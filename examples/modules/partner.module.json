@@ -1,0 +1,20 @@
+{
+  "name": "partner",
+  "description": "Channel partners that resell or refer the product.",
+  "fields": [
+    {
+      "name": "name",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "tier",
+      "type": "enum",
+      "values": ["silver", "gold", "platinum"]
+    },
+    {
+      "name": "territory",
+      "type": "string"
+    }
+  ]
+}

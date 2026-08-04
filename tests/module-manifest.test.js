@@ -1,0 +1,148 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import {
+  validateModuleManifest,
+  generateModuleMigration,
+  pluralizeTableName,
+} from '../packages/core/src/module-manifest.js';
+
+const partnerManifest = JSON.parse(
+  readFileSync(new URL('../examples/modules/partner.module.json', import.meta.url), 'utf8'),
+);
+
+test('a valid manifest normalizes with defaults and stays frozen', () => {
+  const normalized = validateModuleManifest(partnerManifest);
+  assert.equal(normalized.name, 'partner');
+  assert.equal(normalized.table, 'partners');
+  assert.equal(normalized.fields.length, 3);
+  assert.deepEqual(normalized.fields[0], {
+    name: 'name',
+    type: 'string',
+    required: true,
+    unique: false,
+    column: 'name',
+  });
+  assert.deepEqual(normalized.fields[1].values, ['silver', 'gold', 'platinum']);
+  assert.equal(normalized.fields[1].required, false);
+  assert.ok(Object.isFrozen(normalized));
+  assert.ok(Object.isFrozen(normalized.fields[0]));
+});
+
+test('invalid manifests fail with every problem named', () => {
+  let error;
+  try {
+    validateModuleManifest({
+      name: 'Bad Name',
+      fields: [
+        { name: 'id', type: 'string' },
+        { name: 'tier', type: 'enum' },
+        { name: 'tier', type: 'enum', values: ['a'] },
+        { name: 'age', type: 'number' },
+        { name: 'owner', type: 'string', references: 'users' },
+      ],
+      extra: true,
+    });
+  } catch (caught) {
+    error = caught;
+  }
+  assert.ok(error, 'expected validation to throw');
+  assert.equal(error.code, 'VALIDATION_ERROR');
+  assert.match(error.message, /name is required and must match/);
+  assert.match(error.message, /"id" is reserved/);
+  assert.match(error.message, /enum fields require a non-empty "values"/);
+  assert.match(error.message, /type must be one of: string, email, integer, boolean, timestamp, enum, reference/);
+  assert.match(error.message, /"references" and "onDelete" are only allowed on reference fields/);
+  assert.match(error.message, /unknown manifest property "extra"/);
+});
+
+test('duplicate field names and empty manifests are rejected', () => {
+  assert.throws(
+    () =>
+      validateModuleManifest({
+        name: 'partner',
+        fields: [
+          { name: 'tier', type: 'string' },
+          { name: 'tier', type: 'string' },
+        ],
+      }),
+    /duplicate field name/,
+  );
+  assert.throws(() => validateModuleManifest({ name: 'partner' }), /fields is required/);
+  assert.throws(() => validateModuleManifest(null), /must be a JSON object/);
+});
+
+test('reference fields require a target table and validate onDelete', () => {
+  assert.throws(
+    () => validateModuleManifest({ name: 'deal', fields: [{ name: 'companyId', type: 'reference' }] }),
+    /require "references" naming the target table/,
+  );
+  assert.throws(
+    () =>
+      validateModuleManifest({
+        name: 'deal',
+        fields: [{ name: 'companyId', type: 'reference', references: 'companies', onDelete: 'nuke' }],
+      }),
+    /onDelete must be one of: restrict, cascade, set_null/,
+  );
+  assert.throws(
+    () =>
+      validateModuleManifest({
+        name: 'deal',
+        fields: [{ name: 'companyId', type: 'reference', references: 'companies', onDelete: 'set_null', required: true }],
+      }),
+    /onDelete "set_null" conflicts with required: true/,
+  );
+});
+
+test('migration generation is deterministic and matches the documented output', () => {
+  const first = generateModuleMigration(partnerManifest);
+  const second = generateModuleMigration(partnerManifest);
+  assert.deepEqual(first, second);
+  assert.equal(first.migrationName, 'create_partners');
+  assert.equal(
+    first.sql,
+    [
+      'CREATE TABLE IF NOT EXISTS partners (',
+      '  id TEXT PRIMARY KEY,',
+      '  name TEXT NOT NULL,',
+      "  tier TEXT CHECK(tier IN ('silver', 'gold', 'platinum')),",
+      '  territory TEXT,',
+      '  created_at TEXT NOT NULL,',
+      '  updated_at TEXT NOT NULL',
+      ') STRICT;',
+      '',
+    ].join('\n'),
+  );
+});
+
+test('references, uniques and camelCase columns generate expected SQL', () => {
+  const migration = generateModuleMigration({
+    name: 'partner-contract',
+    table: 'partner_contracts',
+    fields: [
+      { name: 'partnerId', type: 'reference', references: 'partners', required: true, onDelete: 'cascade' },
+      { name: 'contractCode', type: 'string', required: true, unique: true },
+      { name: 'active', type: 'boolean' },
+      { name: 'signedAt', type: 'timestamp' },
+      { name: 'valueCents', type: 'integer', required: true },
+    ],
+  });
+  assert.equal(migration.table, 'partner_contracts');
+  assert.match(migration.sql, /partner_id TEXT NOT NULL REFERENCES partners\(id\) ON DELETE CASCADE/);
+  assert.match(migration.sql, /contract_code TEXT NOT NULL UNIQUE/);
+  assert.match(migration.sql, /active INTEGER CHECK\(active IN \(0, 1\)\)/);
+  assert.match(migration.sql, /signed_at TEXT/);
+  assert.match(migration.sql, /value_cents INTEGER NOT NULL/);
+  assert.match(
+    migration.sql,
+    /CREATE INDEX IF NOT EXISTS partner_contracts_partner_id ON partner_contracts\(partner_id\);/,
+  );
+});
+
+test('default table names follow the documented naive plural', () => {
+  assert.equal(pluralizeTableName('partner'), 'partners');
+  assert.equal(pluralizeTableName('company'), 'companies');
+  assert.equal(pluralizeTableName('business'), 'businesses');
+  assert.equal(pluralizeTableName('partner-contract'), 'partner_contracts');
+});
