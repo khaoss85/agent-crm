@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent CRM</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">AGENT-NATIVE CRM FRAMEWORK</div>
+          <h1>Commercial logic you can describe.</h1>
+          <p class="lede">Codex or Claude changes the project. Deterministic workflows protect CRM state.</p>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="refreshButton">Refresh</button>
+          <button class="primary" id="demoButton">Run demo</button>
+        </div>
+      </header>
+
+      <section class="flow" aria-label="Framework flow">
+        <div><span>1</span><strong>Business request</strong><small>“Renewals above €50k need approval.”</small></div>
+        <i>→</i>
+        <div><span>2</span><strong>Agent interface</strong><small>AGENTS.md · Skills · MCP · CLI</small></div>
+        <i>→</i>
+        <div><span>3</span><strong>Controlled execution</strong><small>Modules · Workflow · Trace · Audit</small></div>
+      </section>
+
+      <section class="metrics" id="metrics"></section>
+
+      <section class="grid">
+        <article class="panel panel-wide">
+          <div class="panel-heading">
+            <div>
+              <p class="kicker">CRM state</p>
+              <h2>Opportunities</h2>
+            </div>
+            <code>request-opportunity-stage-change</code>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Opportunity</th>
+                  <th>Company</th>
+                  <th>Value</th>
+                  <th>Stage</th>
+                  <th>Owner</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="opportunities"></tbody>
+            </table>
+          </div>
+          <div class="empty hidden" id="opportunitiesEmpty">Run the demo to create two renewal opportunities.</div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="kicker">Human in the loop</p>
+              <h2>Approvals</h2>
+            </div>
+          </div>
+          <div id="approvals" class="stack"></div>
+          <div class="empty hidden" id="approvalsEmpty">No approval is waiting.</div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="kicker">Observability</p>
+              <h2>Workflow traces</h2>
+            </div>
+          </div>
+          <div id="traces" class="stack compact"></div>
+          <div class="empty hidden" id="tracesEmpty">No workflow has run yet.</div>
+        </article>
+      </section>
+
+      <section class="panel trace-detail hidden" id="traceDetail">
+        <div class="panel-heading">
+          <div>
+            <p class="kicker">Selected run</p>
+            <h2 id="traceTitle">Trace detail</h2>
+          </div>
+          <button class="icon-button" id="closeTrace" aria-label="Close trace">×</button>
+        </div>
+        <div id="traceSpans" class="timeline"></div>
+      </section>
+
+      <footer>
+        <span>Agent CRM v0.1.0</span>
+        <span>Same services behind Admin · REST · CLI · MCP</span>
+      </footer>
+    </main>
+
+    <div class="toast hidden" id="toast"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

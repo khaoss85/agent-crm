@@ -1,0 +1,11 @@
+[mcp_servers.agent_crm]
+command = "node"
+args = ["--no-warnings", "packages/mcp/bin/server.js"]
+cwd = ".."
+startup_timeout_sec = 10
+tool_timeout_sec = 60
+default_tools_approval_mode = "writes"
+required = true
+
+[mcp_servers.agent_crm.env]
+CRM_DB_PATH = "./data/agent-crm.sqlite"
