@@ -14,6 +14,7 @@
     "dev": "node --no-warnings packages/cli/bin/agent-crm.js serve",
     "start": "node --no-warnings packages/cli/bin/agent-crm.js serve",
     "mcp": "node --no-warnings packages/mcp/bin/server.js",
+    "crm": "node --no-warnings packages/cli/bin/agent-crm.js",
     "seed": "node --no-warnings packages/cli/bin/agent-crm.js seed",
     "demo": "node --no-warnings packages/cli/bin/agent-crm.js demo",
     "doctor": "node --no-warnings packages/cli/bin/agent-crm.js doctor",

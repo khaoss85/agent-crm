@@ -4,11 +4,33 @@ import { resolve } from 'node:path';
 import { createAgentCrmApp } from '../../app/src/index.js';
 import { createHttpServer } from '../../../apps/server/src/index.js';
 import { scaffoldModule } from './scaffold-module.js';
+import { validateManifestCommand, generateMigrationCommand } from './manifest-commands.js';
 
 /** @param {string[]} argv */
 export async function runCli(argv) {
-  const { command, positional, flags } = parseArgs(argv);
+  let { command, positional, flags } = parseArgs(argv);
+  // Accept "module validate <path>" as an alias of "module:validate <path>".
+  if (command === 'module' && ['validate', 'migration', 'create'].includes(positional[0])) {
+    command = `module:${positional[0]}`;
+    positional = positional.slice(1);
+  }
   const dbPath = typeof flags.db === 'string' ? resolve(flags.db) : undefined;
+
+  if (command === 'module:validate') {
+    print(validateManifestCommand({ manifestPath: positional[0] }));
+    return;
+  }
+
+  if (command === 'module:migration') {
+    print(
+      generateMigrationCommand({
+        manifestPath: positional[0],
+        out: flags['dry-run'] === true ? undefined : typeof flags.out === 'string' ? flags.out : undefined,
+        force: flags.force === true,
+      }),
+    );
+    return;
+  }
 
   if (command === 'module:create') {
     const result = scaffoldModule({
@@ -131,7 +153,12 @@ Usage:
   agent-crm workflow:list [--db path]
   agent-crm trace:list [--limit 20] [--db path]
   agent-crm module:create <name> [--apply] [--root path]
+  agent-crm module:validate <manifest.json>
+  agent-crm module:migration <manifest.json> [--dry-run] [--out file.sql] [--force]
   agent-crm mcp [--db path]
 
-Module scaffolding is a dry-run unless --apply is explicit.`;
+"module validate" and "module migration" are accepted aliases.
+Module scaffolding is a dry-run unless --apply is explicit.
+Migration generation is a dry-run unless --out is provided; --force allows overwriting.
+Manifest schema: docs/MODULE_MANIFEST.md`;
 }
