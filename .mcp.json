@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "agent-crm": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "--no-warnings",
+        "${CLAUDE_PROJECT_DIR:-.}/packages/mcp/bin/server.js"
+      ],
+      "env": {
+        "CRM_DB_PATH": "${CLAUDE_PROJECT_DIR:-.}/data/agent-crm.sqlite"
+      }
+    }
+  }
+}
