@@ -2,7 +2,7 @@
 
 The first unchecked item is the default next task for Codex.
 
-- [ ] Introduce a declarative module manifest and generate SQLite migrations from it.
+- [x] Introduce a declarative module manifest and generate SQLite migrations from it (`docs/MODULE_MANIFEST.md`, `agent-crm module:validate` / `module:migration`).
 - [ ] Add Activity and Task modules with an automatic follow-up workflow.
 - [ ] Generate an Admin form and table from module metadata.
 - [ ] Add a provider adapter example for MailUp-compatible list enrollment.
