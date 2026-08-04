@@ -10,6 +10,7 @@ Manifests do not execute anything and do not touch the database: they are input 
 
 ```json
 {
+  "manifestVersion": 1,
   "name": "partner",
   "description": "Channel partners that resell or refer the product.",
   "fields": [
@@ -24,6 +25,7 @@ Manifests do not execute anything and do not touch the database: they are input 
 
 | Property | Required | Meaning |
 |---|---|---|
+| `manifestVersion` | no | Manifest format version. Defaults to `1`, the only supported value; a manifest written for a newer format fails with an explicit "unsupported manifestVersion" error instead of being misinterpreted. |
 | `name` | yes | Module name, `^[a-z][a-z0-9-]*$` (example: `partner`, `partner-contract`). |
 | `description` | no | Human/agent-readable description. |
 | `table` | no | Explicit table name (`^[a-z][a-z0-9_]*$`). Defaults to the naive plural below. |
@@ -50,6 +52,7 @@ Unknown properties are rejected so typos fail loudly.
 - Column types: `integer` and `boolean` → `INTEGER` (`boolean` adds `CHECK(col IN (0, 1))`); everything else → `TEXT`. Tables are `STRICT`.
 - Money is modeled explicitly as an `integer` cents field plus a `string`/`enum` currency field, per repository conventions. There is no composite money type.
 - Field order in the manifest is preserved in the generated SQL.
+- Generated identifiers are unquoted, so table names, column names and `references` targets must not be SQLite keywords (for example `order`, `values`, `select`); validation rejects them with a clear error asking for a rename or an explicit `table`.
 
 ## CLI usage
 

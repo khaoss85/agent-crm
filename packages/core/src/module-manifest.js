@@ -23,7 +23,27 @@ export const MANIFEST_FIELD_TYPES = Object.freeze([
 
 export const REFERENCE_ON_DELETE = Object.freeze(['restrict', 'cascade', 'set_null']);
 
+export const SUPPORTED_MANIFEST_VERSION = 1;
+
 const RESERVED_FIELD_NAMES = Object.freeze(['id', 'createdAt', 'created_at', 'updatedAt', 'updated_at']);
+
+// Generated identifiers are intentionally unquoted, so they must not be SQLite
+// keywords (https://sqlite.org/lang_keywords.html).
+const SQLITE_KEYWORDS = new Set(
+  (
+    'abort action add after all alter always analyze and as asc attach autoincrement before begin ' +
+    'between by cascade case cast check collate column commit conflict constraint create cross ' +
+    'current current_date current_time current_timestamp database default deferrable deferred delete ' +
+    'desc detach distinct do drop each else end escape except exclude exclusive exists explain fail ' +
+    'filter first following for foreign from full generated glob group groups having if ignore ' +
+    'immediate in index indexed initially inner insert instead intersect into is isnull join key ' +
+    'last left like limit materialized natural no not nothing notnull null nulls of offset on or ' +
+    'order others outer over partition plan pragma preceding primary query raise range recursive ' +
+    'references regexp reindex release rename replace restrict returning right rollback row rows ' +
+    'savepoint select set table temp temporary then ties to transaction trigger unbounded union ' +
+    'unique update using vacuum values view virtual when where window with without'
+  ).split(' '),
+);
 
 const MODULE_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 const FIELD_NAME_PATTERN = /^[a-z][a-zA-Z0-9]*$/;
@@ -42,6 +62,7 @@ const TABLE_NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
  * }} NormalizedManifestField
  *
  * @typedef {{
+ *   manifestVersion: number,
  *   name: string,
  *   description: string | null,
  *   table: string,
@@ -67,9 +88,16 @@ export function validateModuleManifest(manifest) {
   const input = /** @type {Record<string, unknown>} */ (manifest);
 
   for (const key of Object.keys(input)) {
-    if (!['name', 'description', 'table', 'fields'].includes(key)) {
-      errors.push(`unknown manifest property "${key}" (allowed: name, description, table, fields)`);
+    if (!['manifestVersion', 'name', 'description', 'table', 'fields'].includes(key)) {
+      errors.push(`unknown manifest property "${key}" (allowed: manifestVersion, name, description, table, fields)`);
     }
+  }
+
+  if (input.manifestVersion !== undefined && input.manifestVersion !== SUPPORTED_MANIFEST_VERSION) {
+    throw new ValidationError(
+      `Unsupported manifestVersion: ${JSON.stringify(input.manifestVersion)}. This version of agent-crm supports manifest version ${SUPPORTED_MANIFEST_VERSION}; upgrade agent-crm or lower the manifest version.`,
+      { manifestVersion: input.manifestVersion, supported: SUPPORTED_MANIFEST_VERSION },
+    );
   }
 
   let name = '';
@@ -92,9 +120,17 @@ export function validateModuleManifest(manifest) {
   if (input.table !== undefined) {
     if (typeof input.table !== 'string' || !TABLE_NAME_PATTERN.test(input.table)) {
       errors.push('table must match ^[a-z][a-z0-9_]*$ when present');
+      table = '';
     } else {
       table = input.table;
     }
+  }
+  if (table && SQLITE_KEYWORDS.has(table)) {
+    errors.push(
+      input.table !== undefined
+        ? `table "${table}" is a SQLite keyword; choose a different table name`
+        : `default table name "${table}" (derived from "${name}") is a SQLite keyword; set an explicit non-keyword "table"`,
+    );
   }
 
   /** @type {NormalizedManifestField[]} */
@@ -123,6 +159,7 @@ export function validateModuleManifest(manifest) {
   }
 
   return Object.freeze({
+    manifestVersion: SUPPORTED_MANIFEST_VERSION,
     name,
     description,
     table,
@@ -145,18 +182,32 @@ function normalizeField(rawField, index, errors) {
   const label = typeof field.name === 'string' ? `fields[${index}] "${field.name}"` : `fields[${index}]`;
 
   for (const key of Object.keys(field)) {
-    if (!['name', 'type', 'required', 'unique', 'values', 'references', 'onDelete'].includes(key)) {
+    if (!['name', 'type', 'required', 'unique', 'values', 'references', 'onDelete', 'column'].includes(key)) {
       errors.push(`${label}: unknown property "${key}"`);
     }
   }
 
   let valid = true;
+  let column = '';
 
   if (typeof field.name !== 'string' || !FIELD_NAME_PATTERN.test(field.name)) {
     errors.push(`fields[${index}]: field name is required and must be camelCase matching ^[a-z][a-zA-Z0-9]*$`);
     valid = false;
   } else if (RESERVED_FIELD_NAMES.includes(field.name)) {
     errors.push(`${label}: "${field.name}" is reserved; id, createdAt and updatedAt are generated automatically`);
+    valid = false;
+  } else {
+    column = toSnakeCase(field.name);
+    if (SQLITE_KEYWORDS.has(column)) {
+      errors.push(`${label}: column "${column}" would be a SQLite keyword; rename the field`);
+      valid = false;
+    }
+  }
+
+  // "column" appears in normalized manifests; accept it so validation is
+  // idempotent, but never let it diverge from the derived column name.
+  if (field.column !== undefined && column && field.column !== column) {
+    errors.push(`${label}: "column" is derived from the field name (expected "${column}"); remove or correct it`);
     valid = false;
   }
 
@@ -200,6 +251,9 @@ function normalizeField(rawField, index, errors) {
   if (field.type === 'reference') {
     if (typeof field.references !== 'string' || !TABLE_NAME_PATTERN.test(field.references)) {
       errors.push(`${label}: reference fields require "references" naming the target table (example: "companies")`);
+      valid = false;
+    } else if (SQLITE_KEYWORDS.has(field.references)) {
+      errors.push(`${label}: references target "${field.references}" is a SQLite keyword`);
       valid = false;
     } else {
       references = field.references;

@@ -140,6 +140,55 @@ test('references, uniques and camelCase columns generate expected SQL', () => {
   );
 });
 
+test('SQLite keyword identifiers are rejected with clear errors', () => {
+  assert.throws(
+    () => validateModuleManifest({ name: 'ordine', fields: [{ name: 'order', type: 'string' }] }),
+    /column "order" would be a SQLite keyword; rename the field/,
+  );
+  assert.throws(
+    () => validateModuleManifest({ name: 'value', fields: [{ name: 'amount', type: 'integer' }] }),
+    /default table name "values" \(derived from "value"\) is a SQLite keyword/,
+  );
+  assert.throws(
+    () => validateModuleManifest({ name: 'thing', table: 'select', fields: [{ name: 'amount', type: 'integer' }] }),
+    /table "select" is a SQLite keyword/,
+  );
+  assert.throws(
+    () =>
+      validateModuleManifest({
+        name: 'thing',
+        fields: [{ name: 'targetId', type: 'reference', references: 'values' }],
+      }),
+    /references target "values" is a SQLite keyword/,
+  );
+});
+
+test('manifests carry an explicit version and unsupported versions fail usefully', () => {
+  const normalized = validateModuleManifest(partnerManifest);
+  assert.equal(normalized.manifestVersion, 1);
+  const explicit = validateModuleManifest({ ...partnerManifest, manifestVersion: 1 });
+  assert.equal(explicit.manifestVersion, 1);
+  assert.throws(
+    () => validateModuleManifest({ ...partnerManifest, manifestVersion: 2 }),
+    /Unsupported manifestVersion: 2\. This version of agent-crm supports manifest version 1/,
+  );
+});
+
+test('validation is idempotent: a normalized manifest re-validates and generates', () => {
+  const normalized = validateModuleManifest(partnerManifest);
+  const again = validateModuleManifest(normalized);
+  assert.deepEqual(again, normalized);
+  assert.deepEqual(generateModuleMigration(normalized), generateModuleMigration(partnerManifest));
+  assert.throws(
+    () =>
+      validateModuleManifest({
+        name: 'partner',
+        fields: [{ name: 'tierLevel', type: 'string', column: 'wrong_column' }],
+      }),
+    /"column" is derived from the field name \(expected "tier_level"\)/,
+  );
+});
+
 test('default table names follow the documented naive plural', () => {
   assert.equal(pluralizeTableName('partner'), 'partners');
   assert.equal(pluralizeTableName('company'), 'companies');

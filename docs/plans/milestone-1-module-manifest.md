@@ -81,6 +81,7 @@ Expected behavior:
 - Added partner example manifest, unit tests and CLI integration tests.
 - Documented the manifest schema and recorded ADR-006.
 - Final validation: `npm run verify` and `npm run smoke` pass.
+- Adversarial review pass: rejected SQLite keyword identifiers (columns, tables, `references` targets), added an explicit `manifestVersion` (only `1` supported, newer versions fail with an upgrade hint), made validation idempotent on normalized manifests, and made `--out` writes atomic (temp file + rename).
 
 ## Decision log
 

@@ -1,4 +1,5 @@
 {
+  "manifestVersion": 1,
   "name": "partner",
   "description": "Channel partners that resell or refer the product.",
   "fields": [

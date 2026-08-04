@@ -1,6 +1,6 @@
 // @ts-check
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { ConflictError, ValidationError } from '../../core/src/errors.js';
 import { validateModuleManifest, generateModuleMigration } from '../../core/src/module-manifest.js';
@@ -51,6 +51,14 @@ export function generateMigrationCommand(input) {
     throw new ConflictError(`Refusing to overwrite ${outPath}; pass --force to allow it`, { path: outPath });
   }
   mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, migration.sql, 'utf8');
+  // Write via a sibling temp file + rename so a failure never leaves a partial file.
+  const tempPath = `${outPath}.tmp-agent-crm`;
+  try {
+    writeFileSync(tempPath, migration.sql, 'utf8');
+    renameSync(tempPath, outPath);
+  } catch (error) {
+    rmSync(tempPath, { force: true });
+    throw error;
+  }
   return { ok: true, mode: 'written', source: path, out: outPath, ...migration };
 }
