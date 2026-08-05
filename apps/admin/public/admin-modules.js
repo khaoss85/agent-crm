@@ -91,6 +91,12 @@ export function createModuleAdmin(deps) {
       return;
     }
     if (token !== renderToken) return;
+
+    // Resolve reference labels for the columns, deduplicated per distinct
+    // target id (never one request per cell), with a raw-id fallback.
+    const columnFields = meta.fields.slice(0, 6);
+    const referenceLabels = await resolveReferenceLabels(columnFields, records, token);
+    if (token !== renderToken) return;
     clear();
 
     const panel = el(doc, 'section', { class: 'panel panel-wide' });
@@ -108,7 +114,7 @@ export function createModuleAdmin(deps) {
     }
     panel.appendChild(heading);
 
-    const columns = meta.fields.slice(0, 6);
+    const columns = columnFields;
     if (!records.length) {
       panel.appendChild(el(doc, 'div', { class: 'empty', text: 'No records yet.' }));
     } else {
@@ -124,7 +130,13 @@ export function createModuleAdmin(deps) {
       const tbody = el(doc, 'tbody');
       for (const record of records) {
         const row = el(doc, 'tr');
-        for (const field of columns) row.appendChild(el(doc, 'td', { text: cellText(record[field.name]) }));
+        for (const field of columns) {
+          const value = record[field.name];
+          const text = field.type === 'reference' && value != null
+            ? referenceLabels.get(`${field.name}:${value}`) ?? String(value)
+            : cellText(value);
+          row.appendChild(el(doc, 'td', { text }));
+        }
         row.appendChild(el(doc, 'td', { text: record.createdAt ? String(record.createdAt) : '—' }));
         const openCell = el(doc, 'td');
         if (hasCapability(meta, 'get')) {
@@ -178,9 +190,10 @@ export function createModuleAdmin(deps) {
         const mapped = apiErrorToFormErrors(error);
         showErrors(mapped.fields, mapped.general);
       }
-    }, { submitLabel: 'Create' });
+    }, { submitLabel: 'Create', token });
     clear();
     mount.appendChild(form);
+    await form.__populateReferences(token);
     return form;
   }
 
@@ -225,9 +238,10 @@ export function createModuleAdmin(deps) {
         const mapped = apiErrorToFormErrors(error);
         showErrors(mapped.fields, mapped.general);
       }
-    }, { submitLabel: 'Save', readOnly: !canUpdate, immutable: record, title: displayTitle(record, meta.fields) });
+    }, { submitLabel: 'Save', readOnly: !canUpdate, immutable: record, title: displayTitle(record, meta.fields), token });
     clear();
     mount.appendChild(form);
+    await form.__populateReferences(token);
     return form;
   }
 
@@ -255,6 +269,8 @@ export function createModuleAdmin(deps) {
     const inputs = {};
     /** @type {Record<string, any>} */
     const fieldErrors = {};
+    /** @type {Array<{input: any, control: any, currentValue: string}>} */
+    const referencePopulations = [];
 
     for (const field of fields) {
       const control = fieldControl(field);
@@ -265,7 +281,14 @@ export function createModuleAdmin(deps) {
       row.appendChild(label);
 
       let input;
-      if (control.control === 'select') {
+      if (control.control === 'reference') {
+        // Empty select now; options are loaded asynchronously (guarded by the
+        // render token) from the target module, with the current value ensured.
+        input = el(doc, 'select', { attrs: { id: inputId, name: field.name } });
+        input.appendChild(el(doc, 'option', { text: control.required ? 'Select…' : 'None', attrs: { value: '' } }));
+        const currentValue = initial[field.name] != null ? String(initial[field.name]) : '';
+        referencePopulations.push({ input, control, currentValue });
+      } else if (control.control === 'select') {
         input = el(doc, 'select', { attrs: { id: inputId, name: field.name } });
         input.appendChild(el(doc, 'option', { text: control.required ? 'Select…' : '(none)', attrs: { value: '' } }));
         for (const option of control.options) {
@@ -361,8 +384,108 @@ export function createModuleAdmin(deps) {
     // Expose for tests / programmatic submit without a real submit event.
     form.__submit = handleSubmit;
     form.__inputs = inputs;
+    form.__populateReferences = (token) =>
+      Promise.all(referencePopulations.map((ref) => populateReference(ref, token, options.token)));
 
     return form;
+  }
+
+  /**
+   * Build an id→label map for reference columns, fetching each target module's
+   * list once and resolving only the ids present, deduplicated. Missing ids get
+   * a single by-id fetch; anything unresolved falls back to the raw id.
+   *
+   * @param {Array<any>} columnFields @param {Array<any>} records @param {number} token
+   * @returns {Promise<Map<string, string>>}
+   */
+  async function resolveReferenceLabels(columnFields, records, token) {
+    const labels = new Map();
+    const referenceCols = columnFields.filter((field) => field.type === 'reference' && field.targetModule);
+    for (const field of referenceCols) {
+      const ids = new Set();
+      for (const record of records) {
+        const value = record[field.name];
+        if (value != null && value !== '') ids.add(String(value));
+      }
+      if (ids.size === 0) continue;
+      let items = [];
+      try {
+        const response = await client.request(`/api/modules/${encodeURIComponent(field.targetModule)}/records?limit=100`);
+        items = Array.isArray(response.items) ? response.items : [];
+      } catch {
+        items = [];
+      }
+      if (token !== renderToken) return labels;
+      const displayField = typeof field.targetDisplayField === 'string' ? field.targetDisplayField : 'id';
+      for (const record of items) {
+        const id = record && record.id != null ? String(record.id) : '';
+        if (!ids.has(id)) continue;
+        const labelValue = record[displayField];
+        labels.set(`${field.name}:${id}`, labelValue == null || labelValue === '' ? id : String(labelValue));
+      }
+      // Any id not on the first page: one targeted fetch, else raw-id fallback.
+      for (const id of ids) {
+        if (labels.has(`${field.name}:${id}`)) continue;
+        try {
+          const record = await client.request(
+            `/api/modules/${encodeURIComponent(field.targetModule)}/records/${encodeURIComponent(id)}`,
+          );
+          if (token !== renderToken) return labels;
+          const labelValue = record[displayField];
+          labels.set(`${field.name}:${id}`, labelValue == null || labelValue === '' ? id : String(labelValue));
+        } catch {
+          labels.set(`${field.name}:${id}`, id);
+        }
+      }
+    }
+    return labels;
+  }
+
+  /**
+   * Load target options for one reference select, ensuring the current value is
+   * always present even if it is not on the first page. Guarded by the render
+   * token so a stale form's options never land in a newer view.
+   *
+   * @param {{input: any, control: any, currentValue: string}} ref
+   * @param {number} token
+   */
+  async function populateReference(ref, token) {
+    const { input, control, currentValue } = ref;
+    if (!control.targetModule) return; // malformed metadata: leave placeholder only
+    let items = [];
+    try {
+      const response = await client.request(`/api/modules/${encodeURIComponent(control.targetModule)}/records?limit=100`);
+      items = Array.isArray(response.items) ? response.items : [];
+    } catch {
+      // Target list unavailable: keep the placeholder; the raw id (if any) is
+      // still ensured below so the current value is never silently lost.
+      items = [];
+    }
+    if (token !== renderToken) return; // a newer render owns the view now
+    const seen = new Set();
+    const addOption = (record) => {
+      const id = record && record.id != null ? String(record.id) : '';
+      if (id === '' || seen.has(id)) return;
+      seen.add(id);
+      const labelValue = record[control.targetDisplayField];
+      const label = labelValue == null || labelValue === '' ? id : String(labelValue);
+      input.appendChild(el(doc, 'option', { text: label, attrs: { value: id } })); // safe: textContent
+    };
+    for (const record of items) addOption(record);
+    // Ensure the current value is selectable even if it is not on the first page.
+    if (currentValue && !seen.has(currentValue)) {
+      try {
+        const record = await client.request(
+          `/api/modules/${encodeURIComponent(control.targetModule)}/records/${encodeURIComponent(currentValue)}`,
+        );
+        if (token !== renderToken) return;
+        addOption(record);
+      } catch {
+        if (token !== renderToken) return;
+        addOption({ id: currentValue }); // fall back to the raw id, never lose it
+      }
+    }
+    if (currentValue) input.value = currentValue;
   }
 
   return { renderList, renderNew, renderDetail };
