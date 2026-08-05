@@ -85,4 +85,12 @@ Validated in the same real-Chromium run (requires the intelligence manifests, de
 21. After enrich → score → route on a fresh lead (fixture provider), the lead detail shows the **Enrich**, **Score** and **Route** action controls, the assigned target (`enterprise-italy`) as read-only text, and no editable input for any managed intelligence field.
 22. A `score-contribution` record's detail renders the rule key (e.g. `enterprise-company`) read-only — the immutable record modules are browsable but never editable in the generic Admin.
 
+### Quote builder (Milestone 10)
+
+Validated in the same real-Chromium run (requires the commercial manifests, the fixture catalog provider and the quote actions registered — see `docs/COMMERCIAL_OPERATIONS.md`):
+
+23. After a catalog sync, `#/quotes/<id>` on a draft quote shows the price-book entry selector, quantity and basis-point discount inputs (with the "1000 = 10.00%" hint) and the server-calculated Subtotal/Discount/Total under the documented 1/100 contract.
+24. Adding a line through the browser (20 seats at 500 bps) re-renders from server state: Subtotal `EUR 6,000.00`, Total `EUR 5,700.00` — no client-computed amount is ever posted.
+25. Submitting a 20% discount parks the quote in `pending_approval`, shows the policy decision and states that role enforcement waits for the Production Spine; approving as the Admin user actor flips it to `approved`, removes every editing control, and shows no signature or order UI.
+
 Report any step that fails; do not mark the actions UI browser-validated unless all pass.

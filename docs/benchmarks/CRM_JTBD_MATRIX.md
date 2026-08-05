@@ -153,17 +153,19 @@ The four product workstreams (`docs/strategy/REVENUE_OPERATIONS.md`, `DELIVERY_S
 
 **Evidence (LI-01/02/04/07)**: `tests/lead-intelligence-e2e.test.js` (full enrich→score→route over HTTP/SDK; snapshot provenance + reuse + expiry refresh; contribution order and totals incl. clamp; provider outage/timeout/invalid-data honesty; CRUD immutability matrix on all six record modules and the lead links; capacity exclusion; same-app and cross-connection concurrency with exactly one assignment; restart persistence; fingerprint drift stopping the next boot), `tests/intelligence-contract.test.js` (validation matrix, fingerprint determinism, persisted-version integrity, prepare-phase contract, hostile names), `examples/starters/b2b-lead-qualification/install.mjs` (Enterprise Italy / Spain Sales / fallback outcomes). Real Chromium coverage is the generic Admin smoke (`docs/ADMIN_SMOKE.md`); no dedicated intelligence browser step yet.
 
-### Commercial Operations / CPQ (target: M10–M11)
+### Commercial Operations / CPQ (Milestone 10 implemented for the local slice, ADR-016; signature/order remain M11)
 
 | ID | Job | Status | Notes |
 |---|---|---|---|
-| JTBD-CO-01 | Create a Quote from a Price Book | **not supported** | no product/price-book/quote primitives |
-| JTBD-CO-02 | Synchronize an external catalog (Stripe/Zuora/ERP/custom) | **not supported** | no catalog provider contract |
-| JTBD-CO-03 | Request a discount under a deterministic policy | **not supported** | no discount request/policy primitives |
-| JTBD-CO-04 | Obtain required commercial approval on a discount | **partially supported** | the deterministic human-only approval primitive is validated on the renewal slice (JTBD-02, ADR-003); no Quote/discount objects exist, so the *discount* job itself cannot be performed |
-| JTBD-CO-05 | Create a signature envelope with a provider | **not supported** | no signature provider contract |
-| JTBD-CO-06 | Verify signing via verified provider events | **not supported** | no envelope/artifact primitives |
-| JTBD-CO-07 | Create an immutable signed Order snapshot | **not supported** | no order primitives |
+| JTBD-CO-01 | Create a Quote from a Price Book | **validated end to end** | narrow wording: Opportunity → one price book → controlled server-priced lines → immutable Quote Version with per-line evidence. No taxes, FX, usage/tiered pricing, proration, ramps or bundles |
+| JTBD-CO-02 | Synchronize an external catalog (Stripe/Zuora/ERP/custom) | **partially supported** | validated only for a **deterministic fixture** catalog provider: immutable product versions and entry revisions, idempotent re-sync, provenance and trace. **Real Stripe/Zuora/ERP adapters are not supported** (no credentials, no adapter ships) |
+| JTBD-CO-03 | Request a discount under a deterministic policy | **validated end to end** | basis-point line discounts evaluated by a versioned, fingerprinted discount policy with an explainable bounded decision recorded on the Quote Version |
+| JTBD-CO-04 | Obtain required commercial approval on a discount | **partially supported** | the **human-actor boundary is validated** (agent actors refused 403; one atomic decision per version; concurrent decisions resolve to one winner) — but `requiredApprovalKey` is a label: **secure Sales-Manager/Finance role enforcement is not validated before RBAC** (JTBD-15) |
+| JTBD-CO-05 | Create a signature envelope with a provider | **not supported** | Milestone 11; no signature provider contract |
+| JTBD-CO-06 | Verify signing via verified provider events | **not supported** | Milestone 11; no envelope/artifact primitives |
+| JTBD-CO-07 | Create an immutable signed Order snapshot | **not supported** | Milestone 11; no order primitives |
+
+**Evidence (CO-01/03, and the partial parts of CO-02/04)**: `tests/commercial-e2e.test.js` (catalog sync + idempotency + change-versioning with quoted evidence unchanged, server-priced lines and totals, optimistic draft revisions, immutable versions and version lines, read-only CRUD matrix across all ten commercial modules, human/agent approval boundary, concurrent submit and concurrent decision, submission fault injection with full rollback, provider failure/timeout/invalid with no partial catalog, policy-config drift stopping the boot, restart persistence, 520-row exact reads), `tests/commercial-contract.test.js` (provider/policy validation, fingerprint drift, money and basis-point arithmetic incl. overflow/fraction/string/unsafe inputs), `tests/admin-quotes.test.js` (lifecycle-dependent controls, server-authoritative amounts, action payloads, XSS-as-text, route parsing), `examples/starters/b2b-lead-qualification/install.mjs` (auto-approve path and human-approval path with reject → revise → version 2).
 
 ### Delivery & Service (target: M12–M14)
 
@@ -203,4 +205,4 @@ The four product workstreams (`docs/strategy/REVENUE_OPERATIONS.md`, `DELIVERY_S
 
 This matrix guides roadmap prioritization: the largest gaps blocking common CRM adoption are a reusable Activity/Task engine with scheduling (JTBD-07), generated workflows/approvals for custom objects (JTBD-06), and the auth/tenancy/RBAC prerequisite (JTBD-15).
 
-The workstream sections chart the M9–M15 roadmap. Lead Intelligence (M9) is now implemented for the local slice: JTBD-LI-01/02/04/07 **validated end to end** (fixture provider, explainable versioned scoring, deterministic routing, persisted version fingerprints — ADR-015), LI-03/05/08/09 partial, LI-06 still not supported. The CO/DS/AN sections remain all **not supported** except JTBD-CO-04 and JTBD-DS-01, which inherit *partial* status from the validated approval and workflow primitives. The Production Spine (JTBD-15) remains the hard gate for every job involving real external or role-scoped users — including manual manager reassignment.
+The workstream sections chart the M9–M15 roadmap. Commercial Operations (M10) is now implemented for the local slice: JTBD-CO-01/03 **validated end to end**, CO-02 partial (fixture provider only — no real external catalog), CO-04 partial (human boundary validated, secure roles not), CO-05/06/07 still **not supported** (Milestone 11). Lead Intelligence (M9) is implemented for the local slice: JTBD-LI-01/02/04/07 **validated end to end** (fixture provider, explainable versioned scoring, deterministic routing, persisted version fingerprints — ADR-015), LI-03/05/08/09 partial, LI-06 still not supported. The CO/DS/AN sections remain all **not supported** except JTBD-CO-04 and JTBD-DS-01, which inherit *partial* status from the validated approval and workflow primitives. The Production Spine (JTBD-15) remains the hard gate for every job involving real external or role-scoped users — including manual manager reassignment.
