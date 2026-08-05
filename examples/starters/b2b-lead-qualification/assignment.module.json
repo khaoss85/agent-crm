@@ -1,0 +1,47 @@
+{
+  "manifestVersion": 1,
+  "name": "assignment",
+  "description": "One assignment history entry: which target owns the lead, from which routing run, effective when. Automatic only in v1 \u2014 manual reassignment waits for real authorization (Production Spine).",
+  "fields": [
+    {
+      "name": "leadId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "targetId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "source",
+      "type": "enum",
+      "values": [
+        "automatic"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "routingRunId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "previousAssignmentId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "effectiveAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

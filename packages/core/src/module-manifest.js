@@ -184,7 +184,7 @@ function normalizeField(rawField, index, errors) {
   const label = typeof field.name === 'string' ? `fields[${index}] "${field.name}"` : `fields[${index}]`;
 
   for (const key of Object.keys(field)) {
-    if (!['name', 'type', 'required', 'unique', 'values', 'references', 'onDelete', 'column', 'writable', 'default'].includes(key)) {
+    if (!['name', 'type', 'required', 'unique', 'values', 'references', 'onDelete', 'column', 'writable', 'default', 'index'].includes(key)) {
       errors.push(`${label}: unknown property "${key}"`);
     }
   }
@@ -218,11 +218,22 @@ function normalizeField(rawField, index, errors) {
     valid = false;
   }
 
-  for (const flag of ['required', 'unique']) {
+  for (const flag of ['required', 'unique', 'index']) {
     if (field[flag] !== undefined && typeof field[flag] !== 'boolean') {
       errors.push(`${label}: ${flag} must be a boolean when present`);
       valid = false;
     }
+  }
+  // A plain secondary index for exact-match correctness queries (ADR-015):
+  // redundant on unique fields (already indexed by the constraint) and on
+  // reference fields (auto-indexed) — rejected there to keep manifests honest.
+  if (field.index === true && field.unique === true) {
+    errors.push(`${label}: "index" is redundant with unique: true (the UNIQUE constraint is already indexed)`);
+    valid = false;
+  }
+  if (field.index === true && field.type === 'reference') {
+    errors.push(`${label}: reference fields are indexed automatically; remove "index"`);
+    valid = false;
   }
 
   /** @type {string[] | undefined} */
@@ -351,6 +362,7 @@ function normalizeField(rawField, index, errors) {
     type: /** @type {string} */ (field.type),
     required: field.required === true,
     unique: field.unique === true,
+    ...(field.index === true ? { index: true } : {}),
     column: toSnakeCase(/** @type {string} */ (field.name)),
     writable,
     ...(defaultValue !== undefined ? { default: defaultValue } : {}),
@@ -376,7 +388,7 @@ export function generateModuleMigration(manifest) {
   ];
 
   const indexes = normalized.fields
-    .filter((field) => field.type === 'reference')
+    .filter((field) => field.type === 'reference' || field.index === true)
     .map(
       (field) =>
         `CREATE INDEX IF NOT EXISTS ${normalized.table}_${field.column} ON ${normalized.table}(${field.column});`,

@@ -143,6 +143,27 @@ const MIGRATIONS = [
         ON opportunities(pipeline_key, pipeline_stage);
     `,
   },
+  {
+    version: 4,
+    name: 'definition_versions',
+    // Runtime identity for versioned code-first definitions (ADR-015): every
+    // published scoring model / routing policy {type, name, version} records
+    // its deterministic source fingerprint here at startup. Git history alone
+    // is not runtime policy versioning — a definition whose source changes
+    // under an already-registered version must fail loudly at boot, and every
+    // run additionally stores the fingerprint it executed under.
+    sql: `
+      CREATE TABLE IF NOT EXISTS definition_versions (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        fingerprint TEXT NOT NULL,
+        registered_at TEXT NOT NULL,
+        UNIQUE(type, name, version)
+      ) STRICT;
+    `,
+  },
 ];
 
 /**

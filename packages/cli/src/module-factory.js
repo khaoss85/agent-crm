@@ -168,6 +168,10 @@ export function planModule(input) {
     module: manifest.name,
     table: manifest.table,
     migrationName: migration.migrationName,
+    // A module whose every field is managed generates NO public create/update
+    // at all (capabilities get/list; records only via trusted actions) —
+    // surfaced here so the reviewer sees the write policy before applying.
+    readOnly: manifest.fields.length > 0 && manifest.fields.every((field) => field.writable === 'managed'),
     // Workflow-managed fields are called out in the plan so a reviewer sees,
     // before applying, exactly which fields public create/update will refuse.
     managedFields: manifest.fields
@@ -463,7 +467,12 @@ function serviceTemplate(manifest, names, referenceTargets = {}) {
   const managedFields = manifest.fields.filter((field) => field.writable === 'managed');
   const publicFields = manifest.fields.filter((field) => field.writable !== 'managed');
   const hasManaged = managedFields.length > 0;
-  const needsValidationError = hasReferences || hasManaged;
+  // A module whose EVERY field is managed is read-only on the public surface
+  // (ADR-015): no public create/update is generated at all — the service
+  // exposes get/list(+listWhere/countWhere) publicly and the in-process
+  // createManaged/applyManaged pair to trusted action code.
+  const isReadOnly = hasManaged && publicFields.length === 0;
+  const needsValidationError = true; // listWhere/countWhere validate filter fields
 
   /** For a field, the expression that validates the raw input value. */
   const valueExpr = (field, valueExpression) => {
@@ -600,7 +609,52 @@ ${hasReferences ? `
     }
   }
 
-  /** @param {Record<string, unknown>} input @param {{actor?: unknown}} [context] */
+${isReadOnly ? `  // Read-only module (every field is managed): there is NO public create.
+  // Records are produced only by trusted in-process action code through
+  // createManaged, so no generic client can create empty or forged rows.
+  /** @param {Record<string, unknown>} patch @param {{actor?: unknown}} [context] */
+  async createManaged(patch, context = {}) {
+    const timestamp = nowIso();
+    const ${entity} = {
+      id: randomUUID(),
+${createAssignments}
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+${managedFields
+  .map((field) => {
+    const validator = field.type === 'enum'
+      ? `enumValue(patch.${field.name}, [${(field.values ?? []).map((v) => JSON.stringify(v)).join(', ')}], '${field.name}')`
+      : `${VALIDATORS[field.type].required}(patch.${field.name}, '${field.name}')`;
+    return [
+      `    if (Object.hasOwn(patch, '${field.name}')) {`,
+      field.required
+        ? `      ${entity}.${field.name} = ${validator};`
+        : `      ${entity}.${field.name} = patch.${field.name} === null ? null : ${validator};`,
+      '    }',
+    ].join('\n');
+  })
+  .join('\n')}
+
+    this.#mutation(() => {
+      this.database.raw.prepare(\`
+        INSERT INTO ${manifest.table}(${columns.join(', ')})
+        VALUES (${placeholders})
+      \`).run(
+${insertValues}
+      );
+      this.audit.record({
+        actor: context.actor,
+        action: '${manifest.name}.created',
+        entityType: '${manifest.name}',
+        entityId: ${entity}.id,
+        data: ${entity},
+      });
+    });
+    await this.events.emit('${manifest.name}.created', ${entity});
+    return ${entity};
+  }
+` : `  /** @param {Record<string, unknown>} input @param {{actor?: unknown}} [context] */
   async create(input, context = {}) {
 ${hasManaged ? `    this.#rejectManagedInput(input);\n` : ''}    const timestamp = nowIso();
     const ${entity} = {
@@ -628,7 +682,7 @@ ${insertValues}
     await this.events.emit('${manifest.name}.created', ${entity});
     return ${entity};
   }
-
+`}
   /** @param {string} id */
   get(id) {
     const row = this.database.raw.prepare('SELECT * FROM ${manifest.table} WHERE id = ?').get(id);
@@ -645,7 +699,53 @@ ${insertValues}
     \`).all(limit).map(map${names.pascal}Row);
   }
 
-  /** @param {string} id @param {Record<string, unknown>} input @param {{actor?: unknown}} [context] */
+  // Exact-match correctness queries (ADR-015): unlike the paged list(), these
+  // are complete — a correctness decision must never depend on a page bound.
+  // Filters accept only declared field names; a scalar means equality, null
+  // means IS NULL, an array means IN. In-process API, not routed over HTTP.
+  /** @param {Record<string, unknown>} [filters] */
+  listWhere(filters = {}) {
+    const where = this.#where(filters);
+    return this.database.raw.prepare(\`
+      SELECT * FROM ${manifest.table}\${where.clause} ORDER BY created_at DESC, id
+    \`).all(...where.params).map(map${names.pascal}Row);
+  }
+
+  /** @param {Record<string, unknown>} [filters] */
+  countWhere(filters = {}) {
+    const where = this.#where(filters);
+    return Number(this.database.raw.prepare(\`
+      SELECT COUNT(*) AS n FROM ${manifest.table}\${where.clause}
+    \`).get(...where.params).n);
+  }
+
+  /** @param {Record<string, unknown>} filters */
+  #where(filters) {
+    const columns = ${JSON.stringify(Object.fromEntries([['id', 'id'], ...manifest.fields.filter((field) => field.type !== 'reference' || true).map((field) => [field.name, field.column])]))};
+    /** @type {string[]} */
+    const clauses = [];
+    /** @type {unknown[]} */
+    const params = [];
+    for (const [field, value] of Object.entries(filters ?? {})) {
+      if (!Object.hasOwn(columns, field)) {
+        throw new ValidationError('Unknown filter field: ' + field, { field });
+      }
+      const column = columns[/** @type {keyof typeof columns} */ (field)];
+      if (value === null) {
+        clauses.push(column + ' IS NULL');
+      } else if (Array.isArray(value)) {
+        if (value.length === 0) throw new ValidationError('Filter array for ' + field + ' must not be empty', { field });
+        clauses.push(column + ' IN (' + value.map(() => '?').join(', ') + ')');
+        params.push(...value.map((item) => (typeof item === 'boolean' ? (item ? 1 : 0) : item)));
+      } else {
+        clauses.push(column + ' = ?');
+        params.push(typeof value === 'boolean' ? (value ? 1 : 0) : value);
+      }
+    }
+    return { clause: clauses.length ? ' WHERE ' + clauses.join(' AND ') : '', params };
+  }
+
+${isReadOnly ? `` : `  /** @param {string} id @param {Record<string, unknown>} input @param {{actor?: unknown}} [context] */
   async update(id, input, context = {}) {
 ${hasManaged ? `    this.#rejectManagedInput(input);\n` : ''}    this.get(id);
     /** @type {string[]} */
@@ -679,7 +779,7 @@ ${updateBranches}
     await this.events.emit('${manifest.name}.updated', updated);
     return updated;
   }
-${hasManaged ? `
+`}${hasManaged ? `${isReadOnly ? '' : `
   // Workflow-managed fields (${managedFields.map((f) => f.name).join(', ')}) are never
   // settable through public create/update — only through this internal path,
   // used by action execute() via ctx.managed. Not exposed over HTTP.
@@ -690,7 +790,7 @@ ${hasManaged ? `
       }
     }
   }
-
+`}
   /** @param {string} id @param {Record<string, unknown>} patch @param {{actor?: unknown}} [context] */
   async applyManaged(id, patch, context = {}) {
     this.get(id);
@@ -744,6 +844,11 @@ ${rowMappings}
  * @param {ReturnType<typeof buildNames>} names
  */
 function indexTemplate(manifest, names, referenceTargets = {}) {
+  // Read-only modules (every field managed, ADR-015) expose no public write
+  // capability: the generic HTTP/SDK/Admin surface serves get/list only, so no
+  // client can create or edit rows — records exist only via trusted actions.
+  const isReadOnly = manifest.fields.length > 0 && manifest.fields.every((field) => field.writable === 'managed');
+  const capabilities = isReadOnly ? ['get', 'list'] : ['create', 'get', 'list', 'update'];
   const fieldNames = ['id', ...manifest.fields.map((field) => field.name), 'createdAt', 'updatedAt'];
   const fieldMetadata = manifest.fields.map((field) => {
     if (field.type === 'reference') {
@@ -799,7 +904,7 @@ export const ${names.camel}ModuleDefinition = Object.freeze({
   kind: 'generated',
   manifestVersion: ${manifest.manifestVersion},
   table: ${JSON.stringify(manifest.table)},
-  capabilities: Object.freeze(['create', 'get', 'list', 'update']),
+  capabilities: Object.freeze(${JSON.stringify(capabilities)}),
   fields: Object.freeze([
 ${fieldMetadataLines}
   ]),
@@ -828,6 +933,43 @@ export { ${names.pascal}Service };
  * @param {ReturnType<typeof buildNames>} names
  */
 function testTemplate(manifest, names) {
+  const isReadOnly = manifest.fields.length > 0 && manifest.fields.every((field) => field.writable === 'managed');
+  if (isReadOnly) {
+    const firstField = manifest.fields[0];
+    return `${header()}
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createAgentCrmApp } from '../packages/app/src/index.js';
+
+test('${manifest.name} module is read-only publicly and writable only through managed paths', async (t) => {
+  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  t.after(() => app.close());
+  const actor = { type: 'human', id: 'test-user' };
+
+  const definition = app.modules.get('${manifest.name}');
+  assert.deepEqual(definition.capabilities, ['get', 'list'], 'no public write capability');
+  const service = definition.service;
+  assert.equal(service.create, undefined, 'no public create exists');
+  assert.equal(service.update, undefined, 'no public update exists');
+
+  const created = await service.createManaged({}, { actor });
+  assert.ok(created.id);
+  assert.deepEqual(service.get(created.id), created);
+  assert.equal(service.list().length, 1);
+  assert.equal(service.countWhere({ id: created.id }), 1);
+  await assert.rejects(() => Promise.resolve().then(() => service.listWhere({ ghost: 1 })), /Unknown filter field/);
+
+  const auditActions = app.audit
+    .list({ entityType: '${manifest.name}' })
+    .map((event) => event.action);
+  assert.deepEqual(auditActions, ['${manifest.name}.created'], 'exactly one create audit');
+${firstField && !firstField.required ? `
+  const patched = await service.applyManaged(created.id, { ${firstField.name}: null }, { actor });
+  assert.equal(patched.${firstField.name}, null, 'applyManaged remains the in-process write path');` : ''}
+});
+`;
+  }
   const referenceField = manifest.fields.find((field) => field.type === 'reference');
   if (referenceField) {
     // A module with references can't be created without valid target ids, which

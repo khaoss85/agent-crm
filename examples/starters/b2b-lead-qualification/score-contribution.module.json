@@ -1,0 +1,38 @@
+{
+  "manifestVersion": 1,
+  "name": "score-contribution",
+  "description": "One rule's contribution inside a score run: matched or not, how many points, and why. The full set for a run explains the score exactly.",
+  "fields": [
+    {
+      "name": "runId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "ruleKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "label",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "matched",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "contribution",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

@@ -12,7 +12,14 @@ import { createApprovalModule } from '../../modules/approval/src/index.js';
 import { generatedModules } from '../../modules/generated/index.js';
 import { generatedActions } from '../../actions/generated/index.js';
 import { generatedPipelines } from '../../pipelines/generated/index.js';
+import {
+  generatedEnrichmentProviders,
+  generatedScoringModels,
+  generatedRoutingPolicies,
+  generatedRoutingTargets,
+} from '../../intelligence/generated/index.js';
 import { PipelineRegistry } from '../../core/src/pipeline-registry.js';
+import { IntelligenceRegistries } from '../../core/src/intelligence-registry.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
 import { ActionRegistry } from '../../core/src/action-registry.js';
 import { runRecordAction } from '../../core/src/action-runtime.js';
@@ -104,6 +111,21 @@ export function createAgentCrmApp(options = {}) {
   const pipelines = new PipelineRegistry({ moduleExists: (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name) });
   for (const definition of generatedPipelines) pipelines.register(definition);
 
+  // Code-first Lead Intelligence registries (ADR-015): enrichment providers,
+  // versioned scoring models, versioned routing policies and routing targets —
+  // validated fail-closed at startup. Each scoring-model/routing-policy
+  // version's deterministic source fingerprint is persisted in
+  // definition_versions: the same registered version with changed source stops
+  // the app (definitions are immutable once registered; publish a new version,
+  // and model rollback = a new version derived from an earlier definition).
+  const intelligence = new IntelligenceRegistries({
+    enrichmentProviders: generatedEnrichmentProviders,
+    scoringModels: generatedScoringModels,
+    routingPolicies: generatedRoutingPolicies,
+    routingTargets: generatedRoutingTargets,
+  });
+  intelligence.persistFingerprints(database);
+
   const notificationProvider = new MemoryNotificationProvider();
   providers.register({
     name: 'default-notifications',
@@ -153,6 +175,7 @@ export function createAgentCrmApp(options = {}) {
     services,
     actions,
     pipelines,
+    intelligence,
     actionEligibleCoreModules: [...ACTION_ELIGIBLE_CORE_MODULES].sort(),
     /**
      * Run a code-first record action atomically (ADR-011/012): the business
@@ -171,6 +194,7 @@ export function createAgentCrmApp(options = {}) {
         services,
         core: coreAdapters,
         pipelines,
+        intelligence,
         config: app.config,
         module,
         action,

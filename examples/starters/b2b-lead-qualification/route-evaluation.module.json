@@ -1,0 +1,48 @@
+{
+  "manifestVersion": 1,
+  "name": "route-evaluation",
+  "description": "Per-target evidence for one routing run: whether each candidate target was eligible, why or why not, and the exact load/capacity/priority the decision saw. Makes historical routing decisions explainable after target data changes.",
+  "fields": [
+    {
+      "name": "runId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "targetKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "kind",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "eligible",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "currentLoad",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "capacity",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "priority",
+      "type": "integer",
+      "writable": "managed"
+    }
+  ]
+}
