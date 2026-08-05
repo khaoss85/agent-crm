@@ -48,9 +48,14 @@ export function createHttpServer(app, options = {}) {
       const route = router.match(request.method ?? 'GET', url.pathname);
 
       if (route) {
-        const body = ['POST', 'PUT', 'PATCH'].includes(request.method ?? '')
-          ? await readJson(request)
+        const writesBody = ['POST', 'PUT', 'PATCH'].includes(request.method ?? '');
+        // A route may opt into the RAW body (ADR-017): a signature-verified
+        // payload must be checked as the exact bytes the provider signed, so
+        // parsing-then-reserializing is not an option.
+        const rawBody = writesBody && route.options?.rawBody
+          ? await readRawBody(request, route.options.maxBodyBytes ?? 64_000)
           : null;
+        const body = writesBody && !route.options?.rawBody ? await readJson(request) : null;
         const result = await route.handler({
           request,
           response,
@@ -58,6 +63,8 @@ export function createHttpServer(app, options = {}) {
           query: Object.fromEntries(url.searchParams.entries()),
           searchParams: url.searchParams,
           body,
+          rawBody,
+          headers: request.headers,
           actor: actorFromRequest(request),
         });
         if (!response.writableEnded) {
@@ -124,6 +131,10 @@ function buildRouter(app) {
     // Commercial Operations registries (ADR-016): catalog providers, discount
     // policies, money/discount contract. Additive; function-free.
     ...(app.commercial ? { commercial: app.commercial.metadata() } : {}),
+    // Signature providers and the envelope/order contract (ADR-017). Never a
+    // verification secret, an executable handler, a raw provider payload or an
+    // internal storage path. Additive; function-free.
+    ...(app.signature ? { signature: app.signature.metadata() } : {}),
   }));
 
   // Catalog synchronization (ADR-016). Local-development surface like every
@@ -137,6 +148,36 @@ function buildRouter(app) {
       throw new ValidationError('provider is required', { field: 'provider' });
     }
     return app.syncCatalog({ provider: input.provider, input: input.input, actor });
+  });
+
+  // Signature provider events (ADR-017). A dedicated route, NOT a record
+  // action: the payload arrives from outside, must be verified as the exact
+  // bytes the provider signed before any state is touched, and its identity
+  // is a provider event id rather than a CRM record id. The raw body is
+  // bounded to 64 KiB, the provider is selected canonically from the path,
+  // and a verification failure is a stable 401 that never echoes the payload,
+  // the signature or the key.
+  router.add('POST', '/api/signature/providers/:provider/events', async ({ params, rawBody, headers, actor }) => {
+    if (typeof app.ingestSignatureEvent !== 'function') {
+      throw new NotFoundError('Operation', 'signature events');
+    }
+    return app.ingestSignatureEvent({
+      provider: params.provider,
+      rawBody: rawBody ?? '',
+      headers: safeSignatureHeaders(headers),
+      // The webhook is not an authenticated CRM user: it is the provider
+      // integration acting, and it is recorded as such.
+      actor: { type: 'system', id: `signature:${params.provider}` },
+    });
+  }, { rawBody: true, maxBodyBytes: 64_000 });
+
+  // Explicit envelope reconciliation (ADR-017). No background scheduler ships
+  // in this milestone: recovery is always an explicit, audited operation.
+  router.add('POST', '/api/signature/envelopes/:id/reconcile', async ({ params, actor }) => {
+    if (typeof app.reconcileSignature !== 'function') {
+      throw new NotFoundError('Operation', 'signature reconciliation');
+    }
+    return app.reconcileSignature({ envelopeId: params.id, actor });
   });
 
   // Uniform resource surface for generated modules (ADR-008). Only modules
@@ -299,6 +340,41 @@ async function readJson(request) {
   } catch {
     throw new AppError('Request body must be valid JSON', { code: 'INVALID_JSON', status: 400 });
   }
+}
+
+/**
+ * Read the exact request bytes for a signature-verified route, bounded. The
+ * body is decoded as UTF-8 text but never parsed here: verification must see
+ * what the provider signed.
+ * @param {import('node:http').IncomingMessage} request @param {number} maxBytes
+ */
+async function readRawBody(request, maxBytes) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      throw new AppError('Request body too large', { code: 'PAYLOAD_TOO_LARGE', status: 413 });
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/**
+ * Only the bounded header values a signature provider is allowed to see. The
+ * whole header bag is never handed to provider code, and nothing here is ever
+ * logged or echoed back.
+ * @param {import('node:http').IncomingHttpHeaders} headers
+ */
+function safeSignatureHeaders(headers) {
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const name of ['x-signature-256', 'x-signature-timestamp', 'x-provider-event-id']) {
+    const value = headers?.[name];
+    if (typeof value === 'string' && value.length <= 512) out[name] = value;
+  }
+  return out;
 }
 
 /** @param {import('node:http').ServerResponse} response @param {number} status @param {unknown} body */

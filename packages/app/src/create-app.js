@@ -22,10 +22,13 @@ import {
   generatedCatalogProviders,
   generatedDiscountPolicies,
 } from '../../commercial/generated/index.js';
+import { generatedSignatureProviders } from '../../signature/generated/index.js';
 import { PipelineRegistry } from '../../core/src/pipeline-registry.js';
 import { IntelligenceRegistries } from '../../core/src/intelligence-registry.js';
 import { CommercialRegistries } from '../../core/src/commercial-registry.js';
 import { createCatalogSync } from '../../core/src/catalog-sync.js';
+import { SignatureRegistries } from '../../core/src/signature-registry.js';
+import { createSignatureOperations } from '../../core/src/signature-operations.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
 import { ActionRegistry } from '../../core/src/action-registry.js';
 import { runRecordAction } from '../../core/src/action-runtime.js';
@@ -140,6 +143,13 @@ export function createAgentCrmApp(options = {}) {
   });
   commercial.persistFingerprints(database);
 
+  // Signature provider registry (ADR-017): the same declared-definition
+  // fingerprint mechanism. The fingerprint proves provider CODE and declared
+  // config integrity — never remote-service behavior, which is why every
+  // provider result is re-validated into the normalized contract.
+  const signature = new SignatureRegistries({ signatureProviders: generatedSignatureProviders });
+  signature.persistFingerprints(database);
+
   const notificationProvider = new MemoryNotificationProvider();
   providers.register({
     name: 'default-notifications',
@@ -191,6 +201,7 @@ export function createAgentCrmApp(options = {}) {
     pipelines,
     intelligence,
     commercial,
+    signature,
     actionEligibleCoreModules: [...ACTION_ELIGIBLE_CORE_MODULES].sort(),
     /**
      * Synchronize a catalog provider's normalized catalog into immutable
@@ -208,6 +219,34 @@ export function createAgentCrmApp(options = {}) {
       modules,
       commercial,
       config: { catalogTimeoutMs: /** @type {any} */ (options).catalogTimeoutMs },
+    }),
+    /**
+     * Ingest one provider-verified signature event (ADR-017). Verification
+     * happens before any state is touched; the inbox is idempotent by provider
+     * event id; a verified completion atomically creates the signed artifact
+     * evidence and exactly one immutable Order.
+     * @param {{provider: string, rawBody: string, headers?: Record<string, unknown>, actor?: unknown}} params
+     */
+    ingestSignatureEvent(params) {
+      return app._signatureOperations.ingestSignatureEvent(params);
+    },
+    /**
+     * Reconcile one signature envelope against its provider (ADR-017): the
+     * documented recovery for a lost webhook, a provider success whose local
+     * finalization failed, or a restart mid-flight. No scheduler exists in
+     * this milestone — reconciliation is always explicit.
+     * @param {{envelopeId: string, actor?: unknown}} params
+     */
+    reconcileSignature(params) {
+      return app._signatureOperations.reconcileSignature(params);
+    },
+    _signatureOperations: createSignatureOperations({
+      database,
+      events,
+      modules,
+      services,
+      signature,
+      config: { signatureTimeoutMs: /** @type {any} */ (options).signatureTimeoutMs },
     }),
     /**
      * Run a code-first record action atomically (ADR-011/012): the business
@@ -228,6 +267,7 @@ export function createAgentCrmApp(options = {}) {
         pipelines,
         intelligence,
         commercial,
+        signature,
         config: app.config,
         module,
         action,
@@ -241,6 +281,8 @@ export function createAgentCrmApp(options = {}) {
       approvalThresholdCents:
         options.approvalThresholdCents ??
         Number(process.env.APPROVAL_THRESHOLD_CENTS ?? 5_000_000),
+      // Bound on every external-operation provider call (ADR-017).
+      externalTimeoutMs: /** @type {any} */ (options).signatureTimeoutMs,
     },
     notifications: notificationProvider,
     close() {
