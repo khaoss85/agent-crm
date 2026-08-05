@@ -6,6 +6,7 @@ useful slice of a B2B sales motion:
 
 ```
 Capture lead ──▶ qualify  (atomically opens the first follow-up task)
+            │      └──▶ convert (creates/reuses Company + Contact, opens ONE Opportunity)
             └──▶ disqualify (requires a reason, opens no task)
 ```
 
@@ -22,6 +23,7 @@ Lead-specific screen.
 | `task.module.json` | Task module manifest. `sourceKey` is **unique** — the idempotency key that makes a repeated/concurrent qualify a no-op at the data layer. |
 | `actions/qualify.js` | `lead.qualify` — from `new` only; sets the lead qualified and opens exactly one task, atomically. |
 | `actions/disqualify.js` | `lead.disqualify` — from `new` only; sets the lead disqualified with a required reason; no task. |
+| `actions/convert.js` | `lead.convert` — from `qualified` only; deterministically reuses or creates the Company (exact normalized name match; ambiguity is refused) and Contact (unique email; cross-company clash refused), opens exactly one Opportunity (`sourceKey` = `lead-conversion:<leadId>`, database-unique), and writes the managed conversion links in one atomic update. |
 | `install.mjs` | Builds a clean throwaway project, applies both modules, registers the actions, and verifies the whole flow. |
 
 ## Try it
@@ -49,8 +51,9 @@ only to a temporary directory — your own database is untouched.
    ```js
    import { qualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/qualify.js';
    import { disqualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/disqualify.js';
+   import { convertLead } from '../../../examples/starters/b2b-lead-qualification/actions/convert.js';
 
-   export const generatedActions = [qualifyLead, disqualifyLead];
+   export const generatedActions = [qualifyLead, disqualifyLead, convertLead];
    ```
 
 3. **Run it** — `npm run dev`, open the Admin, create a Lead, and the
@@ -58,9 +61,17 @@ only to a temporary directory — your own database is untouched.
 
    ```js
    const leads = client.module('lead');
-   const lead = await leads.create({ firstName: 'Dana', lastName: 'Rossi', email: 'dana@acme.example' });
+   const lead = await leads.create({ firstName: 'Dana', lastName: 'Rossi', email: 'dana@acme.example', companyName: 'Acme' });
    await leads.action(lead.id, 'qualify', { dueAt: '2026-08-12T09:00:00Z' });
+   await leads.action(lead.id, 'convert', { opportunityName: 'Acme — Enterprise', valueCents: 5_000_000, currency: 'EUR' });
    ```
+
+   Conversion needs a `companyName` on the lead; money is integer minor units.
+
+   **Upgrading from the Milestone 6 starter:** the Lead manifest gained the
+   `converted` status and four managed conversion fields. Applied migrations
+   are immutable (ADR-007) and the factory does not alter existing schemas, so
+   use a fresh project (or database) for the extended manifest.
 
 ## Guarantees demonstrated
 

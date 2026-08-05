@@ -10,8 +10,12 @@
     { "name": "companyName", "type": "string" },
     { "name": "source", "type": "enum", "values": ["website", "referral", "event", "outbound"] },
     { "name": "score", "type": "integer" },
-    { "name": "status", "type": "enum", "values": ["new", "qualified", "disqualified"], "writable": "managed", "default": "new" },
+    { "name": "status", "type": "enum", "values": ["new", "qualified", "disqualified", "converted"], "writable": "managed", "default": "new" },
     { "name": "disqualificationReason", "type": "string", "writable": "managed" },
-    { "name": "qualifiedAt", "type": "timestamp", "writable": "managed" }
+    { "name": "qualifiedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "convertedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "convertedCompanyId", "type": "string", "writable": "managed" },
+    { "name": "convertedContactId", "type": "string", "writable": "managed" },
+    { "name": "convertedOpportunityId", "type": "string", "writable": "managed" }
   ]
 }

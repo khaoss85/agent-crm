@@ -111,6 +111,20 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS audit_events_created_at ON audit_events(created_at DESC);
     `,
   },
+  {
+    version: 2,
+    name: 'opportunity_source_key',
+    // A deterministic origin key for opportunities created by a workflow/action
+    // (e.g. lead conversion: 'lead-conversion:<leadId>'). The partial UNIQUE
+    // index makes duplicate-origin opportunities impossible at the database
+    // layer while leaving ordinary opportunities (NULL key) untouched.
+    sql: `
+      ALTER TABLE opportunities ADD COLUMN source_key TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS opportunities_source_key
+        ON opportunities(source_key)
+        WHERE source_key IS NOT NULL;
+    `,
+  },
 ];
 
 /**

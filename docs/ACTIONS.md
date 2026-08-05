@@ -30,8 +30,8 @@ export const qualifyLead = {
 };
 ```
 
-Input field types are `string`, `timestamp` and `enum` (which requires
-`values`).
+Input field types are `string`, `timestamp`, `enum` (which requires
+`values`) and `integer`.
 
 - **Timestamps** use one canonical form: a UTC ISO-8601 instant
   `YYYY-MM-DDTHH:MM:SS(.mmm)?Z`. Offsets (`+02:00`), date-only forms and
@@ -43,6 +43,17 @@ Input field types are `string`, `timestamp` and `enum` (which requires
   bounded at 10 000 characters; the HTTP body limit (1 MB) bounds the request
   as a whole. Blank and missing are treated the same: a required field that is
   absent, `null`, `''` **or whitespace-only** is a `400`.
+- **Integers** accept JSON safe integers only — numeric strings, fractions,
+  `NaN`/`Infinity` and unsafe magnitudes are `400`s — so money stays integer
+  minor units (`valueCents`) end to end. Zero is a value, not "missing". Sign
+  policy (e.g. non-negative) belongs to the action's own validation. The Admin
+  renders integer inputs as number controls and posts JSON numbers. An Admin
+  that predates this type renders it as text; the server rejects the resulting
+  string with a field-tied `400`, so the fallback is safe.
+
+Any input field may declare a `hint` (string, ≤ 200 chars) — free-text guidance
+rendered under the control strictly as text. Use it wherever a raw value could
+mislead, e.g. money: `hint: "Integer MINOR units: 500000 means 5,000.00."`.
 
 ### The `execute` context
 
@@ -54,6 +65,7 @@ Input field types are `string`, `timestamp` and `enum` (which requires
 | `managed(id, patch)` | The **only** way to write workflow-managed fields (below). |
 | `modules` | The module registry — `modules.get('task').service` for cross-module writes. |
 | `services` | The handwritten core services (companies, contacts, opportunities, approvals). |
+| `core` | Declared adapters over the handwritten core CRM modules (ADR-013): `findCompaniesByNormalizedName`, `findContactByEmail`, `createCompany`, `createContact`, `createOpportunity`. The only sanctioned way for an action to create or reuse core records — writes go through the real services, so audit and events are preserved. |
 | `database`, `config` | Escape hatches; prefer services so validation and audit are preserved. |
 | `now()` | The framework clock (ISO-8601 UTC). Use it for timestamps like `qualifiedAt` so time is injectable and consistent with the rest of the framework. |
 | `step(name, output)` | Record an extra named span in the workflow trace. |
@@ -193,5 +205,8 @@ re-renders so the new state and the newly valid actions appear together.
 ## Worked example
 
 `examples/starters/b2b-lead-qualification/` is a complete, runnable example:
-two manifests, two actions, and an `install.mjs` that builds a clean throwaway
-project and verifies every guarantee above.
+two manifests, three actions (qualify, disqualify, and `convert` — which
+creates or deterministically reuses a Company and Contact and opens exactly
+one Opportunity through the `ctx.core` adapters, ADR-013), and an
+`install.mjs` that builds a clean throwaway project and verifies every
+guarantee above.

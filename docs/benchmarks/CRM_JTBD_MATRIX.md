@@ -79,6 +79,18 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 - **Evidence**: `tests/lead-qualification-e2e.test.js` (atomicity/rollback, repeat 409, same-instance concurrency, CRUD-bypass matrix, restart), `tests/action-runtime-semantics.test.js` (two-connection concurrency, commit-failure injection, post-commit dispatch policy, corrupted-state safety), `tests/action-contract.test.js`, `examples/starters/b2b-lead-qualification/`; Admin buttons validated in `tests/admin-actions.test.js` plus a manual real-Chromium smoke (`docs/ADMIN_SMOKE.md`).
 - **Manual interventions**: registering the starter's actions in `packages/actions/generated/index.js`; lead **scoring** remains out of scope (no scoring primitive).
 
+## JTBD-05b — Convert a qualified lead into Company, Contact and Opportunity
+- **Actor**: SDR / account executive.
+- **Trigger**: a qualified lead becomes a real deal.
+- **Desired outcome**: one action creates (or deterministically reuses) the Company and Contact and opens exactly one Opportunity, atomically, with conversion links on the Lead.
+- **Primitives**: code-first action, managed conversion fields, core-module adapters (ADR-013), outer transaction, database-unique opportunity source key, audit, events, trace.
+- **Framework capabilities**: action registry/runtime over generated modules + declared adapters into the handwritten core CRM; `integer` action input (money as minor units).
+- **Acceptance scenario**: convert a qualified lead → Company created or reused on an exact normalized-name match (ambiguity refused with 409), Contact created or reused by unique email (cross-company clash refused with 409), exactly one Opportunity (`lead-conversion:<leadId>` unique in the database), one atomic managed update writes status `converted` + all three links; repeat and concurrent conversions yield stable 409s with no duplicates; a failure at any step rolls everything back without touching pre-existing reused records; state survives restart; CRUD cannot write conversion fields.
+- **Status**: **validated end to end** (Milestone 7), for the starter's convert action.
+- **Evidence**: `tests/lead-conversion-e2e.test.js` (full flow over HTTP/SDK, reuse/ambiguity/mismatch policies incl. Unicode normalization, source-key squat, COMMIT fault injection, post-commit subscriber failure, same-lead and cross-connection concurrency, shared-company concurrent conversions, migration v2 upgrade, restart), `examples/starters/b2b-lead-qualification/install.mjs` (two conversions sharing one Company), `tests/action-contract.test.js` (integer input), `tests/admin-actions.test.js` (integer control). Admin Convert flow additionally exercised in a manual real-Chromium smoke (`docs/ADMIN_SMOKE.md`).
+- **Manual interventions**: registering the starter's actions; leads without a `companyName` must have one set before converting.
+- **Scope note**: exact deterministic reuse only — **no** fuzzy deduplication, account hierarchies, pipeline movement, or forecasting. Conversion targets the built-in core Company/Contact/Opportunity modules.
+
 ## JTBD-06 — Manage a custom object with an approval rule
 - **Actor**: business user on a generated object.
 - **Desired outcome**: a generated module whose mutations enforce a human-approval policy.
@@ -122,7 +134,7 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 
 ## Summary
 
-- **Validated end to end**: JTBD-01 (custom business object), JTBD-01b (generated-to-generated reference), JTBD-02 (renewal approval, built-in object), JTBD-04 (capture a lead, starter model), JTBD-05 (qualify/disqualify a lead, starter actions).
-- Deliberately **not** marked validated: lead conversion, pipeline for custom objects, a general task engine/scheduling (only the first follow-up Task inside qualification is proven — JTBD-07 stays partial), onboarding, churn/upsell, reporting, integrations, permissions. Primitives for some exist, but no end-to-end proof does.
+- **Validated end to end**: JTBD-01 (custom business object), JTBD-01b (generated-to-generated reference), JTBD-02 (renewal approval, built-in object), JTBD-04 (capture a lead, starter model), JTBD-05 (qualify/disqualify a lead, starter actions), JTBD-05b (convert a qualified lead into Company/Contact/Opportunity, starter action).
+- Deliberately **not** marked validated: pipeline for custom objects, a general task engine/scheduling (only the first follow-up Task inside qualification is proven — JTBD-07 stays partial), onboarding, churn/upsell, reporting, integrations, permissions. Primitives for some exist, but no end-to-end proof does.
 
 This matrix guides roadmap prioritization: the largest gaps blocking common CRM adoption are a reusable Activity/Task engine with scheduling (JTBD-07), generated workflows/approvals for custom objects (JTBD-06), and the auth/tenancy/RBAC prerequisite (JTBD-15).

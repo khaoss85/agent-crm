@@ -63,6 +63,14 @@ export function validateActionInput(schema, body) {
         throw new ValidationError(`${field.name} must be one of: ${(field.values ?? []).join(', ')}`, { field: field.name });
       }
       out[field.name] = raw;
+    } else if (field.type === 'integer') {
+      // JSON numbers only — never numeric strings — and only safe integers:
+      // fractions, NaN/Infinity and unsafe magnitudes are all rejected, so an
+      // action can trust the value arithmetic-safe (money stays minor units).
+      if (typeof raw !== 'number' || !Number.isSafeInteger(raw)) {
+        throw new ValidationError(`${field.name} must be a whole number (JSON integer)`, { field: field.name });
+      }
+      out[field.name] = raw;
     } else {
       // string: outer whitespace is trimmed (inner whitespace preserved), and a
       // whitespace-only value counts as missing — a required reason of "\n\t "
@@ -97,6 +105,7 @@ export function validateActionInput(schema, body) {
  *   database: any, events: any, services: Record<string, any>, config?: Record<string, any>,
  *   registry: {get: (module: string, action: string) => any},
  *   modules: {get: (name: string) => any},
+ *   core?: Record<string, Function>,
  *   module: string, action: string, recordId: string, input: unknown, actor: unknown
  * }} params
  */
@@ -136,6 +145,9 @@ export async function runRecordAction(params) {
           services,
           modules,
           database,
+          // Declared core-module capabilities (ADR-013); frozen, may be absent
+          // in minimal test harnesses.
+          core: params.core ?? Object.freeze({}),
           config: params.config ?? {},
           now: () => nowIso(),
           managed: (id, patch) => service.applyManaged(id, patch, { actor }),

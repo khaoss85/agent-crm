@@ -14,6 +14,7 @@ import { generatedActions } from '../../actions/generated/index.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
 import { ActionRegistry } from '../../core/src/action-registry.js';
 import { runRecordAction } from '../../core/src/action-runtime.js';
+import { createCoreAdapters } from '../../core/src/core-adapters.js';
 import { createReferenceResolver } from '../../core/src/reference-resolver.js';
 import {
   WorkflowEngine,
@@ -101,6 +102,11 @@ export function createAgentCrmApp(options = {}) {
     approvals: approvalModule.service,
   };
 
+  // Declared capabilities over the handwritten core modules (ADR-013): built
+  // once per app instance — frozen, no global state, the only sanctioned way
+  // for an action to create/reuse core records.
+  const coreAdapters = createCoreAdapters({ database, services });
+
   const workflows = new WorkflowEngine({
     database,
     services,
@@ -145,6 +151,7 @@ export function createAgentCrmApp(options = {}) {
         registry: actions,
         modules,
         services,
+        core: coreAdapters,
         config: app.config,
         module,
         action,

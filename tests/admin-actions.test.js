@@ -183,6 +183,59 @@ test('a rejected action surfaces the server message and leaves state untouched',
   assert.ok(panel.findAll('dd').map((n) => n.textContent).includes('new'));
 });
 
+test('integer action inputs render as number controls and post JSON numbers', async () => {
+  const record = { id: 'l1', firstName: 'Dana', status: 'qualified', qualifiedAt: 'x', createdAt: 'x', updatedAt: 'x' };
+  const meta = {
+    ...LEAD_META,
+    actions: [{
+      name: 'convert',
+      label: 'Convert lead',
+      description: null,
+      actionContract: 1,
+      input: [
+        { name: 'opportunityName', type: 'string', required: true },
+        { name: 'valueCents', type: 'integer', required: true },
+      ],
+      fromStates: ['qualified'],
+      stateField: 'status',
+      confirm: false,
+      path: '/api/modules/lead/records/:id/actions/convert',
+    }],
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const calls = [];
+  const client = {
+    async request(path, options = {}) {
+      calls.push({ path, method: options.method ?? 'GET', body: options.body });
+      if (path === '/api/schema') return { generatedResourceContract: 1, generatedModules: [meta] };
+      if (options.method === 'POST') return { ok: true };
+      return record;
+    },
+  };
+  const admin = createModuleAdmin({ doc, mount, client, navigate: () => {} });
+  await admin.renderDetail('lead', 'l1');
+
+  const form = panelOf(mount).findAll('form')[0];
+  const valueInput = form.__inputs.valueCents;
+  assert.equal(valueInput.getAttribute('type'), 'number', 'integer inputs are number controls');
+
+  // A non-numeric value is refused client-side: no POST happens.
+  form.__inputs.opportunityName.value = 'Acme — Enterprise';
+  valueInput.value = 'abc';
+  await form.__run();
+  assert.ok(!calls.some((call) => call.method === 'POST'), 'no POST for a non-numeric value');
+  const error = form.findAll('small').find((node) => (node.getAttribute('class') ?? '') === 'field-error');
+  assert.match(error.textContent, /whole number/);
+
+  // A valid value is posted as a JSON NUMBER, not a string.
+  valueInput.value = '5000000';
+  await form.__run();
+  const post = calls.find((call) => call.method === 'POST');
+  assert.ok(post, 'the action was posted');
+  assert.deepEqual(JSON.parse(post.body), { opportunityName: 'Acme — Enterprise', valueCents: 5000000 });
+});
+
 test('hostile action metadata and values are rendered as text, never markup', async () => {
   const hostile = '<img src=x onerror=alert(1)>';
   const record = { id: 'l1', firstName: 'Dana', status: 'new', qualifiedAt: hostile, createdAt: 'x', updatedAt: 'x' };

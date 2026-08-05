@@ -377,6 +377,8 @@ export function createModuleAdmin(deps) {
         for (const value of Array.isArray(field.values) ? field.values : []) {
           input.appendChild(el(doc, 'option', { text: value, attrs: { value } }));
         }
+      } else if (field.type === 'integer') {
+        input = el(doc, 'input', { attrs: { id: inputId, name: field.name, type: 'number', step: '1' } });
       } else {
         input = el(doc, 'input', { attrs: { id: inputId, name: field.name, type: 'text' } });
         if (field.type === 'timestamp') input.setAttribute('placeholder', 'YYYY-MM-DDTHH:MM:SSZ');
@@ -385,6 +387,11 @@ export function createModuleAdmin(deps) {
       const errorNode = el(doc, 'small', { class: 'field-error hidden', attrs: { id: `${inputId}-error` } });
       input.setAttribute('aria-describedby', `${inputId}-error`);
       fieldRow.appendChild(input);
+      // Declared hint first (action metadata, rendered as text), then the
+      // built-in timestamp format hint.
+      if (typeof field.hint === 'string' && field.hint) {
+        fieldRow.appendChild(el(doc, 'small', { class: 'hint', text: field.hint }));
+      }
       if (field.type === 'timestamp') {
         fieldRow.appendChild(el(doc, 'small', { class: 'hint', text: 'ISO-8601 UTC, e.g. 2026-08-10T09:00:00Z' }));
       }
@@ -431,6 +438,16 @@ export function createModuleAdmin(deps) {
         const text = raw === undefined || raw === null ? '' : String(raw).trim();
         if (text === '') {
           if (field.required) clientErrors[field.name] = `${humanizeLabel(field.name)} is required`;
+          continue;
+        }
+        if (field.type === 'integer') {
+          // The server accepts JSON integers only, so parse here; a fast
+          // client-side message beats a round trip (server stays authoritative).
+          if (!/^-?\d+$/.test(text)) {
+            clientErrors[field.name] = `${humanizeLabel(field.name)} must be a whole number`;
+            continue;
+          }
+          values[field.name] = Number(text);
           continue;
         }
         values[field.name] = text;
