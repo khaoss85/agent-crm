@@ -29,9 +29,20 @@ npm run crm -- module create examples/modules/partner.module.json --apply  # wri
 
 Generated files carry a header stating their origin; they are **yours to edit** — the factory never rewrites an existing module.
 
+## Semantics of generated services
+
+- **Unknown input properties are ignored** on create and update: only manifest-declared fields are read, validated and persisted (the same policy as the handwritten core modules).
+- **Mutations are atomic with their audit record**: the data write and `audit.record` run inside one SAVEPOINT (safe even inside an enclosing workflow transaction); if either fails, neither persists and **no domain event is emitted**. Events fire only after the savepoint is released.
+- `list` accepts only integer limits (anything else falls back to the default 100, capped at 500) and orders by `created_at DESC, id` so pagination is deterministic.
+- `update` changes only the supplied fields; `id`, `createdAt` and `updatedAt` are never client-writable; an empty update is a no-op returning the current record; a missing id raises `NotFoundError`.
+
 ## How registration works
 
-`packages/modules/generated/index.js` is a checked-in registry with static imports, regenerated on every apply from the `module.manifest.json` copies found under `packages/modules/*/`. `createAgentCrmApp` imports it, passes each module's migration to the database layer (tracked by name in the `module_migrations` table, so registration order never renumbers applied migrations) and registers each factory. The application stays synchronous; there is no dynamic loading or runtime eval. See ADR-007.
+`packages/modules/generated/index.js` is a checked-in registry with static imports, regenerated on every apply from the `module.manifest.json` copies found under `packages/modules/*/` (each one re-validated during the scan — a malformed manifest fails the plan loudly instead of producing a registry that breaks app boot). `createAgentCrmApp` imports it, passes each module's migration to the database layer and registers each factory. The application stays synchronous; there is no dynamic loading or runtime eval. See ADR-007.
+
+**Collision policy** (checked at plan time, before anything is written): module names may not be `generated`, may not match a core/handwritten module (case-insensitively), and generated tables may not claim a core framework table or another generated module's table.
+
+**Migration identity and drift**: each module migration is identified by name and a SHA-256 checksum of its SQL, recorded in `module_migrations` when applied. Re-applying the same name+SQL is a no-op; the same name with **changed SQL fails loudly** ("applied migrations are immutable — add a new migration instead of editing an applied one"); duplicate names across modules are rejected; a failed migration is rolled back and never recorded. Automatic schema alteration is out of scope for this milestone.
 
 ## Field support
 

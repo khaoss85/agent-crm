@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -28,6 +29,22 @@ import {
 
 const REGISTRY_RELATIVE_PATH = join('packages', 'modules', 'generated', 'index.js');
 
+// Tables owned by the core schema (packages/core/src/database.js) plus the
+// framework's own bookkeeping tables. Generated modules must not claim them:
+// their CREATE TABLE IF NOT EXISTS would silently no-op against the existing
+// table and the module would run on the wrong schema.
+const CORE_TABLES = new Set([
+  'companies',
+  'contacts',
+  'opportunities',
+  'approvals',
+  'workflow_runs',
+  'trace_spans',
+  'audit_events',
+  'schema_migrations',
+  'module_migrations',
+]);
+
 /**
  * @param {{manifest: unknown, rootDir?: string}} input
  */
@@ -49,6 +66,34 @@ export function planModule(input) {
   const names = buildNames(manifest.name);
   const migration = generateModuleMigration(manifest);
   const moduleDir = join('packages', 'modules', manifest.name);
+
+  if (manifest.name === 'generated') {
+    throw new ValidationError('"generated" is reserved for the module registry; choose another module name');
+  }
+  const existingModules = scanExistingModules(rootDir);
+  for (const existing of existingModules) {
+    const sameName = existing.dirName.toLowerCase() === manifest.name.toLowerCase();
+    if (sameName && existing.kind === 'handwritten') {
+      throw new ConflictError(
+        `A non-generated module named "${existing.dirName}" already exists; the factory will not shadow core or handwritten modules`,
+      );
+    }
+    if (sameName && existing.dirName !== manifest.name) {
+      throw new ConflictError(
+        `Module name "${manifest.name}" collides case-insensitively with existing module "${existing.dirName}" (breaks case-insensitive filesystems)`,
+      );
+    }
+    if (existing.manifest && existing.manifest.table === manifest.table && existing.dirName !== manifest.name) {
+      throw new ConflictError(
+        `Table "${manifest.table}" is already used by generated module "${existing.dirName}"`,
+      );
+    }
+  }
+  if (CORE_TABLES.has(manifest.table)) {
+    throw new ConflictError(
+      `Table "${manifest.table}" is a core framework table; choose another module name or an explicit "table"`,
+    );
+  }
 
   const files = [
     {
@@ -114,6 +159,20 @@ export function planModule(input) {
  * @param {ReturnType<typeof planModule>} plan
  */
 export function applyModulePlan(plan) {
+  // Beyond the lexical check in planModule, resolve symlinks: the nearest
+  // existing ancestor of every target must really live under the project root.
+  const realRoot = realpathSync(plan.rootDir);
+  for (const file of plan.files) {
+    let ancestor = dirname(resolve(plan.rootDir, file.path));
+    while (!existsSync(ancestor)) ancestor = dirname(ancestor);
+    const realAncestor = realpathSync(ancestor);
+    if (realAncestor !== realRoot && !realAncestor.startsWith(realRoot + sep)) {
+      throw new ValidationError(
+        `Refusing to write ${file.path}: its directory resolves outside the project root (symlink?)`,
+      );
+    }
+  }
+
   const collisions = plan.files
     .filter((file) => file.action === 'create' && existsSync(resolve(plan.rootDir, file.path)))
     .map((file) => file.path);
@@ -182,26 +241,65 @@ function firstMissingAncestor(directory, rootDir) {
 }
 
 /**
- * Generated modules are discovered from the module.manifest.json copy each one
- * carries; the registry file is always regenerated from that scan, sorted by
- * module name, so its content is a pure function of the modules on disk.
+ * Every module directory under packages/modules, classified as generated
+ * (carries a module.manifest.json, which is read and validated — a malformed
+ * one fails loudly here instead of producing a registry that breaks app boot)
+ * or handwritten (core modules; no manifest copy).
+ *
+ * @param {string} rootDir
+ * @returns {Array<{dirName: string, kind: 'generated' | 'handwritten', manifest: import('../../core/src/module-manifest.js').NormalizedModuleManifest | null}>}
+ */
+function scanExistingModules(rootDir) {
+  const modulesDir = resolve(rootDir, 'packages', 'modules');
+  /** @type {Array<{dirName: string, kind: 'generated' | 'handwritten', manifest: any}>} */
+  const results = [];
+  if (!existsSync(modulesDir)) return results;
+  for (const entry of readdirSync(modulesDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === 'generated') continue;
+    const manifestPath = join(modulesDir, entry.name, 'module.manifest.json');
+    if (!existsSync(manifestPath)) {
+      results.push({ dirName: entry.name, kind: 'handwritten', manifest: null });
+      continue;
+    }
+    let manifest;
+    try {
+      manifest = validateModuleManifest(JSON.parse(readFileSync(manifestPath, 'utf8')));
+    } catch (error) {
+      throw new ValidationError(
+        `Existing generated module "${entry.name}" has an invalid module.manifest.json; fix or remove it before generating new modules`,
+        { module: entry.name, cause: error instanceof Error ? error.message : String(error) },
+      );
+    }
+    if (manifest.name !== entry.name) {
+      throw new ValidationError(
+        `Existing generated module directory "${entry.name}" contains a manifest named "${manifest.name}"; directory and manifest names must match`,
+      );
+    }
+    results.push({ dirName: entry.name, kind: 'generated', manifest });
+  }
+  return results;
+}
+
+/**
+ * Registry content is a pure function of the generated modules on disk plus
+ * the module being planned, sorted by name.
  *
  * @param {string} rootDir @param {string} [includeName]
  */
 function collectGeneratedModuleNames(rootDir, includeName) {
-  const modulesDir = resolve(rootDir, 'packages', 'modules');
   /** @type {Set<string>} */
-  const names = new Set();
-  if (existsSync(modulesDir)) {
-    for (const entry of readdirSync(modulesDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      if (existsSync(join(modulesDir, entry.name, 'module.manifest.json'))) {
-        names.add(entry.name);
-      }
-    }
-  }
+  const names = new Set(
+    scanExistingModules(rootDir)
+      .filter((entry) => entry.kind === 'generated')
+      .map((entry) => entry.dirName),
+  );
   if (includeName) names.add(includeName);
   return [...names].sort();
+}
+
+/** @param {string} moduleName */
+function sanitizeSavepoint(moduleName) {
+  return moduleName.replaceAll('-', '_');
 }
 
 /** @param {string} moduleName */
@@ -342,6 +440,29 @@ export class ${names.pascal}Service {
     this.events = events;
   }
 
+  /**
+   * Runs the data write and its audit record in one atomic unit. SAVEPOINT is
+   * used instead of BEGIN so the service stays safe inside an enclosing
+   * workflow transaction.
+   * @template T
+   * @param {() => T} fn
+   */
+  #mutation(fn) {
+    this.database.raw.exec("SAVEPOINT ${sanitizeSavepoint(manifest.name)}_mutation;");
+    try {
+      const result = fn();
+      this.database.raw.exec("RELEASE SAVEPOINT ${sanitizeSavepoint(manifest.name)}_mutation;");
+      return result;
+    } catch (error) {
+      this.database.raw.exec("ROLLBACK TO SAVEPOINT ${sanitizeSavepoint(manifest.name)}_mutation;");
+      this.database.raw.exec("RELEASE SAVEPOINT ${sanitizeSavepoint(manifest.name)}_mutation;");
+      if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+        throw new ConflictError('${conflictMessage}');
+      }
+      throw error;
+    }
+  }
+
   /** @param {Record<string, unknown>} input @param {{actor?: unknown}} [context] */
   async create(input, context = {}) {
     const timestamp = nowIso();
@@ -352,26 +473,20 @@ ${createAssignments}
       updatedAt: timestamp,
     };
 
-    try {
+    this.#mutation(() => {
       this.database.raw.prepare(\`
         INSERT INTO ${manifest.table}(${columns.join(', ')})
         VALUES (${placeholders})
       \`).run(
 ${insertValues}
       );
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
-        throw new ConflictError('${conflictMessage}');
-      }
-      throw error;
-    }
-
-    this.audit.record({
-      actor: context.actor,
-      action: '${manifest.name}.created',
-      entityType: '${manifest.name}',
-      entityId: ${entity}.id,
-      data: ${entity},
+      this.audit.record({
+        actor: context.actor,
+        action: '${manifest.name}.created',
+        entityType: '${manifest.name}',
+        entityId: ${entity}.id,
+        data: ${entity},
+      });
     });
     await this.events.emit('${manifest.name}.created', ${entity});
     return ${entity};
@@ -386,9 +501,10 @@ ${insertValues}
 
   /** @param {{limit?: number}} [filters] */
   list(filters = {}) {
-    const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
+    const requested = Number.isInteger(filters.limit) ? /** @type {number} */ (filters.limit) : 100;
+    const limit = Math.min(Math.max(requested, 1), 500);
     return this.database.raw.prepare(\`
-      SELECT * FROM ${manifest.table} ORDER BY created_at DESC LIMIT ?
+      SELECT * FROM ${manifest.table} ORDER BY created_at DESC, id LIMIT ?
     \`).all(limit).map(map${names.pascal}Row);
   }
 
@@ -409,24 +525,19 @@ ${updateBranches}
     params.push(nowIso());
     params.push(id);
 
-    try {
+    const updated = this.#mutation(() => {
       this.database.raw.prepare(
         \`UPDATE ${manifest.table} SET \${assignments.join(', ')} WHERE id = ?\`,
       ).run(...params);
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
-        throw new ConflictError('${conflictMessage}');
-      }
-      throw error;
-    }
-
-    const updated = this.get(id);
-    this.audit.record({
-      actor: context.actor,
-      action: '${manifest.name}.updated',
-      entityType: '${manifest.name}',
-      entityId: id,
-      data: changes,
+      const current = this.get(id);
+      this.audit.record({
+        actor: context.actor,
+        action: '${manifest.name}.updated',
+        entityType: '${manifest.name}',
+        entityId: id,
+        data: changes,
+      });
+      return current;
     });
     await this.events.emit('${manifest.name}.updated', updated);
     return updated;

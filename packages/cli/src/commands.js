@@ -50,7 +50,8 @@ export async function runCli(argv) {
     if (typeof positional[0] === 'string' && positional[0].endsWith('.json')) {
       const { manifest } = readManifestFile(positional[0]);
       const plan = planModule({ manifest, rootDir });
-      if (flags.apply === true) {
+      // An explicit --dry-run always wins over --apply, matching module:migration.
+      if (flags.apply === true && flags['dry-run'] !== true) {
         print({ ok: true, mode: 'applied', ...applyModulePlan(plan), nextSteps: factoryNextSteps() });
       } else {
         print({ ok: true, mode: 'dry-run', ...withoutFileContents(plan), nextSteps: factoryNextSteps() });

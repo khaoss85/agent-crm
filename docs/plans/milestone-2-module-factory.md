@@ -107,6 +107,7 @@ Generated Admin UI / SDK / HTTP API; manifest MCP tools; reference-field service
 - Implemented registry + name-keyed module migrations + factory + CLI + tests.
 - End-to-end Partner proof passing from a clean temporary project copy.
 - Final validation: verify and smoke green; repository registry left empty.
+- Adversarial review pass: migration drift detection via SHA-256 checksums (applied migrations are immutable; changed SQL fails loudly; duplicate identities rejected); data write + audit record made atomic via SAVEPOINT (nesting-safe) with domain events only after release; plan-time collision policy (reserved `generated`, core/handwritten modules case-insensitively, core tables, other generated tables); registry scan validates every existing manifest; `list` limit hardening + deterministic `created_at DESC, id` ordering; explicit `--dry-run` wins over `--apply`; symlink-resolved root confinement on apply; e2e extended to a second module (unique/boolean/integer fields), failed-mutation audit/event assertions, spaced paths.
 
 ## Decision log
 

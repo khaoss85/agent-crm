@@ -88,6 +88,62 @@ test('a failed apply leaves no partial changes and restores the registry', (t) =
   assert.equal(readFileSync(join(root, 'packages/modules/generated/index.js'), 'utf8'), originalRegistry);
 });
 
+test('collisions with core modules, reserved names and core tables are rejected at plan time', (t) => {
+  const root = tempRoot(t);
+  // Simulate a handwritten (core-style) module: a directory without module.manifest.json.
+  mkdirSync(join(root, 'packages/modules/company/src'), { recursive: true });
+  assert.throws(
+    () => planModule({ manifest: { name: 'company', fields: [{ name: 'label', type: 'string' }] }, rootDir: root }),
+    /non-generated module named "company" already exists/,
+  );
+  assert.throws(
+    () => planModule({ manifest: { name: 'generated', fields: [{ name: 'label', type: 'string' }] }, rootDir: root }),
+    /"generated" is reserved/,
+  );
+  // "audit-event" pluralizes to the core audit_events table.
+  assert.throws(
+    () => planModule({ manifest: { name: 'audit-event', fields: [{ name: 'label', type: 'string' }] }, rootDir: root }),
+    /Table "audit_events" is a core framework table/,
+  );
+});
+
+test('table collisions between generated modules are rejected', (t) => {
+  const root = tempRoot(t);
+  applyModulePlan(planModule({ manifest: partnerManifest, rootDir: root }));
+  assert.throws(
+    () =>
+      planModule({
+        manifest: { name: 'reseller', table: 'partners', fields: [{ name: 'label', type: 'string' }] },
+        rootDir: root,
+      }),
+    /Table "partners" is already used by generated module "partner"/,
+  );
+});
+
+test('a malformed pre-existing generated module fails the scan loudly', (t) => {
+  const root = tempRoot(t);
+  mkdirSync(join(root, 'packages/modules/broken'), { recursive: true });
+  writeFileSync(join(root, 'packages/modules/broken/module.manifest.json'), '{ not json');
+  assert.throws(
+    () => planModule({ manifest: partnerManifest, rootDir: root }),
+    /Existing generated module "broken" has an invalid module.manifest.json/,
+  );
+});
+
+test('registry content is identical regardless of module creation order', (t) => {
+  const zebraManifest = { name: 'zebra', fields: [{ name: 'name', type: 'string', required: true }] };
+  const forward = tempRoot(t);
+  applyModulePlan(planModule({ manifest: partnerManifest, rootDir: forward }));
+  applyModulePlan(planModule({ manifest: zebraManifest, rootDir: forward }));
+  const reverse = tempRoot(t);
+  applyModulePlan(planModule({ manifest: zebraManifest, rootDir: reverse }));
+  applyModulePlan(planModule({ manifest: partnerManifest, rootDir: reverse }));
+  assert.equal(
+    readFileSync(join(forward, 'packages/modules/generated/index.js'), 'utf8'),
+    readFileSync(join(reverse, 'packages/modules/generated/index.js'), 'utf8'),
+  );
+});
+
 test('module names cannot traverse outside the project root', (t) => {
   const root = tempRoot(t);
   // The manifest name pattern already forbids path separators; prove it here.
