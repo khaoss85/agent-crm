@@ -107,6 +107,7 @@ export function validateActionInput(schema, body) {
  *   modules: {get: (name: string) => any},
  *   core?: Record<string, Function>,
  *   pipelines?: {forModule: (name: string) => any, get: (name: string) => any, list: () => any[]},
+ *   intelligence?: any,
  *   module: string, action: string, recordId: string, input: unknown, actor: unknown
  * }} params
  */
@@ -128,8 +129,37 @@ export async function runRecordAction(params) {
   let failure = null;
   /** @type {any} */
   let dispatchFailure = null;
+  const intelligence = params.intelligence ?? Object.freeze({
+    getProvider: () => { throw new NotFoundError('Enrichment provider', 'none registered'); },
+    getScoringModel: () => { throw new NotFoundError('Scoring model', 'none registered'); },
+    getRoutingPolicy: () => { throw new NotFoundError('Routing policy', 'none registered'); },
+    listTargets: () => [],
+    fallbackTarget: () => null,
+  });
+  /** @type {any} */
+  let prepared;
 
   try {
+    // Optional prepare phase (ADR-015): runs BEFORE the event buffer and the
+    // write transaction, so an external-style side effect (an enrichment
+    // provider call) never holds the database write lock open. The ctx is
+    // read-oriented — no `managed` — and the record read here is a preview:
+    // execute re-reads the authoritative record inside the transaction. A
+    // prepare failure fails the action with an honest trace and never opens
+    // the transaction.
+    if (typeof definition.prepare === 'function') {
+      const previewRecord = service.get(recordId); // NotFoundError → honest 404, no provider call
+      prepared = await definition.prepare({
+        record: previewRecord,
+        input: validatedInput,
+        actor,
+        modules,
+        intelligence,
+        config: params.config ?? {},
+        now: () => nowIso(),
+        step: (name, output) => steps.push({ name, status: 'completed', output }),
+      });
+    }
     result = await events.buffered(async (outbox) => {
       const value = await database.transactionAsync(async () => {
         const record = service.get(recordId); // NotFoundError → rolled back, no writes
@@ -151,6 +181,10 @@ export async function runRecordAction(params) {
           core: params.core ?? Object.freeze({}),
           // Pipeline definitions (ADR-014); read-only registry view.
           pipelines: params.pipelines ?? Object.freeze({ forModule: () => null, get: () => null, list: () => [] }),
+          // Intelligence registries (ADR-015); read-only, frozen fallback.
+          intelligence,
+          // Value returned by the prepare phase (undefined without one).
+          prepared,
           config: params.config ?? {},
           now: () => nowIso(),
           managed: (id, patch) => service.applyManaged(id, patch, { actor }),
