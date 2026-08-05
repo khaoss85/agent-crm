@@ -6,7 +6,7 @@ This repository is an agent-native CRM framework. Preserve the separation betwee
 
 ## Required workflow
 
-1. Read `PRODUCT.md`, `ARCHITECTURE.md`, `DECISIONS.md` and the relevant module files before changing code.
+1. Read `PRODUCT.md`, `ARCHITECTURE.md`, `DECISIONS.md` and the relevant module files before changing code. Before product, positioning, roadmap or public-distribution decisions, read `docs/strategy/MASTER_PLAN.md` first; for implementation details, `ARCHITECTURE.md` and `DECISIONS.md` remain authoritative.
 2. For a multi-file feature or significant refactor, create and maintain an ExecPlan under `docs/plans/` following `.agent/PLANS.md`.
 3. Use public module services and named workflows. Never mutate CRM tables from API, MCP or UI code.
 4. Any write operation must retain validation, audit and trace.

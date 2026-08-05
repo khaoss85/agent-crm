@@ -26,3 +26,7 @@
 - OpenTelemetry exporter.
 - Deployment provider and Cloud CLI commands.
 - Versioned plugin registry and project templates.
+
+## Strategic roadmap
+
+This file tracks engineering milestones. The full phased product strategy — positioning, distribution, launch, metrics — is in `docs/strategy/MASTER_PLAN.md` and `docs/strategy/EXECUTION_ROADMAP.md`.

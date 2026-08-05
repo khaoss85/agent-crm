@@ -30,3 +30,7 @@ It provides:
 ## Success criterion for milestone 0
 
 A coding agent can understand the repository and safely implement a new CRM module or workflow while preserving tests, trace and audit.
+
+## Strategy
+
+The category, positioning, ICP, JTBD and public promise are defined in `docs/strategy/MASTER_PLAN.md` (canonical entry point) and `docs/strategy/CATEGORY.md`.

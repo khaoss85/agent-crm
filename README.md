@@ -120,6 +120,7 @@ This repository is a local development proof of concept. The HTTP API intentiona
 
 ## Project documents
 
+- `docs/strategy/MASTER_PLAN.md`: canonical strategy entry point (category, roadmap, metrics).
 - `PRODUCT.md`: product boundary and target user.
 - `ARCHITECTURE.md`: technical model and extension rules.
 - `docs/JTBD.md`: Medusa-style use cases translated to CRM.
