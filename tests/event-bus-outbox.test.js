@@ -78,6 +78,43 @@ test('concurrent buffered scopes never share a queue', async () => {
   assert.deepEqual(seen, ['second-1', 'first-1', 'first-2']);
 });
 
+test('nested buffered scopes fail closed with a clear error', async () => {
+  const bus = new EventBus();
+  await assert.rejects(
+    () => bus.buffered(async () => {
+      await bus.buffered(async () => {});
+    }),
+    (error) => error.code === 'NESTED_ACTION' && /not supported/.test(error.message),
+  );
+});
+
+test('flush failure policy: later events still dispatch, errors are aggregated after commit', async () => {
+  const bus = new EventBus();
+  const seen = [];
+  bus.subscribe('a', () => { throw new Error('handler A exploded'); });
+  bus.subscribe('a', () => seen.push('a-second')); // skipped: dispatch of "a" stops at the failure
+  bus.subscribe('b', () => seen.push('b'));        // still dispatched: later events continue
+  bus.subscribe('c', async () => { throw new Error('handler C rejected'); }); // async rejection also collected
+
+  let commitError = null;
+  await bus.buffered(async (outbox) => {
+    await bus.emit('a', {});
+    await bus.emit('b', {});
+    await bus.emit('c', {});
+    try {
+      await outbox.commit();
+    } catch (error) {
+      commitError = error;
+    }
+  });
+  assert.deepEqual(seen, ['b'], 'the failing event stops its own handlers; later events still dispatch');
+  assert.ok(commitError, 'commit surfaces the aggregated failure');
+  assert.equal(commitError.code, 'EVENT_DISPATCH_FAILED');
+  assert.equal(commitError.details.failures.length, 2);
+  assert.match(commitError.details.failures[0], /handler A exploded/);
+  assert.match(commitError.details.failures[1], /handler C rejected/);
+});
+
 test('a handler that emits during flush does not re-queue into the closed outbox', async () => {
   const bus = new EventBus();
   const seen = [];

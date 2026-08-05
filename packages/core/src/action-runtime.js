@@ -15,11 +15,21 @@ export class InvalidStateError extends AppError {
 }
 
 const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
+// Bound on action string inputs (e.g. a disqualification reason). The HTTP
+// body limit (1 MB) bounds the request; this bounds what a single field may
+// store, so a pathological value cannot bloat records, audit and traces.
+export const ACTION_STRING_MAX_LENGTH = 10_000;
 
 /**
  * Validate action input against a declared input schema. Returns a normalized
  * input object or throws a field-tied ValidationError. Only the small set of
  * types the starter needs is supported.
+ *
+ * Timestamp contract (canonical, documented in docs/ACTIONS.md): a UTC ISO-8601
+ * instant `YYYY-MM-DDTHH:MM:SS(.mmm)?Z`. Offsets are rejected — one canonical
+ * form avoids server-local-time ambiguity — and the calendar date must be real:
+ * JavaScript's Date rolls `2026-02-30` over to March 2, so the parsed value is
+ * round-tripped and must reproduce the input exactly.
  *
  * @param {Array<{name: string, type: string, required?: boolean, values?: string[]}>} schema
  * @param {unknown} body
@@ -43,16 +53,30 @@ export function validateActionInput(schema, body) {
       if (typeof raw !== 'string' || !TIMESTAMP_RE.test(raw) || Number.isNaN(Date.parse(raw))) {
         throw new ValidationError(`${field.name} must be an ISO-8601 UTC instant (…Z)`, { field: field.name });
       }
-      out[field.name] = new Date(raw).toISOString();
+      const canonical = new Date(raw).toISOString();
+      if (canonical !== (raw.includes('.') ? raw : `${raw.slice(0, -1)}.000Z`)) {
+        throw new ValidationError(`${field.name} is not a real calendar date/time`, { field: field.name });
+      }
+      out[field.name] = canonical;
     } else if (field.type === 'enum') {
       if (typeof raw !== 'string' || !(field.values ?? []).includes(raw)) {
         throw new ValidationError(`${field.name} must be one of: ${(field.values ?? []).join(', ')}`, { field: field.name });
       }
       out[field.name] = raw;
     } else {
-      // string
+      // string: outer whitespace is trimmed (inner whitespace preserved), and a
+      // whitespace-only value counts as missing — a required reason of "\n\t "
+      // must not satisfy the requirement.
       if (typeof raw !== 'string') throw new ValidationError(`${field.name} must be a string`, { field: field.name });
-      out[field.name] = raw.trim();
+      if (raw.length > ACTION_STRING_MAX_LENGTH) {
+        throw new ValidationError(`${field.name} must be at most ${ACTION_STRING_MAX_LENGTH} characters`, { field: field.name });
+      }
+      const trimmed = raw.trim();
+      if (trimmed === '') {
+        if (field.required) throw new ValidationError(`${field.name} is required`, { field: field.name });
+        continue;
+      }
+      out[field.name] = trimmed;
     }
   }
   return out;
@@ -92,6 +116,8 @@ export async function runRecordAction(params) {
   let result;
   /** @type {any} */
   let failure = null;
+  /** @type {any} */
+  let dispatchFailure = null;
 
   try {
     result = await events.buffered(async (outbox) => {
@@ -111,30 +137,58 @@ export async function runRecordAction(params) {
           modules,
           database,
           config: params.config ?? {},
+          now: () => nowIso(),
           managed: (id, patch) => service.applyManaged(id, patch, { actor }),
           step: (name, output) => steps.push({ name, status: 'completed', output }),
         });
       });
-      await outbox.commit(); // events visible only now, after the DB commit
+      // The database transaction is committed at this point. A subscriber
+      // failure during the flush must NOT be reported as a business failure:
+      // the caller would retry (or compensate) an action that already
+      // succeeded. Policy (ADR-012): the action stays a success, and the
+      // dispatch failure is recorded as a failed trace span and logged.
+      try {
+        await outbox.commit(); // events visible only now, after the DB commit
+      } catch (error) {
+        dispatchFailure = normalizeError(error);
+      }
       return value;
     });
     steps.unshift({ name: `${module}.${action}`, status: 'completed' });
+    if (dispatchFailure) {
+      const detail = Array.isArray(dispatchFailure.details?.failures)
+        ? `${dispatchFailure.message}: ${dispatchFailure.details.failures.join('; ')}`
+        : dispatchFailure.message;
+      steps.push({ name: 'events.dispatch', status: 'failed', error: detail });
+      console.error(`[agent-crm] ${module}.${action} run ${runId}: business writes committed but event dispatch failed: ${detail}`);
+    }
   } catch (error) {
     failure = normalizeError(error);
+    // Steps recorded before the failure describe execution progress; the
+    // business writes behind them were rolled back with the transaction. The
+    // run-level "failed" status is authoritative (documented in ACTIONS.md).
     steps.unshift({ name: `${module}.${action}`, status: 'failed', error: failure.message });
   }
 
-  // Persist the trace outside the business transaction (always recorded).
-  writeTrace(database, {
-    runId,
-    workflowName: `${module}.${action}`,
-    status: failure ? 'failed' : 'completed',
-    input: { recordId, input: validatedInput, actor: safeActor(actor) },
-    output: failure ? null : result,
-    error: failure ? failure.message : null,
-    startedAt,
-    steps,
-  });
+  // Persist the trace outside the business transaction, best-effort: a trace
+  // write failure (e.g. the database is briefly locked by a concurrent writer)
+  // must never mask the action's real outcome, so it is logged, not thrown.
+  try {
+    writeTrace(database, {
+      runId,
+      workflowName: `${module}.${action}`,
+      status: failure ? 'failed' : 'completed',
+      input: { recordId, input: validatedInput, actor: safeActor(actor) },
+      output: failure ? null : result,
+      error: failure ? failure.message : null,
+      startedAt,
+      steps,
+    });
+  } catch (traceError) {
+    console.error(
+      `[agent-crm] ${module}.${action} run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`,
+    );
+  }
 
   if (failure) {
     failure.details = {

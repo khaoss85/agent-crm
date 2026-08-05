@@ -26,11 +26,12 @@ import {
 } from '../../providers/src/index.js';
 
 /**
- * @param {{dbPath?: string, approvalThresholdCents?: number}} [options]
+ * @param {{dbPath?: string, approvalThresholdCents?: number, busyTimeoutMs?: number}} [options]
  */
 export function createAgentCrmApp(options = {}) {
   const database = createDatabase({
     path: options.dbPath,
+    busyTimeoutMs: options.busyTimeoutMs,
     moduleMigrations: generatedModules.map((generated) => generated.migration),
   });
   const events = new EventBus();

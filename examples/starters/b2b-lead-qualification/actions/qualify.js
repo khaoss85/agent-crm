@@ -29,8 +29,8 @@ export const qualifyLead = {
   fromStates: ['new'],
   input: [{ name: 'dueAt', type: 'timestamp', required: true }],
   /** @param {any} ctx */
-  async execute({ record, input, actor, modules, managed }) {
-    const qualifiedAt = new Date().toISOString();
+  async execute({ record, input, actor, modules, managed, now }) {
+    const qualifiedAt = now();
     const lead = await managed(record.id, {
       status: 'qualified',
       qualifiedAt,

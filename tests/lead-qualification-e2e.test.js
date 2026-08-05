@@ -162,12 +162,35 @@ test('lead qualification end to end: qualify, disqualify, atomicity, idempotency
   // Disqualify is only valid from `new`.
   await assert.rejects(() => leads.action(lead2.id, 'disqualify', { reason: 'again' }), (error) => error.status === 409);
 
-  // CRUD can never reach a managed state.
+  // CRUD can never reach a managed state — on any managed field, via create or
+  // update, alone or mixed with valid public fields (the whole request fails,
+  // never a silent partial apply of the public subset).
   await assert.rejects(() => leads.update(lead2.id, { status: 'qualified' }), (error) => error.status === 400 && error.code === 'VALIDATION_ERROR');
+  await assert.rejects(() => leads.update(lead2.id, { status: null }), (error) => error.status === 400);
+  await assert.rejects(() => leads.update(lead2.id, { qualifiedAt: '2026-01-01T00:00:00.000Z' }), (error) => error.status === 400);
+  await assert.rejects(() => leads.update(lead2.id, { disqualificationReason: 'overwrite' }), (error) => error.status === 400);
+  const beforeMixed = await leads.get(lead2.id);
+  await assert.rejects(
+    () => leads.update(lead2.id, { firstName: 'ShouldNotApply', status: 'new' }),
+    (error) => error.status === 400 && error.details?.field === 'status',
+  );
+  assert.equal((await leads.get(lead2.id)).firstName, beforeMixed.firstName, 'the public part of a mixed payload is not applied');
   await assert.rejects(
     () => leads.create({ firstName: 'X', lastName: 'Y', email: 'x@y.example', status: 'qualified' }),
     (error) => error.status === 400,
   );
+  await assert.rejects(
+    () => leads.create({ firstName: 'X', lastName: 'Y', email: 'x2@y.example', qualifiedAt: '2026-01-01T00:00:00.000Z' }),
+    (error) => error.status === 400,
+  );
+
+  // Audit exactness for the successful flows above: capture+qualify produced
+  // exactly one created + one updated audit on the first lead, and exactly one
+  // task.created audit for its follow-up task.
+  const firstLeadAudits = app.audit.list({ entityType: 'lead', entityId: lead.id }).map((a) => a.action).sort();
+  assert.deepEqual(firstLeadAudits, ['lead.created', 'lead.updated']);
+  const followUpAudits = app.audit.list({ entityType: 'task', entityId: leadTasks[0].id }).map((a) => a.action);
+  assert.deepEqual(followUpAudits, ['task.created'], 'exactly one audit for the follow-up task');
 
   await instance.close();
 
