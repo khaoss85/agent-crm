@@ -15,8 +15,32 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 const SCHEMA = {
   commercial: {
     commercialContract: 1,
+    pricingContract: 1,
+    chargeTypes: ['one_time', 'recurring'],
+    pricingModels: ['flat_fee', 'per_unit', 'volume', 'graduated'],
     discountPolicies: [{ name: 'standard-sales-discount', version: 1, label: 'Standard', fingerprint: 'f'.repeat(64) }],
   },
+};
+
+/** A composite offer's server-calculated breakdown, as the action returns it. */
+const BREAKDOWN = {
+  components: [
+    { componentId: 'c1', componentKey: 'ent-setup', label: 'Setup and migration', chargeType: 'one_time', pricingModel: 'flat_fee', interval: null, intervalCount: null, quantity: 0, tierBreakdown: [], listAmountCents: 500_000, discountAmountCents: 0, netAmountCents: 500_000 },
+    { componentId: 'c2', componentKey: 'ent-platform', label: 'Platform fee', chargeType: 'recurring', pricingModel: 'flat_fee', interval: 'month', intervalCount: 1, quantity: 0, tierBreakdown: [], listAmountCents: 200_000, discountAmountCents: 0, netAmountCents: 200_000 },
+    {
+      componentId: 'c3', componentKey: 'ent-seats', label: 'Seats', chargeType: 'recurring', pricingModel: 'volume', interval: 'month', intervalCount: 1, quantity: 30,
+      tierBreakdown: [{ position: 2, from: 1, to: 100, quantity: 30, unitAmountCents: 4000, flatAmountCents: 0, amountCents: 120_000 }],
+      listAmountCents: 120_000, discountAmountCents: 0, netAmountCents: 120_000,
+    },
+  ],
+};
+
+const TOTALS = {
+  oneTimeTotal: { currency: 'EUR', listAmountCents: 500_000, discountAmountCents: 0, netAmountCents: 500_000 },
+  recurringTotals: [
+    { currency: 'EUR', interval: 'month', intervalCount: 1, listAmountCents: 320_000, discountAmountCents: 0, netAmountCents: 320_000 },
+    { currency: 'EUR', interval: 'year', intervalCount: 1, listAmountCents: 1_000_000, discountAmountCents: 50_000, netAmountCents: 950_000 },
+  ],
 };
 
 function quote(overrides = {}) {
@@ -27,9 +51,9 @@ function quote(overrides = {}) {
     currency: 'EUR',
     status: 'draft',
     draftRevision: 3,
-    subtotalCents: 1_800_000,
-    discountCents: 30_000,
-    totalCents: 1_770_000,
+    totalsJson: JSON.stringify(TOTALS),
+    oneTimeNetCents: 500_000,
+    recurringGroupCount: 2,
     currentVersionId: null,
     currentVersionNumber: null,
     ...overrides,
@@ -49,7 +73,7 @@ function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions 
       }
       if (path.startsWith('/api/modules/quote/records/')) return quoteRecord;
       if (path.startsWith('/api/modules/quote-line/records')) return { items: lines };
-      if (path.startsWith('/api/modules/price-book-entry/records')) return { items: entries };
+      if (path.startsWith('/api/modules/offer/records')) return { items: entries };
       if (path.startsWith('/api/modules/quote-version/records')) return { items: versions };
       if (path.startsWith('/api/modules/quote/records')) return { items: [quoteRecord] };
       if (path.startsWith('/api/modules/price-book/records')) return { items: [{ id: 'pb1', name: 'Standard EUR', currency: 'EUR', active: true }] };
@@ -61,25 +85,31 @@ function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions 
 const LINE = {
   id: 'l1',
   quoteId: 'q1',
-  sku: 'SEAT-A',
-  name: 'User Seat — Annual',
-  quantity: 20,
+  offerId: 'o1',
+  offerLogicalKey: 'fixture:offer:enterprise',
+  offerRevision: 1,
+  offerName: 'Enterprise Plan',
+  sku: 'PLATFORM',
+  quantity: 30,
   discountBps: 500,
-  listUnitAmountCents: 30_000,
-  lineTotalCents: 570_000,
+  componentCount: 3,
+  breakdownJson: JSON.stringify(BREAKDOWN),
+  listAmountCents: 820_000,
+  discountAmountCents: 41_000,
+  netAmountCents: 779_000,
   removed: false,
   position: 1,
 };
 
 const ENTRY = {
-  id: 'e1',
+  id: 'o1',
   priceBookId: 'pb1',
-  logicalKey: 'fixture:entry:user-seat-eur',
-  unitAmountCents: 30_000,
+  logicalKey: 'fixture:offer:enterprise',
+  name: 'Enterprise Plan',
   currency: 'EUR',
-  pricingMode: 'recurring',
-  recurringInterval: 'year',
+  componentCount: 3,
   active: true,
+  quoteEligible: true,
 };
 
 test('draft quotes show server-calculated totals and line/submit controls', async () => {
@@ -90,11 +120,28 @@ test('draft quotes show server-calculated totals and line/submit controls', asyn
   await view.renderQuoteDetail('q1');
 
   const text = mount.textContent;
-  assert.ok(text.includes('EUR 18,000.00'), `subtotal rendered under the 1/100 contract (${text})`);
-  assert.ok(text.includes('EUR 17,700.00'), 'total rendered');
+  // Grouped totals: one-time, monthly and annual are shown separately and are
+  // never combined into a single grand total.
+  assert.ok(text.includes('EUR 5,000.00'), `one-time total rendered (${text})`);
+  assert.ok(text.includes('EUR 3,200.00'), 'monthly total rendered');
+  assert.ok(text.includes('EUR 9,500.00'), 'annual total rendered');
+  assert.ok(text.includes('One-time'), 'the one-time group is labelled');
+  assert.ok(text.includes('Recurring every 1 month(s)'), 'the monthly group is labelled');
+  assert.ok(text.includes('Recurring every 1 year(s)'), 'the annual group is labelled');
+  assert.ok(!/ARR|MRR|TCV/.test(text), 'no ARR/MRR/TCV is implied');
+  assert.ok(text.includes('Periods are never combined'), 'the grouping contract is disclosed');
   assert.ok(text.includes('server-calculated'), 'the money contract is disclosed');
   assert.ok(text.includes('5.00%'), 'basis points shown as a percentage');
   assert.ok(text.includes('Discount in basis points'), 'the discount unit is explained');
+  assert.ok(text.includes('flat fees are charged once'), 'quantity semantics disclosed');
+  // Component breakdown with the tier band.
+  const components = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '') === 'quote-component');
+  assert.equal(components.length, 3, 'every component of the composite offer is shown');
+  assert.ok(components[0].textContent.includes('one-time'), 'charge type shown');
+  assert.ok(components[1].textContent.includes('every 1 month(s)'), 'recurrence shown');
+  const tiers = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '') === 'quote-tier');
+  assert.equal(tiers.length, 1, 'the tier band is shown');
+  assert.ok(tiers[0].textContent.includes('30 × EUR 40.00'), `tier breakdown rendered (${tiers[0].textContent})`);
   // Draft controls exist; approval/revise controls do not.
   assert.ok(mount.findAll('div').some((node) => (node.getAttribute('class') ?? '') === 'quote-add-line'));
   assert.ok(mount.findAll('div').some((node) => (node.getAttribute('class') ?? '') === 'quote-submit'));
@@ -116,7 +163,7 @@ test('adding a line posts the server action with quantity, basis points and the 
   const post = client.calls.find((call) => call.method === 'POST');
   assert.equal(post.path, '/api/modules/quote/records/q1/actions/add-line');
   assert.deepEqual(JSON.parse(post.body), {
-    priceBookEntryId: 'e1',
+    offerId: 'o1',
     quantity: 5,
     discountBps: 750,
     expectedRevision: 3,
@@ -171,15 +218,16 @@ test('version history lists immutable versions with their policy decision', asyn
   const doc = createFakeDocument();
   const mount = createMount();
   const versions = [
-    { id: 'v1', quoteId: 'q1', versionNumber: 1, policy: 'standard-sales-discount', policyVersion: 1, policyDecision: 'approval_required', decisionReason: 'max line discount 2000bps exceeds limit', totalCents: 960_000, currency: 'EUR' },
-    { id: 'v2', quoteId: 'q1', versionNumber: 2, policy: 'standard-sales-discount', policyVersion: 1, policyDecision: 'auto_approve', decisionReason: null, totalCents: 1_104_000, currency: 'EUR' },
+    { id: 'v1', quoteId: 'q1', versionNumber: 1, policy: 'standard-sales-discount', policyVersion: 1, policyDecision: 'approval_required', decisionReason: 'max line discount 2000bps exceeds limit', totalsJson: JSON.stringify(TOTALS), currency: 'EUR' },
+    { id: 'v2', quoteId: 'q1', versionNumber: 2, policy: 'standard-sales-discount', policyVersion: 1, policyDecision: 'auto_approve', decisionReason: null, totalsJson: JSON.stringify(TOTALS), currency: 'EUR' },
   ];
   await createQuoteView({ doc, mount, client: stubClient({ quoteRecord: quote({ status: 'approved' }), versions }) }).renderQuoteDetail('q1');
   const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-version-row');
   assert.equal(rows.length, 2);
   assert.equal(rows[0].getAttribute('data-version'), 'v2', 'newest version first');
   assert.ok(rows[1].textContent.includes('approval_required'));
-  assert.ok(rows[1].textContent.includes('EUR 9,600.00'));
+  assert.ok(rows[1].textContent.includes('one-time EUR 5,000.00'), 'versions show grouped periods');
+  assert.ok(rows[1].textContent.includes('EUR 3,200.00 / 1 month(s)'), 'recurring period shown per version');
 });
 
 test('hostile catalog and quote values render as inert text', async () => {
@@ -187,8 +235,13 @@ test('hostile catalog and quote values render as inert text', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({
-    lines: [{ ...LINE, name: hostile, sku: hostile }],
-    entries: [{ ...ENTRY, logicalKey: hostile }],
+    lines: [{
+      ...LINE,
+      offerName: hostile,
+      sku: hostile,
+      breakdownJson: JSON.stringify({ components: [{ ...BREAKDOWN.components[0], label: hostile }] }),
+    }],
+    entries: [{ ...ENTRY, name: hostile }],
   });
   await createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
   const lineRow = mount.findAll('div').find((node) => node.getAttribute('data-line') === 'l1');
