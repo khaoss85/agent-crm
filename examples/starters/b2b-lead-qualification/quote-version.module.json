@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "quote-version",
-  "description": "An immutable submitted quote snapshot with totals, discount evidence and the discount-policy identity/fingerprint used (ADR-016). Version numbers are DB-monotonic.",
+  "description": "An immutable submitted quote snapshot with grouped totals, discount evidence and the discount-policy identity/fingerprint used (ADR-016). Version numbers are DB-monotonic.",
   "fields": [
     {
       "name": "quoteId",
@@ -41,18 +41,28 @@
       "writable": "managed"
     },
     {
-      "name": "subtotalCents",
+      "name": "oneTimeListCents",
       "type": "integer",
       "writable": "managed"
     },
     {
-      "name": "discountCents",
+      "name": "oneTimeDiscountCents",
       "type": "integer",
       "writable": "managed"
     },
     {
-      "name": "totalCents",
+      "name": "oneTimeNetCents",
       "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "recurringGroupCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "totalsJson",
+      "type": "string",
       "writable": "managed"
     },
     {

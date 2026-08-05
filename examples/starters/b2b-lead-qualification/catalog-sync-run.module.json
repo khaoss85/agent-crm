@@ -57,12 +57,22 @@
       "writable": "managed"
     },
     {
-      "name": "entriesCreated",
+      "name": "offersCreated",
       "type": "integer",
       "writable": "managed"
     },
     {
-      "name": "entriesRevised",
+      "name": "offersRevised",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "componentsCreated",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "tiersCreated",
       "type": "integer",
       "writable": "managed"
     },
@@ -73,6 +83,11 @@
     },
     {
       "name": "deactivated",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "ineligibleOffers",
       "type": "integer",
       "writable": "managed"
     }

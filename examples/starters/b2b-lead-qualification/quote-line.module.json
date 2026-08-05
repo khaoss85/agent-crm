@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "quote-line",
-  "description": "A controlled draft quote line with immutable product/price snapshots and server-calculated amounts (ADR-016).",
+  "description": "A controlled draft quote line selecting one offer revision at a quantity, with the server-calculated component breakdown (ADR-016).",
   "fields": [
     {
       "name": "quoteId",
@@ -10,13 +10,23 @@
       "writable": "managed"
     },
     {
-      "name": "priceBookEntryId",
+      "name": "offerId",
       "type": "string",
       "writable": "managed"
     },
     {
-      "name": "entryRevision",
+      "name": "offerLogicalKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "offerRevision",
       "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "offerName",
+      "type": "string",
       "writable": "managed"
     },
     {
@@ -35,11 +45,6 @@
       "writable": "managed"
     },
     {
-      "name": "name",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
       "name": "quantity",
       "type": "integer",
       "writable": "managed"
@@ -50,46 +55,28 @@
       "writable": "managed"
     },
     {
-      "name": "listUnitAmountCents",
+      "name": "componentCount",
       "type": "integer",
       "writable": "managed"
     },
     {
-      "name": "netUnitAmountCents",
+      "name": "breakdownJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "listAmountCents",
       "type": "integer",
       "writable": "managed"
     },
     {
-      "name": "lineSubtotalCents",
+      "name": "discountAmountCents",
       "type": "integer",
       "writable": "managed"
     },
     {
-      "name": "lineDiscountCents",
+      "name": "netAmountCents",
       "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "lineTotalCents",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "pricingMode",
-      "type": "enum",
-      "values": [
-        "one_time",
-        "recurring"
-      ],
-      "writable": "managed"
-    },
-    {
-      "name": "recurringInterval",
-      "type": "enum",
-      "values": [
-        "month",
-        "year"
-      ],
       "writable": "managed"
     },
     {

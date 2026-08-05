@@ -56,12 +56,16 @@ try {
     'product.module.json',
     'product-version.module.json',
     'price-book.module.json',
-    'price-book-entry.module.json',
+    'offer.module.json',
+    'price-component.module.json',
+    'price-tier.module.json',
     'catalog-sync-run.module.json',
     'quote.module.json',
     'quote-line.module.json',
     'quote-version.module.json',
     'quote-version-line.module.json',
+    'quote-version-component.module.json',
+    'quote-version-total.module.json',
     'quote-approval.module.json',
   ]) {
     applyModule(root, join(starterInProject, manifest));
@@ -345,43 +349,76 @@ try {
     assert.equal(scoreRunsSvc.get(freshA.scoreRunId).fingerprint, scoredA.result.fingerprint, 'runs carry the model fingerprint');
     assert.equal(assignmentsSvc.list().filter((a) => a.leadId === leadA.id).length, 1, 'exactly one assignment history entry');
 
-    // ——— Commercial Operations (Milestone 10): catalog → quote → approval ———
+    // ——— Commercial Operations (Milestone 10): catalog → composite quote → approval ———
     const sync1 = await app.syncCatalog({ provider: 'fixture-saas-catalog', actor });
-    assert.equal(sync1.counts.productsCreated, 3);
-    assert.equal(sync1.counts.entriesCreated, 3);
-    // Idempotent re-sync: nothing new, nothing versioned.
+    assert.equal(sync1.counts.productsCreated, 7);
+    assert.equal(sync1.counts.offersCreated, 8);
+    assert.ok(sync1.counts.componentsCreated >= 10, 'composite offers create several components');
+    assert.ok(sync1.counts.tiersCreated >= 6, 'tier schedules persisted');
+    assert.equal(sync1.counts.ineligibleOffers, 1, 'the metered offer is not quote eligible');
+    // Idempotent re-sync: nothing created, nothing revised.
     const sync2 = await app.syncCatalog({ provider: 'fixture-saas-catalog', actor });
-    assert.equal(sync2.counts.productsCreated, 0);
-    assert.equal(sync2.counts.versionsCreated, 0);
-    assert.equal(sync2.counts.entriesRevised, 0);
+    assert.equal(sync2.counts.offersCreated + sync2.counts.offersRevised + sync2.counts.productsCreated + sync2.counts.versionsCreated, 0);
 
     const priceBook = app.modules.get('price-book').service.listWhere({ sourceKey: 'fixture:pb:standard-eur' })[0];
-    const entries = app.modules.get('price-book-entry').service.listWhere({ priceBookId: priceBook.id, active: true });
-    const platformEntry = entries.find((entry) => entry.logicalKey === 'fixture:entry:saas-platform-eur');
-    const seatEntry = entries.find((entry) => entry.logicalKey === 'fixture:entry:user-seat-eur');
+    const offerOf = (key) => app.modules.get('offer').service.listWhere({ logicalKey: key, active: true })[0];
+    const enterprise = offerOf('fixture:offer:enterprise');
+    const storage = offerOf('fixture:offer:storage-monthly');
+    const support = offerOf('fixture:offer:support-annual');
+    const metered = offerOf('fixture:offer:bandwidth-metered');
+    assert.equal(metered.quoteEligible, false);
+    assert.match(metered.unsupportedReason, /metered usage/);
 
-    // Quote 1: low discount → auto-approved.
+    // A mixed quote: composite enterprise offer (one-time + monthly flat +
+    // monthly volume-tiered seats) + graduated storage + annual support.
     const runQuote = (id, action, input) => app.runAction({ module: 'quote', action, recordId: id, input, actor });
     const createdQuote = await app.runAction({
       module: 'opportunity', action: 'create-quote', recordId: opp1.id,
       input: { priceBookId: priceBook.id }, actor,
     });
     const quoteId = createdQuote.result.quote.id;
-    await runQuote(quoteId, 'add-line', { priceBookEntryId: platformEntry.id, quantity: 1 });
-    const withSeats = await runQuote(quoteId, 'add-line', { priceBookEntryId: seatEntry.id, quantity: 20, discountBps: 500 });
-    assert.equal(withSeats.result.quote.subtotalCents, 1_200_000 + 20 * 30_000, 'server-calculated subtotal');
-    assert.equal(withSeats.result.quote.discountCents, Math.trunc((20 * 30_000 * 500) / 10000), 'documented trunc rounding');
+    const enterpriseLine = await runQuote(quoteId, 'add-line', { offerId: enterprise.id, quantity: 30 });
+    // 30 seats reach the 21–100 volume tier: the WHOLE quantity prices at 40.00.
+    const seatComponent = enterpriseLine.result.line.components.find((component) => component.pricingModel === 'volume');
+    assert.equal(seatComponent.listAmountCents, 30 * 4000, 'volume tier prices the entire quantity');
+    assert.equal(enterpriseLine.result.quote.oneTimeTotal.netAmountCents, 500_000, 'flat setup charged once, not per seat');
+    await runQuote(quoteId, 'add-line', { offerId: storage.id, quantity: 250 });
+    await runQuote(quoteId, 'add-line', { offerId: support.id, quantity: 1, discountBps: 500 });
+
+    const mixed = app.modules.get('quote').service.get(quoteId);
+    const mixedTotals = JSON.parse(mixed.totalsJson);
+    const monthly = mixedTotals.recurringTotals.find((group) => group.interval === 'month');
+    const annual = mixedTotals.recurringTotals.find((group) => group.interval === 'year');
+    // Monthly = platform 2,000.00 + seats 1,200.00 + graduated storage
+    // (100×2.00 + 150×1.50 = 425.00) = 3,625.00
+    assert.equal(monthly.netAmountCents, 200_000 + 120_000 + 42_500);
+    assert.equal(annual.netAmountCents, 1_000_000 - 50_000, 'annual support discounted 5%');
+    assert.equal(mixedTotals.oneTimeTotal.netAmountCents, 500_000);
+    assert.equal(mixedTotals.recurringTotals.length, 2, 'monthly and annual stay separate — no grand total');
+
     const submitted = await runQuote(quoteId, 'submit', { policy: 'standard-sales-discount', version: 1 });
     assert.equal(submitted.result.version.decision, 'auto_approve');
     assert.equal(submitted.result.quote.status, 'approved');
-    assert.equal(submitted.result.approvalId, null, 'no fake approval record on auto-approve');
+    const versionTotals = app.modules.get('quote-version-total').service.listWhere({ versionId: submitted.result.version.id });
+    assert.equal(versionTotals.length, 3, 'one one-time group + monthly + annual');
+    const versionComponents = app.modules.get('quote-version-component').service.listWhere({ versionId: submitted.result.version.id });
+    assert.equal(versionComponents.length, 5, 'every component of every line is evidenced');
+    const seatEvidence = versionComponents.find((component) => component.pricingModel === 'volume');
+    assert.ok(JSON.parse(seatEvidence.tiersJson).length >= 3, 'the tier schedule is snapshotted');
+    assert.ok(JSON.parse(seatEvidence.tierBreakdownJson).length >= 1, 'the tier breakdown is snapshotted');
+
+    // Unsupported models can never be quoted.
+    await assert.rejects(
+      () => runQuote(quoteId, 'add-line', { offerId: metered.id, quantity: 1 }),
+      (error) => error.code === 'INVALID_STATE' || error.code === 'OFFER_NOT_QUOTE_ELIGIBLE',
+    );
 
     // Quote 2: high discount → human approval; agents cannot decide.
     const quote2 = (await app.runAction({
       module: 'opportunity', action: 'create-quote', recordId: opp2.id,
       input: { priceBookId: priceBook.id }, actor,
     })).result.quote.id;
-    await runQuote(quote2, 'add-line', { priceBookEntryId: platformEntry.id, quantity: 1, discountBps: 2000 });
+    await runQuote(quote2, 'add-line', { offerId: enterprise.id, quantity: 10, discountBps: 2000 });
     const submitted2 = await runQuote(quote2, 'submit', { policy: 'standard-sales-discount', version: 1 });
     assert.equal(submitted2.result.version.decision, 'approval_required');
     assert.equal(submitted2.result.quote.status, 'pending_approval');
@@ -392,24 +429,45 @@ try {
     );
     const decided = await runQuote(quote2, 'reject', { reason: 'Discount too aggressive for this segment' });
     assert.equal(decided.result.quote.status, 'rejected');
-    // Revise → edit → version 2.
     await runQuote(quote2, 'revise', {});
     const lines2 = app.modules.get('quote-line').service.listWhere({ quoteId: quote2, removed: false });
     await runQuote(quote2, 'update-line', { lineId: lines2[0].id, discountBps: 800 });
     const resubmitted = await runQuote(quote2, 'submit', { policy: 'standard-sales-discount', version: 1 });
     assert.equal(resubmitted.result.version.versionNumber, 2, 'monotonic version numbers');
     assert.equal(resubmitted.result.quote.status, 'approved');
-    // Version 1 evidence intact after the revision.
-    const v1 = app.modules.get('quote-version').service.listWhere({ quoteId: quote2, versionNumber: 1 })[0];
-    assert.equal(v1.policyDecision, 'approval_required');
-    // Quotes and versions are read-only publicly.
+
+    // The provider changes seat tiers AND the platform price: new immutable
+    // offer revisions; the historical quote version is untouched.
+    const sync3 = await app.syncCatalog({ provider: 'fixture-saas-catalog', input: { variant: 'v2' }, actor });
+    assert.ok(sync3.counts.offersRevised >= 2, 'tier and price changes create new offer revisions');
+    const frozenSeats = app.modules.get('quote-version-component').service
+      .listWhere({ versionId: submitted.result.version.id })
+      .find((component) => component.pricingModel === 'volume');
+    assert.equal(frozenSeats.listAmountCents, 30 * 4000, 'historical quoted amount unchanged after the tier change');
+    assert.deepEqual(JSON.parse(frozenSeats.tiersJson)[0], { position: 1, upTo: 20, unitAmountCents: 5000, flatAmountCents: 0 }, 'historical tier schedule unchanged');
+    // New drafts price at the NEW revision.
+    const freshOffer = offerOf('fixture:offer:enterprise');
+    assert.notEqual(freshOffer.id, enterprise.id, 'a new active revision exists');
+    const quote3 = (await app.runAction({
+      module: 'opportunity', action: 'create-quote', recordId: opp1.id, input: { priceBookId: priceBook.id }, actor,
+    })).result.quote.id;
+    const freshLine = await runQuote(quote3, 'add-line', { offerId: freshOffer.id, quantity: 30 });
+    const freshSeats = freshLine.result.line.components.find((component) => component.pricingModel === 'volume');
+    assert.equal(freshSeats.listAmountCents, 30 * 4200, 'new drafts use the new tier prices');
+    // Superseded revisions cannot be added to a new draft.
+    await assert.rejects(
+      () => runQuote(quote3, 'add-line', { offerId: enterprise.id, quantity: 1 }),
+      (error) => error.code === 'OFFER_INACTIVE',
+    );
+
+    // Commercial records are read-only publicly.
     const quoteModule = app.modules.get('quote');
     assert.deepEqual(quoteModule.capabilities, ['get', 'list']);
     assert.equal(quoteModule.service.create, undefined, 'no public quote create');
 
     console.log(JSON.stringify({
       ok: true,
-      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads with immutable snapshots, runs and assignment history; synced a fixture catalog idempotently and built 2 quotes — one auto-approved, one through human discount approval with reject → revise → version 2; CRUD cannot set lifecycle, conversion, pipeline, intelligence or commercial fields.',
+      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads with immutable snapshots, runs and assignment history; synced a composite fixture catalog idempotently (flat, per-unit, volume and graduated components across one-time, monthly and annual charges, plus one unsupported metered offer refused for quoting) and built mixed quotes with grouped one-time/monthly/annual totals — one auto-approved, one through human discount approval with reject → revise → version 2 — then proved a tier/price change creates new offer revisions while the historical quote version stays unchanged; CRUD cannot set lifecycle, conversion, pipeline, intelligence or commercial fields.',
       leads: leads.list().length,
       tasks: tasks.list().length,
       companies: app.services.companies.list().length,

@@ -14,6 +14,28 @@ import { formatMinorUnits } from './admin-core.js';
 
 const LIST_LIMIT = 200;
 
+/** Server-generated evidence blobs; malformed data degrades to empty, never throws. */
+function parseJson(text, fallback) {
+  if (typeof text !== 'string' || text === '') return fallback;
+  try {
+    const value = JSON.parse(text);
+    return value ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+const parseTotals = (text) => {
+  const totals = parseJson(text, {});
+  return {
+    oneTimeTotal: totals.oneTimeTotal ?? null,
+    recurringTotals: Array.isArray(totals.recurringTotals) ? totals.recurringTotals : [],
+  };
+};
+const parseBreakdown = (text) => {
+  const breakdown = parseJson(text, {});
+  return Array.isArray(breakdown.components) ? breakdown.components : [];
+};
+
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
 export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
   let renderToken = 0;
@@ -105,7 +127,12 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
     for (const quote of quotes.rows) {
       const row = el('div', 'quote-row');
       row.setAttribute('data-quote', quote.id);
-      const link = el('a', undefined, `${quote.id} — ${quote.status} — ${money(quote.totalCents, quote.currency)}`);
+      const quoteTotals = parseTotals(quote.totalsJson);
+      const recurringSummary = quoteTotals.recurringTotals
+        .map((group) => `${money(group.netAmountCents, quote.currency)}/${group.intervalCount}${group.interval[0]}`)
+        .join(' + ') || 'no recurring';
+      const link = el('a', undefined,
+        `${quote.id} — ${quote.status} — one-time ${money(quoteTotals.oneTimeTotal?.netAmountCents ?? 0, quote.currency)} · ${recurringSummary}`);
       link.setAttribute('href', `#/quotes/${quote.id}`);
       row.appendChild(link);
       list.appendChild(row);
@@ -130,7 +157,7 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
       quote = await client.request(`/api/modules/quote/records/${encodeURIComponent(quoteId)}`);
       lines = (await fetchRows('quote-line', (line) => line.quoteId === quote.id && line.removed === false)).rows
         .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-      entries = (await fetchRows('price-book-entry', (entry) => entry.priceBookId === quote.priceBookId && entry.active === true)).rows;
+      entries = (await fetchRows('offer', (offer) => offer.priceBookId === quote.priceBookId && offer.active === true && offer.quoteEligible === true)).rows;
       versions = (await fetchRows('quote-version', (version) => version.quoteId === quote.id)).rows
         .sort((a, b) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
     } catch (error) {
@@ -147,17 +174,38 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
       ['Status', quote.status],
       ['Currency', quote.currency],
       ['Draft revision', quote.draftRevision],
-      ['Subtotal', money(quote.subtotalCents, quote.currency)],
-      ['Discount', money(quote.discountCents, quote.currency)],
-      ['Total', money(quote.totalCents, quote.currency)],
     ]) {
       const row = el('p', 'quote-fact');
       row.appendChild(el('strong', undefined, `${label}: `));
       row.appendChild(el('span', undefined, value ?? '—'));
       summary.appendChild(row);
     }
-    summary.appendChild(el('p', 'muted', 'All amounts are server-calculated (1/100 currency units, two decimals).'));
     mount.appendChild(summary);
+
+    // Grouped totals: the one-time group and each recurring period are shown
+    // SEPARATELY — unlike periods are never summed, and no ARR/MRR/TCV is
+    // derived (contract term and normalization are not modeled).
+    const totals = parseTotals(quote.totalsJson);
+    const totalsPanel = el('div', 'quote-totals');
+    totalsPanel.setAttribute('data-recurring-groups', String(totals.recurringTotals.length));
+    totalsPanel.appendChild(el('h3', undefined, 'Totals by commercial period'));
+    const totalRow = (label, group) => {
+      const row = el('p', 'quote-total-row');
+      row.setAttribute('data-total', label);
+      row.appendChild(el('strong', undefined, `${label}: `));
+      row.appendChild(el('span', undefined,
+        `${money(group.netAmountCents, group.currency ?? quote.currency)} net (list ${money(group.listAmountCents, group.currency ?? quote.currency)}, discount ${money(group.discountAmountCents, group.currency ?? quote.currency)})`));
+      totalsPanel.appendChild(row);
+    };
+    if (totals.oneTimeTotal) totalRow('One-time', totals.oneTimeTotal);
+    for (const group of totals.recurringTotals) {
+      totalRow(`Recurring every ${group.intervalCount} ${group.interval}(s)`, group);
+    }
+    if (!totals.oneTimeTotal && totals.recurringTotals.length === 0) {
+      totalsPanel.appendChild(el('p', 'empty', 'No lines yet.'));
+    }
+    totalsPanel.appendChild(el('p', 'muted', 'All amounts are server-calculated (1/100 currency units, two decimals). Periods are never combined into a single total, and no annualized or contract-value figure is derived (contract term is not modeled).'));
+    mount.appendChild(totalsPanel);
 
     const errorLine = el('small', 'field-error', '');
     mount.appendChild(errorLine);
@@ -185,8 +233,28 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
     for (const line of lines) {
       const row = el('div', 'quote-line');
       row.setAttribute('data-line', line.id);
-      row.appendChild(el('span', undefined,
-        `${line.sku} · ${line.name} · qty ${line.quantity} · list ${money(line.listUnitAmountCents, quote.currency)} · discount ${(line.discountBps / 100).toFixed(2)}% · total ${money(line.lineTotalCents, quote.currency)}`));
+      row.appendChild(el('span', 'quote-line-head',
+        `${line.sku} · ${line.offerName} (rev ${line.offerRevision}) · qty ${line.quantity} · discount ${(line.discountBps / 100).toFixed(2)}% · net ${money(line.netAmountCents, quote.currency)}`));
+      // Every price component of the offer, with its tier breakdown.
+      const breakdown = parseBreakdown(line.breakdownJson);
+      const componentList = el('div', 'quote-components');
+      for (const component of breakdown) {
+        const recurrence = component.chargeType === 'one_time'
+          ? 'one-time'
+          : `every ${component.intervalCount} ${component.interval}(s)`;
+        const componentRow = el('p', 'quote-component');
+        componentRow.setAttribute('data-component', component.componentId ?? component.componentKey ?? '');
+        componentRow.textContent =
+          `${component.label ?? component.componentKey} · ${component.pricingModel} · ${recurrence} · list ${money(component.listAmountCents, quote.currency)} · net ${money(component.netAmountCents, quote.currency)}`;
+        componentList.appendChild(componentRow);
+        for (const band of component.tierBreakdown ?? []) {
+          const bandRow = el('p', 'quote-tier');
+          bandRow.textContent =
+            `tier ${band.position}: ${band.from}–${band.to ?? '∞'} · ${band.quantity} × ${money(band.unitAmountCents, quote.currency)}${band.flatAmountCents ? ` + ${money(band.flatAmountCents, quote.currency)} flat` : ''} = ${money(band.amountCents, quote.currency)}`;
+          componentList.appendChild(bandRow);
+        }
+      }
+      row.appendChild(componentList);
       if (quote.status === 'draft') {
         const quantityInput = el('input');
         quantityInput.setAttribute('type', 'number');
@@ -225,22 +293,23 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
       addPanel.appendChild(el('h3', undefined, 'Add line'));
       const entrySelect = el('select');
       for (const entry of entries) {
-        const option = el('option', undefined, `${entry.logicalKey} — ${money(entry.unitAmountCents, entry.currency)} (${entry.pricingMode}${entry.recurringInterval ? `/${entry.recurringInterval}` : ''})`);
+        const option = el('option', undefined, `${entry.name} — ${entry.componentCount} component(s)`);
         option.setAttribute('value', entry.id);
         entrySelect.appendChild(option);
         if (entrySelect.value === undefined || entrySelect.value === '') entrySelect.value = entry.id;
       }
+      if (entries.length === 0) addPanel.appendChild(el('p', 'empty', 'No quote-eligible offers in this price book.'));
       const quantityInput = el('input');
       quantityInput.setAttribute('type', 'number');
       quantityInput.value = '1';
       const discountInput = el('input');
       discountInput.setAttribute('type', 'number');
       discountInput.value = '0';
-      const hint = el('small', 'muted', 'Discount in basis points (integer 0–10000): 1000 = 10.00%.');
+      const hint = el('small', 'muted', 'Quantity applies to per-unit and tiered components; flat fees are charged once. Discount in basis points (integer 0–10000): 1000 = 10.00%.');
       const addButton = el('button', undefined, 'Add line');
       busy.push(addButton);
       addButton.addEventListener('click', () => withBusy(() => act('add-line', {
-        priceBookEntryId: entrySelect.value,
+        offerId: entrySelect.value,
         quantity: Number(quantityInput.value),
         discountBps: Number(discountInput.value),
         expectedRevision: quote.draftRevision,
@@ -250,7 +319,7 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
       addPanel.appendChild(discountInput);
       addPanel.appendChild(hint);
       addPanel.appendChild(addButton);
-      addPanel.__add = () => withBusy(() => act('add-line', { priceBookEntryId: entrySelect.value, quantity: Number(quantityInput.value), discountBps: Number(discountInput.value), expectedRevision: quote.draftRevision }));
+      addPanel.__add = () => withBusy(() => act('add-line', { offerId: entrySelect.value, quantity: Number(quantityInput.value), discountBps: Number(discountInput.value), expectedRevision: quote.draftRevision }));
       addPanel.__entry = entrySelect;
       addPanel.__quantity = quantityInput;
       addPanel.__discountBps = discountInput;
@@ -319,8 +388,13 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
     for (const version of versions) {
       const row = el('div', 'quote-version-row');
       row.setAttribute('data-version', version.id);
+      const versionTotals = parseTotals(version.totalsJson);
+      const periods = [
+        `one-time ${money(versionTotals.oneTimeTotal?.netAmountCents ?? 0, version.currency)}`,
+        ...versionTotals.recurringTotals.map((group) => `${money(group.netAmountCents, version.currency)} / ${group.intervalCount} ${group.interval}(s)`),
+      ].join(' · ');
       const link = el('a', undefined,
-        `v${version.versionNumber} · ${version.policyDecision} · ${version.policy}@${version.policyVersion} · total ${money(version.totalCents, version.currency)}`);
+        `v${version.versionNumber} · ${version.policyDecision} · ${version.policy}@${version.policyVersion} · ${periods}`);
       link.setAttribute('href', `#/modules/quote-version/${version.id}`);
       row.appendChild(link);
       if (version.decisionReason) row.appendChild(el('span', 'muted', ` — ${version.decisionReason}`));

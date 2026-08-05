@@ -1,0 +1,39 @@
+{
+  "manifestVersion": 1,
+  "name": "price-tier",
+  "description": "One immutable tier band of a volume or graduated price component. upToQuantity is the inclusive upper bound; the last tier is open-ended (null) (ADR-016).",
+  "fields": [
+    {
+      "name": "componentId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "position",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "upToQuantity",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "unitAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "flatAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    }
+  ]
+}

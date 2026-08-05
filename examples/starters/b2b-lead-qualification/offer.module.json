@@ -1,8 +1,7 @@
 {
   "manifestVersion": 1,
-  "name": "price-book-entry",
-  "description": "One immutable price revision binding a product version to a price book (ADR-016). Price changes create a new revision; quoted evidence never changes.",
-  "table": "price_book_entries",
+  "name": "offer",
+  "description": "A sellable commercial package (rate plan) for one product version: one or more price components mixing one-time and recurring charges. Versioned as a whole \u2014 any pricing change creates a new immutable revision (ADR-016).",
   "fields": [
     {
       "name": "logicalKey",
@@ -30,6 +29,7 @@
     {
       "name": "productId",
       "type": "string",
+      "index": true,
       "writable": "managed"
     },
     {
@@ -38,13 +38,8 @@
       "writable": "managed"
     },
     {
-      "name": "provider",
+      "name": "name",
       "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "unitAmountCents",
-      "type": "integer",
       "writable": "managed"
     },
     {
@@ -53,26 +48,44 @@
       "writable": "managed"
     },
     {
-      "name": "pricingMode",
-      "type": "enum",
-      "values": [
-        "one_time",
-        "recurring"
-      ],
-      "writable": "managed"
-    },
-    {
-      "name": "recurringInterval",
-      "type": "enum",
-      "values": [
-        "month",
-        "year"
-      ],
-      "writable": "managed"
-    },
-    {
       "name": "active",
       "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "quoteEligible",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "unsupportedReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "providerVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "providerFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "externalOfferId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "componentCount",
+      "type": "integer",
       "writable": "managed"
     },
     {

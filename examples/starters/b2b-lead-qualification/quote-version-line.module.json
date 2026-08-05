@@ -1,12 +1,32 @@
 {
   "manifestVersion": 1,
   "name": "quote-version-line",
-  "description": "An immutable line snapshot inside a quote version: product, price, discount and totals as agreed (ADR-016).",
+  "description": "An immutable line snapshot inside a quote version: the offer revision, quantity, discount and line amounts as agreed (ADR-016).",
   "fields": [
     {
       "name": "versionId",
       "type": "string",
       "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "offerId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "offerLogicalKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "offerRevision",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "offerName",
+      "type": "string",
       "writable": "managed"
     },
     {
@@ -25,27 +45,7 @@
       "writable": "managed"
     },
     {
-      "name": "name",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "priceBookEntryId",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "entryRevision",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
       "name": "quantity",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "listUnitAmountCents",
       "type": "integer",
       "writable": "managed"
     },
@@ -55,41 +55,23 @@
       "writable": "managed"
     },
     {
-      "name": "netUnitAmountCents",
+      "name": "componentCount",
       "type": "integer",
       "writable": "managed"
     },
     {
-      "name": "lineSubtotalCents",
+      "name": "listAmountCents",
       "type": "integer",
       "writable": "managed"
     },
     {
-      "name": "lineDiscountCents",
+      "name": "discountAmountCents",
       "type": "integer",
       "writable": "managed"
     },
     {
-      "name": "lineTotalCents",
+      "name": "netAmountCents",
       "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "pricingMode",
-      "type": "enum",
-      "values": [
-        "one_time",
-        "recurring"
-      ],
-      "writable": "managed"
-    },
-    {
-      "name": "recurringInterval",
-      "type": "enum",
-      "values": [
-        "month",
-        "year"
-      ],
       "writable": "managed"
     },
     {

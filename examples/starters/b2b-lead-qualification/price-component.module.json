@@ -1,0 +1,103 @@
+{
+  "manifestVersion": 1,
+  "name": "price-component",
+  "description": "One immutable price component of an offer: charge type (one_time/recurring), pricing model (flat_fee/per_unit/volume/graduated), recurrence and amounts (ADR-016).",
+  "fields": [
+    {
+      "name": "offerId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "componentKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "label",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "position",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "chargeType",
+      "type": "enum",
+      "values": [
+        "one_time",
+        "recurring"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "pricingModel",
+      "type": "enum",
+      "values": [
+        "flat_fee",
+        "per_unit",
+        "volume",
+        "graduated"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "interval",
+      "type": "enum",
+      "values": [
+        "month",
+        "year"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "intervalCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "unitAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "flatAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "externalPriceId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sourcePricingModel",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "tierCount",
+      "type": "integer",
+      "writable": "managed"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "quote",
-  "description": "A commercial quote for an opportunity against exactly one price book and currency (ADR-016). Created and mutated only through quote actions; every amount is server-derived.",
+  "description": "A commercial quote for an opportunity against exactly one price book and currency (ADR-016). Totals are grouped by commercial period; every amount is server-derived.",
   "fields": [
     {
       "name": "opportunityId",
@@ -52,17 +52,17 @@
       "writable": "managed"
     },
     {
-      "name": "subtotalCents",
+      "name": "totalsJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "oneTimeNetCents",
       "type": "integer",
       "writable": "managed"
     },
     {
-      "name": "discountCents",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "totalCents",
+      "name": "recurringGroupCount",
       "type": "integer",
       "writable": "managed"
     }
