@@ -50,8 +50,9 @@ try {
       '// @ts-check',
       "import { qualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/qualify.js';",
       "import { disqualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/disqualify.js';",
+      "import { convertLead } from '../../../examples/starters/b2b-lead-qualification/actions/convert.js';",
       '',
-      'export const generatedActions = [qualifyLead, disqualifyLead];',
+      'export const generatedActions = [qualifyLead, disqualifyLead, convertLead];',
       '',
     ].join('\n'),
   );
@@ -113,11 +114,64 @@ try {
     await assert.rejects(() => leads.update(lead2.id, { status: 'qualified' }, { actor }), (error) => error.code === 'VALIDATION_ERROR');
     await assert.rejects(() => leads.create({ firstName: 'X', lastName: 'Y', email: 'x@y.example', status: 'qualified' }, { actor }), (error) => error.code === 'VALIDATION_ERROR');
 
+    // Convert the qualified lead: Company + Contact + one Opportunity, atomically.
+    // (Lead 1 has companyName 'Acme' from capture.)
+    const converted = await app.runAction({
+      module: 'lead',
+      action: 'convert',
+      recordId: lead.id,
+      input: { opportunityName: 'Acme — Enterprise', valueCents: 5_000_000, currency: 'eur' },
+      actor,
+    });
+    assert.equal(converted.result.lead.status, 'converted');
+    assert.equal(converted.result.company.reused, false, 'no Acme existed: company created');
+    assert.equal(converted.result.contact.reused, false);
+    const convertedLead = leads.get(lead.id);
+    assert.equal(convertedLead.convertedCompanyId, converted.result.company.id);
+    assert.equal(convertedLead.convertedContactId, converted.result.contact.id);
+    assert.equal(convertedLead.convertedOpportunityId, converted.result.opportunity.id);
+    const opportunity = app.services.opportunities.get(converted.result.opportunity.id);
+    assert.equal(opportunity.valueCents, 5_000_000);
+    assert.equal(opportunity.currency, 'EUR');
+    assert.equal(opportunity.sourceKey, `lead-conversion:${lead.id}`);
+
+    // Repeat conversion → 409; no second opportunity.
+    await assert.rejects(
+      () => app.runAction({ module: 'lead', action: 'convert', recordId: lead.id, input: { opportunityName: 'Again', valueCents: 1 }, actor }),
+      (error) => error.code === 'INVALID_STATE' && error.status === 409,
+    );
+
+    // A second lead at the same company (different email) REUSES the company.
+    const lead3 = await leads.create(
+      { firstName: 'Luca', lastName: 'Bianchi', email: 'luca@acme.example', companyName: '  ACME ', source: 'event' },
+      { actor },
+    );
+    await app.runAction({ module: 'lead', action: 'qualify', recordId: lead3.id, input: { dueAt: '2026-08-20T09:00:00Z' }, actor });
+    const converted3 = await app.runAction({
+      module: 'lead',
+      action: 'convert',
+      recordId: lead3.id,
+      input: { opportunityName: 'Acme — Expansion', valueCents: 100 },
+      actor,
+    });
+    assert.equal(converted3.result.company.id, converted.result.company.id, 'normalized "  ACME " reuses the Acme company');
+    assert.equal(converted3.result.company.reused, true);
+    assert.equal(app.services.companies.list().length, 1, 'exactly one Acme');
+
+    // Conversion links are managed: CRUD cannot touch them.
+    await assert.rejects(
+      () => leads.update(lead3.id, { convertedOpportunityId: 'forged' }, { actor }),
+      (error) => error.code === 'VALIDATION_ERROR',
+    );
+
     console.log(JSON.stringify({
       ok: true,
-      summary: 'Captured 2 leads; qualified 1 (one follow-up task, repeat blocked); disqualified 1 (reason required, no task); CRUD cannot set qualified.',
+      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities; repeats blocked; CRUD cannot set lifecycle or conversion fields.',
       leads: leads.list().length,
       tasks: tasks.list().length,
+      companies: app.services.companies.list().length,
+      contacts: app.services.contacts.list().length,
+      opportunities: app.services.opportunities.list().length,
     }, null, 2));
   } finally {
     app.close();
