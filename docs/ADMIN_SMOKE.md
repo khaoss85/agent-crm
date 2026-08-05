@@ -1,6 +1,6 @@
 # Admin manual browser smoke checklist
 
-Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (re-run at each milestone; 24 automated checks at Milestone 10, all passing, including the XSS-as-text, malformed-hash and composite-pricing cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
+Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (re-run at each milestone; 26 automated checks at Milestone 11, all passing, including the XSS-as-text, malformed-hash, composite-pricing and signature/order cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
 
 ## Setup
 
@@ -93,5 +93,12 @@ Validated in the same real-Chromium run (requires the commercial manifests, the 
 24. Adding **one** line for the composite `Enterprise Plan` (20 seats at 500 bps) re-renders from server state: a **One-time** row at `EUR 4,750.00` and a separate **Recurring every 1 month(s)** row at `EUR 2,850.00` — never summed into one figure, and with no ARR/MRR/TCV anywhere on the page. The line lists all three components with their recurrence and pricing model, and the volume-tiered seat component shows exactly one band, `1–20 · 20 × EUR 50.00` (the whole quantity priced at the reached tier). No client-computed amount is ever posted.
 25. Submitting a 20% discount parks the quote in `pending_approval`, shows the policy decision and states that role enforcement waits for the Production Spine; approving as the Admin user actor flips it to `approved`, removes every editing control, and shows no signature or order UI.
 26. The resulting quote version snapshots the commercial decision: `#/modules/quote-version-component` lists one immutable row per component (with its complete tier schedule and calculated band breakdown) and `#/modules/quote-version-total` one row per commercial period — all read-only, with no create control and no editable field.
+
+Signature and Order (Milestone 11, ADR-017 — requires the signature manifests, the fixture signature provider and the request-signature action registered):
+
+27. An **approved** quote shows a **Signature** section with exactly one write control (Request signature), a provider selector, signer name/email/role inputs, the statement that sending requires a human user actor and that this is **not** Sales or Legal role enforcement, and the note that all signers are required and signer identity assurance is not claimed. No payment, invoice, billing or delivery control appears anywhere.
+28. Sending as the Admin user actor re-renders to the envelope state: status `sent`, provider identity, provider envelope id, document hash and format, and the signer row. The Request-signature control is gone — a second envelope for the same quote version is impossible by construction.
+29. After a verified provider completion event, the page shows **Signed artifact evidence** (provider artifact id, document and artifact hashes, type, reference, completion time), the disclosure that the bytes stay with the provider and that this is not a legally qualified signature, and an **Order** with its own one-time and per-period totals plus the note that they are never recalculated from the current catalog. No ARR/MRR/TCV appears, and neither the envelope, the artifact nor the order exposes any input or button.
+30. On a `failed` envelope the page states which phase failed, that the provider may still hold the envelope, and offers **Reconcile with provider** — never a second signature request.
 
 Report any step that fails; do not mark the actions UI browser-validated unless all pass.

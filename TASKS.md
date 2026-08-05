@@ -10,6 +10,7 @@ The first unchecked item is the default next task for Codex.
 - [x] Add configurable code-first Opportunity pipelines with a server-authoritative move-stage action and an Admin board (Milestone 8, ADR-014, `docs/plans/milestone-8-opportunity-pipeline.md`).
 - [x] Add Lead Intelligence v1: enrichment provider contract with immutable snapshots, behavioral signals, versioned explainable scoring and deterministic routing with assignment history (Milestone 9, ADR-015, `docs/LEAD_INTELLIGENCE.md`).
 - [x] Add Commercial Operations v1: catalog provider sync into immutable products/price books, server-priced quotes with immutable versions, and a versioned discount policy with human approval (Milestone 10, ADR-016, `docs/COMMERCIAL_OPERATIONS.md`).
+- [x] Add Signature and Order v1: a bounded signature provider contract, a persisted envelope/event state machine with verified webhooks and explicit reconciliation, signed-artifact evidence and immutable Orders built from an approved Quote Version (Milestone 11, ADR-017, `docs/SIGNATURE_ORDER.md`).
 - [ ] Add a provider adapter example for MailUp-compatible list enrollment.
 - [ ] Add tenant and role boundaries before exposing remote write tools.
 - [ ] Add Streamable HTTP transport for MCP with authorization.
