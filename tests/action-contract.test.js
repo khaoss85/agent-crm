@@ -135,6 +135,22 @@ test('timestamps: one canonical UTC contract, real calendar dates only', () => {
   bad(`2026-08-10T09:00:00Z${'x'.repeat(500)}`);
 });
 
+test('integer inputs: JSON safe integers only, zero allowed, everything else rejected', () => {
+  const schema = [{ name: 'valueCents', type: 'integer', required: true }];
+  assert.equal(validateActionInput(schema, { valueCents: 5_000_000 }).valueCents, 5_000_000);
+  assert.equal(validateActionInput(schema, { valueCents: 0 }).valueCents, 0, 'zero is present, not missing');
+  assert.equal(validateActionInput(schema, { valueCents: -3 }).valueCents, -3, 'sign policy belongs to the action');
+  for (const bad of ['50000', 10.5, Number.NaN, Infinity, Number.MAX_SAFE_INTEGER + 2, true, null, [5], {}]) {
+    assert.throws(
+      () => validateActionInput(schema, { valueCents: bad }),
+      (error) => error.code === 'VALIDATION_ERROR' && error.details.field === 'valueCents',
+      `expected rejection for ${String(bad)}`,
+    );
+  }
+  // The registry accepts integer as a declared input type.
+  assert.doesNotThrow(() => validateActionDefinition(validDefinition({ input: [{ name: 'n', type: 'integer' }] }), deps));
+});
+
 test('string inputs are bounded; whitespace-only counts as missing after trim', () => {
   const schema = [{ name: 'reason', type: 'string', required: true }];
   assert.equal(validateActionInput(schema, { reason: '  keep  inner  space  ' }).reason, 'keep  inner  space');
