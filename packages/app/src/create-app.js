@@ -14,6 +14,7 @@ import { generatedActions } from '../../actions/generated/index.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
 import { ActionRegistry } from '../../core/src/action-registry.js';
 import { runRecordAction } from '../../core/src/action-runtime.js';
+import { createCoreAdapters } from '../../core/src/core-adapters.js';
 import { createReferenceResolver } from '../../core/src/reference-resolver.js';
 import {
   WorkflowEngine,
@@ -145,6 +146,9 @@ export function createAgentCrmApp(options = {}) {
         registry: actions,
         modules,
         services,
+        // Declared capabilities over the handwritten core modules (ADR-013):
+        // the only sanctioned way for an action to create/reuse core records.
+        core: createCoreAdapters({ database, services }),
         config: app.config,
         module,
         action,

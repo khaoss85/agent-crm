@@ -1,7 +1,7 @@
 // @ts-check
 
 import { randomUUID } from 'node:crypto';
-import { NotFoundError, ValidationError } from '../../../core/src/errors.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../../core/src/errors.js';
 import {
   enumValue,
   nonNegativeInteger,
@@ -33,7 +33,7 @@ export class OpportunityService {
   }
 
   /**
-   * @param {{companyId: unknown, contactId?: unknown, name: unknown, type?: unknown, valueCents: unknown, currency?: unknown, stage?: unknown, owner: unknown, expectedCloseDate?: unknown}} input
+   * @param {{companyId: unknown, contactId?: unknown, name: unknown, type?: unknown, valueCents: unknown, currency?: unknown, stage?: unknown, owner: unknown, expectedCloseDate?: unknown, sourceKey?: unknown}} input
    * @param {{actor?: unknown}} [context]
    */
   async create(input, context = {}) {
@@ -58,29 +58,43 @@ export class OpportunityService {
       stage: enumValue(input.stage ?? 'qualification', [...OPPORTUNITY_STAGES], 'stage'),
       owner: requiredString(input.owner, 'owner'),
       expectedCloseDate: optionalIsoDate(input.expectedCloseDate, 'expectedCloseDate'),
+      // Deterministic origin key for workflow/action-created opportunities
+      // (e.g. 'lead-conversion:<leadId>'); a partial UNIQUE index makes a
+      // duplicate origin impossible at the database layer.
+      sourceKey: optionalString(input.sourceKey, 'sourceKey'),
       createdAt: timestamp,
       updatedAt: timestamp,
     };
 
-    this.database.raw.prepare(`
-      INSERT INTO opportunities(
-        id, company_id, contact_id, name, type, value_cents, currency, stage,
-        owner, expected_close_date, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      opportunity.id,
-      opportunity.companyId,
-      opportunity.contactId,
-      opportunity.name,
-      opportunity.type,
-      opportunity.valueCents,
-      opportunity.currency,
-      opportunity.stage,
-      opportunity.owner,
-      opportunity.expectedCloseDate,
-      opportunity.createdAt,
-      opportunity.updatedAt,
-    );
+    try {
+      this.database.raw.prepare(`
+        INSERT INTO opportunities(
+          id, company_id, contact_id, name, type, value_cents, currency, stage,
+          owner, expected_close_date, source_key, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        opportunity.id,
+        opportunity.companyId,
+        opportunity.contactId,
+        opportunity.name,
+        opportunity.type,
+        opportunity.valueCents,
+        opportunity.currency,
+        opportunity.stage,
+        opportunity.owner,
+        opportunity.expectedCloseDate,
+        opportunity.sourceKey,
+        opportunity.createdAt,
+        opportunity.updatedAt,
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+        throw new ConflictError(`An opportunity already exists for source ${opportunity.sourceKey}`, {
+          sourceKey: opportunity.sourceKey,
+        });
+      }
+      throw error;
+    }
 
     this.audit.record({
       actor: context.actor,
@@ -198,6 +212,7 @@ function mapOpportunityRow(row) {
     stage: row.stage,
     owner: row.owner,
     expectedCloseDate: row.expected_close_date,
+    sourceKey: row.source_key ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
