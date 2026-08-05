@@ -51,6 +51,18 @@ try {
     'routing-run.module.json',
     'route-evaluation.module.json',
     'assignment.module.json',
+    // Commercial Operations record modules (Milestone 10): all read-only
+    // publicly — records exist only through catalog sync and quote actions.
+    'product.module.json',
+    'product-version.module.json',
+    'price-book.module.json',
+    'price-book-entry.module.json',
+    'catalog-sync-run.module.json',
+    'quote.module.json',
+    'quote-line.module.json',
+    'quote-version.module.json',
+    'quote-version-line.module.json',
+    'quote-approval.module.json',
   ]) {
     applyModule(root, join(starterInProject, manifest));
   }
@@ -71,6 +83,7 @@ try {
       '  buildScoreAction,',
       '  buildRouteAction,',
       "} from '../../core/src/intelligence-actions.js';",
+      "import { buildCommercialActions } from '../../core/src/commercial-actions.js';",
       '',
       'export const generatedActions = [',
       '  qualifyLead,',
@@ -81,7 +94,23 @@ try {
       '  buildRecordSignalAction(),',
       '  buildScoreAction(),',
       '  buildRouteAction(),',
+      '  ...buildCommercialActions(),',
       '];',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(root, 'packages', 'commercial', 'generated', 'index.js'),
+    [
+      '// @ts-check',
+      'import {',
+      '  fixtureSaasCatalogProvider,',
+      '  standardSalesDiscountV1,',
+      '  standardSalesDiscountV2,',
+      "} from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
+      '',
+      'export const generatedCatalogProviders = [fixtureSaasCatalogProvider];',
+      'export const generatedDiscountPolicies = [standardSalesDiscountV1, standardSalesDiscountV2];',
       '',
     ].join('\n'),
   );
@@ -316,9 +345,71 @@ try {
     assert.equal(scoreRunsSvc.get(freshA.scoreRunId).fingerprint, scoredA.result.fingerprint, 'runs carry the model fingerprint');
     assert.equal(assignmentsSvc.list().filter((a) => a.leadId === leadA.id).length, 1, 'exactly one assignment history entry');
 
+    // ——— Commercial Operations (Milestone 10): catalog → quote → approval ———
+    const sync1 = await app.syncCatalog({ provider: 'fixture-saas-catalog', actor });
+    assert.equal(sync1.counts.productsCreated, 3);
+    assert.equal(sync1.counts.entriesCreated, 3);
+    // Idempotent re-sync: nothing new, nothing versioned.
+    const sync2 = await app.syncCatalog({ provider: 'fixture-saas-catalog', actor });
+    assert.equal(sync2.counts.productsCreated, 0);
+    assert.equal(sync2.counts.versionsCreated, 0);
+    assert.equal(sync2.counts.entriesRevised, 0);
+
+    const priceBook = app.modules.get('price-book').service.listWhere({ sourceKey: 'fixture:pb:standard-eur' })[0];
+    const entries = app.modules.get('price-book-entry').service.listWhere({ priceBookId: priceBook.id, active: true });
+    const platformEntry = entries.find((entry) => entry.logicalKey === 'fixture:entry:saas-platform-eur');
+    const seatEntry = entries.find((entry) => entry.logicalKey === 'fixture:entry:user-seat-eur');
+
+    // Quote 1: low discount → auto-approved.
+    const runQuote = (id, action, input) => app.runAction({ module: 'quote', action, recordId: id, input, actor });
+    const createdQuote = await app.runAction({
+      module: 'opportunity', action: 'create-quote', recordId: opp1.id,
+      input: { priceBookId: priceBook.id }, actor,
+    });
+    const quoteId = createdQuote.result.quote.id;
+    await runQuote(quoteId, 'add-line', { priceBookEntryId: platformEntry.id, quantity: 1 });
+    const withSeats = await runQuote(quoteId, 'add-line', { priceBookEntryId: seatEntry.id, quantity: 20, discountBps: 500 });
+    assert.equal(withSeats.result.quote.subtotalCents, 1_200_000 + 20 * 30_000, 'server-calculated subtotal');
+    assert.equal(withSeats.result.quote.discountCents, Math.trunc((20 * 30_000 * 500) / 10000), 'documented trunc rounding');
+    const submitted = await runQuote(quoteId, 'submit', { policy: 'standard-sales-discount', version: 1 });
+    assert.equal(submitted.result.version.decision, 'auto_approve');
+    assert.equal(submitted.result.quote.status, 'approved');
+    assert.equal(submitted.result.approvalId, null, 'no fake approval record on auto-approve');
+
+    // Quote 2: high discount → human approval; agents cannot decide.
+    const quote2 = (await app.runAction({
+      module: 'opportunity', action: 'create-quote', recordId: opp2.id,
+      input: { priceBookId: priceBook.id }, actor,
+    })).result.quote.id;
+    await runQuote(quote2, 'add-line', { priceBookEntryId: platformEntry.id, quantity: 1, discountBps: 2000 });
+    const submitted2 = await runQuote(quote2, 'submit', { policy: 'standard-sales-discount', version: 1 });
+    assert.equal(submitted2.result.version.decision, 'approval_required');
+    assert.equal(submitted2.result.quote.status, 'pending_approval');
+    await assert.rejects(
+      () => app.runAction({ module: 'quote', action: 'approve', recordId: quote2, input: {}, actor: { type: 'agent', id: 'bot' } }),
+      (error) => error.code === 'HUMAN_APPROVAL_REQUIRED' && error.status === 403,
+      'an agent actor cannot approve a discount',
+    );
+    const decided = await runQuote(quote2, 'reject', { reason: 'Discount too aggressive for this segment' });
+    assert.equal(decided.result.quote.status, 'rejected');
+    // Revise → edit → version 2.
+    await runQuote(quote2, 'revise', {});
+    const lines2 = app.modules.get('quote-line').service.listWhere({ quoteId: quote2, removed: false });
+    await runQuote(quote2, 'update-line', { lineId: lines2[0].id, discountBps: 800 });
+    const resubmitted = await runQuote(quote2, 'submit', { policy: 'standard-sales-discount', version: 1 });
+    assert.equal(resubmitted.result.version.versionNumber, 2, 'monotonic version numbers');
+    assert.equal(resubmitted.result.quote.status, 'approved');
+    // Version 1 evidence intact after the revision.
+    const v1 = app.modules.get('quote-version').service.listWhere({ quoteId: quote2, versionNumber: 1 })[0];
+    assert.equal(v1.policyDecision, 'approval_required');
+    // Quotes and versions are read-only publicly.
+    const quoteModule = app.modules.get('quote');
+    assert.deepEqual(quoteModule.capabilities, ['get', 'list']);
+    assert.equal(quoteModule.service.create, undefined, 'no public quote create');
+
     console.log(JSON.stringify({
       ok: true,
-      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads to Enterprise Italy / Spain Sales / the fallback queue with immutable snapshots, runs and assignment history; CRUD cannot set lifecycle, conversion, pipeline or intelligence fields.',
+      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads with immutable snapshots, runs and assignment history; synced a fixture catalog idempotently and built 2 quotes — one auto-approved, one through human discount approval with reject → revise → version 2; CRUD cannot set lifecycle, conversion, pipeline, intelligence or commercial fields.',
       leads: leads.list().length,
       tasks: tasks.list().length,
       companies: app.services.companies.list().length,

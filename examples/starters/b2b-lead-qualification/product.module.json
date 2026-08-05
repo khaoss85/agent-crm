@@ -1,0 +1,42 @@
+{
+  "manifestVersion": 1,
+  "name": "product",
+  "description": "Stable commercial product identity (ADR-016). Read-only publicly; created and maintained only by catalog sync or trusted actions.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "sourceKind",
+      "type": "enum",
+      "values": [
+        "internal",
+        "provider"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "externalId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "active",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "currentVersionId",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

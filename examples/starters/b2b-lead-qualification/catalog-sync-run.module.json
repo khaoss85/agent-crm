@@ -1,0 +1,80 @@
+{
+  "manifestVersion": 1,
+  "name": "catalog-sync-run",
+  "description": "Evidence of one catalog synchronization: provider identity/fingerprint, counts and timestamps (ADR-016).",
+  "fields": [
+    {
+      "name": "provider",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "providerVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "providerFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sourceRef",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "startedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "completedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "completed"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "priceBooksCreated",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "productsCreated",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "versionsCreated",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "entriesCreated",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "entriesRevised",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "unchanged",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "deactivated",
+      "type": "integer",
+      "writable": "managed"
+    }
+  ]
+}

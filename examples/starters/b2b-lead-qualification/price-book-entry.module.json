@@ -1,0 +1,84 @@
+{
+  "manifestVersion": 1,
+  "name": "price-book-entry",
+  "description": "One immutable price revision binding a product version to a price book (ADR-016). Price changes create a new revision; quoted evidence never changes.",
+  "table": "price_book_entries",
+  "fields": [
+    {
+      "name": "logicalKey",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "revision",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "priceBookId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "productId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "productVersionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "unitAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "pricingMode",
+      "type": "enum",
+      "values": [
+        "one_time",
+        "recurring"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "recurringInterval",
+      "type": "enum",
+      "values": [
+        "month",
+        "year"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "active",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "sourceFingerprint",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

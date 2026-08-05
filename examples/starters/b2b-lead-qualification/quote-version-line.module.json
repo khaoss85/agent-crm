@@ -1,0 +1,101 @@
+{
+  "manifestVersion": 1,
+  "name": "quote-version-line",
+  "description": "An immutable line snapshot inside a quote version: product, price, discount and totals as agreed (ADR-016).",
+  "fields": [
+    {
+      "name": "versionId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "productId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "productVersionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sku",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "priceBookEntryId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "entryRevision",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "quantity",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "listUnitAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "discountBps",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "netUnitAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "lineSubtotalCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "lineDiscountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "lineTotalCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "pricingMode",
+      "type": "enum",
+      "values": [
+        "one_time",
+        "recurring"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "recurringInterval",
+      "type": "enum",
+      "values": [
+        "month",
+        "year"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "position",
+      "type": "integer",
+      "writable": "managed"
+    }
+  ]
+}
