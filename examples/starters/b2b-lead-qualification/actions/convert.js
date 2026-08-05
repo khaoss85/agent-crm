@@ -157,7 +157,12 @@ export const convertLead = {
       },
       { actor },
     );
-    step('opportunity', { id: opportunity.id });
+    // If a pipeline targets the opportunity module (ADR-014), the new
+    // Opportunity enters its declared default stage atomically with this
+    // transaction. With no pipeline installed the documented deterministic
+    // default is legacy behavior: null pipeline state, never an invented stage.
+    const entered = await core.enterOpportunityPipeline(opportunity.id, { actor, now });
+    step('opportunity', { id: opportunity.id, ...(entered ? { pipeline: entered.pipeline, stage: entered.stage } : {}) });
 
     // 4. One managed update carries the full conversion state.
     const lead = await managed(record.id, {
@@ -176,7 +181,11 @@ export const convertLead = {
       },
       company: { id: company.id, reused: !companyCreated },
       contact: { id: contact.id, reused: !contactCreated },
-      opportunity: { id: opportunity.id, sourceKey: opportunity.sourceKey },
+      opportunity: {
+        id: opportunity.id,
+        sourceKey: opportunity.sourceKey,
+        ...(entered ? { pipeline: entered.pipeline, stage: entered.stage } : {}),
+      },
     };
   },
 };
