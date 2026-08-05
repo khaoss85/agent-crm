@@ -61,7 +61,7 @@ Amounts are safe integers in 1/100 currency units (ADR-014's non-ISO contract, u
 
 ## Out of scope (deliberate)
 
-Signature, envelopes, signed artifacts, Order/Order Lines, taxes, FX, ISO exponents, usage/tiered pricing, proration, ramps, bundles, PDF, payment, billing, real Stripe/Zuora/ERP adapters or credentials (future provider packages documented only), secure role enforcement, auth/tenancy/RBAC, Delivery/Service, Analytics, PostgreSQL, Cloud, remote MCP, telemetry.
+Signature, envelopes, signed artifacts, Order/Order Lines, taxes, FX, ISO exponents, metered/usage-based rating, overage, proration, ramps, minimum commitments, attribute-based pricing, bundles, PDF, payment, billing, real Stripe/Zuora/ERP adapters or credentials (future provider packages documented only), secure role enforcement, auth/tenancy/RBAC, Delivery/Service, Analytics, PostgreSQL, Cloud, remote MCP, telemetry.
 
 ## Verification plan
 
