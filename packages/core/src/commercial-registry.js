@@ -2,7 +2,14 @@
 
 import { ValidationError, NotFoundError } from './errors.js';
 import { computeDefinitionFingerprint, validateDeclaredConfig } from './intelligence-registry.js';
-import { requireCurrency } from './commercial-money.js';
+import {
+  requireCurrency,
+  CHARGE_TYPES,
+  PRICING_MODELS,
+  RECURRING_INTERVALS,
+  MAX_DISCOUNT_BPS,
+  MAX_QUANTITY,
+} from './commercial-money.js';
 
 /**
  * Commercial Operations registries (ADR-016): catalog providers and versioned
@@ -187,8 +194,22 @@ export class CommercialRegistries {
   metadata() {
     return {
       commercialContract: 1,
+      pricingContract: 1,
       money: 'safe integers, 1/100 currency units, two decimals (not ISO-4217 exponents)',
-      discounts: 'integer basis points 0-10000; discount = trunc(subtotal*bps/10000)',
+      discounts: 'integer basis points 0-10000; discount = trunc(list*bps/10000), applied per component after tier calculation',
+      chargeTypes: [...CHARGE_TYPES],
+      pricingModels: [...PRICING_MODELS],
+      recurringIntervals: [...RECURRING_INTERVALS],
+      maxDiscountBps: MAX_DISCOUNT_BPS,
+      maxQuantity: MAX_QUANTITY,
+      quantitySemantics: {
+        flat_fee: 'charged once per quote line; line quantity does not multiply it',
+        per_unit: 'unitAmount x quantity',
+        volume: 'the tier the total quantity reaches prices the entire quantity',
+        graduated: 'each tier band prices the quantity that falls inside it',
+      },
+      totals: 'grouped: one one-time total plus one per (currency, interval, intervalCount); unlike periods are never summed and no ARR/MRR/TCV is derived',
+      unsupportedModels: 'metered usage, overage, proration, ramps, minimum commitments, attribute-based pricing, taxes and FX are never approximated: such offers persist with quoteEligible=false and an unsupportedReason',
       catalogProviders: [...this.catalogProviders.values()]
         .sort((a, b) => (a.definition.name < b.definition.name ? -1 : 1))
         .map(({ definition, fingerprint }) => ({
