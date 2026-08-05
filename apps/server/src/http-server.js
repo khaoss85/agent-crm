@@ -107,6 +107,16 @@ function buildRouter(app) {
       .map((module) => generatedModuleMetadata(app.modules.get(module.name), app.actions.listForModule(module.name))),
     workflows: app.workflows.list(),
     providers: app.providers.list(),
+    // Code-first pipelines (ADR-014). Additive: an older client ignores it.
+    pipelineContract: 1,
+    pipelines: app.pipelines.list(),
+    // Actions registered on action-eligible CORE modules (ADR-014) — generated
+    // modules carry theirs inside generatedModules[].actions.
+    coreModuleActions: Object.fromEntries(
+      (app.actionEligibleCoreModules ?? [])
+        .filter((name) => app.actions.listForModule(name).length > 0)
+        .map((name) => [name, app.actions.listForModule(name)]),
+    ),
   }));
 
   // Uniform resource surface for generated modules (ADR-008). Only modules
@@ -135,13 +145,16 @@ function buildRouter(app) {
     return module.service.update(params.id, recordInput(body), { actor });
   });
 
-  // Code-first actions over the generic surface (ADR-011). The route only
+  // Code-first actions over the generic surface (ADR-011/014). The route only
   // resolves the module and delegates to the action runtime — it never writes
-  // to the database directly. An unknown module (or a non-exposable one) is a
-  // 404 here; an unknown action is a 404 from the registry; a bad input is a
-  // 400; an invalid lifecycle transition is a 409 (stable INVALID_STATE).
+  // to the database directly. Eligible targets are exposable generated
+  // modules, plus handwritten core modules that have at least one action
+  // registered (registration in checked-in source IS the explicit eligibility
+  // declaration — core CRUD stays on its dedicated routes and is never served
+  // by the generic records surface). Anything else is a 404; unknown action
+  // 404; bad input 400; invalid transition a stable 409.
   router.add('POST', '/api/modules/:module/records/:id/actions/:action', async ({ params, body, actor }) => {
-    resolveGeneratedModule(app, params.module); // 404 for unknown/non-exposable modules
+    resolveActionableModule(app, params.module); // 404 for unknown/ineligible modules
     return app.runAction({
       module: params.module,
       action: params.action,
@@ -328,6 +341,29 @@ function resolveGeneratedModule(app, name) {
     throw new NotFoundError('Generated module', name);
   }
   return module;
+}
+
+/**
+ * Resolve a module for the ACTION surface only (ADR-014): an exposable
+ * generated module, or a core module with at least one registered action —
+ * explicit registration in checked-in source is the eligibility declaration.
+ * Everything else fails closed as 404. Never used for the CRUD records routes.
+ *
+ * @param {any} app @param {string} name
+ */
+function resolveActionableModule(app, name) {
+  try {
+    return resolveGeneratedModule(app, name);
+  } catch (generatedError) {
+    let module;
+    try {
+      module = app.modules.get(name);
+    } catch {
+      throw generatedError;
+    }
+    if (module.name === name && app.actions.listForModule(name).length > 0) return module;
+    throw generatedError;
+  }
 }
 
 /** @param {any} module @param {string} capability */

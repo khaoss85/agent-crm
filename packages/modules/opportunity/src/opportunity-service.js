@@ -7,6 +7,7 @@ import {
   nonNegativeInteger,
   optionalIsoDate,
   optionalString,
+  requiredIsoDate,
   requiredString,
 } from '../../../core/src/validation.js';
 import { OPPORTUNITY_STAGES, OPPORTUNITY_TYPES } from '../../../core/src/schema.js';
@@ -22,6 +23,16 @@ const ALLOWED_TRANSITIONS = Object.freeze({
   lost: ['discovery'],
 });
 
+// Pipeline state (migration v3, ADR-014) is server-managed: never accepted
+// from public create input, written only through applyManaged below.
+const PIPELINE_MANAGED_FIELDS = Object.freeze([
+  'pipelineKey',
+  'pipelineStage',
+  'stageEnteredAt',
+  'closedAt',
+  'closeReason',
+]);
+
 export class OpportunityService {
   /** @param {{database: any, audit: any, events: any, companies: any, contacts: any}} dependencies */
   constructor({ database, audit, events, companies, contacts }) {
@@ -32,11 +43,86 @@ export class OpportunityService {
     this.contacts = contacts;
   }
 
+  /** @param {Record<string, unknown>} input */
+  #rejectManagedInput(input) {
+    for (const name of PIPELINE_MANAGED_FIELDS) {
+      if (input && Object.hasOwn(input, name)) {
+        throw new ValidationError(`${name} is managed by the pipeline runtime and cannot be set directly`, { field: name });
+      }
+    }
+  }
+
+  /**
+   * In-process write path for pipeline-managed fields (mirrors the generated
+   * modules' applyManaged boundary): validates only the managed keys, writes
+   * them with audit + event inside a savepoint, and is never routed over HTTP.
+   * Stage-set membership is the pipeline runtime's job; this method enforces
+   * shape (strings/timestamps or null).
+   *
+   * @param {string} id @param {Record<string, unknown>} patch @param {{actor?: unknown}} [context]
+   */
+  async applyManaged(id, patch, context = {}) {
+    this.get(id);
+    /** @type {string[]} */
+    const assignments = [];
+    /** @type {unknown[]} */
+    const params = [];
+    /** @type {Record<string, unknown>} */
+    const changes = {};
+    const columns = {
+      pipelineKey: 'pipeline_key',
+      pipelineStage: 'pipeline_stage',
+      stageEnteredAt: 'stage_entered_at',
+      closedAt: 'closed_at',
+      closeReason: 'close_reason',
+    };
+    for (const [field, column] of Object.entries(columns)) {
+      if (!Object.hasOwn(patch, field)) continue;
+      const raw = patch[field];
+      let value;
+      if (raw === null) {
+        value = null;
+      } else if (field === 'stageEnteredAt' || field === 'closedAt') {
+        value = requiredIsoDate(raw, field);
+      } else {
+        value = requiredString(raw, field);
+      }
+      assignments.push(`${column} = ?`);
+      params.push(value);
+      changes[field] = value;
+    }
+    if (!assignments.length) return this.get(id);
+    assignments.push('updated_at = ?');
+    params.push(nowIso());
+    params.push(id);
+
+    this.database.raw.exec('SAVEPOINT opportunity_managed;');
+    try {
+      this.database.raw.prepare(`UPDATE opportunities SET ${assignments.join(', ')} WHERE id = ?`).run(...params);
+      const updated = this.get(id);
+      this.audit.record({
+        actor: context.actor,
+        action: 'opportunity.updated',
+        entityType: 'opportunity',
+        entityId: id,
+        data: changes,
+      });
+      this.database.raw.exec('RELEASE SAVEPOINT opportunity_managed;');
+      await this.events.emit('opportunity.updated', updated);
+      return updated;
+    } catch (error) {
+      this.database.raw.exec('ROLLBACK TO SAVEPOINT opportunity_managed;');
+      this.database.raw.exec('RELEASE SAVEPOINT opportunity_managed;');
+      throw error;
+    }
+  }
+
   /**
    * @param {{companyId: unknown, contactId?: unknown, name: unknown, type?: unknown, valueCents: unknown, currency?: unknown, stage?: unknown, owner: unknown, expectedCloseDate?: unknown, sourceKey?: unknown}} input
    * @param {{actor?: unknown}} [context]
    */
   async create(input, context = {}) {
+    this.#rejectManagedInput(input);
     const companyId = requiredString(input.companyId, 'companyId');
     this.companies.get(companyId);
     const contactId = optionalString(input.contactId, 'contactId');
@@ -213,6 +299,11 @@ function mapOpportunityRow(row) {
     owner: row.owner,
     expectedCloseDate: row.expected_close_date,
     sourceKey: row.source_key ?? null,
+    pipelineKey: row.pipeline_key ?? null,
+    pipelineStage: row.pipeline_stage ?? null,
+    stageEnteredAt: row.stage_entered_at ?? null,
+    closedAt: row.closed_at ?? null,
+    closeReason: row.close_reason ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

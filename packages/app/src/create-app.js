@@ -11,6 +11,8 @@ import { createOpportunityModule } from '../../modules/opportunity/src/index.js'
 import { createApprovalModule } from '../../modules/approval/src/index.js';
 import { generatedModules } from '../../modules/generated/index.js';
 import { generatedActions } from '../../actions/generated/index.js';
+import { generatedPipelines } from '../../pipelines/generated/index.js';
+import { PipelineRegistry } from '../../core/src/pipeline-registry.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
 import { ActionRegistry } from '../../core/src/action-registry.js';
 import { runRecordAction } from '../../core/src/action-runtime.js';
@@ -80,13 +82,23 @@ export function createAgentCrmApp(options = {}) {
     );
   }
 
-  // Code-first action registry (ADR-011). Actions target generated modules only;
-  // moduleExists is checked against the generated-module set, not the core
-  // modules. A malformed action definition throws here and stops startup rather
-  // than exposing a half-working action.
+  // Code-first action registry (ADR-011/014). Actions target generated modules
+  // or handwritten core modules EXPLICITLY declared action-eligible below —
+  // registering an action is the eligibility declaration for the generic
+  // action route, while core CRUD stays on its dedicated endpoints and is
+  // never exposed through the generic records surface. A malformed action
+  // definition throws here and stops startup rather than exposing a
+  // half-working action.
   const generatedModuleNames = new Set(generatedModules.map((generated) => generated.name));
-  const actions = new ActionRegistry({ moduleExists: (name) => generatedModuleNames.has(name) });
+  const ACTION_ELIGIBLE_CORE_MODULES = new Set(['opportunity']);
+  const actionModuleExists = (name) => generatedModuleNames.has(name) || ACTION_ELIGIBLE_CORE_MODULES.has(name);
+  const actions = new ActionRegistry({ moduleExists: actionModuleExists });
   for (const definition of generatedActions) actions.register(definition);
+
+  // Code-first pipeline registry (ADR-014): staged-eligible targets are the
+  // same set as action-eligible modules. Fail closed at startup.
+  const pipelines = new PipelineRegistry({ moduleExists: actionModuleExists });
+  for (const definition of generatedPipelines) pipelines.register(definition);
 
   const notificationProvider = new MemoryNotificationProvider();
   providers.register({
@@ -105,7 +117,7 @@ export function createAgentCrmApp(options = {}) {
   // Declared capabilities over the handwritten core modules (ADR-013): built
   // once per app instance — frozen, no global state, the only sanctioned way
   // for an action to create/reuse core records.
-  const coreAdapters = createCoreAdapters({ database, services });
+  const coreAdapters = createCoreAdapters({ database, services, pipelines });
 
   const workflows = new WorkflowEngine({
     database,
@@ -136,6 +148,8 @@ export function createAgentCrmApp(options = {}) {
     workflows,
     services,
     actions,
+    pipelines,
+    actionEligibleCoreModules: [...ACTION_ELIGIBLE_CORE_MODULES].sort(),
     /**
      * Run a code-first record action atomically (ADR-011/012): the business
      * writes commit or roll back together and domain events become visible only
@@ -152,6 +166,7 @@ export function createAgentCrmApp(options = {}) {
         modules,
         services,
         core: coreAdapters,
+        pipelines,
         config: app.config,
         module,
         action,

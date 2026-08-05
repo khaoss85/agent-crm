@@ -125,6 +125,24 @@ const MIGRATIONS = [
         WHERE source_key IS NOT NULL;
     `,
   },
+  {
+    version: 3,
+    name: 'opportunity_pipeline_state',
+    // Configurable-pipeline state (ADR-014). Nullable: pre-pipeline
+    // opportunities (and projects with no pipeline installed) stay valid with
+    // pipeline_key NULL — "not on a board". These columns are server-managed:
+    // the service refuses them in public create input and only its in-process
+    // applyManaged path writes them.
+    sql: `
+      ALTER TABLE opportunities ADD COLUMN pipeline_key TEXT;
+      ALTER TABLE opportunities ADD COLUMN pipeline_stage TEXT;
+      ALTER TABLE opportunities ADD COLUMN stage_entered_at TEXT;
+      ALTER TABLE opportunities ADD COLUMN closed_at TEXT;
+      ALTER TABLE opportunities ADD COLUMN close_reason TEXT;
+      CREATE INDEX IF NOT EXISTS opportunities_pipeline_stage
+        ON opportunities(pipeline_key, pipeline_stage);
+    `,
+  },
 ];
 
 /**

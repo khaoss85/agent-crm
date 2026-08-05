@@ -40,9 +40,9 @@ export function normalizeEmail(email) {
 }
 
 /**
- * @param {{database: any, services: {companies: any, contacts: any, opportunities: any}}} deps
+ * @param {{database: any, services: {companies: any, contacts: any, opportunities: any}, pipelines?: {forModule: (name: string) => any}}} deps
  */
-export function createCoreAdapters({ database, services }) {
+export function createCoreAdapters({ database, services, pipelines }) {
   for (const name of ['companies', 'contacts', 'opportunities']) {
     if (!services[name] || typeof services[name].create !== 'function') {
       throw new ValidationError(`Core adapters need the ${name} service`);
@@ -100,6 +100,27 @@ export function createCoreAdapters({ database, services }) {
     /** @param {Record<string, unknown>} input @param {{actor?: unknown}} [context] */
     createOpportunity(input, context) {
       return services.opportunities.create(input, context);
+    },
+
+    /**
+     * Place an opportunity on the pipeline registered for the opportunity
+     * module (ADR-014), in its declared default stage — atomically with the
+     * caller's transaction, via the service's managed write path. Returns
+     * null when no pipeline is installed: the documented deterministic
+     * default is legacy (pre-pipeline) behavior, never an invented stage.
+     *
+     * @param {string} opportunityId @param {{actor?: unknown, now?: () => string}} [context]
+     */
+    async enterOpportunityPipeline(opportunityId, context = {}) {
+      const pipeline = pipelines && typeof pipelines.forModule === 'function' ? pipelines.forModule('opportunity') : null;
+      if (!pipeline) return null;
+      const enteredAt = typeof context.now === 'function' ? context.now() : new Date().toISOString();
+      await services.opportunities.applyManaged(
+        opportunityId,
+        { pipelineKey: pipeline.name, pipelineStage: pipeline.defaultStage, stageEnteredAt: enteredAt },
+        { actor: context.actor },
+      );
+      return { pipeline: pipeline.name, stage: pipeline.defaultStage };
     },
   });
 }
