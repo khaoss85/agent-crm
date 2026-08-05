@@ -1,0 +1,17 @@
+{
+  "manifestVersion": 1,
+  "name": "score-run",
+  "description": "One explainable scoring execution: which model version (and fingerprint) ran against which inputs, producing which total. Immutable history; the lead's latest run is linked from the lead record.",
+  "fields": [
+    { "name": "leadId", "type": "string", "writable": "managed" },
+    { "name": "model", "type": "string", "writable": "managed" },
+    { "name": "modelVersion", "type": "integer", "writable": "managed" },
+    { "name": "fingerprint", "type": "string", "writable": "managed" },
+    { "name": "snapshotId", "type": "string", "writable": "managed" },
+    { "name": "signalCount", "type": "integer", "writable": "managed" },
+    { "name": "signalsFingerprint", "type": "string", "writable": "managed" },
+    { "name": "totalScore", "type": "integer", "writable": "managed" },
+    { "name": "evaluatedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "status", "type": "enum", "values": ["completed"], "writable": "managed" }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 1,
+  "name": "behavioral-signal",
+  "description": "One immutable observed behavioral signal for a lead (pricing page visited, demo requested, ...). Append-only: created only by the lead.record-signal action; the unique sourceKey dedupes repeats.",
+  "fields": [
+    { "name": "leadId", "type": "string", "writable": "managed" },
+    { "name": "signalType", "type": "string", "writable": "managed" },
+    { "name": "source", "type": "string", "writable": "managed" },
+    { "name": "observedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "value", "type": "string", "writable": "managed" },
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" }
+  ]
+}

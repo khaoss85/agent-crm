@@ -41,6 +41,18 @@ try {
   const starterInProject = join(root, 'examples', 'starters', 'b2b-lead-qualification');
   applyModule(root, join(starterInProject, 'lead.module.json'));
   applyModule(root, join(starterInProject, 'task.module.json'));
+  // Lead Intelligence record modules (Milestone 9): every field is managed, so
+  // the records are immutable through public CRUD and writable only by actions.
+  for (const manifest of [
+    'enrichment-snapshot.module.json',
+    'behavioral-signal.module.json',
+    'score-run.module.json',
+    'score-contribution.module.json',
+    'routing-run.module.json',
+    'assignment.module.json',
+  ]) {
+    applyModule(root, join(starterInProject, manifest));
+  }
 
   // 3. Register the code-first actions by pointing the action registry at the
   //    starter's checked-in definitions.
@@ -52,8 +64,43 @@ try {
       "import { disqualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/disqualify.js';",
       "import { convertLead } from '../../../examples/starters/b2b-lead-qualification/actions/convert.js';",
       "import { buildMoveStageAction } from '../../core/src/pipeline-actions.js';",
+      'import {',
+      '  buildEnrichAction,',
+      '  buildRecordSignalAction,',
+      '  buildScoreAction,',
+      '  buildRouteAction,',
+      "} from '../../core/src/intelligence-actions.js';",
       '',
-      "export const generatedActions = [qualifyLead, disqualifyLead, convertLead, buildMoveStageAction({ module: 'opportunity' })];",
+      'export const generatedActions = [',
+      '  qualifyLead,',
+      '  disqualifyLead,',
+      '  convertLead,',
+      "  buildMoveStageAction({ module: 'opportunity' }),",
+      '  buildEnrichAction(),',
+      '  buildRecordSignalAction(),',
+      '  buildScoreAction(),',
+      '  buildRouteAction(),',
+      '];',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(root, 'packages', 'intelligence', 'generated', 'index.js'),
+    [
+      '// @ts-check',
+      'import {',
+      '  fixtureFirmographicsProvider,',
+      '  b2bSaasScoreV1,',
+      '  b2bSaasScoreV2,',
+      '  b2bRoutingV1,',
+      '  b2bRoutingV2,',
+      '  routingTargets,',
+      "} from '../../../examples/starters/b2b-lead-qualification/intelligence.js';",
+      '',
+      'export const generatedEnrichmentProviders = [fixtureFirmographicsProvider];',
+      'export const generatedScoringModels = [b2bSaasScoreV1, b2bSaasScoreV2];',
+      'export const generatedRoutingPolicies = [b2bRoutingV1, b2bRoutingV2];',
+      'export const generatedRoutingTargets = routingTargets;',
       '',
     ].join('\n'),
   );
@@ -204,9 +251,72 @@ try {
       (error) => error.code === 'VALIDATION_ERROR',
     );
 
+    // ——— Lead Intelligence (Milestone 9): enrich → score → route ———
+    const runIntel = (id, action, input) => app.runAction({ module: 'lead', action, recordId: id, input, actor });
+    const signalAt = '2026-08-01T10:00:00Z';
+
+    // Lead A: IT / Italian / enterprise / engaged → Enterprise Italy.
+    const leadA = await leads.create({ firstName: 'Giulia', lastName: 'Ferrari', email: 'giulia@ferrari.example', companyName: 'Ferrari Sistemi', source: 'website' }, { actor });
+    await runIntel(leadA.id, 'record-signal', { signalType: 'pricing-page-visited', observedAt: signalAt });
+    await runIntel(leadA.id, 'record-signal', { signalType: 'demo-requested', observedAt: '2026-08-01T11:00:00Z' });
+    const enrichedA = await runIntel(leadA.id, 'enrich', { provider: 'fixture-firmographics' });
+    assert.equal(enrichedA.result.reused, false);
+    assert.equal(enrichedA.result.snapshot.country, 'IT');
+    // Repeat enrich reuses the non-expired snapshot — no second snapshot.
+    const enrichedAgain = await runIntel(leadA.id, 'enrich', { provider: 'fixture-firmographics' });
+    assert.equal(enrichedAgain.result.reused, true);
+    const scoredA = await runIntel(leadA.id, 'score', { model: 'b2b-saas-score', version: 1 });
+    assert.equal(scoredA.result.total, 75, 'enterprise 30 + country 10 + demo 25 + pricing 10');
+    assert.equal(scoredA.result.contributions.filter((c) => c.matched).length, 4);
+    const routedA = await runIntel(leadA.id, 'route', { policy: 'b2b-sales-routing', version: 1 });
+    assert.equal(routedA.result.target.key, 'enterprise-italy');
+    assert.equal(routedA.result.fallbackReason, null);
+
+    // Lead B: ES / Spanish / mid score → Spain Sales.
+    const leadB = await leads.create({ firstName: 'Carmen', lastName: 'Vega', email: 'carmen@sevilla.example', companyName: 'Sevilla Digital', source: 'referral' }, { actor });
+    await runIntel(leadB.id, 'enrich', { provider: 'fixture-firmographics' });
+    await runIntel(leadB.id, 'score', { model: 'b2b-saas-score', version: 1 });
+    const routedB = await runIntel(leadB.id, 'route', { policy: 'b2b-sales-routing', version: 1 });
+    assert.equal(routedB.result.target.key, 'spain-sales');
+
+    // Lead C: unsupported territory → declared fallback queue, reason recorded.
+    const leadC = await leads.create({ firstName: 'Jon', lastName: 'Stefansson', email: 'jon@reykjavik.example', companyName: 'Reykjavik Hosting', source: 'outbound' }, { actor });
+    await runIntel(leadC.id, 'enrich', { provider: 'fixture-firmographics' });
+    await runIntel(leadC.id, 'score', { model: 'b2b-saas-score', version: 1 });
+    const routedC = await runIntel(leadC.id, 'route', { policy: 'b2b-sales-routing', version: 1 });
+    assert.equal(routedC.result.target.key, 'unrouted-queue');
+    assert.equal(routedC.result.fallbackReason, 'policy declined all eligible targets');
+
+    // Rerouting an assigned lead is a stable conflict, not a silent reshuffle.
+    await assert.rejects(
+      () => runIntel(leadA.id, 'route', { policy: 'b2b-sales-routing', version: 1 }),
+      (error) => error.code === 'ALREADY_ASSIGNED' && error.status === 409,
+    );
+
+    // Provider outage: honest failure, nothing persisted, no lead link.
+    const leadFail = await leads.create({ firstName: 'Out', lastName: 'Age', email: 'x@fail.example' }, { actor });
+    await assert.rejects(
+      () => runIntel(leadFail.id, 'enrich', { provider: 'fixture-firmographics' }),
+      (error) => error.code === 'PROVIDER_FAILED',
+    );
+    assert.equal(leads.get(leadFail.id).enrichmentSnapshotId, null);
+
+    // Intelligence records are immutable through public CRUD.
+    const snapshots = app.modules.get('enrichment-snapshot').service;
+    await assert.rejects(
+      () => snapshots.update(enrichedA.result.snapshot.id, { country: 'XX' }, { actor }),
+      (error) => error.code === 'VALIDATION_ERROR',
+    );
+    const scoreRunsSvc = app.modules.get('score-run').service;
+    const assignmentsSvc = app.modules.get('assignment').service;
+    const freshA = leads.get(leadA.id);
+    assert.equal(freshA.assignedTargetId, 'enterprise-italy');
+    assert.equal(scoreRunsSvc.get(freshA.scoreRunId).fingerprint, scoredA.result.fingerprint, 'runs carry the model fingerprint');
+    assert.equal(assignmentsSvc.list().filter((a) => a.leadId === leadA.id).length, 1, 'exactly one assignment history entry');
+
     console.log(JSON.stringify({
       ok: true,
-      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; CRUD cannot set lifecycle, conversion or pipeline fields.',
+      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads to Enterprise Italy / Spain Sales / the fallback queue with immutable snapshots, runs and assignment history; CRUD cannot set lifecycle, conversion, pipeline or intelligence fields.',
       leads: leads.list().length,
       tasks: tasks.list().length,
       companies: app.services.companies.list().length,

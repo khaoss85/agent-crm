@@ -1,0 +1,23 @@
+{
+  "manifestVersion": 1,
+  "name": "enrichment-snapshot",
+  "description": "One immutable enrichment result for a lead, with provenance. Every field is managed: created and filled only by the lead.enrich action; public CRUD cannot write or change it.",
+  "fields": [
+    { "name": "leadId", "type": "string", "writable": "managed" },
+    { "name": "provider", "type": "string", "writable": "managed" },
+    { "name": "providerVersion", "type": "integer", "writable": "managed" },
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "status", "type": "enum", "values": ["complete", "partial"], "writable": "managed" },
+    { "name": "companyDomain", "type": "string", "writable": "managed" },
+    { "name": "companyName", "type": "string", "writable": "managed" },
+    { "name": "country", "type": "string", "writable": "managed" },
+    { "name": "employeeRange", "type": "string", "writable": "managed" },
+    { "name": "industry", "type": "string", "writable": "managed" },
+    { "name": "revenueRange", "type": "string", "writable": "managed" },
+    { "name": "language", "type": "string", "writable": "managed" },
+    { "name": "confidence", "type": "integer", "writable": "managed" },
+    { "name": "sourceRef", "type": "string", "writable": "managed" },
+    { "name": "retrievedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "expiresAt", "type": "timestamp", "writable": "managed" }
+  ]
+}

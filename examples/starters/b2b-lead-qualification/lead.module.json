@@ -9,13 +9,20 @@
     { "name": "email", "type": "email", "required": true },
     { "name": "companyName", "type": "string" },
     { "name": "source", "type": "enum", "values": ["website", "referral", "event", "outbound"] },
-    { "name": "score", "type": "integer" },
+    { "name": "score", "type": "integer", "writable": "managed" },
     { "name": "status", "type": "enum", "values": ["new", "qualified", "disqualified", "converted"], "writable": "managed", "default": "new" },
     { "name": "disqualificationReason", "type": "string", "writable": "managed" },
     { "name": "qualifiedAt", "type": "timestamp", "writable": "managed" },
     { "name": "convertedAt", "type": "timestamp", "writable": "managed" },
     { "name": "convertedCompanyId", "type": "string", "writable": "managed" },
     { "name": "convertedContactId", "type": "string", "writable": "managed" },
-    { "name": "convertedOpportunityId", "type": "string", "writable": "managed" }
+    { "name": "convertedOpportunityId", "type": "string", "writable": "managed" },
+    { "name": "enrichmentSnapshotId", "type": "string", "writable": "managed" },
+    { "name": "enrichedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "scoreRunId", "type": "string", "writable": "managed" },
+    { "name": "scoredAt", "type": "timestamp", "writable": "managed" },
+    { "name": "assignedTargetId", "type": "string", "writable": "managed" },
+    { "name": "assignedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "routingRunId", "type": "string", "writable": "managed" }
   ]
 }
