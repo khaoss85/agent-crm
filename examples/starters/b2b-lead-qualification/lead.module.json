@@ -1,0 +1,17 @@
+{
+  "manifestVersion": 1,
+  "name": "lead",
+  "description": "An inbound lead captured for qualification.",
+  "table": "leads",
+  "fields": [
+    { "name": "firstName", "type": "string", "required": true },
+    { "name": "lastName", "type": "string", "required": true },
+    { "name": "email", "type": "email", "required": true },
+    { "name": "companyName", "type": "string" },
+    { "name": "source", "type": "enum", "values": ["website", "referral", "event", "outbound"] },
+    { "name": "score", "type": "integer" },
+    { "name": "status", "type": "enum", "values": ["new", "qualified", "disqualified"], "writable": "managed", "default": "new" },
+    { "name": "disqualificationReason", "type": "string", "writable": "managed" },
+    { "name": "qualifiedAt", "type": "timestamp", "writable": "managed" }
+  ]
+}
