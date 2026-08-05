@@ -137,19 +137,21 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 
 The four product workstreams (`docs/strategy/REVENUE_OPERATIONS.md`, `DELIVERY_SERVICE.md`, `ANALYTICS_STUDIO.md`; milestones M9–M15 in `EXECUTION_ROADMAP.md`) introduce the JTBDs below. **Every newly introduced JTBD starts as *not supported*** — no primitive exists — except where an existing validated primitive earns *partially supported*, with the evidence named. None of these may move without linked automated evidence, and JTBDs involving real external users (partners, customers, role-scoped managers) additionally cannot reach *validated end to end* before authentication, tenancy and RBAC exist (Production Spine, JTBD-15).
 
-### Lead Intelligence & Routing (target: M9)
+### Lead Intelligence & Routing (Milestone 9 — implemented for the local slice, ADR-015)
 
 | ID | Job | Status | Notes |
 |---|---|---|---|
-| JTBD-LI-01 | Enrich a Lead from external sources with snapshot + provenance | **not supported** | no provider contract or snapshot primitive |
-| JTBD-LI-02 | Calculate an explainable lead score | **not supported** | no scoring model/run/contribution primitives |
-| JTBD-LI-03 | Prioritize Leads by score | **not supported** | depends on JTBD-LI-02 |
-| JTBD-LI-04 | Route a Lead automatically under a published policy | **not supported** | no routing policy/run/assignment primitives |
-| JTBD-LI-05 | Use sales capacity and availability in routing | **not supported** | no capacity/availability records |
-| JTBD-LI-06 | Manually reassign with permission and reason | **not supported** | no assignment or permission primitives; real permission validation gated by the Production Spine (JTBD-15) |
-| JTBD-LI-07 | Version and publish a scoring/routing policy | **not supported** | no runtime policy-version model (Git history alone is not runtime versioning) |
-| JTBD-LI-08 | Roll back a policy to an earlier version | **not supported** | depends on JTBD-LI-07; rollback = publish a new version from an earlier definition |
-| JTBD-LI-09 | Reproduce a historical routing decision exactly | **not supported** | requires versioned runs with recorded inputs |
+| JTBD-LI-01 | Enrich a Lead from external sources with snapshot + provenance | **validated end to end** | with a deterministic **fixture** provider behind the real provider contract — a real paid external provider is explicitly NOT validated (needs human-approved credentials) |
+| JTBD-LI-02 | Calculate an explainable lead score | **validated end to end** | versioned model → ScoreRun + per-rule contributions; reproducible for identical inputs; bounds clamped |
+| JTBD-LI-03 | Prioritize Leads by score | **partially supported** | the managed `score` exists on every scored lead; no sorted/prioritized list surface exists yet |
+| JTBD-LI-04 | Route a Lead automatically under a published policy | **validated end to end** | versioned policy → RoutingRun + Assignment history; deterministic tie-break; fallback queue; one final assignment under concurrency |
+| JTBD-LI-05 | Use sales capacity and availability in routing | **partially supported** | declared **capacity** is enforced (a full target is excluded — tested); real availability/calendar data is NOT modeled |
+| JTBD-LI-06 | Manually reassign with permission and reason | **not supported** | the assignment record carries `source`/`previousAssignmentId`/`reason` as future data, but no override action exists and none may claim manager permissions before the Production Spine (JTBD-15) |
+| JTBD-LI-07 | Version and publish a scoring/routing policy | **validated end to end** | narrow wording: publication = code-first registration at startup; each version's fingerprint is persisted in `definition_versions`; an edited registered version stops the app; no runtime publishing UI |
+| JTBD-LI-08 | Roll back a policy to an earlier version | **partially supported** | the mechanism is proven (a new version derived from an earlier definition registers cleanly; history immutable) but no end-to-end starter flow routes with a rolled-back version yet |
+| JTBD-LI-09 | Reproduce a historical routing decision exactly | **partially supported** | runs persist model/policy name, version, fingerprint and stable input references, surviving new versions and restarts; an automated re-execution harness reproducing the decision does not exist yet |
+
+**Evidence (LI-01/02/04/07)**: `tests/lead-intelligence-e2e.test.js` (full enrich→score→route over HTTP/SDK; snapshot provenance + reuse + expiry refresh; contribution order and totals incl. clamp; provider outage/timeout/invalid-data honesty; CRUD immutability matrix on all six record modules and the lead links; capacity exclusion; same-app and cross-connection concurrency with exactly one assignment; restart persistence; fingerprint drift stopping the next boot), `tests/intelligence-contract.test.js` (validation matrix, fingerprint determinism, persisted-version integrity, prepare-phase contract, hostile names), `examples/starters/b2b-lead-qualification/install.mjs` (Enterprise Italy / Spain Sales / fallback outcomes). Real Chromium coverage is the generic Admin smoke (`docs/ADMIN_SMOKE.md`); no dedicated intelligence browser step yet.
 
 ### Commercial Operations / CPQ (target: M10–M11)
 
@@ -201,4 +203,4 @@ The four product workstreams (`docs/strategy/REVENUE_OPERATIONS.md`, `DELIVERY_S
 
 This matrix guides roadmap prioritization: the largest gaps blocking common CRM adoption are a reusable Activity/Task engine with scheduling (JTBD-07), generated workflows/approvals for custom objects (JTBD-06), and the auth/tenancy/RBAC prerequisite (JTBD-15).
 
-The future-workstream sections (JTBD-LI/CO/DS/AN) chart the M9–M15 roadmap: all **not supported** today except JTBD-CO-04 and JTBD-DS-01, which inherit *partial* status from the validated approval and workflow primitives. The Production Spine (JTBD-15) remains the hard gate for every job involving real external or role-scoped users.
+The workstream sections chart the M9–M15 roadmap. Lead Intelligence (M9) is now implemented for the local slice: JTBD-LI-01/02/04/07 **validated end to end** (fixture provider, explainable versioned scoring, deterministic routing, persisted version fingerprints — ADR-015), LI-03/05/08/09 partial, LI-06 still not supported. The CO/DS/AN sections remain all **not supported** except JTBD-CO-04 and JTBD-DS-01, which inherit *partial* status from the validated approval and workflow primitives. The Production Spine (JTBD-15) remains the hard gate for every job involving real external or role-scoped users — including manual manager reassignment.

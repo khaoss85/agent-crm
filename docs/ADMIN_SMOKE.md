@@ -78,4 +78,11 @@ Validated in the same real-Chromium run (requires the starter's pipeline and `mo
 19. `Won ✓` / `Lost ✕` badges are visible text; the Discovery column shows a per-currency `EUR …` total.
 20. Select **Demo** in the card's "Move to" control and press **Move** → Demo count becomes 1, Discovery 0, and the server's opportunity record reads `pipelineStage: demo`.
 
+### Lead Intelligence (Milestone 9)
+
+Validated in the same real-Chromium run (requires the intelligence manifests, definitions and framework actions registered — see `docs/LEAD_INTELLIGENCE.md`); note step 17's "no action buttons remain" becomes "no **lifecycle** action buttons remain" — the state-independent Enrich/Record signal/Score/Route controls stay visible:
+
+21. After enrich → score → route on a fresh lead (fixture provider), the lead detail shows the **Enrich**, **Score** and **Route** action controls, the assigned target (`enterprise-italy`) as read-only text, and no editable input for any managed intelligence field.
+22. A `score-contribution` record's detail renders the rule key (e.g. `enterprise-company`) read-only — the immutable record modules are browsable but never editable in the generic Admin.
+
 Report any step that fails; do not mark the actions UI browser-validated unless all pass.
