@@ -47,7 +47,13 @@ Input field types are `string`, `timestamp`, `enum` (which requires
   `NaN`/`Infinity` and unsafe magnitudes are `400`s — so money stays integer
   minor units (`valueCents`) end to end. Zero is a value, not "missing". Sign
   policy (e.g. non-negative) belongs to the action's own validation. The Admin
-  renders integer inputs as number controls and posts JSON numbers.
+  renders integer inputs as number controls and posts JSON numbers. An Admin
+  that predates this type renders it as text; the server rejects the resulting
+  string with a field-tied `400`, so the fallback is safe.
+
+Any input field may declare a `hint` (string, ≤ 200 chars) — free-text guidance
+rendered under the control strictly as text. Use it wherever a raw value could
+mislead, e.g. money: `hint: "Integer MINOR units: 500000 means 5,000.00."`.
 
 ### The `execute` context
 

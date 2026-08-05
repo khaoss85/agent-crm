@@ -149,6 +149,29 @@ conversion links appear read-only in the managed-fields panel after refresh.
 - [x] Docs: ADR-013, ACTIONS/API/MODULE docs, JTBD matrix (evidence-first), TASKS.md.
 - [x] `npm run verify` + smoke + starter + Chromium; PR open and unmerged.
 
+## Fixed in the adversarial review (same PR)
+
+1. **Corruption compounding.** A qualified lead carrying a stray conversion
+   link (out-of-band write) converted successfully and silently overwrote the
+   link. Convert now refuses any pre-set conversion field on a qualified lead
+   with `409 CONVERSION_STATE_CORRUPT` — tested for all four fields.
+2. **Minor-units ambiguity.** The Admin's "Value Cents" number field gave no
+   cue that `500000` means `5,000.00`. Action inputs gained a validated,
+   bounded `hint` rendered as text; convert's money and currency inputs use it.
+3. **Explicit boundaries documented** (ADR-013): the public opportunity
+   `sourceKey` write is deliberate (blocks visibly, cannot forge — the lead's
+   links are authoritative); company lookup is a complete O(n) scan proven
+   beyond 250 rows (no page-limit correctness dependency); conversion links
+   are action-level guarantees, not SQL FKs; the old-Admin integer fallback is
+   safe (text → server 400).
+4. **Hardening**: the adapter registry is built once per app (was once per
+   action call); convert validates `ctx.core` presence with a clear error and
+   bounds `companyName` at the action-string limit; adapter construction fails
+   closed on malformed dependencies (tested); two-app isolation, frozen
+   registry, reused-contact identity preservation, same-email/same-company
+   reuse, same-email/different-company concurrency, and audit/managed-update
+   fault injections are all pinned by tests.
+
 ## Explicitly deferred
 
 Pipeline stages/kanban, forecasting, fuzzy deduplication, account hierarchies,
