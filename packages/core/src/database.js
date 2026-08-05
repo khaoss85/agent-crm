@@ -111,7 +111,10 @@ const MIGRATIONS = [
   },
 ];
 
-/** @param {{path?: string}} [options] @returns {AgentCrmDatabase} */
+/**
+ * @param {{path?: string, moduleMigrations?: Array<{name: string, sql: string}>}} [options]
+ * @returns {AgentCrmDatabase}
+ */
 export function createDatabase(options = {}) {
   const requestedPath = options.path ?? process.env.CRM_DB_PATH ?? './data/agent-crm.sqlite';
   const dbPath = requestedPath === ':memory:' ? requestedPath : resolve(requestedPath);
@@ -142,6 +145,33 @@ export function createDatabase(options = {}) {
       raw.prepare(
         'INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)',
       ).run(migration.version, migration.name, new Date().toISOString());
+      raw.exec('COMMIT;');
+    } catch (error) {
+      raw.exec('ROLLBACK;');
+      throw error;
+    }
+  }
+
+  // Generated-module migrations are keyed by name, not version, so the set can
+  // grow in any order without renumbering migrations that already ran.
+  raw.exec(`
+    CREATE TABLE IF NOT EXISTS module_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    ) STRICT;
+  `);
+  const appliedModuleMigrations = new Set(
+    raw.prepare('SELECT name FROM module_migrations').all().map((row) => String(row.name)),
+  );
+  for (const migration of options.moduleMigrations ?? []) {
+    if (appliedModuleMigrations.has(migration.name)) continue;
+    raw.exec('BEGIN IMMEDIATE;');
+    try {
+      raw.exec(migration.sql);
+      raw.prepare('INSERT INTO module_migrations(name, applied_at) VALUES (?, ?)').run(
+        migration.name,
+        new Date().toISOString(),
+      );
       raw.exec('COMMIT;');
     } catch (error) {
       raw.exec('ROLLBACK;');
