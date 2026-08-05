@@ -52,17 +52,6 @@ export function planModule(input) {
   const manifest = validateModuleManifest(input.manifest);
   const rootDir = resolve(input.rootDir ?? process.cwd());
 
-  const referenceFields = manifest.fields.filter((field) => field.type === 'reference');
-  if (referenceFields.length) {
-    throw new ValidationError(
-      `module create does not support reference fields yet (${referenceFields
-        .map((field) => `"${field.name}"`)
-        .join(', ')}). Generate the migration with module:migration and write the service by ` +
-        'hand so cross-module integrity matches the core modules, or remove the reference fields.',
-      { fields: referenceFields.map((field) => field.name) },
-    );
-  }
-
   const names = buildNames(manifest.name);
   const migration = generateModuleMigration(manifest);
   const moduleDir = join('packages', 'modules', manifest.name);
@@ -71,6 +60,37 @@ export function planModule(input) {
     throw new ValidationError('"generated" is reserved for the module registry; choose another module name');
   }
   const existingModules = scanExistingModules(rootDir);
+
+  // Resolve every reference field's target table to an installed generated
+  // module (or this module itself, for a self-reference), before any write.
+  const referenceFields = manifest.fields.filter((field) => field.type === 'reference');
+  /** @type {Record<string, {targetModule: string, targetTable: string, targetDisplayField: string, required: boolean}>} */
+  const referenceTargets = {};
+  for (const field of referenceFields) {
+    const targetTable = field.references;
+    if (CORE_TABLES.has(targetTable)) {
+      throw new ValidationError(
+        `reference field "${field.name}" targets core table "${targetTable}"; generated-to-core references are not supported in this milestone (a future explicit adapter is required)`,
+        { field: field.name, targetTable },
+      );
+    }
+    const target =
+      targetTable === manifest.table
+        ? { dirName: manifest.name, kind: 'generated', manifest }
+        : existingModules.find((entry) => entry.kind === 'generated' && entry.manifest?.table === targetTable);
+    if (!target) {
+      throw new ValidationError(
+        `reference field "${field.name}" targets table "${targetTable}", but no installed generated module uses it; apply the target module first`,
+        { field: field.name, targetTable },
+      );
+    }
+    referenceTargets[field.name] = {
+      targetModule: target.dirName,
+      targetTable,
+      targetDisplayField: displayFieldFor(target.manifest),
+      required: field.required === true,
+    };
+  }
   for (const existing of existingModules) {
     const sameName = existing.dirName.toLowerCase() === manifest.name.toLowerCase();
     if (sameName && existing.kind === 'handwritten') {
@@ -109,12 +129,12 @@ export function planModule(input) {
     {
       path: join(moduleDir, 'src', `${manifest.name}-service.js`),
       action: 'create',
-      content: serviceTemplate(manifest, names),
+      content: serviceTemplate(manifest, names, referenceTargets),
     },
     {
       path: join(moduleDir, 'src', 'index.js'),
       action: 'create',
-      content: indexTemplate(manifest, names),
+      content: indexTemplate(manifest, names, referenceTargets),
     },
     {
       path: join('tests', `${manifest.name}-module.test.js`),
@@ -139,6 +159,19 @@ export function planModule(input) {
     module: manifest.name,
     table: manifest.table,
     migrationName: migration.migrationName,
+    // Reference dependencies are surfaced in the plan (which strips file
+    // contents) so an agent/user sees each relationship before applying.
+    references: manifest.fields
+      .filter((field) => field.type === 'reference')
+      .map((field) => ({
+        field: field.name,
+        column: field.column,
+        targetModule: referenceTargets[field.name].targetModule,
+        targetTable: referenceTargets[field.name].targetTable,
+        targetKey: 'id',
+        required: field.required === true,
+        onDelete: 'restrict',
+      })),
     rootDir,
     files: files.map((file) => ({
       path: file.path,
@@ -302,6 +335,20 @@ function sanitizeSavepoint(moduleName) {
   return moduleName.replaceAll('-', '_');
 }
 
+/**
+ * Deterministic display field for a target manifest: first required string,
+ * else first string, else 'id'. Matches the Admin displayTitle convention.
+ * @param {import('../../core/src/module-manifest.js').NormalizedModuleManifest} manifest
+ */
+function displayFieldFor(manifest) {
+  const fields = manifest?.fields ?? [];
+  const requiredString = fields.find((field) => field.type === 'string' && field.required);
+  if (requiredString) return requiredString.name;
+  const anyString = fields.find((field) => field.type === 'string');
+  if (anyString) return anyString.name;
+  return 'id';
+}
+
 /** @param {string} moduleName */
 function buildNames(moduleName) {
   const pascal = moduleName
@@ -370,6 +417,7 @@ function validatorCall(field, valueExpression) {
 function usedValidators(manifest) {
   const used = new Set();
   for (const field of manifest.fields) {
+    if (field.type === 'reference') continue; // validated via #reference, not an imported validator
     used.add(VALIDATORS[field.type][field.required ? 'required' : 'optional']);
   }
   return [...used].sort();
@@ -387,13 +435,23 @@ function toDbExpression(field, valueExpression) {
  * @param {import('../../core/src/module-manifest.js').NormalizedModuleManifest} manifest
  * @param {ReturnType<typeof buildNames>} names
  */
-function serviceTemplate(manifest, names) {
+function serviceTemplate(manifest, names, referenceTargets = {}) {
   const entity = names.camel;
   const columns = ['id', ...manifest.fields.map((field) => field.column), 'created_at', 'updated_at'];
   const placeholders = columns.map(() => '?').join(', ');
+  const hasReferences = manifest.fields.some((field) => field.type === 'reference');
+
+  /** For a field, the expression that validates the raw input value. */
+  const valueExpr = (field, valueExpression) => {
+    if (field.type === 'reference') {
+      const target = referenceTargets[field.name];
+      return `this.#reference('${field.name}', ${JSON.stringify(target.targetTable)}, ${field.required === true}, ${valueExpression})`;
+    }
+    return validatorCall(field, valueExpression);
+  };
 
   const createAssignments = manifest.fields
-    .map((field) => `      ${field.name}: ${validatorCall(field, `input.${field.name}`)},`)
+    .map((field) => `      ${field.name}: ${valueExpr(field, `input.${field.name}`)},`)
     .join('\n');
   const insertValues = [
     `      ${entity}.id,`,
@@ -408,7 +466,7 @@ function serviceTemplate(manifest, names) {
     .map((field) =>
       [
         `    if (Object.hasOwn(input, '${field.name}')) {`,
-        `      const value = ${validatorCall(field, `input.${field.name}`)};`,
+        `      const value = ${valueExpr(field, `input.${field.name}`)};`,
         `      assignments.push('${field.column} = ?');`,
         `      params.push(${toDbExpression(field, 'value')});`,
         `      changes.${field.name} = value;`,
@@ -435,20 +493,36 @@ function serviceTemplate(manifest, names) {
 ${header()}
 
 import { randomUUID } from 'node:crypto';
-import { ConflictError, NotFoundError } from '../../../core/src/errors.js';
-import {
-  ${usedValidators(manifest).join(',\n  ')},
-} from '../../../core/src/validation.js';
-import { nowIso } from '../../../core/src/time.js';
+import { ${hasReferences ? 'ConflictError, NotFoundError, ValidationError' : 'ConflictError, NotFoundError'} } from '../../../core/src/errors.js';
+${usedValidators(manifest).length ? `import {\n  ${usedValidators(manifest).join(',\n  ')},\n} from '../../../core/src/validation.js';\n` : ''}import { nowIso } from '../../../core/src/time.js';
 
 export class ${names.pascal}Service {
-  /** @param {{database: any, audit: any, events: any}} dependencies */
-  constructor({ database, audit, events }) {
+  /** @param {{database: any, audit: any, events: any, references?: any}} dependencies */
+  constructor({ database, audit, events, references }) {
     this.database = database;
     this.audit = audit;
     this.events = events;
+    this.references = references;
   }
-
+${hasReferences ? `
+  /**
+   * Validate a reference value through the application reference resolver
+   * (never a direct cross-module SQL query). Returns the validated id, or null
+   * for an omitted/cleared optional reference. A bad target throws a
+   * ValidationError before any write, so no audit or event is produced.
+   * @param {string} field @param {string} targetTable @param {boolean} required @param {unknown} value
+   */
+  #reference(field, targetTable, required, value) {
+    if (value === undefined || value === null || value === '') {
+      if (required) throw new ValidationError(field + ' is required', { field });
+      return null;
+    }
+    if (!this.references || typeof this.references.assertTarget !== 'function') {
+      throw new ValidationError(field + ' cannot be validated: no reference resolver', { field });
+    }
+    return this.references.assertTarget(targetTable, value, field);
+  }
+` : ''}
   /**
    * Runs the data write and its audit record in one atomic unit. SAVEPOINT is
    * used instead of BEGIN so the service stays safe inside an enclosing
@@ -569,18 +643,43 @@ ${rowMappings}
  * @param {import('../../core/src/module-manifest.js').NormalizedModuleManifest} manifest
  * @param {ReturnType<typeof buildNames>} names
  */
-function indexTemplate(manifest, names) {
+function indexTemplate(manifest, names, referenceTargets = {}) {
   const fieldNames = ['id', ...manifest.fields.map((field) => field.name), 'createdAt', 'updatedAt'];
-  const fieldMetadata = manifest.fields.map((field) => ({
-    name: field.name,
-    type: field.type,
-    required: field.required,
-    unique: field.unique,
-    ...(field.values ? { values: field.values } : {}),
-  }));
+  const fieldMetadata = manifest.fields.map((field) => {
+    if (field.type === 'reference') {
+      const target = referenceTargets[field.name];
+      return {
+        name: field.name,
+        type: 'reference',
+        required: field.required,
+        unique: field.unique,
+        references: target.targetTable,
+        targetModule: target.targetModule,
+        targetKey: 'id',
+        targetDisplayField: target.targetDisplayField,
+        targetKind: 'generated',
+      };
+    }
+    return {
+      name: field.name,
+      type: field.type,
+      required: field.required,
+      unique: field.unique,
+      ...(field.values ? { values: field.values } : {}),
+    };
+  });
   const fieldMetadataLines = fieldMetadata
     .map((field) => `    ${JSON.stringify(field)},`)
     .join('\n');
+  const references = manifest.fields
+    .filter((field) => field.type === 'reference')
+    .map((field) => ({
+      field: field.name,
+      column: field.column,
+      targetModule: referenceTargets[field.name].targetModule,
+      targetTable: referenceTargets[field.name].targetTable,
+      required: field.required === true,
+    }));
   return `// @ts-check
 ${header()}
 
@@ -594,10 +693,12 @@ export const ${names.camel}ModuleDefinition = Object.freeze({
   // /api/modules surface and client.module('${manifest.name}') (ADR-008).
   kind: 'generated',
   manifestVersion: ${manifest.manifestVersion},
+  table: ${JSON.stringify(manifest.table)},
   capabilities: Object.freeze(['create', 'get', 'list', 'update']),
   fields: Object.freeze([
 ${fieldMetadataLines}
   ]),
+  references: Object.freeze(${JSON.stringify(references)}),
   immutableFields: Object.freeze(['id', 'createdAt', 'updatedAt']),
   entities: [
     {
@@ -622,6 +723,41 @@ export { ${names.pascal}Service };
  * @param {ReturnType<typeof buildNames>} names
  */
 function testTemplate(manifest, names) {
+  const referenceField = manifest.fields.find((field) => field.type === 'reference');
+  if (referenceField) {
+    // A module with references can't be created without valid target ids, which
+    // this self-contained test can't synthesize generically. It proves the
+    // module is registered/migrated and that a missing target is rejected; the
+    // full CRUD-with-references path is covered by the reference e2e test.
+    const firstRequired = manifest.fields.find((field) => field.required);
+    return `${header()}
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createAgentCrmApp } from '../packages/app/src/index.js';
+
+test('${manifest.name} module is registered and validates references', async (t) => {
+  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  t.after(() => app.close());
+  const actor = { type: 'human', id: 'test-user' };
+
+  assert.ok(app.modules.list().some((module) => module.name === '${manifest.name}'));
+  const service = app.modules.get('${manifest.name}').service;
+
+  // A non-existent reference target is rejected with a field validation error,
+  // and no record, audit or event is produced.
+  await assert.rejects(
+    () => service.create({ ${manifest.fields.filter((f) => f.required).map((f) => `${f.name}: ${f.type === 'reference' ? "'missing-id'" : exampleValue(f)}`).join(', ')} }, { actor }),
+    /${referenceField.name}/,
+  );
+  assert.equal(service.list().length, 0);
+  assert.equal(app.audit.list({ entityType: '${manifest.name}' }).length, 0);
+${firstRequired ? `
+  await assert.rejects(() => service.create({}, { actor }), /${firstRequired.name}/);` : ''}
+});
+`;
+  }
+
   const requiredExamples = manifest.fields
     .filter((field) => field.required)
     .map((field) => `  ${field.name}: ${exampleValue(field)},`)

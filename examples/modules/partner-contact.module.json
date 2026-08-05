@@ -1,0 +1,11 @@
+{
+  "manifestVersion": 1,
+  "name": "partner-contact",
+  "description": "A contact who belongs to a Partner.",
+  "table": "partner_contacts",
+  "fields": [
+    { "name": "fullName", "type": "string", "required": true },
+    { "name": "email", "type": "email" },
+    { "name": "partnerId", "type": "reference", "references": "partners", "required": true }
+  ]
+}
