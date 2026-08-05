@@ -27,11 +27,10 @@ Chosen: **3**. Git history alone is not runtime policy versioning — the finger
 
 ## Storage model — all-managed generated modules
 
-Five new record types + signals are starter-owned generated modules whose **every field is `writable: "managed"`**:
+Six record types + signals are starter-owned generated modules whose **every field is `writable: "managed"`**, which the factory now generates as **read-only public modules** (revised in the adversarial review):
 
-- public `create` can only produce an empty row (managed fields take default/null and reject input);
-- public `update` has zero public fields to touch, so it is a structural no-op;
-- the only data write path is the in-process `applyManaged` used by actions — i.e. **immutable through public CRUD by construction**, read-only in the Admin, with no factory changes needed.
+- capabilities are `['get', 'list']` — no public `create` or `update` exists at all (HTTP POST/PATCH fail closed with 404 capability gating; the Admin shows no Create/Edit; not even an empty row can be created by a client);
+- the only write paths are the generated in-process `createManaged` (one audit + one event per record) and `applyManaged`, reachable only from trusted action code.
 
 Modules (starter manifests, applied through the real CLI/factory like lead/task):
 
@@ -46,7 +45,7 @@ Modules (starter manifests, applied through the real CLI/factory like lead/task)
 
 Lead links are managed strings (ADR-013 precedent — action-level linkage guarantee, no FK claim): `enrichmentSnapshotId`, `enrichedAt`, `score` (converted from public to managed — nothing in the repo wrote it publicly), `scoreRunId`, `scoredAt`, `assignedTargetId`, `assignedAt`, `routingRunId`. All updated atomically with their run records inside the action transaction.
 
-Local-dev honesty: reads that need "all X for lead L" are bounded list-and-filter scans (limit 500), the same documented posture as ADR-013's company scan. Empty rows creatable via public create are inert — the Lead's managed links, written only by actions, are the authoritative record (the ADR-011/013 trusted-local-surface argument).
+Correctness reads (latest snapshot, sequence numbers, signal sets, target load) use the generated services' exact `listWhere`/`countWhere` queries over manifest-indexed columns — complete at any row count (revised in the adversarial review; the paged `list()` is never used for a correctness decision).
 
 ## Framework pieces
 
@@ -87,4 +86,10 @@ Real third-party providers/credentials, ML/LLM scoring, intent prediction, fuzzy
 
 ## Fixed in the adversarial review
 
-(to be filled by the M9 review)
+1. **Prepare-context write access (critical)**: `prepare` received the full module registry, so `applyManaged`/`create` were callable outside any transaction. Fixed: prepare's `modules` is a read-only per-module view (get/list/listWhere/countWhere only), and the prepared value is normalized to plain JSON-safe data and deep-frozen (functions/symbols/non-plain objects/cycles rejected, dangerous keys dropped).
+2. **Publicly creatable empty rows (critical)**: all-managed modules still generated public create (empty rows) and a silently no-op update. Fixed: the factory now generates them read-only — capabilities `['get','list']`, no public create/update at all, a trusted in-process `createManaged` (one audit + one event), the Admin shows no Create/Edit, and HTTP POST/PATCH fail closed.
+3. **Page-bounded correctness + lifetime load (critical)**: latest-snapshot/sequence/signal/load reads used `list({limit: 500})`, and load counted lifetime assignments. Fixed: generated services gained exact `listWhere`/`countWhere` (declared-field equality/IN, prepared statements) with manifest-declared `index` columns; current load = exact count of ACTIVE (`new`/`qualified`) assigned leads — capacity is released on conversion/disqualification (proven, incl. a two-connection last-slot race with no oversubscription and 520-signal exactness).
+4. **Fingerprint honesty (major)**: canonicalization silently swallowed Dates/Maps/getters and crashed on cycles; closure-captured thresholds escaped the fingerprint. Fixed: strict canonicalization (unsupported values fail loudly), the guarantee renamed to *declared-definition fingerprint*, and a declared `config` contract (fingerprinted, frozen into evaluations) as the sanctioned home for thresholds — the starter's models/policies now declare their tunables. Registration also became transactional (concurrent boots serialize; providers get the same persisted protection, and snapshots store the provider fingerprint).
+5. **Missing decision evidence (major)**: routing runs recorded no target-set state; score runs didn't evidence mutable lead inputs. Fixed: RoutingRun stores the target-set fingerprint plus one `route-evaluation` record per candidate (in/out, exact reason, load, capacity, priority); ScoreRun stores a fingerprint of the lead fields read. LI-09 stays partial (values fingerprinted, not copied).
+6. **Missing lifecycle gating (major)**: intelligence actions ran in any lead state — a converted lead could be routed. Fixed: enrich/score/record-signal `fromStates ['new','qualified']`, route `['new']`, server-enforced.
+7. **Timeout hygiene (moderate)**: the losing provider promise could surface an unhandled rejection. Fixed: late settlement is observed and abandoned (no cancellation claim), proven by a late-rejecting fixture.

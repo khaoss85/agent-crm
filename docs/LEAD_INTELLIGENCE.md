@@ -27,7 +27,9 @@ Every decision is deterministic, explainable, versioned, audited, traced and
 reproducible from source. Inspect via the generic surfaces: the Lead's managed
 link fields (read-only in the Admin), the `enrichment-snapshot` /
 `behavioral-signal` / `score-run` / `score-contribution` / `routing-run` /
-`assignment` modules (immutable through public CRUD — every field managed),
+`route-evaluation` / `assignment` modules (read-only publicly — capabilities
+`get`/`list` only, no public create or update exists at all; records are
+produced solely by the trusted in-process `createManaged`),
 `/api/traces?workflowName=lead.enrich|lead.score|lead.route`, and the audit log.
 
 ## Definitions are code, versions are runtime state
@@ -35,13 +37,22 @@ link fields (read-only in the Admin), the `enrichment-snapshot` /
 Providers, scoring models, routing policies and targets are checked-in
 definitions registered through `packages/intelligence/generated/index.js`
 (empty in-repo; the starter writes it — see
-`examples/starters/b2b-lead-qualification/intelligence.js`). Scoring models and
-routing policies are **versioned**: each `{name, version}` persists a
-deterministic source fingerprint in `definition_versions` at startup, runs
-record the exact version + fingerprint they executed under, and editing a
-registered version's source stops the app. **Rollback = publish a new version
-derived from an earlier definition** (e.g. v3 with v1's rules), never an edit.
-Git history alone is not runtime policy versioning.
+`examples/starters/b2b-lead-qualification/intelligence.js`). Providers, scoring
+models and routing policies are **versioned**: each `{name, version}` persists
+a deterministic **declared-definition fingerprint** in `definition_versions` at
+startup (one transaction — concurrent boots serialize), runs record the exact
+version + fingerprint they executed under, and editing a registered version's
+source stops the app. **Rollback = publish a new version derived from an
+earlier definition** (e.g. v3 with v1's rules), never an edit. Git history
+alone is not runtime policy versioning.
+
+**Declared config, not closures.** The fingerprint captures a definition's own
+source and its declared `config` (plain JSON-safe data, passed frozen to every
+evaluation as `ctx.config`). A handler closing over a mutable outer variable or
+an out-of-file helper is NOT captured — put every semantic threshold and
+tunable in `config` (or as a literal in the handler body). Unsupported values
+(Date, Map, Set, class instances, BigInt, symbols, NaN, cycles) fail
+fingerprinting loudly.
 
 ## Semantics worth knowing
 
@@ -58,11 +69,20 @@ Git history alone is not runtime policy versioning.
   with the run. Re-scoring makes a new run; old runs stay readable forever.
 - **Route** refuses an already-assigned lead (`409 ALREADY_ASSIGNED` — reroute
   is deferred) and an unscored one (`409 LEAD_NOT_SCORED`). Eligibility =
-  active + score band + capacity, where current load is the in-transaction
-  count of leads assigned to each target. Ties break priority desc → load asc
-  → key asc — never randomness. No eligible target → the single declared
-  fallback queue with a recorded reason, else `409 NO_ELIGIBLE_TARGET`.
-  Exactly one final assignment under concurrency, across connections.
+  active + score band + capacity, where **current load is the exact indexed
+  count of ACTIVE leads (`new`/`qualified`) assigned to each target** —
+  converting or disqualifying a lead releases its capacity slot. Ties break
+  priority desc → load asc → key asc — never randomness. No eligible target →
+  the single declared fallback queue with a recorded reason, else
+  `409 NO_ELIGIBLE_TARGET`. Every run records the policy fingerprint, the
+  target-set fingerprint and one `route-evaluation` row per candidate (in/out,
+  exact reason, load, capacity, priority), so historical decisions stay
+  explainable after target data changes. Exactly one final assignment under
+  concurrency, across connections — a last-slot race never oversubscribes.
+- **Lifecycle**: enrich/score/record-signal run only from `new`/`qualified`;
+  route only from `new`. Converted and disqualified leads are outside the
+  intelligence lifecycle — enforced server-side via fromStates, mirrored by
+  the Admin.
 
 ## The authorization boundary (honest)
 

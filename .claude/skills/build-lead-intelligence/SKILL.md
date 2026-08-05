@@ -16,8 +16,9 @@ Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-015) and `docs/LEAD_INTELLIGENCE.md`
 ## Create a scoring model version
 
 1. `{ name, version, label, minScore?, maxScore?, rules: [{ key, label, weight (non-zero int), evaluate(context) }] }` — `evaluate` gets frozen `{ lead, snapshot, signals, evaluatedAt }`, must be total, deterministic, side-effect-free (no network, no LLM, no DB writes) and return `boolean` or `{ matched, reason }`.
-2. **Never edit a registered version.** Changing rules = a NEW version registered alongside the old (the persisted fingerprint check stops the app on in-place edits). Rollback = publish a new version whose rules come from an earlier one.
-3. Test explainability: contributions sum to the total, appear in declared rule order, and the same inputs reproduce the same score. Test the bounds clamp and behavior without snapshot/signals.
+2. **Declare every threshold in `config`.** The fingerprint is a *declared-definition* fingerprint: it captures the definition's source and its declared `config` (frozen into `ctx.config`), NOT values captured by closures or out-of-file helpers. A closure-held threshold changes silently — put it in `config` or as a literal.
+3. **Never edit a registered version.** Changing rules or config = a NEW version registered alongside the old (the persisted fingerprint check stops the app on in-place edits). Rollback = publish a new version whose rules come from an earlier one.
+4. Test explainability: contributions sum to the total, appear in declared rule order, and the same inputs reproduce the same score. Test the bounds clamp and behavior without snapshot/signals.
 
 ## Create a routing policy version
 

@@ -101,3 +101,16 @@ A `reference` field links a record to another generated record (many-to-one). `r
 - An **optional** self-reference (`references` = the module's own table, not `required`) is supported: the first record leaves it null, then may point at any existing record including itself.
 - A **required** self-reference is rejected at plan time — the first record would be impossible to create.
 - Cross-module cycles are not constructible through the CLI (a reference's target must be applied first), so they are neither generated nor claimed as supported.
+
+## Indexes and read-only modules (Milestone 9, ADR-015)
+
+- A field may declare `"index": true` to generate a plain secondary index for
+  exact-match correctness queries (`listWhere`/`countWhere` on the generated
+  service). It is rejected as redundant on `unique` fields (the constraint is
+  already indexed) and on `reference` fields (indexed automatically).
+- A module whose **every** field is `"writable": "managed"` is generated as a
+  **read-only public module**: capabilities `["get", "list"]`, no public
+  `create`/`update` at all (HTTP POST/PATCH fail closed; the Admin shows no
+  Create/Edit), and a trusted in-process `createManaged(patch, ctx)` alongside
+  `applyManaged` for action code. Used by the Lead Intelligence record modules
+  (snapshots, signals, runs, contributions, evaluations, assignments).
