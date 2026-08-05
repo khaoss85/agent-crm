@@ -8,6 +8,7 @@ import {
   SUPPORTED_ADMIN_CONTRACT,
   fieldControl,
   editableFields,
+  managedFields,
   buildCreatePayload,
   buildUpdatePayload,
   apiErrorToFormErrors,
@@ -246,8 +247,230 @@ export function createModuleAdmin(deps) {
     }, { submitLabel: 'Save', readOnly: !canUpdate, immutable: record, title: displayTitle(record, meta.fields), token });
     clear();
     mount.appendChild(form);
+    const actionsPanel = buildActionsPanel(meta, record, id, token);
+    if (actionsPanel) mount.appendChild(actionsPanel);
     await form.__populateReferences(token);
     return form;
+  }
+
+  /**
+   * Whether an action is offered for a record, from the action's declared
+   * `fromStates` against the record's state field. An action with no
+   * `fromStates` (null) is always available.
+   *
+   * @param {{fromStates?: string[] | null, stateField?: string}} action @param {Record<string, any>} record
+   */
+  function actionApplies(action, record) {
+    if (!Array.isArray(action.fromStates)) return true;
+    const stateField = typeof action.stateField === 'string' ? action.stateField : 'status';
+    return action.fromStates.includes(record[stateField]);
+  }
+
+  /**
+   * Generic action controls for a record detail (ADR-011), built purely from
+   * `meta.actions` — no per-module code. A read-only summary shows the current
+   * value of every workflow-managed field (e.g. status), then one button per
+   * action valid for the record's current state. Actions with input reveal a
+   * small form built from the action's input schema; actions without input run
+   * on click. On success the detail is re-rendered so state and buttons update.
+   *
+   * @param {any} meta @param {Record<string, any>} record @param {string} id @param {number} token
+   */
+  function buildActionsPanel(meta, record, id, token) {
+    const managed = managedFields(meta);
+    const actions = Array.isArray(meta.actions) ? meta.actions : [];
+    if (!managed.length && !actions.length) return null;
+
+    const panel = el(doc, 'section', { class: 'panel actions-panel' });
+    const heading = el(doc, 'div', { class: 'panel-heading' });
+    const titleBox = el(doc, 'div');
+    titleBox.appendChild(el(doc, 'p', { class: 'kicker', text: 'Lifecycle' }));
+    titleBox.appendChild(el(doc, 'h2', { text: 'Actions' }));
+    heading.appendChild(titleBox);
+    panel.appendChild(heading);
+
+    if (managed.length) {
+      const dl = el(doc, 'dl', { class: 'managed' });
+      for (const field of managed) {
+        dl.appendChild(el(doc, 'dt', { text: humanizeLabel(field.name) }));
+        const value = record[field.name];
+        dl.appendChild(el(doc, 'dd', {
+          text: value === null || value === undefined || value === '' ? '—' : String(value),
+          attrs: { 'data-managed-field': field.name },
+        }));
+      }
+      panel.appendChild(dl);
+    }
+
+    const panelError = el(doc, 'p', { class: 'form-error hidden', attrs: { role: 'alert' } });
+    panel.appendChild(panelError);
+
+    const applicable = actions.filter((action) => actionApplies(action, record));
+    if (!applicable.length) {
+      panel.appendChild(el(doc, 'p', { class: 'empty', text: 'No actions available for this record.' }));
+    } else {
+      for (const action of applicable) {
+        panel.appendChild(buildActionRow(meta, action, id, panelError));
+      }
+    }
+    // Test/programmatic hooks.
+    panel.__actions = applicable.map((action) => action.name);
+    panel.__runAction = (name, values) => {
+      const action = applicable.find((candidate) => candidate.name === name);
+      if (!action) throw new Error(`action not applicable: ${name}`);
+      return submitAction(meta, action, id, values ?? {}, () => {}, panelError);
+    };
+    return panel;
+  }
+
+  /**
+   * One action's controls: a trigger button, plus (for actions with input) an
+   * inline form revealed on click. Double-submit guarded; input errors and the
+   * general error render as text.
+   *
+   * @param {any} meta @param {any} action @param {string} id @param {any} panelError
+   */
+  function buildActionRow(meta, action, id, panelError) {
+    const row = el(doc, 'div', { class: 'action-row', attrs: { 'data-action': action.name } });
+    const trigger = el(doc, 'button', {
+      class: 'primary action-trigger',
+      text: action.label ?? action.name,
+      attrs: { type: 'button', 'data-action-trigger': action.name },
+    });
+    row.appendChild(trigger);
+    if (action.description) row.appendChild(el(doc, 'small', { class: 'hint', text: action.description }));
+
+    const inputs = Array.isArray(action.input) ? action.input : [];
+    let busy = false;
+    const setBusy = (value) => {
+      busy = value;
+      trigger.disabled = value;
+      trigger.setAttribute('aria-busy', value ? 'true' : 'false');
+    };
+
+    if (!inputs.length) {
+      trigger.addEventListener('click', async () => {
+        if (busy) return;
+        setBusy(true);
+        await submitAction(meta, action, id, {}, setBusy, panelError);
+      });
+      return row;
+    }
+
+    // Actions with input: reveal a small form on click.
+    const form = el(doc, 'form', { class: 'action-form hidden' });
+    form.setAttribute('novalidate', 'novalidate');
+    /** @type {Record<string, any>} */
+    const fieldInputs = {};
+    /** @type {Record<string, any>} */
+    const fieldErrors = {};
+    for (const field of inputs) {
+      const fieldRow = el(doc, 'div', { class: 'field-row' });
+      const inputId = `action-${meta.name}-${action.name}-${field.name}`;
+      const label = el(doc, 'label', { text: humanizeLabel(field.name), attrs: { for: inputId } });
+      if (field.required) label.appendChild(el(doc, 'span', { class: 'req', text: ' *' }));
+      fieldRow.appendChild(label);
+      let input;
+      if (field.type === 'enum') {
+        input = el(doc, 'select', { attrs: { id: inputId, name: field.name } });
+        input.appendChild(el(doc, 'option', { text: field.required ? 'Select…' : '(none)', attrs: { value: '' } }));
+        for (const value of Array.isArray(field.values) ? field.values : []) {
+          input.appendChild(el(doc, 'option', { text: value, attrs: { value } }));
+        }
+      } else {
+        input = el(doc, 'input', { attrs: { id: inputId, name: field.name, type: 'text' } });
+        if (field.type === 'timestamp') input.setAttribute('placeholder', 'YYYY-MM-DDTHH:MM:SSZ');
+      }
+      if (field.required) input.setAttribute('required', 'required');
+      const errorNode = el(doc, 'small', { class: 'field-error hidden', attrs: { id: `${inputId}-error` } });
+      input.setAttribute('aria-describedby', `${inputId}-error`);
+      fieldRow.appendChild(input);
+      if (field.type === 'timestamp') {
+        fieldRow.appendChild(el(doc, 'small', { class: 'hint', text: 'ISO-8601 UTC, e.g. 2026-08-10T09:00:00Z' }));
+      }
+      fieldRow.appendChild(errorNode);
+      form.appendChild(fieldRow);
+      fieldInputs[field.name] = input;
+      fieldErrors[field.name] = errorNode;
+    }
+    const runButton = el(doc, 'button', { class: 'primary', text: 'Run', attrs: { type: 'submit' } });
+    form.appendChild(runButton);
+    row.appendChild(form);
+
+    const clearFieldErrors = () => {
+      for (const node of Object.values(fieldErrors)) {
+        node.textContent = '';
+        node.setAttribute('class', 'field-error hidden');
+      }
+    };
+    const showFieldErrors = (fields = {}) => {
+      clearFieldErrors();
+      for (const [name, message] of Object.entries(fields)) {
+        if (fieldErrors[name]) {
+          fieldErrors[name].textContent = message;
+          fieldErrors[name].setAttribute('class', 'field-error');
+        }
+      }
+    };
+
+    trigger.addEventListener('click', () => {
+      const hidden = form.getAttribute('class').includes('hidden');
+      form.setAttribute('class', hidden ? 'action-form' : 'action-form hidden');
+    });
+
+    async function handleRun(event) {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      if (busy) return;
+      clearFieldErrors();
+      /** @type {Record<string, unknown>} */
+      const values = {};
+      /** @type {Record<string, string>} */
+      const clientErrors = {};
+      for (const field of inputs) {
+        const raw = fieldInputs[field.name].value;
+        const text = raw === undefined || raw === null ? '' : String(raw).trim();
+        if (text === '') {
+          if (field.required) clientErrors[field.name] = `${humanizeLabel(field.name)} is required`;
+          continue;
+        }
+        values[field.name] = text;
+      }
+      if (Object.keys(clientErrors).length) return showFieldErrors(clientErrors);
+      setBusy(true);
+      await submitAction(meta, action, id, values, setBusy, panelError, showFieldErrors);
+    }
+    form.addEventListener('submit', handleRun);
+    form.__run = handleRun;
+    form.__inputs = fieldInputs;
+    return row;
+  }
+
+  /**
+   * POST an action to the server and, on success, re-render the detail so the
+   * new state and available actions are reflected. On failure, restore the
+   * button and surface field/general errors as text.
+   *
+   * @param {any} meta @param {any} action @param {string} id
+   * @param {Record<string, unknown>} values @param {(busy: boolean) => void} setBusy
+   * @param {any} panelError @param {(fields: Record<string, string>) => void} [showFieldErrors]
+   */
+  async function submitAction(meta, action, id, values, setBusy, panelError, showFieldErrors) {
+    panelError.textContent = '';
+    panelError.setAttribute('class', 'form-error hidden');
+    try {
+      await client.request(
+        `/api/modules/${encodeURIComponent(meta.name)}/records/${encodeURIComponent(id)}/actions/${encodeURIComponent(action.name)}`,
+        { method: 'POST', body: JSON.stringify(values) },
+      );
+      toast(`${action.label ?? action.name} done.`);
+      await renderDetail(meta.name, id);
+    } catch (error) {
+      setBusy(false);
+      const mapped = apiErrorToFormErrors(error);
+      if (showFieldErrors && mapped.fields && Object.keys(mapped.fields).length) showFieldErrors(mapped.fields);
+      panelError.textContent = mapped.general;
+      panelError.setAttribute('class', 'form-error');
+    }
   }
 
   /**
