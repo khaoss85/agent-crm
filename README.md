@@ -31,6 +31,12 @@ API + Admin + trace + audit
   npm run crm -- module validate examples/modules/partner.module.json
   npm run crm -- module migration examples/modules/partner.module.json --dry-run
   ```
+- A module factory that turns a manifest into a runnable module — service, migration, tests and automatic registration, dry-run by default (see `docs/MODULE_FACTORY.md`):
+
+  ```bash
+  npm run crm -- module plan examples/modules/partner.module.json
+  npm run crm -- module create examples/modules/partner.module.json --apply
+  ```
 - MCP server over stdio with tools and project resources.
 - Codex/Claude repository skills and handover documentation.
 - Automated tests with Node's built-in test runner.
