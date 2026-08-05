@@ -151,6 +151,24 @@ test('integer inputs: JSON safe integers only, zero allowed, everything else rej
   assert.doesNotThrow(() => validateActionDefinition(validDefinition({ input: [{ name: 'n', type: 'integer' }] }), deps));
 });
 
+test('input hints are validated metadata, exposed as text and bounded', () => {
+  const withHint = validDefinition({ input: [{ name: 'valueCents', type: 'integer', hint: 'Integer MINOR units: 500000 means 5,000.00.' }] });
+  assert.doesNotThrow(() => validateActionDefinition(withHint, deps));
+  const meta = actionMetadata(withHint);
+  assert.equal(meta.input[0].hint, 'Integer MINOR units: 500000 means 5,000.00.');
+  // Non-string and oversized hints fail closed at registration.
+  assert.throws(
+    () => validateActionDefinition(validDefinition({ input: [{ name: 'x', type: 'string', hint: 42 }] }), deps),
+    /hint must be a string/,
+  );
+  assert.throws(
+    () => validateActionDefinition(validDefinition({ input: [{ name: 'x', type: 'string', hint: 'h'.repeat(201) }] }), deps),
+    /at most 200/,
+  );
+  // No hint declared → no hint key in metadata (deterministic shape).
+  assert.equal(Object.hasOwn(actionMetadata(validDefinition()).input[0], 'hint'), false);
+});
+
 test('string inputs are bounded; whitespace-only counts as missing after trim', () => {
   const schema = [{ name: 'reason', type: 'string', required: true }];
   assert.equal(validateActionInput(schema, { reason: '  keep  inner  space  ' }).reason, 'keep  inner  space');

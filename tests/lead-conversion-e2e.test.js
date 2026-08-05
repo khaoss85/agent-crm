@@ -430,6 +430,134 @@ test('two independent connections: one winner, loser gets a stable 409, retry do
   assert.equal(appA.services.opportunities.list().length, 1);
 });
 
+test('a qualified lead with stray conversion links refuses to convert (no corruption compounding)', async (t) => {
+  const { app, client } = await boot(t);
+  const leads = client.module('lead');
+  for (const field of ['converted_at', 'converted_company_id', 'converted_contact_id', 'converted_opportunity_id']) {
+    const lead = await qualifiedLead(app, { companyName: 'Corrupt Co', email: `${field}@x.example` });
+    const value = field === 'converted_at' ? '2026-01-01T00:00:00.000Z' : 'stray-id';
+    app.database.raw.prepare(`UPDATE leads SET ${field} = ? WHERE id = ?`).run(value, lead.id);
+    await assert.rejects(
+      () => leads.action(lead.id, 'convert', { opportunityName: 'D', valueCents: 1 }),
+      (error) => error.status === 409 && error.code === 'CONVERSION_STATE_CORRUPT',
+      `expected refusal for stray ${field}`,
+    );
+    const after = app.modules.get('lead').service.get(lead.id);
+    assert.equal(after.status, 'qualified', 'lead untouched');
+  }
+  assert.equal(app.services.opportunities.list().length, 0, 'nothing was created');
+});
+
+test('lookup completeness: matches are found beyond any page limit, deterministically', async (t) => {
+  const { app, client } = await boot(t);
+  const leads = client.module('lead');
+
+  // 250 filler companies, then the needle — far beyond the services' 100/500
+  // list pages. The adapter must still find exactly it.
+  for (let i = 0; i < 250; i += 1) {
+    await app.services.companies.create({ name: `Filler Company ${i}` }, { actor });
+  }
+  const needle = await app.services.companies.create({ name: 'Needle Co' }, { actor });
+  // 150 filler contacts under filler companies, then the needle contact.
+  const host = await app.services.companies.create({ name: 'Contact Host' }, { actor });
+  for (let i = 0; i < 150; i += 1) {
+    await app.services.contacts.create(
+      { companyId: host.id, firstName: 'F', lastName: `${i}`, email: `filler-${i}@host.example` }, { actor },
+    );
+  }
+  const needleContact = await app.services.contacts.create(
+    { companyId: needle.id, firstName: 'Deep', lastName: 'Match', email: 'deep@needle.example' }, { actor },
+  );
+
+  const lead = await qualifiedLead(app, { companyName: '  NEEDLE   CO ', email: 'DEEP@needle.example' });
+  const result = await client.module('lead').action(lead.id, 'convert', { opportunityName: 'Deep deal', valueCents: 1 });
+  assert.equal(result.result.company.id, needle.id, 'company found beyond page limits');
+  assert.equal(result.result.company.reused, true);
+  assert.equal(result.result.contact.id, needleContact.id, 'contact found beyond page limits');
+  assert.equal(result.result.contact.reused, true);
+  // The reused contact's identity is NOT overwritten from the lead.
+  const reused = app.services.contacts.get(needleContact.id);
+  assert.equal(reused.firstName, 'Deep');
+  assert.equal(reused.lastName, 'Match');
+});
+
+test('same email + same company: a second lead reuses the contact and both convert', async (t) => {
+  const { app, client } = await boot(t);
+  const leads = client.module('lead');
+  const first = await qualifiedLead(app, { companyName: 'Twin Co', email: 'twin@x.example' });
+  const r1 = await leads.action(first.id, 'convert', { opportunityName: 'One', valueCents: 1 });
+  const second = await qualifiedLead(app, { companyName: 'twin co', email: 'twin@x.example' });
+  const r2 = await leads.action(second.id, 'convert', { opportunityName: 'Two', valueCents: 2 });
+  assert.equal(r2.result.company.id, r1.result.company.id);
+  assert.equal(r2.result.contact.id, r1.result.contact.id, 'the same contact serves both conversions');
+  assert.equal(r2.result.contact.reused, true);
+  assert.equal(app.services.opportunities.list().length, 2, 'each lead still gets its own opportunity');
+});
+
+test('same email + different companies, concurrent: one converts, one clean mismatch 409', async (t) => {
+  const { app, client } = await boot(t);
+  const leads = client.module('lead');
+  const leadA = await qualifiedLead(app, { companyName: 'Alpha Co', email: 'shared@x.example' });
+  const leadB = await qualifiedLead(app, { companyName: 'Omega Co', email: 'shared@x.example' });
+  const results = await Promise.allSettled([
+    leads.action(leadA.id, 'convert', { opportunityName: 'A', valueCents: 1 }),
+    leads.action(leadB.id, 'convert', { opportunityName: 'B', valueCents: 2 }),
+  ]);
+  const winners = results.filter((r) => r.status === 'fulfilled');
+  const losers = results.filter((r) => r.status === 'rejected');
+  assert.equal(winners.length, 1, 'exactly one conversion wins the shared email');
+  assert.equal(losers[0].reason.status, 409);
+  assert.equal(losers[0].reason.code, 'CONTACT_COMPANY_MISMATCH');
+  // Final state: one contact, one opportunity, the loser's company creation
+  // rolled back, loser still qualified and retryable-after-human-fix.
+  assert.equal(app.services.contacts.list({ limit: 500 }).length, 1);
+  assert.equal(app.services.opportunities.list().length, 1);
+  const loserLead = results[0].status === 'rejected' ? leadA : leadB;
+  assert.equal(app.modules.get('lead').service.get(loserLead.id).status, 'qualified');
+});
+
+test('fault injection at the audit and at the lead managed update: full rollback', async (t) => {
+  // Failure at the OPPORTUNITY AUDIT — after company+contact+opportunity writes.
+  {
+    const { app, client } = await boot(t);
+    const lead = await qualifiedLead(app, { companyName: 'Audit Fail Co', email: 'af@x.example' });
+    const realRecord = app.audit.record.bind(app.audit);
+    app.audit.record = (event) => {
+      if (event.action === 'opportunity.created') throw new Error('injected audit failure');
+      return realRecord(event);
+    };
+    await assert.rejects(
+      () => client.module('lead').action(lead.id, 'convert', { opportunityName: 'D', valueCents: 1 }),
+      /injected audit failure/,
+    );
+    app.audit.record = realRecord;
+    assert.equal(app.services.companies.list().length, 0, 'company rolled back');
+    assert.equal(app.services.contacts.list().length, 0, 'contact rolled back');
+    assert.equal(app.services.opportunities.list().length, 0, 'opportunity rolled back');
+    assert.equal(app.modules.get('lead').service.get(lead.id).status, 'qualified');
+    assert.equal(app.audit.list({ entityType: 'company' }).length, 0, 'no partial audit');
+  }
+  // Failure at the LEAD MANAGED UPDATE — the very last business write.
+  {
+    const { app, client } = await boot(t);
+    const lead = await qualifiedLead(app, { companyName: 'Late Fail Co', email: 'lf@x.example' });
+    const service = app.modules.get('lead').service;
+    const realApply = service.applyManaged.bind(service);
+    service.applyManaged = () => { throw new Error('injected managed-update failure'); };
+    const events = [];
+    app.events.subscribe('*', ({ event }) => events.push(event));
+    await assert.rejects(
+      () => client.module('lead').action(lead.id, 'convert', { opportunityName: 'D', valueCents: 1 }),
+      /injected managed-update failure/,
+    );
+    service.applyManaged = realApply;
+    assert.equal(app.services.companies.list().length, 0);
+    assert.equal(app.services.opportunities.list().length, 0);
+    assert.equal(service.get(lead.id).status, 'qualified');
+    assert.deepEqual(events, [], 'no event escaped the rollback');
+  }
+});
+
 test('core migration v2 upgrades an existing v1 database in place', async (t) => {
   // Simulate a pre-M7 database: schema v1 only, with a real opportunity row.
   const dbPath = join(projectRoot, 'data', `upgrade-${process.pid}.sqlite`);
