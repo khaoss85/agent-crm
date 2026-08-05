@@ -10,6 +10,7 @@ import { createContactModule } from '../../modules/contact/src/index.js';
 import { createOpportunityModule } from '../../modules/opportunity/src/index.js';
 import { createApprovalModule } from '../../modules/approval/src/index.js';
 import { generatedModules } from '../../modules/generated/index.js';
+import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
 import {
   WorkflowEngine,
   decideOpportunityApprovalWorkflow,
@@ -62,7 +63,11 @@ export function createAgentCrmApp(options = {}) {
   modules.register(approvalModule);
 
   for (const generated of generatedModules) {
-    modules.register(generated.createModule({ database, audit, events }));
+    // Fail closed at startup: a corrupted or hand-mangled registry entry stops
+    // the app with a precise error instead of serving a half-working module.
+    modules.register(
+      validateGeneratedModuleDefinition(generated.createModule({ database, audit, events })),
+    );
   }
 
   const notificationProvider = new MemoryNotificationProvider();

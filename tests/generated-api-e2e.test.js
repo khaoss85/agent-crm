@@ -139,6 +139,50 @@ test('end-to-end: applied modules are served over HTTP and usable via client.mod
     assert.equal(instance.app.audit.list({ limit: 500 }).length, auditCount);
     assert.equal(events.length, 3);
 
+    // Concurrent create on the same unique code: exactly one wins, one 409,
+    // and exactly one audit + one event are produced.
+    const auditBeforeRace = instance.app.audit.list({ entityType: 'supplier' }).length;
+    const eventsBeforeRace = events.length;
+    const raceResults = await Promise.allSettled([
+      suppliers.create({ name: 'Race A', code: 'RACE' }),
+      suppliers.create({ name: 'Race B', code: 'RACE' }),
+    ]);
+    const fulfilled = raceResults.filter((result) => result.status === 'fulfilled');
+    const conflicts = raceResults.filter((result) => result.status === 'rejected' && result.reason.status === 409);
+    assert.equal(fulfilled.length, 1, 'expected exactly one winner');
+    assert.equal(conflicts.length, 1, 'expected exactly one conflict');
+    assert.equal(instance.app.audit.list({ entityType: 'supplier' }).length, auditBeforeRace + 1);
+    assert.equal(events.length, eventsBeforeRace + 1, 'exactly one event for the winning create');
+
+    // Actor edge cases reach audit through the same normalization as core routes.
+    const rawCreate = await fetch(`${instance.baseUrl}/api/modules/partner/records`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-actor-type': 'bogus', 'x-actor-id': '  ' },
+      body: JSON.stringify({ name: 'Header Test' }),
+    });
+    assert.equal(rawCreate.status, 201);
+    const headerRecord = await rawCreate.json();
+    const headerAudit = instance.app.audit.list({ entityType: 'partner', entityId: headerRecord.id })[0];
+    assert.equal(headerAudit.actorType, 'user', 'unsupported actor type must fall back');
+    assert.equal(headerAudit.actorId, 'api-user', 'empty actor id must fall back');
+
+    // Array and primitive bodies are rejected as 400 before touching the service.
+    for (const body of ['[]', '42', '"x"', 'null']) {
+      const response = await fetch(`${instance.baseUrl}/api/modules/partner/records`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      });
+      assert.ok([400].includes(response.status), `body ${body} → ${response.status}`);
+    }
+    // __proto__ in the body does not pollute Object.prototype.
+    await fetch(`${instance.baseUrl}/api/modules/partner/records`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Proto', __proto__: { polluted: true } }),
+    });
+    assert.equal({}.polluted, undefined, 'prototype pollution via body');
+
     // 14. Core module endpoints still work and are separate from the generic surface.
     const companies = await fetch(`${instance.baseUrl}/api/companies`).then((response) => response.json());
     assert.deepEqual(companies.items, []);
@@ -150,8 +194,8 @@ test('end-to-end: applied modules are served over HTTP and usable via client.mod
     const schemaAfter = await clientAfter.schema();
     assert.deepEqual(schemaAfter.generatedModules.map((module) => module.name), ['partner', 'supplier']);
     const survivors = await clientAfter.module('partner').list();
-    assert.equal(survivors.items.length, 1);
-    assert.equal(survivors.items[0].tier, 'platinum');
+    assert.ok(survivors.items.some((item) => item.id === created.id && item.tier === 'platinum'), 'updated record lost across restart');
+    assert.equal((await clientAfter.module('partner').get(created.id)).tier, 'platinum');
     assert.equal((await clientAfter.module('supplier').get(supplier.id)).code, 'BOLT');
   } finally {
     await instance.close();

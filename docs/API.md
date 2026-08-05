@@ -59,3 +59,15 @@ Errors follow the existing normalized contract `{ "error": { "code", "message", 
 Actor identity comes from the `x-actor-type` / `x-actor-id` headers and reaches audit records unchanged.
 
 > The HTTP server is a local development surface: no authentication, tenancy or roles yet. Do not expose it publicly.
+
+### Contract stability
+
+`GET /api/schema` includes `generatedResourceContract` (currently `1`), the version of the generated-module resource contract. Output is deterministic for a given application state: modules are listed in a stable order, field and capability ordering is stable, and no timestamps, absolute paths, database paths, migration checksums or other local-only state appear. A malformed or hand-edited generated definition never partially poisons the schema — it is simply omitted (fail closed). Handwritten core modules (in `modules`) and generated modules (in `generatedModules`) remain clearly distinguishable.
+
+### Actor headers are not authentication
+
+`x-actor-type` / `x-actor-id` label who is acting for audit and policy; they are **not** authentication and a local caller can set them to anything. The server binds to loopback (`127.0.0.1`) by default and is a development/local-only surface until authentication, tenancy and RBAC exist. Do not expose it publicly and do not add permissive CORS.
+
+### Accepted `limit` syntax (generated-module surface)
+
+A single base-10 positive integer between 1 and 500. No sign, exponent, hex, whitespace, leading-zero coercion, or repeated `limit` parameter — any of these returns 400. Core endpoints keep their historical lenient parsing; the generated service itself caps and floors the limit as a final boundary.

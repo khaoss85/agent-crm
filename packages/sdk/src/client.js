@@ -4,7 +4,10 @@ export class AgentCrmClient {
   /** @param {{baseUrl?: string, actor?: {type: string, id: string}, fetchImpl?: typeof fetch}} [options] */
   constructor(options = {}) {
     this.baseUrl = (options.baseUrl ?? 'http://localhost:4000').replace(/\/$/, '');
-    this.actor = options.actor ?? { type: 'agent', id: 'sdk-client' };
+    const actor = options.actor ?? { type: 'agent', id: 'sdk-client' };
+    // Frozen copy: mutating the caller's object cannot silently change the
+    // identity sent with every subsequent request.
+    this.actor = Object.freeze({ type: actor.type, id: actor.id });
     this.fetch = options.fetchImpl ?? fetch;
   }
 
@@ -76,6 +79,8 @@ export class AgentCrmClient {
 
   /** @param {string} path @param {{method?: string, body?: unknown}} [options] */
   async request(path, options = {}) {
+    // Network failures (fetch rejections) propagate as-is and stay
+    // distinguishable from framework HTTP errors, which always carry status.
     const response = await this.fetch(`${this.baseUrl}${path}`, {
       method: options.method ?? 'GET',
       headers: {
@@ -85,14 +90,29 @@ export class AgentCrmClient {
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
-    const body = await response.json();
+    // Parse defensively: a non-JSON error response must surface the server's
+    // status and a snippet, never be replaced by a JSON parse error.
+    const text = await response.text();
+    let body;
+    try {
+      body = text === '' ? null : JSON.parse(text);
+    } catch {
+      body = undefined;
+    }
     if (!response.ok) {
-      const error = new Error(body?.error?.message ?? `Agent CRM request failed (${response.status})`);
+      const message = body?.error?.message
+        ?? `Agent CRM request failed (${response.status})${text && body === undefined ? `: ${text.slice(0, 200)}` : ''}`;
+      const error = new Error(message);
       Object.assign(error, {
         status: response.status,
         code: body?.error?.code ?? 'UNKNOWN',
         details: body?.error?.details ?? null,
       });
+      throw error;
+    }
+    if (body === undefined) {
+      const error = new Error(`Agent CRM returned invalid JSON for ${path}`);
+      Object.assign(error, { status: response.status, code: 'INVALID_RESPONSE', details: null });
       throw error;
     }
     return body;

@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { planModule, applyModulePlan } from '../packages/cli/src/module-factory.js';
 
 const partnerManifest = JSON.parse(
@@ -142,6 +144,49 @@ test('registry content is identical regardless of module creation order', (t) =>
     readFileSync(join(forward, 'packages/modules/generated/index.js'), 'utf8'),
     readFileSync(join(reverse, 'packages/modules/generated/index.js'), 'utf8'),
   );
+});
+
+test('hostile manifest strings cannot inject code into generated source', (t) => {
+  const root = tempRoot(t);
+  const hostile = {
+    name: 'hostile',
+    description: 'desc with `backtick` and ${process.exit(1)} and\nnewline */ <script>',
+    fields: [
+      {
+        name: 'status',
+        type: 'enum',
+        values: ['ok', 'x` + (()=>{ globalThis.INJECTED = true; return 1; })() + `y', "quote'and\\slash\\"],
+      },
+    ],
+  };
+  const first = planModule({ manifest: hostile, rootDir: root });
+  const second = planModule({ manifest: hostile, rootDir: root });
+  assert.deepEqual(
+    first.files.map((file) => file.contentSha256),
+    second.files.map((file) => file.contentSha256),
+  );
+  applyModulePlan(first);
+  for (const file of first.files) {
+    if (!file.path.endsWith('.js')) continue;
+    const check = spawnSync(process.execPath, ['--check', join(root, file.path)], { encoding: 'utf8' });
+    assert.equal(check.status, 0, `${file.path}: ${check.stderr}`);
+  }
+  // Loading the generated migration in a subprocess must not execute injected
+  // code; the hostile value must survive as SQL data.
+  const migrationUrl = pathToFileURL(join(root, 'packages/modules/hostile/src/migration.js')).href;
+  const probe = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import { hostileMigration } from ${JSON.stringify(migrationUrl)};
+       if (globalThis.INJECTED) { console.error('INJECTED'); process.exit(2); }
+       if (!hostileMigration.sql.includes('globalThis.INJECTED = true')) process.exit(3);
+       if (!/CREATE TABLE IF NOT EXISTS hostiles/.test(hostileMigration.sql)) process.exit(4);`,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(probe.status, 0, `injection probe failed (${probe.status}): ${probe.stderr}`);
 });
 
 test('module names cannot traverse outside the project root', (t) => {

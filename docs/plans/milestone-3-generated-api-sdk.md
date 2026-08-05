@@ -82,6 +82,7 @@ From a clean temporary project copy: apply Partner and Supplier via the copy's C
 - Read router/http-server/SDK; confirmed normalized error contract, actor headers, decode-after-match routing and lenient core `parseLimit`.
 - Implemented adapter, factory metadata, SDK resource client, tests and docs.
 - Final validation: verify and smoke green from a clean worktree.
+- Adversarial review pass: centralized fail-closed exposure validator (startup + request), Map-backed registry immune to prototype pollution, contract version `generatedResourceContract: 1`, JSON.stringify for all manifest strings in generated source (injection-proof), canonical single base-10 limit with duplicate rejection, plain-object body enforcement, malformed-percent → safe 404, defensive SDK response parsing (non-JSON/empty/invalid preserved, network vs HTTP distinguishable), frozen actor and frozen resource client, concurrent-unique race proof.
 
 ## Decision log
 
