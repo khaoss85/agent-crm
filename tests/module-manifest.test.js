@@ -22,6 +22,7 @@ test('a valid manifest normalizes with defaults and stays frozen', () => {
     required: true,
     unique: false,
     column: 'name',
+    writable: 'public',
   });
   assert.deepEqual(normalized.fields[1].values, ['silver', 'gold', 'platinum']);
   assert.equal(normalized.fields[1].required, false);

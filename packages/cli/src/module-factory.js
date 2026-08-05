@@ -427,6 +427,12 @@ function usedValidators(manifest) {
   const used = new Set();
   for (const field of manifest.fields) {
     if (field.type === 'reference') continue; // validated via #reference, not an imported validator
+    if (field.writable === 'managed') {
+      // applyManaged validates managed fields with the "required" variant
+      // (null-clearing is handled separately before validation).
+      used.add(VALIDATORS[field.type].required);
+      continue;
+    }
     used.add(VALIDATORS[field.type][field.required ? 'required' : 'optional']);
   }
   return [...used].sort();
@@ -449,6 +455,10 @@ function serviceTemplate(manifest, names, referenceTargets = {}) {
   const columns = ['id', ...manifest.fields.map((field) => field.column), 'created_at', 'updated_at'];
   const placeholders = columns.map(() => '?').join(', ');
   const hasReferences = manifest.fields.some((field) => field.type === 'reference');
+  const managedFields = manifest.fields.filter((field) => field.writable === 'managed');
+  const publicFields = manifest.fields.filter((field) => field.writable !== 'managed');
+  const hasManaged = managedFields.length > 0;
+  const needsValidationError = hasReferences || hasManaged;
 
   /** For a field, the expression that validates the raw input value. */
   const valueExpr = (field, valueExpression) => {
@@ -459,8 +469,14 @@ function serviceTemplate(manifest, names, referenceTargets = {}) {
     return validatorCall(field, valueExpression);
   };
 
+  // On create, managed fields take their default (or null), never input.
   const createAssignments = manifest.fields
-    .map((field) => `      ${field.name}: ${valueExpr(field, `input.${field.name}`)},`)
+    .map((field) => {
+      if (field.writable === 'managed') {
+        return `      ${field.name}: ${field.default !== undefined ? JSON.stringify(field.default) : 'null'},`;
+      }
+      return `      ${field.name}: ${valueExpr(field, `input.${field.name}`)},`;
+    })
     .join('\n');
   const insertValues = [
     `      ${entity}.id,`,
@@ -471,7 +487,8 @@ function serviceTemplate(manifest, names, referenceTargets = {}) {
     `      ${entity}.updatedAt,`,
   ].join('\n');
 
-  const updateBranches = manifest.fields
+  // Public update only touches public fields; managed fields go through applyManaged.
+  const updateBranches = publicFields
     .map((field) =>
       [
         `    if (Object.hasOwn(input, '${field.name}')) {`,
@@ -482,6 +499,24 @@ function serviceTemplate(manifest, names, referenceTargets = {}) {
         '    }',
       ].join('\n'),
     )
+    .join('\n');
+
+  const managedNames = managedFields.map((field) => `'${field.name}'`).join(', ');
+  // applyManaged branches: validate each managed field; null clears it.
+  const managedBranches = managedFields
+    .map((field) => {
+      const validator = field.type === 'enum'
+        ? `enumValue(patch.${field.name}, [${(field.values ?? []).map((v) => JSON.stringify(v)).join(', ')}], '${field.name}')`
+        : `${VALIDATORS[field.type].required}(patch.${field.name}, '${field.name}')`;
+      return [
+        `      if (Object.hasOwn(patch, '${field.name}')) {`,
+        `        const value = patch.${field.name} === null ? null : ${validator};`,
+        `        assignments.push('${field.column} = ?');`,
+        `        params.push(${toDbExpression(field, 'value')});`,
+        `        changes.${field.name} = value;`,
+        '      }',
+      ].join('\n');
+    })
     .join('\n');
 
   const rowMappings = manifest.fields
@@ -502,7 +537,7 @@ function serviceTemplate(manifest, names, referenceTargets = {}) {
 ${header()}
 
 import { randomUUID } from 'node:crypto';
-import { ${hasReferences ? 'ConflictError, NotFoundError, ValidationError' : 'ConflictError, NotFoundError'} } from '../../../core/src/errors.js';
+import { ${needsValidationError ? 'ConflictError, NotFoundError, ValidationError' : 'ConflictError, NotFoundError'} } from '../../../core/src/errors.js';
 ${usedValidators(manifest).length ? `import {\n  ${usedValidators(manifest).join(',\n  ')},\n} from '../../../core/src/validation.js';\n` : ''}import { nowIso } from '../../../core/src/time.js';
 
 export class ${names.pascal}Service {
@@ -557,7 +592,7 @@ ${hasReferences ? `
 
   /** @param {Record<string, unknown>} input @param {{actor?: unknown}} [context] */
   async create(input, context = {}) {
-    const timestamp = nowIso();
+${hasManaged ? `    this.#rejectManagedInput(input);\n` : ''}    const timestamp = nowIso();
     const ${entity} = {
       id: randomUUID(),
 ${createAssignments}
@@ -602,7 +637,7 @@ ${insertValues}
 
   /** @param {string} id @param {Record<string, unknown>} input @param {{actor?: unknown}} [context] */
   async update(id, input, context = {}) {
-    this.get(id);
+${hasManaged ? `    this.#rejectManagedInput(input);\n` : ''}    this.get(id);
     /** @type {string[]} */
     const assignments = [];
     /** @type {unknown[]} */
@@ -634,7 +669,53 @@ ${updateBranches}
     await this.events.emit('${manifest.name}.updated', updated);
     return updated;
   }
-}
+${hasManaged ? `
+  // Workflow-managed fields (${managedFields.map((f) => f.name).join(', ')}) are never
+  // settable through public create/update — only through this internal path,
+  // used by action execute() via ctx.managed. Not exposed over HTTP.
+  #rejectManagedInput(input) {
+    for (const name of [${managedNames}]) {
+      if (input && Object.hasOwn(input, name)) {
+        throw new ValidationError(name + ' is managed by a workflow action and cannot be set directly', { field: name });
+      }
+    }
+  }
+
+  /** @param {string} id @param {Record<string, unknown>} patch @param {{actor?: unknown}} [context] */
+  async applyManaged(id, patch, context = {}) {
+    this.get(id);
+    /** @type {string[]} */
+    const assignments = [];
+    /** @type {unknown[]} */
+    const params = [];
+    /** @type {Record<string, unknown>} */
+    const changes = {};
+
+${managedBranches}
+
+    if (!assignments.length) return this.get(id);
+    assignments.push('updated_at = ?');
+    params.push(nowIso());
+    params.push(id);
+
+    const updated = this.#mutation(() => {
+      this.database.raw.prepare(
+        \`UPDATE ${manifest.table} SET \${assignments.join(', ')} WHERE id = ?\`,
+      ).run(...params);
+      const current = this.get(id);
+      this.audit.record({
+        actor: context.actor,
+        action: '${manifest.name}.updated',
+        entityType: '${manifest.name}',
+        entityId: id,
+        data: changes,
+      });
+      return current;
+    });
+    await this.events.emit('${manifest.name}.updated', updated);
+    return updated;
+  }
+` : ''}}
 
 /** @param {any} row */
 function map${names.pascal}Row(row) {
@@ -662,6 +743,7 @@ function indexTemplate(manifest, names, referenceTargets = {}) {
         type: 'reference',
         required: field.required,
         unique: field.unique,
+        writable: field.writable ?? 'public',
         references: target.targetTable,
         targetModule: target.targetModule,
         targetKey: 'id',
@@ -674,6 +756,10 @@ function indexTemplate(manifest, names, referenceTargets = {}) {
       type: field.type,
       required: field.required,
       unique: field.unique,
+      // Write policy exposed to clients: 'managed' fields are set only by
+      // workflow actions, never through public create/update, so the Admin
+      // renders them read-only rather than as editable inputs.
+      writable: field.writable ?? 'public',
       ...(field.values ? { values: field.values } : {}),
     };
   });
