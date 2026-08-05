@@ -23,6 +23,18 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 - **Evidence**: `tests/module-factory-e2e.test.js` (manifest→apply→runnable), `tests/generated-api-e2e.test.js` (API/SDK), `tests/admin-modules.test.js` + `tests/admin-core.test.js` (Admin list/create/detail/edit with audit+events, real server + fake DOM); `docs/ADMIN.md`. A one-off **real-Chromium** smoke (16 checks incl. XSS-as-text) was run manually during the Milestone 4 review and passed; `docs/ADMIN_SMOKE.md` is the reproducible checklist. Automated browser testing is not in CI.
 - **Manual interventions**: writing the manifest and running `module create --apply`; the real-browser smoke is manual (not in CI), not a coding step.
 
+## JTBD-01b — Associate a generated CRM record with another generated CRM record
+- **Actor**: developer/agent modelling a relationship; then the business user.
+- **Trigger**: "every X belongs to a Y" (e.g. every Partner Contact belongs to a Partner).
+- **Desired outcome**: create the dependent object with a reference to the target, view and change the linked target.
+- **Primitives**: reference field, foreign key, reference resolver, target service boundary, audit, events.
+- **Framework capabilities**: manifest reference → FK migration → runtime target validation → API/SDK → schema relationship metadata → Admin target selector.
+- **Acceptance scenario**: apply Partner, then Partner Contact (`partnerId → partner`); create Partners; create a Contact linked to Partner A via SDK; see A's label selected in the Admin; change to Partner B; missing target → validation error; relationship persists across restart; audit/events exactly once on success, none on failure.
+- **Status**: **validated end to end** (Milestone 5), for **generated-to-generated many-to-one** references only.
+- **Evidence**: `tests/reference-resolver.test.js`, `tests/reference-fields-e2e.test.js` (real server + SDK + SQLite FK + restart), `tests/admin-modules.test.js` (selector, current-target-outside-first-page, hostile label as text), `tests/module-factory.test.js` (plan/generation, core/missing-target rejection); a real-Chromium reference-selector smoke (5 checks) was run manually. `docs/MODULE_FACTORY.md`, ADR-010.
+- **Manual interventions**: writing two manifests and applying the target first; real-browser smoke is manual (not in CI).
+- **Scope note**: this validates generated-to-generated many-to-one relationships only — **not** a complete CRM relationship model. Generated-to-core references, many-to-many, inverse collections and cascade/delete are out of scope.
+
 ## JTBD-02 — Request commercial approval on a deal
 - **Actor**: sales rep (submits), manager (decides).
 - **Trigger**: a renewal ≥ threshold is moved toward Proposal.

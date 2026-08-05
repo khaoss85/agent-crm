@@ -77,3 +77,17 @@ npm run crm -- module migration examples/modules/partner.module.json --out migra
 4. For hand-written services (e.g. modules with reference fields), run `module migration --dry-run`, review the SQL, and add it as a migration yourself.
 5. Business logic stays explicit code — manifests generate infrastructure. Mutations still go through module services and workflows with validation, audit and trace.
 6. Finish with `npm run verify`.
+
+## Reference fields (Milestone 5)
+
+A `reference` field links a record to another generated record (many-to-one). `references` names the **target table**; the framework derives the target module from installed-module metadata.
+
+```json
+{ "name": "partnerId", "type": "reference", "references": "partners", "required": true }
+```
+
+- The target generated module must already be applied; `module plan`/`create` reports each reference's `targetModule`/`targetTable` and rejects a missing target ("apply the target module first").
+- `required` → non-null foreign key; optional → nullable, and an optional reference is cleared by submitting `null`.
+- Generated-to-**core** references (e.g. `companies`) are rejected in this milestone.
+- Self-references and cross-module cycles are supported (resolution is lazy at request time).
+- A missing target at create/update is a `VALIDATION_ERROR` tied to the field — no write, audit or event. The SQLite foreign key (`ON DELETE RESTRICT`) enforces integrity as defense in depth. See `docs/MODULE_FACTORY.md` and ADR-010.

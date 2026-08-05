@@ -46,7 +46,7 @@ Generated files carry a header stating their origin; they are **yours to edit** 
 
 ## Field support
 
-`string`, `email`, `integer`, `boolean`, `timestamp`, `enum` (+ `required`/`unique`) generate service validation matching the core modules' idiom. **`reference` fields are rejected by `module create`** with a clear message: cross-module integrity checks (like `contact` validating its company) need injected sibling services, which is deferred; `module:migration` still generates reference DDL for hand-written services.
+`string`, `email`, `integer`, `boolean`, `timestamp`, `enum` (+ `required`/`unique`) generate service validation matching the core modules' idiom. **`reference` fields** (many-to-one to another generated module) are supported since Milestone 5 — see "Reference fields" below and ADR-010. Generated-to-core references remain rejected until an explicit adapter exists.
 
 ## Safety and determinism
 
@@ -91,3 +91,18 @@ await partners.update(created.id, { tier: 'platinum' });
 ```
 
 Discovery for agents: `GET /api/schema` → `generatedModules[]` carries every field's type/required/unique/enum values plus the canonical paths — no need to read internal database code. See `docs/API.md` for the full contract. The server stays local-development-only until auth/tenancy/roles exist.
+
+## Reference fields (Milestone 5)
+
+A `reference` field (`{"type":"reference","references":"<target-table>"}`) generates a real SQLite foreign key plus **runtime** target validation through the application reference resolver (ADR-010) — not a cross-module SQL query, not a static import between modules.
+
+```bash
+npm run crm -- module create examples/modules/partner.module.json --apply          # target first
+npm run crm -- module plan   examples/modules/partner-contact.module.json           # shows the reference dependency
+npm run crm -- module create examples/modules/partner-contact.module.json --apply
+```
+
+- The generated service validates each reference via `this.references.assertTarget(targetTable, value, field)` before the mutation savepoint: a missing/blank required target, or an id that does not exist, throws a field `ValidationError` with no write/audit/event.
+- Optional references: omit to leave unset, send `null` to clear.
+- The target module must be applied first; core-table and unknown targets are rejected at plan time.
+- In the Admin, a reference renders as a target selector labelled by the target's display field, with the current value always preserved (fetched by id if not on the first page). Large target sets will need a searchable control in a later milestone.
