@@ -4,13 +4,14 @@ import { resolve } from 'node:path';
 import { createAgentCrmApp } from '../../app/src/index.js';
 import { createHttpServer } from '../../../apps/server/src/index.js';
 import { scaffoldModule } from './scaffold-module.js';
-import { validateManifestCommand, generateMigrationCommand } from './manifest-commands.js';
+import { validateManifestCommand, generateMigrationCommand, readManifestFile } from './manifest-commands.js';
+import { planModule, applyModulePlan } from './module-factory.js';
 
 /** @param {string[]} argv */
 export async function runCli(argv) {
   let { command, positional, flags } = parseArgs(argv);
   // Accept "module validate <path>" as an alias of "module:validate <path>".
-  if (command === 'module' && ['validate', 'migration', 'create'].includes(positional[0])) {
+  if (command === 'module' && ['validate', 'migration', 'create', 'plan'].includes(positional[0])) {
     command = `module:${positional[0]}`;
     positional = positional.slice(1);
   }
@@ -32,10 +33,34 @@ export async function runCli(argv) {
     return;
   }
 
+  if (command === 'module:plan') {
+    const { manifest } = readManifestFile(positional[0]);
+    const plan = planModule({
+      manifest,
+      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+    });
+    print({ ok: true, mode: 'plan', ...withoutFileContents(plan) });
+    return;
+  }
+
   if (command === 'module:create') {
+    const rootDir = typeof flags.root === 'string' ? flags.root : process.cwd();
+    // A .json argument selects the manifest-driven module factory; a bare name
+    // keeps the legacy template scaffold from Milestone 0.
+    if (typeof positional[0] === 'string' && positional[0].endsWith('.json')) {
+      const { manifest } = readManifestFile(positional[0]);
+      const plan = planModule({ manifest, rootDir });
+      // An explicit --dry-run always wins over --apply, matching module:migration.
+      if (flags.apply === true && flags['dry-run'] !== true) {
+        print({ ok: true, mode: 'applied', ...applyModulePlan(plan), nextSteps: factoryNextSteps() });
+      } else {
+        print({ ok: true, mode: 'dry-run', ...withoutFileContents(plan), nextSteps: factoryNextSteps() });
+      }
+      return;
+    }
     const result = scaffoldModule({
       name: positional[0],
-      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+      rootDir,
       apply: flags.apply === true,
     });
     print(result);
@@ -110,6 +135,19 @@ function print(value) {
   console.log(JSON.stringify(value, null, 2));
 }
 
+/** @param {ReturnType<import('./module-factory.js').planModule>} plan */
+function withoutFileContents(plan) {
+  return { ...plan, files: plan.files.map(({ content: _content, ...file }) => file) };
+}
+
+function factoryNextSteps() {
+  return [
+    'Run npm run verify to execute the generated module test.',
+    'Start the app (npm run dev); the module is migrated and registered automatically.',
+    'Edit the generated service to add domain rules; keep audit and events on every mutation.',
+  ];
+}
+
 /** @param {string[]} argv */
 function parseArgs(argv) {
   const positional = [];
@@ -152,13 +190,17 @@ Usage:
   agent-crm db:migrate [--db path]
   agent-crm workflow:list [--db path]
   agent-crm trace:list [--limit 20] [--db path]
+  agent-crm module:plan <manifest.json> [--root path] [--json]
+  agent-crm module:create <manifest.json> [--apply] [--root path]
   agent-crm module:create <name> [--apply] [--root path]
   agent-crm module:validate <manifest.json>
   agent-crm module:migration <manifest.json> [--dry-run] [--out file.sql] [--force]
   agent-crm mcp [--db path]
 
-"module validate" and "module migration" are accepted aliases.
-Module scaffolding is a dry-run unless --apply is explicit.
+"module plan", "module create", "module validate" and "module migration" are accepted aliases.
+module:plan is always read-only. module:create with a manifest generates a complete
+runnable module (service, migration, registration, tests) and is a dry-run unless
+--apply is explicit; with a bare name it keeps the legacy template scaffold.
 Migration generation is a dry-run unless --out is provided; --force allows overwriting.
-Manifest schema: docs/MODULE_MANIFEST.md`;
+Manifest schema: docs/MODULE_MANIFEST.md — module factory: docs/MODULE_FACTORY.md`;
 }

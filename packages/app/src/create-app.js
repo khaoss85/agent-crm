@@ -9,6 +9,7 @@ import { createCompanyModule } from '../../modules/company/src/index.js';
 import { createContactModule } from '../../modules/contact/src/index.js';
 import { createOpportunityModule } from '../../modules/opportunity/src/index.js';
 import { createApprovalModule } from '../../modules/approval/src/index.js';
+import { generatedModules } from '../../modules/generated/index.js';
 import {
   WorkflowEngine,
   decideOpportunityApprovalWorkflow,
@@ -23,7 +24,10 @@ import {
  * @param {{dbPath?: string, approvalThresholdCents?: number}} [options]
  */
 export function createAgentCrmApp(options = {}) {
-  const database = createDatabase({ path: options.dbPath });
+  const database = createDatabase({
+    path: options.dbPath,
+    moduleMigrations: generatedModules.map((generated) => generated.migration),
+  });
   const events = new EventBus();
   const audit = new AuditLog(database);
   const modules = new ModuleRegistry();
@@ -56,6 +60,10 @@ export function createAgentCrmApp(options = {}) {
     opportunities: opportunityModule.service,
   });
   modules.register(approvalModule);
+
+  for (const generated of generatedModules) {
+    modules.register(generated.createModule({ database, audit, events }));
+  }
 
   const notificationProvider = new MemoryNotificationProvider();
   providers.register({

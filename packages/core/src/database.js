@@ -1,6 +1,7 @@
 // @ts-check
 
 import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -111,7 +112,10 @@ const MIGRATIONS = [
   },
 ];
 
-/** @param {{path?: string}} [options] @returns {AgentCrmDatabase} */
+/**
+ * @param {{path?: string, moduleMigrations?: Array<{name: string, sql: string}>}} [options]
+ * @returns {AgentCrmDatabase}
+ */
 export function createDatabase(options = {}) {
   const requestedPath = options.path ?? process.env.CRM_DB_PATH ?? './data/agent-crm.sqlite';
   const dbPath = requestedPath === ':memory:' ? requestedPath : resolve(requestedPath);
@@ -142,6 +146,55 @@ export function createDatabase(options = {}) {
       raw.prepare(
         'INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)',
       ).run(migration.version, migration.name, new Date().toISOString());
+      raw.exec('COMMIT;');
+    } catch (error) {
+      raw.exec('ROLLBACK;');
+      throw error;
+    }
+  }
+
+  // Generated-module migrations are keyed by name, not version, so the set can
+  // grow in any order without renumbering migrations that already ran. The SQL
+  // checksum makes drift detectable: an applied migration whose SQL later
+  // changes must fail loudly, never be silently treated as already applied.
+  raw.exec(`
+    CREATE TABLE IF NOT EXISTS module_migrations (
+      name TEXT PRIMARY KEY,
+      checksum TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    ) STRICT;
+  `);
+  const appliedModuleMigrations = new Map(
+    raw
+      .prepare('SELECT name, checksum FROM module_migrations')
+      .all()
+      .map((row) => [String(row.name), String(row.checksum)]),
+  );
+  const seenMigrationNames = new Set();
+  for (const migration of options.moduleMigrations ?? []) {
+    if (seenMigrationNames.has(migration.name)) {
+      throw new Error(
+        `Duplicate module migration name "${migration.name}": two modules claim the same migration identity.`,
+      );
+    }
+    seenMigrationNames.add(migration.name);
+    const checksum = createHash('sha256').update(migration.sql).digest('hex');
+    const appliedChecksum = appliedModuleMigrations.get(migration.name);
+    if (appliedChecksum !== undefined) {
+      if (appliedChecksum !== checksum) {
+        throw new Error(
+          `Module migration "${migration.name}" was already applied with different SQL. ` +
+            'Applied migrations are immutable: add a new migration instead of editing an applied one.',
+        );
+      }
+      continue;
+    }
+    raw.exec('BEGIN IMMEDIATE;');
+    try {
+      raw.exec(migration.sql);
+      raw
+        .prepare('INSERT INTO module_migrations(name, checksum, applied_at) VALUES (?, ?, ?)')
+        .run(migration.name, checksum, new Date().toISOString());
       raw.exec('COMMIT;');
     } catch (error) {
       raw.exec('ROLLBACK;');

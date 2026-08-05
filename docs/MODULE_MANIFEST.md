@@ -73,7 +73,7 @@ npm run crm -- module migration examples/modules/partner.module.json --out migra
 
 1. Write the manifest under `examples/modules/` or the module's own directory.
 2. Run `module validate` and fix every reported error.
-3. Run `module migration --dry-run` and review the SQL.
-4. Add the generated SQL as a new versioned entry in the `MIGRATIONS` array of `packages/core/src/database.js` (declarative loading of generated migrations is a later milestone).
-5. Implement the module service by hand — manifests generate infrastructure, not business logic. Mutations still go through module services and workflows with validation, audit and trace.
+3. For a complete runnable module (service, migration, registration, tests), use the **module factory**: `module plan` then `module create --apply` — see `docs/MODULE_FACTORY.md`. No manual `MIGRATIONS` or `create-app.js` edit is needed.
+4. For hand-written services (e.g. modules with reference fields), run `module migration --dry-run`, review the SQL, and add it as a migration yourself.
+5. Business logic stays explicit code — manifests generate infrastructure. Mutations still go through module services and workflows with validation, audit and trace.
 6. Finish with `npm run verify`.
