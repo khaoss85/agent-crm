@@ -260,6 +260,15 @@ export function parseModuleRoute(hash) {
   if (segments[0] === '') segments.shift(); // leading slash
   if (segments.length && segments[segments.length - 1] === '') segments.pop(); // trailing slash
   const rawParts = segments;
+  // Pipeline board routes: #/pipelines/<name> (ADR-014). Same canonical-name
+  // discipline as module routes; anything else is invalid, not a lookup.
+  if (rawParts.length && rawParts[0] === 'pipelines') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length !== 2) return { view: 'invalid' };
+    const pipelineName = safeDecode(rawParts[1]);
+    if (pipelineName === null || !/^[a-z][a-z0-9-]*$/.test(pipelineName)) return { view: 'invalid' };
+    return { view: 'pipeline', pipelineName };
+  }
   if (rawParts.length === 0 || rawParts[0] !== 'modules') return { view: 'dashboard' };
   // An internal empty segment (e.g. "modules//new") is malformed, not a lookup.
   if (rawParts.some((part) => part === '')) return { view: 'invalid' };
@@ -278,6 +287,24 @@ export function parseModuleRoute(hash) {
     return { view: 'detail', moduleName, id };
   }
   return { view: 'invalid' };
+}
+
+/**
+ * Deterministic minor-units money formatting: `500000, 'EUR'` → `"EUR 5,000.00"`.
+ * Grouping and decimals are computed, never taken from browser locale, so
+ * tests and servers render identically. Currencies are NEVER summed together
+ * by callers — totals are per-currency by contract.
+ *
+ * @param {number} minorUnits @param {string} currency
+ */
+export function formatMinorUnits(minorUnits, currency) {
+  if (!Number.isSafeInteger(minorUnits)) return '—';
+  const sign = minorUnits < 0 ? '-' : '';
+  const abs = Math.abs(minorUnits);
+  const whole = Math.floor(abs / 100);
+  const cents = String(abs % 100).padStart(2, '0');
+  const grouped = String(whole).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${String(currency ?? '')} ${sign}${grouped}.${cents}`.trim();
 }
 
 export { IMMUTABLE_FIELDS };

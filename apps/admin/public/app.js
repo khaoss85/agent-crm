@@ -266,6 +266,7 @@ elements.closeTrace.addEventListener('click', () => elements.traceDetail.classLi
 // ---- Hash routing + generated-module navigation -------------------------
 
 import { createModuleAdmin } from './admin-modules.js';
+import { createPipelineBoard } from './admin-pipeline.js';
 import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
 
 const dashboardView = document.querySelector('#view-dashboard');
@@ -277,6 +278,13 @@ const moduleAdmin = createModuleAdmin({
   mount: moduleView,
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
+  toast,
+});
+
+const pipelineBoard = createPipelineBoard({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
   toast,
 });
 
@@ -299,6 +307,18 @@ async function populateNav() {
       link.textContent = humanizeLabel(module.name); // safe: textContent
       generatedNav.appendChild(link);
     }
+    // Pipeline boards (ADR-014): one nav link per registered pipeline, from
+    // the same schema payload, canonical names only.
+    if (schema?.pipelineContract === 1 && Array.isArray(schema.pipelines)) {
+      for (const pipeline of schema.pipelines) {
+        if (typeof pipeline?.name !== 'string' || !/^[a-z][a-z0-9-]*$/.test(pipeline.name)) continue;
+        const link = document.createElement('a');
+        link.setAttribute('href', `#/pipelines/${pipeline.name}`);
+        link.setAttribute('data-nav', `pipeline-${pipeline.name}`);
+        link.textContent = typeof pipeline.label === 'string' ? pipeline.label : pipeline.name; // safe: textContent
+        generatedNav.appendChild(link);
+      }
+    }
   } catch {
     // A schema failure must not break the dashboard; leave nav empty silently.
   }
@@ -312,7 +332,11 @@ async function route() {
   // Set the active nav link by comparing the safe href we built ourselves,
   // never by constructing a selector from route input.
   for (const link of generatedNav.querySelectorAll('a')) {
-    link.classList.toggle('active', !onDashboard && link.getAttribute('href') === `#/modules/${target.moduleName}`);
+    const active = !onDashboard && (
+      link.getAttribute('href') === `#/modules/${target.moduleName}` ||
+      (target.view === 'pipeline' && link.getAttribute('href') === `#/pipelines/${target.pipelineName}`)
+    );
+    link.classList.toggle('active', active);
   }
   if (onDashboard) return;
   if (target.view === 'invalid') {
@@ -330,6 +354,7 @@ async function route() {
     if (target.view === 'list') await moduleAdmin.renderList(target.moduleName);
     else if (target.view === 'new') await moduleAdmin.renderNew(target.moduleName);
     else if (target.view === 'detail') await moduleAdmin.renderDetail(target.moduleName, target.id);
+    else if (target.view === 'pipeline') await pipelineBoard.renderBoard(target.pipelineName);
   } catch (error) {
     toast(error.message, true);
   }
