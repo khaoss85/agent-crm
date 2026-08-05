@@ -10,7 +10,10 @@ import { createContactModule } from '../../modules/contact/src/index.js';
 import { createOpportunityModule } from '../../modules/opportunity/src/index.js';
 import { createApprovalModule } from '../../modules/approval/src/index.js';
 import { generatedModules } from '../../modules/generated/index.js';
+import { generatedActions } from '../../actions/generated/index.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
+import { ActionRegistry } from '../../core/src/action-registry.js';
+import { runRecordAction } from '../../core/src/action-runtime.js';
 import { createReferenceResolver } from '../../core/src/reference-resolver.js';
 import {
   WorkflowEngine,
@@ -75,6 +78,14 @@ export function createAgentCrmApp(options = {}) {
     );
   }
 
+  // Code-first action registry (ADR-011). Actions target generated modules only;
+  // moduleExists is checked against the generated-module set, not the core
+  // modules. A malformed action definition throws here and stops startup rather
+  // than exposing a half-working action.
+  const generatedModuleNames = new Set(generatedModules.map((generated) => generated.name));
+  const actions = new ActionRegistry({ moduleExists: (name) => generatedModuleNames.has(name) });
+  for (const definition of generatedActions) actions.register(definition);
+
   const notificationProvider = new MemoryNotificationProvider();
   providers.register({
     name: 'default-notifications',
@@ -117,6 +128,30 @@ export function createAgentCrmApp(options = {}) {
     providers,
     workflows,
     services,
+    actions,
+    /**
+     * Run a code-first record action atomically (ADR-011/012): the business
+     * writes commit or roll back together and domain events become visible only
+     * after the commit. Delegates to the shared action runtime so the HTTP route
+     * and in-process callers share one implementation.
+     *
+     * @param {{module: string, action: string, recordId: string, input?: unknown, actor?: unknown}} params
+     */
+    runAction({ module, action, recordId, input, actor }) {
+      return runRecordAction({
+        database,
+        events,
+        registry: actions,
+        modules,
+        services,
+        config: app.config,
+        module,
+        action,
+        recordId,
+        input,
+        actor,
+      });
+    },
     schema: CRM_SCHEMA,
     config: {
       approvalThresholdCents:
