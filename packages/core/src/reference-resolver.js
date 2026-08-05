@@ -47,11 +47,17 @@ export function createReferenceResolver(registry) {
       }
       try {
         target.service.get(id);
-      } catch {
-        throw new ValidationError(
-          `${fieldName} references a ${targetTable} record that does not exist`,
-          { field: fieldName, value: id },
-        );
+      } catch (error) {
+        // Only a genuine "not found" becomes a missing-target validation error.
+        // Any other failure (a future permission error, an unexpected service
+        // fault) must propagate untouched — never be swallowed as "missing".
+        if (error && (error.code === 'NOT_FOUND' || error.status === 404)) {
+          throw new ValidationError(
+            `${fieldName} references a ${targetTable} record that does not exist`,
+            { field: fieldName, value: id },
+          );
+        }
+        throw error;
       }
       return id;
     },

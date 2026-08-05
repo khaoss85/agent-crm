@@ -406,6 +406,59 @@ test('reference edit preselects the current target even if outside the first pag
   assert.ok(select.findAll('option').some((o) => o.getAttribute('value') === first.id && o.textContent === 'Linked Partner'));
 });
 
+test('reference selector shows a truncation notice only when the target list is capped', async (t) => {
+  const { app, baseUrl } = await startServer(t, (app2) => {
+    inMemoryModule(app2, partnerModule(), partnerValidator);
+    inMemoryModule(app2, contactModule(), partnerValidator);
+  });
+  const partners = app.modules.get('partner').service;
+  // Fewer than the cap first: no notice.
+  await partners.create({ name: 'Only Partner' }, { actor: { type: 'user', id: 's' } });
+  const doc = createFakeDocument();
+  const admin = createModuleAdmin({ doc, mount: createMount(), client: clientFor(baseUrl), navigate: () => {} });
+  let form = await admin.renderNew('partner-contact');
+  let hint = form.findAll('small').find((n) => /Showing the first 100/.test(n.textContent));
+  assert.ok(hint && hint.classList.contains('hidden'), 'notice must be hidden when not truncated');
+
+  // Now exceed the cap: the notice is revealed.
+  for (let i = 0; i < 100; i += 1) await partners.create({ name: `P${i}` }, { actor: { type: 'user', id: 's' } });
+  const admin2 = createModuleAdmin({ doc, mount: createMount(), client: clientFor(baseUrl), navigate: () => {} });
+  form = await admin2.renderNew('partner-contact');
+  hint = form.findAll('small').find((n) => /Showing the first 100/.test(n.textContent));
+  assert.ok(hint && !hint.classList.contains('hidden'), 'notice must show when the target list is capped');
+});
+
+test('list label resolution deduplicates and bounds by-id fetches', async (t) => {
+  const { app, baseUrl } = await startServer(t, (app2) => {
+    inMemoryModule(app2, partnerModule(), partnerValidator);
+    inMemoryModule(app2, contactModule(), partnerValidator);
+  });
+  const partners = app.modules.get('partner').service;
+  const contacts = app.modules.get('partner-contact').service;
+  const pShared = await partners.create({ name: 'Shared Partner' }, { actor: { type: 'user', id: 's' } });
+  // Many contacts share ONE partner id → the label must resolve with the single
+  // list call, never one fetch per row.
+  for (let i = 0; i < 20; i += 1) await contacts.create({ fullName: `C${i}`, partnerId: pShared.id }, { actor: { type: 'user', id: 's' } });
+
+  // Count target requests during the render.
+  const base = clientFor(baseUrl);
+  let getCalls = 0;
+  const counting = {
+    request(path, options) {
+      if (/\/api\/modules\/partner\/records\/[^?]+$/.test(path)) getCalls += 1;
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const admin = createModuleAdmin({ doc: createFakeDocument(), mount, client: counting, navigate: () => {} });
+  await admin.renderList('partner-contact');
+  // Shared id is on the first page → zero per-cell by-id fetches.
+  assert.equal(getCalls, 0, `expected 0 by-id fetches, got ${getCalls}`);
+  // Every row shows the resolved label, not the raw id.
+  const cells = mount.findAll('td').map((c) => c.textContent);
+  assert.ok(cells.filter((t) => t === 'Shared Partner').length >= 20);
+});
+
 test('hostile target labels render as text in the reference selector', async (t) => {
   const { app, baseUrl } = await startServer(t, (app2) => {
     inMemoryModule(app2, partnerModule(), partnerValidator);

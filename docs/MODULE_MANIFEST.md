@@ -89,5 +89,11 @@ A `reference` field links a record to another generated record (many-to-one). `r
 - The target generated module must already be applied; `module plan`/`create` reports each reference's `targetModule`/`targetTable` and rejects a missing target ("apply the target module first").
 - `required` → non-null foreign key; optional → nullable, and an optional reference is cleared by submitting `null`.
 - Generated-to-**core** references (e.g. `companies`) are rejected in this milestone.
-- Self-references and cross-module cycles are supported (resolution is lazy at request time).
+- Optional self-references are supported; required self-references are rejected at plan time; cross-module cycles are not constructible via the CLI (see below).
 - A missing target at create/update is a `VALIDATION_ERROR` tied to the field — no write, audit or event. The SQLite foreign key (`ON DELETE RESTRICT`) enforces integrity as defense in depth. See `docs/MODULE_FACTORY.md` and ADR-010.
+
+### Reference self-references and cycles
+
+- An **optional** self-reference (`references` = the module's own table, not `required`) is supported: the first record leaves it null, then may point at any existing record including itself.
+- A **required** self-reference is rejected at plan time — the first record would be impossible to create.
+- Cross-module cycles are not constructible through the CLI (a reference's target must be applied first), so they are neither generated nor claimed as supported.

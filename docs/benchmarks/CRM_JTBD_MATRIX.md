@@ -33,7 +33,7 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 - **Status**: **validated end to end** (Milestone 5), for **generated-to-generated many-to-one** references only.
 - **Evidence**: `tests/reference-resolver.test.js`, `tests/reference-fields-e2e.test.js` (real server + SDK + SQLite FK + restart), `tests/admin-modules.test.js` (selector, current-target-outside-first-page, hostile label as text), `tests/module-factory.test.js` (plan/generation, core/missing-target rejection); a real-Chromium reference-selector smoke (5 checks) was run manually. `docs/MODULE_FACTORY.md`, ADR-010.
 - **Manual interventions**: writing two manifests and applying the target first; real-browser smoke is manual (not in CI).
-- **Scope note**: this validates generated-to-generated many-to-one relationships only — **not** a complete CRM relationship model. Generated-to-core references, many-to-many, inverse collections and cascade/delete are out of scope.
+- **Scope note**: this validates generated-to-generated many-to-one relationships only — **not** a complete CRM relationship model. Generated-to-core references, many-to-many, inverse collections and cascade/delete are out of scope. Optional self-references are supported and tested; required self-references are rejected at plan time; cross-module cycles are not constructible via the CLI and are not claimed.
 
 ## JTBD-02 — Request commercial approval on a deal
 - **Actor**: sales rep (submits), manager (decides).

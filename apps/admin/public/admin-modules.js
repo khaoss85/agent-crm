@@ -17,6 +17,11 @@ import {
 } from './admin-core.js';
 
 const LIST_LIMIT = 100;
+const REFERENCE_OPTION_LIMIT = 100;
+// Bound the by-id fallback fetches for unresolved reference labels in a list,
+// so a page of records pointing at many off-page targets cannot fan out into
+// an unbounded request storm. Beyond this, the raw id is shown.
+const REFERENCE_LABEL_FETCH_BUDGET = 25;
 
 /**
  * @param {Document} doc
@@ -269,7 +274,7 @@ export function createModuleAdmin(deps) {
     const inputs = {};
     /** @type {Record<string, any>} */
     const fieldErrors = {};
-    /** @type {Array<{input: any, control: any, currentValue: string}>} */
+    /** @type {Array<{input: any, control: any, currentValue: string, hint: any}>} */
     const referencePopulations = [];
 
     for (const field of fields) {
@@ -281,13 +286,16 @@ export function createModuleAdmin(deps) {
       row.appendChild(label);
 
       let input;
+      let referenceHint = null;
       if (control.control === 'reference') {
         // Empty select now; options are loaded asynchronously (guarded by the
         // render token) from the target module, with the current value ensured.
         input = el(doc, 'select', { attrs: { id: inputId, name: field.name } });
         input.appendChild(el(doc, 'option', { text: control.required ? 'Select…' : 'None', attrs: { value: '' } }));
+        // Honest truncation notice, revealed only if the target list is capped.
+        referenceHint = el(doc, 'small', { class: 'hint hidden', text: 'Showing the first 100; searchable selection is a later milestone.' });
         const currentValue = initial[field.name] != null ? String(initial[field.name]) : '';
-        referencePopulations.push({ input, control, currentValue });
+        referencePopulations.push({ input, control, currentValue, hint: referenceHint });
       } else if (control.control === 'select') {
         input = el(doc, 'select', { attrs: { id: inputId, name: field.name } });
         input.appendChild(el(doc, 'option', { text: control.required ? 'Select…' : '(none)', attrs: { value: '' } }));
@@ -310,6 +318,7 @@ export function createModuleAdmin(deps) {
       const errorNode = el(doc, 'small', { class: 'field-error hidden', attrs: { id: `${inputId}-error` } });
       input.setAttribute('aria-describedby', `${inputId}-error`);
       row.appendChild(input);
+      if (referenceHint) row.appendChild(referenceHint);
       row.appendChild(errorNode);
       form.appendChild(row);
       inputs[field.name] = input;
@@ -410,7 +419,8 @@ export function createModuleAdmin(deps) {
       if (ids.size === 0) continue;
       let items = [];
       try {
-        const response = await client.request(`/api/modules/${encodeURIComponent(field.targetModule)}/records?limit=100`);
+        // One list call per reference column resolves every id on the first page.
+        const response = await client.request(`/api/modules/${encodeURIComponent(field.targetModule)}/records?limit=${REFERENCE_OPTION_LIMIT}`);
         items = Array.isArray(response.items) ? response.items : [];
       } catch {
         items = [];
@@ -423,9 +433,17 @@ export function createModuleAdmin(deps) {
         const labelValue = record[displayField];
         labels.set(`${field.name}:${id}`, labelValue == null || labelValue === '' ? id : String(labelValue));
       }
-      // Any id not on the first page: one targeted fetch, else raw-id fallback.
+      // Ids not on the first page: one targeted fetch each, up to a bounded
+      // budget so a page pointing at many off-page targets cannot fan out
+      // without limit; beyond the budget the raw id is shown.
+      let budget = REFERENCE_LABEL_FETCH_BUDGET;
       for (const id of ids) {
         if (labels.has(`${field.name}:${id}`)) continue;
+        if (budget <= 0) {
+          labels.set(`${field.name}:${id}`, id);
+          continue;
+        }
+        budget -= 1;
         try {
           const record = await client.request(
             `/api/modules/${encodeURIComponent(field.targetModule)}/records/${encodeURIComponent(id)}`,
@@ -450,11 +468,11 @@ export function createModuleAdmin(deps) {
    * @param {number} token
    */
   async function populateReference(ref, token) {
-    const { input, control, currentValue } = ref;
+    const { input, control, currentValue, hint } = ref;
     if (!control.targetModule) return; // malformed metadata: leave placeholder only
     let items = [];
     try {
-      const response = await client.request(`/api/modules/${encodeURIComponent(control.targetModule)}/records?limit=100`);
+      const response = await client.request(`/api/modules/${encodeURIComponent(control.targetModule)}/records?limit=${REFERENCE_OPTION_LIMIT}`);
       items = Array.isArray(response.items) ? response.items : [];
     } catch {
       // Target list unavailable: keep the placeholder; the raw id (if any) is
@@ -462,6 +480,8 @@ export function createModuleAdmin(deps) {
       items = [];
     }
     if (token !== renderToken) return; // a newer render owns the view now
+    // Honest notice: if the target list is capped, the selection is truncated.
+    if (hint && items.length >= REFERENCE_OPTION_LIMIT) hint.setAttribute('class', 'hint');
     const seen = new Set();
     const addOption = (record) => {
       const id = record && record.id != null ? String(record.id) : '';

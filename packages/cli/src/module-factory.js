@@ -74,6 +74,15 @@ export function planModule(input) {
         { field: field.name, targetTable },
       );
     }
+    // A required self-reference is unsatisfiable: the first record could never
+    // be created because its required target must already exist. Reject it
+    // (an optional self-reference is fine — the first record leaves it null).
+    if (targetTable === manifest.table && field.required === true) {
+      throw new ValidationError(
+        `reference field "${field.name}" is a required self-reference to "${targetTable}"; the first record could never be created. Make it optional (remove "required": true), since nested/deferred writes are out of scope.`,
+        { field: field.name, targetTable },
+      );
+    }
     const target =
       targetTable === manifest.table
         ? { dirName: manifest.name, kind: 'generated', manifest }

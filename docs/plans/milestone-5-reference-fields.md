@@ -26,7 +26,7 @@ Keeping the Milestone 1 syntax (`references` = target table) is required; no sec
 
 1. **Foreign key only.** The DB rejects a bad reference. *Cons*: the error is a raw SQLite failure, not a field-tied validation error; no target-capability check; poor agent/UX feedback. Insufficient alone (kept as defense-in-depth).
 2. **Generated services import target services directly.** A generated module's source imports another's. *Cons*: static import cycles between generated modules (partner↔contact), fragile ordering, breaks the "regenerate one module" property. Rejected.
-3. **Application-level reference resolver over service boundaries (chosen).** A small resolver, built per app instance, maps a target **table** to the installed generated module in the registry and validates via its `service.get`. Injected into every generated module as a `references` dependency. Resolution is **lazy at request time**, so all modules are registered by then — no import cycles, self-reference and cycles work naturally, synchronous, per-instance (no global mutable state). Later, an explicit adapter can register a core module as a reference target without changing this contract.
+3. **Application-level reference resolver over service boundaries (chosen).** A small resolver, built per app instance, maps a target **table** to the installed generated module in the registry and validates via its `service.get`. Injected into every generated module as a `references` dependency. Resolution is **lazy at request time**, so all modules are registered by then — no import cycles, synchronous, per-instance (no global mutable state). Later, an explicit adapter can register a core module as a reference target without changing this contract.
 
 Chosen: **3** — smallest safe design, useful errors, no cross-module SQL, no ORM/graph engine. Recorded as **ADR-010**.
 
@@ -44,8 +44,9 @@ Chosen: **3** — smallest safe design, useful errors, no cross-module SQL, no O
 - Syntax: existing `reference` field with `references` = target table (canonical `^[a-z][a-z0-9_]*$`), `required`/`unique`, optional `onDelete`.
 - **Generated-to-generated: supported (mandatory).** The target module must be installed and valid at plan time.
 - **Generated-to-core: rejected this milestone** with a clear message (path 2 of the spec). Core tables are never silently treated as generated targets. A future explicit adapter is the extension point.
-- **Self-reference: supported** (target table = own table) — resolved lazily, no cycle problem.
-- **Reference cycles across modules: supported** — resolution is at request time, never a static import.
+- **Optional self-reference: supported** (target table = own table) — the first record leaves it null, then may point at any existing record including itself.
+- **Required self-reference: rejected at plan time** — its first record would be unseedable (nested/deferred writes are out of scope).
+- **Cross-module cycles: not constructible via the CLI** — a reference requires its target installed first, so a mutual A↔B cycle is a chicken-and-egg the framework does not build; the resolver would tolerate one if present, but support is not claimed for a graph the CLI cannot create.
 - Missing target module at plan time → actionable error before any file write.
 
 ## Plan / apply behavior
@@ -105,6 +106,13 @@ Target module names come only from validated canonical metadata; table→module 
 - [x] Tests: manifest/plan/migration/FK/runtime/optional-clear/no-audit-on-fail/schema/API/SDK/Admin/restart/determinism.
 - [x] Docs (manifest, factory, API, SDK, Admin, README, JTBD) + ADR-010.
 - [x] `npm run verify` + `npm run smoke` green.
+
+## Adversarial review (post-merge-of-#6) decision log
+
+- **Required self-reference rejected at plan time**: it is unsatisfiable (the first record's required target cannot exist yet). Optional self-reference is supported and proven (root with null parent → may self-point). Cross-module cycles are not constructible via the CLI (target must be installed first); documented, not claimed as supported.
+- **Resolver no longer swallows unexpected errors**: only `NOT_FOUND`/404 from the target `get` becomes a missing-target validation error; anything else propagates, so future permission/unexpected faults are not masked.
+- **Admin honesty + bounds**: the reference selector shows a "first 100" truncation notice when the target list is capped; list-label resolution bounds by-id fallback fetches to 25 per column (raw id beyond), deduplicated by distinct id, with zero per-cell fetches when ids repeat.
+- **Verified**: reverse migration-name order on a fresh DB (SQLite forward-reference at CREATE, FK enforced at insert); `PRAGMA foreign_key_list` shows the real FK (`partners.id`, `RESTRICT`); unique reference → 409; real-Chromium reference smoke (4 checks).
 
 ## Explicitly deferred
 

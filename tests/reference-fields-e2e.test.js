@@ -141,3 +141,38 @@ test('reference fields end to end: migration, FK, runtime validation, restart', 
   assert.equal(survived.partnerId, pB.id);
   assert.equal((await instance.client.module('partner').get(pB.id)).name, 'Partner B');
 });
+
+test('optional self-reference: first record null, then can self-point, and persists', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'agent-crm-self-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
+    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
+  }
+  writeFileSync(
+    join(root, 'examples/modules/treenode.module.json'),
+    `${JSON.stringify({ manifestVersion: 1, name: 'treenode', table: 'treenodes', fields: [{ name: 'label', type: 'string', required: true }, { name: 'parentId', type: 'reference', references: 'treenodes' }] }, null, 2)}\n`,
+  );
+  assert.equal(cli(root, ['module', 'create', join(root, 'examples/modules/treenode.module.json'), '--apply']).status, 0);
+
+  const dbPath = join(root, 'data', 'self.sqlite');
+  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const actor = { type: 'user', id: 'self' };
+  let app = createAgentCrmApp({ dbPath });
+  const nodes = app.modules.get('treenode').service;
+  const rootNode = await nodes.create({ label: 'root' }, { actor });
+  assert.equal(rootNode.parentId, null);
+  const child = await nodes.create({ label: 'child', parentId: rootNode.id }, { actor });
+  assert.equal(child.parentId, rootNode.id);
+  const selfPointing = await nodes.update(rootNode.id, { parentId: rootNode.id }, { actor });
+  assert.equal(selfPointing.parentId, rootNode.id);
+  // Invalid self target → validation error, no write/audit/event.
+  const auditBefore = app.audit.list({ entityType: 'treenode' }).length;
+  await assert.rejects(() => nodes.create({ label: 'bad', parentId: 'ghost' }, { actor }), /parentId/);
+  assert.equal(app.audit.list({ entityType: 'treenode' }).length, auditBefore);
+  app.close();
+
+  // Restart: the self-relation persists.
+  app = createAgentCrmApp({ dbPath });
+  t.after(() => app.close());
+  assert.equal(app.modules.get('treenode').service.get(rootNode.id).parentId, rootNode.id);
+});

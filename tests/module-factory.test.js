@@ -88,6 +88,39 @@ test('reference to a core table is rejected; to a missing target is rejected', (
   );
 });
 
+test('a required self-reference is rejected; an optional self-reference is allowed', (t) => {
+  const root = tempRoot(t);
+  assert.throws(
+    () =>
+      planModule({
+        rootDir: root,
+        manifest: {
+          name: 'employee',
+          table: 'employees',
+          fields: [
+            { name: 'fullName', type: 'string', required: true },
+            { name: 'managerId', type: 'reference', references: 'employees', required: true },
+          ],
+        },
+      }),
+    /required self-reference to "employees"; the first record could never be created/,
+  );
+  // Optional self-reference plans fine (the first record leaves it null).
+  const plan = planModule({
+    rootDir: root,
+    manifest: {
+      name: 'treenode',
+      table: 'treenodes',
+      fields: [
+        { name: 'label', type: 'string', required: true },
+        { name: 'parentId', type: 'reference', references: 'treenodes' },
+      ],
+    },
+  });
+  assert.equal(plan.module, 'treenode');
+  assert.deepEqual(plan.references.map((r) => [r.field, r.targetModule, r.required]), [['parentId', 'treenode', false]]);
+});
+
 test('reference to an installed generated target plans and generates a runtime-safe service', (t) => {
   const root = tempRoot(t);
   applyModulePlan(planModule({ manifest: partnerManifest, rootDir: root }));
