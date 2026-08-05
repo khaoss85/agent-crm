@@ -143,22 +143,29 @@ export async function runRecordAction(params) {
     // Optional prepare phase (ADR-015): runs BEFORE the event buffer and the
     // write transaction, so an external-style side effect (an enrichment
     // provider call) never holds the database write lock open. The ctx is
-    // read-oriented — no `managed` — and the record read here is a preview:
-    // execute re-reads the authoritative record inside the transaction. A
-    // prepare failure fails the action with an honest trace and never opens
-    // the transaction.
+    // genuinely read-oriented: no `managed`, and `modules` is a per-module
+    // read-only view (get/list/listWhere/countWhere only — no create, update,
+    // createManaged or applyManaged is reachable through any property). The
+    // record read here is a preview: execute re-reads the authoritative record
+    // inside the transaction. The returned value is normalized to plain
+    // JSON-safe data and deep-frozen before it reaches execute (functions,
+    // symbols, bigints, non-plain objects and cycles are rejected; dangerous
+    // keys are dropped). A prepare failure fails the action with an honest
+    // trace and never opens the transaction.
     if (typeof definition.prepare === 'function') {
       const previewRecord = service.get(recordId); // NotFoundError → honest 404, no provider call
-      prepared = await definition.prepare({
-        record: previewRecord,
-        input: validatedInput,
-        actor,
-        modules,
-        intelligence,
-        config: params.config ?? {},
-        now: () => nowIso(),
-        step: (name, output) => steps.push({ name, status: 'completed', output }),
-      });
+      prepared = sanitizePreparedResult(
+        await definition.prepare({
+          record: previewRecord,
+          input: validatedInput,
+          actor,
+          modules: readOnlyModulesView(modules),
+          intelligence,
+          config: params.config ?? {},
+          now: () => nowIso(),
+          step: (name, output) => steps.push({ name, status: 'completed', output }),
+        }),
+      );
     }
     result = await events.buffered(async (outbox) => {
       const value = await database.transactionAsync(async () => {
@@ -247,6 +254,72 @@ export async function runRecordAction(params) {
     throw failure;
   }
   return { ok: true, module, action, recordId, runId, result };
+}
+
+const READ_ONLY_SERVICE_METHODS = ['get', 'list', 'listWhere', 'countWhere'];
+const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * A read-only view of the module registry for the prepare phase: each module's
+ * service is reduced to its read methods, so no write path (create, update,
+ * createManaged, applyManaged) is reachable through any ctx property.
+ * @param {{get: (name: string) => any}} modules
+ */
+function readOnlyModulesView(modules) {
+  return Object.freeze({
+    get(name) {
+      const module = modules.get(name); // NotFoundError for unknown modules
+      /** @type {Record<string, Function>} */
+      const service = {};
+      for (const method of READ_ONLY_SERVICE_METHODS) {
+        if (typeof module.service?.[method] === 'function') {
+          service[method] = module.service[method].bind(module.service);
+        }
+      }
+      return Object.freeze({ name: module.name, service: Object.freeze(service) });
+    },
+  });
+}
+
+/**
+ * Normalize a prepare result to plain JSON-safe data and deep-freeze it.
+ * Fail closed on anything that cannot round-trip deterministically.
+ * @param {unknown} value @param {string} [path]
+ */
+function sanitizePreparedResult(value, path = 'prepared', seen = new Set()) {
+  if (value === undefined || value === null) return value ?? undefined;
+  const type = typeof value;
+  if (type === 'string' || type === 'boolean') return value;
+  if (type === 'number') {
+    if (!Number.isFinite(value)) throw new ValidationError(`prepare returned a non-finite number at ${path}`);
+    return value;
+  }
+  if (type === 'function' || type === 'bigint' || type === 'symbol') {
+    throw new ValidationError(`prepare must return plain JSON-safe data (found ${type} at ${path})`);
+  }
+  if (seen.has(value)) {
+    throw new ValidationError(`prepare returned a cyclic structure at ${path}`);
+  }
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return Object.freeze(value.map((item, index) => sanitizePreparedResult(item, `${path}[${index}]`, seen) ?? null));
+    }
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      throw new ValidationError(`prepare must return plain JSON-safe data (non-plain object at ${path})`);
+    }
+    /** @type {Record<string, unknown>} */
+    const out = {};
+    for (const key of Object.keys(value)) {
+      if (DANGEROUS_KEYS.has(key)) continue; // dropped, never re-assigned
+      const item = sanitizePreparedResult(/** @type {any} */ (value)[key], `${path}.${key}`, seen);
+      if (item !== undefined) out[key] = item;
+    }
+    return Object.freeze(out);
+  } finally {
+    seen.delete(value);
+  }
 }
 
 /** @param {unknown} actor */

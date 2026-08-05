@@ -49,6 +49,7 @@ try {
     'score-run.module.json',
     'score-contribution.module.json',
     'routing-run.module.json',
+    'route-evaluation.module.json',
     'assignment.module.json',
   ]) {
     applyModule(root, join(starterInProject, manifest));
@@ -301,12 +302,13 @@ try {
     );
     assert.equal(leads.get(leadFail.id).enrichmentSnapshotId, null);
 
-    // Intelligence records are immutable through public CRUD.
-    const snapshots = app.modules.get('enrichment-snapshot').service;
-    await assert.rejects(
-      () => snapshots.update(enrichedA.result.snapshot.id, { country: 'XX' }, { actor }),
-      (error) => error.code === 'VALIDATION_ERROR',
-    );
+    // Intelligence records are READ-ONLY publicly: the generated services have
+    // no public create/update at all (capabilities get/list) — records exist
+    // only through the trusted in-process createManaged used by the actions.
+    const snapshotModule = app.modules.get('enrichment-snapshot');
+    assert.deepEqual(snapshotModule.capabilities, ['get', 'list']);
+    assert.equal(snapshotModule.service.create, undefined, 'no public snapshot create');
+    assert.equal(snapshotModule.service.update, undefined, 'no public snapshot update');
     const scoreRunsSvc = app.modules.get('score-run').service;
     const assignmentsSvc = app.modules.get('assignment').service;
     const freshA = leads.get(leadA.id);

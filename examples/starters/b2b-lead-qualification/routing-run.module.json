@@ -3,18 +3,79 @@
   "name": "routing-run",
   "description": "One routing execution: which policy version (and fingerprint) evaluated which targets and selected which one, with the matched rule or fallback reason. Immutable history.",
   "fields": [
-    { "name": "leadId", "type": "string", "writable": "managed" },
-    { "name": "policy", "type": "string", "writable": "managed" },
-    { "name": "policyVersion", "type": "integer", "writable": "managed" },
-    { "name": "fingerprint", "type": "string", "writable": "managed" },
-    { "name": "scoreRunId", "type": "string", "writable": "managed" },
-    { "name": "snapshotId", "type": "string", "writable": "managed" },
-    { "name": "evaluatedTargets", "type": "integer", "writable": "managed" },
-    { "name": "eligibleTargets", "type": "integer", "writable": "managed" },
-    { "name": "selectedTarget", "type": "string", "writable": "managed" },
-    { "name": "matchedRule", "type": "string", "writable": "managed" },
-    { "name": "fallbackReason", "type": "string", "writable": "managed" },
-    { "name": "routedAt", "type": "timestamp", "writable": "managed" },
-    { "name": "status", "type": "enum", "values": ["completed"], "writable": "managed" }
+    {
+      "name": "leadId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "fingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "targetsFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "scoreRunId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "snapshotId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "evaluatedTargets",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "eligibleTargets",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "selectedTarget",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "matchedRule",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "fallbackReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "routedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "completed"
+      ],
+      "writable": "managed"
+    }
   ]
 }

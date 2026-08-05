@@ -34,6 +34,13 @@ export const fixtureFirmographicsProvider = {
     const domain = typeof lead.email === 'string' && lead.email.includes('@') ? lead.email.split('@')[1].toLowerCase() : null;
     if (domain === 'fail.example') throw new Error('simulated provider outage');
     if (domain === 'slow.example') return new Promise(() => {}); // never resolves → timeout path
+    if (domain === 'latefail.example') {
+      // Rejects AFTER a short timeout window: proves late settlement is
+      // observed (no unhandled rejection) and never persisted.
+      return new Promise((_resolve, reject) => {
+        setTimeout(() => reject(new Error('late simulated outage')), 400);
+      });
+    }
     if (domain === 'invalid.example') return { fields: { country: 'Italia' } }; // not ISO-3166 shaped → PROVIDER_INVALID
     if (domain === 'ephemeral.example') {
       // Already-expired snapshot: every enrich creates a new snapshot version.
@@ -52,7 +59,17 @@ export const fixtureFirmographicsProvider = {
   },
 };
 
-const SUPPORTED_COUNTRIES = Object.freeze(['IT', 'ES', 'DE']);
+/**
+ * Semantic thresholds live in the model's DECLARED config, not in closures:
+ * the config is part of the declared-definition fingerprint, so changing a
+ * threshold without publishing a new version is detected at boot. Rules read
+ * it via ctx.config (frozen).
+ */
+const SCORE_CONFIG = {
+  supportedCountries: ['IT', 'ES', 'DE'],
+  enterpriseRanges: ['1000-5000', '>5000'],
+  engagedSignalCount: 3,
+};
 
 /** Shared rule set for the b2b-saas-score model (v1 baseline). */
 const V1_RULES = [
@@ -61,8 +78,8 @@ const V1_RULES = [
     label: 'Enterprise company size',
     weight: 30,
     /** @param {any} ctx */
-    evaluate({ snapshot }) {
-      const matched = snapshot?.employeeRange === '1000-5000' || snapshot?.employeeRange === '>5000';
+    evaluate({ snapshot, config }) {
+      const matched = snapshot != null && config.enterpriseRanges.includes(snapshot.employeeRange);
       return { matched, reason: matched ? `employee range ${snapshot.employeeRange}` : 'no enterprise employee range' };
     },
   },
@@ -71,8 +88,8 @@ const V1_RULES = [
     label: 'Company in a supported country',
     weight: 10,
     /** @param {any} ctx */
-    evaluate({ snapshot }) {
-      const matched = snapshot != null && SUPPORTED_COUNTRIES.includes(snapshot.country);
+    evaluate({ snapshot, config }) {
+      const matched = snapshot != null && config.supportedCountries.includes(snapshot.country);
       return { matched, reason: matched ? `country ${snapshot.country}` : 'no supported country evidence' };
     },
   },
@@ -96,11 +113,11 @@ const V1_RULES = [
   },
   {
     key: 'highly-engaged',
-    label: 'Three or more behavioral signals',
+    label: 'Highly engaged (declared signal-count threshold)',
     weight: 40,
     /** @param {any} ctx */
-    evaluate({ signals }) {
-      return signals.length >= 3;
+    evaluate({ signals, config }) {
+      return signals.length >= config.engagedSignalCount;
     },
   },
   {
@@ -120,6 +137,7 @@ export const b2bSaasScoreV1 = {
   label: 'B2B SaaS fit + engagement score',
   minScore: -100,
   maxScore: 100,
+  config: SCORE_CONFIG,
   rules: V1_RULES,
 };
 
@@ -129,6 +147,7 @@ export const b2bSaasScoreV2 = {
   label: 'B2B SaaS fit + engagement score (adds product activation)',
   minScore: -100,
   maxScore: 100,
+  config: SCORE_CONFIG,
   rules: [
     ...V1_RULES,
     {
@@ -166,11 +185,13 @@ export const b2bRoutingV2 = {
   name: 'b2b-sales-routing',
   version: 2,
   label: 'Route by country/language, preferring enterprise skill on high scores',
+  // The threshold is DECLARED config (fingerprinted), not a closure value.
+  config: { enterpriseScoreThreshold: 60 },
   /** @param {any} ctx */
   route(context) {
-    const { score, snapshot, targets, rank } = context;
+    const { score, snapshot, targets, rank, config } = context;
     const base = b2bRoutingV1.route(context);
-    if (base === null || score < 60) return base;
+    if (base === null || score < config.enterpriseScoreThreshold) return base;
     const country = snapshot?.country ?? null;
     const preferred = targets.filter(
       (target) =>

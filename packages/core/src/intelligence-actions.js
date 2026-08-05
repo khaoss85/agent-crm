@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ConflictError, NotFoundError, ValidationError } from './errors.js';
+import { AppError, ConflictError, ValidationError } from './errors.js';
 import { computeDefinitionFingerprint, rankRoutingTargets } from './intelligence-registry.js';
 
 /**
@@ -8,15 +8,22 @@ import { computeDefinitionFingerprint, rankRoutingTargets } from './intelligence
  * like buildMoveStageAction (ADR-014): enrich, record-signal, score, route.
  *
  * Storage model: the snapshot/signal/run/assignment record modules declare
- * EVERY field `writable: "managed"`, so public create can only make an empty
- * row, public update is a structural no-op, and the sole data write path is
- * the in-process applyManaged used here — immutable through public CRUD by
- * construction. Records are created empty and filled with one applyManaged
- * call inside the action's transaction.
+ * EVERY field `writable: "managed"`, so the factory generates them READ-ONLY
+ * on the public surface (capabilities get/list, no public create/update at
+ * all) with a trusted in-process `createManaged` — no generic client can
+ * create empty or forged rows, and records are immutable once written.
  *
- * Reads that need "all X for lead L" are bounded list-and-filter scans
- * (limit 500) — the documented local-development posture (ADR-013 precedent),
- * not a scalable index.
+ * Reads that decide correctness use the generated services' exact-match
+ * `listWhere`/`countWhere` queries (complete, indexed via the manifests'
+ * `index` flags) — never the paged `list()`, so no correctness decision
+ * depends on a page bound.
+ *
+ * Lifecycle: the intelligence actions are server-gated to ACTIVE leads —
+ * enrich/score/record-signal from `new` or `qualified`, route from `new` only
+ * (an unrouted qualified lead was worked manually; converted/disqualified
+ * leads are out of the intelligence lifecycle). The generic Admin hides the
+ * actions in other states via the advertised fromStates, and the server
+ * enforces them regardless of client.
  */
 
 const KEY_RE = /^[a-z][a-z0-9-]*$/;
@@ -25,6 +32,12 @@ const LANGUAGE_RE = /^[a-z]{2}$/;
 const MAX_TEXT = 500;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+/**
+ * Statuses that count toward a routing target's CURRENT load: capacity means
+ * active workload, not lifetime assignments. A converted or disqualified lead
+ * releases its slot (ADR-015 addendum).
+ */
+export const ACTIVE_LEAD_STATUSES = Object.freeze(['new', 'qualified']);
 
 /** @typedef {{
  *   module?: string,
@@ -33,6 +46,7 @@ const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
  *   scoreRunModule?: string,
  *   contributionModule?: string,
  *   routingRunModule?: string,
+ *   routeEvaluationModule?: string,
  *   assignmentModule?: string,
  *   timeoutMs?: number,
  * }} IntelligenceActionConfig */
@@ -46,6 +60,7 @@ function resolved(config = {}) {
     scoreRunModule: config.scoreRunModule ?? 'score-run',
     contributionModule: config.contributionModule ?? 'score-contribution',
     routingRunModule: config.routingRunModule ?? 'routing-run',
+    routeEvaluationModule: config.routeEvaluationModule ?? 'route-evaluation',
     assignmentModule: config.assignmentModule ?? 'assignment',
     timeoutMs: Number.isSafeInteger(config.timeoutMs) && /** @type {number} */ (config.timeoutMs) > 0
       ? /** @type {number} */ (config.timeoutMs)
@@ -53,27 +68,43 @@ function resolved(config = {}) {
   };
 }
 
-/** Create an all-managed record: empty create, then one managed fill. */
-async function createManagedRecord(modules, moduleName, patch, actor) {
+/** Recursively freeze plain data (used for evaluation contexts and config). */
+function deepFreeze(value) {
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value)) deepFreeze(item);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+/** Create an immutable record through the trusted in-process path. */
+async function createRecord(modules, moduleName, patch, actor) {
   const service = modules.get(moduleName).service;
-  const empty = await service.create({}, { actor });
-  return service.applyManaged(empty.id, patch, { actor });
+  if (typeof service.createManaged !== 'function') {
+    throw new AppError(
+      `Module "${moduleName}" is not a read-only managed record module (createManaged missing) — regenerate it from the current manifest`,
+      { code: 'INTELLIGENCE_STORAGE_INVALID', status: 500 },
+    );
+  }
+  return service.createManaged(patch, { actor });
 }
 
-/** Bounded list-and-filter over a generated module (documented 500-row local bound). */
-function listForLead(modules, moduleName, leadId, field = 'leadId') {
-  return modules
-    .get(moduleName)
-    .service.list({ limit: 500 })
-    .filter((record) => record[field] === leadId);
-}
-
-/** @param {Promise<any>} promise @param {number} ms @param {string} label */
+/**
+ * Bounded provider-call timeout. The losing promise is explicitly observed so
+ * a late rejection can never become an unhandled rejection; a late RESOLUTION
+ * is simply discarded (best-effort abandonment — the framework does not claim
+ * cancellation, and nothing a provider settles late can be persisted because
+ * persistence happens only in execute from the already-returned prepared
+ * value).
+ * @param {Promise<any>} promise @param {number} ms @param {string} label
+ */
 function withTimeout(promise, ms, label) {
   /** @type {any} */
   let timer;
+  const guarded = Promise.resolve(promise);
+  guarded.catch(() => {}); // observe late rejections; never unhandled
   return Promise.race([
-    promise,
+    guarded,
     new Promise((_resolve, reject) => {
       timer = setTimeout(
         () => reject(new AppError(`${label} timed out after ${ms}ms`, { code: 'PROVIDER_TIMEOUT', status: 504 })),
@@ -100,7 +131,8 @@ function optionalBoundedText(value, field, shape = null) {
 /**
  * Validate and normalize a provider result into the snapshot shape. Anything
  * outside the contract is PROVIDER_INVALID — the framework never persists
- * unvalidated third-party data, and never the full raw payload.
+ * unvalidated third-party data, and never the full raw payload. Only declared
+ * own properties are read; unknown fields are ignored.
  * @param {unknown} raw
  */
 function normalizeEnrichment(raw) {
@@ -108,45 +140,53 @@ function normalizeEnrichment(raw) {
     throw new AppError('Enrichment provider returned a non-object result', { code: 'PROVIDER_INVALID', status: 502 });
   }
   const result = /** @type {Record<string, any>} */ (raw);
-  const fields = result.fields;
+  const fields = Object.hasOwn(result, 'fields') ? result.fields : undefined;
   if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
     throw new AppError('Enrichment provider result needs a "fields" object', { code: 'PROVIDER_INVALID', status: 502 });
   }
+  const own = (object, key) => (Object.hasOwn(object, key) ? object[key] : undefined);
   const normalized = {
-    companyDomain: optionalBoundedText(fields.companyDomain, 'companyDomain'),
-    companyName: optionalBoundedText(fields.companyName, 'companyName'),
-    country: optionalBoundedText(fields.country, 'country', COUNTRY_RE),
-    employeeRange: optionalBoundedText(fields.employeeRange, 'employeeRange'),
-    industry: optionalBoundedText(fields.industry, 'industry'),
-    revenueRange: optionalBoundedText(fields.revenueRange, 'revenueRange'),
-    language: optionalBoundedText(fields.language, 'language', LANGUAGE_RE),
+    companyDomain: optionalBoundedText(own(fields, 'companyDomain'), 'companyDomain'),
+    companyName: optionalBoundedText(own(fields, 'companyName'), 'companyName'),
+    country: optionalBoundedText(own(fields, 'country'), 'country', COUNTRY_RE),
+    employeeRange: optionalBoundedText(own(fields, 'employeeRange'), 'employeeRange'),
+    industry: optionalBoundedText(own(fields, 'industry'), 'industry'),
+    revenueRange: optionalBoundedText(own(fields, 'revenueRange'), 'revenueRange'),
+    language: optionalBoundedText(own(fields, 'language'), 'language', LANGUAGE_RE),
   };
   let confidence = null;
-  if (result.confidence !== undefined && result.confidence !== null) {
-    if (!Number.isSafeInteger(result.confidence) || result.confidence < 0 || result.confidence > 100) {
+  const rawConfidence = own(result, 'confidence');
+  if (rawConfidence !== undefined && rawConfidence !== null) {
+    if (!Number.isSafeInteger(rawConfidence) || rawConfidence < 0 || rawConfidence > 100) {
       throw new AppError('Enrichment provider returned an invalid "confidence" (integer 0–100)', {
         code: 'PROVIDER_INVALID',
         status: 502,
       });
     }
-    confidence = result.confidence;
+    confidence = rawConfidence;
   }
-  const sourceRef = optionalBoundedText(result.sourceRef, 'sourceRef');
+  const sourceRef = optionalBoundedText(own(result, 'sourceRef'), 'sourceRef');
   let expiresAt = null;
-  if (result.expiresAt !== undefined && result.expiresAt !== null) {
-    if (typeof result.expiresAt !== 'string' || Number.isNaN(Date.parse(result.expiresAt))) {
+  const rawExpires = own(result, 'expiresAt');
+  if (rawExpires !== undefined && rawExpires !== null) {
+    if (typeof rawExpires !== 'string' || Number.isNaN(Date.parse(rawExpires))) {
       throw new AppError('Enrichment provider returned an invalid "expiresAt"', { code: 'PROVIDER_INVALID', status: 502 });
     }
-    expiresAt = new Date(result.expiresAt).toISOString();
+    expiresAt = new Date(rawExpires).toISOString();
   }
-  const partial = result.partial === true;
+  const partial = own(result, 'partial') === true;
   return { fields: normalized, confidence, sourceRef, expiresAt, status: partial ? 'partial' : 'complete' };
 }
 
-/** The latest non-expired snapshot for lead+provider, or null. */
+/**
+ * The latest non-expired snapshot for lead+provider, or null. Exact query —
+ * complete regardless of table size; deterministic tie-break retrievedAt desc,
+ * id desc.
+ */
 function latestValidSnapshot(modules, snapshotModule, leadId, providerName, atIso) {
-  const candidates = listForLead(modules, snapshotModule, leadId)
-    .filter((snapshot) => snapshot.provider === providerName && snapshot.sourceKey)
+  const candidates = modules
+    .get(snapshotModule)
+    .service.listWhere({ leadId, provider: providerName })
     .filter((snapshot) => typeof snapshot.expiresAt === 'string' && snapshot.expiresAt > atIso)
     .sort((a, b) => (a.retrievedAt === b.retrievedAt ? (a.id < b.id ? 1 : -1) : a.retrievedAt < b.retrievedAt ? 1 : -1));
   return candidates[0] ?? null;
@@ -165,13 +205,31 @@ function providerLeadView(record) {
 }
 
 /**
+ * The declared-fingerprintable projection of the lead fields a scoring model
+ * may read: the public fields plus lifecycle status — recorded per ScoreRun so
+ * a historical score's mutable inputs are evidenced even after the lead
+ * changes (values are fingerprinted, not copied — LI-09 stays partial).
+ */
+function leadInputView(record) {
+  return {
+    id: record.id,
+    firstName: record.firstName ?? null,
+    lastName: record.lastName ?? null,
+    email: record.email ?? null,
+    companyName: record.companyName ?? null,
+    source: record.source ?? null,
+    status: record.status ?? null,
+  };
+}
+
+/**
  * lead.enrich — call an enrichment provider OUTSIDE the transaction (prepare
  * phase), then persist one immutable snapshot and the Lead's managed links
  * atomically. Refresh semantics: a non-expired snapshot for the same
  * lead+provider is reused (no provider call); an expired one leads to a NEW
  * snapshot version — historical snapshots are never overwritten. Provider
  * failure/timeout/invalid data fails the action with an honest trace and
- * persists nothing (failed snapshots are deliberately not stored in v1).
+ * persists nothing.
  * @param {IntelligenceActionConfig} [config]
  */
 export function buildEnrichAction(config) {
@@ -182,12 +240,14 @@ export function buildEnrichAction(config) {
     label: 'Enrich',
     description: 'Fetch firmographic data from an enrichment provider into an immutable snapshot.',
     actionContract: 1,
+    stateField: 'status',
+    fromStates: ['new', 'qualified'],
     input: [
       { name: 'provider', type: 'string', required: true, hint: 'Registered enrichment provider name (see schema intelligence.enrichmentProviders).' },
     ],
     /** @param {any} ctx */
     async prepare({ record, input, intelligence, modules, config: appConfig, now, step }) {
-      const provider = intelligence.getProvider(input.provider);
+      const { definition: provider, fingerprint } = intelligence.getProvider(input.provider);
       if (!provider.capabilities.includes('company')) {
         throw new ValidationError(`Enrichment provider "${provider.name}" does not support company enrichment`, {
           field: 'provider',
@@ -223,7 +283,7 @@ export function buildEnrichAction(config) {
       step('enrich.provider', { provider: provider.name, version: provider.version, status: normalized.status });
       return {
         reuse: false,
-        provider: { name: provider.name, version: provider.version },
+        provider: { name: provider.name, version: provider.version, fingerprint },
         normalized,
         retrievedAt,
         expiresAt: normalized.expiresAt ?? new Date(Date.parse(retrievedAt) + DEFAULT_TTL_MS).toISOString(),
@@ -249,16 +309,17 @@ export function buildEnrichAction(config) {
         // inside the write lock.
         throw new ConflictError('The reusable enrichment snapshot changed during the request; retry', { transient: true });
       }
-      const sequence = listForLead(modules, cfg.snapshotModule, record.id)
-        .filter((snapshot) => snapshot.provider === prepared.provider.name).length + 1;
+      const snapshots = modules.get(cfg.snapshotModule).service;
+      const sequence = snapshots.countWhere({ leadId: record.id, provider: prepared.provider.name }) + 1;
       const sourceKey = `enrich:${record.id}:${prepared.provider.name}@${prepared.provider.version}:${sequence}`;
-      const snapshot = await createManagedRecord(
+      const snapshot = await createRecord(
         modules,
         cfg.snapshotModule,
         {
           leadId: record.id,
           provider: prepared.provider.name,
           providerVersion: prepared.provider.version,
+          providerFingerprint: prepared.provider.fingerprint,
           sourceKey,
           status: prepared.normalized.status,
           ...prepared.normalized.fields,
@@ -286,6 +347,7 @@ function snapshotSummary(snapshot) {
     id: snapshot.id,
     provider: snapshot.provider,
     providerVersion: snapshot.providerVersion,
+    providerFingerprint: snapshot.providerFingerprint ?? null,
     sourceKey: snapshot.sourceKey,
     status: snapshot.status,
     country: snapshot.country,
@@ -312,6 +374,8 @@ export function buildRecordSignalAction(config) {
     label: 'Record signal',
     description: 'Append an immutable behavioral signal for this lead.',
     actionContract: 1,
+    stateField: 'status',
+    fromStates: ['new', 'qualified'],
     input: [
       { name: 'signalType', type: 'string', required: true, hint: 'Canonical key, e.g. pricing-page-visited, demo-requested.' },
       { name: 'source', type: 'string', required: false },
@@ -327,7 +391,7 @@ export function buildRecordSignalAction(config) {
         });
       }
       const sourceKey = input.sourceKey ?? `signal:${record.id}:${input.signalType}:${input.observedAt}`;
-      const signal = await createManagedRecord(
+      const signal = await createRecord(
         modules,
         cfg.signalModule,
         {
@@ -348,10 +412,12 @@ export function buildRecordSignalAction(config) {
 
 /**
  * lead.score — evaluate a versioned, explainable scoring model in one
- * transaction: every rule runs in declared order against frozen inputs, each
- * contribution is persisted, and the Lead's latest score/run links update
- * atomically with the run. Re-scoring creates a new run (deterministic for
- * identical inputs); historical runs stay readable forever.
+ * transaction. Chosen semantics: EVERY explicit score request creates a new
+ * historical run (safe retry, deterministic for identical inputs); the Lead's
+ * latest links update atomically with the run. The run records the declared
+ * model fingerprint, the snapshot id, the ordered signal-set fingerprint AND a
+ * fingerprint of the mutable lead fields read by rules, so historical runs
+ * stay evidenced after the lead changes.
  * @param {IntelligenceActionConfig} [config]
  */
 export function buildScoreAction(config) {
@@ -362,6 +428,8 @@ export function buildScoreAction(config) {
     label: 'Score',
     description: 'Calculate an explainable score with a versioned scoring model.',
     actionContract: 1,
+    stateField: 'status',
+    fromStates: ['new', 'qualified'],
     input: [
       { name: 'model', type: 'string', required: true, hint: 'Registered scoring model name (see schema intelligence.scoringModels).' },
       { name: 'version', type: 'integer', required: true, hint: 'Explicit model version — never an implicit latest.' },
@@ -386,14 +454,16 @@ export function buildScoreAction(config) {
         if (typeof snapshot.expiresAt === 'string' && snapshot.expiresAt <= evaluatedAt) snapshot = null;
       }
 
-      const signals = listForLead(modules, cfg.signalModule, record.id)
-        .filter((signal) => signal.sourceKey)
+      const signals = modules
+        .get(cfg.signalModule)
+        .service.listWhere({ leadId: record.id })
         .sort((a, b) => (a.observedAt === b.observedAt ? (a.id < b.id ? -1 : 1) : a.observedAt < b.observedAt ? -1 : 1));
 
       const context = Object.freeze({
         lead: Object.freeze({ ...record }),
         snapshot: snapshot ? Object.freeze({ ...snapshot }) : null,
         signals: Object.freeze(signals.map((signal) => Object.freeze({ ...signal }))),
+        config: deepFreeze(structuredClone(definition.config ?? {})),
         evaluatedAt,
       });
 
@@ -410,9 +480,9 @@ export function buildScoreAction(config) {
             { code: 'SCORING_RULE_INVALID', status: 500, details: { rule: rule.key } },
           );
         }
-        const matched = outcome === true || (outcome !== null && typeof outcome === 'object' && outcome.matched === true);
-        if (typeof outcome !== 'boolean' && (outcome === null || typeof outcome !== 'object' || typeof outcome.matched !== 'boolean')) {
-          throw new AppError(`Scoring rule "${rule.key}" must return a boolean or {matched, reason}`, {
+        const matched = outcome === true || (outcome !== null && typeof outcome === 'object' && !(outcome instanceof Promise) && outcome.matched === true);
+        if (typeof outcome !== 'boolean' && (outcome === null || typeof outcome !== 'object' || outcome instanceof Promise || typeof outcome.matched !== 'boolean')) {
+          throw new AppError(`Scoring rule "${rule.key}" must return a synchronous boolean or {matched, reason} — Promises are rejected`, {
             code: 'SCORING_RULE_INVALID',
             status: 500,
             details: { rule: rule.key },
@@ -431,7 +501,7 @@ export function buildScoreAction(config) {
       const signalsFingerprint = signals.length
         ? computeDefinitionFingerprint(signals.map((signal) => signal.id).sort())
         : null;
-      const run = await createManagedRecord(
+      const run = await createRecord(
         modules,
         cfg.scoreRunModule,
         {
@@ -442,6 +512,7 @@ export function buildScoreAction(config) {
           snapshotId: snapshot?.id ?? null,
           signalCount: signals.length,
           signalsFingerprint,
+          leadFingerprint: computeDefinitionFingerprint(leadInputView(record)),
           totalScore: total,
           evaluatedAt,
           status: 'completed',
@@ -449,7 +520,7 @@ export function buildScoreAction(config) {
         actor,
       );
       for (const contribution of contributions) {
-        await createManagedRecord(modules, cfg.contributionModule, { runId: run.id, ...contribution }, actor);
+        await createRecord(modules, cfg.contributionModule, { runId: run.id, ...contribution }, actor);
       }
       step('score.evaluated', { runId: run.id, model: definition.name, version: definition.version, total });
 
@@ -473,12 +544,12 @@ export function buildScoreAction(config) {
  * lead.route — deterministic assignment under a versioned routing policy, in
  * one transaction. Chosen v1 semantics: an already-assigned lead is a stable
  * `409 ALREADY_ASSIGNED` (explicit reroute is deferred); an unscored lead is
- * `409 LEAD_NOT_SCORED`. Current load = count of leads currently assigned to
- * each target, computed in-transaction from the lead module (the documented
- * capacity source). Ties break by the documented deterministic ranking
- * (priority desc → load asc → key asc) — never randomness. When nothing is
- * eligible the declared fallback target takes the lead with a recorded
- * reason; with no fallback the action is `409 NO_ELIGIBLE_TARGET`.
+ * `409 LEAD_NOT_SCORED`. Current load = exact indexed count of ACTIVE leads
+ * (status new|qualified) assigned to each target, computed in-transaction —
+ * converted/disqualified leads release their capacity slot. The run records
+ * the target-set fingerprint plus one route-evaluation row per candidate
+ * target (eligible or not, with reason, load, capacity, priority), so a
+ * historical decision stays explainable after target data changes.
  * @param {IntelligenceActionConfig} [config]
  */
 export function buildRouteAction(config) {
@@ -489,6 +560,8 @@ export function buildRouteAction(config) {
     label: 'Route',
     description: 'Assign the lead with a versioned, deterministic routing policy.',
     actionContract: 1,
+    stateField: 'status',
+    fromStates: ['new'],
     input: [
       { name: 'policy', type: 'string', required: true, hint: 'Registered routing policy name (see schema intelligence.routingPolicies).' },
       { name: 'version', type: 'integer', required: true, hint: 'Explicit policy version — never an implicit latest.' },
@@ -521,24 +594,25 @@ export function buildRouteAction(config) {
         : null;
       const routedAt = now();
 
-      // Current load per target: leads currently assigned to it (bounded scan).
-      const leads = modules.get(cfg.module).service.list({ limit: 500 });
-      const load = new Map();
-      for (const lead of leads) {
-        if (lead.assignedTargetId) load.set(lead.assignedTargetId, (load.get(lead.assignedTargetId) ?? 0) + 1);
-      }
+      // Exact indexed ACTIVE-workload count per target (capacity semantics).
+      const leadService = modules.get(cfg.module).service;
+      const loadOf = (key) => leadService.countWhere({ assignedTargetId: key, status: [...ACTIVE_LEAD_STATUSES] });
       const score = record.score ?? scoreRun.totalScore;
       const allTargets = intelligence
         .listTargets()
-        .map((target) => Object.freeze({ ...target, currentLoad: load.get(target.key) ?? 0 }));
+        .map((target) => Object.freeze({ ...target, currentLoad: loadOf(target.key) }));
       const candidates = allTargets.filter((target) => target.kind !== 'fallback');
-      const eligible = candidates.filter(
-        (target) =>
-          target.active === true &&
-          (target.scoreMin === undefined || score >= target.scoreMin) &&
-          (target.scoreMax === undefined || score <= target.scoreMax) &&
-          (target.capacity === undefined || target.capacity === null || target.currentLoad < target.capacity),
-      );
+      /** @param {any} target — null when eligible, else the exclusion reason */
+      const exclusionReason = (target) => {
+        if (target.active !== true) return 'inactive';
+        if (target.scoreMin !== undefined && score < target.scoreMin) return `score ${score} below scoreMin ${target.scoreMin}`;
+        if (target.scoreMax !== undefined && score > target.scoreMax) return `score ${score} above scoreMax ${target.scoreMax}`;
+        if (target.capacity !== undefined && target.capacity !== null && target.currentLoad >= target.capacity) {
+          return `at capacity (${target.currentLoad}/${target.capacity} active leads)`;
+        }
+        return null;
+      };
+      const eligible = candidates.filter((target) => exclusionReason(target) === null);
 
       const context = Object.freeze({
         lead: Object.freeze({ ...record }),
@@ -546,6 +620,7 @@ export function buildRouteAction(config) {
         snapshot: snapshot ? Object.freeze({ ...snapshot }) : null,
         targets: Object.freeze(eligible),
         allTargets: Object.freeze(allTargets),
+        config: deepFreeze(structuredClone(definition.config ?? {})),
         rank: rankRoutingTargets,
         routedAt,
       });
@@ -558,6 +633,12 @@ export function buildRouteAction(config) {
           `Routing policy "${definition.name}@${definition.version}" threw (${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}) — policies must be total and deterministic`,
           { code: 'ROUTING_POLICY_INVALID', status: 500 },
         );
+      }
+      if (decision instanceof Promise) {
+        throw new AppError('Routing policies must return synchronously — Promises are rejected', {
+          code: 'ROUTING_POLICY_INVALID',
+          status: 500,
+        });
       }
 
       let selected = null;
@@ -586,11 +667,11 @@ export function buildRouteAction(config) {
             status: 409,
           });
         }
-        selected = { ...fallback, currentLoad: load.get(fallback.key) ?? 0 };
+        selected = { ...fallback, currentLoad: loadOf(fallback.key) };
         fallbackReason = eligible.length === 0 ? 'no eligible target' : 'policy declined all eligible targets';
       }
 
-      const run = await createManagedRecord(
+      const run = await createRecord(
         modules,
         cfg.routingRunModule,
         {
@@ -598,6 +679,7 @@ export function buildRouteAction(config) {
           policy: definition.name,
           policyVersion: definition.version,
           fingerprint,
+          targetsFingerprint: intelligence.targetsFingerprint(),
           scoreRunId: scoreRun.id,
           snapshotId: snapshot?.id ?? null,
           evaluatedTargets: candidates.length,
@@ -610,7 +692,27 @@ export function buildRouteAction(config) {
         },
         actor,
       );
-      const assignment = await createManagedRecord(
+      // Per-candidate evaluation evidence: why each target was in or out, with
+      // the exact load/capacity/priority the decision saw.
+      for (const target of candidates) {
+        const reason = exclusionReason(target);
+        await createRecord(
+          modules,
+          cfg.routeEvaluationModule,
+          {
+            runId: run.id,
+            targetKey: target.key,
+            kind: target.kind,
+            eligible: reason === null,
+            reason: reason ?? (target.key === selected.key ? 'selected' : 'eligible, not selected'),
+            currentLoad: target.currentLoad,
+            capacity: target.capacity ?? null,
+            priority: target.priority ?? 0,
+          },
+          actor,
+        );
+      }
+      const assignment = await createRecord(
         modules,
         cfg.assignmentModule,
         {
@@ -633,6 +735,7 @@ export function buildRouteAction(config) {
         policy: definition.name,
         version: definition.version,
         fingerprint,
+        targetsFingerprint: run.targetsFingerprint,
         target: { key: selected.key, kind: selected.kind, label: selected.label ?? selected.key },
         matchedRule,
         fallbackReason,

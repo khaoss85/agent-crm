@@ -33,28 +33,87 @@ export const ENRICHMENT_CAPABILITIES = Object.freeze(['company']);
 export const ROUTING_TARGET_KINDS = Object.freeze(['user', 'team', 'queue', 'fallback']);
 
 /**
- * Deterministic fingerprint of a definition: canonical JSON (objects with
- * sorted keys, functions serialized via toString) hashed with SHA-256. The
- * same checked-in source always produces the same fingerprint; any change to
- * rules, weights, labels or handlers changes it.
+ * Deterministic **declared-definition fingerprint**: canonical serialization
+ * (objects with sorted keys, function source via toString, CRLF normalized to
+ * LF) hashed with SHA-256. The same checked-in source always produces the same
+ * fingerprint; any change to declared rules, weights, labels, config or
+ * handler source changes it.
+ *
+ * Honest limitation (documented in ADR-015): this fingerprints what a
+ * definition DECLARES — its own source and its declared `config`. A handler
+ * closing over a mutable outer variable or calling an out-of-file helper is
+ * not captured: `toString()` serializes the identifier, not the value. That is
+ * why semantic thresholds and tunables MUST live in the declared `config` (or
+ * as literals in the handler body); closure analysis is deliberately not
+ * attempted.
+ *
+ * Unsupported values (Date, Map, Set, RegExp, class instances, BigInt,
+ * symbols, non-finite numbers, undefined, cycles) FAIL loudly instead of
+ * silently disappearing from the fingerprint.
  * @param {unknown} value
  */
 export function computeDefinitionFingerprint(value) {
-  return createHash('sha256').update(canonicalize(value)).digest('hex');
+  return createHash('sha256').update(canonicalize(value, new Set(), '$')).digest('hex');
 }
 
-/** @param {unknown} value @returns {string} */
-function canonicalize(value) {
-  if (typeof value === 'function') return JSON.stringify(`[fn]${value.toString()}`);
-  if (value === null || value === undefined) return 'null';
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
-  if (typeof value === 'object') {
+/** @param {unknown} value @param {Set<unknown>} seen @param {string} path @returns {string} */
+function canonicalize(value, seen, path) {
+  if (value === null) return 'null';
+  const type = typeof value;
+  if (type === 'string') return JSON.stringify(value);
+  if (type === 'boolean') return value ? 'true' : 'false';
+  if (type === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new ValidationError(`Cannot fingerprint a non-finite number at ${path}`);
+    }
+    return JSON.stringify(value);
+  }
+  if (type === 'function') {
+    return JSON.stringify(`[fn]${/** @type {Function} */ (value).toString().replaceAll('\r\n', '\n')}`);
+  }
+  if (type === 'undefined' || type === 'bigint' || type === 'symbol') {
+    throw new ValidationError(`Cannot fingerprint a value of type ${type} at ${path} — use plain JSON-safe data`);
+  }
+  if (seen.has(value)) {
+    throw new ValidationError(`Cannot fingerprint a cyclic structure at ${path}`);
+  }
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return `[${value.map((item, index) => canonicalize(item, seen, `${path}[${index}]`)).join(',')}]`;
+    }
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      throw new ValidationError(
+        `Cannot fingerprint a non-plain object at ${path} (Date, Map, Set, RegExp and class instances are unsupported — use plain JSON-safe data)`,
+      );
+    }
     const entries = Object.keys(/** @type {Record<string, unknown>} */ (value))
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalize(/** @type {any} */ (value)[key])}`);
+      .map((key) => `${JSON.stringify(key)}:${canonicalize(/** @type {any} */ (value)[key], seen, `${path}.${key}`)}`);
     return `{${entries.join(',')}}`;
+  } finally {
+    seen.delete(value);
   }
-  return JSON.stringify(value);
+}
+
+/**
+ * Validate a definition's optional declared `config`: the plain JSON-safe data
+ * its handlers read (thresholds, code lists, tunables). It is included in the
+ * fingerprint and handed frozen to every evaluation — the sanctioned home for
+ * anything a closure would otherwise hide from the fingerprint.
+ * @param {string} label @param {unknown} config
+ */
+function validateDeclaredConfig(label, config) {
+  if (config === undefined) return;
+  try {
+    canonicalize(config, new Set(), 'config');
+  } catch (error) {
+    throw new ValidationError(`${label}: config must be plain JSON-safe data (${error instanceof Error ? error.message : String(error)})`);
+  }
+  if (config === null || typeof config !== 'object' || Array.isArray(config) || typeof config === 'function') {
+    throw new ValidationError(`${label}: config must be a plain object when present`);
+  }
 }
 
 /** @param {string} label @param {unknown} value @param {string} what */
@@ -113,6 +172,7 @@ export function validateEnrichmentProvider(definition) {
   if (definition.capabilities.includes('company') && typeof definition.enrichCompany !== 'function') {
     throw new ValidationError(`${label}: capability "company" requires an enrichCompany function`);
   }
+  validateDeclaredConfig(label, definition.config);
   return definition;
 }
 
@@ -159,6 +219,7 @@ export function validateScoringModel(definition) {
   ) {
     throw new ValidationError(`${label}: minScore must be below maxScore`);
   }
+  validateDeclaredConfig(label, definition.config);
   return definition;
 }
 
@@ -177,6 +238,7 @@ export function validateRoutingPolicy(definition) {
   if (typeof definition.route !== 'function') {
     throw new ValidationError(`${label}: route must be a function`);
   }
+  validateDeclaredConfig(label, definition.config);
   return definition;
 }
 
@@ -270,7 +332,10 @@ export class IntelligenceRegistries {
       if (this.providers.has(definition.name)) {
         throw new ValidationError(`Duplicate enrichment provider name: ${definition.name}`);
       }
-      this.providers.set(definition.name, definition);
+      this.providers.set(definition.name, {
+        definition,
+        fingerprint: computeDefinitionFingerprint(pickFingerprintable('enrichment-provider', definition)),
+      });
     }
     for (const definition of definitions.scoringModels ?? []) {
       validateScoringModel(definition);
@@ -302,11 +367,11 @@ export class IntelligenceRegistries {
     }
   }
 
-  /** @param {string} name */
+  /** @param {string} name — returns {definition, fingerprint} */
   getProvider(name) {
-    const provider = this.providers.get(name);
-    if (!provider) throw new NotFoundError('Enrichment provider', String(name));
-    return provider;
+    const entry = this.providers.get(name);
+    if (!entry) throw new NotFoundError('Enrichment provider', String(name));
+    return entry;
   }
 
   /** @param {string} name @param {number} version */
@@ -334,50 +399,85 @@ export class IntelligenceRegistries {
   }
 
   /**
-   * Record (or verify) the persisted identity of every scoring model and
-   * routing policy version. The same {type, name, version} with a different
-   * fingerprint fails loudly: applied definitions are immutable — publish a
-   * new version instead (rollback = a new version derived from an earlier
-   * definition).
+   * Record (or verify) the persisted identity of every enrichment provider,
+   * scoring model and routing policy version. The same {type, name, version}
+   * with a different fingerprint fails loudly: applied definitions are
+   * immutable — publish a new version instead (rollback = a new version
+   * derived from an earlier definition).
+   *
+   * Runs inside ONE `BEGIN IMMEDIATE` transaction, so registration is
+   * all-or-nothing and two app instances booting concurrently serialize: the
+   * loser re-reads committed rows and verifies instead of racing to a raw
+   * UNIQUE violation. A busy database surfaces as the framework's stable
+   * retryable CONFLICT, never a raw SQLITE error.
    * @param {any} database
    */
   persistFingerprints(database) {
-    const select = database.raw.prepare(
-      'SELECT fingerprint FROM definition_versions WHERE type = ? AND name = ? AND version = ?',
-    );
-    const insert = database.raw.prepare(
-      'INSERT INTO definition_versions(id, type, name, version, fingerprint, registered_at) VALUES (?, ?, ?, ?, ?, ?)',
-    );
     const entries = [
+      ...[...this.providers.values()].map((entry) => ({ type: 'enrichment-provider', entry })),
       ...[...this.scoringModels.values()].map((entry) => ({ type: 'scoring-model', entry })),
       ...[...this.routingPolicies.values()].map((entry) => ({ type: 'routing-policy', entry })),
     ];
-    for (const { type, entry } of entries) {
-      const { name, version } = entry.definition;
-      const existing = select.get(type, name, version);
-      if (existing === undefined) {
-        insert.run(randomUUID(), type, name, version, entry.fingerprint, nowIso());
-        continue;
+    database.transaction(() => {
+      const select = database.raw.prepare(
+        'SELECT fingerprint FROM definition_versions WHERE type = ? AND name = ? AND version = ?',
+      );
+      const insert = database.raw.prepare(
+        'INSERT INTO definition_versions(id, type, name, version, fingerprint, registered_at) VALUES (?, ?, ?, ?, ?, ?)',
+      );
+      for (const { type, entry } of entries) {
+        const { name, version } = entry.definition;
+        const existing = select.get(type, name, version);
+        if (existing === undefined) {
+          insert.run(randomUUID(), type, name, version, entry.fingerprint, nowIso());
+          continue;
+        }
+        if (String(existing.fingerprint) !== entry.fingerprint) {
+          throw new ValidationError(
+            `${type} "${name}@${version}" source changed after registration (persisted fingerprint ${String(existing.fingerprint).slice(0, 12)}…, current ${entry.fingerprint.slice(0, 12)}…). ` +
+              'Registered definition versions are immutable: publish a new version instead of editing this one.',
+          );
+        }
       }
-      if (String(existing.fingerprint) !== entry.fingerprint) {
-        throw new ValidationError(
-          `${type} "${name}@${version}" source changed after registration (persisted fingerprint ${String(existing.fingerprint).slice(0, 12)}…, current ${entry.fingerprint.slice(0, 12)}…). ` +
-            'Registered definition versions are immutable: publish a new version instead of editing this one.',
-        );
-      }
-    }
+    });
+  }
+
+  /**
+   * The declared-definition fingerprint of the ENTIRE routing target set
+   * (sorted by key). Recorded on every RoutingRun so target drift (capacity,
+   * priority, country, active edits) is visible per run — target sets are
+   * explicitly versioned per run rather than boot-failing, because target
+   * data legitimately changes between runs.
+   */
+  targetsFingerprint() {
+    return computeDefinitionFingerprint(
+      this.listTargets().map((target) => ({
+        key: target.key,
+        label: target.label ?? target.key,
+        kind: target.kind,
+        active: target.active,
+        countries: (target.countries ?? []).slice(),
+        languages: (target.languages ?? []).slice(),
+        skills: (target.skills ?? []).slice(),
+        capacity: target.capacity ?? null,
+        priority: target.priority ?? 0,
+        scoreMin: target.scoreMin ?? null,
+        scoreMax: target.scoreMax ?? null,
+      })),
+    );
   }
 
   /** Serializable, function-free metadata for /api/schema and the Admin. */
   metadata() {
     return {
       enrichmentProviders: [...this.providers.values()]
-        .sort((a, b) => (a.name < b.name ? -1 : 1))
-        .map((provider) => ({
-          name: provider.name,
-          version: provider.version,
-          label: provider.label ?? provider.name,
-          capabilities: provider.capabilities.slice().sort(),
+        .sort((a, b) => (a.definition.name < b.definition.name ? -1 : 1))
+        .map(({ definition, fingerprint }) => ({
+          name: definition.name,
+          version: definition.version,
+          label: definition.label ?? definition.name,
+          capabilities: definition.capabilities.slice().sort(),
+          fingerprint,
         })),
       scoringModels: [...this.scoringModels.values()]
         .sort((a, b) => sortByNameVersion(a.definition, b.definition))
@@ -411,6 +511,7 @@ export class IntelligenceRegistries {
         ...(target.scoreMin !== undefined ? { scoreMin: target.scoreMin } : {}),
         ...(target.scoreMax !== undefined ? { scoreMax: target.scoreMax } : {}),
       })),
+      routingTargetsFingerprint: this.targetsFingerprint(),
     };
   }
 }
@@ -435,6 +536,7 @@ function pickFingerprintable(type, definition) {
       version: definition.version,
       minScore: definition.minScore ?? null,
       maxScore: definition.maxScore ?? null,
+      config: definition.config ?? null,
       rules: definition.rules.map((rule) => ({
         key: rule.key,
         label: rule.label ?? rule.key,
@@ -443,10 +545,21 @@ function pickFingerprintable(type, definition) {
       })),
     };
   }
+  if (type === 'enrichment-provider') {
+    return {
+      type,
+      name: definition.name,
+      version: definition.version,
+      capabilities: definition.capabilities.slice().sort(),
+      config: definition.config ?? null,
+      enrichCompany: definition.enrichCompany ?? null,
+    };
+  }
   return {
     type,
     name: definition.name,
     version: definition.version,
+    config: definition.config ?? null,
     route: definition.route,
   };
 }
