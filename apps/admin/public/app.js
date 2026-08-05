@@ -28,6 +28,41 @@ async function api(path, options = {}) {
   return body;
 }
 
+// Request client for generated-module views. A declared identity for audit —
+// NOT authentication; a local caller can set any actor. The Admin is
+// local-development-only until auth/tenancy/RBAC exist.
+const moduleClient = {
+  async request(path, options = {}) {
+    const response = await fetch(path, {
+      ...options,
+      headers: {
+        'content-type': 'application/json',
+        'x-actor-type': 'user',
+        'x-actor-id': 'admin-ui',
+        ...(options.headers || {}),
+      },
+    });
+    const text = await response.text();
+    let payload;
+    try {
+      payload = text === '' ? null : JSON.parse(text);
+    } catch {
+      payload = undefined;
+    }
+    if (!response.ok) {
+      const error = new Error(payload?.error?.message || `Request failed (${response.status})`);
+      Object.assign(error, {
+        status: response.status,
+        code: payload?.error?.code ?? 'UNKNOWN',
+        details: payload?.error?.details ?? null,
+      });
+      throw error;
+    }
+    if (payload === undefined) throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+    return payload;
+  },
+};
+
 async function refresh() {
   toggleBusy(elements.refreshButton, true);
   try {
@@ -227,4 +262,81 @@ function escapeHtml(value) {
 elements.demoButton.addEventListener('click', runDemo);
 elements.refreshButton.addEventListener('click', refresh);
 elements.closeTrace.addEventListener('click', () => elements.traceDetail.classList.add('hidden'));
+
+// ---- Hash routing + generated-module navigation -------------------------
+
+import { createModuleAdmin } from './admin-modules.js';
+import { selectGeneratedModules, humanizeLabel } from './admin-core.js';
+
+const dashboardView = document.querySelector('#view-dashboard');
+const moduleView = document.querySelector('#view-module');
+const generatedNav = document.querySelector('#generatedNav');
+
+const moduleAdmin = createModuleAdmin({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  navigate: (hash) => { window.location.hash = hash; },
+  toast,
+});
+
+async function populateNav() {
+  try {
+    const schema = await moduleClient.request('/api/schema');
+    const { supported, modules } = selectGeneratedModules(schema);
+    while (generatedNav.firstChild) generatedNav.removeChild(generatedNav.firstChild);
+    if (!supported) {
+      const note = document.createElement('span');
+      note.className = 'modnav-note';
+      note.textContent = 'Generated modules need an Admin update';
+      generatedNav.appendChild(note);
+      return;
+    }
+    for (const module of modules) {
+      const link = document.createElement('a');
+      link.setAttribute('href', `#/modules/${module.name}`);
+      link.setAttribute('data-nav', `module-${module.name}`);
+      link.textContent = humanizeLabel(module.name); // safe: textContent
+      generatedNav.appendChild(link);
+    }
+  } catch {
+    // A schema failure must not break the dashboard; leave nav empty silently.
+  }
+}
+
+function parseHash() {
+  const raw = (window.location.hash || '#/').replace(/^#/, '');
+  const parts = raw.split('/').filter(Boolean); // ['modules', name, ...]
+  if (parts[0] !== 'modules' || !parts[1]) return { view: 'dashboard' };
+  const moduleName = decodeURIComponent(parts[1]);
+  if (parts[2] === 'new') return { view: 'new', moduleName };
+  if (parts[2]) return { view: 'detail', moduleName, id: decodeURIComponent(parts[2]) };
+  return { view: 'list', moduleName };
+}
+
+async function route() {
+  const target = parseHash();
+  const onDashboard = target.view === 'dashboard';
+  dashboardView.classList.toggle('hidden', !onDashboard);
+  moduleView.classList.toggle('hidden', onDashboard);
+  for (const link of generatedNav.querySelectorAll('a')) link.classList.remove('active');
+  if (onDashboard) return;
+  const active = generatedNav.querySelector(`[data-nav="module-${cssEscape(target.moduleName)}"]`);
+  if (active) active.classList.add('active');
+  try {
+    if (target.view === 'list') await moduleAdmin.renderList(target.moduleName);
+    else if (target.view === 'new') await moduleAdmin.renderNew(target.moduleName);
+    else if (target.view === 'detail') await moduleAdmin.renderDetail(target.moduleName, target.id);
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+function cssEscape(value) {
+  return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+}
+
+window.addEventListener('hashchange', route);
+populateNav();
+route();
 refresh();

@@ -20,6 +20,14 @@
         </div>
       </header>
 
+      <nav class="modnav" aria-label="Sections">
+        <a href="#/" data-nav="home">Dashboard</a>
+        <span class="modnav-group" id="generatedNav" aria-label="Generated modules"></span>
+      </nav>
+
+      <section id="view-module" class="hidden" aria-live="polite"></section>
+
+      <div id="view-dashboard">
       <section class="flow" aria-label="Framework flow">
         <div><span>1</span><strong>Business request</strong><small>“Renewals above €50k need approval.”</small></div>
         <i>→</i>
@@ -90,6 +98,8 @@
         </div>
         <div id="traceSpans" class="timeline"></div>
       </section>
+
+      </div>
 
       <footer>
         <span>Agent CRM v0.1.0</span>

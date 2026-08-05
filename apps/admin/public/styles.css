@@ -112,3 +112,26 @@ footer { display: flex; justify-content: space-between; color: var(--muted); fon
   .panel { padding: 17px; }
   footer { flex-direction: column; gap: 6px; }
 }
+
+/* Generated-module Admin (Milestone 4) */
+.modnav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 22px; }
+.modnav a { text-decoration: none; font-size: 13px; font-weight: 700; color: var(--accent); background: var(--accent-soft); padding: 6px 12px; border-radius: 999px; }
+.modnav a.active { background: var(--accent); color: #fff; }
+.modnav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.modnav-group { display: flex; flex-wrap: wrap; gap: 8px; }
+.modnav-note { font-size: 12px; color: var(--danger); }
+.record-form { display: grid; gap: 16px; margin-top: 8px; }
+.field-row { display: grid; gap: 6px; }
+.field-row label { font-size: 13px; font-weight: 700; }
+.field-row .req { color: var(--danger); }
+.field-row input[type="text"], .field-row input[type="number"], .field-row input[type="email"], .field-row select {
+  padding: 9px 11px; border: 1px solid var(--line, #d9e2dd); border-radius: 9px; font: inherit; width: 100%;
+}
+.field-row input[type="checkbox"] { width: 18px; height: 18px; }
+.field-row .hint { color: #6b7a72; font-size: 12px; }
+.field-error { color: var(--danger); font-size: 12px; }
+.form-error { color: var(--danger); font-size: 13px; font-weight: 700; background: var(--danger-soft); padding: 9px 11px; border-radius: 9px; }
+.immutable { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; font-size: 12px; color: #6b7a72; margin: 4px 0; }
+.immutable dt { font-weight: 700; }
+.immutable dd { margin: 0; word-break: break-all; }
+button[aria-busy="true"] { opacity: .6; }
