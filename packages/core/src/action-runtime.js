@@ -106,6 +106,7 @@ export function validateActionInput(schema, body) {
  *   registry: {get: (module: string, action: string) => any},
  *   modules: {get: (name: string) => any},
  *   core?: Record<string, Function>,
+ *   pipelines?: {forModule: (name: string) => any, get: (name: string) => any, list: () => any[]},
  *   module: string, action: string, recordId: string, input: unknown, actor: unknown
  * }} params
  */
@@ -148,6 +149,8 @@ export async function runRecordAction(params) {
           // Declared core-module capabilities (ADR-013); frozen, may be absent
           // in minimal test harnesses.
           core: params.core ?? Object.freeze({}),
+          // Pipeline definitions (ADR-014); read-only registry view.
+          pipelines: params.pipelines ?? Object.freeze({ forModule: () => null, get: () => null, list: () => [] }),
           config: params.config ?? {},
           now: () => nowIso(),
           managed: (id, patch) => service.applyManaged(id, patch, { actor }),

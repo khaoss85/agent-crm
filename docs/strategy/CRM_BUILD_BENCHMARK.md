@@ -119,6 +119,17 @@ Each prompt scores on six gates, all-or-nothing per gate:
 - The agent performs the deploy itself; a human may only paste credentials/approve the deploy step (counted as approvals, not interventions).
 - Smoke check runs against the public URL within 10 minutes of deploy.
 
+### Managed-deployment gates (Cloud track, future)
+
+Once Agent CRM Cloud exists (`AGENT_CRM_CLOUD.md`; design only today), the full benchmark additionally tests the managed path:
+
+```text
+brief → generated project → tests → managed deployment → public CRM login
+→ business action → audit → trace → restart/redeploy persistence
+```
+
+Honest status: the benchmark runner is designed but **not yet automated**; local end-to-end tests already exist in-repo (verify, smoke, starters, real-Chromium checks); **public managed-deployment gates belong after the Production Spine (roadmap Phase 6) and Cloud implementation** and must not be scored or published before. Self-hosted Docker/VPS remains a permanent comparison target.
+
 ## Manual-intervention count
 
 Logged per run by the operator from the transcript:

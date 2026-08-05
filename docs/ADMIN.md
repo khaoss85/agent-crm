@@ -70,3 +70,22 @@ When a generated module declares actions (`generatedModules[].actions`), the rec
 - Submitting posts to the action route and, on success, re-renders the detail, so the new state and the newly valid actions appear together. Failures restore the button and show the server's message, mapped to the offending field when the error names one (a `409 INVALID_STATE` shows as a panel-level message).
 - Fields marked `writable: "managed"` are **not** rendered as editable inputs — the edit form omits them — and are shown read-only in the Actions panel instead. The enforcement itself is at the service boundary, not here (see `docs/ACTIONS.md`).
 - Every label, description, value and error is inserted with `textContent`, never `innerHTML`, so hostile action metadata is inert text like all other schema-derived content.
+
+## Pipeline board (Milestone 8)
+
+`#/pipelines/<name>` renders a board for each pipeline in the schema (one nav
+link per pipeline). Columns follow the declared stage order; stage type is
+shown as badge text (`Open`, `Won ✓`, `Lost ✕`) — never color alone; each
+column shows its record count and **per-currency** totals via the
+deterministic `formatMinorUnits` helper (`500000, 'EUR'` → `EUR 5,000.00`) —
+different currencies are never summed together. Cards show name, company,
+value and (for lost) the close reason, all as text. Each open-stage card has
+an accessible "Move to" select + button posting the same `move-stage` server
+action with the current stage as the optimistic `fromStage`; failures restore
+the control and show the server message; success re-renders the board from
+server state. Terminal cards have no move control (the server enforces it
+regardless). Loading/empty/error/retry/unsupported-contract states exist, a
+render token prevents stale responses from bleeding between pipelines, and a
+board failure never breaks the core Admin. Managed pipeline fields stay
+read-only everywhere. There is no drag-and-drop — the accessible control is
+the path.

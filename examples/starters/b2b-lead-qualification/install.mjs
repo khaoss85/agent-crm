@@ -51,8 +51,19 @@ try {
       "import { qualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/qualify.js';",
       "import { disqualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/disqualify.js';",
       "import { convertLead } from '../../../examples/starters/b2b-lead-qualification/actions/convert.js';",
+      "import { buildMoveStageAction } from '../../core/src/pipeline-actions.js';",
       '',
-      'export const generatedActions = [qualifyLead, disqualifyLead, convertLead];',
+      "export const generatedActions = [qualifyLead, disqualifyLead, convertLead, buildMoveStageAction({ module: 'opportunity' })];",
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(root, 'packages', 'pipelines', 'generated', 'index.js'),
+    [
+      '// @ts-check',
+      "import { b2bSalesPipeline } from '../../../examples/starters/b2b-lead-qualification/pipeline.js';",
+      '',
+      'export const generatedPipelines = [b2bSalesPipeline];',
       '',
     ].join('\n'),
   );
@@ -164,14 +175,45 @@ try {
       (error) => error.code === 'VALIDATION_ERROR',
     );
 
+    // Pipeline (Milestone 8): converted opportunities entered Discovery.
+    const opp1 = app.services.opportunities.get(converted.result.opportunity.id);
+    assert.equal(opp1.pipelineKey, 'b2b-sales');
+    assert.equal(opp1.pipelineStage, 'discovery');
+    const move = (id, toStage, fromStage, extra = {}) => app.runAction({
+      module: 'opportunity', action: 'move-stage', recordId: id,
+      input: { toStage, fromStage, ...extra }, actor,
+    });
+    // Walk opportunity 1 through every open stage to Won.
+    await move(opp1.id, 'demo', 'discovery');
+    await move(opp1.id, 'proposal', 'demo');
+    await move(opp1.id, 'negotiation', 'proposal');
+    await move(opp1.id, 'won', 'negotiation');
+    const won = app.services.opportunities.get(opp1.id);
+    assert.equal(won.pipelineStage, 'won');
+    assert.ok(won.closedAt, 'winning closes the opportunity');
+    // Terminal stages refuse further moves.
+    await assert.rejects(() => move(opp1.id, 'discovery', 'won'), (error) => error.code === 'TERMINAL_STAGE');
+    // Opportunity 2 is Lost, with the required reason.
+    const opp2 = app.services.opportunities.get(converted3.result.opportunity.id);
+    await assert.rejects(() => move(opp2.id, 'lost', 'discovery'), (error) => error.code === 'VALIDATION_ERROR');
+    await move(opp2.id, 'lost', 'discovery', { reason: 'Chose a competitor' });
+    assert.equal(app.services.opportunities.get(opp2.id).closeReason, 'Chose a competitor');
+    // Pipeline state is server-managed: CRUD cannot set it.
+    await assert.rejects(
+      () => app.services.opportunities.create({ companyId: converted.result.company.id, name: 'X', valueCents: 1, owner: 'x', pipelineStage: 'won' }, { actor }),
+      (error) => error.code === 'VALIDATION_ERROR',
+    );
+
     console.log(JSON.stringify({
       ok: true,
-      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities; repeats blocked; CRUD cannot set lifecycle or conversion fields.',
+      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; CRUD cannot set lifecycle, conversion or pipeline fields.',
       leads: leads.list().length,
       tasks: tasks.list().length,
       companies: app.services.companies.list().length,
       contacts: app.services.contacts.list().length,
       opportunities: app.services.opportunities.list().length,
+      won: app.services.opportunities.list().filter((o) => o.pipelineStage === 'won').length,
+      lost: app.services.opportunities.list().filter((o) => o.pipelineStage === 'lost').length,
     }, null, 2));
   } finally {
     app.close();

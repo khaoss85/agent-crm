@@ -70,4 +70,12 @@ Validated in the same real-Chromium run (steps continue from the qualify flow; t
 16. Enter a non-numeric value → "must be a whole number" client-side; no POST.
 17. Enter a name and `5000000` → the detail re-renders with `Status: converted`; `Converted Company Id` / `Converted Contact Id` / `Converted Opportunity Id` show read-only; exactly one Opportunity exists with `valueCents` 5000000; **no** action buttons remain.
 
+### Pipeline board (Milestone 8)
+
+Validated in the same real-Chromium run (requires the starter's pipeline and `move-stage` registered):
+
+18. `#/pipelines/b2b-sales` renders the board; the converted Opportunity sits in **Discovery** (count 1).
+19. `Won ✓` / `Lost ✕` badges are visible text; the Discovery column shows a per-currency `EUR …` total.
+20. Select **Demo** in the card's "Move to" control and press **Move** → Demo count becomes 1, Discovery 0, and the server's opportunity record reads `pipelineStage: demo`.
+
 Report any step that fails; do not mark the actions UI browser-validated unless all pass.

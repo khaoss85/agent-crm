@@ -143,3 +143,23 @@ button[aria-busy="true"] { opacity: .6; }
 .action-row .action-trigger { align-self: flex-start; }
 .action-row .hint { color: #6b7a72; font-size: 12px; }
 .action-form { display: flex; flex-direction: column; gap: 12px; padding: 12px; background: var(--surface-soft, #f4f8f6); border-radius: 10px; }
+.pipeline-board { display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; padding-bottom: 8px; }
+.pipeline-column { min-width: 220px; flex: 1 0 220px; background: var(--surface-soft, #f4f8f6); border-radius: 12px; padding: 12px; }
+.pipeline-column.type-won { background: #eef7ef; }
+.pipeline-column.type-lost { background: #f8efef; }
+.pipeline-column-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.pipeline-column-header h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.stage-type { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line, #d9e2dd); }
+.stage-count { margin-left: auto; font-weight: 700; font-size: 13px; }
+.stage-total { margin: 2px 0 8px; font-size: 12px; font-weight: 700; color: #4a5a52; }
+.pipeline-card { background: #fff; border: 1px solid var(--line, #d9e2dd); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+.pipeline-card strong { display: block; overflow-wrap: anywhere; }
+.pipeline-card .card-company { margin: 2px 0; font-size: 12px; color: #6b7a72; overflow-wrap: anywhere; }
+.pipeline-card .card-value { margin: 2px 0; font-size: 13px; font-weight: 700; }
+.pipeline-card .card-reason { margin: 2px 0; font-size: 12px; font-style: italic; overflow-wrap: anywhere; }
+.card-move { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.card-move label { font-size: 11px; font-weight: 700; color: #6b7a72; }
+.card-move select, .card-move input { padding: 6px 8px; border: 1px solid var(--line, #d9e2dd); border-radius: 8px; font: inherit; }
+.pipeline-drift { margin-top: 14px; padding: 12px; border: 1px dashed var(--danger, #b3564d); border-radius: 10px; }
+.pipeline-drift h3 { margin: 0 0 6px; font-size: 14px; }
+.pipeline-drift .drift-record { margin: 4px 0; font-size: 13px; overflow-wrap: anywhere; }
