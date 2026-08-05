@@ -121,7 +121,23 @@ function buildRouter(app) {
     // provider/model/policy identities, fingerprints and target data, never
     // executable rules. Additive: an older client ignores it.
     ...(app.intelligence ? { intelligence: app.intelligence.metadata() } : {}),
+    // Commercial Operations registries (ADR-016): catalog providers, discount
+    // policies, money/discount contract. Additive; function-free.
+    ...(app.commercial ? { commercial: app.commercial.metadata() } : {}),
   }));
+
+  // Catalog synchronization (ADR-016). Local-development surface like every
+  // other write route; the provider call runs outside the write transaction.
+  router.add('POST', '/api/catalog/sync', async ({ body, actor }) => {
+    if (typeof app.syncCatalog !== 'function') {
+      throw new NotFoundError('Operation', 'catalog sync');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    if (typeof input.provider !== 'string' || input.provider === '') {
+      throw new ValidationError('provider is required', { field: 'provider' });
+    }
+    return app.syncCatalog({ provider: input.provider, input: input.input, actor });
+  });
 
   // Uniform resource surface for generated modules (ADR-008). Only modules
   // that fully satisfy the generated-module contract are served; anything

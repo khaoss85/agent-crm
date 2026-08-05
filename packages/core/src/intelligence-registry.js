@@ -104,7 +104,7 @@ function canonicalize(value, seen, path) {
  * anything a closure would otherwise hide from the fingerprint.
  * @param {string} label @param {unknown} config
  */
-function validateDeclaredConfig(label, config) {
+export function validateDeclaredConfig(label, config) {
   if (config === undefined) return;
   try {
     canonicalize(config, new Set(), 'config');

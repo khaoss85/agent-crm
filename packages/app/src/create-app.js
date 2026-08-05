@@ -18,8 +18,14 @@ import {
   generatedRoutingPolicies,
   generatedRoutingTargets,
 } from '../../intelligence/generated/index.js';
+import {
+  generatedCatalogProviders,
+  generatedDiscountPolicies,
+} from '../../commercial/generated/index.js';
 import { PipelineRegistry } from '../../core/src/pipeline-registry.js';
 import { IntelligenceRegistries } from '../../core/src/intelligence-registry.js';
+import { CommercialRegistries } from '../../core/src/commercial-registry.js';
+import { createCatalogSync } from '../../core/src/catalog-sync.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
 import { ActionRegistry } from '../../core/src/action-registry.js';
 import { runRecordAction } from '../../core/src/action-runtime.js';
@@ -126,6 +132,14 @@ export function createAgentCrmApp(options = {}) {
   });
   intelligence.persistFingerprints(database);
 
+  // Commercial Operations registries (ADR-016): catalog providers + versioned
+  // discount policies on the same declared-definition fingerprint mechanism.
+  const commercial = new CommercialRegistries({
+    catalogProviders: generatedCatalogProviders,
+    discountPolicies: generatedDiscountPolicies,
+  });
+  commercial.persistFingerprints(database);
+
   const notificationProvider = new MemoryNotificationProvider();
   providers.register({
     name: 'default-notifications',
@@ -176,7 +190,25 @@ export function createAgentCrmApp(options = {}) {
     actions,
     pipelines,
     intelligence,
+    commercial,
     actionEligibleCoreModules: [...ACTION_ELIGIBLE_CORE_MODULES].sort(),
+    /**
+     * Synchronize a catalog provider's normalized catalog into immutable
+     * commercial records (ADR-016). Provider call happens outside the write
+     * transaction; reconciliation is atomic; a CatalogSyncRun records the
+     * evidence and a trace is written best-effort.
+     * @param {{provider: string, input?: unknown, actor?: unknown}} params
+     */
+    syncCatalog(params) {
+      return app._syncCatalog(params);
+    },
+    _syncCatalog: createCatalogSync({
+      database,
+      events,
+      modules,
+      commercial,
+      config: { catalogTimeoutMs: /** @type {any} */ (options).catalogTimeoutMs },
+    }),
     /**
      * Run a code-first record action atomically (ADR-011/012): the business
      * writes commit or roll back together and domain events become visible only
@@ -195,6 +227,7 @@ export function createAgentCrmApp(options = {}) {
         core: coreAdapters,
         pipelines,
         intelligence,
+        commercial,
         config: app.config,
         module,
         action,

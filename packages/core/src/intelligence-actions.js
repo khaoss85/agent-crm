@@ -98,7 +98,7 @@ async function createRecord(modules, moduleName, patch, actor) {
  * value).
  * @param {Promise<any>} promise @param {number} ms @param {string} label
  */
-function withTimeout(promise, ms, label) {
+export function withTimeout(promise, ms, label) {
   /** @type {any} */
   let timer;
   const guarded = Promise.resolve(promise);

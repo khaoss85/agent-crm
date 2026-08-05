@@ -108,6 +108,7 @@ export function validateActionInput(schema, body) {
  *   core?: Record<string, Function>,
  *   pipelines?: {forModule: (name: string) => any, get: (name: string) => any, list: () => any[]},
  *   intelligence?: any,
+ *   commercial?: any,
  *   module: string, action: string, recordId: string, input: unknown, actor: unknown
  * }} params
  */
@@ -190,6 +191,11 @@ export async function runRecordAction(params) {
           pipelines: params.pipelines ?? Object.freeze({ forModule: () => null, get: () => null, list: () => [] }),
           // Intelligence registries (ADR-015); read-only, frozen fallback.
           intelligence,
+          // Commercial registries (ADR-016); read-only, frozen fallback.
+          commercial: params.commercial ?? Object.freeze({
+            getCatalogProvider: () => { throw new NotFoundError('Catalog provider', 'none registered'); },
+            getDiscountPolicy: () => { throw new NotFoundError('Discount policy', 'none registered'); },
+          }),
           // Value returned by the prepare phase (undefined without one).
           prepared,
           config: params.config ?? {},
@@ -331,8 +337,12 @@ function safeActor(actor) {
   return null;
 }
 
-/** @param {any} database @param {{runId: string, workflowName: string, status: string, input: unknown, output: unknown, error: string | null, startedAt: string, steps: Array<{name: string, status: string, output?: unknown, error?: string}>}} run */
-function writeTrace(database, run) {
+/**
+ * Best-effort operation trace writer, shared with app-level operations that
+ * follow the action envelope (e.g. catalog sync, ADR-016).
+ * @param {any} database @param {{runId: string, workflowName: string, status: string, input: unknown, output: unknown, error: string | null, startedAt: string, steps: Array<{name: string, status: string, output?: unknown, error?: string}>}} run
+ */
+export function writeTrace(database, run) {
   const finishedAt = nowIso();
   database.raw
     .prepare(
