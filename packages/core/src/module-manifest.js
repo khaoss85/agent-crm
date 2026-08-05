@@ -56,6 +56,8 @@ const TABLE_NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
  *   required: boolean,
  *   unique: boolean,
  *   column: string,
+ *   writable: 'public' | 'managed',
+ *   default?: string,
  *   values?: string[],
  *   references?: string,
  *   onDelete?: string,
@@ -298,7 +300,13 @@ function normalizeField(rawField, index, errors) {
   // managed fields, e.g. a status enum defaulting to "new").
   let defaultValue;
   if (field.default !== undefined) {
-    if (field.type === 'enum') {
+    if (writable !== 'managed') {
+      // The factory only applies defaults to managed fields (public fields
+      // take their value from input); accepting a default here would silently
+      // never apply it, which is worse than rejecting it.
+      errors.push(`${label}: default currently requires "writable": "managed" (public-field defaults are not implemented)`);
+      valid = false;
+    } else if (field.type === 'enum') {
       if (typeof field.default !== 'string' || !(Array.isArray(field.values) ? field.values : []).includes(field.default)) {
         errors.push(`${label}: default must be one of the enum values`);
         valid = false;
@@ -314,6 +322,24 @@ function normalizeField(rawField, index, errors) {
       }
     } else {
       errors.push(`${label}: default is only supported on string and enum fields`);
+      valid = false;
+    }
+  }
+
+  // Structurally unusable managed combinations are rejected here rather than
+  // generating a module whose every create (or every second create) fails at
+  // the SQL layer.
+  if (writable === 'managed') {
+    if (field.required === true && field.default === undefined) {
+      errors.push(
+        `${label}: a managed field with required: true needs a "default" — public create cannot supply it, so without a default every create would violate NOT NULL`,
+      );
+      valid = false;
+    }
+    if (field.unique === true && field.default !== undefined) {
+      errors.push(
+        `${label}: a managed field cannot combine unique: true with a "default" — every create would insert the same value and the second create would always fail`,
+      );
       valid = false;
     }
   }

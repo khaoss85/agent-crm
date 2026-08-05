@@ -168,6 +168,11 @@ export function planModule(input) {
     module: manifest.name,
     table: manifest.table,
     migrationName: migration.migrationName,
+    // Workflow-managed fields are called out in the plan so a reviewer sees,
+    // before applying, exactly which fields public create/update will refuse.
+    managedFields: manifest.fields
+      .filter((field) => field.writable === 'managed')
+      .map((field) => ({ field: field.name, type: field.type, ...(field.default !== undefined ? { default: field.default } : {}) })),
     // Reference dependencies are surfaced in the plan (which strips file
     // contents) so an agent/user sees each relationship before applying.
     references: manifest.fields
@@ -502,15 +507,20 @@ function serviceTemplate(manifest, names, referenceTargets = {}) {
     .join('\n');
 
   const managedNames = managedFields.map((field) => `'${field.name}'`).join(', ');
-  // applyManaged branches: validate each managed field; null clears it.
+  // applyManaged branches: validate each managed field; null clears an optional
+  // one, but clearing a required managed field is rejected before SQL so the
+  // caller gets a field-tied validation error instead of a NOT NULL crash.
   const managedBranches = managedFields
     .map((field) => {
       const validator = field.type === 'enum'
         ? `enumValue(patch.${field.name}, [${(field.values ?? []).map((v) => JSON.stringify(v)).join(', ')}], '${field.name}')`
         : `${VALIDATORS[field.type].required}(patch.${field.name}, '${field.name}')`;
+      const valueLine = field.required
+        ? `        const value = ${validator};`
+        : `        const value = patch.${field.name} === null ? null : ${validator};`;
       return [
         `      if (Object.hasOwn(patch, '${field.name}')) {`,
-        `        const value = patch.${field.name} === null ? null : ${validator};`,
+        valueLine,
         `        assignments.push('${field.column} = ?');`,
         `        params.push(${toDbExpression(field, 'value')});`,
         `        changes.${field.name} = value;`,
