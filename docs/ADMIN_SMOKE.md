@@ -1,6 +1,6 @@
 # Admin manual browser smoke checklist
 
-Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (16 automated checks, all passing, including the XSS-as-text and malformed-hash cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
+Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (re-run at each milestone; 24 automated checks at Milestone 10, all passing, including the XSS-as-text, malformed-hash and composite-pricing cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
 
 ## Setup
 
@@ -84,5 +84,14 @@ Validated in the same real-Chromium run (requires the intelligence manifests, de
 
 21. After enrich → score → route on a fresh lead (fixture provider), the lead detail shows the **Enrich**, **Score** and **Route** action controls, the assigned target (`enterprise-italy`) as read-only text, and no editable input for any managed intelligence field.
 22. A `score-contribution` record's detail renders the rule key (e.g. `enterprise-company`) read-only — the immutable record modules are browsable but never editable in the generic Admin.
+
+### Quote builder (Milestone 10)
+
+Validated in the same real-Chromium run (requires the commercial manifests, the fixture catalog provider and the quote actions registered — see `docs/COMMERCIAL_OPERATIONS.md`):
+
+23. After a catalog sync, `#/quotes/<id>` on a draft quote shows the **offer** selector (each option naming the offer and its component count), quantity and basis-point discount inputs (with the "1000 = 10.00%" hint and the "flat fees are charged once" note) and the **Totals by commercial period** panel under the documented 1/100 contract. The quote-ineligible `Metered Bandwidth` offer never appears in the selector.
+24. Adding **one** line for the composite `Enterprise Plan` (20 seats at 500 bps) re-renders from server state: a **One-time** row at `EUR 4,750.00` and a separate **Recurring every 1 month(s)** row at `EUR 2,850.00` — never summed into one figure, and with no ARR/MRR/TCV anywhere on the page. The line lists all three components with their recurrence and pricing model, and the volume-tiered seat component shows exactly one band, `1–20 · 20 × EUR 50.00` (the whole quantity priced at the reached tier). No client-computed amount is ever posted.
+25. Submitting a 20% discount parks the quote in `pending_approval`, shows the policy decision and states that role enforcement waits for the Production Spine; approving as the Admin user actor flips it to `approved`, removes every editing control, and shows no signature or order UI.
+26. The resulting quote version snapshots the commercial decision: `#/modules/quote-version-component` lists one immutable row per component (with its complete tier schedule and calculated band breakdown) and `#/modules/quote-version-total` one row per commercial period — all read-only, with no create control and no editable field.
 
 Report any step that fails; do not mark the actions UI browser-validated unless all pass.

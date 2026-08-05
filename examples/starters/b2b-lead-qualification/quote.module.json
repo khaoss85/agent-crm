@@ -1,0 +1,70 @@
+{
+  "manifestVersion": 1,
+  "name": "quote",
+  "description": "A commercial quote for an opportunity against exactly one price book and currency (ADR-016). Totals are grouped by commercial period; every amount is server-derived.",
+  "fields": [
+    {
+      "name": "opportunityId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "priceBookId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "draft",
+        "pending_approval",
+        "approved",
+        "rejected"
+      ],
+      "default": "draft",
+      "writable": "managed"
+    },
+    {
+      "name": "draftRevision",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "currentVersionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "currentVersionNumber",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "currentApprovalId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "totalsJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "oneTimeNetCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "recurringGroupCount",
+      "type": "integer",
+      "writable": "managed"
+    }
+  ]
+}

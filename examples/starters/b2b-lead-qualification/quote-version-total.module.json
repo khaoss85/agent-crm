@@ -1,0 +1,56 @@
+{
+  "manifestVersion": 1,
+  "name": "quote-version-total",
+  "description": "One immutable grouped total of a quote version: the one-time group plus one row per (currency, interval, intervalCount). Unlike periods are never summed (ADR-016).",
+  "fields": [
+    {
+      "name": "versionId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "kind",
+      "type": "enum",
+      "values": [
+        "one_time",
+        "recurring"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "interval",
+      "type": "enum",
+      "values": [
+        "month",
+        "year"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "intervalCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "listAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "discountAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "netAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    }
+  ]
+}

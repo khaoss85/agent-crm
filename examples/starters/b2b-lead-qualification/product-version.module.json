@@ -1,0 +1,69 @@
+{
+  "manifestVersion": 1,
+  "name": "product-version",
+  "description": "Immutable commercial description snapshot of a product (ADR-016). A change creates a new version; history is never rewritten.",
+  "fields": [
+    {
+      "name": "productId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "version",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "sku",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "description",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "category",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "providerVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "providerFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sourceFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "effectiveAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

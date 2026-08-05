@@ -1,0 +1,129 @@
+{
+  "manifestVersion": 1,
+  "name": "quote-version",
+  "description": "An immutable submitted quote snapshot with grouped totals, discount evidence and the discount-policy identity/fingerprint used (ADR-016). Version numbers are DB-monotonic.",
+  "fields": [
+    {
+      "name": "quoteId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "versionNumber",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "opportunityId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "priceBookId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "draftRevisionUsed",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "oneTimeListCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "oneTimeDiscountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "oneTimeNetCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "recurringGroupCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "totalsJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "maxLineDiscountBps",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "effectiveDiscountBps",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyDecision",
+      "type": "enum",
+      "values": [
+        "auto_approve",
+        "approval_required",
+        "reject"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "decisionReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "requiredApprovalKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "approvalId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "submittedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "submittedBy",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

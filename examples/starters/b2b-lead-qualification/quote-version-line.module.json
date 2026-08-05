@@ -1,0 +1,83 @@
+{
+  "manifestVersion": 1,
+  "name": "quote-version-line",
+  "description": "An immutable line snapshot inside a quote version: the offer revision, quantity, discount and line amounts as agreed (ADR-016).",
+  "fields": [
+    {
+      "name": "versionId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "offerId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "offerLogicalKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "offerRevision",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "offerName",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "productId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "productVersionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sku",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "quantity",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "discountBps",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "componentCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "listAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "discountAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "netAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "position",
+      "type": "integer",
+      "writable": "managed"
+    }
+  ]
+}

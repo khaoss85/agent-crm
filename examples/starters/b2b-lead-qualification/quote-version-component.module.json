@@ -1,0 +1,123 @@
+{
+  "manifestVersion": 1,
+  "name": "quote-version-component",
+  "description": "An immutable per-component snapshot inside a quote version: charge type, pricing model, recurrence, the tier schedule and the calculated tier breakdown, plus provider provenance (ADR-016).",
+  "fields": [
+    {
+      "name": "versionId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "versionLineId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "componentId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "componentKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "label",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "chargeType",
+      "type": "enum",
+      "values": [
+        "one_time",
+        "recurring"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "pricingModel",
+      "type": "enum",
+      "values": [
+        "flat_fee",
+        "per_unit",
+        "volume",
+        "graduated"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "interval",
+      "type": "enum",
+      "values": [
+        "month",
+        "year"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "intervalCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "quantity",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "unitAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "flatAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "tiersJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "tierBreakdownJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "listAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "discountAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "netAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "externalPriceId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sourcePricingModel",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "manifestVersion": 1,
+  "name": "quote-approval",
+  "description": "One human discount-approval request per quote version (ADR-016). The decision requires a user actor; requiredApprovalKey is a label, not enforced security before RBAC.",
+  "fields": [
+    {
+      "name": "quoteId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "quoteVersionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "maxLineDiscountBps",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "effectiveDiscountBps",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "requiredApprovalKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "pending",
+        "approved",
+        "rejected"
+      ],
+      "default": "pending",
+      "writable": "managed"
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "decisionReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "requestedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "requestedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

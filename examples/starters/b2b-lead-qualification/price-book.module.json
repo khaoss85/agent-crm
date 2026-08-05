@@ -1,0 +1,42 @@
+{
+  "manifestVersion": 1,
+  "name": "price-book",
+  "description": "A named price list in exactly one currency (ADR-016). Currency is immutable; a quote binds to one price book.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sourceKind",
+      "type": "enum",
+      "values": [
+        "internal",
+        "provider"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "active",
+      "type": "boolean",
+      "writable": "managed"
+    }
+  ]
+}
