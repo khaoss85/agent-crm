@@ -129,6 +129,43 @@ test('a failed move restores the control and shows the server message as text', 
   assert.match(error.textContent, /Stale move/);
 });
 
+test('drifted records are shown in an explicit off-definition section, never hidden', async () => {
+  const records = [
+    record('a', 'discovery'),
+    record('b', 'renamed-away'),           // stage key no longer in the definition
+    record('c', 'demo'),
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+
+  const drift = mount.findAll('div').find((n) => n.getAttribute('data-drift') !== null);
+  assert.ok(drift, 'an off-definition section exists');
+  assert.equal(drift.getAttribute('data-drift'), '1');
+  assert.ok(drift.textContent.includes('Deal b'));
+  assert.ok(drift.textContent.includes('renamed-away'), 'the stored stage key is shown verbatim');
+  assert.ok(drift.textContent.includes('persistent identifiers'), 'the migration guidance is shown');
+  // The header count reflects PLACED records only; the drifted one is not
+  // silently counted into any stage column.
+  assert.ok(mount.textContent.includes('2 records on this board'));
+  const countOf = (stage) => mount.findAll('span').find((n) => n.getAttribute('data-count') === stage).textContent;
+  assert.equal(countOf('discovery'), '1');
+  assert.equal(countOf('demo'), '1');
+});
+
+test('the board discloses truncation and excluded off-pipeline records', async () => {
+  // Exactly BOARD_LIMIT (200) records triggers the truncation notice.
+  const many = Array.from({ length: 199 }, (_, i) => record(`r${i}`, 'discovery'));
+  many.push({ ...record('other', 'discovery'), pipelineKey: 'another-pipeline' });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(many) });
+  await board.renderBoard('b2b-sales');
+  assert.ok(mount.textContent.includes('Showing the first 200 records only'), 'truncation disclosed');
+  assert.ok(mount.textContent.includes('1 record not on this pipeline (not shown)'), 'exclusion disclosed');
+});
+
 test('hostile stage labels and record values render as inert text', async () => {
   const hostile = '<img src=x onerror=alert(1)>';
   const doc = createFakeDocument();

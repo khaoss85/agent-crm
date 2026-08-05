@@ -35,7 +35,7 @@ test('malformed pipelines fail closed with precise reasons', () => {
   const cases = [
     [validPipeline({ pipelineContract: 2 }), /pipelineContract must be 1/],
     [validPipeline({ name: 'B2B' }), /name must match/],
-    [validPipeline({ module: 'ghost' }), /does not exist or is not staged-eligible/],
+    [validPipeline({ module: 'ghost' }), /not staged-eligible/],
     [validPipeline({ label: 'x'.repeat(81) }), /at most 80/],
     [validPipeline({ stages: [] }), /non-empty array/],
     [validPipeline({ stages: [...stages, { key: 'demo', order: 70, type: 'open', probability: 1 }] }), /duplicate stage key/],
@@ -106,4 +106,16 @@ test('formatMinorUnits is deterministic and never locale-driven', () => {
   assert.equal(formatMinorUnits(-2500, 'EUR'), 'EUR -25.00');
   assert.equal(formatMinorUnits(Number.NaN, 'EUR'), '—');
   assert.equal(formatMinorUnits(1.5, 'EUR'), '—', 'fractional minor units are invalid');
+  assert.equal(formatMinorUnits(Number.MAX_SAFE_INTEGER, 'EUR'), 'EUR 90,071,992,547,409.91', 'largest safe integer stays exact');
+  assert.equal(formatMinorUnits(Number.MAX_SAFE_INTEGER + 2, 'EUR'), '—', 'unsafe integers refuse rather than mislead');
+  assert.equal(formatMinorUnits(/** @type {any} */('500'), 'EUR'), '—', 'strings refuse');
+  assert.equal(formatMinorUnits(/** @type {any} */(null), 'EUR'), '—');
+  // The DOCUMENTED contract: every amount is 1/100 currency units with two
+  // decimals — deliberately NOT ISO exponent handling. JPY/KWD render under
+  // that same contract; this is a stated limitation, not a claim.
+  assert.equal(formatMinorUnits(100000, 'JPY'), 'JPY 1,000.00');
+  assert.equal(formatMinorUnits(100000, 'KWD'), 'KWD 1,000.00');
+  // Currency is rendered verbatim as inert text — casing preserved, unusual
+  // shapes not validated here (the storage layer owns currency validation).
+  assert.equal(formatMinorUnits(100, 'eur'), 'eur 1.00');
 });
