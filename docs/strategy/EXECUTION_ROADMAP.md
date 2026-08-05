@@ -25,6 +25,19 @@ A recurring rule: **coding agents execute, humans approve identity, money, live 
 
 Phases 2–4 and 8 can overlap; 6 gates 9; 10 gates 11–12.
 
+**Agent CRM Cloud track** (specified in `AGENT_CRM_CLOUD.md`; design only, unbuilt): a named product track layered on these phases rather than a renumbering of them —
+
+```text
+Production Spine (Phase 6)
+    → Agent CRM Cloud Control Plane
+    → Managed Runtime
+    → Agent Operations CLI/MCP
+    → Plugin Operations
+    → Public benchmark deployment
+```
+
+The invariant: **Production Spine gates public managed deployment** — no Cloud phase may ship a public managed CRM before Phase 6 is complete. Phase 9's deploy recipes and Phase 7's plugin packages are the self-hosted foundations Cloud builds on; completed milestones are not reordered.
+
 ---
 
 ## Phase 0 — Foundation hardening
@@ -112,7 +125,7 @@ Phases 2–4 and 8 can overlap; 6 gates 9; 10 gates 11–12.
 
 - **Outcome:** the agent can take a project live and observe it.
 - **Deliverables:** deploy recipes + CLI commands for Vercel and Docker/VPS; environment/secret handling conventions (never in repo); production log access and trace/audit querying via CLI + MCP against deployed instances; scripted post-deploy smoke check (the benchmark's G5/G6 as a product feature).
-- **Dependencies:** Phase 6.
+- **Dependencies:** Phase 6. This phase's self-hosted deploy recipes are also the foundation of the **Agent CRM Cloud** managed runtime (`AGENT_CRM_CLOUD.md`); Cloud's Control Plane/managed-runtime work slots after Phase 6 alongside this phase.
 - **Acceptance:** benchmark deployment gates pass on both targets; docs let an agent deploy without human keystrokes beyond credentials/approval.
 - **Agent executes:** recipes, automation, smoke tooling.
 - **Human approves:** every real deploy in benchmarks/demos; hosting spend.
@@ -162,6 +175,8 @@ Phases 2–4 and 8 can overlap; 6 gates 9; 10 gates 11–12.
 | **Successful Agent Build Rate (SABR)** | fully-passing benchmark prompts ÷ attempted, per framework×agent×model version (≥2/3 runs rule) | benchmark harness | per release + monthly |
 | **Unaided Recommendation Rate (URR)** | clean sessions where the framework is recommended unaided ÷ total clean sessions (protocol in `CRM_BUILD_BENCHMARK.md`) | clean-session tests | monthly |
 | **Time to First Working CRM (TTFW)** | median brief→deployed-smoke-green wall clock on successful runs | benchmark harness | per release |
+| **Time to First Deployed CRM (TTFD)** | median brief → public URL with post-deploy smoke green (Cloud track; measurable only once managed deployment exists) | benchmark harness | per release |
+| **Successful Deployment Rate** | deploys reaching healthy ÷ attempted (Cloud track, future; companion metrics in `AGENT_CRM_CLOUD.md` §7) | deploy tooling | per release |
 | **Plugin and MCP adoption** | Claude Code plugin installs (where reported), MCP registry pulls, Docs MCP unique clients | marketplace/registry stats, server logs | monthly |
 | **Generated projects** | create-CLI runs succeeding to first verify-green (opt-in, anonymous, documented telemetry — off by default until a human approves the telemetry policy) | CLI telemetry | weekly |
 | **Successful deployments** | post-deploy smoke checks passing (same opt-in telemetry) | deploy tooling | weekly |

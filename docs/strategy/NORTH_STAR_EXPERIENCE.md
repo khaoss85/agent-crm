@@ -63,6 +63,29 @@ The North Star experience is **achieved** when all of the following hold, measur
 15. **A15 — Destructive or code-writing MCP tools remain dry-run by default** in the generated project.
 16. **A16 — No secrets committed**; deploy credentials handled through the platform's secret store, never written to the repository.
 
+## The zero-friction journey (Cloud extension)
+
+When the optional managed layer exists (`AGENT_CRM_CLOUD.md` — design only today), the target journey extends end to end:
+
+```text
+1.  User asks Claude Code or Codex to build a CRM.
+2.  The agent selects the framework.
+3.  The agent creates the project.
+4.  It generates modules, references, actions, Admin, and tests.
+5.  It asks for permission to deploy.
+6.  The user approves and supplies/authorizes credentials.
+7.  The agent creates a Cloud project and environment.
+8.  It provisions database and managed runtime.
+9.  It deploys.
+10. It reads build and runtime logs.
+11. It fixes deployment errors.
+12. It runs a public smoke test.
+13. It returns: CRM URL · Admin URL · invitation/login status ·
+    deployment status · test results · trace/audit links.
+```
+
+Steps 5–6 are deliberate approval gates (production deploy, credentials, spend), not friction to remove. The same journey must remain possible self-hosted via the documented recipes — Cloud shortens it, never monopolizes it.
+
 ## What "no manual coding" does and does not mean
 
 - It **does** mean: the user never opens an editor to make the CRM work.

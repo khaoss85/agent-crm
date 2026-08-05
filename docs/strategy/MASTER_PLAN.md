@@ -25,7 +25,7 @@ The open-source, agent-native CRM framework: Claude Code and Codex use it to gen
 | create-medusa-app | create-project CLI (Phase 5) |
 | Recipes docs | CI-tested recipes |
 | Agent skills repo + docs MCP + llms.txt | Same trio, free from day one |
-| Cloud (monetization, core stays MIT) | Possible later operations layer — undecided |
+| Cloud (monetization, core stays MIT) | **Agent CRM Cloud** — optional managed operating layer; explicit product track in `AGENT_CRM_CLOUD.md` (design only, unbuilt) |
 
 Full analysis and what *not* to copy: `MEDUSA_PLAYBOOK.md`.
 
@@ -45,6 +45,8 @@ Brief + business process + design reference → the agent scaffolds, generates m
 ## 6. Roadmap phases (summary)
 
 0 Foundation → 1 Brand/license → 2 CRM core (Activity/Task/pipelines) → 3 Manifest-driven generation → 4 Admin+SDK generation → 5 create-CLI → 6 Production spine (Postgres/auth/tenancy) → 7 Providers/plugins → 8 Agent surface (Skills, Docs MCP, Project MCP) → 9 Deploy/observe → 10 Three starters → 11 Distribution → 12 Public launch → 13 Flywheel. Per-phase outcomes, dependencies, acceptance criteria and human-approval points: `EXECUTION_ROADMAP.md`.
+
+**Agent CRM Cloud** is the named product track for the optional managed operating layer — Control Plane, managed runtime, agent operations CLI/MCP, plugin operations, public benchmark deployment — gated by the Production Spine (Phase 6) and specified in `AGENT_CRM_CLOUD.md` (design only; nothing implemented). The open-source framework and the self-hosting path remain first-class forever; Cloud is optional and must never create lock-in.
 
 ## 7. Discovery model (three layers, never conflated)
 
@@ -83,6 +85,7 @@ Definitions and measurement protocols: `EXECUTION_ROADMAP.md` (metrics) and `CRM
 
 1. `MASTER_PLAN.md` — this file.
 2. `CATEGORY.md` — category, positioning, ICP, JTBD, promise.
+   (Product track deep-dive: `AGENT_CRM_CLOUD.md` — the managed operating layer, design only.)
 3. `NORTH_STAR_EXPERIENCE.md` — the target experience and its acceptance criteria.
 4. `COMPETITOR_MAP.md` — Twenty, Frappe, Relaticle, Comp AI, legacy, templates, DIY; the gap and its caveats.
 5. `MEDUSA_PLAYBOOK.md` — the adoption playbook and its limits.
