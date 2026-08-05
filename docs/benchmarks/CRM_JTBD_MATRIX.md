@@ -133,9 +133,72 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 
 ---
 
+## Future workstream JTBDs (from the Revenue/Delivery/Analytics handover)
+
+The four product workstreams (`docs/strategy/REVENUE_OPERATIONS.md`, `DELIVERY_SERVICE.md`, `ANALYTICS_STUDIO.md`; milestones M9–M15 in `EXECUTION_ROADMAP.md`) introduce the JTBDs below. **Every newly introduced JTBD starts as *not supported*** — no primitive exists — except where an existing validated primitive earns *partially supported*, with the evidence named. None of these may move without linked automated evidence, and JTBDs involving real external users (partners, customers, role-scoped managers) additionally cannot reach *validated end to end* before authentication, tenancy and RBAC exist (Production Spine, JTBD-15).
+
+### Lead Intelligence & Routing (target: M9)
+
+| ID | Job | Status | Notes |
+|---|---|---|---|
+| JTBD-LI-01 | Enrich a Lead from external sources with snapshot + provenance | **not supported** | no provider contract or snapshot primitive |
+| JTBD-LI-02 | Calculate an explainable lead score | **not supported** | no scoring model/run/contribution primitives |
+| JTBD-LI-03 | Prioritize Leads by score | **not supported** | depends on JTBD-LI-02 |
+| JTBD-LI-04 | Route a Lead automatically under a published policy | **not supported** | no routing policy/run/assignment primitives |
+| JTBD-LI-05 | Use sales capacity and availability in routing | **not supported** | no capacity/availability records |
+| JTBD-LI-06 | Manually reassign with permission and reason | **not supported** | no assignment or permission primitives; real permission validation gated by the Production Spine (JTBD-15) |
+| JTBD-LI-07 | Version and publish a scoring/routing policy | **not supported** | no runtime policy-version model (Git history alone is not runtime versioning) |
+| JTBD-LI-08 | Roll back a policy to an earlier version | **not supported** | depends on JTBD-LI-07; rollback = publish a new version from an earlier definition |
+| JTBD-LI-09 | Reproduce a historical routing decision exactly | **not supported** | requires versioned runs with recorded inputs |
+
+### Commercial Operations / CPQ (target: M10–M11)
+
+| ID | Job | Status | Notes |
+|---|---|---|---|
+| JTBD-CO-01 | Create a Quote from a Price Book | **not supported** | no product/price-book/quote primitives |
+| JTBD-CO-02 | Synchronize an external catalog (Stripe/Zuora/ERP/custom) | **not supported** | no catalog provider contract |
+| JTBD-CO-03 | Request a discount under a deterministic policy | **not supported** | no discount request/policy primitives |
+| JTBD-CO-04 | Obtain required commercial approval on a discount | **partially supported** | the deterministic human-only approval primitive is validated on the renewal slice (JTBD-02, ADR-003); no Quote/discount objects exist, so the *discount* job itself cannot be performed |
+| JTBD-CO-05 | Create a signature envelope with a provider | **not supported** | no signature provider contract |
+| JTBD-CO-06 | Verify signing via verified provider events | **not supported** | no envelope/artifact primitives |
+| JTBD-CO-07 | Create an immutable signed Order snapshot | **not supported** | no order primitives |
+
+### Delivery & Service (target: M12–M14)
+
+| ID | Job | Status | Notes |
+|---|---|---|---|
+| JTBD-DS-01 | Hand over a won Deal to delivery | **partially supported** | same job as JTBD-08: cross-module workflows with compensation exist as a primitive (`tests/workflow.test.js`); no handover flow or delivery objects |
+| JTBD-DS-02 | Create a Commessa / Delivery Project from an Order | **not supported** | no order or project primitives |
+| JTBD-DS-03 | Involve a third-party delivery partner (engagement, role, scope) | **not supported** | no partner-engagement primitives |
+| JTBD-DS-04 | Restrict partner access to assigned work only | **not supported** | requires RBAC/tenancy — hard-gated by the Production Spine (JTBD-15) |
+| JTBD-DS-05 | Manage milestones and deliverables | **not supported** | no milestone/deliverable primitives |
+| JTBD-DS-06 | Track hours and costs on delivery | **not supported** | no time-entry/expense primitives |
+| JTBD-DS-07 | Calculate delivery margin (forecast vs actual) | **not supported** | no budget/margin primitives |
+| JTBD-DS-08 | Manage a Change Request with impact and approval | **not supported** | approval primitive exists (JTBD-02) but no change-request object or versioned project scope |
+| JTBD-DS-09 | Collect customer acceptance on deliverables | **not supported** | no acceptance primitives; real *customer* actors gated by the Production Spine |
+| JTBD-DS-10 | Activate billing on accepted milestones | **not supported** | no billing-milestone primitives |
+| JTBD-DS-11 | Activate a Service Contract with Entitlements and SLA | **not supported** | no service primitives |
+| JTBD-DS-12 | Manage support cases and escalation | **not supported** | no case/escalation primitives |
+
+### Analytics (target: M15)
+
+| ID | Job | Status | Notes |
+|---|---|---|---|
+| JTBD-AN-01 | Define a trusted, explainable metric | **not supported** | no semantic model or metric-definition primitives |
+| JTBD-AN-02 | Create a report from approved metrics/dimensions | **not supported** | no report/query-compilation primitives |
+| JTBD-AN-03 | Create a role-aware dashboard | **not supported** | requires RBAC at the query boundary — gated by the Production Spine |
+| JTBD-AN-04 | Version and roll back a dashboard | **not supported** | no dashboard-version primitives |
+| JTBD-AN-05 | Validate metric correctness against fixtures | **not supported** | no metric test harness |
+
+**Anti-inflation rule:** none of the broad JTBDs above may be marked *validated end to end* because an isolated constituent primitive lands. A row moves only when the *whole job* is proven by automated evidence — the same standard every existing validated row met.
+
+---
+
 ## Summary
 
 - **Validated end to end**: JTBD-01 (custom business object), JTBD-01b (generated-to-generated reference), JTBD-02 (renewal approval, built-in object), JTBD-03 (opportunity through configurable pipeline stages, code-first), JTBD-04 (capture a lead, starter model), JTBD-05 (qualify/disqualify a lead, starter actions), JTBD-05b (convert a qualified lead into Company/Contact/Opportunity, starter action).
 - Deliberately **not** marked validated: pipeline for custom objects, a general task engine/scheduling (only the first follow-up Task inside qualification is proven — JTBD-07 stays partial), onboarding, churn/upsell, reporting, integrations, permissions. Primitives for some exist, but no end-to-end proof does.
 
 This matrix guides roadmap prioritization: the largest gaps blocking common CRM adoption are a reusable Activity/Task engine with scheduling (JTBD-07), generated workflows/approvals for custom objects (JTBD-06), and the auth/tenancy/RBAC prerequisite (JTBD-15).
+
+The future-workstream sections (JTBD-LI/CO/DS/AN) chart the M9–M15 roadmap: all **not supported** today except JTBD-CO-04 and JTBD-DS-01, which inherit *partial* status from the validated approval and workflow primitives. The Production Spine (JTBD-15) remains the hard gate for every job involving real external or role-scoped users.

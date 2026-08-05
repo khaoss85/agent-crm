@@ -40,6 +40,88 @@ The invariant: **Production Spine gates public managed deployment** — no Cloud
 
 ---
 
+## Product workstream milestones (M9–M15)
+
+The engineering milestones (M0–M8, tracked in `ROADMAP.md`/`TASKS.md` and proven in-repo) continue as the **CRM capability track**, layered on the phases rather than replacing them. After M8 (Opportunity Pipeline, merged), four product workstreams follow, specified in `REVENUE_OPERATIONS.md`, `DELIVERY_SERVICE.md` and `ANALYTICS_STUDIO.md`. **None of them is implemented; every milestone below is future work.**
+
+```text
+M8  Opportunity Pipeline            (done — ADR-014)
+M9  Lead Intelligence v1
+M10 Commercial Operations v1
+M11 Signature + Order
+M12 Delivery Handover v1
+M13 Delivery Economics + Acceptance
+M14 Service Operations v1
+M15 Analytics Studio v1
+```
+
+**Parallelization and hard dependencies — this sequence does NOT gate Cloud.** The workstream milestones and the platform phases run in parallel, exactly as M0–M8 ran alongside strategy work:
+
+- **Hard dependencies inside the track:** M10 → M11 (an Order snapshots a signed Quote) → M12 (a Commessa is created from an Order) → M13 → M14. M9 is independent of M10–M14. M15 closes the sequence pragmatically because its value grows with each preceding milestone, but the semantic layer plus pipeline metrics need only M8 and may be pulled earlier.
+- **The Production Spine (Phase 6) is a parallel hard gate, not a sequel:** PostgreSQL, authentication, organizations/tenancy, RBAC, secrets, backups, remote-safe MCP. It can be built at any time alongside M9–M15, and **Agent CRM Cloud work begins when the Spine is done — not when all domains are done.** A Cloud managed runtime serving M8-era CRMs is a legitimate first Cloud release.
+- **What the Spine specifically gates within the workstreams:** manual-reassignment permission validation with real users (M9), partner/customer access boundaries and portals (M12–M14), role-aware dashboards (M15), and every remote or multi-user claim. Until then those capabilities are designed and boundary-tested against declared actors on the local-development surface, and the JTBD matrix must not claim them validated.
+
+Each milestone below follows the standard per-phase format.
+
+### M9 — Lead Intelligence v1
+
+- **Outcome:** a Lead is enriched with provenance, scored explainably, and routed by a versioned policy — reproducibly.
+- **Deliverables:** enrichment provider contract + EnrichmentSnapshot with provenance; behavioral/firmographic signal records; versioned explainable scoring (model/version/rule/run/contribution); routing policy + versions + runs; Assignment/AssignmentOverride with reason and history; capacity/availability/territory reference data; publication + rollback (rollback publishes a new version, never rewrites); starter extension; skills `integrate-enrichment-provider`, `build-lead-scoring`, `build-routing-policy`.
+- **Dependencies:** M8 pattern stack (actions, managed fields, versioned registries). Independent of M10–M14.
+- **Acceptance:** a historical routing decision reproduces exactly from its recorded version + inputs; every score decomposes into rule contributions; rollback proof (publish v2, roll back, runs still reference the versions that produced them); CRUD cannot write scores/assignments; JTBD Lead Intelligence rows move from *not supported* with linked evidence.
+- **Agent executes:** all primitives, policies, tests, starter, skills, via ExecPlans.
+- **Human approves:** PR merges; external enrichment provider accounts and any call that sends data to a third party; ADR for the shared policy-version model.
+
+### M10 — Commercial Operations v1
+
+- **Outcome:** a Quote is created from a Price Book, discounted under deterministic policy, and approved by a human.
+- **Deliverables:** Product/ProductVersion, PriceBook/PriceBookEntry (integer minor units); catalog provider contract + one sync (source-of-truth policy explicit; immutable commercial snapshots); Quote/QuoteVersion/QuoteLine; DiscountRequest + versioned DiscountPolicy; commercial approval through the existing human-only approval primitive; no-PATCH-bypass enforcement (managed fields); skills `build-price-book`, `connect-cpq`, `build-discount-policy`.
+- **Dependencies:** M8. Feeds M11.
+- **Acceptance:** quote totals are deterministic and per-currency; a discount above policy cannot reach approved state without a human decision (agent-actor probe rejected); catalog re-sync never mutates an issued QuoteVersion; boundary tests at policy thresholds.
+- **Agent executes:** everything code; **human approves:** merges, catalog provider credentials, source-of-truth policy per project, the approval decisions themselves.
+
+### M11 — Signature + Order
+
+- **Outcome:** a signed Quote becomes an immutable Order.
+- **Deliverables:** signature provider contract (DocuSign/Adobe/Dropbox/custom) with verified events; SignatureEnvelope/Signer/SignedArtifact (immutable); Order/OrderLine preserving the signed commercial snapshot; skill `build-signature-flow`, `create-order-handover` (order side).
+- **Dependencies:** M10.
+- **Acceptance:** an unverified webhook mutates nothing; the Order's snapshot survives later catalog and price-book changes byte-for-byte; a second completion event is idempotent; artifacts immutable under CRUD probes.
+- **Agent executes:** everything code; **human approves:** merges, signature provider accounts, every envelope actually sent (legal effect), production webhooks.
+
+### M12 — Delivery Handover v1
+
+- **Outcome:** a won/signed Order becomes a Delivery Project with milestones and partner engagements.
+- **Deliverables:** DeliveryProject/Commessa with immutable scope copy; Milestone/Deliverable/WorkPackage/ResourceAssignment; PartnerEngagement (+agreement, cost, revenue share, access scope); idempotent handover action; kickoff record; skills `create-order-handover`, `build-delivery-project`, `configure-partner-delivery`.
+- **Dependencies:** M11 (hard — the project copies the Order's scope).
+- **Acceptance:** double handover is a stable visible conflict; project scope unaffected by later quote/catalog edits; partner access boundaries expressed in service contracts and boundary-tested against declared actors (real access validation deferred to the Spine, stated in the evidence).
+- **Agent executes:** everything code; **human approves:** merges, partner agreements (commercial commitments).
+
+### M13 — Delivery Economics + Acceptance
+
+- **Outcome:** delivery has budget, actuals, margin, governed change and customer acceptance.
+- **Deliverables:** TimeEntry/Expense; budget + forecast-vs-actual margin (per currency); Risk/Issue; ChangeRequest flow (impact → human approval → versioned scope); CustomerAcceptance flow; BillingMilestone eligibility as managed state; skill `build-change-request-flow`.
+- **Dependencies:** M12.
+- **Acceptance:** margin math proven against fixtures (integer minor units, no float); acceptance/billable state unreachable via CRUD; change approval boundary-tested (agent actor rejected); scope versions preserve history.
+- **Agent executes:** everything code; **human approves:** merges, change approvals and acceptance decisions by design.
+
+### M14 — Service Operations v1
+
+- **Outcome:** post-go-live obligations are contractual records with deterministic SLAs and governed support.
+- **Deliverables:** ServiceContract/Entitlement/SLA (SLA targets versioned like policies); SupportCase/ServiceRequest/Incident/Escalation; CS handover assignment; renewal/upsell signal connection back to the pipeline; skills `configure-service-contract`, `build-support-sla`.
+- **Dependencies:** M13 (acceptance/billing precede service activation).
+- **Acceptance:** SLA evaluation is deterministic and reproducible per version; escalation approval points human-only; a contract nearing expiry emits a deterministic renewal signal consumed by the sales side.
+- **Agent executes:** everything code; **human approves:** merges, SLA commitments to real customers.
+
+### M15 — Analytics Studio v1
+
+- **Outcome:** trusted metrics and dashboards compiled safely from semantic definitions — no agent-generated raw SQL surface.
+- **Deliverables:** SemanticModel/MetricDefinition/DimensionDefinition/Dataset; Report/Dashboard/Widget/SavedView with versions + rollback; safe query compiler (parameterized, bounded, permission hooks at the query boundary); metric correctness tests in `npm run verify`; skills `build-revenue-dashboard`, `build-delivery-margin-dashboard`.
+- **Dependencies:** M8 for pipeline metrics; each additional domain's metrics land as its milestone lands. Role-aware results gated by the Spine.
+- **Acceptance:** every shipped metric has a fixture with a known-correct expected result; no public surface accepts free-form SQL (probe rejected); dashboard rollback proof; compiled queries inspectable.
+- **Agent executes:** everything code; **human approves:** merges, publishing dashboards to real users once the Spine exists.
+
+---
+
 ## Phase 0 — Foundation hardening
 
 - **Outcome:** the existing slice is trustworthy enough to build generation on top of.
@@ -165,6 +247,38 @@ The invariant: **Production Spine gates public managed deployment** — no Cloud
 - **Acceptance:** metrics below trending; at least 3 community-contributed providers/modules within two quarters of launch.
 - **Agent executes:** content pipeline with quality gates, benchmark re-runs, triage drafts.
 - **Human approves:** publishing anything public; community moderation decisions.
+
+---
+
+## Agent Skills and provider roadmap (future)
+
+Phase 8 defines the core skills (build-module, build-workflow, build-integration, debug-run, upgrade-framework). The workstream milestones extend the roster — each skill ships with the milestone that delivers its primitives, never before:
+
+| Skill | Milestone | Provider contracts involved |
+|---|---|---|
+| `integrate-enrichment-provider` | M9 | enrichment (company/person data, marketing automation, behavior, product analytics, billing, ERP, custom) |
+| `build-lead-scoring` | M9 | — |
+| `build-routing-policy` | M9 | — |
+| `build-price-book` | M10 | — |
+| `connect-cpq` | M10 | catalog (internal, Stripe Products/Prices, Zuora/external CPQ, ERP, custom) |
+| `build-discount-policy` | M10 | — |
+| `build-signature-flow` | M11 | signature (DocuSign, Adobe Sign, Dropbox Sign, custom) |
+| `create-order-handover` | M11–M12 | — |
+| `build-delivery-project` | M12 | — |
+| `configure-partner-delivery` | M12 | — |
+| `build-change-request-flow` | M13 | — |
+| `configure-service-contract` | M14 | — |
+| `build-support-sla` | M14 | — |
+| `build-revenue-dashboard` | M15 | — |
+| `build-delivery-margin-dashboard` | M15 | — |
+
+**Domain completeness rule:** every major domain is finished only when all six pieces exist —
+
+```text
+native primitive → provider contract → Agent Skill → starter → JTBD evidence → reproducible E2E benchmark
+```
+
+A domain with primitives but no skill is not agent-native; a domain with a skill but no JTBD evidence or benchmark is a claim without receipts. Providers whose actions send, sign, charge or expose data externally always sit behind explicit human approval — the same boundary Agent CRM Cloud applies to operations (`AGENT_CRM_CLOUD.md` §4.3).
 
 ---
 

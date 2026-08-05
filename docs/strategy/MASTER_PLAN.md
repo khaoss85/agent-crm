@@ -11,7 +11,7 @@ The open-source, agent-native CRM framework: Claude Code and Codex use it to gen
 ## 2. Current status (August 2026)
 
 - Milestone 0 (vertical slice) complete: Company/Contact/Opportunity/Approval modules, renewal-approval workflow, API, Admin, CLI, MCP, trace, audit, 9 tests.
-- Milestone 1 first task merged (PR #2): declarative module manifests with validation and deterministic SQLite migration generation; 23 tests green.
+- Milestones 1–8 merged: declarative module manifests and generated migrations; generated modules over one resource contract with generic Admin and SDK; generated-to-generated references; code-first record actions with atomic execution, post-commit events and trace; lead conversion through declared core adapters; configurable code-first Opportunity pipelines with a server-authoritative move-stage action and Admin board (ADR-006…ADR-014); 160 tests green.
 - Working title `agent-crm`; **no public name chosen**. Repository license is currently **MIT**; final pre-launch license confirmation is a pending human decision.
 - Strategy defined in the nine documents indexed below; benchmark designed but not yet executed.
 
@@ -47,6 +47,27 @@ Brief + business process + design reference → the agent scaffolds, generates m
 0 Foundation → 1 Brand/license → 2 CRM core (Activity/Task/pipelines) → 3 Manifest-driven generation → 4 Admin+SDK generation → 5 create-CLI → 6 Production spine (Postgres/auth/tenancy) → 7 Providers/plugins → 8 Agent surface (Skills, Docs MCP, Project MCP) → 9 Deploy/observe → 10 Three starters → 11 Distribution → 12 Public launch → 13 Flywheel. Per-phase outcomes, dependencies, acceptance criteria and human-approval points: `EXECUTION_ROADMAP.md`.
 
 **Agent CRM Cloud** is the named product track for the optional managed operating layer — Control Plane, managed runtime, agent operations CLI/MCP, plugin operations, public benchmark deployment — gated by the Production Spine (Phase 6) and specified in `AGENT_CRM_CLOUD.md` (design only; nothing implemented). The open-source framework and the self-hosting path remain first-class forever; Cloud is optional and must never create lock-in.
+
+### Product workstreams (design only, unbuilt)
+
+Four named workstreams extend the CRM capability track beyond the Opportunity pipeline, covering the complete commercial lifecycle:
+
+```text
+Marketing
+→ Lead Intelligence        (enrichment, explainable scoring, versioned routing)
+→ Sales                    (pipeline — Milestone 8, done)
+→ Commercial Operations    (catalog, quotes, discounts, approvals, signature, orders)
+→ Delivery                 (handover, commesse, partners, economics, acceptance)
+→ Service                  (contracts, entitlements, SLA, support)
+→ Customer Success
+→ Renewal and Upsell       (feeds back into Lead Intelligence and Sales)
+```
+
+- **Lead Intelligence & Routing** and **Commercial Operations / CPQ** — `REVENUE_OPERATIONS.md` (milestones M9–M11).
+- **Delivery & Service Operations** — `DELIVERY_SERVICE.md` (milestones M12–M14; the CRM equivalent of ecommerce fulfillment).
+- **Analytics Studio** — `ANALYTICS_STUDIO.md` (milestone M15; safe semantic metrics, no agent-generated raw SQL).
+
+Every workstream follows the same delivery model — native deterministic primitives + provider contracts + code-first versioned policies + Agent Skills + starter + JTBD evidence + reproducible E2E benchmark — and none of it is implemented today. Sequencing, parallelization and the Production Spine gate: `EXECUTION_ROADMAP.md` (workstream milestones M9–M15). The workstreams do not gate Agent CRM Cloud: Cloud work begins when the Production Spine is done, not when all domains are done.
 
 ## 7. Discovery model (three layers, never conflated)
 
@@ -85,7 +106,7 @@ Definitions and measurement protocols: `EXECUTION_ROADMAP.md` (metrics) and `CRM
 
 1. `MASTER_PLAN.md` — this file.
 2. `CATEGORY.md` — category, positioning, ICP, JTBD, promise.
-   (Product track deep-dive: `AGENT_CRM_CLOUD.md` — the managed operating layer, design only.)
+   (Product track deep-dives, all design only: `AGENT_CRM_CLOUD.md` — the managed operating layer; `REVENUE_OPERATIONS.md` — lead intelligence, routing and CPQ; `DELIVERY_SERVICE.md` — post-sale delivery and service; `ANALYTICS_STUDIO.md` — safe semantic analytics.)
 3. `NORTH_STAR_EXPERIENCE.md` — the target experience and its acceptance criteria.
 4. `COMPETITOR_MAP.md` — Twenty, Frappe, Relaticle, Comp AI, legacy, templates, DIY; the gap and its caveats.
 5. `MEDUSA_PLAYBOOK.md` — the adoption playbook and its limits.
