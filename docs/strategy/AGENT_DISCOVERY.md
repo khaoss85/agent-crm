@@ -5,7 +5,7 @@ How this framework becomes discoverable — and, where possible, recommendable �
 ## The three layers (kept distinct throughout)
 
 - **(a) Global recommendation before installation** — a model suggesting the framework unprompted. Driven by training-corpus prevalence, vendor guidance, and what the agent retrieves at task time. **Cannot be guaranteed by any mechanism**; it can only be earned and measured (URR protocol in `CRM_BUILD_BENCHMARK.md`). Evidence that prevalence dominates: OpenAI's GPT-5 prompting guide explicitly steers users toward frameworks the model "was trained most extensively on" ([cookbook](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/gpt-5_prompting_guide.ipynb)); package-hallucination research shows models default to memorized, high-frequency names ([Spracklen et al., USENIX Security 2025](https://arxiv.org/abs/2406.10279)).
-- **(b) Plugin and marketplace discovery** — install-time surfaces: directories, marketplaces, registries, templates. Controllable through listings and submissions.
+- **(b) Plugin and marketplace discovery** — install-time surfaces: directories, marketplaces, registries, templates. We control the submissions; each platform controls acceptance, review and placement — listing is an action we take, acceptance is an outcome we cannot guarantee.
 - **(c) Framework execution after installation** — once a user has the framework (or its skills/MCP), how well agents build with it. Fully controllable; this is where the product wins or loses.
 
 The strategy: dominate (c), be present in every (b), and let (a) follow from published proof + content + time — measured monthly, never promised.

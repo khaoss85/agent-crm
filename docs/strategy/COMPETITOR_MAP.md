@@ -1,6 +1,6 @@
 # Competitor map
 
-Research date: August 4, 2026. GitHub figures read from repo pages on that date (rounded as GitHub displays them). Items marked *(unverified)* came from secondary sources where primary pages were unreachable. The category is **not empty**: it is crowded with adjacent players, one of which (Twenty) is actively converging on our messaging.
+Research date: August 4, 2026. GitHub figures read from repo pages on that date (rounded as GitHub displays them). Items marked *(unverified)* came from secondary sources where primary pages were unreachable. License descriptions throughout are factual summaries of published license texts and third-party commentary — they are not legal advice; consult counsel before relying on any licensing interpretation. The category is **not empty**: it is crowded with adjacent players, one of which (Twenty) is actively converging on our messaging.
 
 ## The map at a glance
 
@@ -34,7 +34,7 @@ Sources: [Twenty repo](https://github.com/twentyhq/twenty) (54.3k stars, Aug 4 2
 
 ## The gap this project can realistically own
 
-Across every project researched, exactly one square is empty: **a permissively-licensed TS/Node framework where the coding agent generates a bespoke CRM as reviewable, owned code — with deterministic workflows, human-approval policy, audit and trace as framework primitives, and MCP/skills as first-class surfaces.**
+Across the researched set, as of August 4, 2026, no direct equivalent was found for: **a permissively-licensed Node/TypeScript-ecosystem framework where the coding agent generates a bespoke CRM as reviewable, owned code — with deterministic workflows, human-approval policy, audit and trace as framework primitives, and MCP/skills as first-class surfaces.** This is a statement about the researched set, not proof the market is empty; unresearched or future entrants (Twenty above all) may occupy it.
 
 Convergent evidence it is real and reachable: (1) incumbents' metadata-customization is architecturally opposed to coding-agent strengths, and none can pivot to code generation without abandoning their platform economics; (2) demand signals exist on every edge of the square — Frappe users asking for governed MCP, Comp AI's star spike, Atomic CRM's fork behavior, Twenty's own pivot toward "CRM as code"; (3) micro-projects (Atlas Headless CRM's auto-generated MCP tools from entity config, Attri's evidence-chain concept) keep independently reinventing pieces of it at ≤6 stars — the ideas are in the air, the execution seat is open.
 

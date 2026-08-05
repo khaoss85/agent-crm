@@ -4,13 +4,13 @@
 
 **The agent-native CRM framework**: the open-source framework that coding agents (Claude Code, Codex) use to *generate* bespoke CRM applications as code the customer owns.
 
-Not "open-source CRM" (owned by Twenty: ~54.3k GitHub stars, "the open alternative to Salesforce, designed for AI" — [repo](https://github.com/twentyhq/twenty)). Not "AI CRM" (an app category where agents work *inside* a CRM — Relaticle, Comp AI, Twenty 2.0's agents). The category we can own is one structural level below both: **the substrate agents build CRMs from**. Competitive research (`COMPETITOR_MAP.md`) found this quadrant genuinely empty as of August 2026: every existing project is either a platform you configure, an agent bolted inside an app, or a CRUD template with no CRM semantics.
+Not "open-source CRM" (owned by Twenty: ~54.3k GitHub stars as of August 2026, "the open alternative to Salesforce, designed for AI" — [repo](https://github.com/twentyhq/twenty)). Not "AI CRM" (an app category where agents work *inside* a CRM — Relaticle, Comp AI, Twenty 2.0's agents). The category we can own is one structural level below both: **the substrate agents build CRMs from**. In the competitive research (`COMPETITOR_MAP.md`), no direct equivalent was found in the researched set as of August 4, 2026: every project examined is either a platform you configure, an agent bolted inside an app, or a CRUD template with no CRM semantics. (A crowded adjacent field is not an empty market — the claim is scoped to what was researched, and Twenty's trajectory is the standing caveat.)
 
 The category claim in one line: *configured CRMs are where customization goes to be tolerated; generated CRMs are where it goes to be owned.*
 
 ## Exact product positioning
 
-> **The open-source framework coding agents use to build custom CRMs.** Describe your commercial process to Claude Code or Codex; get a working CRM as reviewable TypeScript you own — deterministic workflows, human approvals, audit and trace built in.
+> **The open-source framework coding agents use to build custom CRMs.** Describe your commercial process to Claude Code or Codex; get a working CRM as reviewable code you own — deterministic workflows, human approvals, audit and trace built in.
 
 Position against the two defaults a buyer actually weighs:
 
@@ -48,7 +48,7 @@ The honest counterpoint we keep in view: Twenty's marketing will *sound* like ou
 
 ## Primary ICP
 
-**Developers and dev-agencies building CRM-shaped internal tools and client systems with coding agents.** They know Claude Code/Codex, bill for outcomes, and today choose between configuring a platform (fast start, ceiling and lock-in) and building from scratch (freedom, re-derived plumbing). Evidence this persona exists and code-first is their revealed preference: Atomic CRM's fork-to-star ratio (~758 forks / 1.2k stars — [repo](https://github.com/marmelab/atomic-crm)) shows developers fork CRM code to own it; incumbents' metadata-in-a-database customization is precisely what coding agents handle worst, while code-in-git is what they handle best.
+**Developers and dev-agencies building CRM-shaped internal tools and client systems with coding agents.** They know Claude Code/Codex, bill for outcomes, and today choose between configuring a platform (fast start, ceiling and lock-in) and building from scratch (freedom, re-derived plumbing). Evidence this persona exists and code-first is their revealed preference: Atomic CRM's fork-to-star ratio (~758 forks / 1.2k stars as of August 2026 — [repo](https://github.com/marmelab/atomic-crm)) shows developers fork CRM code to own it; incumbents' metadata-in-a-database customization is precisely what coding agents handle worst, while code-in-git is what they handle best.
 
 Secondary (later): SaaS teams embedding CRM capabilities; technical founders/RevOps at product companies with bespoke processes.
 

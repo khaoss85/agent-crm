@@ -73,7 +73,7 @@ The North Star experience is **achieved** when all of the following hold, measur
 | North Star element | Status |
 |---|---|
 | Modules, workflows, trace, audit, human approval | Working vertical slice (Milestone 0) |
-| Declarative module manifests → migrations | Implemented in PR #2 (Milestone 1, first task) |
+| Declarative module manifests → migrations | Merged (Milestone 1, first task) |
 | Generated services/Admin/SDK from manifests | Not started |
 | create-project CLI | Not started (only in-repo scaffolding) |
 | Design-reference → Admin theming | Not started |
