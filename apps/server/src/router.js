@@ -36,10 +36,16 @@ export class Router {
       if (route.method !== method.toUpperCase()) continue;
       const match = pathname.match(route.pattern);
       if (!match) continue;
-      const params = Object.fromEntries(
-        route.keys.map((key, index) => [key, decodeURIComponent(match[index + 1])]),
-      );
-      return { handler: route.handler, params };
+      // Malformed percent-encoding must never crash the request: a segment
+      // that cannot be decoded simply does not match any route (safe 404).
+      try {
+        const params = Object.fromEntries(
+          route.keys.map((key, index) => [key, decodeURIComponent(match[index + 1])]),
+        );
+        return { handler: route.handler, params };
+      } catch {
+        return null;
+      }
     }
     return null;
   }

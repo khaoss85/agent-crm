@@ -325,14 +325,21 @@ function header() {
  * @param {{migrationName: string, sql: string}} migration
  */
 function migrationTemplate(names, migration) {
+  // The SQL is embedded via JSON.stringify, never raw template interpolation:
+  // manifest-controlled strings (enum values) must not be able to break out of
+  // the generated source.
+  const lines = migration.sql.trimEnd().split('\n');
+  const serialized = lines.map((line, index) => {
+    const suffix = index === lines.length - 1 ? '' : " + '\\n' +";
+    return `  ${JSON.stringify(line)}${suffix}`;
+  });
   return `// @ts-check
 ${header()}
 
 export const ${names.camel}Migration = {
   name: '${migration.migrationName}',
-  sql: \`
-${migration.sql.trimEnd()}
-\`,
+  sql:
+${serialized.join('\n')},
 };
 `;
 }
@@ -351,7 +358,9 @@ const VALIDATORS = {
 function validatorCall(field, valueExpression) {
   const validator = VALIDATORS[field.type][field.required ? 'required' : 'optional'];
   if (field.type === 'enum') {
-    const values = (field.values ?? []).map((value) => `'${value.replaceAll("'", "\\'")}'`).join(', ');
+    // JSON.stringify, not quote-escaping: enum values are manifest-controlled
+    // free text and must not be able to break out of the generated source.
+    const values = (field.values ?? []).map((value) => JSON.stringify(value)).join(', ');
     return `${validator}(${valueExpression}, [${values}], '${field.name}')`;
   }
   return `${validator}(${valueExpression}, '${field.name}')`;
@@ -562,6 +571,16 @@ ${rowMappings}
  */
 function indexTemplate(manifest, names) {
   const fieldNames = ['id', ...manifest.fields.map((field) => field.name), 'createdAt', 'updatedAt'];
+  const fieldMetadata = manifest.fields.map((field) => ({
+    name: field.name,
+    type: field.type,
+    required: field.required,
+    unique: field.unique,
+    ...(field.values ? { values: field.values } : {}),
+  }));
+  const fieldMetadataLines = fieldMetadata
+    .map((field) => `    ${JSON.stringify(field)},`)
+    .join('\n');
   return `// @ts-check
 ${header()}
 
@@ -571,6 +590,15 @@ export const ${names.camel}ModuleDefinition = Object.freeze({
   name: '${manifest.name}',
   version: '0.1.0',
   description: ${JSON.stringify(manifest.description ?? `Generated ${manifest.name} module.`)},
+  // The static contract that exposes this module through the generic
+  // /api/modules surface and client.module('${manifest.name}') (ADR-008).
+  kind: 'generated',
+  manifestVersion: ${manifest.manifestVersion},
+  capabilities: Object.freeze(['create', 'get', 'list', 'update']),
+  fields: Object.freeze([
+${fieldMetadataLines}
+  ]),
+  immutableFields: Object.freeze(['id', 'createdAt', 'updatedAt']),
   entities: [
     {
       name: '${manifest.name}',
@@ -649,7 +677,7 @@ function exampleValue(field) {
     case 'timestamp':
       return "'2026-01-01T00:00:00.000Z'";
     case 'enum':
-      return `'${(field.values ?? [''])[0]}'`;
+      return JSON.stringify((field.values ?? [''])[0]);
     default:
       return `'Example ${field.name}'`;
   }
@@ -667,7 +695,7 @@ function exampleUpdateValue(field) {
     case 'timestamp':
       return "'2026-02-02T00:00:00.000Z'";
     case 'enum':
-      return `'${(field.values ?? ['']).at(-1)}'`;
+      return JSON.stringify((field.values ?? ['']).at(-1));
     default:
       return `'Updated ${field.name}'`;
   }

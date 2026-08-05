@@ -5,7 +5,13 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Router } from './router.js';
-import { AppError, normalizeError } from '../../../packages/core/src/errors.js';
+import {
+  AppError,
+  NotFoundError,
+  ValidationError,
+  normalizeError,
+} from '../../../packages/core/src/errors.js';
+import { isExposableGeneratedModule } from '../../../packages/core/src/generated-module-contract.js';
 
 const DEFAULT_PUBLIC_DIR = resolve(
   fileURLToPath(new URL('../../admin/public', import.meta.url)),
@@ -17,10 +23,10 @@ export function createHttpServer(app, options = {}) {
   const router = buildRouter(app);
 
   return createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://localhost');
-    const route = router.match(request.method ?? 'GET', url.pathname);
-
     try {
+      const url = new URL(request.url ?? '/', 'http://localhost');
+      const route = router.match(request.method ?? 'GET', url.pathname);
+
       if (route) {
         const body = ['POST', 'PUT', 'PATCH'].includes(request.method ?? '')
           ? await readJson(request)
@@ -30,6 +36,7 @@ export function createHttpServer(app, options = {}) {
           response,
           params: route.params,
           query: Object.fromEntries(url.searchParams.entries()),
+          searchParams: url.searchParams,
           body,
           actor: actorFromRequest(request),
         });
@@ -67,10 +74,40 @@ function buildRouter(app) {
 
   router.add('GET', '/api/schema', async () => ({
     schema: app.schema,
+    generatedResourceContract: 1,
     modules: app.modules.list(),
+    generatedModules: app.modules
+      .list()
+      .filter((module) => isExposableGeneratedModule(app.modules.get(module.name)))
+      .map((module) => generatedModuleMetadata(module)),
     workflows: app.workflows.list(),
     providers: app.providers.list(),
   }));
+
+  // Uniform resource surface for generated modules (ADR-008). Only modules
+  // that fully satisfy the generated-module contract are served; anything
+  // else — unknown names, handwritten core modules, malformed or hand-edited
+  // definitions — fails closed as 404. This is a framework contract against
+  // accidental misuse, not a sandbox against malicious source-code changes.
+  router.add('GET', '/api/modules/:module', async ({ params }) => (
+    generatedModuleMetadata(resolveGeneratedModule(app, params.module))
+  ));
+  router.add('GET', '/api/modules/:module/records', async ({ params, searchParams }) => {
+    const module = requireCapability(resolveGeneratedModule(app, params.module), 'list');
+    return { items: module.service.list({ limit: strictLimit(searchParams) }) };
+  });
+  router.add('POST', '/api/modules/:module/records', async ({ params, body, actor }) => {
+    const module = requireCapability(resolveGeneratedModule(app, params.module), 'create');
+    return { status: 201, body: await module.service.create(recordInput(body), { actor }) };
+  });
+  router.add('GET', '/api/modules/:module/records/:id', async ({ params }) => {
+    const module = requireCapability(resolveGeneratedModule(app, params.module), 'get');
+    return module.service.get(params.id);
+  });
+  router.add('PATCH', '/api/modules/:module/records/:id', async ({ params, body, actor }) => {
+    const module = requireCapability(resolveGeneratedModule(app, params.module), 'update');
+    return module.service.update(params.id, recordInput(body), { actor });
+  });
 
   router.add('GET', '/api/companies', async ({ query }) => ({
     items: app.services.companies.list({ limit: parseLimit(query.limit) }),
@@ -239,6 +276,95 @@ function parseLimit(value) {
   if (!value) return undefined;
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+/**
+ * Resolve a module for the generic generated-module surface. Anything that
+ * does not fully satisfy the generated-module contract — unknown names,
+ * handwritten core modules, malformed or hand-edited definitions — fails
+ * closed as 404 on this surface. The ModuleRegistry is Map-backed, so names
+ * like __proto__ or constructor can never resolve to inherited properties.
+ *
+ * @param {any} app @param {string} name
+ */
+function resolveGeneratedModule(app, name) {
+  let module;
+  try {
+    module = app.modules.get(name);
+  } catch {
+    throw new NotFoundError('Generated module', name);
+  }
+  if (module.name !== name || !isExposableGeneratedModule(module)) {
+    throw new NotFoundError('Generated module', name);
+  }
+  return module;
+}
+
+/** @param {any} module @param {string} capability */
+function requireCapability(module, capability) {
+  if (!module.capabilities.includes(capability)) {
+    throw new NotFoundError(`Generated module operation ${capability}`, module.name);
+  }
+  return module;
+}
+
+/**
+ * Record input on the generic surface must be a plain JSON object; arrays and
+ * primitives are a 400 instead of confusing downstream validation errors.
+ *
+ * @param {unknown} body
+ */
+function recordInput(body) {
+  if (body === null || body === undefined) return {};
+  if (typeof body !== 'object' || Array.isArray(body)) {
+    throw new ValidationError('Request body must be a JSON object');
+  }
+  return body;
+}
+
+/** @param {any} module */
+function generatedModuleMetadata(module) {
+  return {
+    name: module.name,
+    description: module.description ?? null,
+    kind: module.kind,
+    manifestVersion: module.manifestVersion ?? 1,
+    capabilities: module.capabilities,
+    fields: module.fields ?? [],
+    immutableFields: module.immutableFields ?? ['id', 'createdAt', 'updatedAt'],
+    paths: {
+      metadata: `/api/modules/${module.name}`,
+      collection: `/api/modules/${module.name}/records`,
+      record: `/api/modules/${module.name}/records/:id`,
+    },
+  };
+}
+
+/**
+ * Strict limit parsing for the generated-module surface. Canonical accepted
+ * syntax: a single base-10 positive integer between 1 and 500 — no sign, no
+ * exponent, no hex, no whitespace, no duplicates. Anything else is a 400
+ * instead of a silent behavior change. (Core endpoints keep their historical
+ * lenient parsing; the generated service itself remains the final boundary.)
+ *
+ * @param {URLSearchParams} searchParams
+ */
+function strictLimit(searchParams) {
+  const values = searchParams.getAll('limit');
+  if (values.length === 0) return undefined;
+  if (values.length > 1) {
+    throw new ValidationError('limit must not be repeated', { limit: values });
+  }
+  const value = values[0];
+  if (value === '') return undefined;
+  if (!/^\d+$/.test(value)) {
+    throw new ValidationError('limit must be a base-10 positive integer', { limit: value });
+  }
+  const parsed = Number(value);
+  if (parsed < 1 || parsed > 500) {
+    throw new ValidationError('limit must be between 1 and 500', { limit: parsed });
+  }
+  return parsed;
 }
 
 /** @param {string} extension */
