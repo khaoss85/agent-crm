@@ -578,9 +578,11 @@ test('core migration v2 upgrades an existing v1 database in place', async (t) =>
     VALUES ('o1', 'c1', 'Legacy', 'renewal', 100, 'EUR', 'discovery', 'x', 't', 't')
   `).run();
   const versions = database.raw.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map((r) => Number(r.version));
-  assert.deepEqual(versions, [1, 2]);
-  const legacy = database.raw.prepare('SELECT source_key FROM opportunities WHERE id = ?').get('o1');
+  assert.deepEqual(versions, [1, 2, 3]);
+  const legacy = database.raw.prepare('SELECT source_key, pipeline_key, pipeline_stage FROM opportunities WHERE id = ?').get('o1');
   assert.equal(legacy.source_key, null, 'pre-existing rows keep a NULL source key');
+  assert.equal(legacy.pipeline_key, null, 'pre-existing rows keep NULL pipeline state (v3)');
+  assert.equal(legacy.pipeline_stage, null);
   // The partial unique index permits many NULLs but blocks duplicate keys.
   database.raw.prepare("UPDATE opportunities SET source_key = 'k1' WHERE id = 'o1'").run();
   database.raw.prepare(`
