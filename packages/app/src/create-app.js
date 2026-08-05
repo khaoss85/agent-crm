@@ -102,6 +102,11 @@ export function createAgentCrmApp(options = {}) {
     approvals: approvalModule.service,
   };
 
+  // Declared capabilities over the handwritten core modules (ADR-013): built
+  // once per app instance — frozen, no global state, the only sanctioned way
+  // for an action to create/reuse core records.
+  const coreAdapters = createCoreAdapters({ database, services });
+
   const workflows = new WorkflowEngine({
     database,
     services,
@@ -146,9 +151,7 @@ export function createAgentCrmApp(options = {}) {
         registry: actions,
         modules,
         services,
-        // Declared capabilities over the handwritten core modules (ADR-013):
-        // the only sanctioned way for an action to create/reuse core records.
-        core: createCoreAdapters({ database, services }),
+        core: coreAdapters,
         config: app.config,
         module,
         action,

@@ -42,12 +42,37 @@ export const convertLead = {
   fromStates: ['qualified'],
   input: [
     { name: 'opportunityName', type: 'string', required: true },
-    { name: 'valueCents', type: 'integer', required: true },
-    { name: 'currency', type: 'string' },
-    { name: 'owner', type: 'string' },
+    {
+      name: 'valueCents',
+      type: 'integer',
+      required: true,
+      hint: 'Integer MINOR units: 500000 means 5,000.00 (not 500,000) in the chosen currency.',
+    },
+    { name: 'currency', type: 'string', hint: '3-letter ISO-4217 code, e.g. EUR (default). Uppercased automatically.' },
+    { name: 'owner', type: 'string', hint: 'Defaults to the acting user id.' },
   ],
   /** @param {any} ctx */
   async execute({ record, input, actor, core, managed, step, now }) {
+    // The core adapters are wired by the application (ADR-013); a harness that
+    // omits them should fail with a clear message, not a TypeError mid-write.
+    if (!core || typeof core.findCompaniesByNormalizedName !== 'function') {
+      throw new AppError('lead.convert needs the core-module adapters (ctx.core); run it through the application', {
+        code: 'CORE_ADAPTERS_MISSING',
+        status: 500,
+      });
+    }
+    // A qualified lead must carry NO conversion state. Links present here mean
+    // the row was corrupted outside the framework (the action writes status
+    // and all links in one atomic update) — refuse rather than silently
+    // overwrite evidence of the corruption.
+    for (const field of ['convertedAt', 'convertedCompanyId', 'convertedContactId', 'convertedOpportunityId']) {
+      if (record[field] !== null && record[field] !== undefined && record[field] !== '') {
+        throw new AppError(
+          `Cannot convert: this lead is "qualified" but already carries ${field} — its conversion state is corrupt; inspect the data before converting`,
+          { code: 'CONVERSION_STATE_CORRUPT', status: 409, details: { field, value: String(record[field]) } },
+        );
+      }
+    }
     // Validate everything before the first write, so a bad input never costs
     // a rollback.
     if (input.valueCents < 0) {
@@ -62,6 +87,11 @@ export const convertLead = {
         'This lead has no companyName; set it before converting',
         { field: 'companyName' },
       );
+    }
+    if (record.companyName.length > 10_000) {
+      // Same bound as action string inputs: a pathological name must not flow
+      // into a Company record through conversion.
+      throw new ValidationError('companyName is too long to convert (max 10000 characters)', { field: 'companyName' });
     }
     const actorId = actor && typeof actor === 'object' && typeof (/** @type {any} */ (actor).id) === 'string'
       ? /** @type {any} */ (actor).id
