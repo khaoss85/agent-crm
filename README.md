@@ -25,6 +25,12 @@ API + Admin + trace + audit
 - SQLite persistence using Node's built-in database adapter.
 - Workflow runs, step-level traces and audit events.
 - CLI for serve, seed, doctor, demo and module scaffolding.
+- Declarative module manifests with validation and deterministic SQLite migration generation (see `docs/MODULE_MANIFEST.md`):
+
+  ```bash
+  npm run crm -- module validate examples/modules/partner.module.json
+  npm run crm -- module migration examples/modules/partner.module.json --dry-run
+  ```
 - MCP server over stdio with tools and project resources.
 - Codex/Claude repository skills and handover documentation.
 - Automated tests with Node's built-in test runner.
