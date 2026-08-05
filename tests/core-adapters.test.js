@@ -45,11 +45,16 @@ test('the adapter registry is frozen and per-app instances are isolated', async 
   assert.throws(() => adaptersA.findCompaniesByNormalizedName(''), /companyName is required/);
   assert.throws(() => adaptersA.findContactByEmail('   '), /email is required/);
 
-  // Deterministic order: two normalized-equal companies come back oldest first
-  // regardless of lookup casing.
+  // Deterministic order: the contract is ORDER BY (created_at, id) — two
+  // normalized-equal companies created in the same millisecond tie on
+  // created_at and break deterministically on id, so the exact winner is not
+  // insertion order; what IS guaranteed is that every lookup, under any query
+  // casing, returns the same complete set in the same order.
   await adaptersA.createCompany({ name: 'dup co' }, { actor });
   await adaptersA.createCompany({ name: 'DUP CO' }, { actor });
-  const matches = adaptersA.findCompaniesByNormalizedName('Dup   Co');
-  assert.equal(matches.length, 2);
-  assert.equal(matches[0].name, 'dup co', 'oldest first, insertion-order independent of query casing');
+  const first = adaptersA.findCompaniesByNormalizedName('Dup   Co');
+  const second = adaptersA.findCompaniesByNormalizedName('dup co');
+  assert.equal(first.length, 2);
+  assert.deepEqual(first, second, 'identical result set and order regardless of query casing');
+  assert.deepEqual(adaptersA.findCompaniesByNormalizedName('DUP CO'), first, 'stable across repeated lookups');
 });
