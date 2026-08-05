@@ -380,7 +380,8 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
     }
 
     if (quote.status === 'approved') {
-      mount.appendChild(el('p', 'quote-approved', 'Approved — this quote is read-only in this milestone.'));
+      mount.appendChild(el('p', 'quote-approved', 'Approved — the commercial content of this quote is read-only.'));
+      await renderSignature({ quote, schema, mount, el, client, withBusy, busy, money });
     }
 
     const versionsPanel = el('div', 'quote-versions');
@@ -401,6 +402,159 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
       versionsPanel.appendChild(row);
     }
     mount.appendChild(versionsPanel);
+  }
+
+  /**
+   * Signature and Order section (ADR-017), shown only on an approved quote.
+   * Everything here is read-only evidence except the single Request signature
+   * control, which is an explicit human action with its caveat stated in the
+   * UI. No payment, invoice or delivery control exists.
+   */
+  async function renderSignature({ quote, schema, mount, el, client, withBusy, busy, money }) {
+    const panel = el('div', 'quote-signature');
+    panel.appendChild(el('h3', undefined, 'Signature'));
+    mount.appendChild(panel);
+    if (!schema.signature) {
+      panel.appendChild(el('p', 'muted', 'Signature is not enabled in this project.'));
+      return;
+    }
+    let envelopes;
+    let signers;
+    let artifacts;
+    let orders;
+    let orderTotals;
+    try {
+      envelopes = (await fetchRows('signature-envelope', (row) => row.quoteId === quote.id)).rows;
+      signers = (await fetchRows('signature-signer')).rows;
+      artifacts = (await fetchRows('signed-artifact', (row) => row.quoteId === quote.id)).rows;
+      orders = (await fetchRows('order', (row) => row.quoteId === quote.id)).rows;
+      orderTotals = (await fetchRows('order-total')).rows;
+    } catch (error) {
+      panel.appendChild(el('p', 'field-error', `Could not load signature state: ${error?.message ?? 'request failed'}`));
+      return;
+    }
+    const envelope = envelopes[0] ?? null;
+
+    if (!envelope) {
+      const form = el('div', 'signature-request');
+      form.appendChild(el('p', 'muted', 'Sending for signature is a real external side effect: it requires a human user actor. This is a human-actor boundary, not Sales or Legal role enforcement — real roles need the Production Spine.'));
+      const providerSelect = el('select');
+      for (const provider of schema.signature.providers ?? []) {
+        const option = el('option', undefined, `${provider.label} (v${provider.version})`);
+        option.setAttribute('value', `${provider.name}@${provider.version}`);
+        providerSelect.appendChild(option);
+        if (providerSelect.value === undefined || providerSelect.value === '') providerSelect.value = `${provider.name}@${provider.version}`;
+      }
+      const nameInput = el('input');
+      nameInput.setAttribute('name', 'signerName');
+      nameInput.setAttribute('placeholder', 'Signer name');
+      const emailInput = el('input');
+      emailInput.setAttribute('name', 'signerEmail');
+      emailInput.setAttribute('placeholder', 'Signer email');
+      const roleInput = el('input');
+      roleInput.setAttribute('name', 'signerRole');
+      roleInput.setAttribute('placeholder', 'Role (optional)');
+      const requestButton = el('button', undefined, 'Request signature');
+      busy.push(requestButton);
+      const request = () => withBusy(() => {
+        const [provider, version] = String(providerSelect.value).split('@');
+        return client.request(`/api/modules/quote/records/${encodeURIComponent(quote.id)}/actions/request-signature`, {
+          method: 'POST',
+          body: JSON.stringify({
+            quoteVersionId: quote.currentVersionId,
+            provider,
+            providerVersion: Number(version),
+            signers: [{ name: nameInput.value, email: emailInput.value, role: roleInput.value || undefined, order: 1 }],
+          }),
+        });
+      });
+      requestButton.addEventListener('click', request);
+      for (const control of [providerSelect, nameInput, emailInput, roleInput, requestButton]) form.appendChild(control);
+      form.appendChild(el('small', 'muted', 'All signers are required to sign; the declared order is recorded, not sequentially enforced. Signer identity assurance is not claimed.'));
+      form.__request = request;
+      form.__name = nameInput;
+      form.__email = emailInput;
+      panel.appendChild(form);
+      return;
+    }
+
+    const state = el('div', 'signature-envelope');
+    state.setAttribute('data-envelope', envelope.id);
+    state.setAttribute('data-status', envelope.status);
+    for (const [label, value] of [
+      ['Status', envelope.status],
+      ['Provider', `${envelope.provider} v${envelope.providerVersion}`],
+      ['Provider envelope', envelope.providerEnvelopeId ?? '—'],
+      ['Document hash', envelope.documentHash],
+      ['Document format', envelope.documentFormat],
+    ]) {
+      const row = el('p', 'signature-fact');
+      row.appendChild(el('strong', undefined, `${label}: `));
+      row.appendChild(el('span', undefined, String(value ?? '—')));
+      state.appendChild(row);
+    }
+    if (envelope.failureCode) {
+      state.appendChild(el('p', 'signature-failure', `The ${envelope.failurePhase} phase failed (${envelope.failureCode}). The provider may still hold this envelope — reconcile it rather than requesting a second signature.`));
+      const reconcileButton = el('button', undefined, 'Reconcile with provider');
+      busy.push(reconcileButton);
+      const reconcile = () => withBusy(() => client.request(`/api/signature/envelopes/${encodeURIComponent(envelope.id)}/reconcile`, { method: 'POST', body: '{}' }));
+      reconcileButton.addEventListener('click', reconcile);
+      state.appendChild(reconcileButton);
+      state.__reconcile = reconcile;
+    }
+    panel.appendChild(state);
+
+    const signerList = el('div', 'signature-signers');
+    for (const signer of signers.filter((row) => row.envelopeId === envelope.id).sort((a, b) => (a.signingOrder ?? 0) - (b.signingOrder ?? 0))) {
+      const row = el('p', 'signature-signer');
+      row.setAttribute('data-signer', signer.signerKey);
+      row.textContent = `${signer.signingOrder}. ${signer.name} <${signer.email}> · ${signer.role} · ${signer.status}`;
+      signerList.appendChild(row);
+    }
+    panel.appendChild(signerList);
+
+    const artifact = artifacts[0] ?? null;
+    if (artifact) {
+      const evidence = el('div', 'signed-artifact');
+      evidence.setAttribute('data-artifact', artifact.id);
+      evidence.appendChild(el('h4', undefined, 'Signed artifact evidence'));
+      for (const [label, value] of [
+        ['Provider artifact', artifact.providerArtifactId ?? '—'],
+        ['Document hash', artifact.documentHash],
+        ['Artifact hash', artifact.artifactHash ?? '—'],
+        ['Type', artifact.mimeType ?? '—'],
+        ['Completed at', artifact.completedAt ?? '—'],
+        ['Reference', artifact.storageRef ?? '—'],
+      ]) {
+        const row = el('p', 'artifact-fact');
+        row.appendChild(el('strong', undefined, `${label}: `));
+        row.appendChild(el('span', undefined, String(value ?? '—')));
+        evidence.appendChild(row);
+      }
+      evidence.appendChild(el('p', 'muted', 'The artifact bytes are held by the provider: this record stores hashes, metadata and a reference. Long-term object-storage durability is not claimed, and this is not a legally qualified signature.'));
+      panel.appendChild(evidence);
+    }
+
+    const order = orders[0] ?? null;
+    if (order) {
+      const orderPanel = el('div', 'quote-order');
+      orderPanel.setAttribute('data-order', order.id);
+      orderPanel.appendChild(el('h3', undefined, 'Order'));
+      const idRow = el('p', 'order-fact');
+      idRow.appendChild(el('strong', undefined, 'Order: '));
+      idRow.appendChild(el('span', undefined, `${order.id} · ${order.status} · accepted ${order.acceptedAt ?? '—'}`));
+      orderPanel.appendChild(idRow);
+      for (const total of orderTotals.filter((row) => row.orderId === order.id)) {
+        const row = el('p', 'order-total');
+        row.setAttribute('data-total', total.kind === 'one_time' ? 'One-time' : `Recurring every ${total.intervalCount} ${total.interval}(s)`);
+        row.textContent = total.kind === 'one_time'
+          ? `One-time: ${money(total.netAmountCents, total.currency)} net`
+          : `Recurring every ${total.intervalCount} ${total.interval}(s): ${money(total.netAmountCents, total.currency)} net`;
+        orderPanel.appendChild(row);
+      }
+      orderPanel.appendChild(el('p', 'muted', 'Order figures are copied from the signed quote version and are never recalculated from the current catalog. Periods are never combined, and no annualized or contract-value figure is derived. No billing, invoice, payment or fulfillment state exists in this milestone.'));
+      panel.appendChild(orderPanel);
+    }
   }
 
   return { renderQuoteList, renderQuoteDetail };

@@ -1,0 +1,59 @@
+{
+  "manifestVersion": 1,
+  "name": "signature-signer",
+  "description": "An immutable signer snapshot of a signature envelope (ADR-017). All signers are required; the declared order is recorded, not sequentially gated. Signer identity assurance is not claimed - only provider evidence is recorded.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "envelopeId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "signerKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "email",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "role",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "signingOrder",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "pending",
+        "signed",
+        "declined"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "decidedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

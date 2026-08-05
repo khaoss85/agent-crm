@@ -1,0 +1,89 @@
+{
+  "manifestVersion": 1,
+  "name": "order-line",
+  "description": "An immutable order line copied from a quote version line (ADR-017): offer revision, product version, quantity and discount exactly as signed.",
+  "fields": [
+    {
+      "name": "orderId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "versionLineId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "offerId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "offerLogicalKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "offerRevision",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "offerName",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "productId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "productVersionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sku",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "quantity",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "discountBps",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "componentCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "listAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "discountAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "netAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "position",
+      "type": "integer",
+      "writable": "managed"
+    }
+  ]
+}

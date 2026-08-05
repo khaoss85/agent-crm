@@ -1,0 +1,147 @@
+{
+  "manifestVersion": 1,
+  "name": "signature-envelope",
+  "description": "One immutable signature envelope per approved quote version (ADR-017). Status is server-authoritative and monotonic; completed, declined and voided are terminal. The source key is also the provider idempotency key, so a repeated request can never create a second provider envelope.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "idempotencyKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "quoteId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "quoteVersionId",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "providerVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "providerFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "providerEnvelopeId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "preparing",
+        "failed",
+        "sent",
+        "delivered",
+        "completed",
+        "declined",
+        "voided"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "documentHash",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "documentFormat",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "signerCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "providerSequence",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "requestedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "requestedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "sentAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "deliveredAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "completedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "declinedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "voidedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "failedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "failureCode",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "failurePhase",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "signedArtifactId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "orderId",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

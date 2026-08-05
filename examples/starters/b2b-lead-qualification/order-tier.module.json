@@ -1,0 +1,39 @@
+{
+  "manifestVersion": 1,
+  "name": "order-tier",
+  "description": "One immutable tier of an order component (ADR-017). upToQuantity is the inclusive upper bound and is null on the single open-ended final tier.",
+  "fields": [
+    {
+      "name": "orderId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "orderComponentId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "position",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "upToQuantity",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "unitAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "flatAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    }
+  ]
+}
