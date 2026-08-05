@@ -15,7 +15,9 @@ Preferred path — module factory (manifest-driven):
    Apply writes service, migration, module definition, tests and registers the
    module automatically — no manual MIGRATIONS or create-app edits. The module
    is then served at `/api/modules/<name>/…`, discoverable via `GET /api/schema`
-   (`generatedModules`) and usable via `client.module('<name>')` in the SDK.
+   (`generatedModules`), usable via `client.module('<name>')` in the SDK, and
+   shown automatically in the Admin under "Generated modules" (list/create/
+   detail/edit, no page code — see `docs/ADMIN.md`).
 5. Edit the generated service to add domain rules; keep validation, actor
    context, audit and events on every mutation. Reference fields are not
    supported by the factory yet — implement cross-module validation by hand

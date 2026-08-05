@@ -44,6 +44,11 @@ API + Admin + trace + audit
   const created = await partners.create({ name: 'Acme Partners', tier: 'gold' });
   await partners.update(created.id, { tier: 'platinum' });
   ```
+- Applied modules also appear automatically in the Admin under "Generated modules" — list, create, detail and edit with no page code (see `docs/ADMIN.md`):
+
+  ```text
+  write manifest → module create --apply → npm run dev → module appears in Admin → manage records
+  ```
 - MCP server over stdio with tools and project resources.
 - Codex/Claude repository skills and handover documentation.
 - Automated tests with Node's built-in test runner.
