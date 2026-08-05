@@ -29,6 +29,7 @@ function project(t, { enrichTimeoutMs } = {}) {
     'score-run.module.json',
     'score-contribution.module.json',
     'routing-run.module.json',
+    'route-evaluation.module.json',
     'assignment.module.json',
   ]) {
     assert.equal(cli(root, ['module', 'create', join(starter, manifest), '--apply']).status, 0, `apply ${manifest}`);
@@ -134,6 +135,8 @@ test('lead intelligence end to end: enrich → score → route over HTTP/SDK, im
   assert.equal(snapshot.status, 'complete');
   assert.equal(snapshot.confidence, 95);
   assert.equal(snapshot.sourceRef, 'fixture:ferrari.example');
+  assert.match(snapshot.providerFingerprint, /^[0-9a-f]{64}$/, 'snapshot carries the provider fingerprint');
+  assert.equal(snapshot.providerFingerprint, schema.intelligence.enrichmentProviders[0].fingerprint);
   assert.ok(snapshot.retrievedAt && snapshot.expiresAt, 'provenance timestamps present');
   assert.equal((await leads.get(lead.id)).enrichmentSnapshotId, snapshotId);
   const again = await leads.action(lead.id, 'enrich', { provider: 'fixture-firmographics' });
@@ -165,6 +168,8 @@ test('lead intelligence end to end: enrich → score → route over HTTP/SDK, im
   assert.equal(run.snapshotId, snapshotId);
   assert.equal(run.signalCount, 2);
   assert.equal(run.fingerprint, scored.result.fingerprint);
+  assert.match(run.leadFingerprint, /^[0-9a-f]{64}$/, 'the mutable lead-field inputs are fingerprinted per run');
+  assert.match(run.signalsFingerprint, /^[0-9a-f]{64}$/);
   const linked = await leads.get(lead.id);
   assert.equal(linked.score, 75);
   assert.equal(linked.scoreRunId, scored.result.runId);
@@ -238,27 +243,44 @@ test('lead intelligence end to end: enrich → score → route over HTTP/SDK, im
   const ephemeralScore = await leads.action(ephemeral.id, 'score', { model: 'b2b-saas-score', version: 1 });
   assert.equal(ephemeralScore.result.snapshotId, null, 'expired snapshot is not a valid scoring input');
 
-  // Immutability matrix: intelligence records refuse writes through CRUD.
+  // Read-only boundary: the intelligence record modules expose NO public
+  // write at all — create and update are absent from the service and the
+  // capability list, so HTTP POST/PATCH fail closed (404, per ADR-008
+  // capability gating) and no client can create even an empty row. Mixed
+  // payloads on the lead reject managed fields before any public field
+  // applies.
   for (const [module, patch] of [
     ['enrichment-snapshot', { country: 'XX' }],
     ['behavioral-signal', { signalType: 'forged' }],
     ['score-run', { totalScore: 999 }],
     ['score-contribution', { contribution: 999 }],
     ['routing-run', { selectedTarget: 'forged' }],
+    ['route-evaluation', { eligible: true }],
     ['assignment', { targetId: 'forged' }],
   ]) {
+    const meta = schema.generatedModules.find((m) => m.name === module) ?? (await client.request(`/api/modules/${module}`));
+    assert.deepEqual(meta.capabilities, ['get', 'list'], `${module} advertises read-only capabilities`);
     await assert.rejects(
       () => client.module(module).create(patch),
-      (error) => error.status === 400 && error.code === 'VALIDATION_ERROR',
-      `${module} create with data refused`,
+      (error) => error.status === 404,
+      `${module} create is absent (404), even empty`,
+    );
+    await assert.rejects(
+      () => client.module(module).create({}),
+      (error) => error.status === 404,
+      `${module} cannot create an empty row`,
     );
   }
   await assert.rejects(
     () => client.module('enrichment-snapshot').update(snapshotId, { country: 'XX' }),
-    (error) => error.status === 400 && error.code === 'VALIDATION_ERROR',
+    (error) => error.status === 404,
+    'snapshot update is absent, never a silent no-op',
   );
-  const noop = await client.module('assignment').update(routed.result.assignmentId, {});
-  assert.equal(noop.targetId, 'enterprise-italy', 'assignment update is a structural no-op');
+  await assert.rejects(
+    () => client.module('assignment').update(routed.result.assignmentId, {}),
+    (error) => error.status === 404,
+    'assignment update is absent, never a silent no-op',
+  );
   for (const field of ['score', 'scoreRunId', 'assignedTargetId', 'enrichmentSnapshotId', 'routingRunId']) {
     await assert.rejects(
       () => leads.update(lead.id, { [field]: 'forged' }),
@@ -266,6 +288,13 @@ test('lead intelligence end to end: enrich → score → route over HTTP/SDK, im
       `lead.${field} is CRUD-proof`,
     );
   }
+  // A mixed payload (public + managed) is rejected whole: the public field
+  // does not change.
+  await assert.rejects(
+    () => leads.update(lead.id, { firstName: 'Sneaky', score: 999 }),
+    (error) => error.status === 400 && error.code === 'VALIDATION_ERROR',
+  );
+  assert.equal((await leads.get(lead.id)).firstName, 'Giulia', 'no partial application of a mixed payload');
 
   // Audit + trace: the route action produced a completed trace run.
   const traces = await client.request('/api/traces?workflowName=lead.route');
@@ -310,6 +339,26 @@ test('lead intelligence failure semantics and hostile inputs', async (t) => {
     (error) => error.status === 504 && error.code === 'PROVIDER_TIMEOUT',
   );
   assert.equal((await leads.get(slow.id)).enrichmentSnapshotId, null);
+
+  // Late settlement AFTER the timeout: the abandoned promise's rejection is
+  // observed (never an unhandled rejection) and nothing is persisted late.
+  /** @type {unknown[]} */
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const late = await leads.create({ firstName: 'Late', lastName: 'Fail', email: 'x@latefail.example' });
+    await assert.rejects(
+      () => leads.action(late.id, 'enrich', { provider: 'fixture-firmographics' }),
+      (error) => error.status === 504 && error.code === 'PROVIDER_TIMEOUT',
+      'the timeout wins; the late rejection is abandoned',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 600)); // let the late rejection fire
+    assert.deepEqual(unhandled, [], 'no unhandled rejection from the late-settling provider');
+    assert.equal((await leads.get(late.id)).enrichmentSnapshotId, null, 'nothing persisted late');
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
 
   // Provider returning out-of-contract data: refused, never persisted.
   const invalid = await leads.create({ firstName: 'In', lastName: 'Valid', email: 'x@invalid.example' });
@@ -435,6 +484,82 @@ test('lead intelligence concurrency, one-assignment guarantee and fingerprint dr
   await app.runAction({ module: 'lead', action: 'score', recordId: overflow.id, input: { model: 'b2b-saas-score', version: 1 }, actor });
   const overflowRouted = await app.runAction({ module: 'lead', action: 'route', recordId: overflow.id, input: { policy: 'b2b-sales-routing', version: 1 }, actor });
   assert.equal(overflowRouted.result.target.key, 'growth-queue', 'a full target is excluded; the next eligible target wins');
+  // The routing run carries complete decision evidence: policy + target-set
+  // fingerprints plus one route-evaluation row per candidate with the exact
+  // load/capacity the decision saw ("at capacity" for Spain).
+  const overflowRun = app.modules.get('routing-run').service.get(overflowRouted.result.runId);
+  assert.match(overflowRun.targetsFingerprint, /^[0-9a-f]{64}$/);
+  const evaluations = app.modules.get('route-evaluation').service.listWhere({ runId: overflowRouted.result.runId });
+  assert.equal(evaluations.length, 3, 'one evaluation row per non-fallback candidate');
+  const spainEvaluation = evaluations.find((row) => row.targetKey === 'spain-sales');
+  assert.equal(spainEvaluation.eligible, false);
+  assert.match(spainEvaluation.reason, /at capacity \(5\/5 active leads\)/);
+
+  // Capacity means ACTIVE workload: disqualifying an assigned lead releases
+  // its slot, and the next Spanish lead lands in Spain Sales again.
+  const releasedLead = app.modules.get('lead').service.listWhere({ assignedTargetId: 'spain-sales', status: 'new' })[0];
+  await app.runAction({ module: 'lead', action: 'disqualify', recordId: releasedLead.id, input: { reason: 'Duplicate entry' }, actor });
+  const afterRelease = await leads.create({ firstName: 'Cap7', lastName: 'Es', email: 'cap7@sevilla.example', companyName: 'Sevilla Digital' });
+  await app.runAction({ module: 'lead', action: 'enrich', recordId: afterRelease.id, input: { provider: 'fixture-firmographics' }, actor });
+  await app.runAction({ module: 'lead', action: 'score', recordId: afterRelease.id, input: { model: 'b2b-saas-score', version: 1 }, actor });
+  const routedAfterRelease = await app.runAction({ module: 'lead', action: 'route', recordId: afterRelease.id, input: { policy: 'b2b-sales-routing', version: 1 }, actor });
+  assert.equal(routedAfterRelease.result.target.key, 'spain-sales', 'a disqualified lead released its capacity slot');
+
+  // Two independent connections race for the LAST Spain slot (Spain is full
+  // again): writers serialize, exactly one wins the slot, the loser
+  // deterministically overflows to the growth queue (or gets a stable 409) —
+  // no target ever exceeds capacity.
+  const raceA = await leads.create({ firstName: 'Slot', lastName: 'A', email: 'slot-a@sevilla.example', companyName: 'Sevilla Digital' });
+  const raceB = await leads.create({ firstName: 'Slot', lastName: 'B', email: 'slot-b@sevilla.example', companyName: 'Sevilla Digital' });
+  const released2 = app.modules.get('lead').service.listWhere({ assignedTargetId: 'spain-sales', status: 'new' })[0];
+  await app.runAction({ module: 'lead', action: 'disqualify', recordId: released2.id, input: { reason: 'Duplicate entry' }, actor });
+  for (const race of [raceA, raceB]) {
+    await app.runAction({ module: 'lead', action: 'enrich', recordId: race.id, input: { provider: 'fixture-firmographics' }, actor });
+    await app.runAction({ module: 'lead', action: 'score', recordId: race.id, input: { model: 'b2b-saas-score', version: 1 }, actor });
+  }
+  const slotRace = await Promise.allSettled([
+    app.runAction({ module: 'lead', action: 'route', recordId: raceA.id, input: { policy: 'b2b-sales-routing', version: 1 }, actor }),
+    second.runAction({ module: 'lead', action: 'route', recordId: raceB.id, input: { policy: 'b2b-sales-routing', version: 1 }, actor }),
+  ]);
+  const slotTargets = slotRace
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value.result.target.key);
+  assert.equal(slotTargets.filter((key) => key === 'spain-sales').length, 1, 'exactly one lead wins the last Spain slot');
+  for (const result of slotRace.filter((r) => r.status === 'rejected')) {
+    assert.equal(result.reason.status, 409, 'a raced-out route is a stable 409, never raw SQLITE');
+  }
+  const spainActive = app.modules.get('lead').service.countWhere({ assignedTargetId: 'spain-sales', status: ['new', 'qualified'] });
+  assert.ok(spainActive <= 5, `Spain Sales never exceeds capacity (active ${spainActive})`);
+
+  // Lifecycle gating is server-authoritative: routing a qualified lead and
+  // enriching a disqualified one are refused regardless of client state.
+  const qualifiedLead = await leads.create({ firstName: 'Qual', lastName: 'Ified', email: 'q@sevilla.example', companyName: 'Sevilla Digital' });
+  await app.runAction({ module: 'lead', action: 'enrich', recordId: qualifiedLead.id, input: { provider: 'fixture-firmographics' }, actor });
+  await app.runAction({ module: 'lead', action: 'score', recordId: qualifiedLead.id, input: { model: 'b2b-saas-score', version: 1 }, actor });
+  await app.runAction({ module: 'lead', action: 'qualify', recordId: qualifiedLead.id, input: { dueAt: '2026-08-20T09:00:00Z' }, actor });
+  await assert.rejects(
+    () => app.runAction({ module: 'lead', action: 'route', recordId: qualifiedLead.id, input: { policy: 'b2b-sales-routing', version: 1 }, actor }),
+    (error) => error.code === 'INVALID_STATE' && error.status === 409,
+    'route is gated to status new',
+  );
+  await assert.rejects(
+    () => app.runAction({ module: 'lead', action: 'enrich', recordId: released2.id, input: { provider: 'fixture-firmographics' }, actor }),
+    (error) => error.code === 'INVALID_STATE' && error.status === 409,
+    'enrich refuses a disqualified lead',
+  );
+
+  // Exact reads beyond the 500-row page bound: 520 signals all count.
+  const busy = await leads.create({ firstName: 'Very', lastName: 'Busy', email: 'busy@sevilla.example', companyName: 'Sevilla Digital' });
+  const signalService = app.modules.get('behavioral-signal').service;
+  for (let i = 0; i < 520; i += 1) {
+    await signalService.createManaged(
+      { leadId: busy.id, signalType: 'pricing-page-visited', observedAt: '2026-08-01T10:00:00Z', sourceKey: `bulk:${busy.id}:${i}` },
+      { actor },
+    );
+  }
+  assert.equal(signalService.listWhere({ leadId: busy.id }).length, 520, 'listWhere is complete beyond the page bound');
+  const busyScore = await app.runAction({ module: 'lead', action: 'score', recordId: busy.id, input: { model: 'b2b-saas-score', version: 1 }, actor });
+  assert.equal(busyScore.result.signalCount, 520, 'scoring reads the complete signal set');
 
   // Version integrity across processes: editing a REGISTERED version's source
   // fails the next boot loudly (rollback = a new version, never an edit).

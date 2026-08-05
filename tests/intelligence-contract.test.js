@@ -115,6 +115,68 @@ test('registries: duplicate identities, one fallback, prototype-safe lookups', (
   assert.throws(() => registries.getScoringModel('score', 99), (e) => e.code === 'NOT_FOUND');
 });
 
+test('canonicalization is strict: unsupported values fail loudly, never silently disappear', () => {
+  const good = { a: [1, 'x', true, null], b: { c: () => 1 } };
+  assert.equal(computeDefinitionFingerprint(good), computeDefinitionFingerprint({ b: { c: good.b.c }, a: [1, 'x', true, null] }));
+  const cases = [
+    [{ when: new Date(0) }, /non-plain object/],
+    [{ set: new Set([1]) }, /non-plain object/],
+    [{ map: new Map() }, /non-plain object/],
+    [{ re: /x/ }, /non-plain object/],
+    [{ big: 10n }, /type bigint/],
+    [{ sym: Symbol('x') }, /type symbol/],
+    [{ nan: Number.NaN }, /non-finite number/],
+    [{ inf: Infinity }, /non-finite number/],
+    [{ missing: undefined }, /type undefined/],
+    [new (class Thing {})(), /non-plain object/],
+  ];
+  for (const [value, pattern] of cases) {
+    assert.throws(() => computeDefinitionFingerprint(value), pattern, JSON.stringify(String(pattern)));
+  }
+  const cyclic = { name: 'x' };
+  cyclic.self = cyclic;
+  assert.throws(() => computeDefinitionFingerprint(cyclic), /cyclic structure/);
+  // CRLF in function source normalizes to LF.
+  // eslint-disable-next-line no-new-func
+  const crlfFn = new Function('return 1;\r\nreturn 2;');
+  const lfFn = new Function('return 1;\nreturn 2;');
+  assert.equal(computeDefinitionFingerprint(crlfFn), computeDefinitionFingerprint(lfFn));
+});
+
+test('the fingerprint is a DECLARED-definition fingerprint: closures escape it, declared config does not', () => {
+  // The documented limitation: a rule closing over a mutable outer variable is
+  // NOT captured — toString serializes the identifier, not the value.
+  const makeClosureModel = (threshold) => ({
+    name: 'closure',
+    version: 1,
+    rules: [{ key: 'r', label: 'R', weight: 1, evaluate: (ctx) => ctx.lead.score >= threshold }],
+  });
+  const at100 = new IntelligenceRegistries({ scoringModels: [makeClosureModel(100)] }).getScoringModel('closure', 1).fingerprint;
+  const at200 = new IntelligenceRegistries({ scoringModels: [makeClosureModel(200)] }).getScoringModel('closure', 1).fingerprint;
+  assert.equal(at100, at200, 'closure values are invisible — this is WHY thresholds must live in declared config');
+
+  // The sanctioned contract: the same threshold declared as config IS captured.
+  const makeConfigModel = (threshold) => ({
+    name: 'declared',
+    version: 1,
+    config: { threshold },
+    rules: [{ key: 'r', label: 'R', weight: 1, evaluate: (ctx) => ctx.lead.score >= ctx.config.threshold }],
+  });
+  const c100 = new IntelligenceRegistries({ scoringModels: [makeConfigModel(100)] }).getScoringModel('declared', 1).fingerprint;
+  const c200 = new IntelligenceRegistries({ scoringModels: [makeConfigModel(200)] }).getScoringModel('declared', 1).fingerprint;
+  assert.notEqual(c100, c200, 'declared config changes the fingerprint');
+
+  // Config must be plain JSON-safe data.
+  assert.throws(
+    () => new IntelligenceRegistries({ scoringModels: [{ ...makeConfigModel(1), config: { when: new Date(0) } }] }),
+    /config must be plain JSON-safe data/,
+  );
+  assert.throws(
+    () => new IntelligenceRegistries({ routingPolicies: [{ name: 'p', version: 1, route: () => null, config: [1] }] }),
+    /config must be a plain object/,
+  );
+});
+
 test('fingerprints are deterministic from source and change with behavior', () => {
   const a = new IntelligenceRegistries({ scoringModels: [model()] }).getScoringModel('score', 1).fingerprint;
   // Same definition with different property order → same fingerprint.
@@ -152,6 +214,33 @@ test('persisted definition versions: registration is idempotent, drift fails lou
   // A NEW version derived from an earlier definition (rollback) registers fine.
   const rollback = new IntelligenceRegistries({ scoringModels: [model(), model({ version: 3 })] });
   assert.doesNotThrow(() => rollback.persistFingerprints(database));
+  // Enrichment providers get the same persisted protection.
+  const withProvider = new IntelligenceRegistries({ enrichmentProviders: [provider()] });
+  withProvider.persistFingerprints(database);
+  const providerRow = database.raw
+    .prepare("SELECT fingerprint FROM definition_versions WHERE type = 'enrichment-provider' AND name = 'fixture' AND version = 1")
+    .get();
+  assert.ok(providerRow, 'provider fingerprint persisted');
+  const driftedProvider = new IntelligenceRegistries({
+    enrichmentProviders: [provider({ async enrichCompany() { return { fields: { country: 'IT' } }; } })],
+  });
+  assert.throws(() => driftedProvider.persistFingerprints(database), /source changed after registration/);
+});
+
+test('concurrent registration across two connections serializes: one insert, the other verifies', (t) => {
+  const dbPath = `/tmp/claude-0/-home-user-agent-crm/dcabf585-5724-5af3-9508-8c01ce9770f6/scratchpad/reg-race-${process.pid}.sqlite`;
+  const a = createDatabase({ path: dbPath, busyTimeoutMs: 500 });
+  const b = createDatabase({ path: dbPath, busyTimeoutMs: 500 });
+  t.after(() => { a.close(); b.close(); });
+  const first = new IntelligenceRegistries({ scoringModels: [model()] });
+  const second = new IntelligenceRegistries({ scoringModels: [model()] });
+  // Registration is one BEGIN IMMEDIATE transaction per boot: the two
+  // connections serialize on the write lock instead of racing to a raw UNIQUE
+  // violation — the later one re-reads the committed row and verifies.
+  first.persistFingerprints(a);
+  assert.doesNotThrow(() => second.persistFingerprints(b));
+  const rows = a.raw.prepare("SELECT COUNT(*) AS n FROM definition_versions WHERE type = 'scoring-model'").get();
+  assert.equal(Number(rows.n), 1, 'exactly one persisted row for the identity');
 });
 
 test('rankRoutingTargets is deterministic: priority desc, load asc, key asc', () => {
@@ -261,4 +350,48 @@ test('action prepare phase: runs before the transaction, feeds execute, fails ho
     (error) => error.status === 404,
   );
   assert.equal(prepared, false, 'prepare was not invoked for a missing record');
+
+  // Capability attack: the prepare ctx must be genuinely read-oriented. Every
+  // write path is absent from the modules view, and there is no `managed`.
+  await run({
+    ...base,
+    prepare: async (ctx) => {
+      assert.equal(ctx.managed, undefined, 'no managed in prepare');
+      assert.equal(ctx.database, undefined, 'no database handle in prepare');
+      assert.equal(ctx.services, undefined, 'no core services in prepare');
+      const view = ctx.modules.get('thing');
+      assert.equal(typeof view.service.get, 'function', 'read method available');
+      for (const method of ['create', 'update', 'createManaged', 'applyManaged']) {
+        assert.equal(view.service[method], undefined, `${method} unreachable through prepare`);
+      }
+      assert.ok(Object.isFrozen(view.service), 'the view cannot be extended');
+      return { ok: true };
+    },
+  });
+
+  // The prepared value is normalized to plain data and deep-frozen; functions,
+  // non-plain objects and cycles are rejected; dangerous keys are dropped.
+  const frozenResult = await run({
+    ...base,
+    prepare: async () => JSON.parse('{"nested": {"__proto__": {"polluted": 1}, "keep": [1, 2]}}'),
+    execute: ({ prepared: value }) => {
+      assert.ok(Object.isFrozen(value) && Object.isFrozen(value.nested) && Object.isFrozen(value.nested.keep), 'deep-frozen');
+      assert.equal(Object.hasOwn(value.nested, '__proto__'), false, 'dangerous key dropped');
+      assert.equal(/** @type {any} */ ({}).polluted, undefined, 'no prototype pollution');
+      return { saw: value.nested.keep.length };
+    },
+  });
+  assert.equal(frozenResult.result.saw, 2);
+  for (const [bad, pattern] of [
+    [() => ({ fn: () => 1 }), /plain JSON-safe data/],
+    [() => ({ when: new Date(0) }), /plain JSON-safe data/],
+    [() => { const c = {}; c.self = c; return c; }, /cyclic structure/],
+    [() => ({ nan: Number.NaN }), /non-finite number/],
+  ]) {
+    await assert.rejects(
+      () => run({ ...base, prepare: async () => bad() }),
+      (error) => pattern.test(error.message),
+      String(pattern),
+    );
+  }
 });
