@@ -55,6 +55,8 @@ M14 Service Operations v1
 M15 Analytics Studio v1
 ```
 
+**M8 is completed and merged**, and its reviewed boundaries (ADR-014) carry into this track unchanged: pipelines currently target only explicitly eligible core modules — generated-module pipeline state is deferred; stage keys are persistent identifiers and definition drift is surfaced, never auto-migrated; the Admin board has a disclosed 200-record bound; amounts follow the documented 1/100-unit two-decimal convention, not complete ISO-4217 exponent support; forecasting, runtime pipeline editing and approval-before-Won remain unimplemented. M9–M15 build on those boundaries; none of them silently lifts one.
+
 **Parallelization and hard dependencies — this sequence does NOT gate Cloud.** The workstream milestones and the platform phases run in parallel, exactly as M0–M8 ran alongside strategy work:
 
 - **Hard dependencies inside the track:** M10 → M11 (an Order snapshots a signed Quote) → M12 (a Commessa is created from an Order) → M13 → M14. M9 is independent of M10–M14. M15 closes the sequence pragmatically because its value grows with each preceding milestone, but the semantic layer plus pipeline metrics need only M8 and may be pulled earlier.
