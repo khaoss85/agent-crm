@@ -206,6 +206,33 @@ records in the default app.
 - [x] Docs: ADR-014, ACTIONS/API/ADMIN, JTBD matrix (narrow), TASKS.md.
 - [x] verify + smoke + starter + Chromium; PR open and unmerged.
 
+## Fixed in the adversarial review (same PR)
+
+1. **Dead pipelines on generated modules.** A pipeline targeting a generated
+   module registered cleanly and booted — but was permanently unusable (no
+   pipeline-state columns exist; every move is NO_PIPELINE; nothing can enter
+   it). Probed live, then fixed: staged eligibility is now restricted to
+   modules that store pipeline state (the action-eligible core modules);
+   startup rejects the rest fail-closed with a precise message.
+2. **Board silently hid drifted records.** A record whose stored stage key
+   left the definition was counted in the header but shown in no column. The
+   board now renders an explicit "Off-definition" section with the stored key
+   and migration guidance, header counts reflect placed records only, and
+   truncation (200-record load) plus excluded off-pipeline records are
+   disclosed.
+3. **Open-target moves kept corrupt terminal fields.** The patch now
+   explicitly clears closedAt/closeReason on open targets, so coherence is
+   enforced rather than assumed; won ignores a supplied reason (tested).
+4. **Currency decimals were implicitly universal.** formatMinorUnits now
+   documents the 1/100-units two-decimals contract as deliberately non-ISO
+   (JPY/KWD tested under the stated limitation).
+5. **New regression coverage:** legacy-stage/pipeline coexistence without
+   cross-talk (M0 workflow never writes pipeline state; moves never touch the
+   legacy column), conversion+pipeline-entry single-transaction fault
+   injection, definition-drift refusal with untouched stored keys,
+   no-terminal-stage pipelines (legal, open→open only), and the
+   startup rejection of generated-module pipelines.
+
 ## Explicitly deferred
 
 Runtime stage editor, arbitrary transition DSL, reopen, pipeline approval
