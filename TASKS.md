@@ -6,7 +6,7 @@ The first unchecked item is the default next task for Codex.
 - [x] Generate an Admin form and table from module metadata (Milestone 4, `docs/ADMIN.md`).
 - [x] Add code-first record actions with atomic execution, post-commit events and trace, proven by the Lead Qualification starter (Milestone 6, `docs/ACTIONS.md`, `examples/starters/b2b-lead-qualification/`).
 - [ ] Add Activity and a first-class Task module with a general automatic follow-up workflow. Partially explored: the Lead starter ships a Task module and creates one follow-up inside the qualify action, but scheduling, reminders and a reusable task engine are not built.
-- [ ] Add lead conversion (lead → Company/Contact/Opportunity) on top of record actions.
+- [x] Add lead conversion (lead → Company/Contact/Opportunity) on top of record actions, via declared core-module adapters (Milestone 7, ADR-013, `examples/starters/b2b-lead-qualification/actions/convert.js`).
 - [ ] Add a provider adapter example for MailUp-compatible list enrollment.
 - [ ] Add tenant and role boundaries before exposing remote write tools.
 - [ ] Add Streamable HTTP transport for MCP with authorization.

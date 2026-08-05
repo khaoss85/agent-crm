@@ -61,4 +61,13 @@ npm run dev
 12. Create a Lead whose first name is `<b>x</b><img src=x onerror=alert(1)>` → it renders as literal text on the detail; no bold, no image, no dialog.
 13. Throughout, the browser console shows no uncaught JavaScript errors.
 
+### Conversion (Milestone 7)
+
+Validated in the same real-Chromium run (steps continue from the qualify flow; the captured Lead needs a `companyName`):
+
+14. Once qualified, **Qualify**/**Disqualify** disappear and **Convert lead** appears.
+15. Convert reveals its form; **Value Cents** renders as a number control (integer input).
+16. Enter a non-numeric value → "must be a whole number" client-side; no POST.
+17. Enter a name and `5000000` → the detail re-renders with `Status: converted`; `Converted Company Id` / `Converted Contact Id` / `Converted Opportunity Id` show read-only; exactly one Opportunity exists with `valueCents` 5000000; **no** action buttons remain.
+
 Report any step that fails; do not mark the actions UI browser-validated unless all pass.
