@@ -562,6 +562,16 @@ ${rowMappings}
  */
 function indexTemplate(manifest, names) {
   const fieldNames = ['id', ...manifest.fields.map((field) => field.name), 'createdAt', 'updatedAt'];
+  const fieldMetadata = manifest.fields.map((field) => ({
+    name: field.name,
+    type: field.type,
+    required: field.required,
+    unique: field.unique,
+    ...(field.values ? { values: field.values } : {}),
+  }));
+  const fieldMetadataLines = fieldMetadata
+    .map((field) => `    ${JSON.stringify(field)},`)
+    .join('\n');
   return `// @ts-check
 ${header()}
 
@@ -571,6 +581,15 @@ export const ${names.camel}ModuleDefinition = Object.freeze({
   name: '${manifest.name}',
   version: '0.1.0',
   description: ${JSON.stringify(manifest.description ?? `Generated ${manifest.name} module.`)},
+  // The static contract that exposes this module through the generic
+  // /api/modules surface and client.module('${manifest.name}') (ADR-008).
+  kind: 'generated',
+  manifestVersion: ${manifest.manifestVersion},
+  capabilities: Object.freeze(['create', 'get', 'list', 'update']),
+  fields: Object.freeze([
+${fieldMetadataLines}
+  ]),
+  immutableFields: Object.freeze(['id', 'createdAt', 'updatedAt']),
   entities: [
     {
       name: '${manifest.name}',

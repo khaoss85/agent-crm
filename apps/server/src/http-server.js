@@ -5,7 +5,12 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Router } from './router.js';
-import { AppError, normalizeError } from '../../../packages/core/src/errors.js';
+import {
+  AppError,
+  NotFoundError,
+  ValidationError,
+  normalizeError,
+} from '../../../packages/core/src/errors.js';
 
 const DEFAULT_PUBLIC_DIR = resolve(
   fileURLToPath(new URL('../../admin/public', import.meta.url)),
@@ -68,9 +73,37 @@ function buildRouter(app) {
   router.add('GET', '/api/schema', async () => ({
     schema: app.schema,
     modules: app.modules.list(),
+    generatedModules: app.modules
+      .list()
+      .filter((module) => module.kind === 'generated')
+      .map((module) => generatedModuleMetadata(module)),
     workflows: app.workflows.list(),
     providers: app.providers.list(),
   }));
+
+  // Uniform resource surface for generated modules (ADR-008). Only modules
+  // whose definition statically declares kind 'generated' with explicit
+  // capabilities are served; core handwritten modules keep their dedicated
+  // endpoints and are never exposed here.
+  router.add('GET', '/api/modules/:module', async ({ params }) => (
+    generatedModuleMetadata(resolveGeneratedModule(app, params.module))
+  ));
+  router.add('GET', '/api/modules/:module/records', async ({ params, query }) => {
+    const module = requireCapability(resolveGeneratedModule(app, params.module), 'list');
+    return { items: module.service.list({ limit: strictLimit(query.limit) }) };
+  });
+  router.add('POST', '/api/modules/:module/records', async ({ params, body, actor }) => {
+    const module = requireCapability(resolveGeneratedModule(app, params.module), 'create');
+    return { status: 201, body: await module.service.create(body ?? {}, { actor }) };
+  });
+  router.add('GET', '/api/modules/:module/records/:id', async ({ params }) => {
+    const module = requireCapability(resolveGeneratedModule(app, params.module), 'get');
+    return module.service.get(params.id);
+  });
+  router.add('PATCH', '/api/modules/:module/records/:id', async ({ params, body, actor }) => {
+    const module = requireCapability(resolveGeneratedModule(app, params.module), 'update');
+    return module.service.update(params.id, body ?? {}, { actor });
+  });
 
   router.add('GET', '/api/companies', async ({ query }) => ({
     items: app.services.companies.list({ limit: parseLimit(query.limit) }),
@@ -239,6 +272,71 @@ function parseLimit(value) {
   if (!value) return undefined;
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+/**
+ * Resolve a module for the generic generated-module surface. Anything that is
+ * not statically declared as generated — unknown names and handwritten core
+ * modules alike — is a 404 on this surface.
+ *
+ * @param {any} app @param {string} name
+ */
+function resolveGeneratedModule(app, name) {
+  let module;
+  try {
+    module = app.modules.get(name);
+  } catch {
+    throw new NotFoundError('Generated module', name);
+  }
+  if (module.kind !== 'generated' || !Array.isArray(module.capabilities)) {
+    throw new NotFoundError('Generated module', name);
+  }
+  return module;
+}
+
+/** @param {any} module @param {string} capability */
+function requireCapability(module, capability) {
+  if (!module.capabilities.includes(capability)) {
+    throw new NotFoundError(`Generated module operation ${capability}`, module.name);
+  }
+  return module;
+}
+
+/** @param {any} module */
+function generatedModuleMetadata(module) {
+  return {
+    name: module.name,
+    description: module.description ?? null,
+    kind: module.kind,
+    manifestVersion: module.manifestVersion ?? 1,
+    capabilities: module.capabilities,
+    fields: module.fields ?? [],
+    immutableFields: module.immutableFields ?? ['id', 'createdAt', 'updatedAt'],
+    paths: {
+      metadata: `/api/modules/${module.name}`,
+      collection: `/api/modules/${module.name}/records`,
+      record: `/api/modules/${module.name}/records/:id`,
+    },
+  };
+}
+
+/**
+ * Strict limit parsing for the generated-module surface: a present limit must
+ * be a plain positive integer no larger than the service maximum; anything
+ * else is a 400 instead of a silent behavior change.
+ *
+ * @param {string | undefined} value
+ */
+function strictLimit(value) {
+  if (value === undefined || value === '') return undefined;
+  if (!/^\d+$/.test(value)) {
+    throw new ValidationError('limit must be a positive integer', { limit: value });
+  }
+  const parsed = Number(value);
+  if (parsed < 1 || parsed > 500) {
+    throw new ValidationError('limit must be between 1 and 500', { limit: parsed });
+  }
+  return parsed;
 }
 
 /** @param {string} extension */
