@@ -81,6 +81,14 @@ export function createPipelineBoard(deps) {
     clear();
 
     const onBoard = records.filter((record) => record.pipelineKey === pipeline.name);
+    const stageKeys = new Set(pipeline.stages.map((stage) => stage.key));
+    // Records whose stored stage key no longer belongs to the definition
+    // (definition drift / out-of-band writes) are shown explicitly, never
+    // silently hidden or misclassified into a column.
+    const offDefinition = onBoard.filter((record) => !stageKeys.has(record.pipelineStage));
+    const placed = onBoard.filter((record) => stageKeys.has(record.pipelineStage));
+    const offPipeline = records.length - onBoard.length;
+
     const panel = el(doc, 'section', { class: 'panel panel-wide pipeline-board-panel' });
     const heading = el(doc, 'div', { class: 'panel-heading' });
     const titleBox = el(doc, 'div');
@@ -88,16 +96,46 @@ export function createPipelineBoard(deps) {
     titleBox.appendChild(el(doc, 'h2', { text: pipeline.label }));
     titleBox.appendChild(el(doc, 'p', {
       class: 'lede',
-      text: `${onBoard.length} record${onBoard.length === 1 ? '' : 's'} on this board`,
+      text: `${placed.length} record${placed.length === 1 ? '' : 's'} on this board`,
     }));
+    // Honest bounds: the board loads at most BOARD_LIMIT records, and records
+    // not on this pipeline are excluded by documented behavior, not hidden.
+    if (records.length >= BOARD_LIMIT) {
+      titleBox.appendChild(el(doc, 'p', {
+        class: 'hint',
+        text: `Showing the first ${BOARD_LIMIT} records only — later records are not on this board view.`,
+      }));
+    }
+    if (offPipeline > 0) {
+      titleBox.appendChild(el(doc, 'p', {
+        class: 'hint',
+        text: `${offPipeline} record${offPipeline === 1 ? '' : 's'} not on this pipeline (not shown).`,
+      }));
+    }
     heading.appendChild(titleBox);
     panel.appendChild(heading);
 
     const board = el(doc, 'div', { class: 'pipeline-board' });
     for (const stage of pipeline.stages) {
-      board.appendChild(renderColumn(pipeline, stage, onBoard.filter((record) => record.pipelineStage === stage.key), token));
+      board.appendChild(renderColumn(pipeline, stage, placed.filter((record) => record.pipelineStage === stage.key), token));
     }
     panel.appendChild(board);
+
+    if (offDefinition.length) {
+      const drift = el(doc, 'div', { class: 'pipeline-drift', attrs: { 'data-drift': String(offDefinition.length) } });
+      drift.appendChild(el(doc, 'h3', { text: `Off-definition (${offDefinition.length})` }));
+      drift.appendChild(el(doc, 'p', {
+        class: 'hint',
+        text: 'These records store a stage key that is not in the current pipeline definition. Stage keys are persistent identifiers: renaming or removing one requires an explicit data migration.',
+      }));
+      for (const record of offDefinition) {
+        const row = el(doc, 'p', { class: 'drift-record' });
+        row.appendChild(el(doc, 'strong', { text: String(record.name ?? record.id) }));
+        row.appendChild(el(doc, 'span', { text: ` — stored stage: ${String(record.pipelineStage)}` }));
+        drift.appendChild(row);
+      }
+      panel.appendChild(drift);
+    }
     mount.appendChild(panel);
     return panel;
   }

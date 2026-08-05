@@ -84,6 +84,11 @@ export function buildMoveStageAction({ module }) {
       const patch = {
         pipelineStage: targetStage.key,
         stageEnteredAt: timestamp,
+        // Coherence is enforced, not assumed: an open stage never carries
+        // terminal-only fields (a corrupt out-of-band closedAt is cleared on
+        // the next legitimate open move), won never carries a lost reason,
+        // and a reason supplied for a non-lost target is deliberately ignored.
+        ...(targetStage.type === 'open' ? { closedAt: null, closeReason: null } : {}),
         ...(targetStage.type === 'won' ? { closedAt: timestamp, closeReason: null } : {}),
         ...(targetStage.type === 'lost' ? { closedAt: timestamp, closeReason: input.reason } : {}),
       };

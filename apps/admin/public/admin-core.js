@@ -295,6 +295,13 @@ export function parseModuleRoute(hash) {
  * tests and servers render identically. Currencies are NEVER summed together
  * by callers — totals are per-currency by contract.
  *
+ * Contract (documented, deliberately narrow): every stored amount is defined
+ * as 1/100 currency units and always renders with two decimals. This is NOT
+ * universal ISO-4217 minor-unit support — zero-decimal (JPY) and
+ * three-decimal (KWD) exponents are not modeled; a JPY amount stored as
+ * "hundredths of a yen" renders as such. A per-currency exponent map is
+ * deliberately out of scope until a real brief needs it.
+ *
  * @param {number} minorUnits @param {string} currency
  */
 export function formatMinorUnits(minorUnits, currency) {

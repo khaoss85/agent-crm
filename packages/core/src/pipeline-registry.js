@@ -49,7 +49,9 @@ export function validatePipelineDefinition(definition, deps) {
     throw new ValidationError(`${label}: module must match ${NAME_RE}`);
   }
   if (!deps.moduleExists(definition.module)) {
-    throw new ValidationError(`${label}: target module "${definition.module}" does not exist or is not staged-eligible`);
+    throw new ValidationError(
+      `${label}: target module "${definition.module}" is not staged-eligible — pipelines require a module that stores pipeline state (currently the action-eligible core modules; generated-module pipeline state is future work)`,
+    );
   }
   if (!Array.isArray(definition.stages) || definition.stages.length === 0) {
     throw new ValidationError(`${label}: stages must be a non-empty array`);

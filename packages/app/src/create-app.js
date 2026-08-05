@@ -95,9 +95,13 @@ export function createAgentCrmApp(options = {}) {
   const actions = new ActionRegistry({ moduleExists: actionModuleExists });
   for (const definition of generatedActions) actions.register(definition);
 
-  // Code-first pipeline registry (ADR-014): staged-eligible targets are the
-  // same set as action-eligible modules. Fail closed at startup.
-  const pipelines = new PipelineRegistry({ moduleExists: actionModuleExists });
+  // Code-first pipeline registry (ADR-014). Staged-eligible targets are the
+  // modules that actually STORE pipeline state — today the explicitly
+  // action-eligible core modules (opportunity, via core migration v3). A
+  // generated module has no pipeline columns yet (manifest-declared pipeline
+  // state is future work), so a pipeline targeting one would register cleanly
+  // but be permanently unusable — rejected at startup instead, fail closed.
+  const pipelines = new PipelineRegistry({ moduleExists: (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name) });
   for (const definition of generatedPipelines) pipelines.register(definition);
 
   const notificationProvider = new MemoryNotificationProvider();
