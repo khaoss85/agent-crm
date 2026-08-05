@@ -71,3 +71,7 @@ Actor identity comes from the `x-actor-type` / `x-actor-id` headers and reaches 
 ### Accepted `limit` syntax (generated-module surface)
 
 A single base-10 positive integer between 1 and 500. No sign, exponent, hex, whitespace, leading-zero coercion, or repeated `limit` parameter — any of these returns 400. Core endpoints keep their historical lenient parsing; the generated service itself caps and floors the limit as a final boundary.
+
+### Reference field metadata (Milestone 5)
+
+A `reference` field in `generatedModules[].fields` carries: `type:"reference"`, `references` (target table), `targetModule` (name), `targetKey:"id"`, `targetDisplayField`, `targetKind:"generated"`, plus `required`/`unique`. This is an additive extension of `generatedResourceContract: 1`. A reference value crosses the API as the target record's id string; a missing target is a 400 `VALIDATION_ERROR` with `details.field`. No nested resources and no automatic target expansion.

@@ -77,3 +77,23 @@ npm run crm -- module migration examples/modules/partner.module.json --out migra
 4. For hand-written services (e.g. modules with reference fields), run `module migration --dry-run`, review the SQL, and add it as a migration yourself.
 5. Business logic stays explicit code — manifests generate infrastructure. Mutations still go through module services and workflows with validation, audit and trace.
 6. Finish with `npm run verify`.
+
+## Reference fields (Milestone 5)
+
+A `reference` field links a record to another generated record (many-to-one). `references` names the **target table**; the framework derives the target module from installed-module metadata.
+
+```json
+{ "name": "partnerId", "type": "reference", "references": "partners", "required": true }
+```
+
+- The target generated module must already be applied; `module plan`/`create` reports each reference's `targetModule`/`targetTable` and rejects a missing target ("apply the target module first").
+- `required` → non-null foreign key; optional → nullable, and an optional reference is cleared by submitting `null`.
+- Generated-to-**core** references (e.g. `companies`) are rejected in this milestone.
+- Optional self-references are supported; required self-references are rejected at plan time; cross-module cycles are not constructible via the CLI (see below).
+- A missing target at create/update is a `VALIDATION_ERROR` tied to the field — no write, audit or event. The SQLite foreign key (`ON DELETE RESTRICT`) enforces integrity as defense in depth. See `docs/MODULE_FACTORY.md` and ADR-010.
+
+### Reference self-references and cycles
+
+- An **optional** self-reference (`references` = the module's own table, not `required`) is supported: the first record leaves it null, then may point at any existing record including itself.
+- A **required** self-reference is rejected at plan time — the first record would be impossible to create.
+- Cross-module cycles are not constructible through the CLI (a reference's target must be applied first), so they are neither generated nor claimed as supported.

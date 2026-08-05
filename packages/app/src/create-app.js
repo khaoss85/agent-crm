@@ -11,6 +11,7 @@ import { createOpportunityModule } from '../../modules/opportunity/src/index.js'
 import { createApprovalModule } from '../../modules/approval/src/index.js';
 import { generatedModules } from '../../modules/generated/index.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
+import { createReferenceResolver } from '../../core/src/reference-resolver.js';
 import {
   WorkflowEngine,
   decideOpportunityApprovalWorkflow,
@@ -62,11 +63,15 @@ export function createAgentCrmApp(options = {}) {
   });
   modules.register(approvalModule);
 
+  // Reference resolver validates cross-module references at request time via
+  // the target module's service (ADR-010). Built per app instance; resolution
+  // is lazy, so modules may reference peers registered later, or themselves.
+  const references = createReferenceResolver(modules);
   for (const generated of generatedModules) {
     // Fail closed at startup: a corrupted or hand-mangled registry entry stops
     // the app with a precise error instead of serving a half-working module.
     modules.register(
-      validateGeneratedModuleDefinition(generated.createModule({ database, audit, events })),
+      validateGeneratedModuleDefinition(generated.createModule({ database, audit, events, references })),
     );
   }
 

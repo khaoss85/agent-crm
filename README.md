@@ -49,6 +49,11 @@ API + Admin + trace + audit
   ```text
   write manifest → module create --apply → npm run dev → module appears in Admin → manage records
   ```
+- Generated modules can reference each other (many-to-one): a `reference` field generates a foreign key with runtime target validation, API/SDK support and an Admin target selector (see `docs/MODULE_FACTORY.md`, ADR-010):
+
+  ```json
+  { "name": "partnerId", "type": "reference", "references": "partners", "required": true }
+  ```
 - MCP server over stdio with tools and project resources.
 - Codex/Claude repository skills and handover documentation.
 - Automated tests with Node's built-in test runner.

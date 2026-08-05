@@ -47,6 +47,13 @@ export function fieldControl(field) {
     type: field.type,
   };
   switch (field.type) {
+    case 'reference':
+      return {
+        ...base,
+        control: 'reference',
+        targetModule: typeof field.targetModule === 'string' ? field.targetModule : null,
+        targetDisplayField: typeof field.targetDisplayField === 'string' ? field.targetDisplayField : 'id',
+      };
     case 'enum':
       return { ...base, control: 'select', options: Array.isArray(field.values) ? field.values.slice() : [] };
     case 'integer':

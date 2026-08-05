@@ -60,8 +60,9 @@ test('apply writes the planned files and a registry that lists modules sorted', 
   assert.throws(() => applyModulePlan(planModule({ manifest: partnerManifest, rootDir: root })), /refusing to overwrite/i);
 });
 
-test('reference fields are rejected by module create with a clear message', (t) => {
+test('reference to a core table is rejected; to a missing target is rejected', (t) => {
   const root = tempRoot(t);
+  // Generated-to-core is out of scope this milestone.
   assert.throws(
     () =>
       planModule({
@@ -71,8 +72,78 @@ test('reference fields are rejected by module create with a clear message', (t) 
           fields: [{ name: 'companyId', type: 'reference', references: 'companies', required: true }],
         },
       }),
-    /does not support reference fields yet.*"companyId"/s,
+    /targets core table "companies".*not supported/s,
   );
+  // A generated target that is not installed yet is rejected with an actionable message.
+  assert.throws(
+    () =>
+      planModule({
+        rootDir: root,
+        manifest: {
+          name: 'deal',
+          fields: [{ name: 'partnerId', type: 'reference', references: 'partners', required: true }],
+        },
+      }),
+    /no installed generated module uses it; apply the target module first/,
+  );
+});
+
+test('a required self-reference is rejected; an optional self-reference is allowed', (t) => {
+  const root = tempRoot(t);
+  assert.throws(
+    () =>
+      planModule({
+        rootDir: root,
+        manifest: {
+          name: 'employee',
+          table: 'employees',
+          fields: [
+            { name: 'fullName', type: 'string', required: true },
+            { name: 'managerId', type: 'reference', references: 'employees', required: true },
+          ],
+        },
+      }),
+    /required self-reference to "employees"; the first record could never be created/,
+  );
+  // Optional self-reference plans fine (the first record leaves it null).
+  const plan = planModule({
+    rootDir: root,
+    manifest: {
+      name: 'treenode',
+      table: 'treenodes',
+      fields: [
+        { name: 'label', type: 'string', required: true },
+        { name: 'parentId', type: 'reference', references: 'treenodes' },
+      ],
+    },
+  });
+  assert.equal(plan.module, 'treenode');
+  assert.deepEqual(plan.references.map((r) => [r.field, r.targetModule, r.required]), [['parentId', 'treenode', false]]);
+});
+
+test('reference to an installed generated target plans and generates a runtime-safe service', (t) => {
+  const root = tempRoot(t);
+  applyModulePlan(planModule({ manifest: partnerManifest, rootDir: root }));
+  const plan = planModule({
+    rootDir: root,
+    manifest: {
+      name: 'partner-contact',
+      table: 'partner_contacts',
+      fields: [
+        { name: 'fullName', type: 'string', required: true },
+        { name: 'partnerId', type: 'reference', references: 'partners', required: true },
+      ],
+    },
+  });
+  assert.equal(plan.module, 'partner-contact');
+  const service = plan.files.find((file) => file.path.endsWith('partner-contact-service.js'));
+  assert.match(service.content, /this\.#reference\('partnerId', "partners", true, input\.partnerId\)/);
+  assert.match(service.content, /this\.references\.assertTarget/);
+  // No cross-module SQL is generated.
+  assert.equal(/FROM partners/.test(service.content), false);
+  const index = plan.files.find((file) => file.path.endsWith('index.js'));
+  assert.match(index.content, /"targetModule":\s*"partner"/);
+  assert.match(index.content, /table: "partner_contacts"/);
 });
 
 test('a failed apply leaves no partial changes and restores the registry', (t) => {

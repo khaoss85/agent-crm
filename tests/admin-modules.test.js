@@ -340,6 +340,139 @@ test('stale out-of-order renders do not overwrite the current view', async (t) =
   assert.equal(mount.textContent.includes('Channel partners'), false, 'stale partner render leaked in');
 });
 
+function contactModule() {
+  return {
+    name: 'partner-contact',
+    version: '0.1.0',
+    description: 'Partner contacts.',
+    kind: 'generated',
+    manifestVersion: 1,
+    immutableFields: ['id', 'createdAt', 'updatedAt'],
+    capabilities: ['create', 'get', 'list', 'update'],
+    fields: [
+      { name: 'fullName', type: 'string', required: true, unique: false },
+      { name: 'partnerId', type: 'reference', required: true, unique: false, references: 'partners', targetModule: 'partner', targetKey: 'id', targetDisplayField: 'name', targetKind: 'generated' },
+    ],
+  };
+}
+
+test('Admin renders a reference field as a target selector and submits the target id', async (t) => {
+  const { app, baseUrl } = await startServer(t, (app2) => {
+    inMemoryModule(app2, partnerModule(), partnerValidator);
+    inMemoryModule(app2, contactModule(), partnerValidator);
+  });
+  const pA = await app.modules.get('partner').service.create({ name: 'Alpha Partner', tier: 'gold' }, { actor: { type: 'user', id: 's' } });
+  const pB = await app.modules.get('partner').service.create({ name: 'Beta Partner' }, { actor: { type: 'user', id: 's' } });
+  const doc = createFakeDocument();
+  const client = clientFor(baseUrl);
+  const navs = [];
+  const admin = createModuleAdmin({ doc, mount: createMount(), client, navigate: (h) => navs.push(h) });
+
+  const form = await admin.renderNew('partner-contact');
+  const select = form.__inputs.partnerId;
+  assert.equal(select.tagName, 'SELECT');
+  // Placeholder + one option per partner, labelled by the display field (name).
+  const optionLabels = select.findAll('option').map((o) => o.textContent);
+  assert.ok(optionLabels.includes('Alpha Partner') && optionLabels.includes('Beta Partner'));
+  const optionValues = select.findAll('option').map((o) => o.getAttribute('value'));
+  assert.ok(optionValues.includes(pA.id) && optionValues.includes(pB.id));
+
+  // Submit selecting Partner B → the id is stored.
+  form.__inputs.fullName.value = 'Mario';
+  select.value = pB.id;
+  await form.__submit({ preventDefault() {} });
+  const created = app.modules.get('partner-contact').service.list()[0];
+  assert.equal(created.partnerId, pB.id);
+});
+
+test('reference edit preselects the current target even if outside the first page', async (t) => {
+  const { app, baseUrl } = await startServer(t, (app2) => {
+    inMemoryModule(app2, partnerModule(), partnerValidator);
+    inMemoryModule(app2, contactModule(), partnerValidator);
+  });
+  const partners = app.modules.get('partner').service;
+  // Create many partners so the linked one is not on the first page of 100.
+  const first = await partners.create({ name: 'Linked Partner' }, { actor: { type: 'user', id: 's' } });
+  for (let i = 0; i < 120; i += 1) await partners.create({ name: `Filler ${i}` }, { actor: { type: 'user', id: 's' } });
+  const contact = await app.modules.get('partner-contact').service.create({ fullName: 'Mario', partnerId: first.id }, { actor: { type: 'user', id: 's' } });
+
+  const doc = createFakeDocument();
+  const admin = createModuleAdmin({ doc, mount: createMount(), client: clientFor(baseUrl), navigate: () => {} });
+  const form = await admin.renderDetail('partner-contact', contact.id);
+  const select = form.__inputs.partnerId;
+  // The current target must be present and selected even though it is beyond
+  // the first 100 returned rows.
+  assert.equal(select.value, first.id, 'current target lost');
+  assert.ok(select.findAll('option').some((o) => o.getAttribute('value') === first.id && o.textContent === 'Linked Partner'));
+});
+
+test('reference selector shows a truncation notice only when the target list is capped', async (t) => {
+  const { app, baseUrl } = await startServer(t, (app2) => {
+    inMemoryModule(app2, partnerModule(), partnerValidator);
+    inMemoryModule(app2, contactModule(), partnerValidator);
+  });
+  const partners = app.modules.get('partner').service;
+  // Fewer than the cap first: no notice.
+  await partners.create({ name: 'Only Partner' }, { actor: { type: 'user', id: 's' } });
+  const doc = createFakeDocument();
+  const admin = createModuleAdmin({ doc, mount: createMount(), client: clientFor(baseUrl), navigate: () => {} });
+  let form = await admin.renderNew('partner-contact');
+  let hint = form.findAll('small').find((n) => /Showing the first 100/.test(n.textContent));
+  assert.ok(hint && hint.classList.contains('hidden'), 'notice must be hidden when not truncated');
+
+  // Now exceed the cap: the notice is revealed.
+  for (let i = 0; i < 100; i += 1) await partners.create({ name: `P${i}` }, { actor: { type: 'user', id: 's' } });
+  const admin2 = createModuleAdmin({ doc, mount: createMount(), client: clientFor(baseUrl), navigate: () => {} });
+  form = await admin2.renderNew('partner-contact');
+  hint = form.findAll('small').find((n) => /Showing the first 100/.test(n.textContent));
+  assert.ok(hint && !hint.classList.contains('hidden'), 'notice must show when the target list is capped');
+});
+
+test('list label resolution deduplicates and bounds by-id fetches', async (t) => {
+  const { app, baseUrl } = await startServer(t, (app2) => {
+    inMemoryModule(app2, partnerModule(), partnerValidator);
+    inMemoryModule(app2, contactModule(), partnerValidator);
+  });
+  const partners = app.modules.get('partner').service;
+  const contacts = app.modules.get('partner-contact').service;
+  const pShared = await partners.create({ name: 'Shared Partner' }, { actor: { type: 'user', id: 's' } });
+  // Many contacts share ONE partner id → the label must resolve with the single
+  // list call, never one fetch per row.
+  for (let i = 0; i < 20; i += 1) await contacts.create({ fullName: `C${i}`, partnerId: pShared.id }, { actor: { type: 'user', id: 's' } });
+
+  // Count target requests during the render.
+  const base = clientFor(baseUrl);
+  let getCalls = 0;
+  const counting = {
+    request(path, options) {
+      if (/\/api\/modules\/partner\/records\/[^?]+$/.test(path)) getCalls += 1;
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const admin = createModuleAdmin({ doc: createFakeDocument(), mount, client: counting, navigate: () => {} });
+  await admin.renderList('partner-contact');
+  // Shared id is on the first page → zero per-cell by-id fetches.
+  assert.equal(getCalls, 0, `expected 0 by-id fetches, got ${getCalls}`);
+  // Every row shows the resolved label, not the raw id.
+  const cells = mount.findAll('td').map((c) => c.textContent);
+  assert.ok(cells.filter((t) => t === 'Shared Partner').length >= 20);
+});
+
+test('hostile target labels render as text in the reference selector', async (t) => {
+  const { app, baseUrl } = await startServer(t, (app2) => {
+    inMemoryModule(app2, partnerModule(), partnerValidator);
+    inMemoryModule(app2, contactModule(), partnerValidator);
+  });
+  await app.modules.get('partner').service.create({ name: '<img src=x onerror=alert(1)>' }, { actor: { type: 'user', id: 's' } });
+  const doc = createFakeDocument();
+  const admin = createModuleAdmin({ doc, mount: createMount(), client: clientFor(baseUrl), navigate: () => {} });
+  const form = await admin.renderNew('partner-contact');
+  const select = form.__inputs.partnerId;
+  assert.equal(select.findAll('img').length, 0);
+  assert.ok(select.findAll('option').some((o) => o.textContent.includes('<img src=x onerror=alert(1)>')));
+});
+
 test('an unsupported schema contract version fails gracefully', async (t) => {
   const doc = createFakeDocument();
   const mount = createMount();

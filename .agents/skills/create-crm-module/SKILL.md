@@ -18,11 +18,14 @@ Preferred path — module factory (manifest-driven):
    (`generatedModules`), usable via `client.module('<name>')` in the SDK, and
    shown automatically in the Admin under "Generated modules" (list/create/
    detail/edit, no page code — see `docs/ADMIN.md`).
-5. Edit the generated service to add domain rules; keep validation, actor
-   context, audit and events on every mutation. Reference fields are not
-   supported by the factory yet — implement cross-module validation by hand
-   following `packages/modules/contact/`.
-6. Run `npm run verify`.
+5. Reference fields (many-to-one to another generated module) are supported:
+   `{"type":"reference","references":"<target-table>"}`. Apply the target module
+   first; the generated service validates the target at runtime via the
+   application reference resolver (ADR-010) and the Admin renders a target
+   selector. Generated-to-core references are not supported yet.
+6. Edit the generated service to add domain rules; keep validation, actor
+   context, audit and events on every mutation.
+7. Run `npm run verify`.
 
 Manual path (custom shapes the factory does not cover):
 
