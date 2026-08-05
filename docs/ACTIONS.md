@@ -22,17 +22,27 @@ export const qualifyLead = {
   stateField: 'status',           // record field holding lifecycle state (default: 'status')
   fromStates: ['new'],            // states the action is allowed from; omit for "always"
   input: [{ name: 'dueAt', type: 'timestamp', required: true }],
-  async execute({ record, input, actor, modules, managed }) {
-    const lead = await managed(record.id, { status: 'qualified', qualifiedAt: new Date().toISOString() });
+  async execute({ record, input, actor, modules, managed, now }) {
+    const lead = await managed(record.id, { status: 'qualified', qualifiedAt: now() });
     const task = await modules.get('task').service.create({ /* … */ }, { actor });
     return { lead: { id: lead.id, status: lead.status }, task: { id: task.id } };
   },
 };
 ```
 
-Input field types are `string`, `timestamp` (ISO-8601 UTC, `…Z`) and `enum`
-(which requires `values`). Blank and missing are treated the same: a required
-field that is absent, `null` or `''` is a `400`.
+Input field types are `string`, `timestamp` and `enum` (which requires
+`values`).
+
+- **Timestamps** use one canonical form: a UTC ISO-8601 instant
+  `YYYY-MM-DDTHH:MM:SS(.mmm)?Z`. Offsets (`+02:00`), date-only forms and
+  space-separated datetimes are rejected — one canonical form avoids
+  server-local-time ambiguity. The calendar date must be real: JavaScript's
+  `Date` would silently roll `2026-02-30` into March 2, so the parsed value is
+  round-tripped and must reproduce the input exactly.
+- **Strings** are trimmed of outer whitespace (inner whitespace preserved) and
+  bounded at 10 000 characters; the HTTP body limit (1 MB) bounds the request
+  as a whole. Blank and missing are treated the same: a required field that is
+  absent, `null`, `''` **or whitespace-only** is a `400`.
 
 ### The `execute` context
 
@@ -45,6 +55,7 @@ field that is absent, `null` or `''` is a `400`.
 | `modules` | The module registry — `modules.get('task').service` for cross-module writes. |
 | `services` | The handwritten core services (companies, contacts, opportunities, approvals). |
 | `database`, `config` | Escape hatches; prefer services so validation and audit are preserved. |
+| `now()` | The framework clock (ISO-8601 UTC). Use it for timestamps like `qualifiedAt` so time is injectable and consistent with the rest of the framework. |
 | `step(name, output)` | Record an extra named span in the workflow trace. |
 
 ## What the runtime guarantees
@@ -53,12 +64,29 @@ field that is absent, `null` or `''` is a `400`.
   generated services' savepoints nest inside it. If anything throws, all of it
   rolls back — no partial state, no audit, no events.
 - **Events after commit.** Events emitted during `execute` are held in a
-  transaction-scoped outbox and dispatched only once the transaction commits
-  (ADR-012). A subscriber never observes a half-applied action.
-- **Always traced.** A workflow run and its spans are written after the
-  transaction resolves, success or failure — so a failed action still leaves a
-  diagnostic record. The trace is deliberately *not* transactional with the
-  business writes it describes.
+  **transaction-scoped in-process buffer** and dispatched only once the
+  transaction commits (ADR-012). A subscriber never observes a half-applied
+  action. This is *not* a durable outbox: a process crash after the commit but
+  before the flush loses delivery — do not rely on these events for remote
+  integrations.
+- **A post-commit subscriber failure is not a business failure.** Once the
+  transaction has committed, a throwing subscriber cannot turn the action into
+  an error (the caller would retry a change that already succeeded). The flush
+  dispatches every queued event even when a handler fails — a failing handler
+  stops only its own event's remaining handlers — and the failures are recorded
+  as a failed `events.dispatch` span on the (completed) run, plus a stderr log.
+- **Always traced, best-effort.** A workflow run and its spans are written
+  after the transaction resolves, success or failure — so a failed action still
+  leaves a diagnostic record; the *validated input* (including e.g. a
+  disqualification reason) is recorded in the trace for debuggability. The
+  trace is deliberately *not* transactional with the business writes: a
+  trace-write failure is logged, never thrown, and on a failed run the spans
+  recorded before the failure describe execution progress whose writes were
+  rolled back — the run-level status is authoritative.
+- **No nesting.** An action cannot invoke another action (and no second outer
+  transaction can start inside one): both the event buffer and the database
+  layer reject nesting with a clear error. Compose module services inside one
+  `execute` instead.
 - **Fail closed at startup.** A malformed definition stops the app rather than
   exposing a half-working action.
 
@@ -83,7 +111,17 @@ Then, at the **service boundary** — not merely hidden in the Admin:
   `VALIDATION_ERROR`;
 - the generated service's `applyManaged(id, patch, ctx)` is the single
   privileged write path. It is in-process only, never routed over HTTP, and
-  reachable from `execute` as `ctx.managed`. Passing `null` clears a field.
+  reachable from `execute` as `ctx.managed`. Passing `null` clears an
+  *optional* managed field; clearing a *required* one is a field-tied
+  validation error, not a SQL crash. It validates only managed fields —
+  public fields in the patch are unknown keys and are ignored, exactly like
+  unknown input elsewhere.
+
+`applyManaged` is trusted in-process code, deliberately callable outside an
+action (the same trust level as any service method — repository source is the
+trust boundary, per ADR-008's threat model). What it can never do is travel
+over a public surface: it is not a generated-resource capability, not routed,
+not in the SDK, and not exposed via MCP.
 
 So `PATCH /api/modules/lead/records/:id` with `{"status": "qualified"}` is a
 `400` from any client. The Admin additionally renders managed fields read-only,
@@ -99,7 +137,15 @@ Lead starter gives its follow-up Task a **unique** `sourceKey` of
   with a `409`, and the unique key blocks it at the data layer even if the state
   guard were removed;
 - two **concurrent** qualifies resolve to exactly one success and exactly one
-  Task; the loser gets a `409`.
+  Task; the loser gets a `409` — within one server via `BEGIN IMMEDIATE`
+  serialization plus the state guard, and across separate connections/processes
+  on the same SQLite file via the write lock: the loser surfaces a stable
+  retryable `409 CONFLICT` ("database is busy with a concurrent write"), never
+  a raw `SQLITE_BUSY` error.
+
+`sourceKey` is deliberately a *public* Task field: a squatting CRUD write can
+only block a qualification with a visible `409` on a trusted local surface,
+never forge one, and keeping it public avoids a second privileged write path.
 
 ## Calling an action
 

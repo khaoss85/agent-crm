@@ -120,6 +120,49 @@ resolve to exactly one success and one `409`, with exactly one Task — the oute
 `fromStates` check. The unique `sourceKey` is retained as defense in depth
 rather than as the primary mechanism.
 
+## Fixed in the adversarial review (same PR)
+
+1. **Post-commit subscriber failure was reported as a business failure.** A
+   throwing subscriber after the DB commit made the action return a 500 and
+   record a *failed* trace while the lead was qualified and the Task committed —
+   inviting a retry/compensation of a change that had succeeded. Policy now
+   (ADR-012): the action stays a success; the flush dispatches every queued
+   event even when a handler fails; failures are recorded as a failed
+   `events.dispatch` span on the completed run plus a stderr log.
+2. **Cross-connection concurrency leaked raw SQLite errors.** With two app
+   instances on one file DB, the write-lock loser got a raw
+   `ERR_SQLITE_ERROR: database is locked` (HTTP 500) after two full 5 s busy
+   timeouts, and its failure trace was silently lost (the trace write hit the
+   same lock and its throw replaced the original error). Now: busy errors in
+   the transaction helpers map to a stable retryable `409 CONFLICT`; the trace
+   write is best-effort (logged, never thrown); rollback failures never mask
+   the primary error; `busyTimeoutMs` is configurable for tests.
+3. **Impossible calendar dates were accepted.** `2026-02-30T09:00:00Z` parses
+   in JavaScript by rolling over to March 2 and was silently stored as a
+   different date. Timestamps are now round-tripped and must reproduce the
+   input exactly.
+4. **Whitespace-only required strings passed validation** (trimmed to `''` and
+   stored). Blank-after-trim now counts as missing; action string inputs are
+   bounded at 10 000 chars.
+5. **Nesting was an undefined behavior.** An action invoking another action hit
+   a raw "cannot start a transaction within a transaction" and the inner
+   buffered flush could dispatch while the outer transaction was open. Both the
+   event buffer and the database layer now reject nesting fail-closed with a
+   clear message.
+6. **Structurally unusable managed manifests generated broken modules.**
+   `managed+required` without default (every create violates NOT NULL),
+   `managed+unique+default` (second create always fails) and `default` on a
+   public field (silently never applied) are now rejected at manifest
+   validation; `module plan` lists `managedFields`; clearing a required managed
+   field via `applyManaged` is a validation error, not a SQL crash.
+7. **Docs overclaimed durability.** ADR-012 and `docs/ACTIONS.md` now name the
+   mechanism a transaction-scoped **in-process** event buffer (crash after
+   commit loses delivery; no durable outbox is claimed), and
+   `docs/benchmarks/CRM_JTBD_MATRIX.md` was updated with narrow, evidence-linked
+   rows for capture/qualify/disqualify and the follow-up-Task slice.
+8. **A second, non-Lead action fixture** (`task.complete`) proves the registry,
+   route, SDK and state-gating are generic, not Lead-hardcoded.
+
 ## Explicitly deferred
 
 Lead conversion, Company/Contact/Opportunity, pipeline/stages, general task engine, reminders, reopen, workflow DSL, scheduling, retries, sagas, many-to-many, and everything in the task's out-of-scope list.

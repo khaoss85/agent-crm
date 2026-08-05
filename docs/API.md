@@ -85,6 +85,7 @@ A single base-10 positive integer between 1 and 500. No sign, exponent, hex, whi
 | `400` | `VALIDATION_ERROR` | Bad/missing input, or a non-object body. `details.field` names the field. |
 | `404` | `NOT_FOUND` | Unknown module, action or record. |
 | `409` | `INVALID_STATE` | The record's state is not in the action's `fromStates`. |
+| `409` | `CONFLICT` | A concurrent writer holds the database write lock (`details.transient: true`) — safe to retry; a repeat of an already-applied transition then yields `INVALID_STATE`. |
 
 Errors carry `details.workflowRunId` so a failed attempt's trace is retrievable from `GET /api/traces/:id`. Fields whose metadata says `writable: "managed"` are rejected by `POST`/`PATCH` on the record routes with a `400` — a workflow state can never be reached through generic CRUD. See `docs/ACTIONS.md`.
 

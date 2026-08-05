@@ -60,21 +60,24 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 ## JTBD-04 — Capture a lead
 - **Actor**: marketing/inbound.
 - **Trigger**: a new prospect arrives.
-- **Desired outcome**: persist a lead with validation and audit.
-- **Primitives**: a lead-like module (company/contact or a generated module), service, audit.
-- **Framework capabilities**: modules, generic API/Admin.
-- **Acceptance scenario**: create a lead record via Admin/API with audit.
-- **Status**: **technically supported** (model it as company/contact or a generated module); not validated as a named "lead capture" flow.
-- **Evidence**: company/contact modules; generated-module CRUD.
-- **Manual interventions**: choose/define the lead model; no dedup or source-tracking primitives yet.
+- **Desired outcome**: persist a lead with validation and audit, starting in a known lifecycle state.
+- **Primitives**: generated Lead module, managed `status` field with default, service, audit, events.
+- **Framework capabilities**: manifest (with `writable: "managed"` + `default`) → factory → API/SDK/Admin.
+- **Acceptance scenario**: create a Lead via API/SDK/Admin; it persists with `status: "new"`, null qualification fields, one create audit and one event; `status` cannot be supplied at create.
+- **Status**: **validated end to end** (Milestone 6), for the starter's Lead model.
+- **Evidence**: `tests/lead-qualification-e2e.test.js` (API/SDK create → default `new` → persistence/audit/event, restart), `examples/starters/b2b-lead-qualification/install.mjs`; Admin create covered by the generic Admin tests plus a manual real-Chromium smoke (`docs/ADMIN_SMOKE.md`).
+- **Manual interventions**: applying the starter manifests; no dedup or source-tracking primitives.
 
-## JTBD-05 — Qualify a lead
+## JTBD-05 — Qualify (or disqualify) a lead
 - **Actor**: SDR.
-- **Trigger**: a lead needs scoring/qualification.
-- **Desired outcome**: record qualification state via explicit rules.
-- **Status**: **partially supported** — enum/boolean fields exist; there is no scoring/qualification workflow primitive.
-- **Evidence**: field types (`tests/module-manifest.test.js`).
-- **Manual interventions**: handwritten qualification logic.
+- **Trigger**: a `new` lead is worked.
+- **Desired outcome**: an explicit, auditable lifecycle transition that generic CRUD cannot bypass.
+- **Primitives**: code-first record action, managed fields, outer transaction, transaction-scoped event buffer, trace, audit.
+- **Framework capabilities**: action registry/runtime (ADR-011/012), generic action route/SDK/Admin controls.
+- **Acceptance scenario**: qualify a `new` lead → `status: "qualified"` + exactly one follow-up Task, atomically, with actor/audit/events/trace; repeat and concurrent qualify → one stable 409, no duplicate; disqualify requires a non-blank reason, sets `disqualified`, creates no Task; CRUD attempts on managed fields → field-tied 400; state survives restart.
+- **Status**: **validated end to end** (Milestone 6), for the starter's qualify/disqualify actions.
+- **Evidence**: `tests/lead-qualification-e2e.test.js` (atomicity/rollback, repeat 409, same-instance concurrency, CRUD-bypass matrix, restart), `tests/action-runtime-semantics.test.js` (two-connection concurrency, commit-failure injection, post-commit dispatch policy, corrupted-state safety), `tests/action-contract.test.js`, `examples/starters/b2b-lead-qualification/`; Admin buttons validated in `tests/admin-actions.test.js` plus a manual real-Chromium smoke (`docs/ADMIN_SMOKE.md`).
+- **Manual interventions**: registering the starter's actions in `packages/actions/generated/index.js`; lead **scoring** remains out of scope (no scoring primitive).
 
 ## JTBD-06 — Manage a custom object with an approval rule
 - **Actor**: business user on a generated object.
@@ -84,8 +87,9 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 - **Manual interventions**: write the workflow by hand.
 
 ## JTBD-07 — Schedule next actions / follow-ups
-- **Status**: **not supported** — no Activity/Task module or scheduling/delayed-workflow primitive yet (roadmap Milestone 5+).
-- **Manual interventions**: N/A.
+- **Status**: **partially supported** — narrowly: **the first follow-up Task is created as part of Lead qualification** (Milestone 6). There is still no reusable task engine, no scheduling/delayed-workflow primitive, no reminders, no queues, no recurring work.
+- **Evidence** (for the narrow slice only): `tests/lead-qualification-e2e.test.js` (exactly one Task with a deterministic idempotency key, atomic with the qualify transition); the starter's Task module is an ordinary generated module.
+- **Manual interventions**: anything beyond that first Task is handwritten.
 
 ## JTBD-08 — Hand off a won deal
 - **Status**: **partially supported** — cross-module workflows with compensation exist as a primitive; no built-in handoff.
@@ -118,8 +122,7 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 
 ## Summary
 
-- **Validated end to end**: JTBD-01 (custom business object), JTBD-02 (renewal approval, built-in object).
-- **First Milestone 4 target achieved**: JTBD-01 — a user can define a module through the framework and then list, create, view and edit records through the Admin with audit/events and no manual page coding.
-- Deliberately **not** marked validated: lead capture/qualification, pipeline for custom objects, follow-ups, onboarding, churn/upsell, reporting, integrations, permissions. Primitives for some exist, but no end-to-end proof does.
+- **Validated end to end**: JTBD-01 (custom business object), JTBD-01b (generated-to-generated reference), JTBD-02 (renewal approval, built-in object), JTBD-04 (capture a lead, starter model), JTBD-05 (qualify/disqualify a lead, starter actions).
+- Deliberately **not** marked validated: lead conversion, pipeline for custom objects, a general task engine/scheduling (only the first follow-up Task inside qualification is proven — JTBD-07 stays partial), onboarding, churn/upsell, reporting, integrations, permissions. Primitives for some exist, but no end-to-end proof does.
 
-This matrix guides roadmap prioritization: the largest gaps blocking common CRM adoption are Activity/Task + follow-ups (JTBD-07), generated workflows/approvals for custom objects (JTBD-06), and the auth/tenancy/RBAC prerequisite (JTBD-15).
+This matrix guides roadmap prioritization: the largest gaps blocking common CRM adoption are a reusable Activity/Task engine with scheduling (JTBD-07), generated workflows/approvals for custom objects (JTBD-06), and the auth/tenancy/RBAC prerequisite (JTBD-15).
