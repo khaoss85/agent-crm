@@ -267,6 +267,7 @@ elements.closeTrace.addEventListener('click', () => elements.traceDetail.classLi
 
 import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
+import { createQuoteView } from './admin-quotes.js';
 import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
 
 const dashboardView = document.querySelector('#view-dashboard');
@@ -288,6 +289,16 @@ const pipelineBoard = createPipelineBoard({
   toast,
 });
 
+// Quote builder (ADR-016) over the ADR-009 override seam: the generic action
+// forms cannot browse a price book, so this focused view owns that experience
+// while every mutation still goes through the same server actions.
+const quoteView = createQuoteView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  navigate: (hash) => { window.location.hash = hash; },
+});
+
 async function populateNav() {
   try {
     const schema = await moduleClient.request('/api/schema');
@@ -305,6 +316,15 @@ async function populateNav() {
       link.setAttribute('href', `#/modules/${module.name}`);
       link.setAttribute('data-nav', `module-${module.name}`);
       link.textContent = humanizeLabel(module.name); // safe: textContent
+      generatedNav.appendChild(link);
+    }
+    // Quote builder (ADR-016): one nav link when the project has commercial
+    // operations installed (the schema block is additive).
+    if (schema?.commercial?.commercialContract === 1 && modules.some((module) => module.name === 'quote')) {
+      const link = document.createElement('a');
+      link.setAttribute('href', '#/quotes');
+      link.setAttribute('data-nav', 'quotes');
+      link.textContent = 'Quotes';
       generatedNav.appendChild(link);
     }
     // Pipeline boards (ADR-014): one nav link per registered pipeline, from
@@ -334,7 +354,8 @@ async function route() {
   for (const link of generatedNav.querySelectorAll('a')) {
     const active = !onDashboard && (
       link.getAttribute('href') === `#/modules/${target.moduleName}` ||
-      (target.view === 'pipeline' && link.getAttribute('href') === `#/pipelines/${target.pipelineName}`)
+      (target.view === 'pipeline' && link.getAttribute('href') === `#/pipelines/${target.pipelineName}`) ||
+      ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes')
     );
     link.classList.toggle('active', active);
   }
@@ -355,6 +376,8 @@ async function route() {
     else if (target.view === 'new') await moduleAdmin.renderNew(target.moduleName);
     else if (target.view === 'detail') await moduleAdmin.renderDetail(target.moduleName, target.id);
     else if (target.view === 'pipeline') await pipelineBoard.renderBoard(target.pipelineName);
+    else if (target.view === 'quotes') await quoteView.renderQuoteList();
+    else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
   } catch (error) {
     toast(error.message, true);
   }

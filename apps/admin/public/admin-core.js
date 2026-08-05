@@ -269,6 +269,16 @@ export function parseModuleRoute(hash) {
     if (pipelineName === null || !/^[a-z][a-z0-9-]*$/.test(pipelineName)) return { view: 'invalid' };
     return { view: 'pipeline', pipelineName };
   }
+  // Quote builder routes: #/quotes and #/quotes/<id> (ADR-016). Same
+  // canonical discipline; anything else is invalid, not a lookup.
+  if (rawParts.length && rawParts[0] === 'quotes') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length === 1) return { view: 'quotes' };
+    if (rawParts.length !== 2) return { view: 'invalid' };
+    const quoteId = safeDecode(rawParts[1]);
+    if (quoteId === null || quoteId === '' || quoteId.includes('/')) return { view: 'invalid' };
+    return { view: 'quote-detail', quoteId };
+  }
   if (rawParts.length === 0 || rawParts[0] !== 'modules') return { view: 'dashboard' };
   // An internal empty segment (e.g. "modules//new") is malformed, not a lookup.
   if (rawParts.some((part) => part === '')) return { view: 'invalid' };

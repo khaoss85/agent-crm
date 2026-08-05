@@ -163,3 +163,12 @@ button[aria-busy="true"] { opacity: .6; }
 .pipeline-drift { margin-top: 14px; padding: 12px; border: 1px dashed var(--danger, #b3564d); border-radius: 10px; }
 .pipeline-drift h3 { margin: 0 0 6px; font-size: 14px; }
 .pipeline-drift .drift-record { margin: 4px 0; font-size: 13px; overflow-wrap: anywhere; }
+
+/* Quote builder (ADR-016) */
+.quote-create, .quote-add-line, .quote-submit, .quote-decide, .quote-revise { margin: 14px 0; padding: 12px; background: var(--surface-soft, #f4f8f6); border-radius: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.quote-create h3, .quote-add-line h3, .quote-submit h3, .quote-decide h3, .quote-lines h3, .quote-versions h3 { margin: 0; width: 100%; font-size: 14px; }
+.quote-create input, .quote-create select, .quote-add-line input, .quote-add-line select, .quote-decide input, .quote-submit select, .quote-line input { padding: 6px 8px; border: 1px solid var(--line, #d9e2dd); border-radius: 8px; font: inherit; }
+.quote-summary { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 8px 0; }
+.quote-fact { margin: 0; font-size: 13px; }
+.quote-line, .quote-version-row, .quote-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line, #eef2f0); font-size: 13px; overflow-wrap: anywhere; }
+.quote-approved { margin: 12px 0; padding: 10px 12px; background: #eef7ef; border-radius: 8px; font-size: 13px; }
