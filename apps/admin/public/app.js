@@ -266,7 +266,7 @@ elements.closeTrace.addEventListener('click', () => elements.traceDetail.classLi
 // ---- Hash routing + generated-module navigation -------------------------
 
 import { createModuleAdmin } from './admin-modules.js';
-import { selectGeneratedModules, humanizeLabel } from './admin-core.js';
+import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
 
 const dashboardView = document.querySelector('#view-dashboard');
 const moduleView = document.querySelector('#view-module');
@@ -304,25 +304,28 @@ async function populateNav() {
   }
 }
 
-function parseHash() {
-  const raw = (window.location.hash || '#/').replace(/^#/, '');
-  const parts = raw.split('/').filter(Boolean); // ['modules', name, ...]
-  if (parts[0] !== 'modules' || !parts[1]) return { view: 'dashboard' };
-  const moduleName = decodeURIComponent(parts[1]);
-  if (parts[2] === 'new') return { view: 'new', moduleName };
-  if (parts[2]) return { view: 'detail', moduleName, id: decodeURIComponent(parts[2]) };
-  return { view: 'list', moduleName };
-}
-
 async function route() {
-  const target = parseHash();
+  const target = parseModuleRoute(window.location.hash || '#/');
   const onDashboard = target.view === 'dashboard';
   dashboardView.classList.toggle('hidden', !onDashboard);
   moduleView.classList.toggle('hidden', onDashboard);
-  for (const link of generatedNav.querySelectorAll('a')) link.classList.remove('active');
+  // Set the active nav link by comparing the safe href we built ourselves,
+  // never by constructing a selector from route input.
+  for (const link of generatedNav.querySelectorAll('a')) {
+    link.classList.toggle('active', !onDashboard && link.getAttribute('href') === `#/modules/${target.moduleName}`);
+  }
   if (onDashboard) return;
-  const active = generatedNav.querySelector(`[data-nav="module-${cssEscape(target.moduleName)}"]`);
-  if (active) active.classList.add('active');
+  if (target.view === 'invalid') {
+    moduleView.textContent = '';
+    const box = document.createElement('div');
+    box.className = 'panel';
+    const message = document.createElement('p');
+    message.className = 'empty';
+    message.textContent = 'That module route is not valid.';
+    box.appendChild(message);
+    moduleView.appendChild(box);
+    return;
+  }
   try {
     if (target.view === 'list') await moduleAdmin.renderList(target.moduleName);
     else if (target.view === 'new') await moduleAdmin.renderNew(target.moduleName);
@@ -330,10 +333,6 @@ async function route() {
   } catch (error) {
     toast(error.message, true);
   }
-}
-
-function cssEscape(value) {
-  return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
 }
 
 window.addEventListener('hashchange', route);

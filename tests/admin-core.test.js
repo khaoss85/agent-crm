@@ -9,6 +9,7 @@ import {
   apiErrorToFormErrors,
   selectGeneratedModules,
   displayTitle,
+  parseModuleRoute,
   SUPPORTED_ADMIN_CONTRACT,
 } from '../apps/admin/public/admin-core.js';
 
@@ -98,6 +99,44 @@ test('selectGeneratedModules gates on contract version and sorts deterministical
 
   const legacy = selectGeneratedModules({});
   assert.equal(legacy.supported, false);
+});
+
+test('parseModuleRoute is total and safe on hostile hashes', () => {
+  assert.deepEqual(parseModuleRoute('#/'), { view: 'dashboard' });
+  assert.deepEqual(parseModuleRoute(''), { view: 'dashboard' });
+  assert.deepEqual(parseModuleRoute('#/modules/partner'), { view: 'list', moduleName: 'partner' });
+  assert.deepEqual(parseModuleRoute('#/modules/partner/'), { view: 'list', moduleName: 'partner' });
+  assert.deepEqual(parseModuleRoute('#/modules/partner/new'), { view: 'new', moduleName: 'partner' });
+  assert.deepEqual(parseModuleRoute('#/modules/partner/id-1'), { view: 'detail', moduleName: 'partner', id: 'id-1' });
+  assert.deepEqual(parseModuleRoute('#/modules/partner/id-1?x=1'), { view: 'detail', moduleName: 'partner', id: 'id-1' });
+  // Empty module segment → dashboard, not a lookup.
+  assert.deepEqual(parseModuleRoute('#/modules//new'), { view: 'invalid' });
+  // Malformed / encoded / dangerous names never throw and never resolve.
+  for (const hash of [
+    '#/modules/%zz',
+    '#/modules/%2F', // decodes to '/', not a canonical module name
+    '#/modules/%252F',
+    '#/modules/%5C',
+    '#/modules/%2E%2E',
+    '#/modules/__proto__', // leading underscore: not a canonical name
+    '#/modules/Partner', // uppercase: not canonical
+    '#/modules/a b',
+    `#/modules/${'x'.repeat(5000)}/y/z`,
+  ]) {
+    const result = parseModuleRoute(hash);
+    assert.equal(result.view, 'invalid', hash);
+  }
+  // A syntactically valid name that simply does not exist resolves to a list
+  // view; the server's Map-backed lookup returns 404 and the Admin shows
+  // not-found — dangerous-looking but valid identifiers cannot pollute anything.
+  assert.deepEqual(parseModuleRoute('#/modules/constructor'), { view: 'list', moduleName: 'constructor' });
+  // Malformed record id fails safely too.
+  assert.equal(parseModuleRoute('#/modules/partner/%zz').view, 'invalid');
+  assert.equal(parseModuleRoute('#/modules/partner/%2F').view, 'detail'); // %2F decodes to '/', a valid opaque id
+  // Encoded slash in the id decodes once to a literal '/', never re-split.
+  assert.equal(parseModuleRoute('#/modules/partner/a%2Fb').id, 'a/b');
+  // Too many segments → invalid.
+  assert.equal(parseModuleRoute('#/modules/partner/id/extra').view, 'invalid');
 });
 
 test('displayTitle prefers the first required string, falls back to id', () => {

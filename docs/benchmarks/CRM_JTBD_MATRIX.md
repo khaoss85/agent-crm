@@ -20,8 +20,8 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 - **Framework capabilities**: manifest → factory → migration → registration → HTTP API → SDK → schema discovery → generic Admin.
 - **Acceptance scenario**: apply the Partner manifest; the module appears in `/api/schema` and the Admin nav; a user creates, opens and edits a Partner record; audit and events are produced; no page code is written.
 - **Status**: **validated end to end** (Milestone 4).
-- **Evidence**: `tests/module-factory-e2e.test.js`, `tests/generated-api-e2e.test.js`, `tests/admin-modules.test.js`; `docs/ADMIN.md`; manual `docs/ADMIN_SMOKE.md`.
-- **Manual interventions**: writing the manifest and running `module create --apply`; a real-browser pass is manual (documented gap).
+- **Evidence**: `tests/module-factory-e2e.test.js` (manifest→apply→runnable), `tests/generated-api-e2e.test.js` (API/SDK), `tests/admin-modules.test.js` + `tests/admin-core.test.js` (Admin list/create/detail/edit with audit+events, real server + fake DOM); `docs/ADMIN.md`. A one-off **real-Chromium** smoke (16 checks incl. XSS-as-text) was run manually during the Milestone 4 review and passed; `docs/ADMIN_SMOKE.md` is the reproducible checklist. Automated browser testing is not in CI.
+- **Manual interventions**: writing the manifest and running `module create --apply`; the real-browser smoke is manual (not in CI), not a coding step.
 
 ## JTBD-02 — Request commercial approval on a deal
 - **Actor**: sales rep (submits), manager (decides).

@@ -37,7 +37,7 @@ Three new files under `apps/admin/public/`, all dependency-free ES modules:
 2. `admin-modules.js` — **DOM view**: builds every node via `document.createElement` + `textContent`/`setAttribute`/`.value`; **never** `innerHTML` with data. Functions return the root node and capture interactive elements in closures (no `querySelector` on data). Talks to the server through the SDK-shaped `fetch` client already in `app.js`.
 3. `app.js` — gains a minimal hash router (`#/` dashboard, `#/modules/:module`, `#/modules/:module/new`, `#/modules/:module/:id`) and a "Generated modules" nav populated from the schema. The existing dashboard becomes the `#/` view, unchanged.
 
-Testability without a browser: the view functions accept an injected `document` and `fetch`. Tests pass a small faithful **fake document** (createElement/textContent/setAttribute/classList/append/value/addEventListener) plus a **real `node:http` server and real `fetch`**, so the data path and safe-DOM construction are exercised for real. A real-Chromium pass is provided as a manual checklist (Playwright is not a project/CI dependency; adding it would break CI which has no browser) — this gap is stated honestly in the docs and the JTBD matrix.
+Testability without a browser: the view functions accept an injected `document` and `fetch`. Tests pass a small faithful **fake document** (createElement/textContent/setAttribute/classList/append/value/addEventListener) plus a **real `node:http` server and real `fetch`**, so the data path and safe-DOM construction are exercised for real. Real-Chromium execution stays out of CI (Playwright is not a project dependency and CI has no browser); a one-off real-browser smoke was run manually during review (16 checks incl. XSS-as-text) and `docs/ADMIN_SMOKE.md` is the reproducible checklist.
 
 ## Routes (hash-based, matching a zero-build SPA)
 
@@ -77,7 +77,7 @@ Every module name, description, label, enum value and record value is inserted v
 
 ## Actor / audit / events
 
-Admin mutations go through the same `fetch` client with `x-actor-type: human`, `x-actor-id: admin-ui` — a **declared identity for audit, not authentication** (documented; local caller can spoof; remote exposure stays prohibited until auth/tenancy/RBAC). Mutations never bypass the API/generated-service boundary. Tests assert exactly one audit + one event per create/update, none on failed validation/conflict, none on reads.
+Admin mutations go through the same `fetch` client with `x-actor-type: user`, `x-actor-id: admin-ui` (in this framework the human identity is actor type `user`; there is no `human` type) — a **declared identity for audit, not authentication** (documented; local caller can spoof; remote exposure stays prohibited until auth/tenancy/RBAC). Mutations never bypass the API/generated-service boundary. Tests assert exactly one audit + one event per create/update, none on failed validation/conflict, none on reads.
 
 ## Milestones
 
@@ -104,3 +104,10 @@ Admin mutations go through the same `fetch` client with `x-actor-type: human`, `
 ## Explicitly deferred
 
 Figma ingestion, theming, dashboards, kanban, delete, search, filters, pagination, bulk actions, reference-field UI, attachments, auth/tenancy/RBAC, remote exposure, real-browser CI. See out-of-scope list in the task.
+
+## Adversarial review (post-merge-of-#5) decision log
+
+- **Router hardening**: hash parsing moved into a pure, total `parseModuleRoute` in `admin-core.js` and unit-tested against malformed/encoded/dangerous inputs. Previously `decodeURIComponent` ran outside the render try/catch, so `#/modules/%zz` threw a `URIError` and broke routing; now malformed encoding, internal empty segments, encoded slashes, dot-segments and non-canonical names resolve to an explicit `invalid` view (or a safe `list`/404 for syntactically valid but unknown names). The active-nav link is selected by comparing the hrefs we built, never by constructing a `querySelector` from route input.
+- **Capability gating tested end to end**: a module without `create` shows no Create action; without `update` the detail view is read-only (submit disabled). 
+- **Stale render**: proven with controlled out-of-order promises (older list resolves after a newer one; newest view wins).
+- **Real-browser validation path**: Path B (no CI browser) — DOM integration tests remain the CI proof; Playwright stays out of the project. A one-off real-Chromium smoke (16 checks) was run manually during review and passed, including the XSS-as-text assertion; `docs/ADMIN_SMOKE.md` is the reproducible manual checklist. The milestone is not claimed as browser-tested in CI.

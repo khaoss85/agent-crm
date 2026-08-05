@@ -1,6 +1,6 @@
 # Admin manual browser smoke checklist
 
-Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document). They do **not** drive a real browser. Run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
+Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (16 automated checks, all passing, including the XSS-as-text and malformed-hash cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
 
 ## Setup
 

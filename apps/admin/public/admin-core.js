@@ -209,4 +209,49 @@ export function hasCapability(moduleMeta, capability) {
   return Array.isArray(moduleMeta?.capabilities) && moduleMeta.capabilities.includes(capability);
 }
 
+/** Decode a single hash segment, tolerating malformed percent-encoding. */
+function safeDecode(segment) {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null; // malformed encoding → treated as an invalid route, never a crash
+  }
+}
+
+/**
+ * Parse an Admin hash into a route descriptor. Pure and total: malformed
+ * encoding, encoded separators and dangerous names never throw and never
+ * resolve to anything but an explicit view. Decodes each segment exactly once.
+ *
+ * @param {string} hash — e.g. "#/modules/partner/new"
+ * @returns {{view: 'dashboard'} | {view: 'invalid'} | {view: 'list'|'new'|'detail', moduleName: string, id?: string}}
+ */
+export function parseModuleRoute(hash) {
+  const raw = String(hash ?? '').replace(/^#/, '');
+  // Strip a query/extra-hash tail defensively; the Admin uses path-only hashes.
+  const path = raw.split('?')[0].split('#')[0];
+  const segments = path.split('/');
+  if (segments[0] === '') segments.shift(); // leading slash
+  if (segments.length && segments[segments.length - 1] === '') segments.pop(); // trailing slash
+  const rawParts = segments;
+  if (rawParts.length === 0 || rawParts[0] !== 'modules') return { view: 'dashboard' };
+  // An internal empty segment (e.g. "modules//new") is malformed, not a lookup.
+  if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+  if (rawParts.length < 2) return { view: 'dashboard' };
+
+  const moduleName = safeDecode(rawParts[1]);
+  // Module names are canonical; anything else (encoded slash, __proto__, %zz,
+  // dot segments) is an invalid route, not a lookup.
+  if (moduleName === null || !/^[a-z][a-z0-9-]*$/.test(moduleName)) return { view: 'invalid' };
+
+  if (rawParts.length === 2) return { view: 'list', moduleName };
+  if (rawParts.length === 3 && rawParts[2] === 'new') return { view: 'new', moduleName };
+  if (rawParts.length === 3) {
+    const id = safeDecode(rawParts[2]);
+    if (id === null || id === '') return { view: 'invalid' };
+    return { view: 'detail', moduleName, id };
+  }
+  return { view: 'invalid' };
+}
+
 export { IMMUTABLE_FIELDS };

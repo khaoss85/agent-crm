@@ -281,6 +281,65 @@ test('Supplier stays isolated from Partner and both are independently usable', a
   assert.ok(supplierMount.textContent.includes('No records yet'), 'partner data bled into supplier');
 });
 
+test('capability gating: a module without update renders a read-only detail', async (t) => {
+  const definition = {
+    name: 'readonly',
+    version: '0.1.0',
+    description: 'Read-only module.',
+    kind: 'generated',
+    manifestVersion: 1,
+    immutableFields: ['id', 'createdAt', 'updatedAt'],
+    capabilities: ['get', 'list'], // no create, no update
+    fields: [{ name: 'name', type: 'string', required: true, unique: false }],
+  };
+  const { app, baseUrl } = await startServer(t, (app2) => inMemoryModule(app2, definition, partnerValidator));
+  const created = await app.modules.get('readonly').service.create({ name: 'Fixed' }, { actor: { type: 'user', id: 'seed' } });
+  const doc = createFakeDocument();
+  const navs = [];
+  const listMount = createMount();
+  const listAdmin = createModuleAdmin({ doc, mount: listMount, client: clientFor(baseUrl), navigate: (h) => navs.push(h) });
+  await listAdmin.renderList('readonly');
+  // No Create button when create is not a capability.
+  assert.equal(listMount.findAll('button').some((b) => b.getAttribute('data-action') === 'create'), false);
+
+  const detailMount = createMount();
+  const detailAdmin = createModuleAdmin({ doc, mount: detailMount, client: clientFor(baseUrl), navigate: () => {} });
+  const form = await detailAdmin.renderDetail('readonly', created.id);
+  const submit = form.findAll('button').find((b) => b.getAttribute('type') === 'submit');
+  assert.equal(submit.disabled, true, 'submit must be disabled without update capability');
+  assert.ok(detailMount.textContent.includes('read-only'));
+});
+
+test('stale out-of-order renders do not overwrite the current view', async (t) => {
+  const { app, baseUrl } = await setup(t, { supplier: true });
+  await app.modules.get('partner').service.create({ name: 'P' }, { actor: { type: 'user', id: 's' } });
+  await app.modules.get('supplier').service.create({ code: 'S1' }, { actor: { type: 'user', id: 's' } });
+  const doc = createFakeDocument();
+  const mount = createMount();
+
+  // A client that delays the FIRST request (partner) longer than the second.
+  let call = 0;
+  const base = clientFor(baseUrl);
+  const slowFirst = {
+    request(path, options) {
+      call += 1;
+      const delay = call === 1 ? 40 : 1;
+      return new Promise((resolve, reject) => {
+        setTimeout(() => base.request(path, options).then(resolve, reject), delay);
+      });
+    },
+  };
+  const admin = createModuleAdmin({ doc, mount, client: slowFirst, navigate: () => {} });
+  // Start partner list (slow), then immediately supplier list (fast).
+  const first = admin.renderList('partner');
+  const second = admin.renderList('supplier');
+  await Promise.all([first, second]);
+  // Supplier was requested last, so it must own the view even though partner
+  // resolved afterwards.
+  assert.ok(mount.textContent.includes('Supplier'), 'newest render must win');
+  assert.equal(mount.textContent.includes('Channel partners'), false, 'stale partner render leaked in');
+});
+
 test('an unsupported schema contract version fails gracefully', async (t) => {
   const doc = createFakeDocument();
   const mount = createMount();
