@@ -62,3 +62,32 @@ Generated files carry a header stating their origin; they are **yours to edit** 
 3. `module create` (dry-run) → confirm the plan matches intent.
 4. `module create --apply` → then `npm run verify` (the generated test runs with the suite).
 5. Add domain rules by editing the generated service — keep audit and events on every mutation; cross-module processes belong in workflows, not in the service.
+
+## From apply to API and SDK (Milestone 3)
+
+After `--apply`, the module is automatically served over HTTP and usable from the SDK — no route or SDK file to write:
+
+```bash
+npm run crm -- module create examples/modules/partner.module.json --apply
+npm run dev            # start the server
+```
+
+```js
+import { AgentCrmClient } from './packages/sdk/src/index.js';
+
+const client = new AgentCrmClient({
+  baseUrl: 'http://localhost:4000',
+  actor: { type: 'agent', id: 'claude-code' },
+});
+
+const schema = await client.schema();          // generatedModules lists partner + fields
+const partners = client.module('partner');     // frozen resource client
+
+await partners.metadata();                     // fields, capabilities, paths
+const created = await partners.create({ name: 'Acme Partners', tier: 'gold', territory: 'Italy' });
+await partners.get(created.id);
+await partners.list({ limit: 50 });
+await partners.update(created.id, { tier: 'platinum' });
+```
+
+Discovery for agents: `GET /api/schema` → `generatedModules[]` carries every field's type/required/unique/enum values plus the canonical paths — no need to read internal database code. See `docs/API.md` for the full contract. The server stays local-development-only until auth/tenancy/roles exist.

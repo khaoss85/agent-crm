@@ -13,7 +13,9 @@ Preferred path — module factory (manifest-driven):
 4. Generate the runnable module (dry-run first, then explicit apply):
    `npm run crm -- module create <manifest.json>` then `--apply`.
    Apply writes service, migration, module definition, tests and registers the
-   module automatically — no manual MIGRATIONS or create-app edits.
+   module automatically — no manual MIGRATIONS or create-app edits. The module
+   is then served at `/api/modules/<name>/…`, discoverable via `GET /api/schema`
+   (`generatedModules`) and usable via `client.module('<name>')` in the SDK.
 5. Edit the generated service to add domain rules; keep validation, actor
    context, audit and events on every mutation. Reference fields are not
    supported by the factory yet — implement cross-module validation by hand

@@ -37,6 +37,13 @@ API + Admin + trace + audit
   npm run crm -- module plan examples/modules/partner.module.json
   npm run crm -- module create examples/modules/partner.module.json --apply
   ```
+- Applied modules are immediately served over HTTP (`/api/modules/partner/…`), discoverable via `GET /api/schema`, and usable from the SDK with no extra code (see `docs/API.md`):
+
+  ```js
+  const partners = new AgentCrmClient({ baseUrl, actor }).module('partner');
+  const created = await partners.create({ name: 'Acme Partners', tier: 'gold' });
+  await partners.update(created.id, { tier: 'platinum' });
+  ```
 - MCP server over stdio with tools and project resources.
 - Codex/Claude repository skills and handover documentation.
 - Automated tests with Node's built-in test runner.
