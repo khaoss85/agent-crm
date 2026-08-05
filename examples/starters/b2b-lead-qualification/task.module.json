@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 1,
+  "name": "task",
+  "description": "A follow-up task linked to a lead.",
+  "table": "tasks",
+  "fields": [
+    { "name": "title", "type": "string", "required": true },
+    { "name": "status", "type": "enum", "values": ["open", "done"] },
+    { "name": "dueAt", "type": "timestamp" },
+    { "name": "leadId", "type": "reference", "references": "leads", "required": true },
+    { "name": "sourceKey", "type": "string", "unique": true }
+  ]
+}

@@ -22,6 +22,7 @@ test('a valid manifest normalizes with defaults and stays frozen', () => {
     required: true,
     unique: false,
     column: 'name',
+    writable: 'public',
   });
   assert.deepEqual(normalized.fields[1].values, ['silver', 'gold', 'platinum']);
   assert.equal(normalized.fields[1].required, false);
@@ -186,6 +187,48 @@ test('validation is idempotent: a normalized manifest re-validates and generates
         fields: [{ name: 'tierLevel', type: 'string', column: 'wrong_column' }],
       }),
     /"column" is derived from the field name \(expected "tier_level"\)/,
+  );
+});
+
+test('structurally unusable managed-field combinations are rejected at validation', () => {
+  const manifest = (field) => ({ name: 'thing', fields: [{ name: 'title', type: 'string', required: true }, field] });
+
+  // managed + required without a default: every create would violate NOT NULL.
+  assert.throws(
+    () => validateModuleManifest(manifest({ name: 'state', type: 'enum', values: ['a', 'b'], writable: 'managed', required: true })),
+    /needs a "default"/,
+  );
+  // With a default it is valid.
+  assert.doesNotThrow(
+    () => validateModuleManifest(manifest({ name: 'state', type: 'enum', values: ['a', 'b'], writable: 'managed', required: true, default: 'a' })),
+  );
+  // managed + unique + default: the second create would always fail.
+  assert.throws(
+    () => validateModuleManifest(manifest({ name: 'slug', type: 'string', writable: 'managed', unique: true, default: 'x' })),
+    /unique: true with a "default"/,
+  );
+  // managed + unique without default is fine (every create inserts NULL).
+  assert.doesNotThrow(
+    () => validateModuleManifest(manifest({ name: 'slug', type: 'string', writable: 'managed', unique: true })),
+  );
+  // default on a public field would silently never apply — rejected.
+  assert.throws(
+    () => validateModuleManifest(manifest({ name: 'tier', type: 'enum', values: ['a', 'b'], default: 'a' })),
+    /requires "writable": "managed"/,
+  );
+  // Unknown writable values and managed references stay rejected.
+  assert.throws(
+    () => validateModuleManifest(manifest({ name: 'state', type: 'string', writable: 'internal' })),
+    /writable must be "public" or "managed"/,
+  );
+  assert.throws(
+    () => validateModuleManifest(manifest({ name: 'ownerId', type: 'reference', references: 'partners', writable: 'managed' })),
+    /reference fields cannot be managed/,
+  );
+  // default on unsupported types stays rejected even when managed.
+  assert.throws(
+    () => validateModuleManifest(manifest({ name: 'at', type: 'timestamp', writable: 'managed', default: '2026-01-01T00:00:00.000Z' })),
+    /only supported on string and enum/,
   );
 });
 

@@ -54,6 +54,17 @@ API + Admin + trace + audit
   ```json
   { "name": "partnerId", "type": "reference", "references": "partners", "required": true }
   ```
+- Code-first **record actions** for lifecycle steps that are more than a field edit: one atomic transaction, domain events released only after commit, an automatic workflow trace, plus a generic HTTP route, SDK method and Admin buttons rendered from metadata (see `docs/ACTIONS.md`, ADR-011/012):
+
+  ```js
+  await client.module('lead').action(leadId, 'qualify', { dueAt: '2026-08-12T09:00:00Z' });
+  ```
+
+  Fields marked `"writable": "managed"` are refused by generic CRUD, so a lifecycle state is reachable only through its action. The runnable example is `examples/starters/b2b-lead-qualification/`:
+
+  ```bash
+  node examples/starters/b2b-lead-qualification/install.mjs
+  ```
 - MCP server over stdio with tools and project resources.
 - Codex/Claude repository skills and handover documentation.
 - Automated tests with Node's built-in test runner.

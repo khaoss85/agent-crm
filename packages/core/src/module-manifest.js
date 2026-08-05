@@ -56,6 +56,8 @@ const TABLE_NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
  *   required: boolean,
  *   unique: boolean,
  *   column: string,
+ *   writable: 'public' | 'managed',
+ *   default?: string,
  *   values?: string[],
  *   references?: string,
  *   onDelete?: string,
@@ -182,7 +184,7 @@ function normalizeField(rawField, index, errors) {
   const label = typeof field.name === 'string' ? `fields[${index}] "${field.name}"` : `fields[${index}]`;
 
   for (const key of Object.keys(field)) {
-    if (!['name', 'type', 'required', 'unique', 'values', 'references', 'onDelete', 'column'].includes(key)) {
+    if (!['name', 'type', 'required', 'unique', 'values', 'references', 'onDelete', 'column', 'writable', 'default'].includes(key)) {
       errors.push(`${label}: unknown property "${key}"`);
     }
   }
@@ -277,6 +279,71 @@ function normalizeField(rawField, index, errors) {
     valid = false;
   }
 
+  // Field write policy (Milestone 6): 'public' (default) or 'managed'. A managed
+  // field can only be set by an action through the service's applyManaged path,
+  // never by public create/update.
+  let writable = 'public';
+  if (field.writable !== undefined) {
+    if (field.writable !== 'public' && field.writable !== 'managed') {
+      errors.push(`${label}: writable must be "public" or "managed"`);
+      valid = false;
+    } else {
+      writable = field.writable;
+    }
+  }
+  if (field.type === 'reference' && writable === 'managed') {
+    errors.push(`${label}: reference fields cannot be managed`);
+    valid = false;
+  }
+
+  // Optional default value, used to initialise the field on create (mainly for
+  // managed fields, e.g. a status enum defaulting to "new").
+  let defaultValue;
+  if (field.default !== undefined) {
+    if (writable !== 'managed') {
+      // The factory only applies defaults to managed fields (public fields
+      // take their value from input); accepting a default here would silently
+      // never apply it, which is worse than rejecting it.
+      errors.push(`${label}: default currently requires "writable": "managed" (public-field defaults are not implemented)`);
+      valid = false;
+    } else if (field.type === 'enum') {
+      if (typeof field.default !== 'string' || !(Array.isArray(field.values) ? field.values : []).includes(field.default)) {
+        errors.push(`${label}: default must be one of the enum values`);
+        valid = false;
+      } else {
+        defaultValue = field.default;
+      }
+    } else if (field.type === 'string') {
+      if (typeof field.default !== 'string') {
+        errors.push(`${label}: default must be a string`);
+        valid = false;
+      } else {
+        defaultValue = field.default;
+      }
+    } else {
+      errors.push(`${label}: default is only supported on string and enum fields`);
+      valid = false;
+    }
+  }
+
+  // Structurally unusable managed combinations are rejected here rather than
+  // generating a module whose every create (or every second create) fails at
+  // the SQL layer.
+  if (writable === 'managed') {
+    if (field.required === true && field.default === undefined) {
+      errors.push(
+        `${label}: a managed field with required: true needs a "default" — public create cannot supply it, so without a default every create would violate NOT NULL`,
+      );
+      valid = false;
+    }
+    if (field.unique === true && field.default !== undefined) {
+      errors.push(
+        `${label}: a managed field cannot combine unique: true with a "default" — every create would insert the same value and the second create would always fail`,
+      );
+      valid = false;
+    }
+  }
+
   if (!valid) return null;
 
   return {
@@ -285,6 +352,8 @@ function normalizeField(rawField, index, errors) {
     required: field.required === true,
     unique: field.unique === true,
     column: toSnakeCase(/** @type {string} */ (field.name)),
+    writable,
+    ...(defaultValue !== undefined ? { default: defaultValue } : {}),
     ...(values ? { values } : {}),
     ...(references ? { references, onDelete } : {}),
   };

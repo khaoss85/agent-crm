@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { AppError, ConflictError } from './errors.js';
 
 /**
  * @typedef {{
@@ -113,7 +114,21 @@ const MIGRATIONS = [
 ];
 
 /**
- * @param {{path?: string, moduleMigrations?: Array<{name: string, sql: string}>}} [options]
+ * True for the SQLite "database is locked / busy" family of errors — another
+ * connection holds the write lock and the busy timeout expired.
+ * @param {unknown} error
+ */
+function isBusyError(error) {
+  if (!(error instanceof Error)) return false;
+  const code = /** @type {any} */ (error).code;
+  return (
+    code === 'ERR_SQLITE_BUSY' ||
+    /database (?:table )?is locked|SQLITE_BUSY/i.test(error.message)
+  );
+}
+
+/**
+ * @param {{path?: string, moduleMigrations?: Array<{name: string, sql: string}>, busyTimeoutMs?: number}} [options]
  * @returns {AgentCrmDatabase}
  */
 export function createDatabase(options = {}) {
@@ -123,7 +138,7 @@ export function createDatabase(options = {}) {
 
   const raw = new DatabaseSync(dbPath);
   raw.exec('PRAGMA foreign_keys = ON;');
-  raw.exec('PRAGMA busy_timeout = 5000;');
+  raw.exec(`PRAGMA busy_timeout = ${Number.isInteger(options.busyTimeoutMs) && /** @type {number} */ (options.busyTimeoutMs) >= 0 ? options.busyTimeoutMs : 5000};`);
   if (dbPath !== ':memory:') raw.exec('PRAGMA journal_mode = WAL;');
 
   raw.exec(`
@@ -202,30 +217,76 @@ export function createDatabase(options = {}) {
     }
   }
 
+  // One outer transaction at a time per connection. SQLite cannot nest BEGIN,
+  // so a nested attempt (an action invoking another action, a workflow inside
+  // an action) must fail with a clear framework error instead of a raw
+  // "cannot start a transaction within a transaction".
+  let inOuterTransaction = false;
+
+  function begin() {
+    if (inOuterTransaction) {
+      throw new AppError(
+        'Nested outer transactions are not supported on one connection: actions and workflows cannot start a transaction inside another. Compose module services inside a single action instead.',
+        { code: 'NESTED_TRANSACTION', status: 500 },
+      );
+    }
+    try {
+      raw.exec('BEGIN IMMEDIATE;');
+    } catch (error) {
+      if (isBusyError(error)) {
+        // Another connection holds the write lock and the busy timeout
+        // expired. Surface a stable retryable conflict, never a raw
+        // SQLITE_BUSY 500.
+        throw new ConflictError('The database is busy with a concurrent write; retry the request', { transient: true });
+      }
+      throw error;
+    }
+    inOuterTransaction = true;
+  }
+
+  /** @param {unknown} primaryError — never masked by a rollback failure */
+  function rollbackSafely(primaryError) {
+    try {
+      raw.exec('ROLLBACK;');
+    } catch (rollbackError) {
+      console.error(
+        `[agent-crm] rollback failed after: ${primaryError instanceof Error ? primaryError.message : String(primaryError)} — rollback error: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+      );
+    }
+  }
+
   return {
     raw,
     path: dbPath,
     close: () => raw.close(),
     transaction: (fn) => {
-      raw.exec('BEGIN IMMEDIATE;');
+      begin();
       try {
         const result = fn();
         raw.exec('COMMIT;');
         return result;
       } catch (error) {
-        raw.exec('ROLLBACK;');
-        throw error;
+        rollbackSafely(error);
+        throw isBusyError(error)
+          ? new ConflictError('The database is busy with a concurrent write; retry the request', { transient: true })
+          : error;
+      } finally {
+        inOuterTransaction = false;
       }
     },
     transactionAsync: async (fn) => {
-      raw.exec('BEGIN IMMEDIATE;');
+      begin();
       try {
         const result = await fn();
         raw.exec('COMMIT;');
         return result;
       } catch (error) {
-        raw.exec('ROLLBACK;');
-        throw error;
+        rollbackSafely(error);
+        throw isBusyError(error)
+          ? new ConflictError('The database is busy with a concurrent write; retry the request', { transient: true })
+          : error;
+      } finally {
+        inOuterTransaction = false;
       }
     },
   };

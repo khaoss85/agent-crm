@@ -23,9 +23,18 @@ Preferred path — module factory (manifest-driven):
    first; the generated service validates the target at runtime via the
    application reference resolver (ADR-010) and the Admin renders a target
    selector. Generated-to-core references are not supported yet.
-6. Edit the generated service to add domain rules; keep validation, actor
+6. For a lifecycle step that is more than a field edit (qualify, close,
+   approve), do **not** hand-roll it in the service: define a record action
+   (`docs/ACTIONS.md`, ADR-011). Mark the fields the action owns
+   `"writable": "managed"` in the manifest so generic CRUD cannot reach that
+   state, and write the managed fields from `execute` via `ctx.managed`. The
+   runtime supplies one atomic transaction, events released only after commit,
+   and an automatic trace; it does not deduplicate, so express idempotency in
+   data (a unique key), as in
+   `examples/starters/b2b-lead-qualification/`.
+7. Edit the generated service to add domain rules; keep validation, actor
    context, audit and events on every mutation.
-7. Run `npm run verify`.
+8. Run `npm run verify`.
 
 Manual path (custom shapes the factory does not cover):
 

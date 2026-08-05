@@ -74,6 +74,26 @@ export class AgentCrmClient {
       update(id, patch) {
         return client.request(`${base}/records/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch });
       },
+      /**
+       * Run a code-first action on a record (ADR-011). `input` must be a plain
+       * object matching the action's declared input schema. Errors preserve the
+       * server's status/code/details (400 bad input, 404 unknown action, 409
+       * invalid transition), so callers can branch on them.
+       *
+       * @param {string} id @param {string} actionName @param {Record<string, unknown>} [input]
+       */
+      action(id, actionName, input = {}) {
+        if (typeof actionName !== 'string' || !actionName.trim()) {
+          throw new Error('action(id, name, input) requires a non-empty action name');
+        }
+        if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+          throw new Error('action(id, name, input) requires input to be a plain object');
+        }
+        return client.request(
+          `${base}/records/${encodeURIComponent(id)}/actions/${encodeURIComponent(actionName.trim())}`,
+          { method: 'POST', body: input },
+        );
+      },
     });
   }
 

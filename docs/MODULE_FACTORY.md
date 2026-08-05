@@ -35,6 +35,7 @@ Generated files carry a header stating their origin; they are **yours to edit** 
 - **Mutations are atomic with their audit record**: the data write and `audit.record` run inside one SAVEPOINT (safe even inside an enclosing workflow transaction); if either fails, neither persists and **no domain event is emitted**. Events fire only after the savepoint is released.
 - `list` accepts only integer limits (anything else falls back to the default 100, capped at 500) and orders by `created_at DESC, id` so pagination is deterministic.
 - `update` changes only the supplied fields; `id`, `createdAt` and `updatedAt` are never client-writable; an empty update is a no-op returning the current record; a missing id raises `NotFoundError`.
+- **Managed fields are never client-writable.** For a field declared `"writable": "managed"`, `create` takes the declared `default` (never input), `update` ignores it, and either one **rejects** it with a field-tied `VALIDATION_ERROR` if it appears in the input. The generated service instead exposes `applyManaged(id, patch, ctx)` — the single privileged path that validates and writes managed fields with audit and event, used by record actions through `ctx.managed` and never routed over HTTP. Passing `null` clears a managed field. See `docs/ACTIONS.md` and ADR-011.
 
 ## How registration works
 
@@ -46,7 +47,7 @@ Generated files carry a header stating their origin; they are **yours to edit** 
 
 ## Field support
 
-`string`, `email`, `integer`, `boolean`, `timestamp`, `enum` (+ `required`/`unique`) generate service validation matching the core modules' idiom. **`reference` fields** (many-to-one to another generated module) are supported since Milestone 5 — see "Reference fields" below and ADR-010. Generated-to-core references remain rejected until an explicit adapter exists.
+`string`, `email`, `integer`, `boolean`, `timestamp`, `enum` (+ `required`/`unique`, and `writable`/`default` for workflow-managed fields) generate service validation matching the core modules' idiom. **`reference` fields** (many-to-one to another generated module) are supported since Milestone 5 — see "Reference fields" below and ADR-010. Generated-to-core references remain rejected until an explicit adapter exists.
 
 ## Safety and determinism
 

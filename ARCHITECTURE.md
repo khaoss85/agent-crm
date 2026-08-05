@@ -52,6 +52,14 @@ Current workflows:
 - `request-opportunity-stage-change`
 - `decide-opportunity-approval`
 
+## Actions
+
+A record action is a lifecycle operation on a single record that is more than a field edit — qualify a lead, close an opportunity. Actions are code-first definitions (`packages/actions/generated/index.js`) exposed through one generic route, SDK method and Admin control rendered from metadata, never per-action generated files and never a declarative DSL.
+
+The action runtime wraps `execute` in the guarantees a hand-rolled service method would not have: all business writes in one outer transaction (generated-service savepoints nest inside it), domain events held in a transaction-scoped outbox and dispatched only after commit, and a workflow trace written after the transaction resolves so a failed action still leaves a record. Fields a workflow owns are declared `writable: "managed"` in the manifest and refused by generic CRUD, so lifecycle state is enforced at the service boundary rather than in the UI.
+
+Use an action for a single-record lifecycle step; use a workflow for a multi-record or multi-step process, or when a human approval gate is involved. See `docs/ACTIONS.md`, ADR-011 and ADR-012.
+
 ## Providers
 
 Providers isolate external systems from business logic. The proof of concept includes a notification provider contract and an in-memory implementation. Email, calendar, ERP and marketing providers belong here later.

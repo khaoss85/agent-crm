@@ -69,10 +69,29 @@ export function fieldControl(field) {
   }
 }
 
-/** @param {{fields?: Array<{name: string}>}} moduleMeta */
+/**
+ * Fields a user may set through create/update. Immutable fields (id, timestamps)
+ * and workflow-managed fields (writable: 'managed', e.g. a lifecycle status set
+ * only by an action) are excluded — the latter are shown read-only and changed
+ * only through actions, never a generic form.
+ *
+ * @param {{fields?: Array<{name: string, writable?: string}>}} moduleMeta
+ */
 export function editableFields(moduleMeta) {
   const fields = Array.isArray(moduleMeta?.fields) ? moduleMeta.fields : [];
-  return fields.filter((field) => !IMMUTABLE_FIELDS.includes(field.name));
+  return fields.filter((field) => !IMMUTABLE_FIELDS.includes(field.name) && field.writable !== 'managed');
+}
+
+/**
+ * Fields that exist but are not user-editable because a workflow action owns
+ * them (writable: 'managed'). Rendered read-only on the detail view so the
+ * lifecycle state is visible without being editable.
+ *
+ * @param {{fields?: Array<{name: string, writable?: string}>}} moduleMeta
+ */
+export function managedFields(moduleMeta) {
+  const fields = Array.isArray(moduleMeta?.fields) ? moduleMeta.fields : [];
+  return fields.filter((field) => !IMMUTABLE_FIELDS.includes(field.name) && field.writable === 'managed');
 }
 
 /**
