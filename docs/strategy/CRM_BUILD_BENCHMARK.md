@@ -130,6 +130,66 @@ brief → generated project → tests → managed deployment → public CRM logi
 
 Honest status: the benchmark runner is designed but **not yet automated**; local end-to-end tests already exist in-repo (verify, smoke, starters, real-Chromium checks); **public managed-deployment gates belong after the Production Spine (roadmap Phase 6) and Cloud implementation** and must not be scored or published before. Self-hosted Docker/VPS remains a permanent comparison target.
 
+## Future end-to-end scenarios (planned, not implemented)
+
+Two composite scenarios extend the benchmark once the workstream milestones exist (`EXECUTION_ROADMAP.md` M9–M15; strategy in `REVENUE_OPERATIONS.md`, `DELIVERY_SERVICE.md`, `ANALYTICS_STUDIO.md`). **Status: planned.** They are not part of the current 22-prompt set, must not be scored or published before their primitives are implemented, and any gate involving real external users (partner/customer access, role-aware dashboards) is additionally gated by the Production Spine (Phase 6). The 22 existing prompts are unchanged.
+
+### E2E-R1 — Revenue Operations end to end (planned)
+
+```text
+Landing page → Lead → enrichment → explainable scoring → versioned routing
+→ sales assignment (language/country/capacity) → authorized manual override
+→ qualification and conversion → Quote from synced catalog → discount approval
+→ signature → Order → dashboard → rollback proof
+```
+
+Executable gates (all-or-nothing, each with scripted evidence):
+
+| Gate | Evidence required |
+|---|---|
+| R1-G1 Enrichment snapshot | snapshot exists with raw source refs, normalized fields, provider identity, retrieval time, expiry |
+| R1-G2 Reproducible score | replaying the recorded model version + inputs reproduces the score; per-rule contributions sum to it |
+| R1-G3 Routing result + trace | RoutingRun records policy identity, version, inputs, rule matches, result, actor, timestamp |
+| R1-G4 Authorized override | permitted manager reassignment succeeds with reason + history; unauthorized actor rejected at the service boundary |
+| R1-G5 Correct Quote pricing | quote lines match price-book entries; totals deterministic, per currency, integer minor units |
+| R1-G6 Discount approval | over-policy discount blocked until a human decision; agent-actor probe rejected; no PATCH bypass |
+| R1-G7 Verified signature | unverified webhook mutates nothing; verified completion creates the immutable SignedArtifact |
+| R1-G8 Order snapshot | Order preserves the signed commercial snapshot after a subsequent catalog change |
+| R1-G9 Dashboard | metrics render from tested MetricDefinitions; no free-form SQL surface reachable |
+| R1-G10 Rollback proof | policy rolled back by publishing a prior version; historical runs still reference the versions that produced them |
+| R1-G11 Audit/trace | every mutation in the chain carries actor, audit and trace, inspectable end to end |
+
+Failure criteria: any silent decision (a score without contributions, a route without a recorded version), any approval bypass, any mutated snapshot, any raw-SQL surface, any unverified webhook effect — each fails its gate outright; a failed gate fails the scenario.
+
+### E2E-D1 — Delivery & Service end to end (planned)
+
+A signed SaaS Order including migration, training and premium support; a third-party partner performs the migration.
+
+```text
+signed Order → Commessa → milestones and work packages
+→ third-party partner assignment → access verification
+→ cost and revenue-share tracking → Change Request → customer acceptance
+→ billing milestone → Service Contract → SLA support case
+```
+
+Executable gates:
+
+| Gate | Evidence required |
+|---|---|
+| D1-G1 Immutable order scope | project scope copied from the Order; later quote/catalog edits leave it byte-identical |
+| D1-G2 Project creation | idempotent handover: one Commessa, milestones and work packages from order lines; double handover is a stable visible conflict |
+| D1-G3 Partner engagement | engagement records role, scope, responsibilities, cost, revenue share, SLA, access scope, dates |
+| D1-G4 Access boundary | partner actor reaches only assigned work; out-of-scope reads/writes rejected at the service boundary (real-user enforcement scored only post-Spine; pre-Spine runs may verify declared-actor boundaries and must say so) |
+| D1-G5 Milestone/deliverable flow | milestones progress with audit; deliverables completable only through the governed flow |
+| D1-G6 Budget vs actual margin | time/cost entries roll up to deterministic margin (integer minor units) matching a fixture |
+| D1-G7 Change versioning | Change Request → impact → human approval → new scope version; prior scope preserved |
+| D1-G8 Customer sign-off | acceptance recorded with actor and notes; rejection blocks milestone close |
+| D1-G9 Billing eligibility | billing milestone unlocks only from accepted milestones; CRUD cannot set it |
+| D1-G10 Service activation | ServiceContract + Entitlements + SLA active post go-live |
+| D1-G11 SLA case handling | support case against the SLA: deterministic targets, escalation path, human decision points, full audit/trace |
+
+Failure criteria: mutable order scope, duplicate projects, partner access beyond scope, float money math, acceptance or billing reachable through CRUD, silent approvals, or missing audit/trace on any step — each fails its gate; a failed gate fails the scenario.
+
 ## Manual-intervention count
 
 Logged per run by the operator from the transcript:
