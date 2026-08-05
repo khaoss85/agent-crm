@@ -21,6 +21,7 @@ AGENTS.md + Skills + MCP + CLI
 | Discount rule | Commercial approval rule | “Discounts above 15% require VP approval.” | Explicit workflow policy, approval and audit |
 | Checkout funnel analysis | Lead-to-won funnel analysis | “Find where enterprise deals stall.” | Agent reads CRM data and traces, then proposes or implements instrumentation |
 | Abandoned-cart nurturing | Stalled-deal follow-up | “After seven inactive days create a task and draft an email.” | Delayed workflow through Task and Email providers |
+| Product lifecycle transition | Lead qualification | “Qualifying a lead must open the first follow-up task, and disqualifying must record a reason.” | Code-first action: one atomic transaction, events after commit, trace and audit — validated end to end (Milestone 6) |
 | Deploy/debug via CLI | Operate CRM via CLI | “The sync failed; inspect the trace, fix it and verify.” | CLI/MCP exposes logs, runs and diagnostics to the coding agent |
 
 ## Principal JTBD

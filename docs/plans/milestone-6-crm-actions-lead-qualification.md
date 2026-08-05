@@ -96,9 +96,29 @@ Generic action controls on the record detail from `actions` metadata: a button p
 - [x] Server route + SDK method + schema `actions`.
 - [x] Admin generic action controls.
 - [x] Lead Qualification starter + install/verify script.
-- [x] Tests (unit + e2e: atomicity, repeat, concurrent, disqualify, CRUD-bypass, restart) + real-Chromium smoke.
+- [x] Tests (unit + e2e: atomicity, repeat, concurrent, disqualify, CRUD-bypass, restart).
 - [x] Docs (actions, starter, API, SDK, Admin, JTBD) + ADR-011/012.
 - [x] `npm run verify` + `npm run smoke` green.
+
+## Discovered during implementation
+
+**A pre-existing HTTP bug, fixed here.** The response dispatcher read
+`result?.status ?? 200` and `result?.body ?? result`, so a handler returning a
+domain object that carries a `status` field had that value used as the HTTP
+status code. It was unreachable only because no generated module had yet used a
+field named `status`; the Lead module (`new|qualified|disqualified`) made
+`GET /api/modules/lead/records/:id` fail with `Invalid status code: qualified`.
+Handlers now return either a bare payload (served as 200) or an envelope tagged
+with a module-private `Symbol` via `respond(status, body)`, so no domain object
+can be mistaken for an envelope whatever its field names. Note this also made
+the workflow-run routes safer: a run object carries `status: 'completed'` and
+was previously safe only because it happened to be wrapped by hand.
+
+**Concurrency, as measured rather than assumed.** Two concurrent qualifies
+resolve to exactly one success and one `409`, with exactly one Task — the outer
+`BEGIN IMMEDIATE` serializes the writers and the loser then fails its
+`fromStates` check. The unique `sourceKey` is retained as defense in depth
+rather than as the primary mechanism.
 
 ## Explicitly deferred
 

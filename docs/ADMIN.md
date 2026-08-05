@@ -60,3 +60,13 @@ Admin mutations send `x-actor-type: user`, `x-actor-id: admin-ui`. In this frame
 ## Reference fields (Milestone 5)
 
 A `reference` field renders as an accessible target selector: options are loaded via the target module's `list` (safe limit 100) and labelled by its display field; the submitted value is the target id. Required references have a non-selectable placeholder; optional ones a "None" option (submits `null`). On edit the current target is preselected, and if it is not on the first page it is fetched by id so the value is never silently lost. List/detail views show the resolved label (deduplicated per distinct target, one fetch per id, raw-id fallback). Labels render as text. Large target sets will need a searchable control in a later milestone.
+
+## Record actions (Milestone 6)
+
+When a generated module declares actions (`generatedModules[].actions`), the record detail renders an **Actions** panel below the edit form, built entirely from that metadata — there is no per-module page and the customization seam above is untouched.
+
+- One button per action whose `fromStates` includes the record's current state (read from the action's `stateField`, default `status`). When none applies, the panel says so rather than showing dead buttons.
+- An action that declares `input` reveals a small form built from its input schema — text for `string`, a `select` for `enum`, and text with an ISO-8601 hint for `timestamp`. Required fields are checked client-side for a fast message; the server stays authoritative.
+- Submitting posts to the action route and, on success, re-renders the detail, so the new state and the newly valid actions appear together. Failures restore the button and show the server's message, mapped to the offending field when the error names one (a `409 INVALID_STATE` shows as a panel-level message).
+- Fields marked `writable: "managed"` are **not** rendered as editable inputs — the edit form omits them — and are shown read-only in the Actions panel instead. The enforcement itself is at the service boundary, not here (see `docs/ACTIONS.md`).
+- Every label, description, value and error is inserted with `textContent`, never `innerHTML`, so hostile action metadata is inert text like all other schema-derived content.

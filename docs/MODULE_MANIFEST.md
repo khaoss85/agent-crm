@@ -44,6 +44,8 @@ Unknown properties are rejected so typos fail loudly.
 | `values` | enum only | Non-empty array of unique strings; generates a `CHECK(col IN (...))`. |
 | `references` | reference only | Target **table** name (example: `"companies"`); generates `REFERENCES <table>(id)` and an index on the column. |
 | `onDelete` | reference only | `restrict` (default), `cascade` or `set_null`. `set_null` conflicts with `required: true`. |
+| `writable` | no | `public` (default) or `managed`. A `managed` field is owned by a workflow action: public create/update reject it and it is written only through the service's `applyManaged`. Not allowed on `reference` fields. See `docs/ACTIONS.md`. |
+| `default` | no | Value a `managed` field takes on create. Allowed on `string`/`enum` only; for an `enum` it must be one of `values`. |
 
 ### Explicit conventions (no hidden magic)
 

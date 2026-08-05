@@ -18,6 +18,7 @@ Base URL: `http://localhost:4000`
 | POST | `/api/modules/:module/records` | Create a record (201) through the generated service |
 | GET | `/api/modules/:module/records/:id` | Get a record |
 | PATCH | `/api/modules/:module/records/:id` | Update supplied fields |
+| POST | `/api/modules/:module/records/:id/actions/:action` | Run a code-first record action (ADR-011) |
 | GET | `/api/traces` | List workflow runs |
 | GET | `/api/traces/:id` | Run with step spans |
 | GET | `/api/audit` | List audit events |
@@ -71,6 +72,21 @@ Actor identity comes from the `x-actor-type` / `x-actor-id` headers and reaches 
 ### Accepted `limit` syntax (generated-module surface)
 
 A single base-10 positive integer between 1 and 500. No sign, exponent, hex, whitespace, leading-zero coercion, or repeated `limit` parameter — any of these returns 400. Core endpoints keep their historical lenient parsing; the generated service itself caps and floors the limit as a final boundary.
+
+### Record actions (Milestone 6)
+
+`generatedModules[].actions` lists the code-first actions available on a module: `{name, label, description, actionContract, input, fromStates, stateField, confirm, path}`. It is an **additive** extension of `generatedResourceContract: 1` — an older client ignores it — and never exposes action source.
+
+`POST /api/modules/:module/records/:id/actions/:action` runs one. The body must be a JSON object matching the action's declared `input`; an omitted body means no input. The route resolves the module and delegates to the action runtime — it performs no direct database write. Responses:
+
+| Status | Code | When |
+| --- | --- | --- |
+| `200` | — | `{ok, module, action, recordId, runId, result}` |
+| `400` | `VALIDATION_ERROR` | Bad/missing input, or a non-object body. `details.field` names the field. |
+| `404` | `NOT_FOUND` | Unknown module, action or record. |
+| `409` | `INVALID_STATE` | The record's state is not in the action's `fromStates`. |
+
+Errors carry `details.workflowRunId` so a failed attempt's trace is retrievable from `GET /api/traces/:id`. Fields whose metadata says `writable: "managed"` are rejected by `POST`/`PATCH` on the record routes with a `400` — a workflow state can never be reached through generic CRUD. See `docs/ACTIONS.md`.
 
 ### Reference field metadata (Milestone 5)
 
