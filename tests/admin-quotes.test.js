@@ -208,10 +208,13 @@ test('pending approval shows human decision controls; approved and rejected show
 
   const approved = createMount();
   await createQuoteView({ doc: createFakeDocument(), mount: approved, client: stubClient({ quoteRecord: quote({ status: 'approved', currentVersionId: 'v1' }) }) }).renderQuoteDetail('q1');
-  assert.ok(approved.textContent.includes('read-only'), 'approved quotes are read-only');
+  assert.ok(approved.textContent.includes('read-only'), 'the commercial content of an approved quote is read-only');
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-add-line').length, 0);
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-decide').length, 0);
-  assert.ok(!approved.textContent.toLowerCase().includes('signature'), 'no signature UI in M10');
+  // The commercial view never invents a signature surface on its own: without
+  // the ADR-017 schema block it degrades to a statement, not a control.
+  assert.ok(approved.textContent.includes('Signature is not enabled in this project.'));
+  assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'signature-request').length, 0);
 });
 
 test('version history lists immutable versions with their policy decision', async () => {
