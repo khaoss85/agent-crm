@@ -202,6 +202,34 @@ state, built entirely from the schema's `actions` metadata — there is no
 per-module page. Actions with input reveal a small form; on success the detail
 re-renders so the new state and the newly valid actions appear together.
 
+## Pipelines and `move-stage` (ADR-014)
+
+A **pipeline** is a checked-in, validated stage sequence for one module
+(`packages/pipelines/generated/index.js`; see `DECISIONS.md` ADR-014 for the
+contract). The framework ships a generic `buildMoveStageAction({ module })`
+factory; registering it (as the starter does for `opportunity`) enables:
+
+```js
+await client.module('opportunity').action(id, 'move-stage', {
+  toStage: 'proposal',
+  fromStage: 'demo',   // optional optimistic check → 409 STALE_STAGE on mismatch
+  reason: '…',         // required when the target stage type is 'lost'
+});
+```
+
+Rules: open→open/won/lost only; same-stage → `409 SAME_STAGE`; terminal
+stages refuse (`409 TERMINAL_STAGE`, no reopen); corrupt state refuses
+(`409 PIPELINE_STATE_CORRUPT`); no pipeline installed → `409 NO_PIPELINE`.
+Pipeline state lives in server-managed Opportunity fields (`pipelineKey`,
+`pipelineStage`, `stageEnteredAt`, `closedAt`, `closeReason`) that CRUD
+rejects, and `lead.convert` places new Opportunities in the pipeline's
+declared default stage atomically (legacy null state when none is installed).
+
+**Actions on core modules** are possible only for modules the application
+explicitly declares action-eligible AND that have registered actions —
+`opportunity` today. Core CRUD stays on its dedicated routes; ctx gains
+`pipelines` (read-only registry view) for pipeline-aware actions.
+
 ## Worked example
 
 `examples/starters/b2b-lead-qualification/` is a complete, runnable example:

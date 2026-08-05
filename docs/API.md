@@ -89,6 +89,10 @@ A single base-10 positive integer between 1 and 500. No sign, exponent, hex, whi
 
 Errors carry `details.workflowRunId` so a failed attempt's trace is retrievable from `GET /api/traces/:id`. Fields whose metadata says `writable: "managed"` are rejected by `POST`/`PATCH` on the record routes with a `400` — a workflow state can never be reached through generic CRUD. See `docs/ACTIONS.md`.
 
+### Pipelines (Milestone 8)
+
+`GET /api/schema` additionally returns `pipelineContract: 1`, `pipelines` (ordered, function-free stage metadata incl. `type` and `probability` — display metadata, not forecasting) and `coreModuleActions` (actions registered on explicitly action-eligible core modules, e.g. `opportunity`'s `move-stage`). All additive — older clients ignore them. The action route also serves those explicitly eligible core modules; core CRUD remains on its dedicated endpoints and the generic records routes still never serve core modules. Opportunity responses expose the server-managed `pipelineKey`, `pipelineStage`, `stageEnteredAt`, `closedAt`, `closeReason`; sending any of them to `POST /api/opportunities` is a field-tied 400. `move-stage` failures use stable codes: `STALE_STAGE`, `SAME_STAGE`, `TERMINAL_STAGE`, `NO_PIPELINE`, `PIPELINE_STATE_CORRUPT` (all 409) plus the standard 400/404.
+
 ### Reference field metadata (Milestone 5)
 
 A `reference` field in `generatedModules[].fields` carries: `type:"reference"`, `references` (target table), `targetModule` (name), `targetKey:"id"`, `targetDisplayField`, `targetKind:"generated"`, plus `required`/`unique`. This is an additive extension of `generatedResourceContract: 1`. A reference value crosses the API as the target record's id string; a missing target is a 400 `VALIDATION_ERROR` with `details.field`. No nested resources and no automatic target expansion.

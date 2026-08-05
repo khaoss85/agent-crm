@@ -49,13 +49,14 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 ## JTBD-03 — Manage a deal through pipeline stages
 - **Actor**: sales rep.
 - **Trigger**: deal progresses.
-- **Desired outcome**: move a deal across stages with policy enforced at transitions.
-- **Primitives**: opportunity, stage enum, stage-change workflow.
-- **Framework capabilities**: workflow, policy, trace.
-- **Acceptance scenario**: move an opportunity to Proposal; policy evaluates; trace recorded.
-- **Status**: **validated end to end** for the built-in opportunity object; **partially supported** for generated modules (no generated stage workflow/UI).
-- **Evidence**: `tests/workflow.test.js`.
-- **Manual interventions**: custom-object pipelines need a handwritten workflow.
+- **Desired outcome**: move an Opportunity through a configurable sequence of stages to a terminal outcome, with server-enforced transitions.
+- **Primitives**: code-first pipeline definition (ADR-014), server-managed pipeline state, generic `move-stage` action, optimistic `fromStage`, audit/events/trace, Admin board.
+- **Framework capabilities**: pipeline registry → schema metadata → generic action route/SDK → board rendered from metadata.
+- **Acceptance scenario**: a converted Opportunity enters the declared default stage; it moves through open stages and is marked won or lost (lost requires a reason); terminal stages refuse further moves; a stale `fromStage` and concurrent conflicting moves yield stable 409s with exactly one transition; state survives restart; CRUD cannot write pipeline fields; the board shows deterministic columns, counts and per-currency totals.
+- **Status**: **validated end to end** (Milestone 8) for code-first pipelines on the built-in Opportunity module. The legacy fixed stage enum remains what the renewal-approval policy runs on (unchanged evidence: `tests/workflow.test.js`).
+- **Evidence**: `tests/opportunity-pipeline-e2e.test.js` (default stage at conversion, transition rules incl. stale/same/terminal/corrupt/no-pipeline, same-app and cross-connection concurrency, restart, CRUD/HTTP bypass matrix, a second differently-shaped pipeline fixture), `tests/pipeline-contract.test.js`, `tests/admin-pipeline.test.js` (board order/counts/per-currency totals/XSS/move posting), `examples/starters/b2b-lead-qualification/install.mjs` (capture → qualify → convert → Discovery → … → Won/Lost); manual real-Chromium smoke (`docs/ADMIN_SMOKE.md`).
+- **Manual interventions**: pipeline definitions are **code-first, generated and maintained by coding agents** in this milestone — there is no runtime pipeline editor for business admins. Custom-object (generated-module) pipelines are contract-ready but not yet proven end to end.
+- **Scope note**: deliberately NOT validated: forecasting or weighted-value accuracy (probabilities are display metadata), quotas, runtime pipeline configuration by non-technical admins, saved views, filters/search, stage-duration analytics, approval-before-Won, general reporting.
 
 ## JTBD-04 — Capture a lead
 - **Actor**: marketing/inbound.
@@ -134,7 +135,7 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 
 ## Summary
 
-- **Validated end to end**: JTBD-01 (custom business object), JTBD-01b (generated-to-generated reference), JTBD-02 (renewal approval, built-in object), JTBD-04 (capture a lead, starter model), JTBD-05 (qualify/disqualify a lead, starter actions), JTBD-05b (convert a qualified lead into Company/Contact/Opportunity, starter action).
+- **Validated end to end**: JTBD-01 (custom business object), JTBD-01b (generated-to-generated reference), JTBD-02 (renewal approval, built-in object), JTBD-03 (opportunity through configurable pipeline stages, code-first), JTBD-04 (capture a lead, starter model), JTBD-05 (qualify/disqualify a lead, starter actions), JTBD-05b (convert a qualified lead into Company/Contact/Opportunity, starter action).
 - Deliberately **not** marked validated: pipeline for custom objects, a general task engine/scheduling (only the first follow-up Task inside qualification is proven — JTBD-07 stays partial), onboarding, churn/upsell, reporting, integrations, permissions. Primitives for some exist, but no end-to-end proof does.
 
 This matrix guides roadmap prioritization: the largest gaps blocking common CRM adoption are a reusable Activity/Task engine with scheduling (JTBD-07), generated workflows/approvals for custom objects (JTBD-06), and the auth/tenancy/RBAC prerequisite (JTBD-15).
