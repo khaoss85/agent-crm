@@ -75,6 +75,10 @@ Marketing & Growth         (funnel insight, campaign proposal, journeys, experim
 
 Every workstream follows the same delivery model — native deterministic primitives + provider contracts + code-first versioned policies + Agent Skills + starter + JTBD evidence + reproducible E2E benchmark. **M9–M11 are merged; M12 onward is not implemented.**
 
+### The experience that reaches all of them
+
+The pillars are *what* the framework can do. The **objective-driven agent experience** is *how a user gets there*: they supply a business objective and its constraints, and the agent discovers installed packages and capabilities, analyses the gap, chooses or creates packages, proposes a reviewable plan, builds checked-in source, verifies it, and asks only for sensitive approvals. It is cross-cutting — the AX0–AX5 track in `EXECUTION_ROADMAP.md` — not a thirteenth pillar. AX0 is a strategy and a Skill; **AX1–AX5 are not implemented**. See `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`.
+
 ### The twelve pillars
 
 The complete vision, deliberately **modular**: these are optional domain packages and parallel tracks (ADR-018, and the public package contract in addenda 3–4), not one monolith that must ship whole before anything is useful. A project can take the framework and Lead Intelligence and nothing else; a Cloud release can serve an M11-era CRM.

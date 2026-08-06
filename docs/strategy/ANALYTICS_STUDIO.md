@@ -69,3 +69,9 @@ JTBD tracking: `docs/benchmarks/CRM_JTBD_MATRIX.md` (Analytics section — every
 Funnel definitions, drop insights, campaign results and every attribution model compile from **semantic metrics and dimensions** through the safe query compiler defined here. **No arbitrary agent-generated production SQL** — an agent composes declared metrics; the studio compiles them. That boundary is not a preference for the Marketing track, it is the condition of it existing at all.
 
 MK7 additionally needs an identity and touchpoint model that does not exist today; multi-touch attribution without one is arithmetic on guesses. See `EXPERIMENTATION_ATTRIBUTION.md` §4.
+
+## The objective-driven case depends on this
+
+The canonical objective-driven prompt — "track and optimize the Lead → Won funnel by acquisition channel" — bottoms out here. Funnel definitions, drop insights and every attribution model compile from **semantic metrics and dimensions** through the safe query compiler defined in this document. **No arbitrary agent-generated production SQL**, whether the agent is answering a technical request or a business goal.
+
+Until this exists, gates 6, 10 and 11 of benchmark E2E-G1 cannot pass, and an agent must say so rather than approximate them. See `OBJECTIVE_DRIVEN_FUNNEL_EXAMPLE.md`.

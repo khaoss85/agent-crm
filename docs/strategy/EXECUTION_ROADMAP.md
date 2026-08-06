@@ -213,6 +213,53 @@ MK7  Attribution and Closed-loop Optimization      hard-blocked on ANALYTICS_STU
 
 ---
 
+
+## Agent Experience track (AX0–AX5)
+
+Cross-cutting, and **not** a pillar of its own: it is how a user reaches every other pillar. It does not renumber or delay the M-lane or the Marketing MK track. Design: `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`. **Nothing in AX1–AX5 is implemented.**
+
+```text
+AX0  Goal-to-Solution strategy + Skill
+AX1  Application capability inspection            crm app inspect --json
+AX2  Machine-readable Solution Plan
+AX3  Objective-driven local build benchmark       E2E-G1
+AX4  Objective-driven deploy / observe / fix through Cloud
+AX5  Closed-loop optimization with Marketing + Analytics
+```
+
+### AX0 — Goal-to-Solution strategy and Skill
+
+- **Outcome:** the objective-driven experience is defined, and an agent has a disciplined workflow it can follow today — including where capabilities are missing.
+- **Deliverables:** the strategy document, the worked full-funnel example, the mirrored `solve-business-goal` Skill, the E2E-G1 benchmark gates.
+- **Acceptance:** the Skill never instructs an agent to claim an unimplemented capability; documentation only.
+
+### AX1 — Application capability inspection
+
+- **Outcome:** one deterministic document answering "what is installed, what does it provide, what is missing" — instead of an agent assembling five surfaces by hand.
+- **Deliverables:** `crm app inspect --json`: installed package graph with versions, resolved capability graph, unsatisfiable dependencies, configured providers, schema contracts, Quality-Gate and JTBD status. Function-free, deterministic, no absolute paths.
+- **Dependencies:** the package contract (merged).
+
+### AX2 — Machine-readable Solution Plan
+
+- **Outcome:** a plan a human reviews and an agent executes against, rather than a chat transcript.
+- **Deliverables:** the versioned plan contract, its fingerprint, a prose companion renderer, and stale-plan refusal.
+- **Dependencies:** AX1 for the inputs.
+
+### AX3 — Objective-driven local build benchmark
+
+- **Outcome:** E2E-G1 runs end to end for the capabilities that exist, and reports the rest honestly.
+- **Dependencies:** package authoring (merged) and a benchmark runner.
+
+### AX4 — Objective-driven deploy, observe and fix through Cloud
+
+- **Dependencies:** the Production Spine and Agent CRM Cloud. Hard.
+
+### AX5 — Closed-loop optimization
+
+- **Dependencies:** Marketing (MK), Analytics Studio, Data Governance and Durable Automation. Hard.
+
+---
+
 ## Parallel platform track
 
 The product milestones above are one lane. These run **alongside** them and are not gated by domain progress. Each is design-only today unless `docs/PROJECT_STATUS.md` says otherwise.
@@ -243,6 +290,7 @@ Dependencies and what can genuinely run in parallel:
 | Design-to-CRM | the generated Admin (done) | everything | the North Star "design reference → working CRM" claim |
 | Agent CRM Cloud | the Production Spine | product milestones | managed deployment; nothing else |
 | Marketing & Growth (MK0–MK7) | Data Governance from MK2; Jobs/outbox for MK4; Analytics Studio for MK7 | the M-lane, end to end | demand creation, closed-loop ROI — none of it gates the M-lane |
+| Agent Experience (AX0–AX5) | AX1 on capability inspection; AX2 on AX1; AX4 on the Production Spine and Cloud; AX5 on Marketing + Analytics | every other track | how a user reaches the platform at all — it gates nothing, and nothing gates AX0 |
 
 Two consequences worth stating plainly: **a Cloud release serving an M11-era CRM is legitimate** — Cloud waits for the Spine, not for Analytics; and **Jobs/outbox is on the critical path for more JTBDs than any single domain milestone**, because renewal, SLA, reminders and unattended follow-up all reduce to "do something later, durably".
 

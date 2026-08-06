@@ -68,3 +68,9 @@ Covered above under ChatGPT — one submission (verified developer + Docs MCP + 
 - That any listing makes Claude, ChatGPT or Codex recommend us globally — (a) is earned prevalence plus task-time retrieval, measured by URR monthly, with the protocol public.
 - That llms.txt or GEO tactics influence model weights — they help retrieval, not training.
 - Unverified numbers from this research (skills.sh scale figures, agents.md adoption counts, "fewer bugs with AGENTS.md" claims — the last has no primary source and is excluded entirely).
+
+## Layer (c) at its most demanding
+
+Layer (c) — how well agents build with the framework once installed — is measured most honestly by the objective-driven case: the user gives a goal, not an architecture. That is what `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md` defines and what benchmark **E2E-G1** scores, with `Manual Architecture Decisions Required = 0` as its target.
+
+It raises a discovery requirement of its own: an agent can only reuse what it can *see*. `crm package inspect` and `/api/schema` expose per-package facts today; a single application-level view (`crm app inspect`, **AX1, not implemented**) is what would let an agent answer "what is installed and what is missing" in one read rather than five.
