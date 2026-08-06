@@ -1,0 +1,137 @@
+{
+  "manifestVersion": 1,
+  "name": "delivery-handover-run",
+  "description": "The audited handover of one activated contract to delivery (M13): who handed it over, when, from which contract and activation, under which policy version and fingerprint, every per-obligation decision and override, and the records it created. Immutable evidence, written only by the delivery package.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "contractId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "orderId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "activationId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "obligationCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "internalCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "partnerCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "overrideCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "milestoneCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "obligationIdsJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "decisionsJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "targetStartDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "targetEndDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "datesSource",
+      "type": "enum",
+      "values": [
+        "post-sale-delivery-planning"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "partnerRef",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "deliveryProjectId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "partnerEngagementId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "handedOverCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "completed"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "handedOverBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "handedOverAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

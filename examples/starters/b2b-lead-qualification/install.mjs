@@ -97,6 +97,20 @@ try {
   ]) {
     applyModule(root, join(root, 'packages', 'contracts', 'modules', manifest));
   }
+  // Milestone 13 records live in the OPTIONAL delivery domain package, which
+  // depends on the contracts package through a declared capability.
+  for (const manifest of [
+    'delivery-handover-run.module.json',
+    'delivery-project.module.json',
+    'delivery-work-package.module.json',
+    'delivery-milestone.module.json',
+    'delivery-partner-engagement.module.json',
+  ]) {
+    applyModule(root, join(root, 'packages', 'delivery', 'modules', manifest));
+  }
+  // …and one CUSTOMER-AUTHORED package, to prove the authoring path works
+  // without a kernel change (docs/PACKAGE_AUTHORING.md).
+  applyModule(root, join(root, 'examples', 'custom-packages', 'partner-scorecard', 'modules', 'partner-scorecard.module.json'));
 
   // 3. Register the code-first actions by pointing the action registry at the
   //    starter's checked-in definitions.
@@ -152,10 +166,17 @@ try {
     [
       '// @ts-check',
       "import { createContractsDomain } from '../../contracts/src/index.js';",
+      "import { createDeliveryPackage } from '../../delivery/src/index.js';",
+      "import { createPartnerScorecardPackage } from '../../../examples/custom-packages/partner-scorecard/src/index.js';",
       "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
+      "import { b2bDeliveryHandoverV1 } from '../../../examples/starters/b2b-lead-qualification/delivery.js';",
       '',
+      '// The composition file is the ONLY place a project names its packages.',
+      '// Deleting a line removes that package; nothing in the kernel changes.',
       'export const generatedDomains = [',
       '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
+      '  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1] }),',
+      '  createPartnerScorecardPackage(),',
       '];',
       '',
     ].join('\n'),
@@ -423,6 +444,10 @@ try {
     // subscription, delivery or service obligation. That decision is recorded
     // rather than assumed (Milestone 12).
     const apiAddon = offerOf('fixture:offer:api-monthly');
+    // The setup offer carries a one-time setup fee (delivered internally) and
+    // per-record data migration (delivered by a partner): the mix Milestone 13
+    // hands over.
+    const setupOffer = offerOf('fixture:offer:setup');
     assert.equal(metered.quoteEligible, false);
     assert.match(metered.unsupportedReason, /metered usage/);
 
@@ -442,6 +467,7 @@ try {
     await runQuote(quoteId, 'add-line', { offerId: storage.id, quantity: 250 });
     await runQuote(quoteId, 'add-line', { offerId: support.id, quantity: 1, discountBps: 500 });
     await runQuote(quoteId, 'add-line', { offerId: apiAddon.id, quantity: 10 });
+    await runQuote(quoteId, 'add-line', { offerId: setupOffer.id, quantity: 200 });
 
     const mixed = app.modules.get('quote').service.get(quoteId);
     const mixedTotals = JSON.parse(mixed.totalsJson);
@@ -450,8 +476,10 @@ try {
     // Monthly = platform 2,000.00 + seats 1,200.00 + graduated storage
     // (100×2.00 + 150×1.50 = 425.00) + API 10×9.00 = 3,715.00
     assert.equal(monthly.netAmountCents, 200_000 + 120_000 + 42_500 + 9_000);
+    // One-time = enterprise setup 5,000.00 + setup fee 5,000.00 + migration
+    // 200×0.25 = 10,050.00
+    assert.equal(mixedTotals.oneTimeTotal.netAmountCents, 500_000 + 500_000 + 5_000);
     assert.equal(annual.netAmountCents, 1_000_000 - 50_000, 'annual support discounted 5%');
-    assert.equal(mixedTotals.oneTimeTotal.netAmountCents, 500_000);
     assert.equal(mixedTotals.recurringTotals.length, 2, 'monthly and annual stay separate — no grand total');
 
     const submitted = await runQuote(quoteId, 'submit', { policy: 'standard-sales-discount', version: 1 });
@@ -460,7 +488,7 @@ try {
     const versionTotals = app.modules.get('quote-version-total').service.listWhere({ versionId: submitted.result.version.id });
     assert.equal(versionTotals.length, 3, 'one one-time group + monthly + annual');
     const versionComponents = app.modules.get('quote-version-component').service.listWhere({ versionId: submitted.result.version.id });
-    assert.equal(versionComponents.length, 6, 'every component of every line is evidenced');
+    assert.equal(versionComponents.length, 8, 'every component of every line is evidenced');
     const seatEvidence = versionComponents.find((component) => component.pricingModel === 'volume');
     assert.ok(JSON.parse(seatEvidence.tiersJson).length >= 3, 'the tier schedule is snapshotted');
     assert.ok(JSON.parse(seatEvidence.tierBreakdownJson).length >= 1, 'the tier breakdown is snapshotted');
@@ -630,6 +658,9 @@ try {
       termsReason: 'renewal window agreed with the customer after signature',
     };
     const POLICY = { policy: 'b2b-saas-order-activation', policyVersion: 1 };
+    // The delivery partner is a business reference and a name snapshot: this
+    // milestone grants a partner no account, no portal and no permission.
+    const PARTNER = { partnerRef: 'partner:abc-consulting', partnerName: 'ABC Consulting', reason: 'they run our data migrations' };
     const runOrder = (action, input, orderActor = actor) =>
       app.runAction({ module: 'order', action, recordId: order.id, input, actor: orderActor });
 
@@ -639,7 +670,7 @@ try {
     const plan = planned.result.plan;
     // Two independent axes: what recurs, and what is owed beyond the money.
     // Annual support is BOTH a subscription line and a service obligation.
-    assert.deepEqual(plan.counts, { subscriptionLines: 3, delivery: 1, service: 1, noObligation: 3, ambiguous: 1 });
+    assert.deepEqual(plan.counts, { subscriptionLines: 3, delivery: 3, service: 1, noObligation: 3, ambiguous: 1 });
     assert.equal(plan.termsProvenance.source, 'post-signature-operational-activation');
     assert.equal(plan.activatable, false, 'an unclassified component blocks activation');
     assert.equal(app.modules.get('commercial-contract').service.list().length, 0, 'planning writes nothing');
@@ -694,7 +725,7 @@ try {
         },
       ],
     });
-    assert.deepEqual(activated.result.counts, { subscriptionLines: 4, delivery: 1, service: 1, noObligation: 4, ambiguous: 0 });
+    assert.deepEqual(activated.result.counts, { subscriptionLines: 4, delivery: 3, service: 1, noObligation: 4, ambiguous: 0 });
 
     const contract = app.modules.get('commercial-contract').service.listWhere({ orderId: order.id })[0];
     assert.equal(contract.status, 'active');
@@ -707,7 +738,7 @@ try {
     assert.equal(contract.currentVersionId, contractVersion.id);
 
     const contractLines = app.modules.get('contract-line').service.listWhere({ contractId: contract.id });
-    assert.equal(contractLines.length, 6, 'every order component becomes exactly one contract line');
+    assert.equal(contractLines.length, 8, 'every order component becomes exactly one contract line');
     const byKey = (key) => contractLines.find((line) => String(line.componentKey).endsWith(key));
     const obligationsOf = (key) => JSON.parse(byKey(key).obligationsJson);
     assert.equal(byKey('ent-platform').commercialActivation, 'subscription', 'recurring platform fee → subscription line');
@@ -747,8 +778,10 @@ try {
       'the recurring support commitment is a subscription line, not only an obligation',
     );
     const deliveries = app.modules.get('delivery-obligation').service.listWhere({ contractId: contract.id });
-    assert.equal(deliveries.length, 1);
-    assert.equal(deliveries[0].status, 'pending_handover', 'nothing executes it — it is a recorded obligation');
+    assert.equal(deliveries.length, 3, 'enterprise setup, the setup fee and the data migration');
+    for (const obligation of deliveries) {
+      assert.equal(obligation.status, 'pending_handover', 'nothing executes it — it is a recorded obligation');
+    }
     const services = app.modules.get('service-obligation').service.listWhere({ contractId: contract.id });
     assert.equal(services.length, 1);
     assert.equal(services[0].status, 'pending_activation');
@@ -787,6 +820,122 @@ try {
     const platformLine = app.modules.get('contract-line').service.get(byKey('ent-platform').id);
     assert.equal(platformLine.netAmountCents, byKey('ent-platform').netAmountCents, 'a repriced catalog never touches a signed contract');
 
+    // ---- Milestone 13: pending obligations → planned delivery handover ----
+    // A SECOND domain package, reaching the first only through the declared
+    // capability contracts/delivery-obligations@1.
+    const DELIVERY_POLICY = { policy: 'b2b-delivery-handover', policyVersion: 1 };
+    const runContract = (action, input, handoverActor = actor) =>
+      app.runAction({ module: 'commercial-contract', action, recordId: contract.id, input, actor: handoverActor });
+
+    const handoverPlan = (await runContract('plan-delivery-handover', DELIVERY_POLICY)).result.plan;
+    assert.deepEqual(handoverPlan.counts, { workPackages: 3, internal: 2, partner: 1, ambiguous: 0 });
+    assert.equal(handoverPlan.partnerRequired, true, 'the data migration is delivered by a partner');
+    assert.deepEqual(handoverPlan.milestones.map((milestone) => milestone.key), ['kickoff', 'delivery', 'go-live']);
+    assert.equal(handoverPlan.datesProvenance.source, 'post-sale-delivery-planning');
+    assert.equal(app.modules.get('delivery-project').service.list().length, 0, 'planning writes nothing');
+
+    // An agent may prepare the plan; it may not hand the work over.
+    await assert.rejects(
+      () => runContract('create-delivery-handover', { ...DELIVERY_POLICY, partner: PARTNER }, { type: 'agent', id: 'bot' }),
+      (error) => error.code === 'HUMAN_APPROVAL_REQUIRED' && error.status === 403,
+    );
+    // Partner-delivered work cannot be handed over without naming the partner.
+    await assert.rejects(
+      () => runContract('create-delivery-handover', { ...DELIVERY_POLICY }),
+      (error) => error.code === 'PARTNER_REQUIRED' && error.status === 409,
+    );
+    // Planning dates are optional, but a half-window is not a plan.
+    await assert.rejects(
+      () => runContract('create-delivery-handover', { ...DELIVERY_POLICY, partner: PARTNER, targetStartDate: today }),
+      (error) => error.status === 400,
+    );
+
+    const handover = await runContract('create-delivery-handover', {
+      ...DELIVERY_POLICY,
+      projectName: 'Acme — onboarding and migration',
+      targetStartDate: today,
+      targetEndDate: TERM.termEndDate,
+      partner: PARTNER,
+    });
+    assert.equal(handover.result.obligationsHandedOver, 3);
+
+    const deliveryProject = app.modules.get('delivery-project').service.listWhere({ contractId: contract.id })[0];
+    assert.equal(deliveryProject.status, 'pending_kickoff', 'the project is planned, never started');
+    assert.equal(deliveryProject.customerName, contract.customerName, 'it carries its own customer snapshot');
+    assert.equal(deliveryProject.datesSource, 'post-sale-delivery-planning');
+
+    const packages = app.modules.get('delivery-work-package').service.listWhere({ deliveryProjectId: deliveryProject.id });
+    assert.equal(packages.length, 3, 'one work package per delivery obligation');
+    const packageBy = (key) => packages.find((row) => String(row.componentKey).endsWith(key));
+    assert.equal(packageBy('ent-setup').deliveryMode, 'internal');
+    assert.equal(packageBy('setup-fee').deliveryMode, 'internal');
+    assert.equal(packageBy('migration-records').deliveryMode, 'partner', 'the migration is subcontracted');
+    assert.equal(packageBy('migration-records').partnerRef, PARTNER.partnerRef);
+    assert.equal(packageBy('ent-setup').partnerRef, null, 'internal work is not attributed to the partner');
+    for (const workPackage of packages) {
+      assert.equal(workPackage.status, 'planned');
+      assert.ok(workPackage.netAmountCents > 0, 'the commercial amount is copied from the obligation');
+    }
+
+    const milestones = app.modules.get('delivery-milestone').service.listWhere({ deliveryProjectId: deliveryProject.id });
+    assert.deepEqual(
+      milestones.sort((a, b) => a.position - b.position).map((row) => row.milestoneKey),
+      ['kickoff', 'delivery', 'go-live'],
+    );
+    const engagement = app.modules.get('delivery-partner-engagement').service.listWhere({ deliveryProjectId: deliveryProject.id })[0];
+    assert.equal(engagement.partnerNameSnapshot, PARTNER.partnerName);
+    assert.equal(engagement.status, 'planned', 'a planned engagement grants the partner nothing at all');
+    assert.equal(engagement.workPackageCount, 1);
+
+    // The cross-package write: exactly those obligations are handed over, and
+    // the service obligation is not Delivery's business.
+    const handedOver = app.modules.get('delivery-obligation').service.listWhere({ contractId: contract.id });
+    assert.equal(handedOver.length, 3);
+    for (const obligation of handedOver) {
+      assert.equal(obligation.status, 'handed_over');
+      assert.equal(obligation.handoverRef, deliveryProject.id);
+    }
+    assert.equal(
+      app.modules.get('service-obligation').service.listWhere({ contractId: contract.id })[0].status,
+      'pending_activation',
+      'a service obligation is untouched by Delivery',
+    );
+
+    // A second handover is a stable refusal, not a second project.
+    await assert.rejects(
+      () => runContract('create-delivery-handover', { ...DELIVERY_POLICY, partner: PARTNER }),
+      (error) => error.code === 'HANDOVER_ALREADY_EXISTS' && error.status === 409,
+    );
+    assert.equal(app.modules.get('delivery-project').service.list().length, 1);
+
+    // ---- a CUSTOMER-AUTHORED package, attached the same way ----
+    await assert.rejects(
+      () => app.runAction({
+        module: 'delivery-partner-engagement', action: 'rate-partner', recordId: engagement.id,
+        input: { policy: 'standard-partner-rating', policyVersion: 1, score: 95, reason: 'bot opinion' },
+        actor: { type: 'agent', id: 'bot' },
+      }),
+      (error) => error.code === 'HUMAN_APPROVAL_REQUIRED',
+    );
+    const rated = await app.runAction({
+      module: 'delivery-partner-engagement', action: 'rate-partner', recordId: engagement.id,
+      input: { policy: 'standard-partner-rating', policyVersion: 1, score: 95, reason: 'delivered the migration on time' },
+      actor,
+    });
+    assert.equal(rated.result.scorecard.rating, 'preferred');
+    assert.equal(app.modules.get('partner-scorecard').service.list().length, 1);
+
+    // Delivery and custom-package records are read-only publicly too.
+    for (const name of [
+      'delivery-handover-run', 'delivery-project', 'delivery-work-package',
+      'delivery-milestone', 'delivery-partner-engagement', 'partner-scorecard',
+    ]) {
+      const module = app.modules.get(name);
+      assert.deepEqual(module.capabilities, ['get', 'list'], name);
+      assert.equal(module.service.create, undefined, `no public create on ${name}`);
+      assert.equal(module.service.update, undefined, `no public update on ${name}`);
+    }
+
     // Contract records are read-only publicly, like every other evidence
     // record: they exist only through the activation action.
     for (const name of [
@@ -801,7 +950,7 @@ try {
 
     console.log(JSON.stringify({
       ok: true,
-      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads with immutable snapshots, runs and assignment history; synced a composite fixture catalog idempotently (flat, per-unit, volume and graduated components across one-time, monthly and annual charges, plus one unsupported metered offer refused for quoting) and built mixed quotes with grouped one-time/monthly/annual totals — one auto-approved, one through human discount approval with reject → revise → version 2 — then proved a tier/price change creates new offer revisions while the historical quote version stays unchanged; sent an approved quote version for signature as a human actor (agents refused), refused a forged webhook, ingested verified delivered and completed events, produced signed-artifact evidence and exactly one immutable Order with its lines, components, tiers and grouped totals, proved replay and out-of-order events change nothing and a decline creates no order; then activated that signed order — through the optional contracts domain package — into one commercial contract with an immutable version and six contract lines classified on two explicit axes (platform and seats as subscription lines owing nothing further, a one-time setup as a pending delivery obligation, annual support as BOTH a subscription line and a pending service obligation, a recurring API charge deliberately as neither, and one component the policy refused to guess until a human decided both of its axes with reasons), recording the term as post-signature operational metadata with its stated source, refusing agent actors, impossible and reversed dates, a notice period without auto-renewal, a term with no stated source and any second activation, and recording a future-dated contract as scheduled because no scheduler exists; CRUD cannot set lifecycle, conversion, pipeline, intelligence, commercial, signature, order or contract fields.',
+      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads with immutable snapshots, runs and assignment history; synced a composite fixture catalog idempotently (flat, per-unit, volume and graduated components across one-time, monthly and annual charges, plus one unsupported metered offer refused for quoting) and built mixed quotes with grouped one-time/monthly/annual totals — one auto-approved, one through human discount approval with reject → revise → version 2 — then proved a tier/price change creates new offer revisions while the historical quote version stays unchanged; sent an approved quote version for signature as a human actor (agents refused), refused a forged webhook, ingested verified delivered and completed events, produced signed-artifact evidence and exactly one immutable Order with its lines, components, tiers and grouped totals, proved replay and out-of-order events change nothing and a decline creates no order; then activated that signed order — through the optional contracts domain package — into one commercial contract with an immutable version and six contract lines classified on two explicit axes (platform and seats as subscription lines owing nothing further, a one-time setup as a pending delivery obligation, annual support as BOTH a subscription line and a pending service obligation, a recurring API charge deliberately as neither, and one component the policy refused to guess until a human decided both of its axes with reasons), recording the term as post-signature operational metadata with its stated source, refusing agent actors, impossible and reversed dates, a notice period without auto-renewal, a term with no stated source and any second activation, and recording a future-dated contract as scheduled because no scheduler exists; then handed that contract to delivery through a SECOND domain package — reaching the first only through the declared capability contracts/delivery-obligations@1 — planning a delivery project with three work packages (two internal, the data migration subcontracted to a named partner who is granted no access of any kind), a kickoff/delivery/go-live milestone plan and post-sale planning dates, marking exactly the three delivery obligations handed over while the service obligation stayed untouched, refusing agent actors, a missing partner, a half window and any second handover; and rated that partner through a CUSTOMER-AUTHORED package attached with no kernel change; CRUD cannot set lifecycle, conversion, pipeline, intelligence, commercial, signature, order or contract fields.',
       leads: leads.list().length,
       tasks: tasks.list().length,
       companies: app.services.companies.list().length,
