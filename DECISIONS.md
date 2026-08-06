@@ -415,3 +415,51 @@ now attach through the identical contract, and `tests/custom-package-e2e.test.js
 fingerprints every kernel file before and after to prove the customer path
 needs no kernel change. The extraction of M9–M11 stays deferred until a third
 independent package (Service, M15) has exercised the contract.
+
+
+### ADR-018 addendum 4 — what the package contract enforces, exactly
+
+**Status:** accepted (adversarial review of Milestone 13 / PR #17).
+
+Addendum 3 said capabilities are the only cross-package reach and that the
+declaration "is the truth, not a comment". The review proved that was true only
+of the polite path. Four corrections, each with a regression test:
+
+1. **The registry's state is private.** `packages`, `policies`, `capabilities`
+   and `resources` were public mutable `Map`s on the object handed to every
+   package action. A package could add a capability, rewrite another package's
+   `requires` and then open anything. They are now `#private`, with
+   `size`, `names()` and `resources()` as frozen read-only views.
+
+2. **`get()` returns a summary, not a definition.** It used to return the
+   definition — including `capabilities[].create`. Reaching a capability you did
+   not declare took one property access. It now returns a frozen public summary
+   with no function on it.
+
+3. **A capability opens only from the package the declaration named.** The
+   open-time check matched on capability name and version alone; it now also
+   requires `offered.package` to equal the declared `package`.
+
+4. **`metadata()` may not restate the composition.** The declared block was
+   spread *last*, so a package could publish `requires: []`, its own
+   `version`, or an empty `policies` list — and `/api/schema` would disagree
+   with `package inspect` silently. Reserved keys are now refused, and the
+   block must be plain, function-free data (the "function-free" claim had never
+   been enforced).
+
+Two boundaries are now stated rather than implied, because they cannot be
+enforced in-process and pretending otherwise is the more dangerous error:
+
+- **The consumer identity is self-asserted.** `capability({consumer, …})` trusts
+  the name. A package that deliberately impersonates another consumer is a
+  trusted-source problem. Binding the identity at dispatch time is a runtime
+  change, not a package-contract change, and is deferred with this written down.
+- **`crm package validate|inspect` executes the package it reads.** A code-first
+  definition is read by importing it. The commands themselves touch no file,
+  database or network, but the package's module body runs with full authority.
+  The guide now says so instead of calling them read-only.
+
+The private-import rule was also quote-sensitive — `from "…/core/src/…"` with
+double quotes passed both the CLI and the conformance helper. It now matches any
+quote style and `import()`/`require()` as well.
+

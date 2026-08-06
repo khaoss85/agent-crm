@@ -18,7 +18,10 @@ import { PackageRegistry, validatePackageDefinition } from '../../packages/core/
  * domain concept, it belongs in that package's own tests.
  */
 
-const PRIVATE_IMPORT_RE = /from\s+'[^']*core\/src\/[^']*'/;
+// A package may not reach into `packages/core/src`. The rule has to see the
+// import however it is written: single or double quotes, a backtick, a static
+// `from` clause or a dynamic `import()` — a quote style is not a boundary.
+const PRIVATE_IMPORT_RE = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)(['"`])[^'"`]*core\/src\/[^'"`]*\1/;
 const SOURCE_RE = /\.m?js$/;
 
 /** Every JavaScript file under a package directory. */

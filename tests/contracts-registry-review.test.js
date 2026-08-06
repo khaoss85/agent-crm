@@ -66,7 +66,10 @@ test('the domain seam refuses everything malformed, fail-closed', () => {
       domain({ name: 'b', policies: [{ kind: 'k', definition: policy() }] }),
     ],
   });
-  assert.equal(scoped.policies.size, 2);
+  // Identity is scoped per package; the registry publishes it, it does not
+  // expose the Map (adversarial review of PR #17).
+  assert.equal(scoped.metadata().a.policies.length, 1);
+  assert.equal(scoped.metadata().b.policies.length, 1);
   assert.notEqual(scoped.getPolicy('a', 'k', 'p', 1), scoped.getPolicy('b', 'k', 'p', 1));
 
   // Metadata is deterministic, function-free and never introspected blindly.
@@ -199,7 +202,7 @@ test('the dependency direction is one-way, and the package is genuinely removabl
     const { createAgentCrmApp } = await import(${JSON.stringify(pathToFileURL(join(root, 'packages/app/src/index.js')).href)});
     const app = createAgentCrmApp({ dbPath: ${JSON.stringify(dbPath)} });
     const out = {
-      domains: app.domains.packages.size,
+      domains: app.domains.size,
       hasPlan: app.actions.listForModule('order').some((a) => a.name === 'plan-activation'),
       contracts: app.database.raw.prepare('SELECT COUNT(*) AS n FROM commercial_contracts').get().n,
       subscriptionLines: app.database.raw.prepare('SELECT COUNT(*) AS n FROM subscription_lines').get().n,

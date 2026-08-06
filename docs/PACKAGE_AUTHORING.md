@@ -84,8 +84,12 @@ const obligations = domains.capability({
 Because the capability is created with the caller's `modules`, everything it
 reads and writes happens **inside the caller's transaction** — a cross-package
 commit is atomic without either package sharing a database handle. A package
-that did not declare the requirement is refused even when the capability
-exists (`CAPABILITY_NOT_DECLARED`): the declaration is the truth, not a comment.
+that did not declare the requirement is refused even when the capability exists
+(`CAPABILITY_NOT_DECLARED`), and a declaration naming the wrong provider is
+refused too (`CAPABILITY_PROVIDER_MISMATCH`). The registry hands out no
+definition and no mutable index, so there is no second route to the same
+interface — see "What the contract does and does not enforce" below for the
+line this stops at.
 
 Offering one is the mirror image:
 
@@ -185,6 +189,30 @@ There is **no** dynamic loading, no request-controlled import, no `eval`, no
 remote install and no marketplace. A package is source you can read in your own
 repository, and that is the security model.
 
+### What the contract does and does not enforce
+
+The package contract is **fail-closed against accidents**, not a sandbox
+against hostile code. Concretely, it enforces:
+
+- the registry keeps its own indexes private, so no package can mutate the
+  composition at runtime;
+- `domains.get(name)` returns a frozen public summary — never a definition, and
+  never another package's `create()` or policy handlers;
+- a capability opens only for a consumer that declared it, from the package the
+  declaration named;
+- `metadata()` may add to the schema block but may never restate what the
+  registry computes (`version`, `resources`, `requires`, `provides`, `actions`,
+  `policies`…), and must be plain, function-free data.
+
+It does **not** enforce, and must not be described as if it did:
+
+- the consumer name passed when opening a capability is asserted by the caller.
+  A package that deliberately names another package as the consumer is a
+  trusted-source problem, not something the runtime can distinguish;
+- nothing sandboxes a package's module body, its actions or its policies. They
+  run in-process with full authority;
+- `package validate` executes the source it validates (see §9).
+
 ## 9. Validate before you boot
 
 ```bash
@@ -192,14 +220,22 @@ npm run crm -- package validate packages/delivery
 npm run crm -- package inspect packages/delivery
 ```
 
-Both are read-only: they run the same validator the application runs at
-startup, write nothing, open no database and reach no network, and exit
-non-zero on any problem. `inspect` adds the function-free metadata the schema
-would publish.
+Both run the same validator the application runs at startup and exit non-zero
+on any problem. `inspect` adds the function-free metadata the schema would
+publish. Neither writes a file, opens a database or reaches the network, and
+neither prints an absolute path.
+
+**They are not static analysis, and not a sandbox.** Reading a code-first
+definition means importing your `src/index.js`, so your module body runs with
+the command's full authority — it can write files, open sockets and read the
+environment, exactly as it would at boot. That is the same trust boundary as
+the composition file: repository source is trusted. Point these commands only
+at a package you would be willing to boot.
 
 They check identity and contract version, resource and capability collisions,
 duplicate policy identities, dependency declarations — and that no file in your
-package imports a private kernel path.
+package imports a private kernel path, in any quote style and through
+`import()` and `require()` as well as a static `from` clause.
 
 ## 10. The public kernel surface
 

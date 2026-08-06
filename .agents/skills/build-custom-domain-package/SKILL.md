@@ -44,3 +44,11 @@ Update `docs/benchmarks/CRM_JTBD_MATRIX.md` conservatively — a row moves only 
 A package registry, npm publication, remote install, auto-update, cryptographic signing, a marketplace, hot loading, a scaffold generator (deferred until Delivery and Service settle the file shape), or any kernel patch.
 
 Finish with `npm run verify`, the starter (`node examples/starters/b2b-lead-qualification/install.mjs`) and `docs/QUALITY_GATES.md`; leave the PR open for adversarial review.
+
+## What the contract enforces, and what it does not (ADR-018 addendum 4)
+
+1. The registry's indexes are private. `domains.get(name)` returns a **frozen public summary** — never a definition, never another package's `create()` or policy handlers. Do not look for a second route to an interface: there isn't one, and adding one is a kernel change.
+2. A capability opens only for a consumer that declared it, from the package the declaration named. Declare the requirement; do not reach around it.
+3. `metadata()` may add to your schema block but may **never restate** what the registry computes — `version`, `label`, `description`, `resources`, `requires`, `provides`, `actions`, `policies`. Those keys are refused at startup. It must return plain, function-free, JSON-safe data.
+4. Package `name` is bounded (64 characters), lowercase-canonical, and Map-keyed.
+5. Nothing here is a sandbox. `crm package validate` **imports and executes** your `src/index.js`; your actions and policies run in-process with full authority; and the consumer name passed when opening a capability is asserted by the caller. Never describe any of this as isolation.

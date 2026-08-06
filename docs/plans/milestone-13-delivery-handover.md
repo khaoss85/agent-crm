@@ -52,7 +52,10 @@ self-dependency and a dependency cycle.
 **Capabilities** are the only cross-package reach. A capability is created per
 call with the *caller's* runtime handles, so it reads and writes inside the
 caller's transaction while the provider keeps its services and tables private.
-An undeclared reach is refused even when the capability exists.
+An undeclared reach is refused even when the capability exists, and the
+registry hands out no definition and no mutable index, so there is no second
+route to the interface. The adversarial review found that it once had two, and
+ADR-018 addendum 4 records what is and is not enforced.
 
 **The public kernel surface**: packages import `packages/core/index.js` and
 nothing else under `packages/core`. M12 was migrated to it in this PR; the CLI

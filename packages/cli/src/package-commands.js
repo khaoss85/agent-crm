@@ -1,9 +1,9 @@
 // @ts-check
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { PackageRegistry, validatePackageDefinition } from '../../core/src/package-registry.js';
+import { PackageRegistry, validatePackageDefinition } from '../../core/index.js';
 
 /**
  * `crm package validate|inspect` — the agent-facing surface of the domain
@@ -11,17 +11,32 @@ import { PackageRegistry, validatePackageDefinition } from '../../core/src/packa
  *
  * It runs **the same validator the application runs at startup**, so a package
  * that validates here registers there, and one that fails here fails there for
- * the same stated reason. It is read-only: it writes no file, opens no
- * database, and reaches no network.
+ * the same stated reason. *These commands themselves* write no file, open no
+ * database and reach no network.
  *
- * Loading a package does import its checked-in `src/index.js` — that is how a
- * static, code-first definition is read, and it is the same trust boundary as
- * the composition file itself. It is not a sandbox: repository source is
- * trusted, and the guide says so.
+ * They are **not** static analysis and **not** a sandbox. Reading a code-first
+ * definition means importing `src/index.js`, so the package's own module body
+ * runs with this process's full authority — it can write files, open sockets
+ * or read the environment. That is the same trust boundary as the checked-in
+ * composition file: repository source is trusted. Point these commands only at
+ * a package you would be willing to boot.
  */
 
-const PRIVATE_IMPORT_RE = /from\s+'[^']*core\/src\/[^']*'/;
+// A package may not reach into `packages/core/src`. The rule has to see the
+// import however it is written: single or double quotes, a backtick, a static
+// `from` clause or a dynamic `import()` — a quote style is not a boundary.
+const PRIVATE_IMPORT_RE = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)(['"`])[^'"`]*core\/src\/[^'"`]*\1/;
 const SOURCE_RE = /\.m?js$/;
+
+/**
+ * The package directory as the caller named it, relative to where they ran the
+ * command — never the resolved absolute path.
+ * @param {string} dir
+ */
+function relativeToCwd(dir) {
+  const from = relative(process.cwd(), dir);
+  return from === '' ? '.' : from;
+}
 
 /** @param {string} value */
 function resolvePackageDir(value) {
@@ -143,7 +158,10 @@ export async function validatePackageCommand({ packagePath }) {
     ok: problems.length === 0,
     command: 'package:validate',
     package: basename(dir),
-    path: dir,
+    // Deliberately not the absolute path: this JSON is written for agents and
+    // pasted into issues, and an absolute path carries the operator's home
+    // directory and machine layout with it for no diagnostic gain.
+    path: relativeToCwd(dir),
     packages,
     privateImports,
     problems,

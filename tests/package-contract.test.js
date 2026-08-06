@@ -209,10 +209,10 @@ test('a customer-authored package conforms through the identical contract', () =
       createPartnerScorecardPackage(),
     ],
   });
-  assert.deepEqual([...registry.packages.keys()], ['contracts', 'delivery', 'partner-scorecard']);
+  assert.deepEqual([...registry.names()], ['contracts', 'delivery', 'partner-scorecard']);
   assert.deepEqual(Object.keys(registry.metadata()), ['contracts', 'delivery', 'partner-scorecard']);
   assert.equal(registry.actions().length, 5);
-  assert.equal(registry.resources.size, 14);
+  assert.equal(registry.resources().length, 14);
 });
 
 test('the kernel never depends on a package, in either direction', () => {
@@ -288,4 +288,76 @@ test('the package CLI validates, inspects and refuses, read-only', () => {
   } finally {
     rmSync(spaced, { recursive: true, force: true });
   }
+});
+
+/**
+ * Adversarial review of PR #17. Each case below failed before the fix it names,
+ * and each attack is the *accidental* one: the shape a package author reaches
+ * for without meaning to cross a boundary.
+ */
+
+test('the registry keeps its own state private and hands out no executable definition', () => {
+  const registry = new PackageRegistry({
+    packages: [
+      pkg({ name: 'provider', capabilities: [{ name: 'cap', version: 1, create: () => ({ private: 'data' }) }] }),
+      pkg({ name: 'consumer' }),
+    ],
+  });
+
+  // A package action is handed this registry. Reaching a capability it did not
+  // declare must not merely be refused on the polite path: the definition it
+  // would need must not be reachable at all.
+  const summary = registry.get('provider');
+  assert.equal(summary.capabilities, undefined, 'get() must not return capability factories');
+  assert.equal(typeof summary.metadata, 'undefined', 'get() must not return functions');
+  assert.deepEqual(summary.provides, [{ name: 'cap', version: 1 }]);
+  assert.ok(Object.isFrozen(summary), 'the summary is frozen');
+
+  // The registry's own indexes are not a public mutation surface. `resources()`
+  // and `names()` are read-only views; there is no Map to write through.
+  for (const property of ['packages', 'policies', 'capabilities']) {
+    assert.equal(registry[property], undefined, `${property} must not be a public Map`);
+  }
+  assert.ok(!(registry.resources instanceof Map), 'resources must not be a public Map');
+  assert.ok(Object.isFrozen(registry.resources()), 'the resource view is frozen');
+  assert.ok(Object.isFrozen(registry.names()), 'the name view is frozen');
+  assert.throws(
+    () => registry.capability({ consumer: 'consumer', capability: 'cap', version: 1 }),
+    (error) => error.code === 'CAPABILITY_NOT_DECLARED',
+  );
+  // …and self-granting the declaration through the returned summary changes nothing.
+  try { summary.requires.push({ package: 'provider', capability: 'cap', version: 1 }); } catch { /* frozen */ }
+  assert.throws(
+    () => registry.capability({ consumer: 'consumer', capability: 'cap', version: 1 }),
+    (error) => error.code === 'CAPABILITY_NOT_DECLARED',
+  );
+});
+
+test('a package cannot rewrite its own published graph through metadata()', () => {
+  const reserved = ['packageContract', 'version', 'resources', 'requires', 'provides', 'actions', 'policies'];
+  for (const key of reserved) {
+    const registry = new PackageRegistry({
+      packages: [pkg({ name: 'liar', metadata: () => ({ [key]: 'forged' }) })],
+    });
+    refuses(() => registry.metadata(), new RegExp(`metadata\\(\\) may not redeclare "${key}"`));
+  }
+
+  // Metadata is published to every client: it must be plain, function-free data.
+  const withFunction = new PackageRegistry({ packages: [pkg({ name: 'fn', metadata: () => ({ hostile: () => 1 }) })] });
+  refuses(() => withFunction.metadata(), /metadata\(\) must be function-free/);
+  const nested = new PackageRegistry({ packages: [pkg({ name: 'deep', metadata: () => ({ a: { b: [{ c: () => 1 }] } }) })] });
+  refuses(() => nested.metadata(), /metadata\(\) must be function-free/);
+
+  // The honest case still publishes both the declared block and the computed graph.
+  const good = new PackageRegistry({
+    packages: [pkg({ name: 'honest', resources: ['a-record'], metadata: () => ({ notModeled: ['nothing'] }) })],
+  });
+  const published = good.metadata().honest;
+  assert.deepEqual(published.resources, ['a-record'], 'the registry owns the graph');
+  assert.deepEqual(published.notModeled, ['nothing'], 'the package owns its own block');
+});
+
+test('a package name is bounded like every other stored identity', () => {
+  refuses(() => validatePackageDefinition(pkg({ name: 'a'.repeat(65) })), /name must be at most 64/);
+  assert.equal(validatePackageDefinition(pkg({ name: 'a'.repeat(64) })).name.length, 64);
 });

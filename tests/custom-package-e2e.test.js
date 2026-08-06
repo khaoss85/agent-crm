@@ -116,7 +116,7 @@ test('a customer-authored package attaches, works and detaches with no kernel ch
     const { createAgentCrmApp } = await import(${JSON.stringify(pathToFileURL(join(root, 'packages/app/src/index.js')).href)});
     const app = createAgentCrmApp({ dbPath: ${JSON.stringify(dbPath)} });
     console.log(JSON.stringify({
-      packages: [...app.domains.packages.keys()],
+      packages: [...app.domains.names()],
       actions: app.actions.listForModule('delivery-partner-engagement').map((action) => action.name),
       scorecards: app.database.raw.prepare('SELECT COUNT(*) AS n FROM partner_scorecards').get().n,
       deliveryProjects: app.database.raw.prepare('SELECT COUNT(*) AS n FROM delivery_projects').get().n,
