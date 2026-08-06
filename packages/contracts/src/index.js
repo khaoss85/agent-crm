@@ -9,6 +9,8 @@ import {
 } from './activation-policy.js';
 import { buildContractActions } from './activation.js';
 import { MAX_NOTICE_DAYS, MAX_TERM_DAYS, TERMS_NOTE, TERMS_SOURCE } from './dates.js';
+import { definePackage } from '../../core/index.js';
+import { createDeliveryObligationsCapability } from './capabilities.js';
 
 /**
  * The Contracts domain package (Milestone 12) — the first domain built under
@@ -29,6 +31,11 @@ import { MAX_NOTICE_DAYS, MAX_TERM_DAYS, TERMS_NOTE, TERMS_SOURCE } from './date
  */
 
 export const CONTRACTS_DOMAIN = 'contracts';
+/** The record modules this package owns; declaring them makes a collision detectable. */
+export const CONTRACTS_RESOURCES = Object.freeze([
+  'commercial-contract', 'contract-version', 'contract-line', 'contract-activation',
+  'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
+]);
 export const ACTIVATION_POLICY_KIND = 'order-activation-policy';
 
 /**
@@ -44,20 +51,21 @@ export function createContractsDomain(options = {}) {
     definition: defineOrderActivationPolicy(definition),
   }));
 
-  return {
+  return definePackage({
+    packageContract: 1,
     name: CONTRACTS_DOMAIN,
-    domainContract: 1,
+    version: 1,
     label: 'Contracts and subscriptions',
+    description: 'Activates a signed immutable Order into a commercial contract, a subscription and pending delivery/service obligations.',
+    resources: [...CONTRACTS_RESOURCES],
+    capabilities: [createDeliveryObligationsCapability(options.modules)],
     actions: buildContractActions(options.modules),
     policies,
     /** Function-free, additive schema metadata — never a handler or a secret. */
     metadata() {
       return {
         contractsContract: 1,
-        resources: [
-          'commercial-contract', 'contract-version', 'contract-line', 'contract-activation',
-          'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
-        ],
+
         classification: {
           dimensions: [...DIMENSIONS],
           commercialActivation: [...COMMERCIAL_ACTIVATIONS],
@@ -90,7 +98,7 @@ export function createContractsDomain(options = {}) {
         ],
       };
     },
-  };
+  });
 }
 
 export { defineOrderActivationPolicy, COMMERCIAL_ACTIVATIONS, OBLIGATION_TYPES, OVERRIDABLE_COMMERCIAL, DIMENSIONS };

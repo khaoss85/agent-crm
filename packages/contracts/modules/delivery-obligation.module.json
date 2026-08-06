@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "delivery-obligation",
-  "description": "A pending delivery obligation created at activation (M12) for a component classified as delivery work. Milestone 13 will turn these into delivery projects and work packages; this is not a project, and nothing is scheduled or fulfilled.",
+  "description": "A pending delivery obligation created at activation (M12) for a component classified as delivery work. Milestone 13 will turn these into delivery projects and work packages; this is not a project, and nothing is scheduled or fulfilled. A delivery package may mark it handed over through the contracts package's declared delivery-obligations capability; nothing else may change it.",
   "fields": [
     {
       "name": "sourceKey",
@@ -37,7 +37,8 @@
       "name": "status",
       "type": "enum",
       "values": [
-        "pending_handover"
+        "pending_handover",
+        "handed_over"
       ],
       "writable": "managed"
     },
@@ -112,6 +113,17 @@
     {
       "name": "activationId",
       "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "handoverRef",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "handedOverAt",
+      "type": "timestamp",
       "writable": "managed"
     }
   ]

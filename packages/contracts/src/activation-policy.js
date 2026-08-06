@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ValidationError } from '../../core/src/errors.js';
+import { AppError, ValidationError } from '../../core/index.js';
 
 /**
  * The Order Activation Policy: how a signed Order's components become

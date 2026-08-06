@@ -40,7 +40,7 @@ test('signed order → plan → human activation → contract, subscription and 
   // The schema publishes the domain contract, its limits and no handler.
   const schema = await client.request('/api/schema');
   assert.equal(schema.domains.contracts.contractsContract, 1);
-  assert.equal(schema.domains.contracts.domainContract, 1);
+  assert.equal(schema.domains.contracts.packageContract, 1);
   assert.deepEqual(schema.domains.contracts.actions, ['order.activate-contract', 'order.plan-activation']);
   assert.match(schema.domains.contracts.policies[0].fingerprint, /^[0-9a-f]{64}$/);
   assert.ok(schema.domains.contracts.notModeled.includes('MRR/ARR/TCV'));
