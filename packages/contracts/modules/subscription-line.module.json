@@ -140,6 +140,7 @@
       "name": "status",
       "type": "enum",
       "values": [
+        "scheduled",
         "active"
       ],
       "writable": "managed"

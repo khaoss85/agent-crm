@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "contract-line",
-  "description": "One immutable contract line per order component (M12), carrying the complete commercial snapshot plus the classification decision, its reason and its policy evidence. Every order component becomes a contract line, whatever its classification.",
+  "description": "One immutable contract line per order component (M12), carrying the complete commercial snapshot plus BOTH classification axes — what the money is (commercial activation) and what is owed beyond it (obligations) — each with the policy decision, any human override and its reason. Every order component becomes exactly one contract line.",
   "fields": [
     {
       "name": "sourceKey",
@@ -183,14 +183,52 @@
       "writable": "managed"
     },
     {
-      "name": "classification",
+      "name": "commercialActivation",
       "type": "enum",
       "values": [
         "subscription",
-        "delivery",
-        "service",
-        "other"
+        "non_subscription"
       ],
+      "writable": "managed"
+    },
+    {
+      "name": "policyCommercialActivation",
+      "type": "enum",
+      "values": [
+        "subscription",
+        "non_subscription",
+        "ambiguous"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "commercialOverridden",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "commercialOverrideReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "obligationsJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyObligationsJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "obligationsOverridden",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "obligationsOverrideReason",
+      "type": "string",
       "writable": "managed"
     },
     {
@@ -210,28 +248,6 @@
     },
     {
       "name": "classificationPolicyFingerprint",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "policyClassification",
-      "type": "enum",
-      "values": [
-        "subscription",
-        "delivery",
-        "service",
-        "other",
-        "ambiguous"
-      ],
-      "writable": "managed"
-    },
-    {
-      "name": "overridden",
-      "type": "boolean",
-      "writable": "managed"
-    },
-    {
-      "name": "overrideReason",
       "type": "string",
       "writable": "managed"
     },

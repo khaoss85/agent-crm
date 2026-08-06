@@ -77,6 +77,28 @@
       "writable": "managed"
     },
     {
+      "name": "termsSource",
+      "type": "enum",
+      "values": [
+        "post-signature-operational-activation"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "termsReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "activationState",
+      "type": "enum",
+      "values": [
+        "scheduled",
+        "active"
+      ],
+      "writable": "managed"
+    },
+    {
       "name": "subscriptionLineCount",
       "type": "integer",
       "writable": "managed"
@@ -92,7 +114,7 @@
       "writable": "managed"
     },
     {
-      "name": "otherComponentCount",
+      "name": "noObligationCount",
       "type": "integer",
       "writable": "managed"
     },

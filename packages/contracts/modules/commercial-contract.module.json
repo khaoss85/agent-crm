@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "commercial-contract",
-  "description": "One active commercial agreement per activated signed order (M12). Its commercial content is copied from the immutable Order and never recalculated from the live catalog. No cancellation, suspension, renewal or amendment behavior exists in this milestone.",
+  "description": "One active commercial agreement per activated signed order (M12). Its commercial content is copied from the immutable Order and never recalculated from the live catalog. No cancellation, suspension, renewal or amendment behavior exists in this milestone. The term is operational metadata recorded after signature (termsSource) — the signed document package carries no term, so it is never presented as a signed commercial term.",
   "fields": [
     {
       "name": "sourceKey",
@@ -72,6 +72,7 @@
       "name": "status",
       "type": "enum",
       "values": [
+        "scheduled",
         "active"
       ],
       "writable": "managed"
@@ -104,6 +105,19 @@
     {
       "name": "renewalNoticeDays",
       "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "termsSource",
+      "type": "enum",
+      "values": [
+        "post-signature-operational-activation"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "termsReason",
+      "type": "string",
       "writable": "managed"
     },
     {

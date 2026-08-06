@@ -2,12 +2,14 @@
 
 import { AppError } from '../../core/src/errors.js';
 import {
+  OBLIGATIONS_AMBIGUOUS,
   assertClassificationCoherent,
+  canonicalObligations,
   classificationContext,
   normalizeClassification,
   normalizeOverrides,
 } from './activation-policy.js';
-import { requireTerm } from './dates.js';
+import { TERMS_NOTE, TERMS_SOURCE, activationState, requireTerm } from './dates.js';
 
 /**
  * Order → Commercial Contract activation (Milestone 12).
@@ -129,7 +131,6 @@ export function loadActivationSource(modules, names, order) {
 export function classifyComponents({ policy, fingerprint, order, components, overrides }) {
   const label = `Order activation policy "${policy.name}@${policy.version}"`;
   return components.map(({ line, component }) => {
-    const override = overrides.get(component.id) ?? null;
     /** @type {unknown} */
     let raw;
     try {
@@ -141,18 +142,34 @@ export function classifyComponents({ policy, fingerprint, order, components, ove
       );
     }
     const policyDecision = normalizeClassification(label, raw);
-    const effective = override
-      ? { type: override.type, reason: override.reason }
-      : policyDecision;
-    assertClassificationCoherent(effective, component);
+    // Each dimension is resolved independently: a human may settle the
+    // commercial axis while the policy's obligations stand, or the reverse.
+    const commercialOverride = overrides.get(`${component.id}/commercial`) ?? null;
+    const obligationsOverride = overrides.get(`${component.id}/obligations`) ?? null;
+    const commercialActivation = commercialOverride
+      ? commercialOverride.value
+      : policyDecision.commercialActivation;
+    const obligations = obligationsOverride
+      ? canonicalObligations(obligationsOverride.value)
+      : policyDecision.obligations;
+
+    assertClassificationCoherent({ commercialActivation }, component);
     return {
       line,
       component,
       policyDecision,
-      classification: effective.type,
-      classificationReason: effective.reason,
-      overridden: Boolean(override),
-      overrideReason: override ? override.reason : null,
+      commercialActivation,
+      obligations,
+      classificationReason: (commercialOverride ?? obligationsOverride)?.reason ?? policyDecision.reason,
+      commercialOverride,
+      obligationsOverride,
+      overridden: Boolean(commercialOverride || obligationsOverride),
+      // Which axes are still undecided — the plan reports exactly this, so a
+      // human knows what to answer rather than "something is ambiguous".
+      ambiguousDimensions: [
+        ...(commercialActivation === 'ambiguous' ? ['commercial'] : []),
+        ...(obligations === OBLIGATIONS_AMBIGUOUS ? ['obligations'] : []),
+      ],
       policy: policy.name,
       policyVersion: policy.version,
       policyFingerprint: fingerprint,
@@ -162,13 +179,21 @@ export function classifyComponents({ policy, fingerprint, order, components, ove
 
 /** @param {any[]} decisions */
 function summarize(decisions) {
-  const counts = { subscription: 0, delivery: 0, service: 0, other: 0, ambiguous: 0 };
-  for (const decision of decisions) counts[decision.classification] += 1;
+  const counts = { subscriptionLines: 0, delivery: 0, service: 0, noObligation: 0, ambiguous: 0 };
+  for (const decision of decisions) {
+    if (decision.ambiguousDimensions.length > 0) counts.ambiguous += 1;
+    if (decision.commercialActivation === 'subscription') counts.subscriptionLines += 1;
+    if (Array.isArray(decision.obligations)) {
+      if (decision.obligations.includes('delivery')) counts.delivery += 1;
+      if (decision.obligations.includes('service')) counts.service += 1;
+      if (decision.obligations.length === 0) counts.noObligation += 1;
+    }
+  }
   return counts;
 }
 
 /** The machine-readable plan an agent can prepare and a human can approve. */
-function planPayload({ order, envelope, artifact, decisions, totals, existingContract }) {
+function planPayload({ order, envelope, artifact, decisions, totals, existingContract, policy, fingerprint }) {
   const counts = summarize(decisions);
   return {
     orderId: order.id,
@@ -176,11 +201,19 @@ function planPayload({ order, envelope, artifact, decisions, totals, existingCon
     customerName: order.customerName,
     quoteVersionId: order.quoteVersionId,
     signature: { envelopeId: envelope.id, signedArtifactId: artifact.id, documentHash: envelope.documentHash },
+    policy: policy.name,
+    policyVersion: policy.version,
+    policyFingerprint: fingerprint,
     alreadyActivated: Boolean(existingContract),
     contractId: existingContract?.id ?? null,
     activatable: !existingContract && counts.ambiguous === 0,
     // Everything a caller must still decide, stated rather than defaulted.
-    requiredInputs: existingContract ? [] : ['effectiveDate', 'termStartDate', 'termEndDate'],
+    requiredInputs: existingContract
+      ? []
+      : ['effectiveDate', 'termStartDate', 'termEndDate', 'termsReason'],
+    // The term is NOT part of what was signed, and the plan says so before a
+    // single record exists (ADR-018 addendum, review finding C1).
+    termsProvenance: { source: TERMS_SOURCE, note: TERMS_NOTE },
     counts,
     components: decisions.map((decision) => ({
       orderLineId: decision.line.id,
@@ -193,10 +226,19 @@ function planPayload({ order, envelope, artifact, decisions, totals, existingCon
       intervalCount: decision.component.intervalCount,
       quantity: decision.component.quantity,
       netAmountCents: decision.component.netAmountCents,
-      classification: decision.classification,
+      // Two independent answers, each reported with what the policy said.
+      commercialActivation: decision.commercialActivation,
+      obligations: decision.obligations,
+      policyCommercialActivation: decision.policyDecision.commercialActivation,
+      policyObligations: decision.policyDecision.obligations,
       reason: decision.classificationReason,
       overridden: decision.overridden,
-      requiresOverride: decision.classification === 'ambiguous',
+      overriddenDimensions: [
+        ...(decision.commercialOverride ? ['commercial'] : []),
+        ...(decision.obligationsOverride ? ['obligations'] : []),
+      ],
+      ambiguousDimensions: decision.ambiguousDimensions,
+      requiresOverride: decision.ambiguousDimensions.length > 0,
     })),
     totals: totals.map((total) => ({
       kind: total.kind, currency: total.currency, interval: total.interval,
@@ -241,7 +283,7 @@ export function buildPlanActivationAction(config) {
       const existingContract = trusted(modules, names.contract).listWhere({ orderId: order.id })[0] ?? null;
       step('activation.planned', { orderId: order.id, ...summarize(decisions) });
       return {
-        plan: planPayload({ order, envelope: source.envelope, artifact: source.artifact, decisions, totals: source.totals, existingContract }),
+        plan: planPayload({ order, envelope: source.envelope, artifact: source.artifact, decisions, totals: source.totals, existingContract, policy, fingerprint }),
         policy: { name: policy.name, version: policy.version, fingerprint },
       };
     },
@@ -272,8 +314,9 @@ export function buildActivateContractAction(config) {
       { name: 'termStartDate', type: 'string', required: true, hint: 'Calendar date YYYY-MM-DD.' },
       { name: 'termEndDate', type: 'string', required: true, hint: 'Calendar date YYYY-MM-DD, inclusive.' },
       { name: 'autoRenew', type: 'boolean', required: false, hint: 'Recorded only — no scheduler exists in this milestone.' },
-      { name: 'renewalNoticeDays', type: 'integer', required: false, hint: 'Recorded only (0-365).' },
-      { name: 'classificationOverrides', type: 'json', required: false, hint: '[{orderComponentId, type, reason}] — a human decision, with a reason.' },
+      { name: 'renewalNoticeDays', type: 'integer', required: false, hint: 'Recorded only (0-365); requires autoRenew.' },
+      { name: 'termsReason', type: 'string', required: true, hint: 'Where this term came from: it is operational metadata recorded after signature, not a signed term.' },
+      { name: 'classificationOverrides', type: 'json', required: false, hint: '[{orderComponentId, dimension: "commercial"|"obligations", value, reason}] — a human decision per dimension, with a reason.' },
     ],
     /** @param {any} ctx */
     async execute({ record: order, input, actor, modules, domains, managed, now, step }) {
@@ -305,19 +348,37 @@ export function buildActivateContractAction(config) {
         new Set(source.components.map(({ component }) => component.id)),
       );
       const decisions = classifyComponents({ policy, fingerprint, order, components: source.components, overrides });
-      const ambiguous = decisions.filter((decision) => decision.classification === 'ambiguous');
+      const ambiguous = decisions.filter((decision) => decision.ambiguousDimensions.length > 0);
       if (ambiguous.length > 0) {
         throw new AppError(
           `${ambiguous.length} order component(s) could not be classified and need an explicit human override`,
           {
             code: 'CLASSIFICATION_AMBIGUOUS',
             status: 409,
-            details: { orderComponentIds: ambiguous.map((decision) => decision.component.id) },
+            details: {
+              orderComponentIds: ambiguous.map((decision) => decision.component.id),
+              // Which axis each one needs, so the answer is actionable.
+              dimensions: ambiguous.map((decision) => ({
+                orderComponentId: decision.component.id,
+                dimensions: decision.ambiguousDimensions,
+              })),
+            },
           },
         );
       }
 
       const activatedAt = now();
+      // State follows the business date, never the wish: a term that starts
+      // next month is `scheduled`, and NOTHING flips it — there is no
+      // scheduler in this framework, which the schema and the Admin state.
+      const businessDate = activatedAt.slice(0, 10);
+      const state = activationState(term, businessDate);
+      if (state === 'ended') {
+        throw new AppError('The term ended before this activation', {
+          code: 'TERM_ALREADY_ENDED', status: 409,
+          details: { termEndDate: term.termEndDate, businessDate },
+        });
+      }
       const counts = summarize(decisions);
       const activations = trusted(modules, names.activation);
       const activation = await activations.createManaged(
@@ -336,20 +397,28 @@ export function buildActivateContractAction(config) {
           effectiveDate: term.effectiveDate,
           termStartDate: term.termStartDate,
           termEndDate: term.termEndDate,
-          subscriptionLineCount: counts.subscription,
+          termsSource: term.termsSource,
+          termsReason: term.termsReason,
+          activationState: state,
+          subscriptionLineCount: counts.subscriptionLines,
           deliveryObligationCount: counts.delivery,
           serviceObligationCount: counts.service,
-          otherComponentCount: counts.other,
-          overrideCount: decisions.filter((decision) => decision.overridden).length,
+          noObligationCount: counts.noObligation,
+          overrideCount: decisions.reduce(
+            (total, decision) => total + (decision.commercialOverride ? 1 : 0) + (decision.obligationsOverride ? 1 : 0),
+            0,
+          ),
           decisionsJson: toJson(
             decisions.map((decision) => ({
               orderComponentId: decision.component.id,
               componentKey: decision.component.componentKey,
-              policyType: decision.policyDecision.type,
+              policyCommercialActivation: decision.policyDecision.commercialActivation,
+              policyObligations: decision.policyDecision.obligations,
               policyReason: decision.policyDecision.reason,
-              classification: decision.classification,
-              overridden: decision.overridden,
-              overrideReason: decision.overrideReason,
+              commercialActivation: decision.commercialActivation,
+              obligations: decision.obligations,
+              commercialOverrideReason: decision.commercialOverride?.reason ?? null,
+              obligationsOverrideReason: decision.obligationsOverride?.reason ?? null,
             })),
             'activation decisions',
           ),
@@ -375,13 +444,15 @@ export function buildActivateContractAction(config) {
           customerName: order.customerName,
           customerEmail: order.customerEmail,
           currency: order.currency,
-          status: 'active',
+          status: state,
           effectiveDate: term.effectiveDate,
           termStartDate: term.termStartDate,
           termEndDate: term.termEndDate,
           termDays: term.termDays,
           autoRenew: term.autoRenew,
           renewalNoticeDays: term.renewalNoticeDays,
+          termsSource: term.termsSource,
+          termsReason: term.termsReason,
           policy: policy.name,
           policyVersion: policy.version,
           policyFingerprint: fingerprint,
@@ -415,6 +486,8 @@ export function buildActivateContractAction(config) {
           termDays: term.termDays,
           autoRenew: term.autoRenew,
           renewalNoticeDays: term.renewalNoticeDays,
+          termsSource: term.termsSource,
+          termsReason: term.termsReason,
           // The Order's grouped totals, copied verbatim. They are period sums
           // of what was signed — never MRR, ARR or TCV.
           totalsJson: order.totalsJson,
@@ -434,18 +507,18 @@ export function buildActivateContractAction(config) {
       // One Subscription per contract in v1, created only when at least one
       // component was explicitly classified as a subscription.
       let subscription = null;
-      if (counts.subscription > 0) {
+      if (counts.subscriptionLines > 0) {
         subscription = await trusted(modules, names.subscription).createManaged(
           {
             sourceKey: `subscription:contract:${contract.id}`,
             contractId: contract.id,
             contractVersionId: version.id,
             orderId: order.id,
-            status: 'active',
+            status: state,
             currency: order.currency,
             startDate: term.termStartDate,
             endDate: term.termEndDate,
-            lineCount: counts.subscription,
+            lineCount: counts.subscriptionLines,
             activationId: activation.id,
             activatedAt,
           },
@@ -495,21 +568,30 @@ export function buildActivateContractAction(config) {
             provider: component.provider,
             externalPriceId: component.externalPriceId,
             sourcePricingModel: component.sourcePricingModel,
-            classification: decision.classification,
+            // Dimension 1: what the money is, with the policy's own answer.
+            commercialActivation: decision.commercialActivation,
+            policyCommercialActivation: decision.policyDecision.commercialActivation,
+            commercialOverridden: Boolean(decision.commercialOverride),
+            commercialOverrideReason: decision.commercialOverride?.reason ?? null,
+            // Dimension 2: what we owe beyond the money, likewise.
+            obligationsJson: toJson(decision.obligations, 'obligations'),
+            policyObligationsJson: toJson(decision.policyDecision.obligations, 'policy obligations'),
+            obligationsOverridden: Boolean(decision.obligationsOverride),
+            obligationsOverrideReason: decision.obligationsOverride?.reason ?? null,
             classificationReason: decision.classificationReason,
             classificationPolicy: policy.name,
             classificationPolicyVersion: policy.version,
             classificationPolicyFingerprint: fingerprint,
-            policyClassification: decision.policyDecision.type,
-            overridden: decision.overridden,
-            overrideReason: decision.overrideReason,
             overriddenBy: decision.overridden ? String(/** @type {any} */ (actor).id ?? 'unknown') : null,
             position,
           },
           { actor },
         );
 
-        if (decision.classification === 'subscription') {
+        // The two axes are written independently: the same component can be a
+        // recurring commitment AND a future obligation (annual support is
+        // exactly that), and an exclusive branch would silently drop one.
+        if (decision.commercialActivation === 'subscription') {
           await subscriptionLines.createManaged(
             {
               sourceKey: `subscription-line:${subscription.id}:${component.id}`,
@@ -535,12 +617,13 @@ export function buildActivateContractAction(config) {
               provider: component.provider,
               externalPriceId: component.externalPriceId,
               sourcePricingModel: component.sourcePricingModel,
-              status: 'active',
+              status: state,
               activationId: activation.id,
             },
             { actor },
           );
-        } else if (decision.classification === 'delivery') {
+        }
+        if (decision.obligations.includes('delivery')) {
           await deliveryObligations.createManaged(
             {
               sourceKey: `delivery-obligation:${contract.id}:${component.id}`,
@@ -565,7 +648,8 @@ export function buildActivateContractAction(config) {
             },
             { actor },
           );
-        } else if (decision.classification === 'service') {
+        }
+        if (decision.obligations.includes('service')) {
           await serviceObligations.createManaged(
             {
               sourceKey: `service-obligation:${contract.id}:${component.id}`,
@@ -588,8 +672,9 @@ export function buildActivateContractAction(config) {
             { actor },
           );
         }
-        // `other` creates a Contract Line and nothing else: the decision that
-        // a component carries no further obligation is itself recorded.
+        // An empty obligations list creates a Contract Line and nothing else:
+        // the decision that a component owes nothing further is itself
+        // recorded, and is not the same as never having decided.
       }
 
       await activations.applyManaged(
@@ -611,7 +696,7 @@ export function buildActivateContractAction(config) {
         activationId: activation.id,
         contract: {
           id: contract.id,
-          status: 'active',
+          status: state,
           currency: contract.currency,
           customerName: contract.customerName,
           currentVersionId: version.id,
@@ -621,6 +706,8 @@ export function buildActivateContractAction(config) {
           termDays: term.termDays,
           autoRenew: term.autoRenew,
           renewalNoticeDays: term.renewalNoticeDays,
+          termsSource: term.termsSource,
+          termsReason: term.termsReason,
         },
         subscriptionId: subscription?.id ?? null,
         counts,

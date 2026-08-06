@@ -97,6 +97,19 @@
       "writable": "managed"
     },
     {
+      "name": "termsSource",
+      "type": "enum",
+      "values": [
+        "post-signature-operational-activation"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "termsReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
       "name": "totalsJson",
       "type": "string",
       "writable": "managed"
