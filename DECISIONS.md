@@ -199,3 +199,44 @@ The review found two defects that could each destroy an Order permanently, and f
 **`artifactHash` is provider-reported.** agent-crm does not download or hash the artifact bytes and verifies no signature cryptographically. The schema says so, the guide says so, and the Admin says so.
 
 **One limitation is retained deliberately and stated everywhere:** there is exactly one signature envelope per Quote Version, **ever**. A quote version whose envelope failed — including one the provider never received (`PROVIDER_ENVELOPE_ABSENT`, distinguished from an unknown outcome) — cannot be re-sent in M11; reconciliation is the only recovery path, and no resend framework exists. The Admin states which of the three cases applies rather than implying the provider's state is known when it is not.
+
+## ADR-018 — The core runtime is a platform; domain behavior belongs in domain packages
+
+**Status:** accepted (Platform Alignment Gate, after Milestone 11).
+
+**Context.** Eleven milestones put an increasing amount of *domain* behavior inside `packages/core/src`: `intelligence-registry.js`, `intelligence-actions.js`, `commercial-registry.js`, `commercial-money.js`, `catalog-sync.js`, `commercial-actions.js`, `signature-registry.js` and `signature-operations.js` sit next to genuinely generic machinery like `database.js`, `audit.js`, `event-bus.js`, `module-manifest.js`, `action-runtime.js` and `external-operation.js`. Each addition was individually reasonable — the runtime pieces they needed did not exist yet — but the trend has one ending: a core that every project must adopt whole, where lead scoring, pricing and signature semantics are framework concerns. The next three domains (Contract/Subscription, Delivery, Service) would triple it.
+
+**Decision.** The core is a **platform runtime**, not a CRM. Domain behavior belongs in optional domain packages built on the runtime's contracts.
+
+**The core runtime may own** module and runtime contracts; the deterministic database boundary; transactions and savepoints; audit; trace; the event-buffer/outbox contract; the action and workflow runtimes; the external-operation runtime; provider and definition registries (the *mechanism*, not any particular provider kind); policy-version and fingerprint helpers; the module factory; the schema contract; plugin and capability contracts; and the generic HTTP, SDK and Admin adapters.
+
+**Domain packages own** Lead Intelligence, Commercial Operations, Signature/Documents, Contract/Subscription, Delivery, Service and Analytics — their records, their policies, their provider kinds and their actions.
+
+A provisional package shape, deliberately **not** a naming decision (the public name is still an open human decision, `MASTER_PLAN.md` §10):
+
+```text
+@<brand>/runtime        database, transactions, audit, trace, events, registries
+@<brand>/framework      module factory, manifest, generated API/SDK/Admin adapters
+@<brand>/intelligence   enrichment, scoring, routing
+@<brand>/commercial     catalog, pricing, quotes, discount policy
+@<brand>/signature      envelopes, verified events, signed artifacts, orders
+@<brand>/subscription   contracts, subscriptions, terms, entitlements, renewal
+@<brand>/delivery       projects, milestones, work packages, acceptance
+@<brand>/service        service contracts, SLA, support cases
+@<brand>/analytics      semantic metrics, reports, dashboards
+```
+
+**The core budget rule.** *New domain-specific business behavior is not added to `packages/core` unless it is first proven to be a reusable runtime capability.* "Proven" means at least two domains need it, or it is one of the responsibilities listed above. A PR that adds a domain concept to core must say in its description which runtime capability it is and why the domain package cannot own it. This rule is a review gate, not a lint.
+
+**Staged extraction, never a big-bang refactor.** Existing M9–M11 files stay exactly where they are; this ADR moves nothing:
+
+1. **New domains start outside core.** Milestone 12 onward builds domain packages against runtime contracts from day one.
+2. **Shared capability contracts are introduced where a second consumer proves the need** (`docs/strategy/PLATFORM_CAPABILITIES.md`), not speculatively.
+3. **Existing domain code moves only through behavior-preserving PRs** — one domain at a time, import paths and public behavior unchanged, the full suite green before and after.
+4. **Compatibility is maintained** with golden tests: the same starter, the same manifests, the same HTTP/SDK responses, the same audit/event/trace shapes.
+
+An extraction PR that changes behavior is not an extraction PR.
+
+**Plugin ownership.** A third-party package must be able to add domain modules, provider kinds, actions and policies **without patching core**: it registers through the same checked-in `generated/index.js` registries the first-party domains use, and it is bound by the same capability contract. If a plugin needs a core change to work, that is a missing runtime capability and belongs in this ADR's list — not in the plugin.
+
+**Consequences.** Domain packages become optional: a project that only wants Lead Intelligence should not carry pricing or signature code. The core gains a stable, testable surface. Extraction costs several careful PRs, and until they land the tree keeps the current shape — which is exactly why this ADR is written before the next domain rather than after it.
