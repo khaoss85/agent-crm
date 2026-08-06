@@ -348,3 +348,67 @@ the third and last addition M12 asked of the kernel.
 
 **Also corrected:** a renewal notice period without `autoRenew` is refused
 rather than stored as a clause that can never apply.
+
+### ADR-018 addendum 3 — the public domain-package contract
+
+**Status:** accepted (Milestone 13, the second package and the first customer-authored one).
+
+ADR-018 said domain behavior belongs in optional packages. Milestone 12 proved
+one package could exist outside the kernel. This addendum makes the seam a
+**public contract**: the way a customer's own package attaches is the way the
+first-party packages attach, and there is no second, privileged mechanism.
+
+**The contract.** A package exports one static definition:
+
+```js
+definePackage({
+  packageContract: 1,        // the contract it is written against
+  name: 'delivery',          // canonical, unique, Map-keyed
+  version: 1,                // the package's own version
+  label, description,
+  resources: [...],          // the record modules it owns
+  requires: [{ package, capability, version }],
+  capabilities: [{ name, version, description, create(ctx) }],
+  actions: [...], policies: [{kind, definition}],
+  metadata(),                // function-free, additive schema block
+})
+```
+
+Validated fail-closed at startup: an unsupported contract version, a
+non-canonical or prototype-shaped name, a duplicate package or policy identity,
+a resource or capability two packages both claim, a missing or mis-versioned
+dependency, a self-dependency and a dependency cycle all stop the application
+with the offending edge named.
+
+**Capabilities are the only cross-package reach.** A capability is created per
+call with the **caller's** runtime handles, so it reads and writes inside the
+caller's transaction while the provider keeps its services and tables private —
+that is what makes a cross-package commit atomic without sharing a database
+handle. A package that did not *declare* the requirement is refused even when
+the capability exists: the dependency graph in the definition is the truth, not
+a comment. Deep-importing another package's source is never allowed.
+
+**A public kernel surface.** `packages/core/index.js` is what a package may
+import: the package contract, the error types, the ADR-015 fingerprint helpers,
+the money helpers and bounds, and the shared validators. Everything under
+`packages/core/src/*` is private and may change without notice. The CLI and the
+conformance helper both fail a package that reaches into it, and M12 was
+migrated to the public surface in the same PR that introduced it.
+
+**Static composition, deliberately.** Packages are checked-in source registered
+by one import in `packages/domains/generated/index.js`. No dynamic import, no
+`eval`, no remote install, no signing, no marketplace, no hot loading. The
+security model is "you can read the source in your own repository", and adding
+distribution would replace it with a different, larger problem.
+
+**What this addendum defers, with the reason.** A `crm package new` scaffold
+waits until Delivery and Service have settled the file shape — generating the
+wrong skeleton into every customer repository is harder to undo than writing
+four files. A package registry, publication and updates are a distribution
+problem with their own threat model, and authoring does not need them.
+
+**Consequences.** Two first-party packages and one customer-authored example
+now attach through the identical contract, and `tests/custom-package-e2e.test.js`
+fingerprints every kernel file before and after to prove the customer path
+needs no kernel change. The extraction of M9–M11 stays deferred until a third
+independent package (Service, M15) has exercised the contract.

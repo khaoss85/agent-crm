@@ -14,14 +14,14 @@ Generated: **2026-08-06**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **Platform Alignment Gate** (ADR-018, documentation only) |
-| Main SHA at generation | `98bea3b` (merge of PR #15) |
-| Tests on clean main | **216 passing, 0 failing** (`npm run verify` from a fresh clone); **249 passing** on the open M12 branch after its adversarial review |
+| Latest merged milestone | **M12 — Contract & Subscription Activation** (ADR-018 + addenda 1–2), the first domain package |
+| Main SHA at generation | `97a37fe` (merge of PR #16) |
+| Tests on clean main | **249 passing, 0 failing** (`npm run verify` from a fresh clone); **270 passing** on the open M13 branch |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 27/27 in real Chromium, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | `feat: activate contracts and subscriptions from signed orders` (M12 — this PR, adversarially reviewed and corrected, awaiting human merge) |
+| Open PRs | `feat: add package-native delivery handover` (M13 — awaiting adversarial review and human merge) |
 
 ## Completed functional path
 
@@ -39,6 +39,9 @@ Lead capture
 → plan activation, classify every component explicitly, resolve ambiguity     M12
 → Commercial Contract + immutable version + lines, Subscription + lines,      M12
   pending delivery and service obligations                                    M12
+→ plan the delivery handover, decide who delivers what                        M13
+→ Delivery Project + work packages + milestones + optional partner,           M13
+  with the obligations marked handed over                                     M13
 ```
 
 Framework underneath: module manifest + generated migrations (M1), module
@@ -46,7 +49,8 @@ factory (M2), one generated resource contract over API/SDK (M3), generated
 Admin (M4), generated-to-generated references (M5), code-first action runtime
 (M6), core adapters (M7), pipeline registry (M8), declared-definition
 fingerprints + prepare phase (M9), external-operation runtime (M11), optional
-domain packages on a generic domain registry seam (M12).
+domain packages on a generic seam (M12), and a public domain-package contract
+with declared capabilities, a validation CLI and a customer-authoring path (M13).
 
 ## Merged milestones and their ADRs
 
@@ -63,17 +67,20 @@ domain packages on a generic domain registry seam (M12).
 | M10 | Commercial Operations: composite catalog, quotes, discount policy, approval | ADR-016 |
 | M11 | Signature + immutable Order, external-operation runtime | ADR-017 (+ addendum) |
 | — | Platform alignment gate: core-vs-domain boundary | ADR-018 |
-| M12 | Contract & Subscription activation — the first domain package outside core (open PR, not merged) | ADR-018 addenda 1–2 |
+| M12 | Contract & Subscription activation — the first domain package outside core | ADR-018 addenda 1–2 |
+| M13 | Delivery handover + the public package contract and custom-package authoring (open PR, not merged) | ADR-018 addendum 3 |
 
 ## Next planned development
 
-1. **M12 — Contract & Subscription Activation** — this PR: the first optional
-   domain package (`packages/contracts/`), implemented, adversarially reviewed
-   (three domain-model defects found and fixed — term provenance, two-axis
-   classification, scheduled-versus-active state) and green, awaiting a human
-   merge.
-2. Then M13 Delivery Handover, M14 Delivery Economics & Acceptance,
-   M15 Service Operations, M16 Analytics Studio — `EXECUTION_ROADMAP.md`.
+1. **M13 — Delivery Handover + Custom Package Authoring v1** — this PR: the
+   public domain-package contract with declared capabilities, the package
+   validation CLI, the authoring guide and mirrored skill, a customer-authored
+   conformance package, and the `packages/delivery` domain. Awaiting the
+   adversarial review in `docs/QUALITY_GATES.md` §5 and a human merge.
+2. Then M14 Delivery Economics & Acceptance, M15 Service Operations, then the
+   **package contract review** and the first legacy extraction (one of
+   Intelligence / Commercial / Signature), then M16 Analytics Studio —
+   `EXECUTION_ROADMAP.md`.
 
 A parallel platform track (domain package boundary, create-project CLI,
 PostgreSQL, auth/tenancy/RBAC, Jobs & durable outbox, Integration Runtime, Data
@@ -101,8 +108,8 @@ public use. None of it is started.
 
 **Implemented (merged):** module manifest and factory; generated API/SDK/Admin;
 references; actions; core adapters; pipelines; Lead Intelligence; Commercial
-Operations; Signature and Order; Contract activation and subscriptions (open
-PR); MCP server; CLI.
+Operations; Signature and Order; Contract activation and subscriptions; the
+public domain-package contract and delivery handover (open PR); MCP server; CLI.
 
 **Documentation only (no code):** renewal, billing and everything downstream of
 activation; Delivery;
