@@ -105,15 +105,15 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 - **Manual interventions**: anything beyond that first Task is handwritten.
 
 ## JTBD-08 — Hand off a won deal
-- **Status**: **partially supported** — cross-module workflows with compensation exist as a primitive; no built-in handoff.
-- **Evidence**: workflow engine (`tests/workflow.test.js`).
+- **Status**: **partially supported** — cross-module workflows with compensation exist as a primitive, and activating a contract (M12) records explicit **pending** delivery and service obligations from the signed order. Nothing executes, schedules, staffs or completes them: there is no handover process, no delivery project and no acceptance.
+- **Evidence**: workflow engine (`tests/workflow.test.js`); `tests/contracts-activation-e2e.test.js` (obligations created `pending_handover` / `pending_activation`).
 
 ## JTBD-09 — Onboard a customer
 - **Status**: **not supported** — no checklist/onboarding primitives.
 
 ## JTBD-10 — Manage contracts and renewals
-- **Status**: **partially supported** — the renewal-approval slice is validated; general contract lifecycle (dates, terms, auto-renewal) is not modeled.
-- **Evidence**: `npm run smoke`, `tests/workflow.test.js`.
+- **Status**: **partially supported** — a contract can now be *activated* from a signed Order with an explicit term (M12), and the renewal-approval workflow slice is validated. Renewal itself is **not** supported: auto-renew and the notice period are recorded only, nothing fires on them (no scheduler), and amendments, cancellation and non-renewal do not exist.
+- **Evidence**: `tests/contracts-activation-e2e.test.js`, `docs/CONTRACT_ACTIVATION.md`, `npm run smoke`, `tests/workflow.test.js`.
 
 ## JTBD-11 — Identify churn risk
 - **Status**: **not supported** — no health-scoring/activity primitives.
@@ -196,22 +196,24 @@ The four product workstreams (`docs/strategy/REVENUE_OPERATIONS.md`, `DELIVERY_S
 | JTBD-AN-04 | Version and roll back a dashboard | **not supported** | no dashboard-version primitives |
 | JTBD-AN-05 | Validate metric correctness against fixtures | **not supported** | no metric test harness |
 
-### Contract & Subscription (target: M12 — `CONTRACT_SUBSCRIPTION_RENEWAL.md`)
+### Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, `docs/CONTRACT_ACTIVATION.md`)
 
-The layer between the immutable Order (M11) and Delivery/Service. **No primitive exists.**
+The layer between the immutable Order (M11) and Delivery/Service. **Activation
+exists; nothing downstream of it does** — no billing, no amendment, no renewal,
+no cancellation, and deliberately no recurring-revenue figure.
 
 | ID | Job | Status | Notes |
 |---|---|---|---|
-| JTBD-CS-01 | Activate a commercial contract from a signed Order | **not supported** | no contract primitives; the Order exists and is independently readable (M11), which is the input |
-| JTBD-CS-02 | Activate a subscription with lines and an initial term | **not supported** | no subscription/term primitives |
+| JTBD-CS-01 | Activate a commercial contract from a signed Order | **validated end to end** | `order.activate-contract` (human actor only) creates one contract, its immutable version and one line per order component, atomically and idempotently, copied from the signed Order — `tests/contracts-activation-e2e.test.js`, starter `install.mjs` |
+| JTBD-CS-02 | Activate a subscription with lines and an initial term | **partially supported** | one subscription per contract with one line per component explicitly classified as recurring, plus term dates on the contract — but it is a commercial activation record only: nothing bills, prorates, renews or cancels it, and there is no scheduler |
 | JTBD-CS-03 | Amend seats or quantity on a live subscription | **not supported** | no amendment primitives |
 | JTBD-CS-04 | Record an expansion or contraction, classified at the time of change | **not supported** | no amendment classification |
-| JTBD-CS-05 | Calculate MRR, ARR and TCV from real contract data | **not supported** | deliberately impossible today — M10/M11 grouped totals are one quote's period sums, not recurring revenue; needs a term, an active subscription and a stated normalization policy |
+| JTBD-CS-05 | Calculate MRR, ARR and TCV from real contract data | **not supported** | deliberately not derived — M12 now provides a term and an active subscription, but normalizing unlike periods into one figure is a stated business policy that does not exist here; the Admin and the schema say so rather than implying a number |
 | JTBD-CS-06 | Schedule a renewal ahead of term end | **not supported** | needs both this layer and a scheduler (`JOBS_AND_OUTBOX.md`) |
 | JTBD-CS-07 | Create a renewal opportunity from an expiring subscription | **not supported** | needs CS-06 |
-| JTBD-CS-08 | Apply a versioned price-uplift policy at renewal | **not supported** | the versioned-policy mechanism exists (ADR-015/016); the renewal domain does not |
+| JTBD-CS-08 | Apply a versioned price-uplift policy at renewal | **not supported** | the versioned-policy mechanism exists (ADR-015/016/018) and M12 uses it to classify, but the renewal domain does not exist |
 | JTBD-CS-09 | Cancel or non-renew with an audited reason | **not supported** | no cancellation primitives |
-| JTBD-CS-10 | Read a complete amendment history | **not supported** | no amendment history |
+| JTBD-CS-10 | Read a complete amendment history | **not supported** | no amendments exist; what M12 does record is the activation itself — who activated, from which order, under which policy version, and every classification with its reason and any human override |
 
 ### Data operations (no milestone assigned)
 
@@ -279,7 +281,7 @@ All fifteen operator jobs (CL-01…CL-15) are **not supported**: no control plan
 
 This matrix guides roadmap prioritization: the largest gaps blocking common CRM adoption are a reusable Activity/Task engine with scheduling (JTBD-07), generated workflows/approvals for custom objects (JTBD-06), and the auth/tenancy/RBAC prerequisite (JTBD-15).
 
-The workstream sections chart the M9–M16 roadmap (corrected at the Platform Alignment Gate: M12 is Order Activation & Subscription, and Delivery/Service/Analytics shift by one — `EXECUTION_ROADMAP.md`). Commercial Operations (M10) is now implemented for the local slice: JTBD-CO-01/03 **validated end to end**, CO-02 partial (fixture provider only — no real external catalog), CO-04 partial (human boundary validated, secure roles not), CO-05/06/07 still **not supported** (Milestone 11). Lead Intelligence (M9) is implemented for the local slice: JTBD-LI-01/02/04/07 **validated end to end** (fixture provider, explainable versioned scoring, deterministic routing, persisted version fingerprints — ADR-015), LI-03/05/08/09 partial, LI-06 still not supported. The CO/DS/AN sections remain all **not supported** except JTBD-CO-04 and JTBD-DS-01, which inherit *partial* status from the validated approval and workflow primitives. Signature and Order (M11) is implemented for the local slice: JTBD-CO-07 **validated end to end**, CO-05/CO-06 partial (fixture provider, test-only webhook key, provider-reported artifact hash — ADR-017).
+The workstream sections chart the M9–M16 roadmap (corrected at the Platform Alignment Gate: M12 is Order Activation & Subscription, and Delivery/Service/Analytics shift by one — `EXECUTION_ROADMAP.md`). Commercial Operations (M10) is now implemented for the local slice: JTBD-CO-01/03 **validated end to end**, CO-02 partial (fixture provider only — no real external catalog), CO-04 partial (human boundary validated, secure roles not), CO-05/06/07 still **not supported** (Milestone 11). Lead Intelligence (M9) is implemented for the local slice: JTBD-LI-01/02/04/07 **validated end to end** (fixture provider, explainable versioned scoring, deterministic routing, persisted version fingerprints — ADR-015), LI-03/05/08/09 partial, LI-06 still not supported. The CO/DS/AN sections remain all **not supported** except JTBD-CO-04 and JTBD-DS-01, which inherit *partial* status from the validated approval and workflow primitives. Signature and Order (M11) is implemented for the local slice: JTBD-CO-07 **validated end to end**, CO-05/CO-06 partial (fixture provider, test-only webhook key, provider-reported artifact hash — ADR-017). Contract activation (M12) is implemented for the local slice as the first optional domain package: JTBD-CS-01 **validated end to end**, CS-02 partial (an activation record with a term, with nothing billing, renewing or cancelling it), CS-05 deliberately still **not supported**, and every remaining CS row unchanged.
 
 The Production Spine (JTBD-15) remains the hard gate for every job involving real external or role-scoped users — including manual manager reassignment.
 

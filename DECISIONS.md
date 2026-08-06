@@ -240,3 +240,44 @@ An extraction PR that changes behavior is not an extraction PR.
 **Plugin ownership.** A third-party package must be able to add domain modules, provider kinds, actions and policies **without patching core**: it registers through the same checked-in `generated/index.js` registries the first-party domains use, and it is bound by the same capability contract. If a plugin needs a core change to work, that is a missing runtime capability and belongs in this ADR's list — not in the plugin.
 
 **Consequences.** Domain packages become optional: a project that only wants Lead Intelligence should not carry pricing or signature code. The core gains a stable, testable surface. Extraction costs several careful PRs, and until they land the tree keeps the current shape — which is exactly why this ADR is written before the next domain rather than after it.
+
+### ADR-018 addendum — the domain seam, proven by Milestone 12
+
+**Status:** accepted (Milestone 12, the first domain built outside core).
+
+Milestone 12 was the test the ADR asked for: build a whole domain — contracts,
+subscriptions and obligations — in `packages/contracts/` without adding a
+domain concept to core. It needed exactly **two** generic runtime additions,
+both of which pass the core budget rule because they name no domain:
+
+**1. A domain registry seam (`packages/core/src/domain-registry.js`).** A
+domain package hands the application a plain declaration —
+`{name, domainContract: 1, label, actions[], policies[{kind, definition}],
+metadata()}` — and the runtime does what it already does for every other
+registry: validates the shape, refuses duplicates, computes the ADR-015
+declared-definition fingerprint of each policy, persists it in
+`definition_versions` under `domain-policy:<domain>:<kind>`, registers the
+actions, resolves policies by explicit `(domain, kind, name, version)` from a
+Map, and publishes function-free metadata under `/api/schema` → `domains`.
+The word "contract", "subscription" and "obligation" appears nowhere in
+`packages/core`; a test scans the core sources to keep it that way. Removing
+the single static import in `packages/domains/generated/index.js` removes the
+domain, and the kernel boots byte-identically without it.
+
+**2. A strict `boolean` action input type.** The action runtime had `string`,
+`timestamp`, `enum`, `integer` and `json`; a boolean had to travel as JSON,
+which is a modelling accident rather than a decision. The new type accepts
+`true`/`false` only — never `"true"`, `1` or `"yes"` — so a term flag cannot be
+set by a string that happens to look truthy.
+
+**Nothing else was needed**, and that is the finding: the module factory,
+managed writes, the record-action runtime, transactions, audit, events and
+trace carried a full domain unchanged. The seam is generic by construction —
+the next domain package (Delivery, Service) registers through the same
+`DomainRegistries` without a further core change, and a third-party package
+uses the identical path, as ADR-018's plugin-ownership clause requires.
+
+**What the seam deliberately does not do.** It does not sequence domains, share
+state between them, let one domain override another's action, or give a domain
+privileged database access: a domain package writes exclusively through the
+same managed record services every other action uses.

@@ -60,6 +60,12 @@ The action runtime wraps `execute` in the guarantees a hand-rolled service metho
 
 Use an action for a single-record lifecycle step; use a workflow for a multi-record or multi-step process, or when a human approval gate is involved. See `docs/ACTIONS.md`, ADR-011 and ADR-012.
 
+## Domain packages
+
+Domain behavior lives in optional packages built on the runtime's contracts, not in the core (ADR-018). A package declares itself as plain data — a name, its record manifests, its versioned policies, its actions and function-free schema metadata — and a project enables it with one static import in `packages/domains/generated/index.js`. The runtime validates the declaration, fingerprints each policy version (ADR-015), registers the actions and publishes the metadata under `/api/schema`; it never learns the domain's vocabulary. Removing the import removes the domain, and everything else keeps working.
+
+`packages/contracts/` (Milestone 12: contract activation and subscriptions) is the first one, and a third-party package uses the identical path. See `docs/CONTRACT_ACTIVATION.md` and the ADR-018 addendum.
+
 ## Providers
 
 Providers isolate external systems from business logic. The proof of concept includes a notification provider contract and an in-memory implementation. Email, calendar, ERP and marketing providers belong here later.
