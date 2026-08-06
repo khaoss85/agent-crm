@@ -66,7 +66,23 @@ Produce a **capability coverage map**: what is reused, what is missing, where da
 
 Choose and *explain*: official packages, custom packages, provider adapters, the data model, events and touchpoints, policies, metrics, Admin views, tests, and fallback behaviour when a provider or a dataset is missing.
 
-The design rule that matters: **prefer an existing package; create a custom package when none fits; never patch the kernel.** A kernel change is a missing generic runtime capability and belongs in an ADR discussion, not in a solution.
+### The decision hierarchy — try each rung before the next
+
+This is the rule that stops an objective-driven build from producing a
+duplicate package for every goal, or a kernel patch for every gap:
+
+```text
+1. configure an existing package        a policy version, a config value, a view
+2. extend through a declared seam       an action, a policy, a record on a package that owns the domain
+3. add or configure a provider          when the gap is an integration, not a model
+4. create a custom package              when no installed package owns the domain
+5. propose a kernel capability          ONLY with generic, multi-domain evidence — and as an ADR discussion, never inside a solution
+```
+
+Rung 5 is not a step an agent takes; it is a proposal an agent writes. A kernel
+change made to fit one goal is the failure this hierarchy exists to prevent.
+Rung 4 is justified only when rungs 1–3 genuinely cannot carry the domain — and
+the agent must say which it tried.
 
 ### PLAN
 
@@ -90,7 +106,38 @@ Show what was built, how it works, the assumptions, the limitations, the Admin U
 
 ### OBSERVE · RECOMMEND · ITERATE
 
-Use **evidence, not intuition**. A recommendation without a linked measurement is an opinion, and the agent should say so.
+The post-build loop, and it is not optional — a solution that is never observed
+is a guess that was never checked:
+
+```text
+observe    what the built system actually recorded
+diagnose   where it underperforms, for which segment, by how much
+recommend  what to change, with the evidence behind it
+propose    the next version, as a reviewable change
+```
+
+**No silent operational change.** A recommendation is a proposal; applying it is
+a new plan, a new approval where the boundary requires one, and a new version.
+
+### Evidence-first output
+
+Every answer an agent gives about a goal separates these, explicitly and in this
+order, so a reader can see *why* a recommendation was made:
+
+| Layer | Meaning |
+|---|---|
+| **Observed facts** | what the data actually says, with the query and its version |
+| **Derived metrics** | what was computed from those facts, and how |
+| **Assumptions** | what was taken as true without evidence |
+| **Inferences** | what was concluded from facts plus assumptions |
+| **Recommendations** | what to do, traceable to the rows above |
+| **Unavailable evidence** | what could not be checked, and why |
+
+Two standing rules inside that structure: **no attribution model is causal
+truth** — each is an assumption about credit, and its version travels with every
+result; and where a valid control group exists, **lift outranks attribution**,
+so the agent reports it as the better answer rather than the more flattering
+one.
 
 ---
 
@@ -167,7 +214,7 @@ Until AX1 exists, an agent assembles that picture from the surfaces above. That 
 
 The agent may **analyze, propose, generate, prepare, test, preview and recommend** without asking.
 
-A human must approve: publishing to production · sending any external communication · activating a journey · changing a live audience · using sensitive data · launching ads · creating or increasing spend · installing or configuring a provider · changing secrets · auto-applying an experiment winner · any irreversible or destructive action.
+A human must approve: publishing to production · sending any external communication · activating a journey · changing a live audience · using sensitive data · launching ads · creating or increasing spend · installing an external package · installing or configuring a provider · changing secrets · auto-applying an experiment winner · **sending for signature** · **activating a commercial contract** · **starting delivery or recording acceptance** · **a destructive migration** · **a consent or legal change** · any other irreversible or destructive action.
 
 Real approval **roles** require the Production Spine (auth, tenancy, RBAC). Until it exists, actor headers are not authentication and every boundary here is a local-development boundary. No document in this repository may present it as more.
 

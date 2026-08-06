@@ -68,6 +68,39 @@ Proceed without asking for analysis, proposals, generation, previews and tests. 
 
 Real approval **roles** need the Production Spine. Until then this is a human-actor boundary, not RBAC — never describe it as secure.
 
+## The decision hierarchy — try each rung before the next
+
+```text
+1. configure an existing package        a policy version, a config value, a view
+2. extend through a declared seam       an action, a policy, a record on a package that owns the domain
+3. add or configure a provider          when the gap is an integration, not a model
+4. create a custom package              when no installed package owns the domain
+5. propose a kernel capability          ONLY with generic, multi-domain evidence, as an ADR discussion
+```
+
+Say which rungs you tried. Rung 5 is a proposal you write, never a step you take inside a solution.
+
+## Evidence-first output, in this order
+
+```text
+Observed facts        what the data says, with the query and its version
+Derived metrics       what was computed, and how
+Assumptions           what was taken as true without evidence
+Inferences            what follows from facts plus assumptions
+Recommendations       what to do, traceable to the rows above
+Unavailable evidence  what could not be checked, and why
+```
+
+No attribution model is causal truth. Where a valid control group exists, report **lift** as the better answer than attribution.
+
+## After the build
+
+```text
+observe → diagnose → recommend → propose next version
+```
+
+**No silent operational change.** A recommendation is a proposal; applying it is a new plan, a new approval where required, and a new version.
+
 ## 10. Finish with evidence, not code
 
 Report: what was built, how it works, the assumptions, the limitations, the Admin views, the tests and their results, the JTBD rows moved and why, and the approvals still outstanding. Run the adversarial review (`docs/QUALITY_GATES.md` §5) before any merge.
