@@ -22,7 +22,15 @@ import { formatMinorUnits } from './admin-core.js';
  * control disables while a request is in flight.
  */
 
-const OVERRIDE_TYPES = ['subscription', 'delivery', 'service', 'other'];
+const COMMERCIAL_VALUES = ['subscription', 'non_subscription'];
+const OBLIGATION_VALUES = ['delivery', 'service'];
+/** Every obligation combination a human can choose, as one bounded control. */
+const OBLIGATION_CHOICES = [
+  { value: '', label: 'no further obligation' },
+  { value: 'delivery', label: 'delivery' },
+  { value: 'service', label: 'service' },
+  { value: 'delivery,service', label: 'delivery and service' },
+];
 
 /**
  * @param {{order: any, schema: any, mount: any, el: any, client: any,
@@ -116,7 +124,7 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
   summary.setAttribute('data-activatable', String(plan.activatable));
   summary.setAttribute('data-ambiguous', String(plan.counts.ambiguous));
   summary.appendChild(el('p', 'activation-counts',
-    `${plan.counts.subscription} subscription line(s) · ${plan.counts.delivery} delivery obligation(s) · ${plan.counts.service} service obligation(s) · ${plan.counts.other} recorded with no further obligation · ${plan.counts.ambiguous} unclassified`));
+    `${plan.counts.subscriptionLines} subscription line(s) · ${plan.counts.delivery} delivery obligation(s) · ${plan.counts.service} service obligation(s) · ${plan.counts.noObligation} owing nothing further · ${plan.counts.ambiguous} undecided`));
   result.appendChild(summary);
 
   /** @type {Map<string, {type: any, reason: any}>} */
@@ -126,33 +134,55 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
   for (const component of plan.components) {
     const row = el('div', component.requiresOverride ? 'activation-component needs-decision' : 'activation-component');
     row.setAttribute('data-component', component.orderComponentId);
-    row.setAttribute('data-classification', component.classification);
+    row.setAttribute('data-commercial', component.commercialActivation);
+    row.setAttribute('data-obligations', Array.isArray(component.obligations) ? component.obligations.join(',') : String(component.obligations));
     const recurrence = component.chargeType === 'one_time'
       ? 'one-time'
       : `every ${component.intervalCount} ${component.interval}(s)`;
+    const obligations = Array.isArray(component.obligations)
+      ? (component.obligations.length > 0 ? component.obligations.join(' + ') : 'no further obligation')
+      : 'obligations undecided';
+    const commercial = component.commercialActivation === 'subscription'
+      ? 'subscription line'
+      : component.commercialActivation === 'non_subscription' ? 'no subscription line' : 'commercial treatment undecided';
     row.appendChild(el('p', 'activation-component-head',
-      `${component.label ?? component.componentKey} · ${component.sku} · ${recurrence} · ${formatMinorUnits(component.netAmountCents, plan.currency)} net · ${component.classification}${component.overridden ? ' (human override)' : ''}`));
+      `${component.label ?? component.componentKey} · ${component.sku} · ${recurrence} · ${formatMinorUnits(component.netAmountCents, plan.currency)} net · ${commercial} · ${obligations}${component.overridden ? ` (human override: ${component.overriddenDimensions.join(' and ')})` : ''}`));
     row.appendChild(el('p', 'activation-reason', component.reason ?? 'no reason recorded'));
 
     if (component.requiresOverride) {
       row.appendChild(el('p', 'activation-blocked',
-        'This component blocks activation: the policy could not classify it and will not guess. Choose what it is, and say why.'));
-      const typeSelect = el('select');
-      typeSelect.setAttribute('name', `type:${component.orderComponentId}`);
-      for (const type of (domain.overridableTypes ?? OVERRIDE_TYPES)) {
-        const option = el('option', undefined, type);
-        option.setAttribute('value', type);
-        typeSelect.appendChild(option);
-        if (typeSelect.value === undefined || typeSelect.value === '') typeSelect.value = type;
+        `This component blocks activation: the policy could not decide ${component.ambiguousDimensions.join(' or ')} and will not guess. Choose what it is, and say why.`));
+      // One editor per undecided axis: a human answers the question that was
+      // actually left open, and the answer is recorded against that axis.
+      for (const dimension of component.ambiguousDimensions) {
+        const block = el('div', `activation-decision activation-decision-${dimension}`);
+        block.setAttribute('data-dimension', dimension);
+        block.appendChild(el('strong', undefined, dimension === 'commercial'
+          ? 'Is this a recurring right? '
+          : 'What does it oblige us to? '));
+        const select = el('select');
+        select.setAttribute('name', `${dimension}:${component.orderComponentId}`);
+        const choices = dimension === 'commercial'
+          ? (domain.classification?.overridableCommercialActivation ?? COMMERCIAL_VALUES).map((value) => ({ value, label: value }))
+          : OBLIGATION_CHOICES;
+        for (const choice of choices) {
+          const option = el('option', undefined, choice.label);
+          option.setAttribute('value', choice.value);
+          select.appendChild(option);
+          if (select.value === undefined || select.value === '') select.value = choice.value;
+        }
+        const reasonInput = el('input');
+        reasonInput.setAttribute('name', `reason:${dimension}:${component.orderComponentId}`);
+        reasonInput.setAttribute('placeholder', 'Why (required)');
+        block.appendChild(select);
+        block.appendChild(reasonInput);
+        row.appendChild(block);
+        overrideControls.set(`${component.orderComponentId}/${dimension}`, {
+          orderComponentId: component.orderComponentId, dimension, select, reason: reasonInput,
+        });
+        row[`__${dimension}`] = select;
+        row[`__${dimension}Reason`] = reasonInput;
       }
-      const reasonInput = el('input');
-      reasonInput.setAttribute('name', `reason:${component.orderComponentId}`);
-      reasonInput.setAttribute('placeholder', 'Why this classification (required)');
-      row.appendChild(typeSelect);
-      row.appendChild(reasonInput);
-      overrideControls.set(component.orderComponentId, { type: typeSelect, reason: reasonInput });
-      row.__type = typeSelect;
-      row.__reason = reasonInput;
     }
     table.appendChild(row);
   }
@@ -164,11 +194,13 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
    * later decision about the same component replaces the earlier one.
    */
   const collectOverrides = () => {
-    const merged = new Map(appliedOverrides.map((override) => [override.orderComponentId, override]));
-    for (const [orderComponentId, control] of overrideControls) {
-      merged.set(orderComponentId, {
-        orderComponentId,
-        type: String(control.type.value ?? ''),
+    const merged = new Map(appliedOverrides.map((override) => [`${override.orderComponentId}/${override.dimension}`, override]));
+    for (const [key, control] of overrideControls) {
+      const raw = String(control.select.value ?? '');
+      merged.set(key, {
+        orderComponentId: control.orderComponentId,
+        dimension: control.dimension,
+        value: control.dimension === 'obligations' ? (raw === '' ? [] : raw.split(',')) : raw,
         reason: String(control.reason.value ?? '').trim(),
       });
     }
@@ -210,7 +242,11 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
 
   // ---- term: three calendar dates the caller must state, never defaulted ----
   const term = el('div', 'activation-term');
-  term.appendChild(el('h4', undefined, 'Contract term'));
+  term.appendChild(el('h4', undefined, 'Operational activation term'));
+  // Said before the inputs, not in a footnote: these values were NOT signed.
+  term.appendChild(el('p', 'activation-terms-provenance',
+    plan.termsProvenance?.note
+      ?? 'Recorded after signature: the signed document carries no term, renewal clause or notice period.'));
   const dateInput = (name, placeholder) => {
     const input = el('input');
     input.setAttribute('type', 'date');
@@ -228,12 +264,16 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
   noticeDays.setAttribute('type', 'number');
   noticeDays.setAttribute('name', 'renewalNoticeDays');
   noticeDays.value = '0';
+  const termsReason = el('input');
+  termsReason.setAttribute('name', 'termsReason');
+  termsReason.setAttribute('placeholder', 'Where this term came from (required)');
   for (const [label, control] of [
     ['Effective date', effectiveDate],
     ['Term start', termStartDate],
     ['Term end (inclusive)', termEndDate],
     ['Auto-renew (recorded only)', autoRenew],
-    ['Renewal notice days (recorded only)', noticeDays],
+    ['Renewal notice days (recorded only, needs auto-renew)', noticeDays],
+    ['Source of this term', termsReason],
   ]) {
     const row = el('p', 'activation-term-row');
     row.appendChild(el('strong', undefined, `${label}: `));
@@ -241,7 +281,7 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
     term.appendChild(row);
   }
   term.appendChild(el('small', 'muted',
-    `Dates are calendar dates (YYYY-MM-DD) with no time and no timezone; the end date is inclusive. ${domain.term?.renewalNotice ?? 'Auto-renew and notice days are recorded only'} — nothing in this milestone schedules, bills or renews anything.`));
+    `Dates are calendar dates (YYYY-MM-DD) with no time and no timezone; the end date is inclusive. ${domain.term?.renewalNotice ?? 'Auto-renew and notice days are recorded only'} — nothing in this milestone schedules, bills or renews anything. A term starting in the future is recorded as scheduled and ${domain.activationState?.limitation ?? 'nothing transitions it: there is no scheduler'}.`));
   result.appendChild(term);
 
   const activatePanel = el('div', 'activation-activate');
@@ -263,6 +303,7 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
           termEndDate: String(termEndDate.value ?? ''),
           autoRenew: Boolean(autoRenew.checked),
           renewalNoticeDays: Number(noticeDays.value ?? 0),
+          termsReason: String(termsReason.value ?? '').trim(),
           // The human decisions that made this plan activatable travel with
           // the activation: the server recomputes the plan from the Order and
           // must reach the same classification the human approved.
@@ -281,6 +322,7 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
   result.__termEndDate = termEndDate;
   result.__autoRenew = autoRenew;
   result.__noticeDays = noticeDays;
+  result.__termsReason = termsReason;
   result.__activateButton = activateButton;
 }
 
@@ -316,13 +358,14 @@ async function renderEvidence({ order, domain, panel, el, fetchRows, money }) {
   facts.setAttribute('data-contract', contract.id);
   facts.setAttribute('data-status', contract.status);
   for (const [label, value] of [
-    ['Contract', `${contract.id} · ${contract.status}`],
+    ['Contract', `${contract.id} · ${contract.status}${contract.status === 'scheduled' ? ' (starts in the future; nothing transitions it automatically)' : ''}`],
     ['Customer', contract.customerName],
     ['Currency', contract.currency],
     ['Effective', contract.effectiveDate],
     ['Term', `${contract.termStartDate} → ${contract.termEndDate} (inclusive, ${contract.termDays} day(s))`],
     ['Auto-renew', contract.autoRenew ? 'yes (recorded only)' : 'no'],
     ['Renewal notice', `${contract.renewalNoticeDays} day(s) (recorded only)`],
+    ['Term source', `${contract.termsSource} — ${contract.termsReason ?? 'no reason recorded'}`],
     ['Version', version ? `v${version.versionNumber} · ${version.lineCount} line(s)` : '—'],
     ['Classification policy', `${contract.policy}@${contract.policyVersion}`],
     ['Policy fingerprint', contract.policyFingerprint],
@@ -343,12 +386,22 @@ async function renderEvidence({ order, domain, panel, el, fetchRows, money }) {
     row.setAttribute('data-line', line.id);
     row.setAttribute('data-classification', line.classification);
     const recurrence = line.chargeType === 'one_time' ? 'one-time' : `every ${line.intervalCount} ${line.interval}(s)`;
+    const obligations = parseObligations(line.obligationsJson);
+    row.setAttribute('data-commercial', line.commercialActivation);
     row.textContent =
-      `${line.label ?? line.componentKey} · ${line.sku} · ${recurrence} · ${money(line.netAmountCents, line.currency)} net · ${line.classification}`;
+      `${line.label ?? line.componentKey} · ${line.sku} · ${recurrence} · ${money(line.netAmountCents, line.currency)} net · ${line.commercialActivation === 'subscription' ? 'subscription line' : 'no subscription line'} · ${obligations.length > 0 ? obligations.join(' + ') : 'no further obligation'}`;
     lineList.appendChild(row);
     const evidence = el('p', 'contract-line-evidence');
-    evidence.textContent = line.overridden
-      ? `Human override by ${line.overriddenBy}: the policy said "${line.policyClassification}" — ${line.overrideReason}`
+    const overrides = [
+      ...(line.commercialOverridden
+        ? [`commercial treatment overridden by ${line.overriddenBy} (the policy said "${line.policyCommercialActivation}"): ${line.commercialOverrideReason}`]
+        : []),
+      ...(line.obligationsOverridden
+        ? [`obligations overridden by ${line.overriddenBy} (the policy said "${parseObligationsLabel(line.policyObligationsJson)}"): ${line.obligationsOverrideReason}`]
+        : []),
+    ];
+    evidence.textContent = overrides.length > 0
+      ? overrides.join(' · ')
       : `Policy ${line.classificationPolicy}@${line.classificationPolicyVersion}: ${line.classificationReason ?? 'no reason recorded'}`;
     lineList.appendChild(evidence);
   }
@@ -359,7 +412,7 @@ async function renderEvidence({ order, domain, panel, el, fetchRows, money }) {
   if (subscription) {
     subscriptionPanel.setAttribute('data-subscription', subscription.id);
     subscriptionPanel.setAttribute('data-status', subscription.status);
-    subscriptionPanel.appendChild(el('h4', undefined, `Subscription (${subscription.status})`));
+    subscriptionPanel.appendChild(el('h4', undefined, `Subscription (${subscription.status}${subscription.status === 'scheduled' ? ' — starts in the future' : ''})`));
     subscriptionPanel.appendChild(el('p', 'subscription-window',
       `${subscription.startDate} → ${subscription.endDate} · ${subscription.lineCount} line(s) · ${subscription.currency}`));
     for (const line of subscriptionLines.filter((row) => row.subscriptionId === subscription.id)) {
@@ -397,4 +450,25 @@ async function renderEvidence({ order, domain, panel, el, fetchRows, money }) {
 
   panel.appendChild(el('p', 'muted',
     `Everything above is read-only evidence copied from the signed order and never recalculated from the current catalog. Not modeled: ${(domain.notModeled ?? []).join(', ')}.`));
+}
+
+/** Server-written obligation evidence; unreadable data degrades to none. */
+function parseObligations(text) {
+  try {
+    const value = JSON.parse(String(text ?? '[]'));
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+/** What the policy said about the obligations axis, including "undecided". */
+function parseObligationsLabel(text) {
+  try {
+    const value = JSON.parse(String(text ?? '[]'));
+    if (value === 'ambiguous') return 'undecided';
+    return Array.isArray(value) && value.length > 0 ? value.join(' + ') : 'nothing further';
+  } catch {
+    return 'unreadable';
+  }
 }

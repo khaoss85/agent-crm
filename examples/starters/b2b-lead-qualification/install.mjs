@@ -615,7 +615,20 @@ try {
     // ---- Milestone 12: signed Order → Contract, Subscription, obligations ----
     // Everything below belongs to the optional `contracts` domain package: the
     // kernel does not know the words contract or subscription.
-    const TERM = { effectiveDate: '2026-09-01', termStartDate: '2026-09-01', termEndDate: '2027-08-31' };
+    // The term is operational metadata recorded AFTER signature: the signed
+    // document carries none, so the package requires a human reason for it.
+    // A term that starts today is active; one that starts later is recorded
+    // as scheduled and stays that way — there is no scheduler (below).
+    const today = app.now().slice(0, 10);
+    const inOneYear = new Date(`${today}T00:00:00.000Z`);
+    inOneYear.setUTCFullYear(inOneYear.getUTCFullYear() + 1);
+    inOneYear.setUTCDate(inOneYear.getUTCDate() - 1);
+    const TERM = {
+      effectiveDate: today,
+      termStartDate: today,
+      termEndDate: inOneYear.toISOString().slice(0, 10),
+      termsReason: 'renewal window agreed with the customer after signature',
+    };
     const POLICY = { policy: 'b2b-saas-order-activation', policyVersion: 1 };
     const runOrder = (action, input, orderActor = actor) =>
       app.runAction({ module: 'order', action, recordId: order.id, input, actor: orderActor });
@@ -624,7 +637,10 @@ try {
     // from recurrence. One component is deliberately unmapped by v1.
     const planned = await runOrder('plan-activation', POLICY);
     const plan = planned.result.plan;
-    assert.deepEqual(plan.counts, { subscription: 2, delivery: 1, service: 1, other: 1, ambiguous: 1 });
+    // Two independent axes: what recurs, and what is owed beyond the money.
+    // Annual support is BOTH a subscription line and a service obligation.
+    assert.deepEqual(plan.counts, { subscriptionLines: 3, delivery: 1, service: 1, noObligation: 3, ambiguous: 1 });
+    assert.equal(plan.termsProvenance.source, 'post-signature-operational-activation');
     assert.equal(plan.activatable, false, 'an unclassified component blocks activation');
     assert.equal(app.modules.get('commercial-contract').service.list().length, 0, 'planning writes nothing');
     const ambiguous = plan.components.find((component) => component.requiresOverride);
@@ -646,25 +662,44 @@ try {
       (error) => error.status === 400,
     );
     await assert.rejects(
-      () => runOrder('activate-contract', { ...POLICY, ...TERM, termEndDate: '2026-08-31' }),
+      () => runOrder('activate-contract', { ...POLICY, ...TERM, termStartDate: TERM.termEndDate, termEndDate: TERM.termStartDate }),
       (error) => error.status === 400,
+    );
+    // The term is not signed, so it must say where it came from.
+    await assert.rejects(
+      () => runOrder('activate-contract', { ...POLICY, ...TERM, termsReason: undefined }),
+      (error) => error.status === 400 && /termsReason/.test(error.message),
+    );
+    // A notice period without auto-renewal is a clause that can never apply.
+    await assert.rejects(
+      () => runOrder('activate-contract', { ...POLICY, ...TERM, autoRenew: false, renewalNoticeDays: 30 }),
+      (error) => error.status === 400 && /autoRenew/.test(error.message),
     );
 
     // The human decision: an explicit classification with a reason.
     const activated = await runOrder('activate-contract', {
       ...POLICY, ...TERM, autoRenew: true, renewalNoticeDays: 30,
-      classificationOverrides: [{
-        orderComponentId: ambiguous.orderComponentId,
-        type: 'subscription',
-        reason: 'storage is sold to this customer as a recurring right',
-      }],
+      classificationOverrides: [
+        {
+          orderComponentId: ambiguous.orderComponentId,
+          dimension: 'commercial',
+          value: 'subscription',
+          reason: 'storage is sold to this customer as a recurring right',
+        },
+        {
+          orderComponentId: ambiguous.orderComponentId,
+          dimension: 'obligations',
+          value: [],
+          reason: 'we host it; there is no delivery or service work to do',
+        },
+      ],
     });
-    assert.deepEqual(activated.result.counts, { subscription: 3, delivery: 1, service: 1, other: 1, ambiguous: 0 });
+    assert.deepEqual(activated.result.counts, { subscriptionLines: 4, delivery: 1, service: 1, noObligation: 4, ambiguous: 0 });
 
     const contract = app.modules.get('commercial-contract').service.listWhere({ orderId: order.id })[0];
     assert.equal(contract.status, 'active');
     assert.equal(contract.sourceKey, `contract:order:${order.id}`);
-    assert.equal(contract.termDays, 365, 'the end date is inclusive');
+    assert.ok(contract.termDays === 365 || contract.termDays === 366, 'the end date is inclusive');
     assert.equal(contract.documentHash, order.documentHash, 'the contract cites the signed document');
     assert.equal(orders.get(order.id).contractId, contract.id);
     const contractVersion = app.modules.get('contract-version').service.listWhere({ contractId: contract.id })[0];
@@ -674,15 +709,28 @@ try {
     const contractLines = app.modules.get('contract-line').service.listWhere({ contractId: contract.id });
     assert.equal(contractLines.length, 6, 'every order component becomes exactly one contract line');
     const byKey = (key) => contractLines.find((line) => String(line.componentKey).endsWith(key));
-    assert.equal(byKey('ent-platform').classification, 'subscription', 'recurring platform fee → subscription');
-    assert.equal(byKey('ent-seats').classification, 'subscription', 'recurring seats → subscription');
-    assert.equal(byKey('ent-setup').classification, 'delivery', 'one-time setup → delivery obligation');
-    assert.equal(byKey('support-fee').classification, 'service', 'recurring support → service obligation');
-    assert.equal(byKey('api-calls').classification, 'other', 'a recurring charge is NOT automatically a subscription');
+    const obligationsOf = (key) => JSON.parse(byKey(key).obligationsJson);
+    assert.equal(byKey('ent-platform').commercialActivation, 'subscription', 'recurring platform fee → subscription line');
+    assert.deepEqual(obligationsOf('ent-platform'), [], 'and it owes nothing further');
+    assert.equal(byKey('ent-seats').commercialActivation, 'subscription', 'recurring seats → subscription line');
+    assert.equal(byKey('ent-setup').commercialActivation, 'non_subscription', 'a one-time setup is not a recurring right');
+    assert.deepEqual(obligationsOf('ent-setup'), ['delivery'], 'one-time setup → delivery obligation');
+    // The two-axis case: recurring support is a subscription line AND a
+    // service obligation. One exclusive answer would silently lose one of them.
+    assert.equal(byKey('support-fee').commercialActivation, 'subscription', 'recurring support is recurring money');
+    assert.deepEqual(obligationsOf('support-fee'), ['service'], 'and it is a future service obligation');
+    assert.equal(byKey('api-calls').commercialActivation, 'non_subscription', 'a recurring charge is NOT automatically a recurring right');
+    assert.deepEqual(obligationsOf('api-calls'), [], 'and it owes nothing further');
     const overridden = byKey('storage-gb');
-    assert.equal(overridden.overridden, true);
-    assert.equal(overridden.policyClassification, 'ambiguous', 'the policy decision survives next to the override');
+    assert.equal(overridden.commercialOverridden, true);
+    assert.equal(overridden.obligationsOverridden, true);
+    assert.equal(overridden.policyCommercialActivation, 'ambiguous', 'the policy decision survives next to the override');
     assert.equal(overridden.overriddenBy, 'starter');
+    // The term is operational metadata, and every record says so rather than
+    // implying the customer signed these dates.
+    assert.equal(contract.termsSource, 'post-signature-operational-activation');
+    assert.equal(contract.termsReason, TERM.termsReason);
+    assert.equal(contractVersion.termsSource, 'post-signature-operational-activation');
     // Amounts are copied from the signed order, never recomputed.
     const orderComponents = app.modules.get('order-component').service.listWhere({ orderId: order.id });
     for (const line of contractLines) {
@@ -691,14 +739,40 @@ try {
     }
 
     const subscription = app.modules.get('subscription').service.listWhere({ contractId: contract.id })[0];
-    assert.equal(subscription.lineCount, 3);
-    assert.equal(app.modules.get('subscription-line').service.countWhere({ subscriptionId: subscription.id }), 3);
+    assert.equal(subscription.lineCount, 4, 'platform, seats, support and the overridden storage line');
+    assert.equal(app.modules.get('subscription-line').service.countWhere({ subscriptionId: subscription.id }), 4);
+    assert.ok(
+      app.modules.get('subscription-line').service.listWhere({ subscriptionId: subscription.id })
+        .some((subLine) => String(subLine.componentKey).endsWith('support-fee')),
+      'the recurring support commitment is a subscription line, not only an obligation',
+    );
     const deliveries = app.modules.get('delivery-obligation').service.listWhere({ contractId: contract.id });
     assert.equal(deliveries.length, 1);
     assert.equal(deliveries[0].status, 'pending_handover', 'nothing executes it — it is a recorded obligation');
     const services = app.modules.get('service-obligation').service.listWhere({ contractId: contract.id });
     assert.equal(services.length, 1);
     assert.equal(services[0].status, 'pending_activation');
+    assert.equal(services[0].contractLineId, byKey('support-fee').id, 'both consequences cite one contract line');
+
+    // A future-dated activation is SCHEDULED, never active — and nothing will
+    // flip it, because this milestone has no scheduler.
+    const laterOrder = orders.listWhere({ quoteVersionId: resubmitted.result.version.id })[0] ?? null;
+    if (laterOrder) {
+      const future = new Date(`${today}T00:00:00.000Z`);
+      future.setUTCMonth(future.getUTCMonth() + 1);
+      const start = future.toISOString().slice(0, 10);
+      const end = new Date(future);
+      end.setUTCFullYear(end.getUTCFullYear() + 1);
+      const scheduled = await app.runAction({
+        module: 'order', action: 'activate-contract', recordId: laterOrder.id,
+        input: {
+          ...POLICY, effectiveDate: today, termStartDate: start, termEndDate: end.toISOString().slice(0, 10),
+          termsReason: 'starts next month by agreement',
+        },
+        actor,
+      });
+      assert.equal(scheduled.result.contract.status, 'scheduled');
+    }
 
     // Activation is once: a second attempt is a stable refusal, not a second
     // contract, and the whole transaction is idempotent by identity.
