@@ -42,11 +42,15 @@ So the change has to be explicit:
 
 ## What v1 can do
 
-| Change | How |
-|---|---|
-| add an optional field (`string`, `integer`, `boolean`, `enum`, `reference`) | `ALTER TABLE … ADD COLUMN` |
-| widen an enum — `planned` → `planned \| in_progress \| completed` | a controlled table rebuild |
-| add a non-unique index to an existing field | `CREATE INDEX IF NOT EXISTS` |
+| Change | Strategy | How |
+|---|---|---|
+| add an optional field (`string`, `integer`, `boolean`, `enum`, `reference`) | `alter` | `ALTER TABLE … ADD COLUMN` |
+| widen an enum — `planned` → `planned \| in_progress \| completed` | `rebuild` | a controlled table rebuild |
+| add a non-unique index to an existing field | `alter` | `CREATE INDEX IF NOT EXISTS` |
+| **remove** an index declaration | `alter` | `DROP INDEX IF EXISTS` — so the declared and actual schema agree, whichever strategy runs |
+| change `writable`, or a field's `default` | `metadata` | **no migration at all.** These change the generated service, the `/api/schema` block and the Admin, and nothing in the table. The revision still advances, and the source is regenerated |
+
+A `reference` column added by `ALTER TABLE` **is** enforced — `PRAGMA foreign_key_list` records it and a dangling value is refused. That was verified rather than assumed.
 
 ## What v1 refuses, and why
 
@@ -60,6 +64,7 @@ refusal happens **before any file or database write**, and names the field:
 - **adding a required or unique field** — existing rows have no value, or all
   share NULL;
 - **changing `unique`**, or a **reference target or delete rule**;
+- **renaming the table** — the existing table and its rows keep the old name, so a rename would generate `ALTER TABLE <new-name>` against a table that was never created, and every boot after it would fail;
 - **a rebuild while another table holds a foreign key into this one** — the
   refusal names the blocking reference. Widening an enum on a referenced table
   is a design decision, not an automatic migration.
@@ -83,9 +88,14 @@ recreate every index from the new manifest
 
 The copy is all-or-nothing: the `INSERT…SELECT` has no filter, so it copies
 every row or violates a constraint and aborts, leaving the original table
-untouched. Afterwards the migration runner verifies referential integrity with
-`PRAGMA foreign_key_check` — a check that now protects every module migration,
-not only rebuilds.
+untouched.
+
+Afterwards the migration runner verifies referential integrity — for **every**
+module migration, not only rebuilds. It compares `PRAGMA foreign_key_check`
+before and after, and fails only on violations *this migration introduced*. An
+unrelated violation the database already carried is a real problem, but blocking
+every future migration on it would mean such a database could never be upgraded,
+which is the worse outcome.
 
 Preserved by the rebuild, and asserted in tests: every row, its id, its
 `created_at`/`updated_at`, all `NOT NULL`, `UNIQUE` and `CHECK` constraints,

@@ -522,6 +522,30 @@ comply. Referential integrity is verified inside every module migration's
 transaction, so a migration that leaves a dangling reference rolls back rather
 than being recorded as applied.
 
+**Corrections from the adversarial review.** Three defects were found and fixed
+before merge, each confirmed with a runnable probe first:
+
+- a **table rename** was accepted and produced `ALTER TABLE <new-name>` against
+  a table that was never created — every boot after that migration failed with
+  "no such table". It is now refused by name;
+- a **removed index declaration** was silently ignored on the `alter` path and
+  silently applied on the `rebuild` path, so one manifest change had two
+  outcomes. It is now one change, applied either way;
+- a change to **`writable` or `default`** — real API, schema and Admin
+  behaviour with no storage change — was impossible: the fingerprint demanded a
+  revision, then generation refused it as pointless. It is now a first-class
+  `metadata` strategy that advances the revision, regenerates the source and
+  emits no migration.
+
+The runner's integrity check was also **scoped to violations the migration
+introduced**, by comparing before and after. An unscoped whole-database check
+blocked innocent migrations on inherited violations, leaving such a database
+permanently unupgradable.
+
+Verified rather than assumed: a `reference` column added by `ALTER TABLE ADD
+COLUMN` **is** enforced — `PRAGMA foreign_key_list` records it and a dangling
+value is refused — so reference addition needs no rebuild.
+
 **This is not an ORM, and not a general schema-diff tool.** There is no data
 transformation, no default backfill, no arbitrary SQL hook, no field split or
 merge, no table rename and no dependent-table migration. It is a narrow additive

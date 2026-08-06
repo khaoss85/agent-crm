@@ -48,7 +48,7 @@ Manual path (custom shapes the factory does not cover):
 ## Evolving a module that already exists (ADR-019)
 
 1. A generated module's schema can grow, but only additively and only with an explicit `"revision"` bump — one step at a time. Edit the manifest, set `"revision": <previous + 1>`, and re-run `module create … --apply`; the factory appends one new migration and the next boot applies it.
-2. **Supported:** add an optional field, widen an enum's values, add a non-unique index. **Refused before any write:** removing or renaming a field, changing a type, narrowing an enum, adding a required or unique field, changing `unique`, changing a reference target — and a rebuild while another table holds a foreign key into this one.
+2. **Supported:** add an optional field, widen an enum's values, add or remove a non-unique index, and change `writable` or `default` (a `metadata` evolution — the revision advances, the source is regenerated, no migration is emitted). **Refused before any write:** removing or renaming a field, changing a type, narrowing an enum, adding a required or unique field, changing `unique`, changing a reference target, **renaming the table** — and a rebuild while another table holds a foreign key into this one.
 3. Never edit `packages/modules/<name>/module.state.json`. It is the checked-in source of truth for the next evolution, and a hand edit is refused by fingerprint and per-migration checksum.
 4. Never edit an applied migration. The create migration keeps its identity forever; changes are appended to `migrations[]`.
 5. Generated source at revision 2 with a database still at revision 1 is normal — the next boot catches up. Rolling the source back after a migration has applied is not supported; publish a forward change.

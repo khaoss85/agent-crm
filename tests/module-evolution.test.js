@@ -148,7 +148,7 @@ test('a revision must increase, and a revision that changes nothing is a mistake
   );
   assert.throws(
     () => generateModuleEvolution({ previous: base(), next: { ...base(), revision: 2 } }),
-    /changes nothing that needs a migration/,
+    /changes nothing/,
   );
   assert.throws(
     () => planModuleEvolution({ previous: base(), next: { ...grown(), name: 'widget' } }),
@@ -178,4 +178,65 @@ test('the generated evolution SQL is deterministic', () => {
   const first = generateModuleEvolution({ previous: base(), next: grown() });
   const second = generateModuleEvolution({ previous: base(), next: grown() });
   assert.equal(first.sql, second.sql);
+});
+
+/**
+ * Adversarial review of PR #19. Each case below failed before the fix it names.
+ */
+
+test('a table rename is refused, not turned into a migration against a table that does not exist', () => {
+  const previous = { manifestVersion: 1, name: 'thing', fields: [{ name: 'a', type: 'string' }] };
+  const next = { ...previous, revision: 2, table: 'renamed_things', fields: [...previous.fields, { name: 'b', type: 'string' }] };
+  assert.throws(
+    () => planModuleEvolution({ previous, next }),
+    /table name changed/,
+    'a renamed table produced ALTER TABLE renamed_things … against a table that was never created',
+  );
+});
+
+test('a removed index is applied, not silently left behind', () => {
+  const previous = {
+    manifestVersion: 1, name: 'thing',
+    fields: [{ name: 'a', type: 'string', index: true }, { name: 'b', type: 'string' }],
+  };
+  const next = {
+    ...previous, revision: 2,
+    fields: [{ name: 'a', type: 'string' }, { name: 'b', type: 'string' }, { name: 'c', type: 'string' }],
+  };
+  const plan = planModuleEvolution({ previous, next });
+  assert.deepEqual(plan.removedIndexes, ['a'], 'the dropped declaration is part of the plan');
+
+  const db = new DatabaseSync(':memory:');
+  db.exec(generateModuleMigration(previous).sql);
+  assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='things_a'").get());
+  db.exec(generateModuleEvolution({ previous, next }).sql);
+  assert.equal(
+    db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='things_a'").get(), undefined,
+    'the index the manifest no longer declares is gone, so declared and actual schema agree',
+  );
+});
+
+test('a change that alters behaviour but not storage is a first-class metadata evolution', () => {
+  const previous = {
+    manifestVersion: 1, name: 'thing',
+    fields: [{ name: 'status', type: 'enum', values: ['planned'], writable: 'managed' }],
+  };
+  // `writable` decides whether public CRUD may set the field: a real API, schema
+  // and Admin change with no schema change at all. It used to be impossible —
+  // the fingerprint demanded a revision, then generation refused it as pointless.
+  const next = {
+    ...previous, revision: 2,
+    fields: [{ name: 'status', type: 'enum', values: ['planned'], writable: 'public' }],
+  };
+  const plan = planModuleEvolution({ previous, next });
+  assert.equal(plan.strategy, 'metadata', 'classified, not mistaken for "nothing changed"');
+  const evolution = generateModuleEvolution({ previous, next });
+  assert.equal(evolution.sql.trim(), '', 'a metadata evolution emits no migration');
+  assert.equal(evolution.migrationName, null, 'and claims no migration identity');
+
+  // A genuinely empty revision bump is still a mistake, and says so.
+  assert.throws(
+    () => generateModuleEvolution({ previous, next: { ...previous, revision: 2 } }),
+    /changes nothing/,
+  );
 });

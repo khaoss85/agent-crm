@@ -257,19 +257,28 @@ export function createDatabase(options = {}) {
       }
       continue;
     }
+    // Referential integrity is verified inside the migration's own transaction,
+    // so a migration that leaves a dangling reference rolls back rather than
+    // being recorded as applied (ADR-019).
+    //
+    // Deliberately scoped to violations *this* migration introduced: an
+    // unrelated pre-existing violation is a real problem, but blocking every
+    // future migration on it means such a database can never be upgraded —
+    // which is the worse outcome. The check is a before/after comparison
+    // because it needs no list of the tables a migration happened to touch.
+    const fingerprintViolations = () => new Set(
+      raw.prepare('PRAGMA foreign_key_check').all()
+        .map((row) => `${String(row.table)}#${String(row.rowid)}#${String(row.fkid)}`),
+    );
+    const preExisting = fingerprintViolations();
     raw.exec('BEGIN IMMEDIATE;');
     try {
       raw.exec(migration.sql);
-      // Referential integrity is verified inside the migration's own
-      // transaction, so a migration that leaves a dangling reference rolls back
-      // rather than being recorded as applied. This covers every module
-      // migration, not only the ones that rebuild a table (ADR-019).
-      const violations = raw.prepare('PRAGMA foreign_key_check').all();
-      if (violations.length > 0) {
-        const first = violations[0];
+      const introduced = [...fingerprintViolations()].filter((key) => !preExisting.has(key));
+      if (introduced.length > 0) {
         throw new Error(
-          `Module migration "${migration.name}" left ${violations.length} foreign key violation(s), `
-            + `starting in table "${String(first.table ?? first['table'])}". The migration was rolled back.`,
+          `Module migration "${migration.name}" introduced ${introduced.length} foreign key violation(s), `
+            + `starting at ${introduced[0]}. The migration was rolled back.`,
         );
       }
       raw

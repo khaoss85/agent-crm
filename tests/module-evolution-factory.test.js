@@ -282,3 +282,135 @@ test('exact reads stay exact after a rebuild, past the paged list bound', async 
   db.exec("UPDATE widgets SET cost_cents = 7 WHERE id = 'w617';");
   assert.equal(db.prepare('SELECT cost_cents FROM widgets WHERE id = ?').get('w617').cost_cents, 7);
 });
+
+test('a metadata-only evolution regenerates source and appends no migration', (t) => {
+  const root = project(t);
+  const managed = () => ({
+    manifestVersion: 1, name: 'widget', description: 'a record whose field opens up',
+    fields: [
+      { name: 'sourceKey', type: 'string', unique: true, writable: 'managed' },
+      { name: 'status', type: 'enum', values: ['planned'], writable: 'managed' },
+    ],
+  });
+  applyModulePlan(planModule({ manifest: managed(), rootDir: root }));
+  const before = readModuleState(root, 'widget');
+  assert.equal(before.migrations.length, 1);
+
+  const opened = {
+    ...managed(), revision: 2,
+    fields: [managed().fields[0], { name: 'status', type: 'enum', values: ['planned'], writable: 'public' }],
+  };
+  applyModulePlan(planModule({ manifest: opened, rootDir: root }));
+
+  const after = readModuleState(root, 'widget');
+  assert.equal(after.revision, 2, 'the revision advanced');
+  assert.equal(after.migrations.length, 1, 'no migration was appended for a storage-free change');
+  assert.equal(after.manifest.fields[1].writable, 'public', 'and the state records the new behaviour');
+
+  const service = readFileSync(join(root, 'packages/modules/widget/src/widget-service.js'), 'utf8');
+  assert.ok(service.length > 0, 'the service was regenerated');
+});
+
+test('a package-owned module survives detach, source evolution and reattach with its data', async (t) => {
+  // r1 install → detach → source r2 → reattach → DB upgrade → data survives.
+  const root = project(t);
+  const owned = (revision) => ({
+    manifestVersion: 1, ...(revision ? { revision } : {}),
+    name: 'sample-asset', description: 'a package-owned record',
+    fields: [
+      { name: 'sourceKey', type: 'string', unique: true, writable: 'managed' },
+      { name: 'status', type: 'enum', writable: 'managed', values: revision ? ['planned', 'active'] : ['planned'] },
+      ...(revision ? [{ name: 'costCents', type: 'integer', writable: 'managed' }] : []),
+    ],
+  });
+
+  applyModulePlan(planModule({ manifest: owned(), rootDir: root }));
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON;');
+  await migrateInto(db, root, 'sample-asset');
+  db.prepare('INSERT INTO sample_assets (id, source_key, status, created_at, updated_at) VALUES (?,?,?,?,?)')
+    .run('a1', 'k1', 'planned', 'c', 'u');
+
+  // Detach: the package is removed from the composition. Its data is untouched —
+  // the framework never drops a table behind you.
+  const registryPath = join(root, 'packages/modules/generated/index.js');
+  const attached = readFileSync(registryPath, 'utf8');
+  writeFileSync(registryPath, 'export const generatedModules = [];\n');
+  assert.equal(db.prepare('SELECT count(*) AS n FROM sample_assets').get().n, 1, 'detach leaves the rows');
+
+  // Evolve the source while detached, then reattach and let the database catch up.
+  applyModulePlan(planModule({ manifest: owned(2), rootDir: root }));
+  assert.ok(readFileSync(registryPath, 'utf8').includes('sampleAssetMigrations'), 'reattached by the apply');
+  const migrations = await migrateInto(db, root, 'sample-asset');
+  assert.equal(migrations.length, 2);
+
+  const row = db.prepare('SELECT * FROM sample_assets WHERE id = ?').get('a1');
+  assert.equal(row.source_key, 'k1', 'the row survived detach + evolution + reattach');
+  assert.equal(row.cost_cents, null);
+  db.exec("UPDATE sample_assets SET status = 'active', cost_cents = 99 WHERE id = 'a1';");
+  assert.equal(db.prepare('SELECT status FROM sample_assets WHERE id = ?').get('a1').status, 'active');
+  assert.notEqual(attached, '', 'the original registry was non-empty');
+});
+
+test('the create migration is immutable, and a tampered history is refused', (t) => {
+  const root = project(t);
+  applyModulePlan(planModule({ manifest: r1(), rootDir: root }));
+  applyModulePlan(planModule({ manifest: r2(), rootDir: root }));
+
+  const statePath = join(root, 'packages/modules/widget/module.state.json');
+  const state = JSON.parse(readFileSync(statePath, 'utf8'));
+  assert.equal(state.migrations.length, 2);
+  assert.equal(state.migrations[0].name, 'create_widgets', 'the create migration keeps its identity');
+
+  // Editing an applied migration's SQL without its checksum is caught.
+  const tampered = structuredClone(state);
+  tampered.migrations[0].sql += '\nDROP TABLE widgets;';
+  writeFileSync(statePath, JSON.stringify(tampered, null, 2));
+  assert.throws(() => readModuleState(root, 'widget'), /was edited — its checksum does not match/);
+
+  // So is a state file lifted from another module.
+  const foreign = structuredClone(state);
+  foreign.module = 'gadget';
+  writeFileSync(statePath, JSON.stringify(foreign, null, 2));
+  assert.throws(() => readModuleState(root, 'widget'), /describes "gadget"/);
+
+  // …and a malformed entry.
+  const malformed = structuredClone(state);
+  malformed.migrations[1] = { name: 'evolve_widgets_r2' };
+  writeFileSync(statePath, JSON.stringify(malformed, null, 2));
+  assert.throws(() => readModuleState(root, 'widget'), /malformed migration entry/);
+});
+
+test('the migration runner blocks violations a migration introduced, not ones it inherited', async (t) => {
+  const root = project(t);
+  applyModulePlan(planModule({ manifest: r1(), rootDir: root }));
+  const { createDatabase } = await import('../packages/core/src/database.js');
+
+  const migrations = (await import(
+    new URL(`file://${join(root, 'packages/modules/widget/src/migration.js')}?v=fk`).href
+  )).widgetMigrations;
+
+  // A database that already contains an unrelated dangling reference — the way
+  // it really happens, with enforcement briefly off.
+  const database = createDatabase({ path: ':memory:' });
+  database.raw.exec('CREATE TABLE parents (id TEXT PRIMARY KEY) STRICT;');
+  database.raw.exec('CREATE TABLE kids (id TEXT PRIMARY KEY, parent_id TEXT REFERENCES parents(id)) STRICT;');
+  database.raw.exec('PRAGMA foreign_keys = OFF;');
+  database.raw.prepare('INSERT INTO kids (id, parent_id) VALUES (?, ?)').run('k1', 'ghost');
+  database.raw.exec('PRAGMA foreign_keys = ON;');
+  assert.equal(database.raw.prepare('PRAGMA foreign_key_check').all().length, 1, 'the inherited violation is there');
+
+  // An innocent migration must still apply: a database in this state has to
+  // remain upgradable.
+  assert.doesNotThrow(() => createDatabase({ path: ':memory:', moduleMigrations: migrations }));
+  const upgraded = createDatabase({ path: ':memory:' });
+  upgraded.raw.exec('CREATE TABLE parents (id TEXT PRIMARY KEY) STRICT;');
+  upgraded.raw.exec('CREATE TABLE kids (id TEXT PRIMARY KEY, parent_id TEXT REFERENCES parents(id)) STRICT;');
+  upgraded.raw.exec('PRAGMA foreign_keys = OFF;');
+  upgraded.raw.prepare('INSERT INTO kids (id, parent_id) VALUES (?, ?)').run('k1', 'ghost');
+  upgraded.raw.exec('PRAGMA foreign_keys = ON;');
+  assert.doesNotThrow(
+    () => createDatabase({ path: ':memory:', moduleMigrations: migrations }),
+    'an inherited violation elsewhere does not block an unrelated migration',
+  );
+});

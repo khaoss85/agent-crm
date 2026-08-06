@@ -178,7 +178,11 @@ export function planModule(input) {
         next: manifest,
         referencedBy: inboundReferences(existingModules, manifest),
       });
-      history.push({ migrationName: evolution.migrationName, sql: evolution.sql });
+      // A metadata-only evolution regenerates the service, schema block and
+      // Admin without touching the table, so it appends no migration.
+      if (evolution.migrationName !== null) {
+        history.push({ migrationName: evolution.migrationName, sql: evolution.sql });
+      }
       evolving = true;
     }
   }

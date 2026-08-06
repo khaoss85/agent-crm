@@ -77,6 +77,17 @@ export function planModuleEvolution({ previous, next }) {
     );
   }
 
+  // A renamed table is a different table. Left undetected it generated an
+  // `ALTER TABLE <new-name>` against a table that was never created, so every
+  // boot after the migration failed with "no such table".
+  if (before.table !== after.table) {
+    throw new ValidationError(
+      `Module "${after.name}": table name changed from "${before.table}" to "${after.table}". `
+        + 'Renaming a table is not an additive evolution — the existing table and its rows keep the old name. '
+        + 'Keep the table name, or create a new module and migrate the data explicitly.',
+    );
+  }
+
   const previousFields = byName(before.fields);
   const nextFields = byName(after.fields);
 
@@ -88,6 +99,10 @@ export function planModuleEvolution({ previous, next }) {
   const widenedEnums = [];
   /** @type {string[]} */
   const addedIndexes = [];
+  /** @type {string[]} */
+  const removedIndexes = [];
+  /** @type {string[]} */
+  const metadataChanges = [];
 
   for (const [name, field] of previousFields) {
     const updated = nextFields.get(name);
@@ -122,6 +137,17 @@ export function planModuleEvolution({ previous, next }) {
       if (added.length > 0) widenedEnums.push({ field: name, added });
     }
     if (updated.index === true && field.index !== true) addedIndexes.push(name);
+    // A dropped index declaration used to be ignored on the ALTER path and
+    // silently applied on the rebuild path, so the same manifest change had two
+    // different outcomes. It is one change, applied either way.
+    if (field.index === true && updated.index !== true) removedIndexes.push(name);
+    // Changes that alter behaviour without altering storage: `writable` decides
+    // whether public CRUD may set the field, `default` what a create fills in.
+    // Both reach the API, the schema and the Admin through regenerated source.
+    if (updated.writable !== field.writable) metadataChanges.push(`${name}.writable`);
+    if (JSON.stringify(updated.default ?? null) !== JSON.stringify(field.default ?? null)) {
+      metadataChanges.push(`${name}.default`);
+    }
   }
 
   for (const [name, field] of nextFields) {
@@ -146,8 +172,14 @@ export function planModuleEvolution({ previous, next }) {
   }
 
   // Widening an enum means rebuilding the table: SQLite has no ALTER for a
-  // CHECK constraint. Adding a column does not.
-  const strategy = widenedEnums.length > 0 ? 'rebuild' : addedFields.length + addedIndexes.length > 0 ? 'alter' : 'none';
+  // CHECK constraint. Adding or dropping a column or an index does not. A change
+  // that touches no storage at all is still a change — it regenerates the
+  // service, the schema block and the Admin — and is classified as such rather
+  // than mistaken for "nothing happened".
+  const touchesStorage = addedFields.length + addedIndexes.length + removedIndexes.length > 0;
+  const strategy = widenedEnums.length > 0 ? 'rebuild'
+    : touchesStorage ? 'alter'
+      : metadataChanges.length > 0 ? 'metadata' : 'none';
 
   return {
     module: after.name,
@@ -158,6 +190,8 @@ export function planModuleEvolution({ previous, next }) {
     addedFields: addedFields.map((field) => field.name),
     widenedEnums,
     addedIndexes,
+    removedIndexes,
+    metadataChanges,
   };
 }
 
@@ -174,11 +208,18 @@ export function planModuleEvolution({ previous, next }) {
 export function generateModuleEvolution({ previous, next, referencedBy = [] }) {
   const plan = planModuleEvolution({ previous, next });
   const after = validateModuleManifest(next);
+  const before = validateModuleManifest(previous);
 
   if (plan.strategy === 'none') {
     throw new ValidationError(
-      `Module "${plan.module}" revision ${plan.toRevision} changes nothing that needs a migration`,
+      `Module "${plan.module}" revision ${plan.toRevision} changes nothing: neither the stored schema nor the `
+        + 'generated behaviour differs from the previous revision.',
     );
+  }
+  if (plan.strategy === 'metadata') {
+    // Real, and storage-free: the generated service, schema block and Admin
+    // change; the table does not. No migration is emitted, and none is claimed.
+    return { ...plan, migrationName: null, sql: '' };
   }
 
   const migrationName = `evolve_${plan.table}_r${plan.toRevision}`;
@@ -193,6 +234,10 @@ export function generateModuleEvolution({ previous, next, referencedBy = [] }) {
     for (const name of plan.addedIndexes) {
       const field = after.fields.find((entry) => entry.name === name);
       statements.push(indexSql(plan.table, field));
+    }
+    for (const name of plan.removedIndexes) {
+      const field = before.fields.find((entry) => entry.name === name);
+      statements.push(`DROP INDEX IF EXISTS ${plan.table}_${field.column};`);
     }
   } else {
     if (referencedBy.length > 0) {
