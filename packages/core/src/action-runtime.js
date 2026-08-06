@@ -153,7 +153,10 @@ export async function runRecordAction(params) {
   }
 
   const runId = randomUUID();
-  const startedAt = nowIso();
+  // One clock per run: the injected application clock when there is one, the
+  // wall clock otherwise. Everything the action stamps uses the same source.
+  const now = params.now ?? nowIso;
+  const startedAt = now();
   /** @type {Array<{name: string, status: string, output?: unknown, error?: string}>} */
   const steps = [];
   /** @type {any} */
@@ -195,7 +198,7 @@ export async function runRecordAction(params) {
           modules: readOnlyModulesView(modules),
           intelligence,
           config: params.config ?? {},
-          now: () => nowIso(),
+          now,
           step: (name, output) => steps.push({ name, status: 'completed', output }),
         }),
       );
@@ -237,7 +240,7 @@ export async function runRecordAction(params) {
           // Value returned by the prepare phase (undefined without one).
           prepared,
           config: params.config ?? {},
-          now: () => nowIso(),
+          now,
           managed: (id, patch) => service.applyManaged(id, patch, { actor }),
           step: (name, output) => steps.push({ name, status: 'completed', output }),
         });
@@ -313,6 +316,7 @@ export async function runRecordAction(params) {
  */
 async function runExternalRecordAction(params, definition, validatedInput) {
   const { database, events, services, modules, module, action, recordId, actor } = params;
+  const now = params.now ?? nowIso;
   const service = modules.get(module).service;
   const stateField = definition.stateField ?? 'status';
 
@@ -339,6 +343,7 @@ async function runExternalRecordAction(params, definition, validatedInput) {
     database,
     events,
     name: `${module}.${action}`,
+    now,
     input: { recordId, input: validatedInput },
     actor,
     timeoutMs: definition.timeoutMs ?? params.config?.externalTimeoutMs,

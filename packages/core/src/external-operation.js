@@ -94,14 +94,16 @@ function safeActor(actor) {
 export async function runExternalOperation(operation) {
   const { database, events, name, actor, input } = operation;
   const runId = operation.runId ?? randomUUID();
-  const startedAt = nowIso();
+  // One clock per run, injectable like every other runtime capability.
+  const now = operation.now ?? nowIso;
+  const startedAt = now();
   const timeoutMs = Number.isSafeInteger(operation.timeoutMs) && /** @type {number} */ (operation.timeoutMs) > 0
     ? /** @type {number} */ (operation.timeoutMs)
     : DEFAULT_EXTERNAL_TIMEOUT_MS;
   /** @type {Array<{name: string, status: string, output?: unknown, error?: string}>} */
   const steps = [];
   const step = (stepName, output) => steps.push({ name: stepName, status: 'completed', output });
-  const shared = { ...(operation.context ?? {}), input, actor, now: () => nowIso(), step };
+  const shared = { ...(operation.context ?? {}), input, actor, now, step };
 
   /** Run one transactional phase with its own buffered-event outbox. */
   const transactional = async (phase, fn) => events.buffered(async (outbox) => {

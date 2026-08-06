@@ -34,6 +34,7 @@ import { DomainRegistries } from '../../core/src/domain-registry.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
 import { ActionRegistry } from '../../core/src/action-registry.js';
 import { runRecordAction } from '../../core/src/action-runtime.js';
+import { resolveClock } from '../../core/src/time.js';
 import { createCoreAdapters } from '../../core/src/core-adapters.js';
 import { createReferenceResolver } from '../../core/src/reference-resolver.js';
 import {
@@ -50,6 +51,10 @@ import {
  * @param {{dbPath?: string, approvalThresholdCents?: number, busyTimeoutMs?: number}} [options]
  */
 export function createAgentCrmApp(options = {}) {
+  // The application clock (generic runtime capability): actions that decide
+  // anything from the current instant read it here, so a test can pin "today"
+  // and a run is reproducible. Defaults to the wall clock.
+  const now = resolveClock(options.clock);
   const database = createDatabase({
     path: options.dbPath,
     busyTimeoutMs: options.busyTimeoutMs,
@@ -283,6 +288,7 @@ export function createAgentCrmApp(options = {}) {
         commercial,
         signature,
         domains,
+        now,
         config: app.config,
         module,
         action,
@@ -291,6 +297,7 @@ export function createAgentCrmApp(options = {}) {
         actor,
       });
     },
+    now,
     schema: CRM_SCHEMA,
     config: {
       approvalThresholdCents:
