@@ -1,0 +1,153 @@
+{
+  "manifestVersion": 1,
+  "name": "subscription-line",
+  "description": "One immutable subscription line per component explicitly classified as a subscription (M12). It represents an active recurring commercial right, not a billing schedule.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subscriptionId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "contractId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "contractLineId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "orderComponentId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "componentKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "label",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "chargeType",
+      "type": "enum",
+      "values": [
+        "recurring"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "pricingModel",
+      "type": "enum",
+      "values": [
+        "flat_fee",
+        "per_unit",
+        "volume",
+        "graduated"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "interval",
+      "type": "enum",
+      "values": [
+        "month",
+        "year"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "intervalCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "quantity",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "unitAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "flatAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "tiersJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "tierBreakdownJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "netAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "startDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "endDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "externalPriceId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sourcePricingModel",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "active"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "activationId",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

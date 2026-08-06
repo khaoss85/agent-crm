@@ -1,0 +1,249 @@
+{
+  "manifestVersion": 1,
+  "name": "contract-line",
+  "description": "One immutable contract line per order component (M12), carrying the complete commercial snapshot plus the classification decision, its reason and its policy evidence. Every order component becomes a contract line, whatever its classification.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "contractId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "contractVersionId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "orderId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "orderLineId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "orderComponentId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "productId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "productVersionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "offerId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "offerLogicalKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "offerRevision",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "offerName",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sku",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "componentId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "componentKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "label",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "chargeType",
+      "type": "enum",
+      "values": [
+        "one_time",
+        "recurring"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "pricingModel",
+      "type": "enum",
+      "values": [
+        "flat_fee",
+        "per_unit",
+        "volume",
+        "graduated"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "interval",
+      "type": "enum",
+      "values": [
+        "month",
+        "year"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "intervalCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "quantity",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "unitAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "flatAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "tiersJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "tierBreakdownJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "listAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "discountAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "netAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "externalPriceId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sourcePricingModel",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "classification",
+      "type": "enum",
+      "values": [
+        "subscription",
+        "delivery",
+        "service",
+        "other"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "classificationReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "classificationPolicy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "classificationPolicyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "classificationPolicyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyClassification",
+      "type": "enum",
+      "values": [
+        "subscription",
+        "delivery",
+        "service",
+        "other",
+        "ambiguous"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "overridden",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "overrideReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "overriddenBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "position",
+      "type": "integer",
+      "writable": "managed"
+    }
+  ]
+}

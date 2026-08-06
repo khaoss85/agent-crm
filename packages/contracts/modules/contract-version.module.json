@@ -1,0 +1,145 @@
+{
+  "manifestVersion": 1,
+  "name": "contract-version",
+  "description": "An immutable contract snapshot (M12). Version 1 is created at activation; it is readable without the catalog, the quote or any live CRM row.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "contractId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "versionNumber",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "orderId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "quoteVersionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "documentHash",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "artifactHash",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "customerName",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "customerEmail",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "companyId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "contactId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "effectiveDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termStartDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termEndDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termDays",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "autoRenew",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "renewalNoticeDays",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "totalsJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "oneTimeNetCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "recurringGroupCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "lineCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "activationId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "activatedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

@@ -1,0 +1,144 @@
+{
+  "manifestVersion": 1,
+  "name": "contract-activation",
+  "description": "One immutable activation run per signed order (ADR-018 addendum, M12): the policy that classified it, every component decision, every human override and the records it produced.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "orderId",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "quoteId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "quoteVersionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "envelopeId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "signedArtifactId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "documentHash",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sourceFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "effectiveDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termStartDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termEndDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "subscriptionLineCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "deliveryObligationCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "serviceObligationCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "otherComponentCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "overrideCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "decisionsJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "contractId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "contractVersionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "subscriptionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "completed"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "activatedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "activatedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}
