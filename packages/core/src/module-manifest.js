@@ -90,8 +90,8 @@ export function validateModuleManifest(manifest) {
   const input = /** @type {Record<string, unknown>} */ (manifest);
 
   for (const key of Object.keys(input)) {
-    if (!['manifestVersion', 'name', 'description', 'table', 'fields'].includes(key)) {
-      errors.push(`unknown manifest property "${key}" (allowed: manifestVersion, name, description, table, fields)`);
+    if (!['manifestVersion', 'revision', 'name', 'description', 'table', 'fields'].includes(key)) {
+      errors.push(`unknown manifest property "${key}" (allowed: manifestVersion, revision, name, description, table, fields)`);
     }
   }
 
@@ -100,6 +100,13 @@ export function validateModuleManifest(manifest) {
       `Unsupported manifestVersion: ${JSON.stringify(input.manifestVersion)}. This version of agent-crm supports manifest version ${SUPPORTED_MANIFEST_VERSION}; upgrade agent-crm or lower the manifest version.`,
       { manifestVersion: input.manifestVersion, supported: SUPPORTED_MANIFEST_VERSION },
     );
+  }
+
+  // The manifest's own revision (ADR-020). Absent means 1, so every manifest
+  // written before module evolution existed stays valid and unchanged.
+  if (input.revision !== undefined
+    && (!Number.isSafeInteger(input.revision) || Number(input.revision) < 1 || Number(input.revision) > 1000)) {
+    errors.push('revision must be an integer between 1 and 1000 when present');
   }
 
   let name = '';
@@ -162,6 +169,7 @@ export function validateModuleManifest(manifest) {
 
   return Object.freeze({
     manifestVersion: SUPPORTED_MANIFEST_VERSION,
+    revision: input.revision === undefined ? 1 : Number(input.revision),
     name,
     description,
     table,
