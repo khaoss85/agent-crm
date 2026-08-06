@@ -40,12 +40,17 @@ framework never deletes data behind you.)
 
 ## What you must supply
 
-An **Order Activation Policy**: the versioned, fingerprinted decision of what
-each signed order component becomes. Recurrence alone never decides
-(annual support is not a subscription; a recurring API charge may create no
-obligation at all), so the policy maps explicit identity — component key, SKU,
-offer — and returns `ambiguous` for anything it does not recognize, which
-blocks activation until a human classifies it with a reason.
+An **Order Activation Policy**: the versioned, fingerprinted decision about
+each signed order component, on **two independent axes** —
+
+- `commercialActivation`: is this a recurring right (a Subscription Line) or not?
+- `obligations`: does it also owe `delivery` work, `service`, both, or nothing?
+
+Recurrence decides neither (annual support is a recurring right *and* a service
+obligation; a recurring API charge may be neither), so the policy maps explicit
+identity — component key, SKU, offer — and returns `ambiguous` on the axis it
+cannot decide, which blocks activation until a human resolves that axis with a
+reason.
 
 ```js
 import { defineOrderActivationPolicy } from './src/index.js';
@@ -53,13 +58,19 @@ import { defineOrderActivationPolicy } from './src/index.js';
 export const policy = defineOrderActivationPolicy({
   name: 'my-order-activation',
   version: 1,
-  config: { componentKeys: { 'platform-fee': 'subscription', 'setup-fee': 'delivery' } },
+  config: {
+    componentKeys: {
+      'platform-fee': { commercial: 'subscription', obligations: [] },
+      'support-fee': { commercial: 'subscription', obligations: ['service'] },
+      'setup-fee': { commercial: 'non_subscription', obligations: ['delivery'] },
+    },
+  },
   classifyComponent({ component, line, config }) {
     const key = String(component.componentKey).split(':').pop();
-    const type = config.componentKeys[key];
-    return type
-      ? { type, reason: `component "${key}" is mapped to ${type}` }
-      : { type: 'ambiguous', reason: `component "${key}" is not mapped by this policy version` };
+    const mapped = config.componentKeys[key];
+    return mapped
+      ? { commercialActivation: mapped.commercial, obligations: mapped.obligations, reason: `component "${key}" is mapped` }
+      : { commercialActivation: 'ambiguous', obligations: 'ambiguous', reason: `component "${key}" is not mapped by this policy version` };
   },
 });
 ```
@@ -81,6 +92,16 @@ src/activation-policy.js the policy contract, classification bounds, human overr
 src/dates.js             calendar dates and the inclusive term
 modules/                 eight read-only record manifests
 ```
+
+## Two limitations you must not misread
+
+1. **The term is not signed.** The signed document package carries priced
+   lines, parties and signers and nothing about dates, so the term this package
+   records is operational metadata entered after signature
+   (`termsSource: "post-signature-operational-activation"`, with a required
+   human reason). Do not present it as a signed commercial term.
+2. **A future-dated contract is `scheduled` and stays that way.** There is no
+   scheduler here; nothing transitions it to `active` on its start date.
 
 ## What it does not do
 

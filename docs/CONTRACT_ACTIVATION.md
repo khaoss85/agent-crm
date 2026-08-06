@@ -5,6 +5,19 @@ Contract, its immutable version, one Contract Line per Order Component, a
 Subscription with its lines, and explicit **pending** delivery and service
 obligations.
 
+**Two limitations before anything else**, because both were found by the
+adversarial review and both change what this milestone may claim:
+
+1. **The term is not signed.** The signed document package carries priced
+   lines, parties and signers — no term, no renewal clause, no notice period.
+   Everything M12 records about dates is **operational activation metadata**
+   (`termsSource: "post-signature-operational-activation"`), entered by a human
+   after signature with a required reason. This is not a signed commercial
+   agreement end to end, and nothing here says it is.
+2. **Nothing is active before it starts, and nothing starts it.** A term
+   beginning in the future produces a `scheduled` contract and subscription
+   that stay scheduled forever: there is no scheduler in this framework.
+
 **No billing exists.** No invoicing, payment, usage rating, proration, ramp,
 tax, FX, revenue recognition, MRR/ARR/TCV, amendment, seat change, renewal,
 cancellation, delivery execution, service activation, entitlement or SLA. A
@@ -60,31 +73,41 @@ activation control — and after activation, evidence only.
 The temptation is to say *recurring → subscription, one-time → delivery*. It is
 wrong, and wrong in a way that silently mis-files real money:
 
-| Component | Recurrence | What it actually is |
+It is also not **one** question. Each component answers two independent ones:
+
+| Component | Recurrence | Recurring right? | Owes beyond the money |
+|---|---|---|---|
+| Platform fee | recurring monthly | subscription line | nothing |
+| Seats | recurring monthly | subscription line | nothing |
+| Premium support | recurring annual | **subscription line** | **service obligation** |
+| Onboarding | one-time | no | delivery obligation |
+| Data migration | one-time | no | delivery obligation |
+| API capacity | recurring monthly | **no** | nothing |
+
+Annual support is why the second axis exists: it is recurring money *and*
+future service work. A single exclusive label has to drop one of them, and the
+first implementation dropped the subscription line — removing real recurring
+money from the Subscription. So the policy returns two answers:
+
+| Axis | Values | Creates |
 |---|---|---|
-| Platform fee | recurring monthly | subscription line |
-| Seats | recurring monthly | subscription line |
-| Premium support | recurring annual | **service obligation**, not a subscription |
-| Onboarding | one-time | **delivery obligation** |
-| Data migration | one-time | delivery obligation |
-| API capacity | recurring monthly | **`other`** — a real charge that creates no further obligation |
+| `commercialActivation` | `subscription` | a Subscription Line (and the Subscription, if it is the first) |
+| | `non_subscription` | nothing — a recorded decision that this is not a recurring right |
+| | `ambiguous` | **nothing**: blocks activation until a human decides this axis |
+| `obligations` | `['delivery']` | a Delivery Obligation, status `pending_handover` |
+| | `['service']` | a Service Obligation, status `pending_activation` |
+| | `['delivery','service']` | both |
+| | `[]` | nothing — a recorded decision that nothing further is owed |
+| | `'ambiguous'` | **nothing**: blocks activation until a human decides this axis |
 
-So classification is an explicit decision of a **versioned, fingerprinted Order
-Activation Policy**, and the decision plus its reason is stored on every
-contract line. Five outcomes exist:
-
-| Type | Creates |
-|---|---|
-| `subscription` | a Subscription Line (and the Subscription, if it is the first) |
-| `delivery` | a Delivery Obligation, status `pending_handover` |
-| `service` | a Service Obligation, status `pending_activation` |
-| `other` | a Contract Line only — a recorded decision that nothing further is owed |
-| `ambiguous` | **nothing**: it blocks activation until a human classifies it |
+Every order component still becomes **exactly one** Contract Line, whatever the
+two answers are, and no obligation type is ever created twice for one
+component.
 
 `ambiguous` is not a failure mode to be smoothed over. A policy that cannot
 place a component says so, and the framework refuses to guess on a signed
-commercial commitment. Note the difference from `other`: `other` is a decision,
-`ambiguous` is the absence of one.
+commercial commitment. Note the difference from `[]`: an empty obligations list
+is a decision, `'ambiguous'` is the absence of one.
 
 The one coherence rule the domain enforces regardless of policy or override: a
 **subscription line must recur**. Overriding a one-time charge into a
@@ -99,10 +122,14 @@ export const b2bSaasOrderActivationV1 = defineOrderActivationPolicy({
   name: 'b2b-saas-order-activation',
   version: 1,
   label: 'B2B SaaS order activation',
-  config: { componentKeys: { 'ent-seats': 'subscription', /* … */ }, skus: { SUPPORT: 'service' } },
+  config: { componentKeys: { 'support-fee': { commercial: 'subscription', obligations: ['service'] } } },
   classifyComponent({ component, line, order, config }) {
     // deterministic, synchronous, total — no clock, no network, no database
-    return { type: 'subscription', reason: 'component "ent-seats" is mapped to subscription' };
+    return {
+      commercialActivation: 'subscription',
+      obligations: ['service'],
+      reason: 'annual support is a recurring right and a future service obligation',
+    };
   },
 });
 ```
@@ -125,17 +152,26 @@ export const b2bSaasOrderActivationV1 = defineOrderActivationPolicy({
 
 ## Human overrides
 
-An override is a human decision, and it is recorded as one: it needs a bounded,
-non-blank `reason`, it may not select `ambiguous` (that is the problem, not a
-resolution), it may not target a component of another order
-(`409 OVERRIDE_COMPONENT_UNKNOWN`), and it may not contain control characters —
-SQLite ends a text value at the first NUL byte, so accepting one would persist
-an audit reason shorter than what the human wrote.
+An override decides **one axis of one component**:
 
-The contract line keeps **both** decisions: `policyClassification` (what the
-policy said), `classification` (what applies), `overrideReason` and
-`overriddenBy`. An activation is explainable years later without re-running
-anything.
+```js
+{ orderComponentId, dimension: 'commercial', value: 'subscription', reason: '…' }
+{ orderComponentId, dimension: 'obligations', value: ['service'], reason: '…' }
+```
+
+It needs a bounded, non-blank `reason`; it may not select the ambiguity it is
+meant to resolve; it may not target a component of another order
+(`409 OVERRIDE_COMPONENT_UNKNOWN`); it may not repeat the same component and
+dimension twice; and it may not contain control characters — SQLite ends a text
+value at the first NUL byte, so accepting one would persist an audit reason
+shorter than what the human wrote.
+
+The contract line keeps **both** answers on **both** axes:
+`policyCommercialActivation` / `commercialActivation` /
+`commercialOverridden` / `commercialOverrideReason`, and
+`policyObligationsJson` / `obligationsJson` / `obligationsOverridden` /
+`obligationsOverrideReason`, plus `overriddenBy`. An activation is explainable
+years later without re-running anything.
 
 ## Plan versus activate
 
@@ -145,13 +181,32 @@ anything.
 | Actor | any (agents included) | `actor.type === "user"`; an agent is `403 HUMAN_APPROVAL_REQUIRED` |
 | Ambiguity | reported | refused (`409 CLASSIFICATION_AMBIGUOUS`) |
 | Trust in the caller | — | none: the plan is recomputed inside the transaction from the Order |
+| Client input | — | policy identity, three term dates, the term's reason, two recorded flags, overrides. Never an amount, product, tier or hash |
 
 The activation never accepts an amount, a product, a tier or a source hash from
-the client. Everything is copied from the Order snapshot. The only client
-inputs are the policy identity, the three term dates, two recorded renewal
-flags, and human overrides.
+the client. Everything commercial is copied from the Order snapshot. The only
+client inputs are the policy identity, the three term dates and their reason,
+two recorded renewal flags, and human overrides.
 
-## The term
+A plan is **not** an authorization token: activation recomputes everything from
+the Order inside the transaction, so a plan that was activatable a minute ago
+(because it carried preview overrides, or ran against another policy version)
+does not make an activation succeed unless the same decisions are supplied
+again.
+
+## Activation state
+
+```text
+termStartDate in the future   → scheduled   (and stays scheduled: no scheduler)
+business date inside the term → active
+term already ended            → refused, TERM_ALREADY_ENDED
+```
+
+The business date comes from the application clock, which is injectable
+(`createAgentCrmApp({ clock })`) so a run is reproducible. The activation
+instant is a UTC timestamp; the term stays date-only.
+
+## The term (operational metadata, not a signed term)
 
 Calendar dates, `YYYY-MM-DD`, validated by round-trip so `2026-02-30` and
 `2026-13-01` are refused rather than normalized into a different day. No time,
@@ -162,8 +217,12 @@ timezone would silently move a boundary.
 - **`termEndDate` is inclusive** — `2026-09-01 → 2027-08-31` is 365 days
 - term length bounded (10 years), `renewalNoticeDays` bounded (0–365)
 - `autoRenew` is a strict boolean; `"true"` and `1` are refused
+- a notice period **requires** `autoRenew`: a notice against a renewal that
+  cannot happen is a clause that can never apply, so it is refused
 - auto-renew and the notice period are **recorded only** — there is no
   scheduler in this framework, so nothing fires on them
+- `termsReason` is required, and `termsSource` is stored on the contract, its
+  version and the activation run: the term's provenance travels with it
 
 ## Source validation
 
@@ -177,6 +236,7 @@ Activation refuses anything it cannot prove, each with a stable code:
 | `SOURCE_HASH_MISMATCH` | the three disagree on the signed document hash |
 | `SOURCE_INCOMPLETE` | the order snapshot is missing lines, components or totals |
 | `ORDER_ALREADY_ACTIVATED` | a contract already exists for this order |
+| `TERM_ALREADY_ENDED` | the operational term ended before this activation |
 
 ## Atomicity, idempotency and immutability
 
@@ -225,9 +285,10 @@ packages/contracts/
 packages/domains/generated/index.js   the one static import that enables it
 ```
 
-The kernel gained one generic seam (`packages/core/src/domain-registry.js`) and
-one generic input type (`boolean`); it contains no contract, subscription or
-obligation concept, and a test scans the core sources to prove it. Schema
+The kernel gained one generic seam (`packages/core/src/domain-registry.js`), one
+generic input type (`boolean`) and an injectable application clock; it contains
+no contract, subscription or obligation concept, and a test scans the core
+sources and the static import graph to prove it. Schema
 metadata is published additively under `/api/schema` → `domains.contracts`,
 including each policy's fingerprint and the explicit `notModeled` list.
 

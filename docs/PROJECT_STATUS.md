@@ -16,12 +16,12 @@ Generated: **2026-08-06**.
 |---|---|
 | Latest merged milestone | **Platform Alignment Gate** (ADR-018, documentation only) |
 | Main SHA at generation | `98bea3b` (merge of PR #15) |
-| Tests on clean main | **216 passing, 0 failing** (`npm run verify` from a fresh clone); **238 passing** on the open M12 branch |
+| Tests on clean main | **216 passing, 0 failing** (`npm run verify` from a fresh clone); **249 passing** on the open M12 branch after its adversarial review |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 27/27 in real Chromium, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | `feat: activate contracts and subscriptions from signed orders` (M12 — this PR, awaiting adversarial review and human merge) |
+| Open PRs | `feat: activate contracts and subscriptions from signed orders` (M12 — this PR, adversarially reviewed and corrected, awaiting human merge) |
 
 ## Completed functional path
 
@@ -63,13 +63,15 @@ domain packages on a generic domain registry seam (M12).
 | M10 | Commercial Operations: composite catalog, quotes, discount policy, approval | ADR-016 |
 | M11 | Signature + immutable Order, external-operation runtime | ADR-017 (+ addendum) |
 | — | Platform alignment gate: core-vs-domain boundary | ADR-018 |
-| M12 | Contract & Subscription activation — the first domain package outside core (open PR, not merged) | ADR-018 addendum |
+| M12 | Contract & Subscription activation — the first domain package outside core (open PR, not merged) | ADR-018 addenda 1–2 |
 
 ## Next planned development
 
 1. **M12 — Contract & Subscription Activation** — this PR: the first optional
-   domain package (`packages/contracts/`), implemented and green, awaiting the
-   adversarial review in `docs/QUALITY_GATES.md` §5 and a human merge.
+   domain package (`packages/contracts/`), implemented, adversarially reviewed
+   (three domain-model defects found and fixed — term provenance, two-axis
+   classification, scheduled-versus-active state) and green, awaiting a human
+   merge.
 2. Then M13 Delivery Handover, M14 Delivery Economics & Acceptance,
    M15 Service Operations, M16 Analytics Studio — `EXECUTION_ROADMAP.md`.
 
