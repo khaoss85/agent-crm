@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
-  "name": "order",
-  "description": "One immutable Order per completed signed quote version (ADR-017). Every commercial figure is copied from the approved quote version snapshot, never re-read from the live catalog. No fulfillment, billing or payment status exists in this milestone.",
+  "name": "contract-version",
+  "description": "An immutable contract snapshot (M12). Version 1 is created at activation; it is readable without the catalog, the quote or any live CRM row.",
   "fields": [
     {
       "name": "sourceKey",
@@ -10,7 +10,18 @@
       "writable": "managed"
     },
     {
-      "name": "quoteId",
+      "name": "contractId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "versionNumber",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "orderId",
       "type": "string",
       "index": true,
       "writable": "managed"
@@ -18,34 +29,15 @@
     {
       "name": "quoteVersionId",
       "type": "string",
-      "unique": true,
       "writable": "managed"
     },
     {
-      "name": "envelopeId",
-      "type": "string",
-      "index": true,
-      "writable": "managed"
-    },
-    {
-      "name": "signedArtifactId",
+      "name": "documentHash",
       "type": "string",
       "writable": "managed"
     },
     {
-      "name": "opportunityId",
-      "type": "string",
-      "index": true,
-      "writable": "managed"
-    },
-    {
-      "name": "companyId",
-      "type": "string",
-      "index": true,
-      "writable": "managed"
-    },
-    {
-      "name": "contactId",
+      "name": "artifactHash",
       "type": "string",
       "writable": "managed"
     },
@@ -60,45 +52,60 @@
       "writable": "managed"
     },
     {
+      "name": "companyId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "contactId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
       "name": "currency",
       "type": "string",
       "writable": "managed"
     },
     {
-      "name": "status",
+      "name": "effectiveDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termStartDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termEndDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termDays",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "autoRenew",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "renewalNoticeDays",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "termsSource",
       "type": "enum",
       "values": [
-        "accepted"
+        "post-signature-operational-activation"
       ],
       "writable": "managed"
     },
     {
-      "name": "versionNumber",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "policy",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "policyVersion",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "policyDecision",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "documentHash",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "artifactHash",
+      "name": "termsReason",
       "type": "string",
       "writable": "managed"
     },
@@ -123,19 +130,23 @@
       "writable": "managed"
     },
     {
-      "name": "acceptedAt",
-      "type": "timestamp",
-      "writable": "managed"
-    },
-    {
-      "name": "sourceFingerprint",
+      "name": "policy",
       "type": "string",
       "writable": "managed"
     },
     {
-      "name": "contractId",
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
       "type": "string",
-      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "activationId",
+      "type": "string",
       "writable": "managed"
     },
     {

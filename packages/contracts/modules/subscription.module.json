@@ -1,0 +1,69 @@
+{
+  "manifestVersion": 1,
+  "name": "subscription",
+  "description": "One active subscription per contract (M12): a commercial activation record, not a billing engine. It has no invoice schedule, usage rating, proration, payment, renewal or cancellation state.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "contractId",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "contractVersionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "orderId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "scheduled",
+        "active"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "startDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "endDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "lineCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "activationId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "activatedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

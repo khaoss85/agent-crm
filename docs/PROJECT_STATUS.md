@@ -14,14 +14,14 @@ Generated: **2026-08-06**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **M11 — Signature + Immutable Order** (ADR-017 + review addendum) |
-| Main SHA at generation | `ade6c6683b402d353fd119ea1656d30cce495c95` (merge of PR #14) |
-| Tests on clean main | **216 passing, 0 failing** (`npm run verify` from a fresh clone) |
+| Latest merged milestone | **Platform Alignment Gate** (ADR-018, documentation only) |
+| Main SHA at generation | `98bea3b` (merge of PR #15) |
+| Tests on clean main | **216 passing, 0 failing** (`npm run verify` from a fresh clone); **249 passing** on the open M12 branch after its adversarial review |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
-| Browser smoke | 26/26 in real Chromium, run manually — **not in CI** |
+| Browser smoke | 27/27 in real Chromium, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | `docs: add the platform alignment gate` (this PR — documentation only) |
+| Open PRs | `feat: activate contracts and subscriptions from signed orders` (M12 — this PR, adversarially reviewed and corrected, awaiting human merge) |
 
 ## Completed functional path
 
@@ -36,13 +36,17 @@ Lead capture
 → immutable Quote Version + versioned discount policy + human approval        M10
 → signature envelope → verified events → signed-artifact evidence             M11
 → exactly one immutable Order (lines, components, tiers, grouped totals)      M11
+→ plan activation, classify every component explicitly, resolve ambiguity     M12
+→ Commercial Contract + immutable version + lines, Subscription + lines,      M12
+  pending delivery and service obligations                                    M12
 ```
 
 Framework underneath: module manifest + generated migrations (M1), module
 factory (M2), one generated resource contract over API/SDK (M3), generated
 Admin (M4), generated-to-generated references (M5), code-first action runtime
 (M6), core adapters (M7), pipeline registry (M8), declared-definition
-fingerprints + prepare phase (M9), external-operation runtime (M11).
+fingerprints + prepare phase (M9), external-operation runtime (M11), optional
+domain packages on a generic domain registry seam (M12).
 
 ## Merged milestones and their ADRs
 
@@ -58,15 +62,17 @@ fingerprints + prepare phase (M9), external-operation runtime (M11).
 | M9 | Lead Intelligence: enrichment, versioned scoring, routing | ADR-015 |
 | M10 | Commercial Operations: composite catalog, quotes, discount policy, approval | ADR-016 |
 | M11 | Signature + immutable Order, external-operation runtime | ADR-017 (+ addendum) |
-| — | Platform alignment gate (this PR): core-vs-domain boundary | ADR-018 |
+| — | Platform alignment gate: core-vs-domain boundary | ADR-018 |
+| M12 | Contract & Subscription activation — the first domain package outside core (open PR, not merged) | ADR-018 addenda 1–2 |
 
 ## Next planned development
 
-1. **Platform alignment gate** — this PR: documentation, ADR-018 and the
-   adversarial-review skill. No runtime change.
-2. **M12 — Order Activation & Subscription v1** — design drafted in
-   `docs/plans/milestone-12-order-activation-subscription.md`; not implemented.
-3. Then M13 Delivery Handover, M14 Delivery Economics & Acceptance,
+1. **M12 — Contract & Subscription Activation** — this PR: the first optional
+   domain package (`packages/contracts/`), implemented, adversarially reviewed
+   (three domain-model defects found and fixed — term provenance, two-axis
+   classification, scheduled-versus-active state) and green, awaiting a human
+   merge.
+2. Then M13 Delivery Handover, M14 Delivery Economics & Acceptance,
    M15 Service Operations, M16 Analytics Studio — `EXECUTION_ROADMAP.md`.
 
 A parallel platform track (domain package boundary, create-project CLI,
@@ -95,9 +101,11 @@ public use. None of it is started.
 
 **Implemented (merged):** module manifest and factory; generated API/SDK/Admin;
 references; actions; core adapters; pipelines; Lead Intelligence; Commercial
-Operations; Signature and Order; MCP server; CLI.
+Operations; Signature and Order; Contract activation and subscriptions (open
+PR); MCP server; CLI.
 
-**Documentation only (no code):** Contract/Subscription/Renewal; Delivery;
+**Documentation only (no code):** renewal, billing and everything downstream of
+activation; Delivery;
 Service; Analytics Studio; Integration Runtime; Jobs & durable outbox; Data
 Governance; Design-to-CRM; Agent CRM Cloud; create-project CLI; PostgreSQL;
 auth/tenancy/RBAC; benchmark execution.

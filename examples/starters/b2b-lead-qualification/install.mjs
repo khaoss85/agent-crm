@@ -82,6 +82,21 @@ try {
   ]) {
     applyModule(root, join(starterInProject, manifest));
   }
+  // Milestone 12 records live in the OPTIONAL contracts domain package, not in
+  // the starter: a project that does not register the package never applies
+  // these manifests and keeps every earlier milestone working.
+  for (const manifest of [
+    'contract-activation.module.json',
+    'commercial-contract.module.json',
+    'contract-version.module.json',
+    'contract-line.module.json',
+    'subscription.module.json',
+    'subscription-line.module.json',
+    'delivery-obligation.module.json',
+    'service-obligation.module.json',
+  ]) {
+    applyModule(root, join(root, 'packages', 'contracts', 'modules', manifest));
+  }
 
   // 3. Register the code-first actions by pointing the action registry at the
   //    starter's checked-in definitions.
@@ -129,6 +144,19 @@ try {
       '',
       'export const generatedCatalogProviders = [fixtureSaasCatalogProvider];',
       'export const generatedDiscountPolicies = [standardSalesDiscountV1, standardSalesDiscountV2];',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(root, 'packages', 'domains', 'generated', 'index.js'),
+    [
+      '// @ts-check',
+      "import { createContractsDomain } from '../../contracts/src/index.js';",
+      "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
+      '',
+      'export const generatedDomains = [',
+      '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
+      '];',
       '',
     ].join('\n'),
   );
@@ -390,6 +418,11 @@ try {
     const storage = offerOf('fixture:offer:storage-monthly');
     const support = offerOf('fixture:offer:support-annual');
     const metered = offerOf('fixture:offer:bandwidth-metered');
+    // The API add-on is quoted so that the signed order carries a component the
+    // activation policy classifies as `other`: a real charge that creates no
+    // subscription, delivery or service obligation. That decision is recorded
+    // rather than assumed (Milestone 12).
+    const apiAddon = offerOf('fixture:offer:api-monthly');
     assert.equal(metered.quoteEligible, false);
     assert.match(metered.unsupportedReason, /metered usage/);
 
@@ -408,14 +441,15 @@ try {
     assert.equal(enterpriseLine.result.quote.oneTimeTotal.netAmountCents, 500_000, 'flat setup charged once, not per seat');
     await runQuote(quoteId, 'add-line', { offerId: storage.id, quantity: 250 });
     await runQuote(quoteId, 'add-line', { offerId: support.id, quantity: 1, discountBps: 500 });
+    await runQuote(quoteId, 'add-line', { offerId: apiAddon.id, quantity: 10 });
 
     const mixed = app.modules.get('quote').service.get(quoteId);
     const mixedTotals = JSON.parse(mixed.totalsJson);
     const monthly = mixedTotals.recurringTotals.find((group) => group.interval === 'month');
     const annual = mixedTotals.recurringTotals.find((group) => group.interval === 'year');
     // Monthly = platform 2,000.00 + seats 1,200.00 + graduated storage
-    // (100×2.00 + 150×1.50 = 425.00) = 3,625.00
-    assert.equal(monthly.netAmountCents, 200_000 + 120_000 + 42_500);
+    // (100×2.00 + 150×1.50 = 425.00) + API 10×9.00 = 3,715.00
+    assert.equal(monthly.netAmountCents, 200_000 + 120_000 + 42_500 + 9_000);
     assert.equal(annual.netAmountCents, 1_000_000 - 50_000, 'annual support discounted 5%');
     assert.equal(mixedTotals.oneTimeTotal.netAmountCents, 500_000);
     assert.equal(mixedTotals.recurringTotals.length, 2, 'monthly and annual stay separate — no grand total');
@@ -426,7 +460,7 @@ try {
     const versionTotals = app.modules.get('quote-version-total').service.listWhere({ versionId: submitted.result.version.id });
     assert.equal(versionTotals.length, 3, 'one one-time group + monthly + annual');
     const versionComponents = app.modules.get('quote-version-component').service.listWhere({ versionId: submitted.result.version.id });
-    assert.equal(versionComponents.length, 5, 'every component of every line is evidenced');
+    assert.equal(versionComponents.length, 6, 'every component of every line is evidenced');
     const seatEvidence = versionComponents.find((component) => component.pricingModel === 'volume');
     assert.ok(JSON.parse(seatEvidence.tiersJson).length >= 3, 'the tier schedule is snapshotted');
     assert.ok(JSON.parse(seatEvidence.tierBreakdownJson).length >= 1, 'the tier breakdown is snapshotted');
@@ -578,9 +612,196 @@ try {
       assert.equal(module.service.update, undefined, `no public update on ${name}`);
     }
 
+    // ---- Milestone 12: signed Order → Contract, Subscription, obligations ----
+    // Everything below belongs to the optional `contracts` domain package: the
+    // kernel does not know the words contract or subscription.
+    // The term is operational metadata recorded AFTER signature: the signed
+    // document carries none, so the package requires a human reason for it.
+    // A term that starts today is active; one that starts later is recorded
+    // as scheduled and stays that way — there is no scheduler (below).
+    const today = app.now().slice(0, 10);
+    const inOneYear = new Date(`${today}T00:00:00.000Z`);
+    inOneYear.setUTCFullYear(inOneYear.getUTCFullYear() + 1);
+    inOneYear.setUTCDate(inOneYear.getUTCDate() - 1);
+    const TERM = {
+      effectiveDate: today,
+      termStartDate: today,
+      termEndDate: inOneYear.toISOString().slice(0, 10),
+      termsReason: 'renewal window agreed with the customer after signature',
+    };
+    const POLICY = { policy: 'b2b-saas-order-activation', policyVersion: 1 };
+    const runOrder = (action, input, orderActor = actor) =>
+      app.runAction({ module: 'order', action, recordId: order.id, input, actor: orderActor });
+
+    // Planning is read-only, and it classifies from explicit identity — never
+    // from recurrence. One component is deliberately unmapped by v1.
+    const planned = await runOrder('plan-activation', POLICY);
+    const plan = planned.result.plan;
+    // Two independent axes: what recurs, and what is owed beyond the money.
+    // Annual support is BOTH a subscription line and a service obligation.
+    assert.deepEqual(plan.counts, { subscriptionLines: 3, delivery: 1, service: 1, noObligation: 3, ambiguous: 1 });
+    assert.equal(plan.termsProvenance.source, 'post-signature-operational-activation');
+    assert.equal(plan.activatable, false, 'an unclassified component blocks activation');
+    assert.equal(app.modules.get('commercial-contract').service.list().length, 0, 'planning writes nothing');
+    const ambiguous = plan.components.find((component) => component.requiresOverride);
+    assert.ok(ambiguous.reason.includes('not mapped by this policy version'));
+
+    // An agent may prepare the plan; it may never commit the business.
+    await assert.rejects(
+      () => runOrder('activate-contract', { ...POLICY, ...TERM }, { type: 'agent', id: 'bot' }),
+      (error) => error.code === 'HUMAN_APPROVAL_REQUIRED' && error.status === 403,
+    );
+    // And no human can activate past an ambiguity without deciding it.
+    await assert.rejects(
+      () => runOrder('activate-contract', { ...POLICY, ...TERM }),
+      (error) => error.code === 'CLASSIFICATION_AMBIGUOUS' && error.status === 409,
+    );
+    // Impossible and reversed dates are refused before anything is created.
+    await assert.rejects(
+      () => runOrder('activate-contract', { ...POLICY, ...TERM, effectiveDate: '2026-02-30' }),
+      (error) => error.status === 400,
+    );
+    await assert.rejects(
+      () => runOrder('activate-contract', { ...POLICY, ...TERM, termStartDate: TERM.termEndDate, termEndDate: TERM.termStartDate }),
+      (error) => error.status === 400,
+    );
+    // The term is not signed, so it must say where it came from.
+    await assert.rejects(
+      () => runOrder('activate-contract', { ...POLICY, ...TERM, termsReason: undefined }),
+      (error) => error.status === 400 && /termsReason/.test(error.message),
+    );
+    // A notice period without auto-renewal is a clause that can never apply.
+    await assert.rejects(
+      () => runOrder('activate-contract', { ...POLICY, ...TERM, autoRenew: false, renewalNoticeDays: 30 }),
+      (error) => error.status === 400 && /autoRenew/.test(error.message),
+    );
+
+    // The human decision: an explicit classification with a reason.
+    const activated = await runOrder('activate-contract', {
+      ...POLICY, ...TERM, autoRenew: true, renewalNoticeDays: 30,
+      classificationOverrides: [
+        {
+          orderComponentId: ambiguous.orderComponentId,
+          dimension: 'commercial',
+          value: 'subscription',
+          reason: 'storage is sold to this customer as a recurring right',
+        },
+        {
+          orderComponentId: ambiguous.orderComponentId,
+          dimension: 'obligations',
+          value: [],
+          reason: 'we host it; there is no delivery or service work to do',
+        },
+      ],
+    });
+    assert.deepEqual(activated.result.counts, { subscriptionLines: 4, delivery: 1, service: 1, noObligation: 4, ambiguous: 0 });
+
+    const contract = app.modules.get('commercial-contract').service.listWhere({ orderId: order.id })[0];
+    assert.equal(contract.status, 'active');
+    assert.equal(contract.sourceKey, `contract:order:${order.id}`);
+    assert.ok(contract.termDays === 365 || contract.termDays === 366, 'the end date is inclusive');
+    assert.equal(contract.documentHash, order.documentHash, 'the contract cites the signed document');
+    assert.equal(orders.get(order.id).contractId, contract.id);
+    const contractVersion = app.modules.get('contract-version').service.listWhere({ contractId: contract.id })[0];
+    assert.equal(contractVersion.versionNumber, 1);
+    assert.equal(contract.currentVersionId, contractVersion.id);
+
+    const contractLines = app.modules.get('contract-line').service.listWhere({ contractId: contract.id });
+    assert.equal(contractLines.length, 6, 'every order component becomes exactly one contract line');
+    const byKey = (key) => contractLines.find((line) => String(line.componentKey).endsWith(key));
+    const obligationsOf = (key) => JSON.parse(byKey(key).obligationsJson);
+    assert.equal(byKey('ent-platform').commercialActivation, 'subscription', 'recurring platform fee → subscription line');
+    assert.deepEqual(obligationsOf('ent-platform'), [], 'and it owes nothing further');
+    assert.equal(byKey('ent-seats').commercialActivation, 'subscription', 'recurring seats → subscription line');
+    assert.equal(byKey('ent-setup').commercialActivation, 'non_subscription', 'a one-time setup is not a recurring right');
+    assert.deepEqual(obligationsOf('ent-setup'), ['delivery'], 'one-time setup → delivery obligation');
+    // The two-axis case: recurring support is a subscription line AND a
+    // service obligation. One exclusive answer would silently lose one of them.
+    assert.equal(byKey('support-fee').commercialActivation, 'subscription', 'recurring support is recurring money');
+    assert.deepEqual(obligationsOf('support-fee'), ['service'], 'and it is a future service obligation');
+    assert.equal(byKey('api-calls').commercialActivation, 'non_subscription', 'a recurring charge is NOT automatically a recurring right');
+    assert.deepEqual(obligationsOf('api-calls'), [], 'and it owes nothing further');
+    const overridden = byKey('storage-gb');
+    assert.equal(overridden.commercialOverridden, true);
+    assert.equal(overridden.obligationsOverridden, true);
+    assert.equal(overridden.policyCommercialActivation, 'ambiguous', 'the policy decision survives next to the override');
+    assert.equal(overridden.overriddenBy, 'starter');
+    // The term is operational metadata, and every record says so rather than
+    // implying the customer signed these dates.
+    assert.equal(contract.termsSource, 'post-signature-operational-activation');
+    assert.equal(contract.termsReason, TERM.termsReason);
+    assert.equal(contractVersion.termsSource, 'post-signature-operational-activation');
+    // Amounts are copied from the signed order, never recomputed.
+    const orderComponents = app.modules.get('order-component').service.listWhere({ orderId: order.id });
+    for (const line of contractLines) {
+      const source = orderComponents.find((component) => component.id === line.orderComponentId);
+      assert.equal(line.netAmountCents, source.netAmountCents, `${line.componentKey} amount copied`);
+    }
+
+    const subscription = app.modules.get('subscription').service.listWhere({ contractId: contract.id })[0];
+    assert.equal(subscription.lineCount, 4, 'platform, seats, support and the overridden storage line');
+    assert.equal(app.modules.get('subscription-line').service.countWhere({ subscriptionId: subscription.id }), 4);
+    assert.ok(
+      app.modules.get('subscription-line').service.listWhere({ subscriptionId: subscription.id })
+        .some((subLine) => String(subLine.componentKey).endsWith('support-fee')),
+      'the recurring support commitment is a subscription line, not only an obligation',
+    );
+    const deliveries = app.modules.get('delivery-obligation').service.listWhere({ contractId: contract.id });
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].status, 'pending_handover', 'nothing executes it — it is a recorded obligation');
+    const services = app.modules.get('service-obligation').service.listWhere({ contractId: contract.id });
+    assert.equal(services.length, 1);
+    assert.equal(services[0].status, 'pending_activation');
+    assert.equal(services[0].contractLineId, byKey('support-fee').id, 'both consequences cite one contract line');
+
+    // A future-dated activation is SCHEDULED, never active — and nothing will
+    // flip it, because this milestone has no scheduler.
+    const laterOrder = orders.listWhere({ quoteVersionId: resubmitted.result.version.id })[0] ?? null;
+    if (laterOrder) {
+      const future = new Date(`${today}T00:00:00.000Z`);
+      future.setUTCMonth(future.getUTCMonth() + 1);
+      const start = future.toISOString().slice(0, 10);
+      const end = new Date(future);
+      end.setUTCFullYear(end.getUTCFullYear() + 1);
+      const scheduled = await app.runAction({
+        module: 'order', action: 'activate-contract', recordId: laterOrder.id,
+        input: {
+          ...POLICY, effectiveDate: today, termStartDate: start, termEndDate: end.toISOString().slice(0, 10),
+          termsReason: 'starts next month by agreement',
+        },
+        actor,
+      });
+      assert.equal(scheduled.result.contract.status, 'scheduled');
+    }
+
+    // Activation is once: a second attempt is a stable refusal, not a second
+    // contract, and the whole transaction is idempotent by identity.
+    await assert.rejects(
+      () => runOrder('activate-contract', { ...POLICY, ...TERM }),
+      (error) => error.code === 'ORDER_ALREADY_ACTIVATED' && error.status === 409,
+    );
+    assert.equal(app.modules.get('commercial-contract').service.list().length, 1);
+
+    // A catalog change after activation cannot move a single figure.
+    await app.syncCatalog({ provider: 'fixture-saas-catalog', input: { variant: 'v2' }, actor });
+    const platformLine = app.modules.get('contract-line').service.get(byKey('ent-platform').id);
+    assert.equal(platformLine.netAmountCents, byKey('ent-platform').netAmountCents, 'a repriced catalog never touches a signed contract');
+
+    // Contract records are read-only publicly, like every other evidence
+    // record: they exist only through the activation action.
+    for (const name of [
+      'contract-activation', 'commercial-contract', 'contract-version', 'contract-line',
+      'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
+    ]) {
+      const module = app.modules.get(name);
+      assert.deepEqual(module.capabilities, ['get', 'list'], name);
+      assert.equal(module.service.create, undefined, `no public create on ${name}`);
+      assert.equal(module.service.update, undefined, `no public update on ${name}`);
+    }
+
     console.log(JSON.stringify({
       ok: true,
-      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads with immutable snapshots, runs and assignment history; synced a composite fixture catalog idempotently (flat, per-unit, volume and graduated components across one-time, monthly and annual charges, plus one unsupported metered offer refused for quoting) and built mixed quotes with grouped one-time/monthly/annual totals — one auto-approved, one through human discount approval with reject → revise → version 2 — then proved a tier/price change creates new offer revisions while the historical quote version stays unchanged; sent an approved quote version for signature as a human actor (agents refused), refused a forged webhook, ingested verified delivered and completed events, produced signed-artifact evidence and exactly one immutable Order with its lines, components, tiers and grouped totals, proved replay and out-of-order events change nothing and a decline creates no order; CRUD cannot set lifecycle, conversion, pipeline, intelligence, commercial, signature or order fields.',
+      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads with immutable snapshots, runs and assignment history; synced a composite fixture catalog idempotently (flat, per-unit, volume and graduated components across one-time, monthly and annual charges, plus one unsupported metered offer refused for quoting) and built mixed quotes with grouped one-time/monthly/annual totals — one auto-approved, one through human discount approval with reject → revise → version 2 — then proved a tier/price change creates new offer revisions while the historical quote version stays unchanged; sent an approved quote version for signature as a human actor (agents refused), refused a forged webhook, ingested verified delivered and completed events, produced signed-artifact evidence and exactly one immutable Order with its lines, components, tiers and grouped totals, proved replay and out-of-order events change nothing and a decline creates no order; then activated that signed order — through the optional contracts domain package — into one commercial contract with an immutable version and six contract lines classified on two explicit axes (platform and seats as subscription lines owing nothing further, a one-time setup as a pending delivery obligation, annual support as BOTH a subscription line and a pending service obligation, a recurring API charge deliberately as neither, and one component the policy refused to guess until a human decided both of its axes with reasons), recording the term as post-signature operational metadata with its stated source, refusing agent actors, impossible and reversed dates, a notice period without auto-renewal, a term with no stated source and any second activation, and recording a future-dated contract as scheduled because no scheduler exists; CRUD cannot set lifecycle, conversion, pipeline, intelligence, commercial, signature, order or contract fields.',
       leads: leads.list().length,
       tasks: tasks.list().length,
       companies: app.services.companies.list().length,

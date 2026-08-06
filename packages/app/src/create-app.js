@@ -23,15 +23,18 @@ import {
   generatedDiscountPolicies,
 } from '../../commercial/generated/index.js';
 import { generatedSignatureProviders } from '../../signature/generated/index.js';
+import { generatedDomains } from '../../domains/generated/index.js';
 import { PipelineRegistry } from '../../core/src/pipeline-registry.js';
 import { IntelligenceRegistries } from '../../core/src/intelligence-registry.js';
 import { CommercialRegistries } from '../../core/src/commercial-registry.js';
 import { createCatalogSync } from '../../core/src/catalog-sync.js';
 import { SignatureRegistries } from '../../core/src/signature-registry.js';
 import { createSignatureOperations } from '../../core/src/signature-operations.js';
+import { DomainRegistries } from '../../core/src/domain-registry.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
 import { ActionRegistry } from '../../core/src/action-registry.js';
 import { runRecordAction } from '../../core/src/action-runtime.js';
+import { resolveClock } from '../../core/src/time.js';
 import { createCoreAdapters } from '../../core/src/core-adapters.js';
 import { createReferenceResolver } from '../../core/src/reference-resolver.js';
 import {
@@ -48,6 +51,10 @@ import {
  * @param {{dbPath?: string, approvalThresholdCents?: number, busyTimeoutMs?: number}} [options]
  */
 export function createAgentCrmApp(options = {}) {
+  // The application clock (generic runtime capability): actions that decide
+  // anything from the current instant read it here, so a test can pin "today"
+  // and a run is reproducible. Defaults to the wall clock.
+  const now = resolveClock(options.clock);
   const database = createDatabase({
     path: options.dbPath,
     busyTimeoutMs: options.busyTimeoutMs,
@@ -150,6 +157,17 @@ export function createAgentCrmApp(options = {}) {
   const signature = new SignatureRegistries({ signatureProviders: generatedSignatureProviders });
   signature.persistFingerprints(database);
 
+  // Optional domain packages (ADR-018 addendum). The kernel knows only the
+  // generic contract: a package contributes actions and versioned policies,
+  // and the application composes it here. With none registered, everything
+  // below behaves exactly as it did before this seam existed.
+  const domains = new DomainRegistries({ domains: generatedDomains });
+  domains.persistFingerprints(database);
+  // A domain's actions join the same registry, under the same validation and
+  // the same eligibility rules as any other action. Registration order is
+  // deterministic and a malformed action stops startup.
+  for (const definition of domains.actions()) actions.register(definition);
+
   const notificationProvider = new MemoryNotificationProvider();
   providers.register({
     name: 'default-notifications',
@@ -202,6 +220,7 @@ export function createAgentCrmApp(options = {}) {
     intelligence,
     commercial,
     signature,
+    domains,
     actionEligibleCoreModules: [...ACTION_ELIGIBLE_CORE_MODULES].sort(),
     /**
      * Synchronize a catalog provider's normalized catalog into immutable
@@ -268,6 +287,8 @@ export function createAgentCrmApp(options = {}) {
         intelligence,
         commercial,
         signature,
+        domains,
+        now,
         config: app.config,
         module,
         action,
@@ -276,6 +297,7 @@ export function createAgentCrmApp(options = {}) {
         actor,
       });
     },
+    now,
     schema: CRM_SCHEMA,
     config: {
       approvalThresholdCents:

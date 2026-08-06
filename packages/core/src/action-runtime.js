@@ -66,6 +66,13 @@ export function validateActionInput(schema, body) {
         throw new ValidationError(`${field.name} must be one of: ${(field.values ?? []).join(', ')}`, { field: field.name });
       }
       out[field.name] = raw;
+    } else if (field.type === 'boolean') {
+      // Strict: only a JSON boolean. "true", 1 and "yes" are refused rather
+      // than coerced, so a caller can never half-mean a flag.
+      if (typeof raw !== 'boolean') {
+        throw new ValidationError(`${field.name} must be true or false`, { field: field.name });
+      }
+      out[field.name] = raw;
     } else if (field.type === 'json') {
       // Bounded structured input (e.g. a signer list): plain JSON-safe data
       // only — functions, symbols, cycles and non-plain objects are refused,
@@ -146,7 +153,10 @@ export async function runRecordAction(params) {
   }
 
   const runId = randomUUID();
-  const startedAt = nowIso();
+  // One clock per run: the injected application clock when there is one, the
+  // wall clock otherwise. Everything the action stamps uses the same source.
+  const now = params.now ?? nowIso;
+  const startedAt = now();
   /** @type {Array<{name: string, status: string, output?: unknown, error?: string}>} */
   const steps = [];
   /** @type {any} */
@@ -188,7 +198,7 @@ export async function runRecordAction(params) {
           modules: readOnlyModulesView(modules),
           intelligence,
           config: params.config ?? {},
-          now: () => nowIso(),
+          now,
           step: (name, output) => steps.push({ name, status: 'completed', output }),
         }),
       );
@@ -221,10 +231,16 @@ export async function runRecordAction(params) {
             getCatalogProvider: () => { throw new NotFoundError('Catalog provider', 'none registered'); },
             getDiscountPolicy: () => { throw new NotFoundError('Discount policy', 'none registered'); },
           }),
+          // Optional domain packages (ADR-018 addendum); read-only registry
+          // view, frozen fallback when no domain is registered.
+          domains: params.domains ?? Object.freeze({
+            getPolicy: () => { throw new NotFoundError('Domain policy', 'none registered'); },
+            has: () => false,
+          }),
           // Value returned by the prepare phase (undefined without one).
           prepared,
           config: params.config ?? {},
-          now: () => nowIso(),
+          now,
           managed: (id, patch) => service.applyManaged(id, patch, { actor }),
           step: (name, output) => steps.push({ name, status: 'completed', output }),
         });
@@ -300,6 +316,7 @@ export async function runRecordAction(params) {
  */
 async function runExternalRecordAction(params, definition, validatedInput) {
   const { database, events, services, modules, module, action, recordId, actor } = params;
+  const now = params.now ?? nowIso;
   const service = modules.get(module).service;
   const stateField = definition.stateField ?? 'status';
 
@@ -314,6 +331,10 @@ async function runExternalRecordAction(params, definition, validatedInput) {
     signature: params.signature ?? Object.freeze({
       getSignatureProvider: () => { throw new NotFoundError('Signature provider', 'none registered'); },
     }),
+    domains: params.domains ?? Object.freeze({
+      getPolicy: () => { throw new NotFoundError('Domain policy', 'none registered'); },
+      has: () => false,
+    }),
     config: params.config ?? {},
     managed: (id, patch) => service.applyManaged(id, patch, { actor }),
   });
@@ -322,6 +343,7 @@ async function runExternalRecordAction(params, definition, validatedInput) {
     database,
     events,
     name: `${module}.${action}`,
+    now,
     input: { recordId, input: validatedInput },
     actor,
     timeoutMs: definition.timeoutMs ?? params.config?.externalTimeoutMs,

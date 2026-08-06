@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
-  "name": "order",
-  "description": "One immutable Order per completed signed quote version (ADR-017). Every commercial figure is copied from the approved quote version snapshot, never re-read from the live catalog. No fulfillment, billing or payment status exists in this milestone.",
+  "name": "subscription-line",
+  "description": "One immutable subscription line per component explicitly classified as a subscription (M12). It represents an active recurring commercial right, not a billing schedule.",
   "fields": [
     {
       "name": "sourceKey",
@@ -10,126 +10,9 @@
       "writable": "managed"
     },
     {
-      "name": "quoteId",
+      "name": "subscriptionId",
       "type": "string",
       "index": true,
-      "writable": "managed"
-    },
-    {
-      "name": "quoteVersionId",
-      "type": "string",
-      "unique": true,
-      "writable": "managed"
-    },
-    {
-      "name": "envelopeId",
-      "type": "string",
-      "index": true,
-      "writable": "managed"
-    },
-    {
-      "name": "signedArtifactId",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "opportunityId",
-      "type": "string",
-      "index": true,
-      "writable": "managed"
-    },
-    {
-      "name": "companyId",
-      "type": "string",
-      "index": true,
-      "writable": "managed"
-    },
-    {
-      "name": "contactId",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "customerName",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "customerEmail",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "currency",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "status",
-      "type": "enum",
-      "values": [
-        "accepted"
-      ],
-      "writable": "managed"
-    },
-    {
-      "name": "versionNumber",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "policy",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "policyVersion",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "policyDecision",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "documentHash",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "artifactHash",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "totalsJson",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "oneTimeNetCents",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "recurringGroupCount",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "lineCount",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "acceptedAt",
-      "type": "timestamp",
-      "writable": "managed"
-    },
-    {
-      "name": "sourceFingerprint",
-      "type": "string",
       "writable": "managed"
     },
     {
@@ -139,8 +22,132 @@
       "writable": "managed"
     },
     {
-      "name": "activatedAt",
-      "type": "timestamp",
+      "name": "contractLineId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "orderComponentId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "componentKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "label",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "chargeType",
+      "type": "enum",
+      "values": [
+        "recurring"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "pricingModel",
+      "type": "enum",
+      "values": [
+        "flat_fee",
+        "per_unit",
+        "volume",
+        "graduated"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "interval",
+      "type": "enum",
+      "values": [
+        "month",
+        "year"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "intervalCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "quantity",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "unitAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "flatAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "tiersJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "tierBreakdownJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "netAmountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "startDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "endDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "externalPriceId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sourcePricingModel",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "scheduled",
+        "active"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "activationId",
+      "type": "string",
       "writable": "managed"
     }
   ]

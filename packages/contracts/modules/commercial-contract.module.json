@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
-  "name": "order",
-  "description": "One immutable Order per completed signed quote version (ADR-017). Every commercial figure is copied from the approved quote version snapshot, never re-read from the live catalog. No fulfillment, billing or payment status exists in this milestone.",
+  "name": "commercial-contract",
+  "description": "One active commercial agreement per activated signed order (M12). Its commercial content is copied from the immutable Order and never recalculated from the live catalog. No cancellation, suspension, renewal or amendment behavior exists in this milestone. The term is operational metadata recorded after signature (termsSource) — the signed document package carries no term, so it is never presented as a signed commercial term.",
   "fields": [
     {
       "name": "sourceKey",
@@ -10,21 +10,25 @@
       "writable": "managed"
     },
     {
-      "name": "quoteId",
-      "type": "string",
-      "index": true,
-      "writable": "managed"
-    },
-    {
-      "name": "quoteVersionId",
+      "name": "orderId",
       "type": "string",
       "unique": true,
       "writable": "managed"
     },
     {
-      "name": "envelopeId",
+      "name": "quoteId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "quoteVersionId",
       "type": "string",
       "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "envelopeId",
+      "type": "string",
       "writable": "managed"
     },
     {
@@ -68,13 +72,52 @@
       "name": "status",
       "type": "enum",
       "values": [
-        "accepted"
+        "scheduled",
+        "active"
       ],
       "writable": "managed"
     },
     {
-      "name": "versionNumber",
+      "name": "effectiveDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termStartDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termEndDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termDays",
       "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "autoRenew",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "renewalNoticeDays",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "termsSource",
+      "type": "enum",
+      "values": [
+        "post-signature-operational-activation"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "termsReason",
+      "type": "string",
       "writable": "managed"
     },
     {
@@ -88,7 +131,7 @@
       "writable": "managed"
     },
     {
-      "name": "policyDecision",
+      "name": "policyFingerprint",
       "type": "string",
       "writable": "managed"
     },
@@ -103,39 +146,18 @@
       "writable": "managed"
     },
     {
-      "name": "totalsJson",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "oneTimeNetCents",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "recurringGroupCount",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "lineCount",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "acceptedAt",
-      "type": "timestamp",
-      "writable": "managed"
-    },
-    {
       "name": "sourceFingerprint",
       "type": "string",
       "writable": "managed"
     },
     {
-      "name": "contractId",
+      "name": "currentVersionId",
       "type": "string",
-      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "activationId",
+      "type": "string",
       "writable": "managed"
     },
     {
