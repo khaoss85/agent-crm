@@ -11,26 +11,28 @@ Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-016 and ADR-017) and `docs/SIGNATURE
 2. The `external` phase gets frozen JSON-safe data plus the provider registry — **no database, no modules, no managed writes**. If you find yourself wanting a service handle there, the work belongs in `intent` or `finalize`.
 3. Give every external call a **deterministic idempotency key** derived from the record it belongs to (here: `env:quote-version:<id>`, which is also the DB-unique source key). A repeated request must be refused, not retried into a second remote object.
 4. On failure, move to a **recoverable** local state and record the phase and code. The single policy is: never silently retry, always reconcile.
-5. Do not build a scheduler, an outbox or a workflow DSL.
+5. A provider answer that is already terminal is a **completion**, not a status: route every provider state through the one path that creates the artifact and the order, and prefetch what that needs in `external`. Persisting a terminal state without its evidence is unrecoverable.
+6. An idempotency key is a **lookup, not an identity**: before adopting a provider envelope, check the document hash, the signer set and any known provider envelope id, and fail closed on a mismatch.
+7. Do not build a scheduler, an outbox or a workflow DSL.
 
 ## Add a signature provider
 
 1. Define it code-first: `{ name, version, label, config, createEnvelope, getEnvelope, verifyEvent, getSignedArtifact }` and register it in `packages/signature/generated/index.js` (static import, like actions/pipelines/intelligence/commercial).
 2. The declared-definition fingerprint proves **provider code and config integrity, not remote-service behavior**. Re-validate every provider result into the normalized contract (`normalizeProviderEnvelope`/`normalizeProviderEvent`/`normalizeProviderArtifact`) before it touches local state; off-contract data is `PROVIDER_INVALID`. A provider may never assert the local-only `preparing`/`failed` states.
-3. `verifyEvent` receives the **raw body**, must compare in constant time and must bound replay by timestamp. Never log or echo the payload, the signature or the key.
+3. `verifyEvent` receives the **raw bytes** (a Buffer — decoding first would replace invalid UTF-8 and verify something the provider never signed), must compare in constant time and must bound replay by timestamp. Never log or echo the payload, the signature or the key.
 4. A verification key in checked-in `config` is **test-only**. Do not describe it as production webhook security, and do not ship a real DocuSign/Adobe/Dropbox adapter or credential.
 
 ## Extend the envelope state machine
 
 1. Transitions are monotonic: apply only when the target ranks strictly higher. `completed`, `declined` and `voided` are terminal — no event and no action may regress them.
-2. Every accepted event is an append-only inbox row keyed by a DB-unique provider event id, with an explicit `effect` (`applied` / `ignored` / `quarantined`). A replay must answer identically; an unknown envelope is quarantined evidence, not an error and not a silent discard.
+2. Every accepted event is an append-only inbox row keyed by a DB-unique provider event id **plus a fingerprint of the verified bytes**. The same id with the same bytes is a stable duplicate; the same id with different bytes is a conflict, never an acknowledged replay. A row whose processing failed stays unprocessed and must be **resumed** on redelivery. An unknown envelope is quarantined evidence that gets linked once the provider id is known — never a silent discard.
 3. Signer semantics in v1: all signers required, 1–5 signers, declared order recorded but not sequentially gated, no conditional routing. Never claim signer identity assurance beyond provider evidence.
 
 ## Create an Order
 
 1. One Order per completed signed Quote Version, keyed `order:quote-version:<id>` (DB-unique) — the guarantee that duplicate, concurrent or reconciled completions cannot produce two.
 2. **Copy, never recalculate.** Lines, components, tier schedules, band breakdowns and grouped totals come from the Quote Version snapshot; reading the live catalog here is a defect.
-3. Rebuild the document package from the snapshot and refuse (`DOCUMENT_HASH_MISMATCH`) if it no longer hashes to what was signed.
+3. Rebuild the document package from **immutable snapshot rows plus the party snapshot taken at request time** — never from live CRM records, or a rename would block completion forever — and refuse (`DOCUMENT_HASH_MISMATCH`) if it no longer hashes to what was signed. Canonicalize with one deterministic serializer; `localeCompare` in a hashed path is a defect.
 4. The completion transition, artifact and full order snapshot commit in ONE transaction, or none of it does.
 5. Do not add fulfillment, billing, payment, invoice, tax, FX, amendment or cancellation state.
 

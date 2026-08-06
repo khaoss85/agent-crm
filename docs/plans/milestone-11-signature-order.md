@@ -106,11 +106,13 @@ preparing ──▶ sent ──▶ delivered ──▶ completed   (terminal)
     └──▶ failed ──(reconcile only)──▶ sent | delivered | completed | declined | voided
 ```
 
-Ranking is server-authoritative and monotonic: a transition is applied only if
-its target ranks strictly higher than the current state. `completed`,
-`declined` and `voided` are terminal and can never regress — a late `sent` or a
-duplicate `completed` is recorded in the inbox and ignored. `failed` is the one
-recoverable non-terminal state: it means *the local side failed*, the provider
+Transitions come from an **explicit allowed-transition table** (corrected in
+the adversarial review — a numeric rank cannot express branching terminals, and
+would treat `completed → declined` as equal): the table is published in
+`/api/schema` and asserted pair by pair. `completed`, `declined` and `voided`
+are terminal and can never regress — a late `sent` or a duplicate `completed`
+is recorded in the inbox and ignored. `failed` is the one recoverable
+non-terminal state: it means *the local side failed*, the provider
 may or may not hold an envelope, and `reconcile` is the documented recovery.
 
 **Exactly one envelope per Quote Version, ever** — enforced by the DB-unique
@@ -131,10 +133,11 @@ conditional routing, no reminders, no delegation. Signer identity assurance is
 A deterministic canonical JSON document is derived from the approved Quote
 Version: quote/version identity, parties, offer and product-version snapshot,
 every component with its tier schedule and band breakdown, grouped totals, the
-discount-policy decision, and the signer list. It is hashed with the existing
-canonical SHA-256 helper. The hash is stored on the envelope, sent to the
-provider, and re-checked before an Order is created. It is **not** a PDF and is
-never called one.
+discount-policy decision, and the signer list. One deterministic serializer
+emits the canonical bytes, the SHA-256 covers exactly those bytes, and exactly
+those bytes are sent. Parties are snapshotted at request time so the package
+stays reproducible; the rebuild is re-checked before an Order is created. It is
+**not** a PDF and is never called one.
 
 ## Order creation atomicity
 
@@ -157,6 +160,20 @@ state is touched; failures are a stable `401 SIGNATURE_INVALID` that never
 echoes the payload, the signature or the key. The fixture verification key is
 declared test-only in checked-in source and is documented as **not** production
 webhook security — real secret management is Production Spine work.
+
+## Corrected in the adversarial review
+
+1. **A terminal answer from `createEnvelope` now completes properly.** Persisting `completed` without the artifact and the Order was unrecoverable, because terminal states never transition again. Finalization routes every provider state through the same path a webhook uses, and the artifact is prefetched in `external`.
+2. **The signed package is rebuilt from snapshots, not live CRM rows.** Parties are snapshotted at request time; a customer rename previously blocked completion forever with `DOCUMENT_HASH_MISMATCH`.
+3. **The hash covers the exact bytes sent**, produced by one deterministic serializer with no `localeCompare` anywhere.
+4. **A provider envelope must prove it is ours** (document hash + signer set + known provider id) before adoption: `409 PROVIDER_ENVELOPE_MISMATCH`.
+5. **Transitions come from an explicit table**, published in the schema — a rank cannot express branching terminals.
+6. **Replay scope is provider + event id + payload fingerprint**; a reused id with different bytes is `409 EVENT_ID_CONFLICT`, and an event whose processing failed is **resumed** on redelivery instead of being stranded as a duplicate.
+7. **Quarantined events are linked and recoverable**, so an early completion is never silently lost.
+8. **Webhook bytes stay bytes** end to end; the bound is a real 64 KiB.
+9. **The Order snapshots its customer**, and the signed canonical document travels with the artifact, so the Order reads independently of catalog, quote and CRM rows.
+10. **`artifactHash` is documented as provider-reported**; no artifact byte is downloaded, hashed or cryptographically verified.
+11. **`PROVIDER_ENVELOPE_ABSENT` is distinguished from an unknown outcome**, and the Admin states which of the three cases applies.
 
 ## Verification
 

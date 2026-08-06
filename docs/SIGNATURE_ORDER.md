@@ -59,18 +59,24 @@ provider call and local finalization are always distinguishable.
 
 ## Envelope state machine
 
-```text
-preparing ──▶ sent ──▶ delivered ──▶ completed   (terminal)
-    │           │           └──────▶ declined    (terminal)
-    │           └──────────────────▶ voided      (terminal)
-    └──▶ failed ──(reconcile only)──▶ sent | delivered | completed | declined | voided
-```
+The **allowed-transition table is the contract** — not a rank comparison.
+`completed`, `declined` and `voided` are branching outcomes, not points on a
+scale, so a rank would make `completed → declined` and `declined → completed`
+look equal. The table is published in `/api/schema` as
+`signature.allowedTransitions`:
 
-Transitions are **monotonic and server-authoritative**: a transition applies
-only if its target ranks strictly higher, and `completed`/`declined`/`voided`
-are terminal. A duplicate, late or contradictory event is stored in the inbox
-and ignored — it can never regress a completed envelope, and no action turns a
-completed envelope back into failed or declined.
+| From | May become |
+|---|---|
+| `preparing` | `failed`, `sent`, `delivered`, `completed`, `declined`, `voided` |
+| `failed` | `sent`, `delivered`, `completed`, `declined`, `voided` |
+| `sent` | `delivered`, `completed`, `declined`, `voided` |
+| `delivered` | `completed`, `declined`, `voided` |
+| `completed` / `declined` / `voided` | *(nothing — terminal)* |
+
+A duplicate, late or contradictory event is stored in the inbox and ignored —
+it can never regress a completed envelope, and no action turns a completed
+envelope back into failed or declined. `preparing` and `failed` are
+**local-only**: a provider may never assert them.
 
 `failed` means the **local** side failed while the provider may or may not hold
 an envelope. The single documented policy is: **never silently retry, always
@@ -85,6 +91,20 @@ reconciliation failure.
 repeated request is `409 ENVELOPE_EXISTS`; a second provider envelope is
 structurally impossible.
 
+An idempotency key is a **lookup, not an identity**. Before a provider envelope
+is adopted — at creation and at reconciliation — it must agree with the local
+intent on the document hash and the signer set, and on the provider envelope id
+when one is already known; a disagreement is `409 PROVIDER_ENVELOPE_MISMATCH`
+and nothing is bound. A provider that echoes neither field cannot be checked on
+it, and that weaker guarantee is stated rather than assumed away.
+
+**Retained M11 limitation:** a quote version whose envelope failed — including
+one the provider never received (`PROVIDER_ENVELOPE_ABSENT`, which is recorded
+distinctly from an unknown outcome) — **cannot be sent again**. Reconciliation
+is the only recovery path; there is no resend framework, and the Admin says
+which of the three cases applies instead of implying the provider's state is
+known when it is not.
+
 ## Signer semantics (v1, narrow and stated)
 
 All signers are required; 1–5 signers; the declared `order` is **recorded and
@@ -97,10 +117,22 @@ own evidence is recorded.
 A deterministic canonical JSON package is derived from the approved Quote
 Version: quote and version identity, parties, offer/product-version snapshot,
 every component with its tier schedule and band breakdown, grouped totals, the
-discount-policy decision, and the signer list. It is hashed with the canonical
-SHA-256 helper; the hash is stored on the envelope, sent to the provider, and
-**re-checked before an Order is created** — a snapshot that moved is a refusal
-(`409 DOCUMENT_HASH_MISMATCH`), never a mis-signed order.
+discount-policy decision, and the signer list.
+
+**The hash covers the exact bytes that are sent.** `canonicalJson` emits one
+deterministic serialization — object keys sorted by code unit, array order
+preserved, no whitespace, and no locale-sensitive comparison anywhere — the
+SHA-256 is taken over exactly those bytes, and exactly those bytes are what the
+provider receives. CRLF vs LF, precomposed vs decomposed Unicode and `1` vs
+`"1"` are different documents; no normalization is silently applied.
+
+The commercial **parties are snapshotted once, at request time**, and stored on
+the envelope. The package is rebuilt only from immutable snapshot rows plus
+that snapshot, so a customer rename can never make the signed document
+unreproducible. The rebuild is re-checked before an Order is created — a
+snapshot that really moved is `409 DOCUMENT_HASH_MISMATCH`, never a mis-signed
+order — and the stored canonical bytes are re-hashed too, so both the snapshot
+rows and the stored evidence are proven.
 
 Its media type is `application/vnd.agent-crm.quote-package+json`. **It is not a
 PDF and is never called one.**
@@ -120,9 +152,21 @@ POST /api/signature/providers/:provider/events
   window. A failure is a stable `401 SIGNATURE_INVALID` that never echoes the
   payload, the signature or the key.
 - Accepted events land in an append-only inbox with a **DB-unique provider
-  event id**: a replay is idempotent and answers identically.
+  event id** plus a **fingerprint of the verified bytes**. Replay scope is
+  therefore `provider + providerEventId + payload`: the same id with the same
+  bytes is a stable duplicate, and the same id with **different** bytes is
+  `409 EVENT_ID_CONFLICT` rather than an acknowledged replay.
+- An inbox row whose *processing* failed stays `processed: false`, and a
+  redelivery **resumes** it. A failed completion is retryable, never stranded
+  behind its own duplicate check.
 - An event for an unknown envelope is **quarantined as evidence**, not
-  discarded and not an error.
+  discarded and not an error. Once the envelope learns its provider id, the
+  matching quarantined rows are linked to it and reconciliation produces the
+  artifact and the Order that event announced — an early completion is never
+  silently lost.
+- The raw body travels as bytes from the socket to verification: decoding it
+  to a string first would replace invalid UTF-8 and verify something the
+  provider never signed. The ±300 s window is inclusive at the boundary.
 - Each event records its `effect`: `applied`, `ignored` (out of order or
   terminal) or `quarantined`.
 
@@ -167,11 +211,34 @@ TCV (contract term is not modeled), and no amendment or cancellation path.
 
 ## Signed artifact evidence
 
-Envelope link, provider artifact id, the canonical document hash, the provider
-artifact hash where available, MIME type, size, storage reference, the
-completion event id, completion timestamp and signer evidence. **The artifact
-bytes are not stored in the database**, and long-term object-storage durability
-is not claimed.
+Envelope link, provider artifact id, the canonical document hash, the signed
+canonical document itself, the provider artifact hash where available, MIME
+type, size, storage reference, the completion event id, completion timestamp
+and signer evidence.
+
+`artifactHash` is **provider-reported**: agent-crm does not download or hash
+the artifact bytes and **verifies no signature cryptographically**. The
+artifact bytes are not stored in the database, and long-term object-storage
+durability is not claimed. What *is* locally verifiable is the document
+package: the stored canonical bytes re-hash to `documentHash` at completion.
+
+## Crash and recovery matrix
+
+| Where the process dies | Local state after restart | Safe next step |
+|---|---|---|
+| before the intent commits | nothing exists | request again |
+| after intent, before the provider call | envelope `preparing`, no provider id | **reconcile** (absent → `failed` + `PROVIDER_ENVELOPE_ABSENT`) |
+| during the provider call | envelope `preparing` | **reconcile** — the provider may hold it |
+| provider accepted, process dies before the result is observed | envelope `preparing` | **reconcile** recovers it by idempotency key |
+| result observed, finalize rolls back | envelope `preparing`/`failed` | **reconcile** |
+| finalize commits, the response is lost | envelope `sent`/terminal, order created if terminal | re-read; reconcile is a safe no-op |
+| compensation itself fails | envelope stays non-terminal | **reconcile** |
+| any point after a terminal state | terminal, order present | reconcile short-circuits (`terminal`) |
+
+In every row: requesting again is refused (`ENVELOPE_EXISTS`), reconciliation
+is idempotent, and **no second provider envelope can be created for one Quote
+Version** — proven with a real killed child process and with two app instances
+on one database.
 
 ## Reconciliation
 
