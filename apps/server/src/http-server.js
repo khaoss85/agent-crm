@@ -135,6 +135,9 @@ function buildRouter(app) {
     // verification secret, an executable handler, a raw provider payload or an
     // internal storage path. Additive; function-free.
     ...(app.signature ? { signature: app.signature.metadata() } : {}),
+    // Optional domain packages (ADR-018 addendum). Additive and function-free;
+    // absent entirely when no domain is registered.
+    ...(app.domains && app.domains.domains.size > 0 ? { domains: app.domains.metadata() } : {}),
   }));
 
   // Catalog synchronization (ADR-016). Local-development surface like every

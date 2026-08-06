@@ -7,7 +7,7 @@ const NAME_RE = /^[a-z][a-z0-9-]*$/;
 // `json` is bounded structured input (a signer list, ADR-017): the runtime
 // normalizes it to plain JSON-safe data, drops dangerous keys and bounds its
 // serialized size; the action still validates the domain shape itself.
-const INPUT_TYPES = new Set(['string', 'timestamp', 'enum', 'integer', 'json']);
+const INPUT_TYPES = new Set(['string', 'timestamp', 'enum', 'integer', 'boolean', 'json']);
 
 /**
  * @typedef {{
