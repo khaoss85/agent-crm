@@ -219,7 +219,7 @@ test('registry content is identical regardless of module creation order', (t) =>
 
 test('hostile enum values are refused before they reach the schema', () => {
   // An enum value is interpolated into a SQL CHECK constraint and re-emitted by
-  // every rebuild that constraint survives (ADR-020). Quote-doubling does stop
+  // every rebuild that constraint survives (ADR-019). Quote-doubling does stop
   // injection, but an unbounded value still travels into the schema: a NUL byte
   // produces DDL SQLite cannot parse, and a newline or a 300-character value
   // makes a table definition nobody can read. It is bounded where it is written.

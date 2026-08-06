@@ -132,7 +132,7 @@ export function planModule(input) {
     );
   }
 
-  // Evolution (ADR-020). The previously *generated* definition is the checked-in
+  // Evolution (ADR-019). The previously *generated* definition is the checked-in
   // `module.state.json`, not the raw manifest and not the live database: a state
   // file travels with the source, is reviewable in a diff, works before any
   // database exists, and is identical for a fresh project and an upgrade.
@@ -478,7 +478,7 @@ ${header()}
  * Every migration this module has generated, in the order they must run: the
  * create migration first, then one per revision it has evolved through. The
  * list is append-only — an applied migration is never edited, regenerated or
- * renumbered (ADR-020).
+ * renumbered (ADR-019).
  */
 export const ${names.camel}Migrations = [
 ${entries.join('\n')}

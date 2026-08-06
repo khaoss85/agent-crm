@@ -9,7 +9,7 @@ import { planModule, applyModulePlan } from '../packages/cli/src/module-factory.
 import { readModuleState } from '../packages/core/src/module-evolution.js';
 
 /**
- * Module evolution through the real factory (ADR-020): the checked-in state
+ * Module evolution through the real factory (ADR-019): the checked-in state
  * file as the source of truth, append-only `migrations[]`, and the property
  * that matters most — a database upgraded to revision 2 and a database created
  * fresh at revision 2 end up with the same schema.
@@ -51,7 +51,8 @@ const r2 = () => ({
 async function migrateInto(db, root, moduleName) {
   const url = new URL(`file://${join(root, 'packages/modules', moduleName, 'src/migration.js')}?v=${Math.random()}`);
   const module = await import(url.href);
-  const list = module[`${moduleName}Migrations`];
+  const camel = moduleName.replace(/-([a-z0-9])/g, (_, ch) => ch.toUpperCase());
+  const list = module[`${camel}Migrations`];
   for (const migration of list) db.exec(migration.sql);
   return list;
 }
@@ -223,4 +224,61 @@ test('planning is read-only and deterministic', (t) => {
     readFileSync(join(root, 'packages/modules/widget/module.state.json'), 'utf8'), before,
     'planning wrote nothing',
   );
+});
+
+test('a package-owned module evolves through the identical path', async (t) => {
+  // The characterization Milestone 14 will rely on: a package's own record gains
+  // a lifecycle and a cost field, with no domain word anywhere in the kernel.
+  const root = project(t);
+  const owned = (revision) => ({
+    manifestVersion: 1,
+    ...(revision ? { revision } : {}),
+    name: 'sample-job',
+    description: 'a package-owned record that gains a lifecycle',
+    fields: [
+      { name: 'sourceKey', type: 'string', unique: true, writable: 'managed' },
+      {
+        name: 'status', type: 'enum', writable: 'managed',
+        values: revision ? ['planned', 'in_progress', 'completed'] : ['planned'],
+      },
+      ...(revision ? [
+        { name: 'note', type: 'string', writable: 'managed' },
+        { name: 'costCents', type: 'integer', writable: 'managed' },
+      ] : []),
+    ],
+  });
+
+  applyModulePlan(planModule({ manifest: owned(), rootDir: root }));
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON;');
+  await migrateInto(db, root, 'sample-job');
+  db.prepare('INSERT INTO sample_jobs (id, source_key, status, created_at, updated_at) VALUES (?,?,?,?,?)')
+    .run('j1', 'k1', 'planned', 'c', 'u');
+
+  applyModulePlan(planModule({ manifest: owned(2), rootDir: root }));
+  const migrations = await migrateInto(db, root, 'sample-job');
+  assert.equal(migrations.length, 2);
+
+  db.exec("UPDATE sample_jobs SET status = 'in_progress', cost_cents = 4200 WHERE id = 'j1';");
+  const row = db.prepare('SELECT status, cost_cents FROM sample_jobs WHERE id = ?').get('j1');
+  assert.equal(row.status, 'in_progress');
+  assert.equal(row.cost_cents, 4200);
+  assert.equal(readModuleState(root, 'sample-job').revision, 2);
+});
+
+test('exact reads stay exact after a rebuild, past the paged list bound', async (t) => {
+  const root = project(t);
+  applyModulePlan(planModule({ manifest: r1(), rootDir: root }));
+  const db = new DatabaseSync(':memory:');
+  await migrateInto(db, root, 'widget');
+  const insert = db.prepare('INSERT INTO widgets (id, source_key, status, created_at, updated_at) VALUES (?,?,?,?,?)');
+  for (let index = 0; index < 620; index += 1) insert.run(`w${index}`, `k${index}`, 'planned', 'c', 'u');
+
+  applyModulePlan(planModule({ manifest: r2(), rootDir: root }));
+  await migrateInto(db, root, 'widget');
+
+  assert.equal(db.prepare('SELECT count(*) AS n FROM widgets').get().n, 620, 'every row survived');
+  assert.equal(db.prepare('SELECT source_key FROM widgets WHERE id = ?').get('w617').source_key, 'k617');
+  db.exec("UPDATE widgets SET cost_cents = 7 WHERE id = 'w617';");
+  assert.equal(db.prepare('SELECT cost_cents FROM widgets WHERE id = ?').get('w617').cost_cents, 7);
 });

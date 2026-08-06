@@ -59,7 +59,7 @@ export function createAgentCrmApp(options = {}) {
     path: options.dbPath,
     busyTimeoutMs: options.busyTimeoutMs,
     // A generated module carries an append-only, ordered `migrations` list: its
-    // create migration plus one per revision it has evolved through (ADR-020).
+    // create migration plus one per revision it has evolved through (ADR-019).
     // `migration` is the pre-evolution single-migration shape, still honoured so
     // a project generated before this contract keeps booting unchanged.
     moduleMigrations: generatedModules.flatMap((generated) => (

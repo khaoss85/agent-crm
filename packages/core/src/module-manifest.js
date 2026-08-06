@@ -108,7 +108,7 @@ export function validateModuleManifest(manifest) {
     );
   }
 
-  // The manifest's own revision (ADR-020). Absent means 1, so every manifest
+  // The manifest's own revision (ADR-019). Absent means 1, so every manifest
   // written before module evolution existed stays valid and unchanged.
   if (input.revision !== undefined
     && (!Number.isSafeInteger(input.revision) || Number(input.revision) < 1 || Number(input.revision) > 1000)) {
@@ -268,7 +268,7 @@ function normalizeField(rawField, index, errors) {
       // quote does stop injection, but an unbounded value still travels into the
       // schema: a NUL byte produces DDL SQLite cannot parse at all, and a
       // newline or a 300-character value makes a table definition nobody can
-      // read. Bound it where it is written (ADR-020).
+      // read. Bound it where it is written (ADR-019).
       errors.push(
         `${label}: enum values must be printable, at most 64 characters, and start with a letter or digit`,
       );

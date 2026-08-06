@@ -14,14 +14,14 @@ Generated: **2026-08-06**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **M13 — Delivery Handover + Custom Package Authoring v1** (ADR-018 + addenda 1–4), the second domain package and the first that depends on another |
-| Main SHA at generation | `7520766` (merge of PR #17; full SHA `75207669e45b9cc9d2d8d4ea2c75a46211543290`) |
+| Latest merged milestone | **M13 — Delivery Handover + Custom Package Authoring v1** (ADR-018 + addenda 1–4), plus the Marketing & Growth roadmap (documentation only) |
+| Main SHA at generation | `9338119` (merge of PR #18; full SHA `93381193acda75e57f994d9cf09e537ee77d93cc`) |
 | Tests on clean main | **273 passing, 0 failing** (`npm run verify` from a fresh clone of `7520766`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 28/28 in real Chromium, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | PR #18 `docs: add Marketing and Growth Operations roadmap` — **documentation only**, targeting `main`. It adds the MK0–MK7 parallel track, three strategy documents, 43 Marketing JTBDs (**all `not supported`**) and five planned benchmark scenarios. **No Marketing runtime is implemented, and MK1 is not started.** |
+| Open PRs | `feat(core): add safe generated module evolution` — Module Evolution v1 (ADR-019), a generic kernel capability split out of the M14 branch. `docs: add the objective-driven agent solution experience` — documentation and Agent Skills only. |
 
 ## Completed functional path
 
@@ -72,12 +72,17 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **M14 — Delivery Economics & Acceptance** — next: bounded execution states
+1. **Module Evolution v1** — open PR, and a prerequisite for M14: a generated
+   module could not grow, so delivery records could not gain a lifecycle
+   (ADR-019). Must merge before M14 resumes — see
+   `docs/plans/milestone-14-resume-after-module-evolution.md`.
+2. **M14 — Delivery Economics & Acceptance** — partial work preserved on
+   `claude/m14-wip-add289b-preserved` (`add289b`): bounded execution states
    on the delivery package, append-only time and expense evidence, a versioned
    operational economics plan and reproducible snapshot, governed change
    requests, and customer acceptance evidence. Operational estimates, **not**
    accounting, billing or a legally binding sign-off.
-2. Then M15 Service Operations, the **package contract review** and the first
+3. Then M15 Service Operations, the **package contract review** and the first
    legacy extraction (one of Intelligence / Commercial / Signature), then M16
    Analytics Studio — `EXECUTION_ROADMAP.md`.
 

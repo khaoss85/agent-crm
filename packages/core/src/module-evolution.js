@@ -7,7 +7,7 @@ import { ValidationError } from './errors.js';
 import { validateModuleManifest, generateModuleMigration } from './module-manifest.js';
 
 /**
- * **Module manifest evolution** — a generic runtime capability (ADR-020).
+ * **Module manifest evolution** — a generic runtime capability (ADR-019).
  *
  * A generated module's migration is `CREATE TABLE IF NOT EXISTS`, and its
  * enum values are a SQL `CHECK` constraint baked into the table. Together those

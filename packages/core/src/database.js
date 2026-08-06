@@ -263,7 +263,7 @@ export function createDatabase(options = {}) {
       // Referential integrity is verified inside the migration's own
       // transaction, so a migration that leaves a dangling reference rolls back
       // rather than being recorded as applied. This covers every module
-      // migration, not only the ones that rebuild a table (ADR-020).
+      // migration, not only the ones that rebuild a table (ADR-019).
       const violations = raw.prepare('PRAGMA foreign_key_check').all();
       if (violations.length > 0) {
         const first = violations[0];

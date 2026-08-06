@@ -5,7 +5,7 @@ import { generateModuleMigration, validateModuleManifest } from '../packages/cor
 import { generateModuleEvolution, planModuleEvolution, manifestRevision } from '../packages/core/src/module-evolution.js';
 
 /**
- * Module manifest evolution (ADR-020).
+ * Module manifest evolution (ADR-019).
  *
  * The gap it closes: a generated module's migration is `CREATE TABLE IF NOT
  * EXISTS` and its enum values are a baked-in SQL `CHECK`, so a record that

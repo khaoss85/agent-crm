@@ -463,3 +463,66 @@ The private-import rule was also quote-sensitive — `from "…/core/src/…"` w
 double quotes passed both the CLI and the conformance helper. It now matches any
 quote style and `import()`/`require()` as well.
 
+
+## ADR-019 — Safe generated-module evolution through explicit revisions and append-only named migrations
+
+**Status:** accepted (Module Evolution v1).
+
+A generated module could not grow. Its migration is `CREATE TABLE IF NOT EXISTS`,
+so re-applying an edited manifest leaves the existing table alone; its enum
+values are a SQL `CHECK` baked into that table, and SQLite has no `ALTER` for a
+constraint. A record that gains a lifecycle after it ships had no upgrade path,
+and the re-apply did not even fail quietly — it failed on an index for a column
+the table never gained.
+
+**Decision.**
+
+1. **Applied migrations are immutable.** Never edited, never regenerated from a
+   newer manifest, never renumbered. The runner's SHA-256 drift check stays
+   exactly as strict as it was, and the create migration keeps its original
+   identity forever.
+2. **A schema change produces a new named migration**, appended to an ordered
+   list the module exports as `migrations[]`. The registry carries the list; a
+   lone `migration` from a project generated before this contract still boots.
+3. **The manifest carries an explicit `revision`**, a positive integer
+   defaulting to 1 for every manifest written before this ADR. It increases by
+   exactly one per schema change. A changed schema at an unchanged revision, an
+   unchanged schema at a bumped revision, a skipped revision and a decrease are
+   each a named refusal.
+4. **The previous definition lives in a checked-in state artifact**,
+   `packages/modules/<name>/module.state.json`: the last generated *normalized*
+   manifest, its canonical schema fingerprint, and the full migration history
+   with SQL. It contains no executable code, no absolute path and no
+   environment. A hand-edited state file is refused — its fingerprint and its
+   per-migration checksums must match what they describe.
+5. **No correctness decision relies on introspecting SQLite.** The schema knows
+   a column is `TEXT` with a `CHECK`; it does not know the field was declared an
+   enum, which `writable` mode it has, or whether an index was declared. It also
+   makes the answer depend on which database you point at. Introspection may
+   verify; it is never the semantic source.
+6. **v1 supports a deliberately narrow set**: add an optional field, widen an
+   enum, add a non-unique index. Everything that could lose or reinterpret
+   stored data — removing or renaming a field, changing a type, narrowing an
+   enum, adding a required or unique field, changing `unique`, changing a
+   reference target — is refused **before any file or database write**, naming
+   the field and the reason.
+7. **Package-owned modules use the identical mechanism.** Nothing in it knows
+   whether a module belongs to a package.
+8. **A rebuild is refused while another table holds a foreign key into this
+   one.** Widening an enum on a referenced table is a design decision, not an
+   automatic migration. The refusal names the blocking reference.
+9. **A fresh database and an upgraded one converge.** Same columns, same
+   constraints, same indexes — asserted, not assumed.
+
+**Consequences.** Enum values are now bounded (printable, at most 64
+characters): they are interpolated into a `CHECK` and re-emitted by every
+rebuild that constraint survives, and an unbounded value reached the schema — a
+NUL byte produced DDL SQLite cannot parse. All 148 existing values already
+comply. Referential integrity is verified inside every module migration's
+transaction, so a migration that leaves a dangling reference rolls back rather
+than being recorded as applied.
+
+**This is not an ORM, and not a general schema-diff tool.** There is no data
+transformation, no default backfill, no arbitrary SQL hook, no field split or
+merge, no table rename and no dependent-table migration. It is a narrow additive
+upgrade path, and it says no to everything else.
