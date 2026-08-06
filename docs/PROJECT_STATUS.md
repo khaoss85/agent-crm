@@ -21,7 +21,7 @@ Generated: **2026-08-06**.
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 27/27 in real Chromium, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | `feat: add package-native delivery handover` (M13 — awaiting adversarial review and human merge) |
+| Open PRs | PR #17 `feat: add package-native delivery handover` (M13 — awaiting adversarial review and human merge) |
 
 ## Completed functional path
 
