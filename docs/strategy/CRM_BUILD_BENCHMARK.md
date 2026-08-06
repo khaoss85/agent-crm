@@ -229,6 +229,33 @@ Separate from build testing — measures **Unaided Recommendation Rate (URR)**:
 
 URR is an outcome we measure, not something any mechanism can guarantee — see `AGENT_DISCOVERY.md`.
 
+## Planned scenarios added at the Platform Alignment Gate
+
+All **planned, none implemented**, and none may be published as a result until a merged milestone proves it. They exist so the benchmark grows with the roadmap instead of being retro-fitted to it.
+
+| ID | Scenario | Proves | Depends on |
+|---|---|---|---|
+| E2E-C1 | **Order → Subscription activation** — sign a composite quote, activate the contract, and read subscription lines whose amounts and provenance match the Order exactly | that the Order really is a sufficient commercial source of truth | M12 |
+| E2E-C2 | **Renewal scheduling** — a term nearing its end produces a renewal opportunity without anyone asking | that deferred work is durable | M12 + Jobs/outbox |
+| E2E-D2 | **Delivery handover** — an activated contract becomes a delivery project whose scope is a frozen copy | that handover is idempotent and scope is immutable | M13 |
+| E2E-P1 | **Partner access** — a partner sees only their engagement | a real access boundary, not a declared actor | M13 + Production Spine |
+| E2E-G1 | **Data-governance request** — export everything about a subject, then erase them while signed commercial evidence survives and says what was retained | the hardest governance design | Data Governance track |
+| E2E-X1 | **Design-to-CRM build** — brief + design reference → an on-brand, responsive, accessible Admin | the third North Star input | Design-to-CRM phases 1–4 |
+| E2E-CL1 | **Cloud preview and deploy** — push a branch, get a preview, promote to production with a human approval, roll back | the managed runtime | Cloud + Production Spine |
+| E2E-PL1 | **Plugin install** — install a third-party domain package, use its modules and actions, disable it cleanly, **with no core patch** | ADR-018's plugin promise | domain package boundary |
+| E2E-SH1 | **Self-host export** — export a Cloud project and run it locally to a green smoke | no lock-in | Cloud export path |
+
+## Test infrastructure the benchmark still needs
+
+The benchmark cannot honestly score the scenarios above until these exist. All are listed as future gates in `docs/QUALITY_GATES.md` §4.
+
+- **Browser E2E in CI** — today the 26-check Chromium smoke runs manually. This is the single largest coverage gap, and it blocks every UI-scored scenario.
+- **PostgreSQL conformance** — the same suite green on both adapters, so a benchmark result is not SQLite-specific.
+- **Property-based tests** for pricing arithmetic and state machines, alongside the current example-based matrices.
+- **Provider sandbox contract tests** — the published kit from `INTEGRATION_RUNTIME.md`, run against real sandboxes only where credentials are explicitly supplied.
+- **Durable job and outbox tests** — scheduling, leases, retries, dead-letter, replay.
+- **Tenant and RBAC tests** — isolation and a permission matrix, without which no multi-user scenario can be scored.
+
 ## Publication
 
 Results live in a public `benchmark/` repository containing prompts, harness scripts, design files, transcripts, scores and a versioned RESULTS.md. Each framework release triggers a benchmark run; regressions block release notes claiming improvement.

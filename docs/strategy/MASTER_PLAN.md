@@ -8,12 +8,13 @@ The canonical entry point to the strategy. Read this first; follow the links for
 
 The open-source, agent-native CRM framework: Claude Code and Codex use it to generate bespoke CRM applications — deterministic workflows, human approvals, audit and trace built in — as code the customer owns.
 
-## 2. Current status (August 2026)
+## 2. Current status
 
-- Milestone 0 (vertical slice) complete: Company/Contact/Opportunity/Approval modules, renewal-approval workflow, API, Admin, CLI, MCP, trace, audit, 9 tests.
-- Milestones 1–8 merged: declarative module manifests and generated migrations; generated modules over one resource contract with generic Admin and SDK; generated-to-generated references; code-first record actions with atomic execution, post-commit events and trace; lead conversion through declared core adapters; configurable code-first Opportunity pipelines with a server-authoritative move-stage action and Admin board (ADR-006…ADR-014); 160 tests green.
-- Working title `agent-crm`; **no public name chosen**. Repository license is currently **MIT**; final pre-launch license confirmation is a pending human decision.
-- Strategy defined in the nine documents indexed below; benchmark designed but not yet executed.
+**Volatile status lives in `docs/PROJECT_STATUS.md`** — merged milestone, main SHA, test count, open PRs, next task and production blockers. It is updated in every milestone merge PR; this file deliberately no longer carries numbers that go stale.
+
+Stable facts: milestones **M0–M11 are merged and proven in-repo** — the vertical from lead capture through enrichment, scoring, routing, qualification, conversion, pipeline, composite quoting, discount approval, verified signature evidence and an immutable Order (ADR-001…ADR-017). Working title `agent-crm`; **no public name chosen**. The repository license is currently **MIT**; final pre-launch confirmation is a pending human decision. The benchmark is designed and **not yet executed**.
+
+A **Platform Alignment Gate** (`PLATFORM_ALIGNMENT_GATE.md`, ADR-018) was taken after M11 and before further domain code: it draws the core-versus-domain boundary, defines the capability model, corrects the post-Order roadmap and adds the missing platform tracks. It changed no runtime code.
 
 ## 3. Medusa-to-CRM mapping (short form)
 
@@ -54,20 +55,41 @@ Four named workstreams extend the CRM capability track beyond the Opportunity pi
 
 ```text
 Marketing
-→ Lead Intelligence        (enrichment, explainable scoring, versioned routing)
-→ Sales                    (pipeline — Milestone 8, done)
-→ Commercial Operations    (catalog, quotes, discounts, approvals, signature, orders)
-→ Delivery                 (handover, commesse, partners, economics, acceptance)
-→ Service                  (contracts, entitlements, SLA, support)
+→ Lead Intelligence        (enrichment, explainable scoring, versioned routing — M9, done)
+→ Sales                    (pipeline — M8, done)
+→ Commercial Operations    (catalog, composite quotes, discounts, approvals — M10, done)
+→ Signature and Order      (verified evidence, immutable Order — M11, done)
+→ Contract / Subscription  (activation, terms, entitlements, renewal — M12, next)
+→ Delivery                 (handover, commesse, partners, economics, acceptance — M13/M14)
+→ Service                  (contracts, entitlements, SLA, support — M15)
 → Customer Success
 → Renewal and Upsell       (feeds back into Lead Intelligence and Sales)
 ```
 
-- **Lead Intelligence & Routing** and **Commercial Operations / CPQ** — `REVENUE_OPERATIONS.md` (milestones M9–M11).
-- **Delivery & Service Operations** — `DELIVERY_SERVICE.md` (milestones M12–M14; the CRM equivalent of ecommerce fulfillment).
-- **Analytics Studio** — `ANALYTICS_STUDIO.md` (milestone M15; safe semantic metrics, no agent-generated raw SQL).
+- **Lead Intelligence & Routing** and **Commercial Operations / CPQ** — `REVENUE_OPERATIONS.md` (M9–M11, **merged**).
+- **Contract, Subscription and Renewal** — `CONTRACT_SUBSCRIPTION_RENEWAL.md` (M12; the layer between an immutable Order and everything recurring — added at the alignment gate because Delivery cannot be built on an Order alone).
+- **Delivery & Service Operations** — `DELIVERY_SERVICE.md` (M13–M15; the CRM equivalent of ecommerce fulfillment).
+- **Analytics Studio** — `ANALYTICS_STUDIO.md` (M16; safe semantic metrics, no agent-generated raw SQL).
 
-Every workstream follows the same delivery model — native deterministic primitives + provider contracts + code-first versioned policies + Agent Skills + starter + JTBD evidence + reproducible E2E benchmark — and none of it is implemented today. Sequencing, parallelization and the Production Spine gate: `EXECUTION_ROADMAP.md` (workstream milestones M9–M15). The workstreams do not gate Agent CRM Cloud: Cloud work begins when the Production Spine is done, not when all domains are done.
+Every workstream follows the same delivery model — native deterministic primitives + provider contracts + code-first versioned policies + Agent Skills + starter + JTBD evidence + reproducible E2E benchmark. **M9–M11 are merged; M12 onward is not implemented.**
+
+### The eleven pillars
+
+The complete vision, deliberately **modular**: these are optional domain packages and parallel tracks (ADR-018), not one monolith that must ship whole before anything is useful. A project can take the framework and Lead Intelligence and nothing else; a Cloud release can serve an M11-era CRM.
+
+| # | Pillar | Status | Where |
+|---|---|---|---|
+| 1 | Agent-native development framework | merged (M1–M6) | `ARCHITECTURE.md` |
+| 2 | Deterministic CRM runtime | merged (M0–M8) | `ARCHITECTURE.md`, `DECISIONS.md` |
+| 3 | Revenue lifecycle | merged (M9–M11) | `REVENUE_OPERATIONS.md` |
+| 4 | Contract / subscription / renewal | design only | `CONTRACT_SUBSCRIPTION_RENEWAL.md` |
+| 5 | Delivery & service | design only | `DELIVERY_SERVICE.md` |
+| 6 | Analytics Studio | design only | `ANALYTICS_STUDIO.md` |
+| 7 | Data governance | design only | `DATA_GOVERNANCE.md` |
+| 8 | Design-to-CRM | design only (Admin exists; the design pipeline does not) | `DESIGN_TO_CRM.md` |
+| 9 | Integration & jobs platform | design only | `INTEGRATION_RUNTIME.md`, `JOBS_AND_OUTBOX.md` |
+| 10 | Agent CRM Cloud | design only | `AGENT_CRM_CLOUD.md`, `CLOUD_JTBD.md` |
+| 11 | JTBD and benchmark evidence | matrix live; benchmark not executed | `../benchmarks/CRM_JTBD_MATRIX.md`, `CRM_BUILD_BENCHMARK.md` | Sequencing, parallelization and the Production Spine gate: `EXECUTION_ROADMAP.md` (workstream milestones M9–M15). The workstreams do not gate Agent CRM Cloud: Cloud work begins when the Production Spine is done, not when all domains are done.
 
 ## 7. Discovery model (three layers, never conflated)
 
@@ -105,6 +127,8 @@ Definitions and measurement protocols: `EXECUTION_ROADMAP.md` (metrics) and `CRM
 ## 11. Reading order
 
 1. `MASTER_PLAN.md` — this file.
+1b. `../PROJECT_STATUS.md` — what is true in the repository **today**.
+1c. `PLATFORM_ALIGNMENT_GATE.md` — the post-M11 architecture and roadmap checkpoint, and the index of the tracks it created (`PLATFORM_CAPABILITIES.md`, `CONTRACT_SUBSCRIPTION_RENEWAL.md`, `INTEGRATION_RUNTIME.md`, `JOBS_AND_OUTBOX.md`, `DATA_GOVERNANCE.md`, `DESIGN_TO_CRM.md`, `CLOUD_JTBD.md`, `../QUALITY_GATES.md`).
 2. `CATEGORY.md` — category, positioning, ICP, JTBD, promise.
    (Product track deep-dives, all design only: `AGENT_CRM_CLOUD.md` — the managed operating layer; `REVENUE_OPERATIONS.md` — lead intelligence, routing and CPQ; `DELIVERY_SERVICE.md` — post-sale delivery and service; `ANALYTICS_STUDIO.md` — safe semantic analytics.)
 3. `NORTH_STAR_EXPERIENCE.md` — the target experience and its acceptance criteria.

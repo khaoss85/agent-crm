@@ -91,17 +91,25 @@ Steps 5–6 are deliberate approval gates (production deploy, credentials, spend
 - It **does** mean: the user never opens an editor to make the CRM work.
 - It does **not** mean: the user is absent. Approvals (deploy, spend, schema changes on live data) remain human decisions — the same philosophy the framework enforces inside the CRM (deterministic policy, human approval) applies to the build process itself.
 
-## Current distance from the North Star (August 2026)
+## Current distance from the North Star
 
-| North Star element | Status |
+Live status — merged milestone, SHA, test count — lives in `docs/PROJECT_STATUS.md`, not here. This table tracks distance from the *experience*, and is grouped by the eleven pillars in `MASTER_PLAN.md` §6.
+
+| Pillar / North Star element | Status |
 |---|---|
-| Modules, workflows, trace, audit, human approval | Working vertical slice (Milestone 0) |
-| Declarative module manifests → migrations | Merged (Milestone 1, first task) |
-| Generated services/Admin/SDK from manifests | Not started |
-| create-project CLI | Not started (only in-repo scaffolding) |
-| Design-reference → Admin theming | Not started |
-| Providers beyond in-memory notification | Not started |
-| Deploy targets, remote auth/tenancy | Not started (explicitly out of scope pre-tenancy) |
-| Public benchmark | Defined in this strategy, not yet executed |
+| 1. Modules, actions, workflows, trace, audit, human approval | **Merged** (M0–M8) |
+| 1. Declarative manifests → migrations → services/Admin/SDK | **Merged** (M1–M5) |
+| 2. Deterministic CRM runtime with immutable evidence | **Merged** (M6–M11) |
+| 3. Revenue lifecycle: lead → score → route → convert → pipeline → quote → approve → sign → Order | **Merged** (M9–M11) |
+| 4. Contract, subscription, renewal | Design only — `CONTRACT_SUBSCRIPTION_RENEWAL.md` |
+| 5. Delivery and service | Design only — `DELIVERY_SERVICE.md` |
+| 6. Analytics Studio | Design only — `ANALYTICS_STUDIO.md` |
+| 7. Data governance | Design only — `DATA_GOVERNANCE.md` |
+| 8. **Design-reference → Admin theming and layout** | Design only — the Admin is generated and identical in every project; the design pipeline is `DESIGN_TO_CRM.md` |
+| 9. Integration runtime, jobs, durable outbox | Design only — every shipped provider is an offline fixture |
+| 10. create-project CLI, deploy targets, remote auth/tenancy, Cloud | Not started — gated on the Production Spine |
+| 11. Public benchmark | Defined, **not yet executed** |
 
-The phased path to close this distance is `docs/strategy/EXECUTION_ROADMAP.md`.
+The three-input promise — brief **+ process + design reference** — is currently two-thirds true: the brief and the process drive real generation, the design reference does not. That gap is now an owned track rather than an implicit hope.
+
+The phased path to close the distance is `docs/strategy/EXECUTION_ROADMAP.md`; the architecture checkpoint that reorganized it is `PLATFORM_ALIGNMENT_GATE.md`.
