@@ -203,6 +203,99 @@ checked-in Agent CRM repository. Evidence for every row below is
 | JTBD-PK-06 | Install a package from a registry or marketplace | **not supported** | no registry, publication, remote install, auto-update, signing or hot loading. Packages are checked-in source, by design |
 | JTBD-PK-07 | Run an untrusted package safely | **not supported** | and not planned at this layer. Repository source is trusted: a package's module body, actions and policies run in-process with full authority, and the consumer name passed when opening a capability is asserted by the caller (ADR-018 addendum 4) |
 
+## Marketing & Growth Operations (MK0–MK7, design only)
+
+Who: a marketing or growth operator, and the coding agent working for them.
+Strategy: `../strategy/MARKETING_GROWTH_OPERATIONS.md`,
+`../strategy/CAMPAIGNS_JOURNEYS.md`,
+`../strategy/EXPERIMENTATION_ATTRIBUTION.md`.
+
+**Every row below is `not supported`.** No campaign, audience, consent check,
+journey, experiment, content asset, landing page, tracking plan, channel
+provider, media plan, funnel definition or attribution model exists in the
+repository. Lead Intelligence (M9) scores and routes leads that already exist;
+that is emphatically **not** a marketing campaign system, and no MK row inherits
+status from it. A row moves only with linked evidence in this repository.
+
+### Audience and governance
+
+| Job | Status | Blocked by |
+|---|---|---|
+| JTBD-MK-01 | Create a dynamic audience from CRM data | **not supported** | MK2; no audience primitive |
+| JTBD-MK-02 | Freeze an audience snapshot for a send | **not supported** | MK2; no snapshot primitive |
+| JTBD-MK-03 | Apply exclusions and suppression sets | **not supported** | MK2; `DATA_GOVERNANCE.md` |
+| JTBD-MK-04 | Verify consent and communication preferences | **not supported** | MK2; `DATA_GOVERNANCE.md` — hard |
+| JTBD-MK-05 | Apply a cross-campaign frequency cap | **not supported** | MK2; needs campaign history |
+| JTBD-MK-06 | Sync an audience to a provider | **not supported** | MK6; no provider adapter |
+
+### Campaign planning
+
+| Job | Status | Blocked by |
+|---|---|---|
+| JTBD-MK-07 | Diagnose a funnel drop | **not supported** | MK1; funnel primitives, better with Analytics Studio |
+| JTBD-MK-08 | Create a complete Campaign Proposal | **not supported** | MK1 — the first milestone, and it needs no provider |
+| JTBD-MK-09 | Select a channel and an installed provider, with rationale | **not supported** | MK1/MK2; provider contracts |
+| JTBD-MK-10 | Recommend a send time and window | **not supported** | MK1 |
+| JTBD-MK-11 | Define content, creative, landing page and CTA | **not supported** | MK3 |
+| JTBD-MK-12 | Define a tracking plan (UTM, conversion events) | **not supported** | MK3 |
+| JTBD-MK-13 | Request human approval of a proposal | **not supported** | MK1; real roles need the Production Spine |
+
+### Execution
+
+| Job | Status | Blocked by |
+|---|---|---|
+| JTBD-MK-14 | Run a one-shot email campaign | **not supported** | MK2; fixture provider first |
+| JTBD-MK-15 | Run a rolling campaign | **not supported** | MK4; `JOBS_AND_OUTBOX.md` — hard |
+| JTBD-MK-16 | Run a triggered campaign | **not supported** | MK4; durable event inbox — hard |
+| JTBD-MK-17 | Run a multi-step multichannel journey | **not supported** | MK4; scheduler and durable waits — hard |
+| JTBD-MK-18 | Pause or stop a running campaign | **not supported** | MK4 |
+| JTBD-MK-19 | Handle bounces and unsubscribes | **not supported** | MK2; inbound provider events |
+
+### Content
+
+| Job | Status | Blocked by |
+|---|---|---|
+| JTBD-MK-20 | Generate email content | **not supported** | MK3 |
+| JTBD-MK-21 | Generate SMS/WhatsApp messaging content | **not supported** | MK3 |
+| JTBD-MK-22 | Generate a landing page, form and CTA | **not supported** | MK3; design ownership per `DESIGN_TO_CRM.md` |
+| JTBD-MK-23 | Publish a preview | **not supported** | MK3 |
+| JTBD-MK-24 | Publish an approved asset to production | **not supported** | MK3; human approval mandatory |
+
+### Experimentation
+
+| Job | Status | Blocked by |
+|---|---|---|
+| JTBD-MK-25 | Create an A/B test | **not supported** | MK5 |
+| JTBD-MK-26 | Assign a deterministic control group | **not supported** | MK5; fingerprinted assignment rule |
+| JTBD-MK-27 | Create a holdout | **not supported** | MK5 |
+| JTBD-MK-28 | Measure lift against control | **not supported** | MK5/MK7 |
+| JTBD-MK-29 | Select and publish a winner | **not supported** | MK5; human approval where risk exists |
+
+### Paid media
+
+| Job | Status | Blocked by |
+|---|---|---|
+| JTBD-MK-30 | Prepare a Media Plan | **not supported** | MK6 |
+| JTBD-MK-31 | Sync an audience to an ads platform | **not supported** | MK6; consent rules |
+| JTBD-MK-32 | Launch an approved ads campaign | **not supported** | MK6; human spend approval mandatory |
+| JTBD-MK-33 | Ingest spend and results | **not supported** | MK6; provider adapters |
+| JTBD-MK-34 | Propose a budget change | **not supported** | MK6; a proposal, never an action |
+
+### Analytics and attribution
+
+| Job | Status | Blocked by |
+|---|---|---|
+| JTBD-MK-35 | Define a funnel | **not supported** | MK1/MK7 |
+| JTBD-MK-36 | Identify and segment a drop | **not supported** | MK1; `ANALYTICS_STUDIO.md` |
+| JTBD-MK-37 | Report a campaign result | **not supported** | MK2 onward |
+| JTBD-MK-38 | First-touch attribution | **not supported** | MK7; identity/touchpoint model |
+| JTBD-MK-39 | Last-touch attribution | **not supported** | MK7 |
+| JTBD-MK-40 | Multi-touch attribution | **not supported** | MK7; `ANALYTICS_STUDIO.md` — hard |
+| JTBD-MK-41 | Connect a campaign to an Opportunity or Order | **not supported** | MK7 |
+| JTBD-MK-42 | Calculate campaign ROI | **not supported** | MK7 |
+| JTBD-MK-43 | Recommend the next campaign version | **not supported** | MK7; closes the loop |
+
+
 ### Analytics (target: M16)
 
 | ID | Job | Status | Notes |
@@ -298,7 +391,7 @@ All fifteen operator jobs (CL-01…CL-15) are **not supported**: no control plan
 
 This matrix guides roadmap prioritization: the largest gaps blocking common CRM adoption are a reusable Activity/Task engine with scheduling (JTBD-07), generated workflows/approvals for custom objects (JTBD-06), and the auth/tenancy/RBAC prerequisite (JTBD-15).
 
-The workstream sections chart the M9–M16 roadmap (corrected at the Platform Alignment Gate: M12 is Order Activation & Subscription, and Delivery/Service/Analytics shift by one — `EXECUTION_ROADMAP.md`). Commercial Operations (M10) is now implemented for the local slice: JTBD-CO-01/03 **validated end to end**, CO-02 partial (fixture provider only — no real external catalog), CO-04 partial (human boundary validated, secure roles not), CO-05/06/07 still **not supported** (Milestone 11). Lead Intelligence (M9) is implemented for the local slice: JTBD-LI-01/02/04/07 **validated end to end** (fixture provider, explainable versioned scoring, deterministic routing, persisted version fingerprints — ADR-015), LI-03/05/08/09 partial, LI-06 still not supported. The CO/DS/AN sections remain all **not supported** except JTBD-CO-04 and JTBD-DS-01, which inherit *partial* status from the validated approval and workflow primitives. Signature and Order (M11) is implemented for the local slice: JTBD-CO-07 **validated end to end**, CO-05/CO-06 partial (fixture provider, test-only webhook key, provider-reported artifact hash — ADR-017). Contract activation (M12) is implemented for the local slice as the first optional domain package, and its adversarial review narrowed what it may claim: JTBD-CS-01 is **partially supported** (the activation is real and atomic, but the term is post-signature operational metadata, not a signed term), CS-02 partial (an activation record that now keeps every recurring commitment, with nothing billing, renewing or cancelling it), CS-05 deliberately still **not supported**, and every remaining CS row unchanged. Delivery handover (M13) is implemented for the local slice as the second package — and the first that depends on another through a declared capability: JTBD-DS-01 **validated end to end**, DS-02/DS-03/DS-05 partial (a planned project, a planned partner reference that grants nothing, and a milestone plan), DS-04 and DS-06 through DS-11 still **not supported**. Custom Package Authoring v1 adds a **Package developer** section: JTBD-PK-01/PK-02 **validated end to end** (a customer-authored package attaches and detaches with the kernel fingerprinted unchanged; cross-package reach only through a declared capability), PK-03/PK-04 partial (the CLI executes what it validates; removal leaves data behind with no uninstall), and PK-05/PK-06/PK-07 **not supported** — no scaffold, no registry or marketplace, and no sandboxing of package code. The adversarial review of PR #17 corrected the contract before these rows were written: ADR-018 addendum 4.
+The workstream sections chart the M9–M16 roadmap (corrected at the Platform Alignment Gate: M12 is Order Activation & Subscription, and Delivery/Service/Analytics shift by one — `EXECUTION_ROADMAP.md`). Commercial Operations (M10) is now implemented for the local slice: JTBD-CO-01/03 **validated end to end**, CO-02 partial (fixture provider only — no real external catalog), CO-04 partial (human boundary validated, secure roles not), CO-05/06/07 still **not supported** (Milestone 11). Lead Intelligence (M9) is implemented for the local slice: JTBD-LI-01/02/04/07 **validated end to end** (fixture provider, explainable versioned scoring, deterministic routing, persisted version fingerprints — ADR-015), LI-03/05/08/09 partial, LI-06 still not supported. The CO/DS/AN sections remain all **not supported** except JTBD-CO-04 and JTBD-DS-01, which inherit *partial* status from the validated approval and workflow primitives. Signature and Order (M11) is implemented for the local slice: JTBD-CO-07 **validated end to end**, CO-05/CO-06 partial (fixture provider, test-only webhook key, provider-reported artifact hash — ADR-017). Contract activation (M12) is implemented for the local slice as the first optional domain package, and its adversarial review narrowed what it may claim: JTBD-CS-01 is **partially supported** (the activation is real and atomic, but the term is post-signature operational metadata, not a signed term), CS-02 partial (an activation record that now keeps every recurring commitment, with nothing billing, renewing or cancelling it), CS-05 deliberately still **not supported**, and every remaining CS row unchanged. Delivery handover (M13) is implemented for the local slice as the second package — and the first that depends on another through a declared capability: JTBD-DS-01 **validated end to end**, DS-02/DS-03/DS-05 partial (a planned project, a planned partner reference that grants nothing, and a milestone plan), DS-04 and DS-06 through DS-11 still **not supported**. Custom Package Authoring v1 adds a **Package developer** section: JTBD-PK-01/PK-02 **validated end to end** (a customer-authored package attaches and detaches with the kernel fingerprinted unchanged; cross-package reach only through a declared capability), PK-03/PK-04 partial (the CLI executes what it validates; removal leaves data behind with no uninstall), and PK-05/PK-06/PK-07 **not supported** — no scaffold, no registry or marketplace, and no sandboxing of package code. The adversarial review of PR #17 corrected the contract before these rows were written: ADR-018 addendum 4. Marketing & Growth Operations (MK0–MK7) is added as a **design-only parallel workstream**: all 43 JTBD-MK rows are **not supported**, because no campaign, audience, consent-check, journey, experiment, content, provider, media-plan, funnel or attribution primitive exists. Lead Intelligence's scoring and routing is not a marketing campaign system and no MK row inherits status from it.
 
 The Production Spine (JTBD-15) remains the hard gate for every job involving real external or role-scoped users — including manual manager reassignment.
 

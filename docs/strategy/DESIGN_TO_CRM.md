@@ -79,3 +79,7 @@ claimed. The realistic target is: correct information architecture, on-brand
 tokens, sane responsive layout, and a human-reviewable diff — with the design
 reference as **input to a proposal**, never as a specification the agent
 silently implements.
+
+## The Marketing track depends on this, and does not duplicate it
+
+MK3 (`EXECUTION_ROADMAP.md`) generates email content, landing pages, forms, CTAs and thank-you pages as **checked-in, customer-owned source**, with design tokens and branding owned by the code exactly as this document requires. It composes what is defined here; it does not implement a second design pipeline, and it makes **no claim that visual or Figma ingestion exists**. See `CAMPAIGNS_JOURNEYS.md` §6.

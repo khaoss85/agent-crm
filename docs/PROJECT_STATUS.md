@@ -14,14 +14,14 @@ Generated: **2026-08-06**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **M12 — Contract & Subscription Activation** (ADR-018 + addenda 1–2), the first domain package |
-| Main SHA at generation | `97a37fe` (merge of PR #16) |
-| Tests on clean main | **249 passing, 0 failing** (`npm run verify` from a fresh clone); **273 passing** on the open M13 branch (after the adversarial review) |
+| Latest merged milestone | **M13 — Delivery Handover + Custom Package Authoring v1** (ADR-018 + addenda 1–4), the second domain package and the first that depends on another |
+| Main SHA at generation | `7520766` (merge of PR #17; full SHA `75207669e45b9cc9d2d8d4ea2c75a46211543290`) |
+| Tests on clean main | **273 passing, 0 failing** (`npm run verify` from a fresh clone of `7520766`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
-| Browser smoke | 27/27 in real Chromium, run manually — **not in CI** |
+| Browser smoke | 28/28 in real Chromium, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | PR #17 `feat: add package-native delivery handover` (M13 — adversarially reviewed and corrected, awaiting human merge) |
+| Open PRs | PR #18 `docs: add Marketing and Growth Operations roadmap` — **documentation only**, targeting `main`. It adds the MK0–MK7 parallel track, three strategy documents, 43 Marketing JTBDs (**all `not supported`**) and five planned benchmark scenarios. **No Marketing runtime is implemented, and MK1 is not started.** |
 
 ## Completed functional path
 
@@ -68,24 +68,25 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 | M11 | Signature + immutable Order, external-operation runtime | ADR-017 (+ addendum) |
 | — | Platform alignment gate: core-vs-domain boundary | ADR-018 |
 | M12 | Contract & Subscription activation — the first domain package outside core | ADR-018 addenda 1–2 |
-| M13 | Delivery handover + the public package contract and custom-package authoring (open PR, not merged) | ADR-018 addendum 3 |
+| M13 | Delivery handover + the public package contract and custom-package authoring | ADR-018 addenda 3–4 |
 
 ## Next planned development
 
-1. **M13 — Delivery Handover + Custom Package Authoring v1** — this PR: the
-   public domain-package contract with declared capabilities, the package
-   validation CLI, the authoring guide and mirrored skill, a customer-authored
-   conformance package, and the `packages/delivery` domain. Awaiting the
-   adversarial review in `docs/QUALITY_GATES.md` §5 and a human merge.
-2. Then M14 Delivery Economics & Acceptance, M15 Service Operations, then the
-   **package contract review** and the first legacy extraction (one of
-   Intelligence / Commercial / Signature), then M16 Analytics Studio —
-   `EXECUTION_ROADMAP.md`.
+1. **M14 — Delivery Economics & Acceptance** — next: bounded execution states
+   on the delivery package, append-only time and expense evidence, a versioned
+   operational economics plan and reproducible snapshot, governed change
+   requests, and customer acceptance evidence. Operational estimates, **not**
+   accounting, billing or a legally binding sign-off.
+2. Then M15 Service Operations, the **package contract review** and the first
+   legacy extraction (one of Intelligence / Commercial / Signature), then M16
+   Analytics Studio — `EXECUTION_ROADMAP.md`.
 
-A parallel platform track (domain package boundary, create-project CLI,
-PostgreSQL, auth/tenancy/RBAC, Jobs & durable outbox, Integration Runtime, Data
-Governance, Design-to-CRM, Cloud) runs alongside; sequencing and dependencies
-are in `EXECUTION_ROADMAP.md`.
+Two parallel tracks run alongside and are not gated by domain progress: the
+**platform track** (domain package boundary, create-project CLI, PostgreSQL,
+auth/tenancy/RBAC, Jobs & durable outbox, Integration Runtime, Data Governance,
+Design-to-CRM, Cloud) and the **Marketing & Growth track** (MK0–MK7 — design
+only; `MARKETING_GROWTH_OPERATIONS.md`). Sequencing and dependencies are in
+`EXECUTION_ROADMAP.md`.
 
 ## Production blockers
 

@@ -51,10 +51,11 @@ Brief + business process + design reference → the agent scaffolds, generates m
 
 ### Product workstreams (design only, unbuilt)
 
-Four named workstreams extend the CRM capability track beyond the Opportunity pipeline, covering the complete commercial lifecycle:
+Five named workstreams extend the CRM capability track beyond the Opportunity pipeline, covering the complete commercial lifecycle — and, with Marketing, what happens before a lead exists at all:
 
 ```text
-Marketing
+Marketing & Growth         (funnel insight, campaign proposal, journeys, experiments,
+                            paid media, attribution — MK0–MK7, design only)
 → Lead Intelligence        (enrichment, explainable scoring, versioned routing — M9, done)
 → Sales                    (pipeline — M8, done)
 → Commercial Operations    (catalog, composite quotes, discounts, approvals — M10, done)
@@ -70,12 +71,13 @@ Marketing
 - **Contract, Subscription and Renewal** — `CONTRACT_SUBSCRIPTION_RENEWAL.md` (M12; the layer between an immutable Order and everything recurring — added at the alignment gate because Delivery cannot be built on an Order alone).
 - **Delivery & Service Operations** — `DELIVERY_SERVICE.md` (M13–M15; the CRM equivalent of ecommerce fulfillment).
 - **Analytics Studio** — `ANALYTICS_STUDIO.md` (M16; safe semantic metrics, no agent-generated raw SQL).
+- **Marketing & Growth Operations** — `MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md` (MK0–MK7; a **parallel** package-native track, not a successor to Delivery. It proposes before it sends: MK1 needs no provider at all, MK4 is hard-blocked on durable automation and MK7 on Analytics Studio).
 
 Every workstream follows the same delivery model — native deterministic primitives + provider contracts + code-first versioned policies + Agent Skills + starter + JTBD evidence + reproducible E2E benchmark. **M9–M11 are merged; M12 onward is not implemented.**
 
-### The eleven pillars
+### The twelve pillars
 
-The complete vision, deliberately **modular**: these are optional domain packages and parallel tracks (ADR-018), not one monolith that must ship whole before anything is useful. A project can take the framework and Lead Intelligence and nothing else; a Cloud release can serve an M11-era CRM.
+The complete vision, deliberately **modular**: these are optional domain packages and parallel tracks (ADR-018, and the public package contract in addenda 3–4), not one monolith that must ship whole before anything is useful. A project can take the framework and Lead Intelligence and nothing else; a Cloud release can serve an M11-era CRM.
 
 | # | Pillar | Status | Where |
 |---|---|---|---|
@@ -89,7 +91,8 @@ The complete vision, deliberately **modular**: these are optional domain package
 | 8 | Design-to-CRM | design only (Admin exists; the design pipeline does not) | `DESIGN_TO_CRM.md` |
 | 9 | Integration & jobs platform | design only | `INTEGRATION_RUNTIME.md`, `JOBS_AND_OUTBOX.md` |
 | 10 | Agent CRM Cloud | design only | `AGENT_CRM_CLOUD.md`, `CLOUD_JTBD.md` |
-| 11 | JTBD and benchmark evidence | matrix live; benchmark not executed | `../benchmarks/CRM_JTBD_MATRIX.md`, `CRM_BUILD_BENCHMARK.md` | Sequencing, parallelization and the Production Spine gate: `EXECUTION_ROADMAP.md` (workstream milestones M9–M15). The workstreams do not gate Agent CRM Cloud: Cloud work begins when the Production Spine is done, not when all domains are done.
+| 11 | JTBD and benchmark evidence | matrix live; benchmark not executed | `../benchmarks/CRM_JTBD_MATRIX.md`, `CRM_BUILD_BENCHMARK.md` |
+| 12 | Marketing & Growth Operations | design only | `MARKETING_GROWTH_OPERATIONS.md` | Sequencing, parallelization and the Production Spine gate: `EXECUTION_ROADMAP.md` (workstream milestones M9–M15). The workstreams do not gate Agent CRM Cloud: Cloud work begins when the Production Spine is done, not when all domains are done.
 
 ## 7. Discovery model (three layers, never conflated)
 

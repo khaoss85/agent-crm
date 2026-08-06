@@ -80,3 +80,9 @@ Per-tenant queues or fair scheduling, so one tenant's backlog cannot starve anot
 - PostgreSQL is not required for a first version, but a SQLite-only queue will be single-node; that limit must be stated wherever it is shipped.
 - Tenancy gates fair scheduling.
 - The Integration Runtime consumes this track; it must not build a private scheduler.
+
+## Marketing MK4 is hard-blocked on this document
+
+One-shot campaigns can ship before a scheduler exists. **Rolling, triggered and journey campaigns cannot** — they need durable waits that survive a restart, exactly-once step semantics, retry with backoff, a durable event inbox with an explicit replay policy, and enrolment state pinned to a journey version. Built on the current in-process, post-commit event buffer (ADR-012) they would demo correctly and drop steps in production.
+
+That makes this track a blocker for more Marketing JTBDs than any single marketing milestone. See `CAMPAIGNS_JOURNEYS.md` §7 and `EXECUTION_ROADMAP.md` (MK4).

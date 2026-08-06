@@ -281,6 +281,36 @@ leave it open for the adversarial review in `docs/QUALITY_GATES.md` §5. The
 review will attack your package's boundary, its atomicity and its claims — the
 same way it attacks first-party ones.
 
+
+## 13. Official packages are reference implementations, not a framework tax
+
+The first-party packages (`contracts`, `delivery`, and the planned Marketing
+packages in `docs/strategy/MARKETING_GROWTH_OPERATIONS.md`) attach through the
+contract on this page and no other. That has a consequence worth stating:
+
+- an official package is **optional** — take it, or don't;
+- you may **replace** one with your own. Keep `marketing`, write your own
+  `journeys`; or collapse the lot into a single custom Growth package for your
+  business;
+- you may write **custom channel or provider packages** for anything nobody
+  upstream has adapted, with no kernel patch;
+- you may **extend** any package with your own resources, actions and policies.
+
+A package that needs consent state, funnel metrics or durable enrolment declares
+a **capability** for it — governance, analytics, durable automation — rather than
+reaching into another package's tables. If the capability does not exist yet,
+that is a missing runtime capability to raise, not a deep import to write.
+
+Two rules no package may bend, official or custom: **nothing bypasses human
+approval, consent, audit or the provider boundary**, and **trusted checked-in
+source is not sandboxed** (ADR-018 addendum 4). A package that sends, publishes
+or spends without a recorded human approval is a defect regardless of who wrote
+it.
+
+*(No Marketing package exists today. The packages named above are planned
+identities, not shipped code, and a future Marketing authoring Skill is planned
+rather than implemented.)*
+
 ## What is deliberately not here yet
 
 - **A scaffold command.** `crm package new <name>` will exist once Delivery and

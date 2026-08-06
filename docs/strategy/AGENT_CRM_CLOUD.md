@@ -189,3 +189,7 @@ Production Spine (Phase 6: PostgreSQL, auth, tenancy, RBAC, sessions/API keys)
 - Telemetry policy — off by default until approved.
 - Infrastructure vendors, regions, compliance scope — decided at implementation with their own ADRs.
 - Product name (Cloud inherits the framework's still-open naming decision).
+
+## Agent operations and approvals, with Marketing in scope
+
+The Marketing track sharpens what a managed deployment must get right about **agent authority**: an agent may analyze, propose, generate, prepare and recommend without asking, but sending external communication, publishing a landing page, activating a journey, changing a live audience, launching ads, creating or increasing spend, installing a provider and changing secrets each require a human approval — from a real, authenticated role. That role does not exist until the Production Spine does. Until then every approval boundary in Marketing is a local-development boundary, and Cloud must not present it as more. See `MARKETING_GROWTH_OPERATIONS.md` §6.

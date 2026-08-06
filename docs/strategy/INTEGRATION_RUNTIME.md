@@ -106,3 +106,9 @@ Sending, signing, charging or exposing data externally requires `actor.type === 
 5. Health and observability.
 
 Auth and tenancy (the Production Spine) gate any multi-tenant use of all of it.
+
+## Marketing channel and analytics providers
+
+The Marketing track (`MARKETING_GROWTH_OPERATIONS.md`) adds provider *contracts*, not provider dependencies: email, SMS, WhatsApp, ads, analytics/insight and content publishing. Named examples (Resend, MailUp, SES, Google/Meta/LinkedIn Ads, GA4, Search Console, PostHog) are **optional adapters a customer may install**, and naming one commits the project to nothing.
+
+Provider metadata must declare channel, transactional/bulk capability, region, rate and batch constraints, template capability, tracking/webhook support, unsubscribe and consent support, sandbox capability, installed/configured status and bounded health metadata. An agent selects only among **installed and configured** providers, the selection is versioned and explainable, and no install, send or spend happens without human approval. See `CAMPAIGNS_JOURNEYS.md` §5. **No marketing provider is implemented.**

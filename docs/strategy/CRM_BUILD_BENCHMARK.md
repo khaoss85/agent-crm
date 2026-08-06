@@ -259,3 +259,51 @@ The benchmark cannot honestly score the scenarios above until these exist. All a
 ## Publication
 
 Results live in a public `benchmark/` repository containing prompts, harness scripts, design files, transcripts, scores and a versioned RESULTS.md. Each framework release triggers a benchmark run; regressions block release notes claiming improvement.
+
+## Marketing & Growth scenarios (planned — none implemented)
+
+These five sit alongside the existing scenarios and are **not executed**. They exist so MK1–MK7 have a definition of done written before the code (`MARKETING_GROWTH_OPERATIONS.md`). Each names its evidence and its failure criteria, because a marketing benchmark that only checks "a thing was sent" measures nothing.
+
+### E2E-M1 — Campaign Proposal (MK1)
+
+```text
+funnel data → drop insight → audience and exclusion plan → Campaign Proposal
+→ content, landing and tracking proposal → human review
+```
+
+**No external send.** Evidence: a proposal stating objective, hypothesis, KPI, audience, exclusions, consent requirements, mode, channel, provider rationale, content plan, tracking plan, risks and required approvals; the funnel insight with its query version; the proposal versioned and immutable once reviewed. **Fails if** the proposal is assembled from fragments the reviewer must piece together, any provider is contacted, or any field the human approved can change without a new version.
+
+### E2E-M2 — One-shot campaign (MK2)
+
+```text
+consent-safe audience snapshot → approved email content → provider fixture/sandbox send
+→ delivery, click and conversion events → report
+```
+
+Evidence: a frozen audience snapshot with its definition fingerprint; every exclusion counted and explained by reason; a human actor required to send; delivery/bounce/unsubscribe ingested and attributed to the run; unsubscribe honoured across all campaigns. **Fails if** the send reads a live query instead of the snapshot, an exclusion is silent, an agent actor can send, or a replayed provider event double-counts.
+
+### E2E-M3 — Journey experiment (MK3–MK5)
+
+```text
+trigger → durable journey → control and variants → multi-channel steps → exit goal → lift
+```
+
+Evidence: exactly-once step execution across a forced restart; enrolments pinned to the journey version they entered; deterministic, reproducible variant assignment; exposure recorded separately from assignment; an immutable result including "inconclusive". **Fails if** a restart drops or repeats a step, publishing a version mutates active enrolments, assignment is not reproducible from stored inputs, or the result is a live query that drifts.
+
+### E2E-M4 — Paid acceleration (MK6)
+
+```text
+organic campaign under target → Ads proposal → human budget approval → provider launch
+→ spend and result ingestion → recommendation
+```
+
+Evidence: budget in integer minor units; explicit human approval before any spend or launch; platform references stored as external references; ingested spend reconciled against approved budget; pause and budget-change surfaced as **proposals**. **Fails if** any spend, launch or material targeting change occurs without a recorded human approval, or an amount is a float.
+
+### E2E-M5 — Closed-loop attribution (MK7)
+
+```text
+touchpoints → Lead → Opportunity → Quote/Order → attribution model → campaign ROI
+```
+
+Evidence: touchpoints linked through the identity model; at least two attribution models run over the same data with their assumptions and versions stored; control-group lift reported where a holdout exists; every metric compiled from semantic definitions. **Fails if** any query is agent-generated raw SQL, a model is presented as truth, an attribution run mutates after the fact, or ROI is claimed without a stated model version.
+
