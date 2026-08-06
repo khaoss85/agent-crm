@@ -24,6 +24,12 @@ export const MANIFEST_FIELD_TYPES = Object.freeze([
 export const REFERENCE_ON_DELETE = Object.freeze(['restrict', 'cascade', 'set_null']);
 
 export const SUPPORTED_MANIFEST_VERSION = 1;
+/**
+ * An enum value ends up inside a SQL `CHECK` constraint and inside every
+ * rebuild that constraint survives, so it is bounded like an identifier rather
+ * than treated as free text.
+ */
+const ENUM_VALUE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._:@/+-]{0,63}$/;
 
 const RESERVED_FIELD_NAMES = Object.freeze(['id', 'createdAt', 'created_at', 'updatedAt', 'updated_at']);
 
@@ -256,6 +262,16 @@ function normalizeField(rawField, index, errors) {
       valid = false;
     } else if (new Set(field.values).size !== field.values.length) {
       errors.push(`${label}: enum values must be unique`);
+      valid = false;
+    } else if (field.values.some((value) => !ENUM_VALUE_PATTERN.test(value))) {
+      // An enum value is interpolated into a SQL CHECK constraint. Doubling the
+      // quote does stop injection, but an unbounded value still travels into the
+      // schema: a NUL byte produces DDL SQLite cannot parse at all, and a
+      // newline or a 300-character value makes a table definition nobody can
+      // read. Bound it where it is written (ADR-020).
+      errors.push(
+        `${label}: enum values must be printable, at most 64 characters, and start with a letter or digit`,
+      );
       valid = false;
     } else {
       values = /** @type {string[]} */ (field.values.slice());

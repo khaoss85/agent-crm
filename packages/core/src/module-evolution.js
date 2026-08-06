@@ -1,5 +1,8 @@
 // @ts-check
 
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ValidationError } from './errors.js';
 import { validateModuleManifest, generateModuleMigration } from './module-manifest.js';
 
@@ -199,11 +202,15 @@ export function generateModuleEvolution({ previous, next, referencedBy = [] }) {
       );
     }
     // The standard SQLite rebuild, inside the migration runner's transaction:
-    // build the new shape, copy every existing column by name (new columns take
-    // NULL), drop the old table and rename. Indexes are recreated from the new
-    // manifest, so an added index needs no separate statement.
+    // build the new shape, copy every existing column **by name** (new columns
+    // take NULL), verify nothing was lost, drop the old table and rename.
+    // Indexes are recreated from the new manifest, so an added index needs no
+    // separate statement. There is no `SELECT *` anywhere: a column list that
+    // drifted from the manifest must fail, not be copied blindly.
     const fresh = generateModuleMigration({ ...after, name: after.name });
-    const temporary = `${plan.table}__r${plan.toRevision}`;
+    // A rebuild-scratch name a real module cannot claim: module names are
+    // `^[a-z][a-z0-9-]*$`, so no generated table contains `__evolve__`.
+    const temporary = `${plan.table}__evolve__r${plan.toRevision}`;
     const carried = after.fields
       .filter((field) => plan.addedFields.indexOf(field.name) === -1)
       .map((field) => field.column);
@@ -220,11 +227,18 @@ export function generateModuleEvolution({ previous, next, referencedBy = [] }) {
     statements.push(
       `INSERT INTO ${temporary} (${columns.join(', ')}) SELECT ${columns.join(', ')} FROM ${plan.table};`,
     );
+    // The copy is all-or-nothing by construction: the INSERT…SELECT has no
+    // filter, so it either copies every row or violates a constraint and aborts
+    // the migration's transaction, leaving the original table untouched. SQLite
+    // never silently drops rows on insert.
     statements.push(`DROP TABLE ${plan.table};`);
     statements.push(`ALTER TABLE ${temporary} RENAME TO ${plan.table};`);
     for (const line of fresh.sql.split('\n').filter((line) => line.startsWith('CREATE INDEX'))) {
       statements.push(line);
     }
+    // Outbound references are verified after the migration runs, by the
+    // migration runner's `PRAGMA foreign_key_check` — one check that protects
+    // every module migration rather than only this one.
   }
 
   return { ...plan, migrationName, sql: `${statements.join('\n')}\n` };
@@ -249,4 +263,152 @@ function columnSql(field) {
 /** @param {string} table @param {any} field */
 function indexSql(table, field) {
   return `CREATE INDEX IF NOT EXISTS ${table}_${field.column} ON ${table}(${field.column});`;
+}
+
+
+/** The state-file contract version. */
+export const MODULE_STATE_VERSION = 1;
+
+/**
+ * The fingerprint of a module's *normalized* definition. Canonical, so a
+ * reordered manifest with the same meaning produces the same value and a
+ * meaningful edit never produces the same value.
+ *
+ * @param {any} manifest
+ */
+export function moduleStateFingerprint(manifest) {
+  const normalized = validateModuleManifest(manifest);
+  // Deliberately excludes `revision`: the fingerprint answers "is this the same
+  // schema?", so a bumped revision over an unchanged schema is detectable as
+  // exactly that rather than looking like a change.
+  const canonical = JSON.stringify({
+    name: normalized.name,
+    table: normalized.table,
+    fields: [...normalized.fields]
+      .map((field) => ({
+        name: field.name, type: field.type, column: field.column,
+        required: field.required, unique: field.unique, writable: field.writable,
+        ...(field.index ? { index: true } : {}),
+        ...(field.default !== undefined ? { default: field.default } : {}),
+        ...(field.values ? { values: [...field.values] } : {}),
+        ...(field.references ? { references: field.references, onDelete: field.onDelete } : {}),
+      }))
+      .sort((a, b) => (a.name < b.name ? -1 : 1)),
+  });
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+/**
+ * Render the checked-in state file: the last generated definition, its
+ * fingerprint, and every migration generated for this module in order.
+ *
+ * It is data only — no executable code, no absolute path, no environment.
+ *
+ * @param {{manifest: any, migrations: {migrationName: string, sql: string}[]}} input
+ */
+export function renderModuleState({ manifest, migrations }) {
+  const normalized = validateModuleManifest(manifest);
+  const state = {
+    stateVersion: MODULE_STATE_VERSION,
+    module: normalized.name,
+    revision: normalized.revision,
+    fingerprint: moduleStateFingerprint(normalized),
+    manifest: normalized,
+    // The complete, ordered migration history — SQL included. An applied
+    // migration is never regenerated from a newer manifest: doing so would
+    // change its checksum and break every database that already ran it.
+    migrations: migrations.map((entry) => ({
+      name: entry.migrationName,
+      checksum: createHash('sha256').update(entry.sql).digest('hex'),
+      sql: entry.sql,
+    })),
+  };
+  return `${JSON.stringify(state, null, 2)}\n`;
+}
+
+/**
+ * Read a module's last generated definition, or `null` when the module has
+ * never been generated.
+ *
+ * A state file that is malformed, or that disagrees with the definition it
+ * claims to describe, is a hard failure: silently trusting a hand-edited state
+ * file would let the next evolution be computed against a definition that was
+ * never generated.
+ *
+ * @param {string} rootDir @param {string} moduleName
+ */
+export function readModuleState(rootDir, moduleName) {
+  const path = join(rootDir, 'packages', 'modules', moduleName, 'module.state.json');
+  if (!existsSync(path)) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    throw new ValidationError(`Module "${moduleName}" has an unreadable module.state.json; restore it from version control`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new ValidationError(`Module "${moduleName}": module.state.json must be a JSON object`);
+  }
+  if (parsed.stateVersion !== MODULE_STATE_VERSION) {
+    throw new ValidationError(
+      `Module "${moduleName}": module.state.json is stateVersion ${JSON.stringify(parsed.stateVersion)}; `
+        + `this version of agent-crm reads ${MODULE_STATE_VERSION}`,
+    );
+  }
+  if (parsed.module !== moduleName) {
+    throw new ValidationError(
+      `Module "${moduleName}": module.state.json describes "${String(parsed.module).slice(0, 64)}"`,
+    );
+  }
+  const manifest = validateModuleManifest(parsed.manifest);
+  const fingerprint = moduleStateFingerprint(manifest);
+  if (fingerprint !== parsed.fingerprint) {
+    throw new ValidationError(
+      `Module "${moduleName}": module.state.json was edited by hand — its fingerprint does not match the definition it `
+        + 'contains. Restore it from version control rather than editing it: the next evolution is computed from it.',
+    );
+  }
+  if (manifest.revision !== parsed.revision) {
+    throw new ValidationError(
+      `Module "${moduleName}": module.state.json revision ${parsed.revision} disagrees with its manifest revision ${manifest.revision}`,
+    );
+  }
+  return {
+    revision: manifest.revision,
+    fingerprint,
+    manifest,
+    // The whole history, in order: index 0 is the create migration.
+    migrations: (parsed.migrations ?? []).map((entry) => {
+      if (typeof entry?.name !== 'string' || typeof entry?.sql !== 'string') {
+        throw new ValidationError(`Module "${moduleName}": module.state.json has a malformed migration entry`);
+      }
+      const checksum = createHash('sha256').update(entry.sql).digest('hex');
+      if (checksum !== entry.checksum) {
+        throw new ValidationError(
+          `Module "${moduleName}": migration "${entry.name}" in module.state.json was edited — its checksum does not `
+            + 'match its SQL. Applied migrations are immutable; restore the file from version control.',
+        );
+      }
+      return { migrationName: entry.name, sql: entry.sql };
+    }),
+  };
+}
+
+/**
+ * Which other installed generated modules hold a foreign key into this table.
+ * A rebuild drops and recreates the table, so any inbound reference blocks it.
+ *
+ * @param {{manifest?: any, dirName: string}[]} installed @param {any} manifest
+ */
+export function inboundReferences(installed, manifest) {
+  const out = [];
+  for (const entry of installed) {
+    if (!entry.manifest || entry.dirName === manifest.name) continue;
+    for (const field of entry.manifest.fields ?? []) {
+      if (field.type === 'reference' && field.references === manifest.table) {
+        out.push(`${entry.dirName}.${field.name}`);
+      }
+    }
+  }
+  return out.sort();
 }

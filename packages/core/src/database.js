@@ -260,6 +260,18 @@ export function createDatabase(options = {}) {
     raw.exec('BEGIN IMMEDIATE;');
     try {
       raw.exec(migration.sql);
+      // Referential integrity is verified inside the migration's own
+      // transaction, so a migration that leaves a dangling reference rolls back
+      // rather than being recorded as applied. This covers every module
+      // migration, not only the ones that rebuild a table (ADR-020).
+      const violations = raw.prepare('PRAGMA foreign_key_check').all();
+      if (violations.length > 0) {
+        const first = violations[0];
+        throw new Error(
+          `Module migration "${migration.name}" left ${violations.length} foreign key violation(s), `
+            + `starting in table "${String(first.table ?? first['table'])}". The migration was rolled back.`,
+        );
+      }
       raw
         .prepare('INSERT INTO module_migrations(name, checksum, applied_at) VALUES (?, ?, ?)')
         .run(migration.name, checksum, new Date().toISOString());

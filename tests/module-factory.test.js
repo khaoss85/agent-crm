@@ -217,17 +217,41 @@ test('registry content is identical regardless of module creation order', (t) =>
   );
 });
 
+test('hostile enum values are refused before they reach the schema', () => {
+  // An enum value is interpolated into a SQL CHECK constraint and re-emitted by
+  // every rebuild that constraint survives (ADR-020). Quote-doubling does stop
+  // injection, but an unbounded value still travels into the schema: a NUL byte
+  // produces DDL SQLite cannot parse, and a newline or a 300-character value
+  // makes a table definition nobody can read. It is bounded where it is written.
+  const withValues = (values) => ({ name: 'bounded', fields: [{ name: 'status', type: 'enum', values }] });
+  for (const value of [
+    "x` + (()=>{ globalThis.INJECTED = true; return 1; })() + `y",
+    "quote'and\\slash\\",
+    'line\nbreak',
+    'nul\u0000byte',
+    'x'.repeat(65),
+    ' leading-space',
+  ]) {
+    assert.throws(
+      () => planModule({ manifest: withValues(['ok', value]), rootDir: '/tmp' }),
+      /enum values must be printable/,
+      JSON.stringify(value.slice(0, 24)),
+    );
+  }
+  // Ordinary values, including the punctuation a real status uses, still pass.
+  assert.ok(planModule({ manifest: withValues(['pending_kickoff', 'in progress', 'a.b', 'a-b']), rootDir: '/tmp' }));
+});
+
 test('hostile manifest strings cannot inject code into generated source', (t) => {
   const root = tempRoot(t);
+  // Free-text fields the contract does not bound: the description reaches the
+  // generated header comment, so it is the remaining injection surface.
   const hostile = {
     name: 'hostile',
-    description: 'desc with `backtick` and ${process.exit(1)} and\nnewline */ <script>',
+    description: 'desc with `backtick` and ${globalThis.INJECTED = true} and\nnewline */ <script>',
     fields: [
-      {
-        name: 'status',
-        type: 'enum',
-        values: ['ok', 'x` + (()=>{ globalThis.INJECTED = true; return 1; })() + `y', "quote'and\\slash\\"],
-      },
+      { name: 'status', type: 'enum', values: ['ok', 'needs review'] },
+      { name: 'note', type: 'string' },
     ],
   };
   const first = planModule({ manifest: hostile, rootDir: root });
@@ -243,17 +267,17 @@ test('hostile manifest strings cannot inject code into generated source', (t) =>
     assert.equal(check.status, 0, `${file.path}: ${check.stderr}`);
   }
   // Loading the generated migration in a subprocess must not execute injected
-  // code; the hostile value must survive as SQL data.
+  // code; the hostile text must survive as inert data.
   const migrationUrl = pathToFileURL(join(root, 'packages/modules/hostile/src/migration.js')).href;
   const probe = spawnSync(
     process.execPath,
     [
       '--input-type=module',
       '-e',
-      `import { hostileMigration } from ${JSON.stringify(migrationUrl)};
+      `import { hostileMigration, hostileMigrations } from ${JSON.stringify(migrationUrl)};
        if (globalThis.INJECTED) { console.error('INJECTED'); process.exit(2); }
-       if (!hostileMigration.sql.includes('globalThis.INJECTED = true')) process.exit(3);
-       if (!/CREATE TABLE IF NOT EXISTS hostiles/.test(hostileMigration.sql)) process.exit(4);`,
+       if (!/CREATE TABLE IF NOT EXISTS hostiles/.test(hostileMigration.sql)) process.exit(3);
+       if (!Array.isArray(hostileMigrations) || hostileMigrations[0].name !== hostileMigration.name) process.exit(4);`,
     ],
     { encoding: 'utf8' },
   );
