@@ -6,6 +6,7 @@ import { createHttpServer } from '../../../apps/server/src/index.js';
 import { scaffoldModule } from './scaffold-module.js';
 import { validateManifestCommand, generateMigrationCommand, readManifestFile } from './manifest-commands.js';
 import { planModule, applyModulePlan } from './module-factory.js';
+import { validatePackageCommand, inspectPackageCommand } from './package-commands.js';
 
 /** @param {string[]} argv */
 export async function runCli(argv) {
@@ -15,7 +16,23 @@ export async function runCli(argv) {
     command = `module:${positional[0]}`;
     positional = positional.slice(1);
   }
+  // "package validate|inspect <dir>" reads the domain-package contract with the
+  // same validator the application runs at startup. Both are read-only.
+  if (command === 'package' && ['validate', 'inspect'].includes(positional[0])) {
+    command = `package:${positional[0]}`;
+    positional = positional.slice(1);
+  }
   const dbPath = typeof flags.db === 'string' ? resolve(flags.db) : undefined;
+
+  if (command === 'package:validate' || command === 'package:inspect') {
+    const run = command === 'package:validate' ? validatePackageCommand : inspectPackageCommand;
+    const result = await run({ packagePath: positional[0] });
+    print(result);
+    // A deterministic non-zero exit is what makes this usable in CI and by an
+    // agent that checks its own work.
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
 
   if (command === 'module:validate') {
     print(validateManifestCommand({ manifestPath: positional[0] }));
@@ -195,6 +212,8 @@ Usage:
   agent-crm module:create <name> [--apply] [--root path]
   agent-crm module:validate <manifest.json>
   agent-crm module:migration <manifest.json> [--dry-run] [--out file.sql] [--force]
+  agent-crm package:validate <package-directory>
+  agent-crm package:inspect <package-directory>
   agent-crm mcp [--db path]
 
 "module plan", "module create", "module validate" and "module migration" are accepted aliases.
@@ -202,5 +221,9 @@ module:plan is always read-only. module:create with a manifest generates a compl
 runnable module (service, migration, registration, tests) and is a dry-run unless
 --apply is explicit; with a bare name it keeps the legacy template scaffold.
 Migration generation is a dry-run unless --out is provided; --force allows overwriting.
-Manifest schema: docs/MODULE_MANIFEST.md — module factory: docs/MODULE_FACTORY.md`;
+"package validate" and "package inspect" are accepted aliases. Both are read-only:
+they run the same domain-package validator the application runs at startup, write
+nothing, open no database and reach no network, and exit non-zero on any problem.
+Manifest schema: docs/MODULE_MANIFEST.md — module factory: docs/MODULE_FACTORY.md
+Package contract: docs/PACKAGE_AUTHORING.md`;
 }
