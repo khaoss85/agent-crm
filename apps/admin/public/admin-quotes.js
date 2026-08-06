@@ -1,6 +1,7 @@
 // @ts-check
 
 import { formatMinorUnits } from './admin-core.js';
+import { renderActivation } from './admin-contracts.js';
 
 /**
  * Quote builder Admin (ADR-016), built on the ADR-009 override seam: a small
@@ -564,6 +565,11 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
       }
       orderPanel.appendChild(el('p', 'muted', 'Order figures are copied from the signed quote version and are never recalculated from the current catalog. Periods are never combined, and no annualized or contract-value figure is derived. No billing, invoice, payment or fulfillment state exists in this milestone.'));
       panel.appendChild(orderPanel);
+      // Contract activation (Milestone 12) lives in the optional contracts
+      // domain package: it renders only when the server publishes that domain.
+      // It is a sibling section, never nested inside the order evidence —
+      // that block stays free of controls.
+      await renderActivation({ order, schema, mount, el, client, fetchRows, money, withBusy, busy });
     }
   }
 
