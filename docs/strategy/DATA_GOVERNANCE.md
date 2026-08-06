@@ -136,3 +136,9 @@ give legal advice, and does not assert that implementing it would make a
 deployment compliant. Compliance is a property of a deployment, its contracts
 and its operator — the framework can only make the controls possible and the
 evidence honest.
+
+## Marketing is the first consumer that cannot be optional about this
+
+Every other workstream reads and writes CRM data. Marketing **contacts people**, so consent stops being a policy document and becomes a runtime check before every enrolment and every send: legal basis, communication preferences, channel permission, suppression, frequency cap, and the tenant boundary once the Production Spine exists. A failed check must be a recorded, explained exclusion, never a silent drop.
+
+It also forces the inbound side into scope — unsubscribe, bounce, invalid destination, opt-out, provider data sharing, retention of audience snapshots and touchpoints, and how export and deletion interact with immutable campaign evidence. MK2 (`EXECUTION_ROADMAP.md`) is hard-blocked on the foundations here, deliberately. See `CAMPAIGNS_JOURNEYS.md` §4. **Nothing here is a compliance claim.**

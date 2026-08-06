@@ -140,6 +140,79 @@ Each milestone below follows the standard per-phase format.
 - **Acceptance:** every shipped metric has a fixture with a known-correct expected result; no public surface accepts free-form SQL (probe rejected); dashboard rollback proof; compiled queries inspectable.
 - **Agent executes:** everything code; **human approves:** merges, publishing dashboards to real users once the Spine exists.
 
+
+## Marketing & Growth track (MK0–MK7)
+
+A **parallel** lane, not a successor to the M-lane. It shares the platform and nothing else, and it is deliberately sequenced so the first useful milestone needs no provider, no scheduler and no spend. Strategy: `MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md`. **Nothing below is implemented.**
+
+```text
+MK0  Marketing strategy, package contracts and JTBDs
+MK1  Funnel Insight + Campaign Proposal            no send, no spend
+MK2  Audience + Consent + one-shot email           fixture provider first
+MK3  Content + Landing Page + Form + CTA + Tracking
+MK4  Durable Journey Orchestration                 hard-blocked on JOBS_AND_OUTBOX
+MK5  Experiments, Control Groups and Holdouts
+MK6  Paid Media Planning and Providers             human spend approval
+MK7  Attribution and Closed-loop Optimization      hard-blocked on ANALYTICS_STUDIO
+```
+
+### MK0 — Strategy, package contracts and JTBDs
+
+- **Outcome:** the workstream is defined, sequenced and honestly statused before any code exists.
+- **Deliverables:** the three strategy documents; the Marketing JTBD sections (all rows **not supported**); the planned E2E-M1…E2E-M5 benchmark scenarios; the package-native architecture and its capability dependencies.
+- **Acceptance:** every document agrees that no Marketing runtime exists; no JavaScript, package metadata, migration, test or CI change.
+
+### MK1 — Funnel Insight + Campaign Proposal
+
+- **Outcome:** an agent observes a bounded funnel insight and prepares a **complete** CampaignProposal in Admin. Nothing is sent, published or spent.
+- **Deliverables:** `packages/marketing` with FunnelDefinition/FunnelRun/FunnelDropInsight and CampaignProposal/CampaignVersion; a versioned proposal policy; the Admin review screen; plan-then-approve as a human-actor boundary.
+- **Dependencies:** none hard. Insight quality improves with Analytics Studio but does not wait for it.
+- **Acceptance:** a proposal states audience, exclusions, channel, provider rationale, content plan, tracking plan, risks and required approvals, or it is refused; no provider is contacted; no external effect is reachable from the package.
+
+### MK2 — Audience + Consent + one-shot email
+
+- **Outcome:** one approved one-shot email campaign, to a frozen audience snapshot, through a **fixture** provider first and a real sandbox adapter later.
+- **Deliverables:** AudienceDefinition/AudienceSnapshot/SuppressionSet; the governance checks (consent basis, preferences, channel permission, suppression, frequency cap) with recorded, explained exclusions; an email provider contract; delivery/bounce/unsubscribe ingestion.
+- **Dependencies:** Data Governance foundations (`DATA_GOVERNANCE.md`) — hard.
+- **Acceptance:** the audience is a snapshot, not a live query; every exclusion is counted and explained; a send requires a human actor; unsubscribe is honoured across campaigns; no real recipient is reachable from `npm run verify`.
+
+### MK3 — Content, Landing Page, Form, CTA and Tracking
+
+- **Outcome:** generated content and web assets as checked-in, customer-owned source, with preview and an explicit publish approval.
+- **Deliverables:** `packages/content`; ContentAsset/ContentVersion, EmailTemplate, LandingPage, Form, CTA, ThankYouPage, PublishingPlan; TrackingPlan as a versioned object; a publishing provider contract.
+- **Dependencies:** MK1. Design ownership per `DESIGN_TO_CRM.md` — this milestone does **not** implement visual or Figma ingestion.
+- **Acceptance:** assets live in the customer repository; publishing to production requires human approval; a tracking plan is versioned and consistent across channels.
+
+### MK4 — Durable Journey Orchestration
+
+- **Outcome:** rolling, triggered and multi-step multichannel journeys that survive a restart.
+- **Deliverables:** `packages/journeys`; JourneyDefinition/Version, Enrollment, StepExecution, durable waits, retry/backoff, exit criteria, version pinning.
+- **Dependencies:** **Durable Automation (`JOBS_AND_OUTBOX.md`) — hard.** Journeys on the current in-process post-commit event buffer (ADR-012) would drop steps in production; this milestone does not start before the outbox lands.
+- **Acceptance:** exactly-once step semantics under restart and concurrency; publishing a version does not mutate active enrolments; a stuck journey fails loudly rather than silently.
+
+### MK5 — Experiments, Control Groups and Holdouts
+
+- **Outcome:** a campaign can prove it worked.
+- **Deliverables:** `packages/experimentation`; deterministic assignment from a fingerprinted rule, exposure evidence distinct from assignment, immutable result evidence, winner decision as a new version, "inconclusive" as a first-class outcome.
+- **Dependencies:** MK2; MK4 for journey-scoped experiments.
+- **Acceptance:** assignment is reproducible from stored inputs; subjects stay pinned; auto-applying a winner requires human approval wherever spend or external send is involved. No claim of advanced statistical automation.
+
+### MK6 — Paid Media Planning and Providers
+
+- **Outcome:** the agent prepares everything and a human spends the money.
+- **Deliverables:** MediaPlan; audience sync under consent rules; creative and conversion-event definitions; budget in integer minor units (ADR-014); Google/Meta/LinkedIn-style adapters as **optional** providers; spend and result ingestion; pause/resume and budget-change **proposals**.
+- **Dependencies:** MK2, MK3; provider contracts per `INTEGRATION_RUNTIME.md`.
+- **Acceptance:** creating spend, increasing a budget, launching, materially changing targeting and pausing a high-impact campaign each require human approval; no adapter is a mandatory dependency.
+
+### MK7 — Attribution and Closed-loop Optimization
+
+- **Outcome:** touchpoints → Lead → Opportunity → Order → revenue credit, with the assumptions on the page.
+- **Deliverables:** `packages/attribution`; FunnelDefinition reuse, AttributionModel/Run, RevenueCredit, cohort and lift analysis, campaign ROI.
+- **Dependencies:** **Analytics Studio (`ANALYTICS_STUDIO.md`) — hard**, and an identity/touchpoint model that does not exist yet. No arbitrary agent-generated production SQL: the agent composes declared metrics and the studio compiles them.
+- **Acceptance:** every attribution run stores its model version and assumptions; two models disagreeing is normal; where a holdout exists, control-group lift is reported as the better answer.
+
+---
+
 ## Parallel platform track
 
 The product milestones above are one lane. These run **alongside** them and are not gated by domain progress. Each is design-only today unless `docs/PROJECT_STATUS.md` says otherwise.
@@ -169,6 +242,7 @@ Dependencies and what can genuinely run in parallel:
 | Data Governance | tenancy for the tenant-boundary parts; the rest is independent | everything | any deployment holding real personal data |
 | Design-to-CRM | the generated Admin (done) | everything | the North Star "design reference → working CRM" claim |
 | Agent CRM Cloud | the Production Spine | product milestones | managed deployment; nothing else |
+| Marketing & Growth (MK0–MK7) | Data Governance from MK2; Jobs/outbox for MK4; Analytics Studio for MK7 | the M-lane, end to end | demand creation, closed-loop ROI — none of it gates the M-lane |
 
 Two consequences worth stating plainly: **a Cloud release serving an M11-era CRM is legitimate** — Cloud waits for the Spine, not for Analytics; and **Jobs/outbox is on the critical path for more JTBDs than any single domain milestone**, because renewal, SLA, reminders and unattended follow-up all reduce to "do something later, durably".
 

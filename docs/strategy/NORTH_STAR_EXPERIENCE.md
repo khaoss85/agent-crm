@@ -113,3 +113,7 @@ Live status — merged milestone, SHA, test count — lives in `docs/PROJECT_STA
 The three-input promise — brief **+ process + design reference** — is currently two-thirds true: the brief and the process drive real generation, the design reference does not. That gap is now an owned track rather than an implicit hope.
 
 The phased path to close the distance is `docs/strategy/EXECUTION_ROADMAP.md`; the architecture checkpoint that reorganized it is `PLATFORM_ALIGNMENT_GATE.md`.
+
+## Marketing & Growth, in the same experience
+
+The North Star is "describe it, review it, approve it" — and it applies to demand creation as much as to a data model. The Marketing track (`MARKETING_GROWTH_OPERATIONS.md`, MK0–MK7) targets the same shape: the agent observes a funnel drop, diagnoses it, and presents **one complete CampaignProposal** in the CRM — audience, exclusions, content, landing page, tracking plan, budget, risks and the approvals it needs — rather than a dozen configuration screens the user must assemble themselves. Nothing sends, publishes or spends without a human approving what they actually read. **None of it is implemented.**

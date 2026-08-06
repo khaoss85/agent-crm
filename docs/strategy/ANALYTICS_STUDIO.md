@@ -63,3 +63,9 @@ Each becomes a tested MetricDefinition when its underlying primitives exist — 
 - **Agents execute:** semantic models, metric definitions with correctness tests, reports, dashboards, skills, starter evidence.
 
 JTBD tracking: `docs/benchmarks/CRM_JTBD_MATRIX.md` (Analytics section — everything starts **not supported**). Benchmark integration: analytics gates appear inside the Revenue Operations and Delivery & Service E2E scenarios in `CRM_BUILD_BENCHMARK.md` (planned, not implemented).
+
+## Marketing MK7 is hard-blocked on this document
+
+Funnel definitions, drop insights, campaign results and every attribution model compile from **semantic metrics and dimensions** through the safe query compiler defined here. **No arbitrary agent-generated production SQL** — an agent composes declared metrics; the studio compiles them. That boundary is not a preference for the Marketing track, it is the condition of it existing at all.
+
+MK7 additionally needs an identity and touchpoint model that does not exist today; multi-touch attribution without one is arithmetic on guesses. See `EXPERIMENTATION_ATTRIBUTION.md` §4.

@@ -21,7 +21,7 @@ Generated: **2026-08-06**.
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 27/27 in real Chromium, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | PR #17 `feat: add package-native delivery handover` (M13 — adversarially reviewed and corrected, awaiting human merge) |
+| Open PRs | PR #17 `feat: add package-native delivery handover` (M13 — adversarially reviewed and corrected, awaiting human merge); a **documentation-only** PR stacked on it adding the Marketing & Growth Operations roadmap (MK0–MK7 — strategy, JTBDs and benchmarks only, **no runtime**) |
 
 ## Completed functional path
 
