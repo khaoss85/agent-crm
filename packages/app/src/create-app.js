@@ -58,7 +58,14 @@ export function createAgentCrmApp(options = {}) {
   const database = createDatabase({
     path: options.dbPath,
     busyTimeoutMs: options.busyTimeoutMs,
-    moduleMigrations: generatedModules.map((generated) => generated.migration),
+    // A generated module carries an append-only, ordered `migrations` list: its
+    // create migration plus one per revision it has evolved through (ADR-019).
+    // `migration` is the pre-evolution single-migration shape, still honoured so
+    // a project generated before this contract keeps booting unchanged.
+    moduleMigrations: generatedModules.flatMap((generated) => (
+      Array.isArray(generated.migrations) ? generated.migrations
+        : generated.migration ? [generated.migration] : []
+    )),
   });
   const events = new EventBus();
   const audit = new AuditLog(database);

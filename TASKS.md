@@ -20,3 +20,6 @@ The first unchecked item is the default next task for Codex.
 - [ ] Add PostgreSQL storage adapter behind the existing database contract.
 
 - [ ] **MK0 — Marketing & Growth Operations roadmap (documentation only).** Strategy (`docs/strategy/MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md`), the MK0–MK7 track in `EXECUTION_ROADMAP.md`, 43 JTBD-MK rows (all **not supported**) and five planned E2E-M benchmark scenarios. Opened as a documentation-only PR (#18) targeting `main`. **No Marketing runtime is implemented, and MK1 does not start in it.**
+
+- [ ] **Module Evolution v1 (ADR-019).** A generic kernel capability: a generated module gains fields, enum values and indexes through an explicit `revision`, a checked-in `module.state.json` and append-only `migrations[]`. Split out of the M14 branch and open as its own PR. **Prerequisite for M14.**
+- [ ] **AX0 — Objective-driven agent experience (documentation only).** The Goal-to-Solution lifecycle, the SolutionPlan design, the `solve-business-goal` Skill and the E2E-G1 benchmark. No runtime.

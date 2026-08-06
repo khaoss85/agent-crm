@@ -14,8 +14,16 @@ import {
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { ConflictError, ValidationError } from '../../core/src/errors.js';
 import {
+  generateModuleEvolution,
+  inboundReferences,
+  moduleStateFingerprint,
+  readModuleState,
+  renderModuleState,
+} from '../../core/src/module-evolution.js';
+import {
   validateModuleManifest,
   generateModuleMigration,
+  validateModuleManifest as revalidateManifest,
 } from '../../core/src/module-manifest.js';
 
 /**
@@ -124,30 +132,92 @@ export function planModule(input) {
     );
   }
 
+  // Evolution (ADR-019). The previously *generated* definition is the checked-in
+  // `module.state.json`, not the raw manifest and not the live database: a state
+  // file travels with the source, is reviewable in a diff, works before any
+  // database exists, and is identical for a fresh project and an upgrade.
+  const previousState = readModuleState(rootDir, manifest.name);
+  // The create migration is whatever was generated the first time. It is never
+  // regenerated from a newer manifest: its checksum is recorded in every
+  // database that ran it, and an edited applied migration is a hard failure.
+  /** @type {{migrationName: string, sql: string}[]} */
+  const history = previousState
+    ? [...previousState.migrations]
+    : [{ migrationName: migration.migrationName, sql: migration.sql }];
+  let evolution = null;
+  // `evolving` gates the overwrite: regenerating a module's files is allowed
+  // only as part of an actual revision step. Re-applying an unchanged manifest
+  // still hits the original refusal, so a hand-edited generated module is never
+  // silently clobbered.
+  let evolving = false;
+  if (previousState) {
+    const currentFingerprint = moduleStateFingerprint(manifest);
+    if (currentFingerprint === previousState.fingerprint) {
+      // Identical schema at the same revision: applying again is a no-op that
+      // regenerates the same files, which is what an idempotent apply means.
+      if (manifest.revision !== previousState.revision) {
+        throw new ValidationError(
+          `Module "${manifest.name}": revision changed to ${manifest.revision} but the schema is identical to revision `
+            + `${previousState.revision}. A revision marks a schema change; leave it at ${previousState.revision}.`,
+        );
+      }
+    } else if (manifest.revision === previousState.revision) {
+      throw new ValidationError(
+        `Module "${manifest.name}": the schema changed but revision is still ${previousState.revision}. `
+          + `Set "revision": ${previousState.revision + 1} to generate the migration that upgrades existing databases.`,
+      );
+    } else if (manifest.revision !== previousState.revision + 1) {
+      throw new ValidationError(
+        `Module "${manifest.name}": revision must go from ${previousState.revision} to `
+          + `${previousState.revision + 1}; got ${manifest.revision}. Evolution is one revision at a time so every `
+          + 'step has its own reviewable migration.',
+      );
+    } else {
+      evolution = generateModuleEvolution({
+        previous: previousState.manifest,
+        next: manifest,
+        referencedBy: inboundReferences(existingModules, manifest),
+      });
+      // A metadata-only evolution regenerates the service, schema block and
+      // Admin without touching the table, so it appends no migration.
+      if (evolution.migrationName !== null) {
+        history.push({ migrationName: evolution.migrationName, sql: evolution.sql });
+      }
+      evolving = true;
+    }
+  }
+
   const files = [
     {
       path: join(moduleDir, 'module.manifest.json'),
-      action: 'create',
+      action: evolving ? 'update' : 'create',
       content: `${JSON.stringify(manifest, null, 2)}\n`,
     },
     {
+      // The last generated definition, so the next evolution has a deterministic
+      // source that does not depend on any particular database.
+      path: join(moduleDir, 'module.state.json'),
+      action: evolving ? 'update' : 'create',
+      content: renderModuleState({ manifest, migrations: history }),
+    },
+    {
       path: join(moduleDir, 'src', 'migration.js'),
-      action: 'create',
-      content: migrationTemplate(names, migration),
+      action: evolving ? 'update' : 'create',
+      content: migrationTemplate(names, history),
     },
     {
       path: join(moduleDir, 'src', `${manifest.name}-service.js`),
-      action: 'create',
+      action: evolving ? 'update' : 'create',
       content: serviceTemplate(manifest, names, referenceTargets),
     },
     {
       path: join(moduleDir, 'src', 'index.js'),
-      action: 'create',
+      action: evolving ? 'update' : 'create',
       content: indexTemplate(manifest, names, referenceTargets),
     },
     {
       path: join('tests', `${manifest.name}-module.test.js`),
-      action: 'create',
+      action: evolving ? 'update' : 'create',
       content: testTemplate(manifest, names),
     },
     {
@@ -389,23 +459,37 @@ function header() {
  * @param {ReturnType<typeof buildNames>} names
  * @param {{migrationName: string, sql: string}} migration
  */
-function migrationTemplate(names, migration) {
-  // The SQL is embedded via JSON.stringify, never raw template interpolation:
-  // manifest-controlled strings (enum values) must not be able to break out of
+function migrationTemplate(names, history) {
+  // Every SQL string is embedded via JSON.stringify, never raw template
+  // interpolation: manifest-controlled strings must not be able to break out of
   // the generated source.
-  const lines = migration.sql.trimEnd().split('\n');
-  const serialized = lines.map((line, index) => {
-    const suffix = index === lines.length - 1 ? '' : " + '\\n' +";
-    return `  ${JSON.stringify(line)}${suffix}`;
-  });
+  const render = (sql, indent) => {
+    const lines = sql.trimEnd().split('\n');
+    return lines
+      .map((line, index) => `${indent}${JSON.stringify(line)}${index === lines.length - 1 ? '' : " + '\\n' +"}`)
+      .join('\n');
+  };
+  const entries = history.map((entry) => `  {
+    name: ${JSON.stringify(entry.migrationName)},
+    sql:
+${render(entry.sql, '      ')},
+  },`);
+
   return `// @ts-check
 ${header()}
 
-export const ${names.camel}Migration = {
-  name: '${migration.migrationName}',
-  sql:
-${serialized.join('\n')},
-};
+/**
+ * Every migration this module has generated, in the order they must run: the
+ * create migration first, then one per revision it has evolved through. The
+ * list is append-only — an applied migration is never edited, regenerated or
+ * renumbered (ADR-019).
+ */
+export const ${names.camel}Migrations = [
+${entries.join('\n')}
+];
+
+/** The create migration, kept as a named export for pre-evolution consumers. */
+export const ${names.camel}Migration = ${names.camel}Migrations[0];
 `;
 }
 
@@ -1092,7 +1176,7 @@ function registryTemplate(moduleNames) {
 // which regenerates this file from the module.manifest.json each generated module carries.
 // You can edit it by hand, but the next apply rewrites it from the manifests on disk.
 
-/** @type {Array<{name: string, createModule: (deps: {database: any, audit: any, events: any}) => any, migration: {name: string, sql: string}}>} */
+/** @type {Array<{name: string, createModule: (deps: {database: any, audit: any, events: any}) => any, migrations: Array<{name: string, sql: string}>}>} */
 export const generatedModules = [];
 `;
   }
@@ -1100,13 +1184,13 @@ export const generatedModules = [];
   const imports = names
     .flatMap((name) => [
       `import { create${name.pascal}Module } from '../${name.module}/src/index.js';`,
-      `import { ${name.camel}Migration } from '../${name.module}/src/migration.js';`,
+      `import { ${name.camel}Migrations } from '../${name.module}/src/migration.js';`,
     ])
     .join('\n');
   const entries = names
     .map(
       (name) =>
-        `  { name: '${name.module}', createModule: create${name.pascal}Module, migration: ${name.camel}Migration },`,
+        `  { name: '${name.module}', createModule: create${name.pascal}Module, migrations: ${name.camel}Migrations },`,
     )
     .join('\n');
   return `// @ts-check
@@ -1116,7 +1200,7 @@ export const generatedModules = [];
 
 ${imports}
 
-/** @type {Array<{name: string, createModule: (deps: {database: any, audit: any, events: any}) => any, migration: {name: string, sql: string}}>} */
+/** @type {Array<{name: string, createModule: (deps: {database: any, audit: any, events: any}) => any, migrations: Array<{name: string, sql: string}>}>} */
 export const generatedModules = [
 ${entries}
 ];

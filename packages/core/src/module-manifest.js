@@ -24,6 +24,12 @@ export const MANIFEST_FIELD_TYPES = Object.freeze([
 export const REFERENCE_ON_DELETE = Object.freeze(['restrict', 'cascade', 'set_null']);
 
 export const SUPPORTED_MANIFEST_VERSION = 1;
+/**
+ * An enum value ends up inside a SQL `CHECK` constraint and inside every
+ * rebuild that constraint survives, so it is bounded like an identifier rather
+ * than treated as free text.
+ */
+const ENUM_VALUE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._:@/+-]{0,63}$/;
 
 const RESERVED_FIELD_NAMES = Object.freeze(['id', 'createdAt', 'created_at', 'updatedAt', 'updated_at']);
 
@@ -90,8 +96,8 @@ export function validateModuleManifest(manifest) {
   const input = /** @type {Record<string, unknown>} */ (manifest);
 
   for (const key of Object.keys(input)) {
-    if (!['manifestVersion', 'name', 'description', 'table', 'fields'].includes(key)) {
-      errors.push(`unknown manifest property "${key}" (allowed: manifestVersion, name, description, table, fields)`);
+    if (!['manifestVersion', 'revision', 'name', 'description', 'table', 'fields'].includes(key)) {
+      errors.push(`unknown manifest property "${key}" (allowed: manifestVersion, revision, name, description, table, fields)`);
     }
   }
 
@@ -100,6 +106,13 @@ export function validateModuleManifest(manifest) {
       `Unsupported manifestVersion: ${JSON.stringify(input.manifestVersion)}. This version of agent-crm supports manifest version ${SUPPORTED_MANIFEST_VERSION}; upgrade agent-crm or lower the manifest version.`,
       { manifestVersion: input.manifestVersion, supported: SUPPORTED_MANIFEST_VERSION },
     );
+  }
+
+  // The manifest's own revision (ADR-019). Absent means 1, so every manifest
+  // written before module evolution existed stays valid and unchanged.
+  if (input.revision !== undefined
+    && (!Number.isSafeInteger(input.revision) || Number(input.revision) < 1 || Number(input.revision) > 1000)) {
+    errors.push('revision must be an integer between 1 and 1000 when present');
   }
 
   let name = '';
@@ -162,6 +175,7 @@ export function validateModuleManifest(manifest) {
 
   return Object.freeze({
     manifestVersion: SUPPORTED_MANIFEST_VERSION,
+    revision: input.revision === undefined ? 1 : Number(input.revision),
     name,
     description,
     table,
@@ -248,6 +262,16 @@ function normalizeField(rawField, index, errors) {
       valid = false;
     } else if (new Set(field.values).size !== field.values.length) {
       errors.push(`${label}: enum values must be unique`);
+      valid = false;
+    } else if (field.values.some((value) => !ENUM_VALUE_PATTERN.test(value))) {
+      // An enum value is interpolated into a SQL CHECK constraint. Doubling the
+      // quote does stop injection, but an unbounded value still travels into the
+      // schema: a NUL byte produces DDL SQLite cannot parse at all, and a
+      // newline or a 300-character value makes a table definition nobody can
+      // read. Bound it where it is written (ADR-019).
+      errors.push(
+        `${label}: enum values must be printable, at most 64 characters, and start with a letter or digit`,
+      );
       valid = false;
     } else {
       values = /** @type {string[]} */ (field.values.slice());
