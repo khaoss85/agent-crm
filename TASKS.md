@@ -11,6 +11,8 @@ The first unchecked item is the default next task for Codex.
 - [x] Add Lead Intelligence v1: enrichment provider contract with immutable snapshots, behavioral signals, versioned explainable scoring and deterministic routing with assignment history (Milestone 9, ADR-015, `docs/LEAD_INTELLIGENCE.md`).
 - [x] Add Commercial Operations v1: catalog provider sync into immutable products/price books, server-priced quotes with immutable versions, and a versioned discount policy with human approval (Milestone 10, ADR-016, `docs/COMMERCIAL_OPERATIONS.md`).
 - [x] Add Signature and Order v1: a bounded signature provider contract, a persisted envelope/event state machine with verified webhooks and explicit reconciliation, signed-artifact evidence and immutable Orders built from an approved Quote Version (Milestone 11, ADR-017, `docs/SIGNATURE_ORDER.md`).
+- [x] Take the Platform Alignment Gate: core-versus-domain boundary (ADR-018), the capability model, the corrected M12–M16 sequence, the Integration Runtime / Jobs / Data Governance / Design-to-CRM tracks, permanent quality gates and one project-status source (`docs/strategy/PLATFORM_ALIGNMENT_GATE.md`). Documentation and architecture only.
+- [ ] Add Order Activation & Subscription v1: activate a commercial contract and its subscriptions from an immutable Order, as the first optional domain package under ADR-018 (Milestone 12, `docs/plans/milestone-12-order-activation-subscription.md`).
 - [ ] Add a provider adapter example for MailUp-compatible list enrollment.
 - [ ] Add tenant and role boundaries before exposing remote write tools.
 - [ ] Add Streamable HTTP transport for MCP with authorization.

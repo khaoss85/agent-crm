@@ -40,28 +40,36 @@ The invariant: **Production Spine gates public managed deployment** — no Cloud
 
 ---
 
-## Product workstream milestones (M9–M15)
+## Product workstream milestones
 
-The engineering milestones (M0–M8, tracked in `ROADMAP.md`/`TASKS.md` and proven in-repo) continue as the **CRM capability track**, layered on the phases rather than replacing them. After M8 (Opportunity Pipeline, merged), four product workstreams follow, specified in `REVENUE_OPERATIONS.md`, `DELIVERY_SERVICE.md` and `ANALYTICS_STUDIO.md`. **None of them is implemented; every milestone below is future work.**
+The engineering milestones (M0–M8, tracked in `ROADMAP.md`/`TASKS.md` and proven in-repo) continue as the **CRM capability track**, layered on the phases rather than replacing them.
+
+**M9, M10 and M11 are implemented and merged** (ADR-015, ADR-016, ADR-017). Current status, SHAs and test counts: `docs/PROJECT_STATUS.md` — not this file.
 
 ```text
-M8  Opportunity Pipeline            (done — ADR-014)
-M9  Lead Intelligence v1
-M10 Commercial Operations v1
-M11 Signature + Order
-M12 Delivery Handover v1
-M13 Delivery Economics + Acceptance
-M14 Service Operations v1
-M15 Analytics Studio v1
+M8  Opportunity Pipeline                      done — ADR-014
+M9  Lead Intelligence v1                      done — ADR-015
+M10 Commercial Operations v1                  done — ADR-016
+M11 Signature + Immutable Order               done — ADR-017
+
+    Platform Alignment Gate                   docs/architecture only — ADR-018
+
+M12 Order Activation & Subscription v1        next
+M13 Delivery Handover v1
+M14 Delivery Economics & Customer Acceptance
+M15 Service Operations & Customer Success
+M16 Analytics Studio v1
 ```
+
+**The future sequence was corrected at the Platform Alignment Gate.** The original plan went from an immutable Order straight to Delivery, which skips the Contract / Subscription / Renewal layer that Delivery, Service, renewal and every recurring-revenue metric depend on (`CONTRACT_SUBSCRIPTION_RENEWAL.md`). Delivery, Delivery Economics, Service and Analytics keep their content and shift by one; **completed milestones M0–M11 are never renumbered.**
 
 **M8 is completed and merged**, and its reviewed boundaries (ADR-014) carry into this track unchanged: pipelines currently target only explicitly eligible core modules — generated-module pipeline state is deferred; stage keys are persistent identifiers and definition drift is surfaced, never auto-migrated; the Admin board has a disclosed 200-record bound; amounts follow the documented 1/100-unit two-decimal convention, not complete ISO-4217 exponent support; forecasting, runtime pipeline editing and approval-before-Won remain unimplemented. M9–M15 build on those boundaries; none of them silently lifts one.
 
 **Parallelization and hard dependencies — this sequence does NOT gate Cloud.** The workstream milestones and the platform phases run in parallel, exactly as M0–M8 ran alongside strategy work:
 
-- **Hard dependencies inside the track:** M10 → M11 (an Order snapshots a signed Quote) → M12 (a Commessa is created from an Order) → M13 → M14. M9 is independent of M10–M14. M15 closes the sequence pragmatically because its value grows with each preceding milestone, but the semantic layer plus pipeline metrics need only M8 and may be pulled earlier.
+- **Hard dependencies inside the track:** M10 → M11 (an Order snapshots a signed Quote) → **M12** (a contract and its subscriptions are activated from an Order) → **M13** (a delivery project is created from the Order/Contract scope) → **M14** → **M15**. M9 is independent of M10–M15. **M16** closes the sequence pragmatically because its value grows with each preceding milestone, but the semantic layer plus pipeline metrics need only M8 and may be pulled earlier. Renewal scheduling inside M12 is additionally gated on `JOBS_AND_OUTBOX.md`: without a scheduler nothing can fire on a future date, so M12 stops at activation.
 - **The Production Spine (Phase 6) is a parallel hard gate, not a sequel:** PostgreSQL, authentication, organizations/tenancy, RBAC, secrets, backups, remote-safe MCP. It can be built at any time alongside M9–M15, and **Agent CRM Cloud work begins when the Spine is done — not when all domains are done.** A Cloud managed runtime serving M8-era CRMs is a legitimate first Cloud release.
-- **What the Spine specifically gates within the workstreams:** manual-reassignment permission validation with real users (M9), partner/customer access boundaries and portals (M12–M14), role-aware dashboards (M15), and every remote or multi-user claim. Until then those capabilities are designed and boundary-tested against declared actors on the local-development surface, and the JTBD matrix must not claim them validated.
+- **What the Spine specifically gates within the workstreams:** manual-reassignment permission validation with real users (M9), partner/customer access boundaries and portals (M13–M15), role-aware dashboards (M16), and every remote or multi-user claim. Until then those capabilities are designed and boundary-tested against declared actors on the local-development surface, and the JTBD matrix must not claim them validated.
 
 Each milestone below follows the standard per-phase format.
 
@@ -90,37 +98,79 @@ Each milestone below follows the standard per-phase format.
 - **Acceptance:** an unverified webhook mutates nothing; the Order's snapshot survives later catalog and price-book changes byte-for-byte; a second completion event is idempotent; artifacts immutable under CRUD probes.
 - **Agent executes:** everything code; **human approves:** merges, signature provider accounts, every envelope actually sent (legal effect), production webhooks.
 
-### M12 — Delivery Handover v1
+### M12 — Order Activation & Subscription v1
 
-- **Outcome:** a won/signed Order becomes a Delivery Project with milestones and partner engagements.
+- **Outcome:** a signed, immutable Order becomes a live commercial contract with subscriptions, lines, an initial term and basic entitlements.
+- **Deliverables:** `CommercialContract` + `ContractVersion`; `Subscription` + `SubscriptionLine` sourced from **recurring** Order Components; `SubscriptionTerm` (start, end, auto-renew flag, notice period); `Activation` evidence; basic `Entitlement` mapping; complete source links back to order line, order component, quote version, offer revision and product version; idempotent activation keyed on the Order; skill `activate-order-subscription`. Design: `CONTRACT_SUBSCRIPTION_RENEWAL.md`; draft plan: `docs/plans/milestone-12-order-activation-subscription.md`.
+- **Built as an optional domain package** on shared runtime capabilities (ADR-018), not inside `packages/core`.
+- **Dependencies:** M11 (hard — activation copies the Order snapshot). Renewal scheduling depends on `JOBS_AND_OUTBOX.md` and is **out of scope** for M12.
+- **Acceptance:** activation is idempotent per Order (one contract and one subscription set however many times it runs); every subscription line carries full provenance; the Order stays byte-identical after activation; a later catalog change alters nothing; CRUD cannot write contract, subscription or entitlement state; concurrency and fault injection produce exactly one complete activation.
+- **Explicitly deferred:** invoicing, billing, payment, usage rating, proration, tax, FX, renewal scheduler, cancellation, refunds, amendments beyond recording, Delivery.
+- **Agent executes:** everything code; **human approves:** merges, and the activation decision itself where a project makes it a human step.
+
+### M13 — Delivery Handover v1
+
+- **Outcome:** a signed Order and its active contract become a Delivery Project with milestones and partner engagements.
 - **Deliverables:** DeliveryProject/Commessa with immutable scope copy; Milestone/Deliverable/WorkPackage/ResourceAssignment; PartnerEngagement (+agreement, cost, revenue share, access scope); idempotent handover action; kickoff record; skills `create-order-handover`, `build-delivery-project`, `configure-partner-delivery`.
-- **Dependencies:** M11 (hard — the project copies the Order's scope).
+- **Dependencies:** M12 (hard — the project copies the Order's one-time scope and the contract's entitlements).
 - **Acceptance:** double handover is a stable visible conflict; project scope unaffected by later quote/catalog edits; partner access boundaries expressed in service contracts and boundary-tested against declared actors (real access validation deferred to the Spine, stated in the evidence).
 - **Agent executes:** everything code; **human approves:** merges, partner agreements (commercial commitments).
 
-### M13 — Delivery Economics + Acceptance
+### M14 — Delivery Economics & Customer Acceptance
 
 - **Outcome:** delivery has budget, actuals, margin, governed change and customer acceptance.
 - **Deliverables:** TimeEntry/Expense; budget + forecast-vs-actual margin (per currency); Risk/Issue; ChangeRequest flow (impact → human approval → versioned scope); CustomerAcceptance flow; BillingMilestone eligibility as managed state; skill `build-change-request-flow`.
-- **Dependencies:** M12.
+- **Dependencies:** M13.
 - **Acceptance:** margin math proven against fixtures (integer minor units, no float); acceptance/billable state unreachable via CRUD; change approval boundary-tested (agent actor rejected); scope versions preserve history.
 - **Agent executes:** everything code; **human approves:** merges, change approvals and acceptance decisions by design.
 
-### M14 — Service Operations v1
+### M15 — Service Operations & Customer Success
 
 - **Outcome:** post-go-live obligations are contractual records with deterministic SLAs and governed support.
 - **Deliverables:** ServiceContract/Entitlement/SLA (SLA targets versioned like policies); SupportCase/ServiceRequest/Incident/Escalation; CS handover assignment; renewal/upsell signal connection back to the pipeline; skills `configure-service-contract`, `build-support-sla`.
-- **Dependencies:** M13 (acceptance/billing precede service activation).
+- **Dependencies:** M14 (acceptance/billing precede service activation). Renewal *signals* additionally need the scheduler (`JOBS_AND_OUTBOX.md`).
 - **Acceptance:** SLA evaluation is deterministic and reproducible per version; escalation approval points human-only; a contract nearing expiry emits a deterministic renewal signal consumed by the sales side.
 - **Agent executes:** everything code; **human approves:** merges, SLA commitments to real customers.
 
-### M15 — Analytics Studio v1
+### M16 — Analytics Studio v1
 
 - **Outcome:** trusted metrics and dashboards compiled safely from semantic definitions — no agent-generated raw SQL surface.
 - **Deliverables:** SemanticModel/MetricDefinition/DimensionDefinition/Dataset; Report/Dashboard/Widget/SavedView with versions + rollback; safe query compiler (parameterized, bounded, permission hooks at the query boundary); metric correctness tests in `npm run verify`; skills `build-revenue-dashboard`, `build-delivery-margin-dashboard`.
-- **Dependencies:** M8 for pipeline metrics; each additional domain's metrics land as its milestone lands. Role-aware results gated by the Spine.
+- **Dependencies:** M8 for pipeline metrics; each additional domain's metrics land as its milestone lands. **Recurring-revenue metrics (MRR/ARR/TCV) depend on M12** — they cannot be derived from M10/M11 grouped totals (`CONTRACT_SUBSCRIPTION_RENEWAL.md`). Role-aware results gated by the Spine.
 - **Acceptance:** every shipped metric has a fixture with a known-correct expected result; no public surface accepts free-form SQL (probe rejected); dashboard rollback proof; compiled queries inspectable.
 - **Agent executes:** everything code; **human approves:** merges, publishing dashboards to real users once the Spine exists.
+
+## Parallel platform track
+
+The product milestones above are one lane. These run **alongside** them and are not gated by domain progress. Each is design-only today unless `docs/PROJECT_STATUS.md` says otherwise.
+
+```text
+domain package boundary      ADR-018 — staged, behavior-preserving extraction
+create-project CLI           Phase 5
+PostgreSQL                   Phase 6 (Production Spine)
+auth / tenancy / RBAC        Phase 6 (Production Spine)
+Jobs / durable outbox        JOBS_AND_OUTBOX.md
+Integration Runtime          INTEGRATION_RUNTIME.md
+Data Governance              DATA_GOVERNANCE.md
+Design-to-CRM                DESIGN_TO_CRM.md
+Agent CRM Cloud              AGENT_CRM_CLOUD.md + CLOUD_JTBD.md
+```
+
+Dependencies and what can genuinely run in parallel:
+
+| Track | Depends on | Runs in parallel with | Gates |
+|---|---|---|---|
+| Domain package boundary | nothing (ADR-018 is accepted) | every product milestone | plugin authorship without core patches |
+| create-project CLI | the framework surface as it stands | everything | first-run experience, benchmark scenarios |
+| PostgreSQL | nothing technically; the deterministic storage boundary already exists | everything | production storage, the conformance suite |
+| Auth / tenancy / RBAC | PostgreSQL is *not* a prerequisite, but they ship together as the Spine | everything | **every** multi-user, remote or portal claim; role-aware anything |
+| Jobs / durable outbox | nothing; a database-backed queue works on the current boundary | everything | renewal scheduling (M12+), SLA timers (M15), reminders, provider sync, unattended follow-up |
+| Integration Runtime | Jobs/outbox, then secret management | product milestones | every **real** provider adapter |
+| Data Governance | tenancy for the tenant-boundary parts; the rest is independent | everything | any deployment holding real personal data |
+| Design-to-CRM | the generated Admin (done) | everything | the North Star "design reference → working CRM" claim |
+| Agent CRM Cloud | the Production Spine | product milestones | managed deployment; nothing else |
+
+Two consequences worth stating plainly: **a Cloud release serving an M11-era CRM is legitimate** — Cloud waits for the Spine, not for Analytics; and **Jobs/outbox is on the critical path for more JTBDs than any single domain milestone**, because renewal, SLA, reminders and unattended follow-up all reduce to "do something later, durably".
 
 ---
 

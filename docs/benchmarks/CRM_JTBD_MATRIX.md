@@ -169,7 +169,7 @@ The four product workstreams (`docs/strategy/REVENUE_OPERATIONS.md`, `DELIVERY_S
 
 **Evidence (CO-01/03, and the partial parts of CO-02/04)**: `tests/commercial-e2e.test.js` (composite catalog sync + idempotency + whole-offer revisioning with historical quote evidence byte-identical after tier/price changes, mixed-recurrence quotes with grouped one-time/monthly/annual totals, volume and graduated breakdowns, unsupported-offer refusal, optimistic draft revisions, immutable version + component + total rows, read-only CRUD matrix across all fourteen commercial modules, human/agent approval boundary, concurrent submit and concurrent decision, two-connection draft race with no lost update, submission fault injection with full rollback, provider failure/timeout/invalid/bad-tier payloads with no partial catalog, policy-config drift stopping the boot, restart persistence, 520-row exact reads, hostile inputs and forged-amount rejection), `tests/commercial-contract.test.js` (provider/policy validation, fingerprint drift, tier-schedule validation matrix, volume/graduated boundary math at 1/10/11/20/100/101, flat-fee-charged-once, grouped totals, overflow/fraction/string/unsafe money inputs), `tests/admin-quotes.test.js` (component and tier rendering, grouped period totals with no ARR/MRR/TCV, lifecycle-dependent controls, server-authoritative amounts, action payloads, XSS-as-text, route parsing), `examples/starters/b2b-lead-qualification/install.mjs` (composite offer quote, mixed periods, auto-approve and human-approval paths, tier change with unchanged history).
 
-### Delivery & Service (target: M12–M14)
+### Delivery & Service (target: M13–M15)
 
 | ID | Job | Status | Notes |
 |---|---|---|---|
@@ -186,7 +186,7 @@ The four product workstreams (`docs/strategy/REVENUE_OPERATIONS.md`, `DELIVERY_S
 | JTBD-DS-11 | Activate a Service Contract with Entitlements and SLA | **not supported** | no service primitives |
 | JTBD-DS-12 | Manage support cases and escalation | **not supported** | no case/escalation primitives |
 
-### Analytics (target: M15)
+### Analytics (target: M16)
 
 | ID | Job | Status | Notes |
 |---|---|---|---|
@@ -195,6 +195,78 @@ The four product workstreams (`docs/strategy/REVENUE_OPERATIONS.md`, `DELIVERY_S
 | JTBD-AN-03 | Create a role-aware dashboard | **not supported** | requires RBAC at the query boundary — gated by the Production Spine |
 | JTBD-AN-04 | Version and roll back a dashboard | **not supported** | no dashboard-version primitives |
 | JTBD-AN-05 | Validate metric correctness against fixtures | **not supported** | no metric test harness |
+
+### Contract & Subscription (target: M12 — `CONTRACT_SUBSCRIPTION_RENEWAL.md`)
+
+The layer between the immutable Order (M11) and Delivery/Service. **No primitive exists.**
+
+| ID | Job | Status | Notes |
+|---|---|---|---|
+| JTBD-CS-01 | Activate a commercial contract from a signed Order | **not supported** | no contract primitives; the Order exists and is independently readable (M11), which is the input |
+| JTBD-CS-02 | Activate a subscription with lines and an initial term | **not supported** | no subscription/term primitives |
+| JTBD-CS-03 | Amend seats or quantity on a live subscription | **not supported** | no amendment primitives |
+| JTBD-CS-04 | Record an expansion or contraction, classified at the time of change | **not supported** | no amendment classification |
+| JTBD-CS-05 | Calculate MRR, ARR and TCV from real contract data | **not supported** | deliberately impossible today — M10/M11 grouped totals are one quote's period sums, not recurring revenue; needs a term, an active subscription and a stated normalization policy |
+| JTBD-CS-06 | Schedule a renewal ahead of term end | **not supported** | needs both this layer and a scheduler (`JOBS_AND_OUTBOX.md`) |
+| JTBD-CS-07 | Create a renewal opportunity from an expiring subscription | **not supported** | needs CS-06 |
+| JTBD-CS-08 | Apply a versioned price-uplift policy at renewal | **not supported** | the versioned-policy mechanism exists (ADR-015/016); the renewal domain does not |
+| JTBD-CS-09 | Cancel or non-renew with an audited reason | **not supported** | no cancellation primitives |
+| JTBD-CS-10 | Read a complete amendment history | **not supported** | no amendment history |
+
+### Data operations (no milestone assigned)
+
+The everyday jobs that decide whether a CRM is usable at all. **None is implemented**, and none has a milestone yet — which is itself a finding.
+
+| ID | Job | Status | Notes |
+|---|---|---|---|
+| JTBD-DO-01 | Import records from CSV | **not supported** | no import path; records are created one at a time through services or actions |
+| JTBD-DO-02 | Detect duplicates on import or entry | **not supported** | unique constraints exist per field; no matching or scoring |
+| JTBD-DO-03 | Merge two Companies or Contacts | **not supported** | no merge primitive; references would have to be re-pointed and evidence preserved |
+| JTBD-DO-04 | Export records | **not supported** | no export endpoint; `list` is page-bounded by design |
+| JTBD-DO-05 | Bulk update a set of records | **not supported** | every mutation is single-record |
+| JTBD-DO-06 | Save and share a filtered view | **not supported** | no saved-view primitive |
+| JTBD-DO-07 | Search across modules | **not supported** | no global search; exact indexed lookups are per-module |
+| JTBD-DO-08 | See a unified activity timeline for a record | **not supported** | audit and trace exist per record but there is no Activity model or timeline view |
+| JTBD-DO-09 | Attach notes or files to a record | **not supported** | no note or attachment primitive |
+
+### Communications (no milestone assigned)
+
+| ID | Job | Status | Notes |
+|---|---|---|---|
+| JTBD-CM-01 | Sync email with CRM records | **not supported** | no email provider; needs the Integration Runtime |
+| JTBD-CM-02 | Sync calendar events | **not supported** | no calendar provider |
+| JTBD-CM-03 | Log meetings and calls | **not supported** | no Activity model |
+| JTBD-CM-04 | Schedule and track a follow-up | **partially supported** | qualification creates exactly one follow-up Task with a deterministic source key (M6); there is no scheduler, reminder or task engine — the same limit JTBD-07 states |
+| JTBD-CM-05 | Honor unsubscribe and communication preferences | **not supported** | no preference or suppression model (`DATA_GOVERNANCE.md`) |
+
+### Data governance (no milestone assigned — `DATA_GOVERNANCE.md`)
+
+| ID | Job | Status | Notes |
+|---|---|---|---|
+| JTBD-DG-01 | Record consent and lawful basis | **not supported** | no consent primitive |
+| JTBD-DG-02 | Honor an opt-out across outbound paths | **not supported** | no outbound paths and no suppression list |
+| JTBD-DG-03 | Export everything held about a subject | **not supported** | no subject-access path |
+| JTBD-DG-04 | Anonymize or delete a subject while preserving immutable evidence | **not supported** | the hardest design in the track: commercial evidence is deliberately immutable |
+| JTBD-DG-05 | Apply a retention policy and evidence that it ran | **not supported** | needs the scheduler |
+| JTBD-DG-06 | Inspect what was shared with which provider | **not supported** | M9 records inbound provenance only |
+| JTBD-DG-07 | Restrict sensitive fields by role | **not supported** | needs RBAC |
+| JTBD-DG-08 | Prove a deletion request completed | **not supported** | needs DG-04 |
+
+### Cloud operations (design only — `CLOUD_JTBD.md`)
+
+All fifteen operator jobs (CL-01…CL-15) are **not supported**: no control plane, deployment, account or billing code exists, and Cloud is gated on the Production Spine. Actors, triggers, acceptance scenarios and approval boundaries are specified in `CLOUD_JTBD.md`.
+
+### Design-to-CRM (design only — `DESIGN_TO_CRM.md`)
+
+| ID | Job | Status | Notes |
+|---|---|---|---|
+| JTBD-DC-01 | Apply a brand's colors and typography | **not supported** | one stylesheet, no token layer |
+| JTBD-DC-02 | Choose and group Admin navigation | **not supported** | navigation is derived from module metadata |
+| JTBD-DC-03 | Control field order, sections and responsive layout | **not supported** | layout is generated from field order in the manifest |
+| JTBD-DC-04 | Replace a component without forking the Admin | **partially supported** | the ADR-009 override seam exists and carries the pipeline board and the quote/signature view — but it is an internal seam with no declared contract, registry or plugin path |
+| JTBD-DC-05 | Generate a CRM UI from a Figma file or screenshot | **not supported** | pixel-perfect generation is explicitly not claimed |
+| JTBD-DC-06 | Prove the UI still matches its design after a change | **not supported** | no visual regression; browser tests are not in CI |
+| JTBD-DC-07 | Meet a stated accessibility bar | **not supported** | no automated checks |
 
 **Anti-inflation rule:** none of the broad JTBDs above may be marked *validated end to end* because an isolated constituent primitive lands. A row moves only when the *whole job* is proven by automated evidence — the same standard every existing validated row met.
 
@@ -207,4 +279,8 @@ The four product workstreams (`docs/strategy/REVENUE_OPERATIONS.md`, `DELIVERY_S
 
 This matrix guides roadmap prioritization: the largest gaps blocking common CRM adoption are a reusable Activity/Task engine with scheduling (JTBD-07), generated workflows/approvals for custom objects (JTBD-06), and the auth/tenancy/RBAC prerequisite (JTBD-15).
 
-The workstream sections chart the M9–M15 roadmap. Commercial Operations (M10) is now implemented for the local slice: JTBD-CO-01/03 **validated end to end**, CO-02 partial (fixture provider only — no real external catalog), CO-04 partial (human boundary validated, secure roles not), CO-05/06/07 still **not supported** (Milestone 11). Lead Intelligence (M9) is implemented for the local slice: JTBD-LI-01/02/04/07 **validated end to end** (fixture provider, explainable versioned scoring, deterministic routing, persisted version fingerprints — ADR-015), LI-03/05/08/09 partial, LI-06 still not supported. The CO/DS/AN sections remain all **not supported** except JTBD-CO-04 and JTBD-DS-01, which inherit *partial* status from the validated approval and workflow primitives. The Production Spine (JTBD-15) remains the hard gate for every job involving real external or role-scoped users — including manual manager reassignment.
+The workstream sections chart the M9–M16 roadmap (corrected at the Platform Alignment Gate: M12 is Order Activation & Subscription, and Delivery/Service/Analytics shift by one — `EXECUTION_ROADMAP.md`). Commercial Operations (M10) is now implemented for the local slice: JTBD-CO-01/03 **validated end to end**, CO-02 partial (fixture provider only — no real external catalog), CO-04 partial (human boundary validated, secure roles not), CO-05/06/07 still **not supported** (Milestone 11). Lead Intelligence (M9) is implemented for the local slice: JTBD-LI-01/02/04/07 **validated end to end** (fixture provider, explainable versioned scoring, deterministic routing, persisted version fingerprints — ADR-015), LI-03/05/08/09 partial, LI-06 still not supported. The CO/DS/AN sections remain all **not supported** except JTBD-CO-04 and JTBD-DS-01, which inherit *partial* status from the validated approval and workflow primitives. Signature and Order (M11) is implemented for the local slice: JTBD-CO-07 **validated end to end**, CO-05/CO-06 partial (fixture provider, test-only webhook key, provider-reported artifact hash — ADR-017).
+
+The Production Spine (JTBD-15) remains the hard gate for every job involving real external or role-scoped users — including manual manager reassignment.
+
+**Six sections added at the Platform Alignment Gate** — Contract & Subscription, Data operations, Communications, Data governance, Cloud operations and Design-to-CRM — are **entirely `not supported`** except two rows that inherit *partial* status from proven primitives (JTBD-CM-04, the single deterministic follow-up Task; JTBD-DC-04, the Admin override seam). Data operations is the most uncomfortable of them: CSV import, dedupe, merge, export, bulk edit, saved views, global search and an activity timeline are table stakes in every commercial CRM and none of them has a milestone. That is recorded here deliberately rather than left implicit.
