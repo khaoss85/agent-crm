@@ -250,7 +250,10 @@ subscriptions and obligations — in `packages/contracts/` without adding a
 domain concept to core. It needed exactly **two** generic runtime additions,
 both of which pass the core budget rule because they name no domain:
 
-**1. A domain registry seam (`packages/core/src/domain-registry.js`).** A
+**1. A domain registry seam (`packages/core/src/domain-registry.js`).**
+*Superseded by addendum 3: the file is now
+`packages/core/src/package-registry.js` and the field is `packageContract`.
+The paragraph below records what Milestone 12 shipped.* A
 domain package hands the application a plain declaration —
 `{name, domainContract: 1, label, actions[], policies[{kind, definition}],
 metadata()}` — and the runtime does what it already does for every other
