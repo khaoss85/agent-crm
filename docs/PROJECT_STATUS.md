@@ -16,12 +16,12 @@ Generated: **2026-08-06**.
 |---|---|
 | Latest merged milestone | **M12 — Contract & Subscription Activation** (ADR-018 + addenda 1–2), the first domain package |
 | Main SHA at generation | `97a37fe` (merge of PR #16) |
-| Tests on clean main | **249 passing, 0 failing** (`npm run verify` from a fresh clone); **270 passing** on the open M13 branch |
+| Tests on clean main | **249 passing, 0 failing** (`npm run verify` from a fresh clone); **273 passing** on the open M13 branch (after the adversarial review) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 27/27 in real Chromium, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | PR #17 `feat: add package-native delivery handover` (M13 — awaiting adversarial review and human merge) |
+| Open PRs | PR #17 `feat: add package-native delivery handover` (M13 — adversarially reviewed and corrected, awaiting human merge) |
 
 ## Completed functional path
 
