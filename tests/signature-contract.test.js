@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 import {
   ENVELOPE_STATES,
   MAX_SIGNERS,
   SignatureRegistries,
   TERMINAL_ENVELOPE_STATES,
+  allowedTransitions,
+  assertProviderEnvelopeMatches,
   canTransition,
-  envelopeRank,
   hmacSignatureHeaders,
   normalizeProviderArtifact,
   normalizeProviderEnvelope,
@@ -15,7 +17,7 @@ import {
   validateSignatureProvider,
   verifyHmacSignature,
 } from '../packages/core/src/signature-registry.js';
-import { normalizeSigners } from '../packages/core/src/signature-operations.js';
+import { byteOrder, canonicalDocument, canonicalJson, normalizeSigners } from '../packages/core/src/signature-operations.js';
 import { validateActionInput } from '../packages/core/src/action-runtime.js';
 import { validateActionDefinition } from '../packages/core/src/action-registry.js';
 import { freezePhaseValue, withExternalTimeout } from '../packages/core/src/external-operation.js';
@@ -76,30 +78,90 @@ test('the registry is Map-backed, unique per identity and fingerprinted', () => 
   assert.equal(JSON.stringify(metadata).includes('function'), false);
 });
 
-test('envelope transitions are monotonic and terminal states never regress', () => {
-  assert.ok(canTransition('preparing', 'sent'));
-  assert.ok(canTransition('preparing', 'failed'));
-  assert.ok(canTransition('failed', 'sent'), 'a failed local finalization is recoverable by reconciliation');
-  assert.ok(canTransition('failed', 'completed'));
-  assert.ok(canTransition('sent', 'delivered'));
-  assert.ok(canTransition('sent', 'completed'), 'a completion may arrive before delivery');
-  assert.ok(canTransition('delivered', 'declined'));
+test('envelope transitions follow an explicit table, never a rank comparison', () => {
+  // The published table IS the contract.
+  assert.deepEqual([...allowedTransitions('preparing')], ['failed', 'sent', 'delivered', 'completed', 'declined', 'voided']);
+  assert.deepEqual([...allowedTransitions('failed')], ['sent', 'delivered', 'completed', 'declined', 'voided']);
+  assert.deepEqual([...allowedTransitions('sent')], ['delivered', 'completed', 'declined', 'voided']);
+  assert.deepEqual([...allowedTransitions('delivered')], ['completed', 'declined', 'voided']);
+  for (const terminal of TERMINAL_ENVELOPE_STATES) assert.deepEqual([...allowedTransitions(terminal)], []);
+  refuses(() => allowedTransitions('nonsense'), /Unknown envelope state/);
 
-  // Never backwards.
-  assert.equal(canTransition('delivered', 'sent'), false);
-  assert.equal(canTransition('sent', 'preparing'), false);
-  assert.equal(canTransition('sent', 'sent'), false, 'a duplicate never re-applies');
-  // Terminal is terminal, in every direction.
-  for (const terminal of TERMINAL_ENVELOPE_STATES) {
-    for (const next of ENVELOPE_STATES) {
-      assert.equal(canTransition(terminal, next), false, `${terminal} → ${next}`);
-    }
+  // The exact matrix the review requires, asserted pair by pair.
+  const expected = [
+    ['sent', 'delivered', true], ['delivered', 'completed', true], ['sent', 'completed', true],
+    ['sent', 'declined', true], ['sent', 'voided', true], ['delivered', 'declined', true],
+    ['failed', 'sent', true], ['failed', 'completed', true], ['preparing', 'failed', true],
+    ['preparing', 'completed', true],
+    // Branching terminals are NOT ordered relative to each other: a rank
+    // comparison would call these equal, and the table refuses them.
+    ['completed', 'declined', false], ['declined', 'completed', false],
+    ['completed', 'voided', false], ['voided', 'completed', false],
+    ['declined', 'voided', false], ['voided', 'declined', false],
+    ['completed', 'failed', false], ['declined', 'failed', false],
+    // Never backwards, never a self-transition, never into a local-only state.
+    ['delivered', 'sent', false], ['sent', 'preparing', false], ['sent', 'sent', false],
+    ['delivered', 'delivered', false], ['completed', 'completed', false],
+    ['sent', 'failed', false], ['delivered', 'failed', false], ['failed', 'preparing', false],
+    ['sent', 'nonsense', false], ['nonsense', 'sent', false],
+  ];
+  for (const [from, to, allowed] of expected) {
+    assert.equal(canTransition(from, to), allowed, `${from} → ${to} should be ${allowed}`);
   }
-  assert.equal(canTransition('completed', 'declined'), false);
-  assert.equal(canTransition('declined', 'completed'), false);
-  assert.equal(canTransition('completed', 'failed'), false, 'no action may un-complete an envelope');
-  assert.equal(canTransition('sent', 'nonsense'), false);
-  refuses(() => envelopeRank('nonsense'), /Unknown envelope state/);
+});
+
+test('a provider envelope must prove it is ours, not merely answer the key', () => {
+  const local = { documentHash: 'a'.repeat(64), signerKeys: ['s1', 's2'] };
+  const ours = { providerEnvelopeId: 'env_1', documentHash: 'a'.repeat(64), signers: [{ signerKey: 's2' }, { signerKey: 's1' }] };
+  assert.equal(assertProviderEnvelopeMatches(local, ours).providerEnvelopeId, 'env_1');
+
+  // A different signed document behind the same idempotency key.
+  refuses(
+    () => assertProviderEnvelopeMatches(local, { ...ours, documentHash: 'b'.repeat(64) }),
+    /does not match this signature request \(documentHash\)/,
+  );
+  // A different signer set, in either direction.
+  refuses(() => assertProviderEnvelopeMatches(local, { ...ours, signers: [{ signerKey: 's1' }] }), /\(signers\)/);
+  refuses(() => assertProviderEnvelopeMatches(local, { ...ours, signers: [{ signerKey: 's1' }, { signerKey: 's3' }] }), /\(signers\)/);
+  // A foreign provider envelope id when one was already known.
+  refuses(
+    () => assertProviderEnvelopeMatches(local, ours, { expectedProviderEnvelopeId: 'env_other' }),
+    /\(providerEnvelopeId\)/,
+  );
+  // A provider that echoes neither cannot be checked on them — the weaker
+  // guarantee is accepted deliberately and documented, not silently assumed.
+  assert.equal(assertProviderEnvelopeMatches(local, { providerEnvelopeId: 'env_1', documentHash: null, signers: [] }).providerEnvelopeId, 'env_1');
+});
+
+test('the document package canonicalizes to stable bytes, locale-independently', () => {
+  // Key order never changes the bytes; array order always does.
+  assert.equal(canonicalJson({ b: 1, a: 2 }), '{"a":2,"b":1}');
+  assert.equal(canonicalJson({ a: 2, b: 1 }), canonicalJson({ b: 1, a: 2 }));
+  assert.notEqual(canonicalJson([1, 2]), canonicalJson([2, 1]));
+  assert.equal(canonicalJson({ n: null, s: 'x', t: true, i: 10 }), '{"i":10,"n":null,"s":"x","t":true}');
+  // Ordering is by code unit, never by locale collation.
+  assert.equal(byteOrder('Z', 'a'), -1);
+  assert.equal(canonicalJson({ Z: 1, a: 2 }), '{"Z":1,"a":2}');
+  // Hostile and Unicode content survives as text, escaped by JSON.stringify.
+  const hostile = { k: '<script>${x}`\u2028\u0000</script>' };
+  assert.equal(JSON.parse(canonicalJson(hostile)).k, hostile.k);
+  // CRLF vs LF is a real byte difference and must change the hash.
+  assert.notEqual(canonicalDocument({ a: 'x\r\n' }).documentHash, canonicalDocument({ a: 'x\n' }).documentHash);
+  // Precomposed vs decomposed Unicode are different bytes: the hash covers the
+  // bytes sent, so no normalization is silently applied.
+  assert.notEqual(canonicalDocument({ a: '\u00e9' }).documentHash, canonicalDocument({ a: 'e\u0301' }).documentHash);
+  // Omitted and explicitly-null fields are the same document.
+  assert.equal(canonicalJson({ a: 1, b: undefined }), '{"a":1,"b":null}');
+  // Numbers are never coerced to strings.
+  assert.notEqual(canonicalDocument({ a: 1 }).documentHash, canonicalDocument({ a: '1' }).documentHash);
+  // The hash is exactly SHA-256 of the emitted bytes.
+  const { documentBytes, documentHash } = canonicalDocument({ z: 1, a: [{ b: 2, a: 1 }] });
+  assert.equal(documentBytes, '{"a":[{"a":1,"b":2}],"z":1}');
+  assert.equal(documentHash, createHash('sha256').update(documentBytes, 'utf8').digest('hex'));
+  // Non-JSON-safe input is refused, never silently coerced.
+  refuses(() => canonicalJson({ when: new Date() }), /non-plain object/);
+  refuses(() => canonicalJson({ n: Number.NaN }), /non-finite/);
+  refuses(() => canonicalDocument({ big: 'x'.repeat(250_000) }), /exceeds the storable bound/);
 });
 
 test('webhook verification is constant-time, replay-bounded and fail-closed', () => {
@@ -127,12 +189,38 @@ test('webhook verification is constant-time, replay-bounded and fail-closed', ()
   assert.equal(verifyHmacSignature({ rawBody: body, signature: future['x-signature-256'], timestamp: future['x-signature-timestamp'], key, nowMs }).ok, false);
   // The timestamp is bound INTO the MAC: swapping it invalidates the signature.
   assert.equal(verifyHmacSignature({ rawBody: body, signature: headers['x-signature-256'], timestamp: String(nowSeconds - 1), key, nowMs }).ok, false);
+
+  // Verification is over BYTES: a Buffer and its string form agree, and a body
+  // containing invalid UTF-8 verifies as itself rather than as its lossy
+  // replacement-character decoding.
+  const bytes = Buffer.from(body, 'utf8');
+  assert.equal(verifyHmacSignature({ rawBody: bytes, signature: headers['x-signature-256'], timestamp: headers['x-signature-timestamp'], key, nowMs }).ok, true);
+  const invalidUtf8 = Buffer.from([0x7b, 0x22, 0x61, 0x22, 0x3a, 0x22, 0xff, 0xfe, 0x22, 0x7d]);
+  const invalidHeaders = hmacSignatureHeaders(invalidUtf8, key, nowSeconds);
+  assert.equal(verifyHmacSignature({ rawBody: invalidUtf8, signature: invalidHeaders['x-signature-256'], timestamp: invalidHeaders['x-signature-timestamp'], key, nowMs }).ok, true);
+  assert.equal(
+    verifyHmacSignature({ rawBody: invalidUtf8.toString('utf8'), signature: invalidHeaders['x-signature-256'], timestamp: invalidHeaders['x-signature-timestamp'], key, nowMs }).ok,
+    false,
+    'a lossy decode must NOT verify — which is why the raw bytes travel end to end',
+  );
+  // Exactly at the replay boundary the event is still accepted; one second
+  // past it, it is not.
+  const edge = hmacSignatureHeaders(body, key, nowSeconds - 300);
+  assert.equal(verifyHmacSignature({ rawBody: body, signature: edge['x-signature-256'], timestamp: edge['x-signature-timestamp'], key, nowMs, toleranceSeconds: 300 }).ok, true);
+  const pastEdge = hmacSignatureHeaders(body, key, nowSeconds - 301);
+  assert.equal(verifyHmacSignature({ rawBody: body, signature: pastEdge['x-signature-256'], timestamp: pastEdge['x-signature-timestamp'], key, nowMs, toleranceSeconds: 300 }).ok, false);
+  // A duplicated header arrives joined by Node as "a, b" and cannot match.
+  assert.equal(verifyHmacSignature({ rawBody: body, signature: `${headers['x-signature-256']}, ${headers['x-signature-256']}`, timestamp: headers['x-signature-timestamp'], key, nowMs }).ok, false);
+  // A 15-digit timestamp cannot overflow into an accepted window.
+  assert.equal(verifyHmacSignature({ rawBody: body, signature: headers['x-signature-256'], timestamp: '999999999999999', key, nowMs }).ok, false);
 });
 
 test('provider results are normalized into the bounded contract or refused', () => {
-  const good = normalizeProviderEnvelope({ providerEnvelopeId: 'env_1', status: 'sent', sequence: 2, signers: [{ signerKey: 's1', status: 'pending' }] });
+  const good = normalizeProviderEnvelope({ providerEnvelopeId: 'env_1', status: 'sent', sequence: 2, documentHash: 'a'.repeat(64), signers: [{ signerKey: 's1', status: 'pending' }] });
   assert.equal(good.status, 'sent');
   assert.equal(good.signers[0].signerKey, 's1');
+  assert.equal(good.documentHash, 'a'.repeat(64));
+  assert.equal(normalizeProviderEnvelope({ providerEnvelopeId: 'env_1', status: 'sent' }).documentHash, null);
 
   // Local-only states can never be asserted by a provider.
   refuses(() => normalizeProviderEnvelope({ providerEnvelopeId: 'env_1', status: 'preparing' }), /unsupported envelope status/);
@@ -156,6 +244,8 @@ test('provider results are normalized into the bounded contract or refused', () 
   assert.equal(artifact.artifactHash, null);
   refuses(() => normalizeProviderArtifact({ mimeType: 'application/json' }), /artifactId/);
   refuses(() => normalizeProviderArtifact({ artifactId: 'art_1', mimeType: 'application/json', sizeBytes: -1 }), /sizeBytes/);
+  refuses(() => normalizeProviderArtifact({ artifactId: 'art_1', mimeType: 'application/json', sizeBytes: Number.MAX_SAFE_INTEGER }), /sizeBytes/);
+  refuses(() => normalizeProviderArtifact({ artifactId: 'art_1', mimeType: 'application/json', storageRef: 'x'.repeat(400) }), /storageRef/);
 });
 
 test('signer lists are bounded, canonical and de-duplicated', () => {

@@ -175,20 +175,31 @@ test('a completed envelope renders evidence and the order, with no edit controls
   assert.equal(mount.findAll('select').length, 0);
 });
 
-test('a failed envelope offers reconciliation, never a second signature request', async () => {
-  const failed = { ...ENVELOPE, status: 'failed', providerEnvelopeId: null, failureCode: 'PROVIDER_TIMEOUT', failurePhase: 'external' };
-  const client = stubClient({ envelopes: [failed], signers: [{ ...SIGNER, status: 'pending' }] });
+test('a failed envelope states its uncertainty honestly and offers reconciliation', async () => {
+  // Unknown outcome: the provider may or may not hold it.
+  const unknown = { ...ENVELOPE, status: 'failed', providerEnvelopeId: null, failureCode: 'PROVIDER_TIMEOUT', failurePhase: 'external' };
+  const client = stubClient({ envelopes: [unknown], signers: [{ ...SIGNER, status: 'pending' }] });
   const mount = await render(client);
-  const text = mount.textContent;
-
-  assert.ok(text.includes('The external phase failed (PROVIDER_TIMEOUT)'), text);
-  assert.ok(text.includes('may still hold this envelope'), 'the honest ambiguity is stated');
-  assert.ok(text.includes('reconcile it rather than requesting a second signature'));
+  assert.ok(mount.textContent.includes('The external phase failed (PROVIDER_TIMEOUT)'), mount.textContent);
+  assert.ok(mount.textContent.includes('is UNKNOWN'), 'an unknown provider outcome is never presented as known');
+  assert.ok(mount.textContent.includes('never request a second signature'));
   assert.equal(anyByClass(mount, 'signature-request'), null, 'no second send control is ever offered');
-
   await byClass(mount, 'div', 'signature-envelope').__reconcile();
-  const post = client.calls.find((call) => call.method === 'POST');
-  assert.equal(post.path, '/api/signature/envelopes/env1/reconcile');
+  assert.equal(client.calls.find((call) => call.method === 'POST').path, '/api/signature/envelopes/env1/reconcile');
+
+  // Known acceptance: only the local step after it failed.
+  const accepted = await render(stubClient({ envelopes: [{ ...unknown, providerEnvelopeId: 'env_abc123', failurePhase: 'finalize', failureCode: 'INJECTED' }] }));
+  assert.ok(accepted.textContent.includes('DID accept this envelope'), accepted.textContent);
+
+  // Known absence: the provider never received it, and M11 has no resend.
+  const absent = await render(stubClient({ envelopes: [{ ...unknown, failureCode: 'PROVIDER_ENVELOPE_ABSENT' }] }));
+  assert.ok(absent.textContent.includes('does not have this envelope'), absent.textContent);
+  assert.ok(absent.textContent.includes('cannot be sent again in this milestone'), 'the limitation is stated, not hidden');
+
+  // A terminal envelope offers no reconcile control at all: there is nothing
+  // left to reconcile, and the evidence is read-only.
+  const terminal = await render(stubClient({ envelopes: [ENVELOPE], signers: [SIGNER], artifacts: [ARTIFACT], orders: [ORDER], orderTotals: ORDER_TOTALS }));
+  assert.equal(terminal.findAll('button').length, 0, 'a completed envelope exposes no control');
 });
 
 test('provider and customer text renders as text, never as markup', async () => {
