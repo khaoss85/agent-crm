@@ -50,6 +50,16 @@
       "writable": "managed"
     },
     {
+      "name": "customerName",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "customerEmail",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
       "name": "currency",
       "type": "string",
       "writable": "managed"

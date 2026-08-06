@@ -53,7 +53,7 @@ export function createHttpServer(app, options = {}) {
         // payload must be checked as the exact bytes the provider signed, so
         // parsing-then-reserializing is not an option.
         const rawBody = writesBody && route.options?.rawBody
-          ? await readRawBody(request, route.options.maxBodyBytes ?? 64_000)
+          ? await readRawBody(request, route.options.maxBodyBytes ?? 65_536)
           : null;
         const body = writesBody && !route.options?.rawBody ? await readJson(request) : null;
         const result = await route.handler({
@@ -163,13 +163,13 @@ function buildRouter(app) {
     }
     return app.ingestSignatureEvent({
       provider: params.provider,
-      rawBody: rawBody ?? '',
+      rawBody: rawBody ?? Buffer.alloc(0),
       headers: safeSignatureHeaders(headers),
       // The webhook is not an authenticated CRM user: it is the provider
       // integration acting, and it is recorded as such.
       actor: { type: 'system', id: `signature:${params.provider}` },
     });
-  }, { rawBody: true, maxBodyBytes: 64_000 });
+  }, { rawBody: true, maxBodyBytes: 65_536 });
 
   // Explicit envelope reconciliation (ADR-017). No background scheduler ships
   // in this milestone: recovery is always an explicit, audited operation.
@@ -344,8 +344,9 @@ async function readJson(request) {
 
 /**
  * Read the exact request bytes for a signature-verified route, bounded. The
- * body is decoded as UTF-8 text but never parsed here: verification must see
- * what the provider signed.
+ * body is returned as a Buffer and never decoded or parsed here: a decode
+ * would replace invalid UTF-8 and the MAC must cover exactly the bytes the
+ * provider signed.
  * @param {import('node:http').IncomingMessage} request @param {number} maxBytes
  */
 async function readRawBody(request, maxBytes) {
@@ -358,7 +359,7 @@ async function readRawBody(request, maxBytes) {
     }
     chunks.push(chunk);
   }
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
 }
 
 /**

@@ -48,6 +48,11 @@
       "writable": "managed"
     },
     {
+      "name": "documentJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
       "name": "artifactHash",
       "type": "string",
       "writable": "managed"

@@ -32,36 +32,57 @@ const MAX_VERSION = 1_000_000;
 const MAX_TEXT = 500;
 const REQUIRED_HANDLERS = ['createEnvelope', 'getEnvelope', 'verifyEvent', 'getSignedArtifact'];
 
-/** Normalized envelope states, ordered by monotonic rank. */
+/** Normalized envelope states. Ordering between them is a TABLE, not a rank. */
 export const ENVELOPE_STATES = Object.freeze(['preparing', 'failed', 'sent', 'delivered', 'completed', 'declined', 'voided']);
 export const TERMINAL_ENVELOPE_STATES = Object.freeze(['completed', 'declined', 'voided']);
 export const SIGNER_STATES = Object.freeze(['pending', 'signed', 'declined']);
 export const MAX_SIGNERS = 5;
 
 /**
- * Monotonic rank. A transition applies only when the target ranks strictly
- * higher than the current state, and a terminal state never changes at all —
- * so a duplicate or out-of-order provider event can never regress an envelope.
- * `failed` ranks below `sent` on purpose: it is a local failure marker that
- * reconciliation is expected to move forward.
+ * The explicit allowed-transition table. Branching states (completed vs
+ * declined vs voided) are NOT ordered relative to each other, so a numeric
+ * rank cannot express them: `completed → declined` and `declined → completed`
+ * must both be impossible even though they would compare equal. The table is
+ * the contract, and it is what the documentation publishes.
+ *
+ *   preparing  the local intent exists; the provider may or may not have it
+ *   failed     a LOCAL phase failed; recoverable only through reconciliation
+ *   sent       the provider accepted the envelope
+ *   delivered  the provider reached the signers
+ *   completed  terminal — every signer signed
+ *   declined   terminal — a signer refused
+ *   voided     terminal — the envelope was cancelled at the provider
  */
-const RANK = Object.freeze({ preparing: 0, failed: 1, sent: 2, delivered: 3, completed: 4, declined: 4, voided: 4 });
+const ALLOWED_TRANSITIONS = Object.freeze({
+  // A provider truth observed by reconciliation may jump straight to any
+  // provider state, including a terminal one: the local intent simply had not
+  // learned it yet.
+  preparing: Object.freeze(['failed', 'sent', 'delivered', 'completed', 'declined', 'voided']),
+  failed: Object.freeze(['sent', 'delivered', 'completed', 'declined', 'voided']),
+  sent: Object.freeze(['delivered', 'completed', 'declined', 'voided']),
+  delivered: Object.freeze(['completed', 'declined', 'voided']),
+  completed: Object.freeze([]),
+  declined: Object.freeze([]),
+  voided: Object.freeze([]),
+});
 
-/** @param {string} state */
-export function envelopeRank(state) {
-  const rank = Object.prototype.hasOwnProperty.call(RANK, state) ? RANK[/** @type {keyof typeof RANK} */ (state)] : -1;
-  if (rank < 0) throw new ValidationError(`Unknown envelope state "${state}"`);
-  return rank;
+/** The states reachable from `state`, as published in the schema and docs. */
+export function allowedTransitions(state) {
+  if (!Object.prototype.hasOwnProperty.call(ALLOWED_TRANSITIONS, state)) {
+    throw new ValidationError(`Unknown envelope state "${state}"`);
+  }
+  return ALLOWED_TRANSITIONS[state];
 }
 
 /**
- * Decide whether `next` may be applied on top of `current`.
+ * Decide whether `next` may be applied on top of `current`, by table lookup —
+ * never by comparing ranks. Unknown states, self-transitions and every
+ * transition out of a terminal state are refused.
  * @param {string} current @param {string} next
  */
 export function canTransition(current, next) {
   if (!ENVELOPE_STATES.includes(current) || !ENVELOPE_STATES.includes(next)) return false;
-  if (TERMINAL_ENVELOPE_STATES.includes(current)) return false; // terminal is terminal
-  return envelopeRank(next) > envelopeRank(current);
+  return allowedTransitions(current).includes(next);
 }
 
 /** @param {string} label @param {any} definition */
@@ -105,12 +126,12 @@ function providerText(value, field, { optional = false, max = MAX_TEXT } = {}) {
 }
 
 /** @param {unknown} value @param {string} field */
-function providerInteger(value, field, { optional = false, min = 0 } = {}) {
+function providerInteger(value, field, { optional = false, min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
   if (value === undefined || value === null) {
     if (optional) return null;
     throw new AppError(`Signature provider returned no "${field}"`, { code: 'PROVIDER_INVALID', status: 502, details: { field } });
   }
-  if (!Number.isSafeInteger(value) || /** @type {number} */ (value) < min) {
+  if (!Number.isSafeInteger(value) || /** @type {number} */ (value) < min || /** @type {number} */ (value) > max) {
     throw new AppError(`Signature provider returned an invalid "${field}"`, { code: 'PROVIDER_INVALID', status: 502, details: { field } });
   }
   return /** @type {number} */ (value);
@@ -134,7 +155,43 @@ export function normalizeProviderEnvelope(raw) {
     sequence: providerInteger(value.sequence, 'sequence', { optional: true, min: 0 }) ?? 0,
     signers: normalizeProviderSigners(value.signers),
     completedAt: providerText(value.completedAt, 'completedAt', { optional: true, max: 40 }),
+    // Echoed identity: what the provider believes it is holding. Used to prove
+    // the envelope answering our idempotency key is genuinely ours.
+    documentHash: providerText(value.documentHash, 'documentHash', { optional: true, max: 128 }),
   };
+}
+
+/**
+ * An idempotency key is a lookup, not a proof of identity. Before a provider
+ * envelope is adopted it must agree with the local intent on the document that
+ * was signed and on the signer set. Anything else is a semantic mismatch and
+ * fails closed rather than binding a foreign envelope to a quote version.
+ *
+ * @param {{documentHash: string, signerKeys: string[]}} local
+ * @param {{providerEnvelopeId: string, documentHash: string | null, signers: Array<{signerKey: string}>}} provider
+ * @param {{expectedProviderEnvelopeId?: string | null}} [options]
+ */
+export function assertProviderEnvelopeMatches(local, provider, options = {}) {
+  const mismatch = (field, detail) => {
+    throw new AppError(
+      `The provider envelope does not match this signature request (${field})`,
+      { code: 'PROVIDER_ENVELOPE_MISMATCH', status: 409, details: { field, ...detail } },
+    );
+  };
+  if (options.expectedProviderEnvelopeId && provider.providerEnvelopeId !== options.expectedProviderEnvelopeId) {
+    mismatch('providerEnvelopeId', {});
+  }
+  // A provider that does not echo the document hash cannot be checked on it;
+  // that weaker guarantee is documented rather than silently assumed away.
+  if (provider.documentHash && provider.documentHash !== local.documentHash) mismatch('documentHash', {});
+  if (provider.signers.length > 0) {
+    const local_keys = [...local.signerKeys].sort();
+    const remote = provider.signers.map((signer) => signer.signerKey).sort();
+    if (local_keys.length !== remote.length || local_keys.some((key, index) => key !== remote[index])) {
+      mismatch('signers', { expected: local_keys.length, received: remote.length });
+    }
+  }
+  return provider;
 }
 
 /** @param {unknown} raw */
@@ -170,7 +227,7 @@ export function normalizeProviderArtifact(raw) {
     artifactId: providerText(value.artifactId, 'artifactId', { max: 200 }),
     artifactHash: providerText(value.artifactHash, 'artifactHash', { optional: true, max: 128 }),
     mimeType: providerText(value.mimeType, 'mimeType', { max: 100 }),
-    sizeBytes: providerInteger(value.sizeBytes, 'sizeBytes', { optional: true, min: 0 }),
+    sizeBytes: providerInteger(value.sizeBytes, 'sizeBytes', { optional: true, min: 0, max: 1_000_000_000_000 }),
     storageRef: providerText(value.storageRef, 'storageRef', { optional: true, max: 300 }),
     completedAt: providerText(value.completedAt, 'completedAt', { optional: true, max: 40 }),
   };
@@ -205,7 +262,11 @@ export function normalizeProviderEvent(raw) {
  * @param {{rawBody: string, signature: unknown, timestamp: unknown, key: string, toleranceSeconds?: number, nowMs?: number}} params
  */
 export function verifyHmacSignature(params) {
-  const { rawBody, key } = params;
+  const { key } = params;
+  // Bytes, not a decoded string: a body containing invalid UTF-8 would not
+  // survive a string round trip, and the MAC must cover exactly what the
+  // provider signed.
+  const rawBody = Buffer.isBuffer(params.rawBody) ? params.rawBody : Buffer.from(String(params.rawBody ?? ''), 'utf8');
   const tolerance = params.toleranceSeconds ?? 300;
   const nowMs = params.nowMs ?? Date.now();
   if (typeof params.signature !== 'string' || !/^[0-9a-f]{64}$/.test(params.signature)) {
@@ -218,7 +279,7 @@ export function verifyHmacSignature(params) {
   if (skewMs > tolerance * 1000) {
     return { ok: false, reason: 'timestamp outside the replay window' };
   }
-  const expected = createHmac('sha256', key).update(`${params.timestamp}.${rawBody}`).digest();
+  const expected = createHmac('sha256', key).update(Buffer.concat([Buffer.from(`${params.timestamp}.`, 'utf8'), rawBody])).digest();
   const provided = Buffer.from(params.signature, 'hex');
   if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
     return { ok: false, reason: 'signature mismatch' };
@@ -229,9 +290,10 @@ export function verifyHmacSignature(params) {
 /** Compute the header pair a fixture/test client must send. */
 export function hmacSignatureHeaders(rawBody, key, timestampSeconds) {
   const timestamp = String(timestampSeconds);
+  const body = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody), 'utf8');
   return {
     'x-signature-timestamp': timestamp,
-    'x-signature-256': createHmac('sha256', key).update(`${timestamp}.${rawBody}`).digest('hex'),
+    'x-signature-256': createHmac('sha256', key).update(Buffer.concat([Buffer.from(`${timestamp}.`, 'utf8'), body])).digest('hex'),
   };
 }
 
@@ -321,6 +383,9 @@ export class SignatureRegistries {
       signatureContract: 1,
       envelopeStates: [...ENVELOPE_STATES],
       terminalStates: [...TERMINAL_ENVELOPE_STATES],
+      allowedTransitions: Object.fromEntries(ENVELOPE_STATES.map((state) => [state, [...allowedTransitions(state)]])),
+      replayScope: 'provider + providerEventId; the payload fingerprint must match or the reuse is refused 409 EVENT_ID_CONFLICT',
+      artifactHash: 'provider-reported; agent-crm does not download or hash the artifact bytes and verifies no signature cryptographically',
       signerSemantics: 'all signers required; declared order is recorded, not sequentially gated; 1-5 signers; no conditional routing; signer identity assurance is not claimed',
       maxSigners: MAX_SIGNERS,
       humanApproval: 'request-signature requires actor.type === "user"; agent actors are refused 403 HUMAN_APPROVAL_REQUIRED',

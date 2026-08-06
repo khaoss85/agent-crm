@@ -74,6 +74,16 @@
       "writable": "managed"
     },
     {
+      "name": "partiesJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "documentJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
       "name": "signerCount",
       "type": "integer",
       "writable": "managed"

@@ -38,6 +38,11 @@
       "writable": "managed"
     },
     {
+      "name": "payloadFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
       "name": "envelopeId",
       "type": "string",
       "index": true,

@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { hmacSignatureHeaders, verifyHmacSignature } from '../../../packages/core/src/signature-registry.js';
 
 /**
@@ -29,6 +30,37 @@ const envelopes = new Map();
 const byProviderId = new Map();
 let eventCounter = 0;
 
+/**
+ * A real signature provider outlives the CRM process. When
+ * `AGENT_CRM_FIXTURE_SIGNATURE_STORE` names a file, the fixture keeps its
+ * envelopes there instead of only in memory, so a test can crash the CRM
+ * mid-operation and still find the envelope the "provider" accepted. Test and
+ * starter affordance only — it is never a datastore for anything real.
+ */
+const storePath = () => process.env.AGENT_CRM_FIXTURE_SIGNATURE_STORE ?? null;
+
+function loadStore() {
+  const path = storePath();
+  if (!path || !existsSync(path)) return;
+  try {
+    const saved = JSON.parse(readFileSync(path, 'utf8'));
+    envelopes.clear();
+    byProviderId.clear();
+    for (const envelope of saved.envelopes ?? []) {
+      envelopes.set(envelope.idempotencyKey, envelope);
+      byProviderId.set(envelope.providerEnvelopeId, envelope.idempotencyKey);
+    }
+  } catch {
+    // A corrupt fixture store is simply an empty provider.
+  }
+}
+
+function saveStore() {
+  const path = storePath();
+  if (!path) return;
+  writeFileSync(path, JSON.stringify({ envelopes: [...envelopes.values()] }));
+}
+
 /** Deterministic provider ids: same idempotency key → same envelope id. */
 function providerEnvelopeId(idempotencyKey) {
   return `env_${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 24)}`;
@@ -39,10 +71,12 @@ export function resetSignatureFixture() {
   envelopes.clear();
   byProviderId.clear();
   eventCounter = 0;
+  saveStore();
 }
 
 /** @param {string} key */
 function requireEnvelope(key) {
+  loadStore();
   const envelope = envelopes.get(key);
   if (!envelope) throw new Error(`fixture signature envelope not found: ${key}`);
   return envelope;
@@ -61,6 +95,7 @@ function advance(idempotencyKey, status, { signers } = {}) {
       decidedAt: '2026-08-05T12:00:00.000Z',
     }));
   }
+  saveStore();
   return envelope;
 }
 
@@ -93,7 +128,7 @@ export const signatureFixture = {
         decidedAt: status === 'completed' || status === 'declined' ? '2026-08-05T12:00:00.000Z' : null,
       })),
     };
-    const rawBody = JSON.stringify(payload);
+    const rawBody = options.rawBody ?? JSON.stringify(payload);
     const timestamp = options.timestampSeconds ?? Math.floor(Date.now() / 1000);
     const headers = options.headers ?? hmacSignatureHeaders(rawBody, TEST_ONLY_VERIFICATION_KEY, timestamp);
     return { rawBody, headers, payload };
@@ -114,11 +149,13 @@ export const fixtureSignatureProvider = {
     const idempotencyKey = String(input?.idempotencyKey ?? '');
     if (idempotencyKey === '') throw new Error('idempotencyKey is required');
     if (String(input?.documentHash ?? '') === '') throw new Error('documentHash is required');
+    if (String(input?.documentBytes ?? '') === '') throw new Error('documentBytes is required');
     // Deterministic failure paths, selected by a magic signer domain so a test
     // never needs a network, a clock or a second provider definition.
     const domains = (input.signers ?? []).map((signer) => String(signer.email ?? '').split('@')[1] ?? '');
     if (domains.includes('outage.example')) throw new Error('simulated signature provider outage');
     if (domains.includes('timeout.example')) return new Promise(() => {}); // never settles → timeout path
+    loadStore();
     const existing = envelopes.get(idempotencyKey);
     if (existing) return snapshot(existing);
     const envelope = {
@@ -132,11 +169,13 @@ export const fixtureSignatureProvider = {
     };
     envelopes.set(idempotencyKey, envelope);
     byProviderId.set(envelope.providerEnvelopeId, idempotencyKey);
+    saveStore();
     return snapshot(envelope);
   },
 
   /** Lookup by provider id or — for recovery — by idempotency key. */
   async getEnvelope(input) {
+    loadStore();
     const key = input?.providerEnvelopeId ? byProviderId.get(String(input.providerEnvelopeId)) : null;
     const envelope = envelopes.get(key ?? String(input?.idempotencyKey ?? ''));
     return envelope ? snapshot(envelope) : null;
@@ -155,9 +194,10 @@ export const fixtureSignatureProvider = {
       toleranceSeconds: Number(config?.replayToleranceSeconds ?? 300),
     });
     if (!verdict.ok) return { ok: false };
+    // Only AFTER the bytes are verified are they decoded and parsed.
     let payload;
     try {
-      payload = JSON.parse(rawBody);
+      payload = JSON.parse(Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody));
     } catch {
       return { ok: false };
     }
@@ -166,6 +206,7 @@ export const fixtureSignatureProvider = {
   },
 
   async getSignedArtifact({ providerEnvelopeId }) {
+    loadStore();
     const key = byProviderId.get(String(providerEnvelopeId));
     const envelope = key ? envelopes.get(key) : null;
     if (!envelope) throw new Error('unknown envelope');
@@ -188,6 +229,9 @@ function snapshot(envelope) {
     status: envelope.status,
     sequence: envelope.sequence,
     completedAt: envelope.completedAt,
+    // Echoed so the caller can prove this envelope is the one it asked for,
+    // rather than merely one that answered the same idempotency key.
+    documentHash: envelope.documentHash,
     signers: envelope.signers.map((signer) => ({ ...signer })),
   };
 }

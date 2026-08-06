@@ -1,12 +1,13 @@
 // @ts-check
 
+import { createHash } from 'node:crypto';
 import { AppError, NotFoundError, ValidationError, normalizeError } from './errors.js';
-import { computeDefinitionFingerprint } from './intelligence-registry.js';
 import { runExternalOperation, withExternalTimeout } from './external-operation.js';
 import { nowIso } from './time.js';
 import {
   MAX_SIGNERS,
   TERMINAL_ENVELOPE_STATES,
+  assertProviderEnvelopeMatches,
   canTransition,
   normalizeProviderArtifact,
   normalizeProviderEnvelope,
@@ -37,6 +38,50 @@ import {
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@.]+(\.[^\s@.]+)+$/;
 const MAX_TEXT = 200;
 export const DOCUMENT_FORMAT = 'application/vnd.agent-crm.quote-package+json';
+/** The document package a quote version can produce is small; bound it anyway. */
+const MAX_DOCUMENT_BYTES = 200_000;
+
+/** Deterministic, locale-independent string ordering for canonical output. */
+export function byteOrder(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Serialize a JSON-safe value to canonical bytes: object keys sorted by code
+ * unit, arrays in their given order, no whitespace. **The document hash covers
+ * exactly these bytes, and exactly these bytes are what the provider is sent**
+ * — never a re-serialization that could differ by key order or spacing.
+ * @param {unknown} value @param {string} [path]
+ */
+export function canonicalJson(value, path = '$') {
+  if (value === null) return 'null';
+  const type = typeof value;
+  if (type === 'string' || type === 'boolean') return JSON.stringify(value);
+  if (type === 'number') {
+    if (!Number.isFinite(value)) throw new ValidationError(`Cannot canonicalize a non-finite number at ${path}`);
+    return JSON.stringify(value);
+  }
+  if (value === undefined) return 'null';
+  if (type !== 'object') throw new ValidationError(`Cannot canonicalize a value of type ${type} at ${path}`);
+  if (Array.isArray(value)) {
+    return `[${value.map((item, index) => canonicalJson(item, `${path}[${index}]`)).join(',')}]`;
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    throw new ValidationError(`Cannot canonicalize a non-plain object at ${path}`);
+  }
+  const keys = Object.keys(/** @type {any} */ (value)).sort(byteOrder);
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(/** @type {any} */ (value)[key], `${path}.${key}`)}`).join(',')}}`;
+}
+
+/** The canonical bytes plus their SHA-256 — the pair that is signed. */
+export function canonicalDocument(document) {
+  const bytes = canonicalJson(document);
+  if (bytes.length > MAX_DOCUMENT_BYTES) {
+    throw new AppError('The document package exceeds the storable bound', { code: 'DOCUMENT_TOO_LARGE', status: 409 });
+  }
+  return { documentBytes: bytes, documentHash: createHash('sha256').update(bytes, 'utf8').digest('hex') };
+}
 
 /** @param {Record<string, string>} [config] */
 function resolvedNames(config = {}) {
@@ -142,14 +187,15 @@ export function normalizeSigners(raw) {
  * list — never from the live catalog — so the same version always produces the
  * same hash. It is structured JSON, not a PDF, and is never described as one.
  */
-export function buildDocumentPackage({ modules, names, services, quote, version, signers }) {
-  const lines = trusted(modules, names.versionLine)
-    .listWhere({ versionId: version.id })
-    .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
-  const components = trusted(modules, names.versionComponent).listWhere({ versionId: version.id });
-  const totals = trusted(modules, names.versionTotal).listWhere({ versionId: version.id });
-
-  let parties = { companyId: null, companyName: null, contactId: null, contactEmail: null, opportunityId: version.opportunityId ?? null };
+/**
+ * Read the commercial parties ONCE, at request time. Company, contact and
+ * opportunity rows are ordinary mutable CRM records: rebuilding the signed
+ * package from them later would make the document hash depend on data that can
+ * legitimately change, permanently blocking completion. The snapshot below is
+ * stored on the envelope and is the only party source the package ever uses.
+ */
+export function snapshotParties({ services, version }) {
+  const parties = { companyId: null, companyName: null, contactId: null, contactEmail: null, opportunityId: version.opportunityId ?? null };
   try {
     const opportunity = services?.opportunities?.get(version.opportunityId);
     if (opportunity) {
@@ -166,9 +212,18 @@ export function buildDocumentPackage({ modules, names, services, quote, version,
       }
     }
   } catch {
-    // A missing or unreadable party never blocks the package: identity that
-    // exists is snapshotted, identity that does not stays null.
+    // Identity that exists is snapshotted; identity that cannot be read stays
+    // null. Either way the snapshot is fixed from this moment on.
   }
+  return parties;
+}
+
+export function buildDocumentPackage({ modules, names, quote, version, signers, parties }) {
+  const lines = trusted(modules, names.versionLine)
+    .listWhere({ versionId: version.id })
+    .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
+  const components = trusted(modules, names.versionComponent).listWhere({ versionId: version.id });
+  const totals = trusted(modules, names.versionTotal).listWhere({ versionId: version.id });
 
   const document = {
     documentContract: 1,
@@ -202,7 +257,7 @@ export function buildDocumentPackage({ modules, names, services, quote, version,
       position: line.position,
       components: components
         .filter((component) => component.versionLineId === line.id)
-        .sort((a, b) => (a.componentKey < b.componentKey ? -1 : a.componentKey > b.componentKey ? 1 : a.id < b.id ? -1 : 1))
+        .sort((a, b) => byteOrder(a.componentKey, b.componentKey) || byteOrder(a.id, b.id))
         .map((component) => ({
           componentKey: component.componentKey,
           label: component.label,
@@ -231,10 +286,17 @@ export function buildDocumentPackage({ modules, names, services, quote, version,
         discountAmountCents: total.discountAmountCents,
         netAmountCents: total.netAmountCents,
       }))
-      .sort((a, b) => `${a.kind}${a.interval ?? ''}${a.intervalCount ?? ''}`.localeCompare(`${b.kind}${b.interval ?? ''}${b.intervalCount ?? ''}`)),
+      // Locale-independent by construction: `localeCompare` would make the
+      // document hash depend on the host's ICU data.
+      .sort((a, b) => byteOrder(
+        `${a.kind}|${a.interval ?? ''}|${a.intervalCount ?? ''}`,
+        `${b.kind}|${b.interval ?? ''}|${b.intervalCount ?? ''}`,
+      )),
     signers: signers.map((signer) => ({ signerKey: signer.signerKey, name: signer.name, email: signer.email, role: signer.role, order: signer.order })),
   };
-  return { document, documentHash: computeDefinitionFingerprint(document) };
+  // The hash covers the exact canonical bytes, and those same bytes are what
+  // the provider receives — never a second, possibly different serialization.
+  return { document, ...canonicalDocument(document) };
 }
 
 /** Load the quote version and validate it is signable for this quote. */
@@ -307,7 +369,8 @@ export function buildRequestSignatureAction(config) {
           { code: 'ENVELOPE_EXISTS', status: 409, details: { envelopeId: existing.id, status: existing.status } },
         );
       }
-      const { document, documentHash } = buildDocumentPackage({ modules, names, services, quote, version, signers });
+      const parties = snapshotParties({ services, version });
+      const { documentBytes, documentHash } = buildDocumentPackage({ modules, names, quote, version, signers, parties });
       const idempotencyKey = `env:quote-version:${version.id}`;
       const requestedAt = now();
       const envelope = envelopes.createManaged(
@@ -322,6 +385,11 @@ export function buildRequestSignatureAction(config) {
           status: 'preparing',
           documentHash,
           documentFormat: DOCUMENT_FORMAT,
+          // Both stored: the parties snapshot makes the package reproducible
+          // from immutable data, and the canonical bytes make the signed
+          // evidence readable without the live catalog or CRM records.
+          partiesJson: toJson(parties, 'parties snapshot'),
+          documentJson: documentBytes,
           signerCount: signers.length,
           providerSequence: 0,
           requestedBy: String(/** @type {any} */ (actor).id ?? 'unknown'),
@@ -351,7 +419,8 @@ export function buildRequestSignatureAction(config) {
           envelopeId: created.id,
           idempotencyKey,
           documentHash,
-          document,
+          documentBytes,
+          documentFormat: DOCUMENT_FORMAT,
           provider: provider.name,
           providerVersion: provider.version,
           signers,
@@ -365,30 +434,49 @@ export function buildRequestSignatureAction(config) {
       const raw = await provider.createEnvelope({
         idempotencyKey: intent.idempotencyKey,
         documentHash: intent.documentHash,
-        document: intent.document,
+        documentFormat: intent.documentFormat,
+        // The exact canonical bytes the hash was taken over.
+        documentBytes: intent.documentBytes,
         signers: intent.signers,
       });
-      const normalized = normalizeProviderEnvelope(raw);
-      step('signature.provider-envelope', { providerEnvelopeId: normalized.providerEnvelopeId, status: normalized.status });
-      return normalized;
+      const envelope = assertProviderEnvelopeMatches(
+        { documentHash: intent.documentHash, signerKeys: intent.signers.map((signer) => signer.signerKey) },
+        normalizeProviderEnvelope(raw),
+      );
+      // A provider may answer an idempotent create with an already-terminal
+      // envelope (an instant signature, or a replayed key). The completion
+      // evidence needs artifact metadata, and that call must happen HERE —
+      // outside every transaction — or the terminal state would be persisted
+      // with no artifact and no order, unrecoverably.
+      const artifact = envelope.status === 'completed'
+        ? normalizeProviderArtifact(await provider.getSignedArtifact({ providerEnvelopeId: envelope.providerEnvelopeId }))
+        : null;
+      step('signature.provider-envelope', { providerEnvelopeId: envelope.providerEnvelopeId, status: envelope.status });
+      return { envelope, artifact };
     },
 
     /** Transaction B: persist the provider's answer. */
-    async finalize({ intent, external, actor, modules, managed, now, step }) {
+    async finalize({ intent, external, actor, modules, services, managed, now, step }) {
       const envelopes = trusted(modules, names.envelope);
+      await envelopes.applyManaged(
+        intent.envelopeId,
+        { providerEnvelopeId: external.envelope.providerEnvelopeId, sentAt: now(), failureCode: null, failurePhase: null },
+        { actor },
+      );
+      // Every state change goes through ONE code path, so a terminal answer
+      // creates its artifact and its order exactly like a webhook would.
+      const outcome = await applyProviderState({
+        modules, services, names,
+        envelope: envelopes.get(intent.envelopeId),
+        provider: intent.provider,
+        state: external.envelope,
+        artifact: external.artifact,
+        eventId: null, actor, now, step,
+      });
       const envelope = envelopes.get(intent.envelopeId);
-      const patch = {
-        providerEnvelopeId: external.providerEnvelopeId,
-        providerSequence: external.sequence,
-        sentAt: now(),
-        failureCode: null,
-        failurePhase: null,
-      };
-      const status = canTransition(envelope.status, external.status) ? external.status : envelope.status;
-      const updated = await envelopes.applyManaged(envelope.id, { ...patch, status }, { actor });
-      await managed(envelope.quoteId, { signatureEnvelopeId: envelope.id, signatureStatus: status });
-      step('signature.sent', { envelopeId: envelope.id, status });
-      return { envelope: envelopeSummary(updated), signers: intent.signers.length };
+      await managed(envelope.quoteId, { signatureEnvelopeId: envelope.id, signatureStatus: envelope.status });
+      step('signature.sent', { envelopeId: envelope.id, status: envelope.status });
+      return { envelope: envelopeSummary(envelope), signers: intent.signers.length, orderId: outcome.orderId ?? null };
     },
 
     /**
@@ -443,8 +531,29 @@ function envelopeSummary(envelope) {
  * the completion evidence when (and only when) the envelope reaches
  * `completed` for the first time. Runs INSIDE a write transaction.
  */
+/**
+ * Adopt inbox rows that arrived before this envelope knew its provider id.
+ * They stay evidence — they are never re-applied — but they stop being
+ * orphaned, so a legitimate early event is visible against its envelope.
+ */
+async function linkQuarantinedEvents({ modules, names, envelope, actor, step }) {
+  if (!envelope.providerEnvelopeId) return 0;
+  const inbox = trusted(modules, names.event);
+  const orphans = inbox.listWhere({ providerEnvelopeId: envelope.providerEnvelopeId, envelopeId: null });
+  for (const orphan of orphans) {
+    await inbox.applyManaged(
+      orphan.id,
+      { envelopeId: envelope.id, effectReason: 'linked to its envelope after the provider id became known' },
+      { actor },
+    );
+  }
+  if (orphans.length > 0) step('signature.quarantine-linked', { envelopeId: envelope.id, events: orphans.length });
+  return orphans.length;
+}
+
 async function applyProviderState({ modules, services, names, envelope, provider, state, artifact, eventId, actor, now, step }) {
   const envelopes = trusted(modules, names.envelope);
+  await linkQuarantinedEvents({ modules, names, envelope, actor, step });
   if (!canTransition(envelope.status, state.status)) {
     return { applied: false, reason: TERMINAL_ENVELOPE_STATES.includes(envelope.status) ? 'terminal' : 'not-newer', status: envelope.status };
   }
@@ -510,11 +619,22 @@ async function createCompletionEvidence({ modules, services, names, envelope, ar
   // what was sent for signature: proof that nothing in the commercial evidence
   // moved between the request and the signature.
   const rebuilt = buildDocumentPackage({
-    modules, names, services, quote, version,
+    modules, names, quote, version,
     signers: signers.map((signer) => ({ signerKey: signer.signerKey, name: signer.name, email: signer.email, role: signer.role, order: signer.signingOrder })),
+    // The parties snapshot taken at request time — never a fresh read of
+    // mutable CRM rows, which would make a rename block completion forever.
+    parties: fromJson(envelope.partiesJson) ?? {},
   });
   if (rebuilt.documentHash !== envelope.documentHash) {
     throw new AppError('The signed document package no longer matches the stored quote version snapshot', {
+      code: 'DOCUMENT_HASH_MISMATCH', status: 409,
+    });
+  }
+  // The stored canonical bytes must also still hash to what was signed: the
+  // two checks together prove both the snapshot rows and the stored evidence.
+  if (typeof envelope.documentJson === 'string' && envelope.documentJson !== ''
+    && createHash('sha256').update(envelope.documentJson, 'utf8').digest('hex') !== envelope.documentHash) {
+    throw new AppError('The stored signed document package does not match its recorded hash', {
       code: 'DOCUMENT_HASH_MISMATCH', status: 409,
     });
   }
@@ -538,6 +658,10 @@ async function createCompletionEvidence({ modules, services, names, envelope, ar
       storageRef: artifact?.storageRef ?? null,
       completionEventId: eventId ?? null,
       completedAt,
+      // The signed package itself, so the evidence is readable even if the
+      // catalog, the quote or the provider becomes unavailable. The ARTIFACT
+      // bytes stay with the provider; this is our own canonical document.
+      documentJson: envelope.documentJson ?? null,
       signerEvidenceJson: toJson(
         signers.map((signer) => ({ signerKey: signer.signerKey, email: signer.email, role: signer.role, order: signer.signingOrder, status: signer.status, decidedAt: signer.decidedAt ?? null })),
         'signer evidence',
@@ -559,15 +683,9 @@ async function createCompletionEvidence({ modules, services, names, envelope, ar
   const versionComponents = trusted(modules, names.versionComponent).listWhere({ versionId: version.id });
   const versionTotals = trusted(modules, names.versionTotal).listWhere({ versionId: version.id });
 
-  let companyId = null;
-  let contactId = null;
-  try {
-    const opportunity = services?.opportunities?.get(version.opportunityId);
-    companyId = opportunity?.companyId ?? null;
-    contactId = opportunity?.contactId ?? null;
-  } catch {
-    companyId = null;
-  }
+  // Party identity comes from the snapshot taken at request time, so the order
+  // renders its customer without reading — or depending on — live CRM rows.
+  const parties = fromJson(envelope.partiesJson) ?? {};
 
   const order = await orders.createManaged(
     {
@@ -576,9 +694,11 @@ async function createCompletionEvidence({ modules, services, names, envelope, ar
       quoteVersionId: version.id,
       envelopeId: envelope.id,
       signedArtifactId: signedArtifact.id,
-      opportunityId: version.opportunityId,
-      companyId,
-      contactId,
+      opportunityId: parties.opportunityId ?? version.opportunityId,
+      companyId: parties.companyId ?? null,
+      contactId: parties.contactId ?? null,
+      customerName: parties.companyName ?? null,
+      customerEmail: parties.contactEmail ?? null,
       currency: version.currency,
       status: 'accepted',
       versionNumber: version.versionNumber,
@@ -708,7 +828,8 @@ export function createSignatureOperations(deps) {
   async function ingestSignatureEvent(params) {
     const providerName = typeof params.provider === 'string' ? params.provider : '';
     const { definition: provider, fingerprint } = signature.getSignatureProviderByName(providerName);
-    const rawBody = typeof params.rawBody === 'string' ? params.rawBody : '';
+    // Bytes end to end: verification must see exactly what the provider signed.
+    const rawBody = Buffer.isBuffer(params.rawBody) ? params.rawBody : String(params.rawBody ?? '');
     const actor = params.actor ?? { type: 'system', id: `signature:${provider.name}` };
 
     // Verify first. A failure never echoes the payload, the signature or the
@@ -731,6 +852,11 @@ export function createSignatureOperations(deps) {
       throw new AppError('Signature event verification failed: invalid signature', { code: 'SIGNATURE_INVALID', status: 401 });
     }
     const event = normalizeProviderEvent(verified.event);
+    // Fingerprint of the VERIFIED bytes: what makes a replay provably the same
+    // event rather than merely the same identifier.
+    const payloadFingerprint = createHash('sha256')
+      .update(Buffer.isBuffer(params.rawBody) ? params.rawBody : Buffer.from(rawBody, 'utf8'))
+      .digest('hex');
 
     const { result } = await runExternalOperation({
       database,
@@ -744,6 +870,32 @@ export function createSignatureOperations(deps) {
         const inbox = trusted(modules, names.event);
         const already = inbox.listWhere({ provider: provider.name, providerEventId: event.providerEventId })[0];
         if (already) {
+          // Replay is identified by provider + event id, but a replay must
+          // also BE the same event: a reused id carrying a different payload
+          // is a provider contract violation, not a duplicate to acknowledge.
+          if (already.payloadFingerprint !== payloadFingerprint) {
+            throw new AppError(
+              `Provider event id "${event.providerEventId}" was already recorded with a different payload`,
+              { code: 'EVENT_ID_CONFLICT', status: 409, details: { providerEventId: event.providerEventId } },
+            );
+          }
+          // An inbox row whose PROCESSING failed is durable evidence of an
+          // event that has not had its effect yet: a redelivery must resume
+          // it, not answer "duplicate" and strand it forever.
+          if (already.processed !== true) {
+            const envelope = already.envelopeId ? trusted(modules, names.envelope).get(already.envelopeId) : null;
+            step('signature.event-resumed', { eventId: already.id, providerEventId: event.providerEventId });
+            return {
+              duplicate: false,
+              resumed: true,
+              quarantined: !envelope,
+              eventId: already.id,
+              envelopeId: envelope?.id ?? null,
+              currentStatus: envelope?.status ?? null,
+              needsArtifact: Boolean(envelope) && event.status === 'completed' && canTransition(envelope.status, 'completed'),
+              providerEnvelopeId: event.providerEnvelopeId,
+            };
+          }
           step('signature.event-duplicate', { providerEventId: event.providerEventId });
           return { duplicate: true, eventId: already.id, effect: already.effect };
         }
@@ -756,6 +908,7 @@ export function createSignatureOperations(deps) {
             providerFingerprint: fingerprint,
             providerEventId: event.providerEventId,
             providerEnvelopeId: event.providerEnvelopeId,
+            payloadFingerprint,
             envelopeId: envelope?.id ?? null,
             status: event.status,
             sequence: event.sequence,
@@ -838,6 +991,10 @@ export function createSignatureOperations(deps) {
       /** Read-only intent: reconciliation records nothing before it knows. */
       intent({ step }) {
         const envelope = trusted(modules, names.envelope).get(String(params.envelopeId));
+        const signerKeys = trusted(modules, names.signer)
+          .listWhere({ envelopeId: envelope.id })
+          .map((signer) => signer.signerKey)
+          .sort(byteOrder);
         step('signature.reconcile-start', { envelopeId: envelope.id, status: envelope.status });
         return {
           envelopeId: envelope.id,
@@ -846,6 +1003,8 @@ export function createSignatureOperations(deps) {
           providerVersion: envelope.providerVersion,
           providerEnvelopeId: envelope.providerEnvelopeId,
           idempotencyKey: envelope.idempotencyKey,
+          documentHash: envelope.documentHash,
+          signerKeys,
           terminal: TERMINAL_ENVELOPE_STATES.includes(envelope.status),
         };
       },
@@ -863,7 +1022,14 @@ export function createSignatureOperations(deps) {
           step('signature.reconcile-absent', { envelopeId: intent.envelopeId });
           return { absent: true };
         }
-        const state = normalizeProviderEnvelope(raw);
+        // An idempotency key is a lookup, not proof of identity: the envelope
+        // that answers must agree on the signed document and the signer set,
+        // or it is refused instead of being bound to this quote version.
+        const state = assertProviderEnvelopeMatches(
+          { documentHash: intent.documentHash, signerKeys: intent.signerKeys },
+          normalizeProviderEnvelope(raw),
+          { expectedProviderEnvelopeId: intent.providerEnvelopeId },
+        );
         const artifact = state.status === 'completed'
           ? normalizeProviderArtifact(await provider.getSignedArtifact({ providerEnvelopeId: state.providerEnvelopeId }))
           : null;
@@ -872,7 +1038,23 @@ export function createSignatureOperations(deps) {
       },
       async finalize({ intent, external, now, step }) {
         if (intent.terminal) return { envelopeId: intent.envelopeId, applied: false, reason: 'terminal', status: intent.status };
-        if (!external || external.absent) return { envelopeId: intent.envelopeId, applied: false, reason: 'absent-at-provider', status: intent.status };
+        if (!external || external.absent) {
+          // "The provider does not have it" is a different fact from "the call
+          // failed", and the record says so: a local intent the provider never
+          // received becomes `failed` with an explicit, honest code rather
+          // than sitting in `preparing` forever pretending to be in flight.
+          const envelopes = trusted(modules, names.envelope);
+          const current = envelopes.get(intent.envelopeId);
+          if (canTransition(current.status, 'failed')) {
+            await envelopes.applyManaged(
+              current.id,
+              { status: 'failed', failedAt: now(), failurePhase: 'external', failureCode: 'PROVIDER_ENVELOPE_ABSENT' },
+              { actor },
+            );
+            step('signature.absent-at-provider', { envelopeId: current.id });
+          }
+          return { envelopeId: intent.envelopeId, applied: false, reason: 'absent-at-provider', status: envelopes.get(intent.envelopeId).status };
+        }
         const envelopes = trusted(modules, names.envelope);
         const envelope = envelopes.get(intent.envelopeId);
         const state = external.state;
