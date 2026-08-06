@@ -311,6 +311,23 @@ it.
 identities, not shipped code, and a future Marketing authoring Skill is planned
 rather than implemented.)*
 
+## 14. When an agent is working from a business goal
+
+A package is often the answer an agent reaches when a user states an *objective*
+rather than a change — "track our funnel by acquisition channel" resolves to
+reused packages plus, sometimes, one new custom package. The rules do not
+change, and two of them matter more in that mode:
+
+- **Discover before you create.** `crm package inspect` and `GET /api/schema`
+  say what is already installed and what it provides. Duplicating an existing
+  domain is the most common failure; there is no application-level inspector
+  yet (`crm app inspect` is planned, not implemented).
+- **Report what you could not build.** A package that silently omits the part
+  of the goal it had no capability for is worse than one that names the gap.
+
+See `docs/strategy/OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md` and the
+`solve-business-goal` Skill.
+
 ## What is deliberately not here yet
 
 - **A scaffold command.** `crm package new <name>` will exist once Delivery and

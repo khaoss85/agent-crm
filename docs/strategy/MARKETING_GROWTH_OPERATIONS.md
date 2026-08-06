@@ -168,3 +168,9 @@ MK7  Attribution and Closed-loop Optimization             requires ANALYTICS_STU
 ## 8. Related
 
 `CAMPAIGNS_JOURNEYS.md` (the objects and the modes) · `EXPERIMENTATION_ATTRIBUTION.md` (experiments, funnels, attribution, paid media) · `DATA_GOVERNANCE.md` (consent) · `JOBS_AND_OUTBOX.md` (durable automation) · `ANALYTICS_STUDIO.md` (semantic metrics) · `DESIGN_TO_CRM.md` (creative and design ownership) · `INTEGRATION_RUNTIME.md` (provider contracts) · `docs/PACKAGE_AUTHORING.md` (how any of this attaches) · `docs/benchmarks/CRM_JTBD_MATRIX.md` (what is actually supported).
+
+## Where this meets the objective-driven experience
+
+The agentic loop in §4 is the Marketing-specific instance of the general Goal-to-Solution lifecycle in `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`. A user who says "optimize our funnel" is asking for both: the analysis and modelling on the CRM side, and the Campaign Proposal on this side.
+
+That makes MK1 (Funnel Insight + Campaign Proposal) the first milestone where the objective-driven experience produces something a marketer would recognise — and it is why AX5 (closed-loop optimization) depends on this track rather than the other way round. **Campaign economics are not delivery economics**: the two never share a number, a record or a vocabulary.

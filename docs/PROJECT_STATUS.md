@@ -14,14 +14,14 @@ Generated: **2026-08-06**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **M13 — Delivery Handover + Custom Package Authoring v1** (ADR-018 + addenda 1–4), plus the Marketing & Growth roadmap (documentation only) |
-| Main SHA at generation | `9338119` (merge of PR #18; full SHA `93381193acda75e57f994d9cf09e537ee77d93cc`) |
-| Tests on clean main | **273 passing, 0 failing** (`npm run verify` from a fresh clone of `7520766`) |
+| Latest merged milestone | **Module Evolution v1** (ADR-019) on top of **M13 — Delivery Handover + Custom Package Authoring v1** (ADR-018 + addenda 1–4) and the Marketing & Growth roadmap (documentation only) |
+| Main SHA at generation | `775713c` (merge of PR #19; full SHA `775713c39689229692dd9c85cd94ed7989390302`) |
+| Tests on clean main | **299 passing, 0 failing** (`npm run verify` from a fresh clone of `775713c`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 28/28 in real Chromium, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | `feat(core): add safe generated module evolution` — Module Evolution v1 (ADR-019), a generic kernel capability split out of the M14 branch. `docs: add the objective-driven agent solution experience` — documentation and Agent Skills only. |
+| Open PRs | `docs: add the objective-driven agent solution experience` (AX0) — documentation and Agent Skills only. |
 
 ## Completed functional path
 
@@ -72,12 +72,11 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **Module Evolution v1** — open PR, and a prerequisite for M14: a generated
-   module could not grow, so delivery records could not gain a lifecycle
-   (ADR-019). Must merge before M14 resumes — see
-   `docs/plans/milestone-14-resume-after-module-evolution.md`.
-2. **M14 — Delivery Economics & Acceptance** — partial work preserved on
-   `claude/m14-wip-add289b-preserved` (`add289b`): bounded execution states
+1. **M14 — Delivery Economics & Acceptance** — unblocked now that Module
+   Evolution v1 (ADR-019) is merged: delivery records can finally gain a
+   lifecycle. Partial work preserved on `claude/m14-wip-add289b-preserved`
+   (`add289b`); resume plan in
+   `docs/plans/milestone-14-resume-after-module-evolution.md`. Bounded execution states
    on the delivery package, append-only time and expense evidence, a versioned
    operational economics plan and reproducible snapshot, governed change
    requests, and customer acceptance evidence. Operational estimates, **not**
@@ -89,8 +88,10 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 Two parallel tracks run alongside and are not gated by domain progress: the
 **platform track** (domain package boundary, create-project CLI, PostgreSQL,
 auth/tenancy/RBAC, Jobs & durable outbox, Integration Runtime, Data Governance,
-Design-to-CRM, Cloud) and the **Marketing & Growth track** (MK0–MK7 — design
-only; `MARKETING_GROWTH_OPERATIONS.md`). Sequencing and dependencies are in
+Design-to-CRM, Cloud), the **Marketing & Growth track** (MK0–MK7 — design only;
+`MARKETING_GROWTH_OPERATIONS.md`) and the cross-cutting **Agent Experience
+track** (AX0–AX5 — AX0 is a strategy and a Skill, AX1–AX5 are not implemented;
+`OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequencing and dependencies are in
 `EXECUTION_ROADMAP.md`.
 
 ## Production blockers

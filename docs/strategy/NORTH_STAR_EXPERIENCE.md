@@ -117,3 +117,9 @@ The phased path to close the distance is `docs/strategy/EXECUTION_ROADMAP.md`; t
 ## Marketing & Growth, in the same experience
 
 The North Star is "describe it, review it, approve it" — and it applies to demand creation as much as to a data model. The Marketing track (`MARKETING_GROWTH_OPERATIONS.md`, MK0–MK7) targets the same shape: the agent observes a funnel drop, diagnoses it, and presents **one complete CampaignProposal** in the CRM — audience, exclusions, content, landing page, tracking plan, budget, risks and the approvals it needs — rather than a dozen configuration screens the user must assemble themselves. Nothing sends, publishes or spends without a human approving what they actually read. **None of it is implemented.**
+
+## The objective-driven form of this experience
+
+The North Star above is "describe it, review it, approve it". Its most demanding form is a user who supplies **only a business objective** — "track and optimize our Lead → Won funnel by acquisition channel" — and never a manifest, a schema, a package graph, an event model or a dashboard implementation. The agent discovers what is installed, analyses the gap, chooses or creates packages, proposes a reviewable plan, builds checked-in source, verifies it and asks only for sensitive approvals.
+
+That is the cross-cutting **AX track** (`OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`, AX0–AX5). AX0 ships a strategy and a Skill usable today; **AX1–AX5 are not implemented**, and the loop does not run end to end.

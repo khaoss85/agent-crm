@@ -193,3 +193,7 @@ Production Spine (Phase 6: PostgreSQL, auth, tenancy, RBAC, sessions/API keys)
 ## Agent operations and approvals, with Marketing in scope
 
 The Marketing track sharpens what a managed deployment must get right about **agent authority**: an agent may analyze, propose, generate, prepare and recommend without asking, but sending external communication, publishing a landing page, activating a journey, changing a live audience, launching ads, creating or increasing spend, installing a provider and changing secrets each require a human approval — from a real, authenticated role. That role does not exist until the Production Spine does. Until then every approval boundary in Marketing is a local-development boundary, and Cloud must not present it as more. See `MARKETING_GROWTH_OPERATIONS.md` §6.
+
+## AX4 — the objective-driven case in a managed deployment
+
+The objective-driven experience (`OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`) ends locally at "built and verified". **AX4** is what extends it through deploy, observe and fix in a managed environment — and it is gated on the Production Spine, because everything it adds (real approval roles, production deployment, live observation) needs authenticated identity that does not exist yet. Until then an objective-driven build is a local-development artifact, and Cloud must not present it as more.

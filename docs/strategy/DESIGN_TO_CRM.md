@@ -83,3 +83,7 @@ silently implements.
 ## The Marketing track depends on this, and does not duplicate it
 
 MK3 (`EXECUTION_ROADMAP.md`) generates email content, landing pages, forms, CTAs and thank-you pages as **checked-in, customer-owned source**, with design tokens and branding owned by the code exactly as this document requires. It composes what is defined here; it does not implement a second design pipeline, and it makes **no claim that visual or Figma ingestion exists**. See `CAMPAIGNS_JOURNEYS.md` §6.
+
+## An objective-driven build reaches this document too
+
+When a user states a goal rather than a design, the agent still has to decide what the resulting screens look like. Generated Admin views, landing pages and content assets remain **checked-in, customer-owned source** with code-owned design tokens, exactly as defined here — an objective-driven build does not get a second, looser design path. See `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`. Visual and Figma ingestion remain **unimplemented**.
