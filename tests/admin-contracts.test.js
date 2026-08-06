@@ -15,7 +15,8 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
  */
 
 const CONTRACTS_DOMAIN = {
-  domainContract: 1,
+  packageContract: 1,
+  version: 1,
   contractsContract: 1,
   label: 'Contracts and subscriptions',
   actions: ['order.activate-contract', 'order.plan-activation'],

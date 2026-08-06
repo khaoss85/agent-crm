@@ -1,6 +1,7 @@
 // @ts-check
 
 import { formatMinorUnits } from './admin-core.js';
+import { renderDeliveryHandover } from './admin-delivery.js';
 
 /**
  * Contract activation Admin (Milestone 12, ADR-018 domain package).
@@ -50,7 +51,12 @@ export async function renderActivation({ order, schema, mount, el, client, fetch
   mount.appendChild(panel);
 
   if (order.contractId) {
-    await renderEvidence({ order, domain, panel, el, fetchRows, money });
+    const contract = await renderEvidence({ order, domain, panel, el, fetchRows, money });
+    // Delivery handover (M13) lives in a second, independent package: it
+    // renders only when the server publishes it, as its own section.
+    if (contract) {
+      await renderDeliveryHandover({ contract, schema, mount, el, client, fetchRows, money, withBusy, busy });
+    }
     return;
   }
   renderPlanner({ order, domain, panel, el, client, withBusy, busy });
@@ -350,7 +356,7 @@ async function renderEvidence({ order, domain, panel, el, fetchRows, money }) {
   const contract = contracts[0] ?? null;
   if (!contract) {
     panel.appendChild(el('p', 'field-error', 'This order links a contract that could not be read.'));
-    return;
+    return null;
   }
   const version = versions.find((row) => row.id === contract.currentVersionId) ?? null;
 
@@ -450,6 +456,7 @@ async function renderEvidence({ order, domain, panel, el, fetchRows, money }) {
 
   panel.appendChild(el('p', 'muted',
     `Everything above is read-only evidence copied from the signed order and never recalculated from the current catalog. Not modeled: ${(domain.notModeled ?? []).join(', ')}.`));
+  return contract;
 }
 
 /** Server-written obligation evidence; unreadable data degrades to none. */
