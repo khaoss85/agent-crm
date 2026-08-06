@@ -67,6 +67,18 @@ try {
     'quote-version-component.module.json',
     'quote-version-total.module.json',
     'quote-approval.module.json',
+    // Signature and Order record modules (Milestone 11): immutable evidence,
+    // written only by the signature operations through the trusted managed
+    // path — never by public CRUD.
+    'signature-envelope.module.json',
+    'signature-signer.module.json',
+    'signature-event.module.json',
+    'signed-artifact.module.json',
+    'order.module.json',
+    'order-line.module.json',
+    'order-component.module.json',
+    'order-tier.module.json',
+    'order-total.module.json',
   ]) {
     applyModule(root, join(starterInProject, manifest));
   }
@@ -88,6 +100,7 @@ try {
       '  buildRouteAction,',
       "} from '../../core/src/intelligence-actions.js';",
       "import { buildCommercialActions } from '../../core/src/commercial-actions.js';",
+      "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
       '',
       'export const generatedActions = [',
       '  qualifyLead,',
@@ -99,6 +112,7 @@ try {
       '  buildScoreAction(),',
       '  buildRouteAction(),',
       '  ...buildCommercialActions(),',
+      '  buildRequestSignatureAction(),',
       '];',
       '',
     ].join('\n'),
@@ -115,6 +129,16 @@ try {
       '',
       'export const generatedCatalogProviders = [fixtureSaasCatalogProvider];',
       'export const generatedDiscountPolicies = [standardSalesDiscountV1, standardSalesDiscountV2];',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(root, 'packages', 'signature', 'generated', 'index.js'),
+    [
+      '// @ts-check',
+      "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
+      '',
+      'export const generatedSignatureProviders = [fixtureSignatureProvider];',
       '',
     ].join('\n'),
   );
@@ -465,9 +489,98 @@ try {
     assert.deepEqual(quoteModule.capabilities, ['get', 'list']);
     assert.equal(quoteModule.service.create, undefined, 'no public quote create');
 
+    // ---- Milestone 11: signature → verified events → immutable Order ----
+    const { signatureFixture } = await import(pathToFileURL(join(starterInProject, 'signature.js')).href);
+    const envelopes = app.modules.get('signature-envelope').service;
+    const orders = app.modules.get('order').service;
+    const requestSignature = (quote, quoteVersionId, signers, signActor = actor) => app.runAction({
+      module: 'quote', action: 'request-signature', recordId: quote,
+      input: { quoteVersionId, provider: 'fixture-signature', providerVersion: 1, signers },
+      actor: signActor,
+    });
+    const customer = [{ name: 'Mario Rossi', email: 'mario.rossi@acme.example', role: 'customer', order: 1 }];
+
+    // Sending is a real external side effect: an agent actor may prepare it,
+    // but only a human user actor may send.
+    await assert.rejects(
+      () => requestSignature(quoteId, submitted.result.version.id, customer, { type: 'agent', id: 'bot' }),
+      (error) => error.code === 'HUMAN_APPROVAL_REQUIRED' && error.status === 403,
+      'an agent actor cannot send for signature',
+    );
+    assert.equal(envelopes.list().length, 0, 'a refused send leaves no envelope behind');
+
+    const requested = await requestSignature(quoteId, submitted.result.version.id, customer);
+    assert.equal(requested.result.envelope.status, 'sent');
+    const envelope = envelopes.listWhere({ quoteVersionId: submitted.result.version.id })[0];
+    assert.equal(envelope.idempotencyKey, `env:quote-version:${submitted.result.version.id}`);
+    // Exactly one envelope per quote version, ever: a repeat is refused rather
+    // than creating a second provider envelope.
+    await assert.rejects(
+      () => requestSignature(quoteId, submitted.result.version.id, customer),
+      (error) => error.code === 'ENVELOPE_EXISTS',
+    );
+
+    const ingest = (event) => app.ingestSignatureEvent({ provider: 'fixture-signature', rawBody: event.rawBody, headers: event.headers });
+    // A forged webhook is refused before any state is touched.
+    const forged = signatureFixture.event(envelope.idempotencyKey, 'completed', { providerEventId: 'evt_forged' });
+    await assert.rejects(
+      () => app.ingestSignatureEvent({ provider: 'fixture-signature', rawBody: forged.rawBody, headers: { 'x-signature-256': 'f'.repeat(64), 'x-signature-timestamp': forged.headers['x-signature-timestamp'] } }),
+      (error) => error.code === 'SIGNATURE_INVALID' && error.status === 401,
+    );
+    assert.equal(app.modules.get('signature-event').service.list().length, 0);
+
+    signatureFixture.markDelivered(envelope.idempotencyKey);
+    assert.equal((await ingest(signatureFixture.event(envelope.idempotencyKey, 'delivered'))).applied, true);
+    assert.equal(orders.list().length, 0, 'delivery is not completion');
+
+    signatureFixture.markCompleted(envelope.idempotencyKey);
+    const completionEvent = signatureFixture.event(envelope.idempotencyKey, 'completed', { providerEventId: 'evt_starter_completed' });
+    const completion = await ingest(completionEvent);
+    assert.equal(completion.applied, true);
+    assert.equal(envelopes.get(envelope.id).status, 'completed');
+
+    const artifact = app.modules.get('signed-artifact').service.listWhere({ envelopeId: envelope.id })[0];
+    assert.equal(artifact.documentHash, envelope.documentHash, 'the signed package is the one that was sent');
+    const order = orders.listWhere({ quoteVersionId: submitted.result.version.id })[0];
+    assert.equal(order.status, 'accepted');
+    assert.equal(order.totalsJson, app.modules.get('quote-version').service.get(submitted.result.version.id).totalsJson);
+    assert.equal(app.modules.get('order-component').service.countWhere({ orderId: order.id }), versionComponents.length);
+    assert.equal(app.modules.get('order-total').service.countWhere({ orderId: order.id }), versionTotals.length);
+
+    // Replay, out-of-order and post-terminal events never change the outcome.
+    assert.equal((await ingest(completionEvent)).duplicate, true);
+    const lateSent = signatureFixture.event(envelope.idempotencyKey, 'sent', { providerEventId: 'evt_starter_late' });
+    assert.equal((await ingest(lateSent)).applied, false);
+    assert.equal(envelopes.get(envelope.id).status, 'completed');
+    assert.equal(orders.list().length, 1, 'exactly one order');
+
+    // A catalog change after signing cannot touch the signed evidence.
+    await app.syncCatalog({ provider: 'fixture-saas-catalog', input: { variant: 'v2' }, actor });
+    assert.equal(orders.get(order.id).totalsJson, order.totalsJson);
+    assert.equal(app.modules.get('signed-artifact').service.get(artifact.id).artifactHash, artifact.artifactHash);
+
+    // A declined signature is terminal and produces no order.
+    const declineEnvelopeRequest = await requestSignature(quote2, resubmitted.result.version.id, [{ name: 'Lucia Bianchi', email: 'lucia.bianchi@beta.example', role: 'customer', order: 1 }]);
+    assert.equal(declineEnvelopeRequest.result.envelope.status, 'sent');
+    const declinedEnvelope = envelopes.listWhere({ quoteVersionId: resubmitted.result.version.id })[0];
+    signatureFixture.markDeclined(declinedEnvelope.idempotencyKey);
+    assert.equal((await ingest(signatureFixture.event(declinedEnvelope.idempotencyKey, 'declined', { providerEventId: 'evt_starter_declined' }))).applied, true);
+    assert.equal(envelopes.get(declinedEnvelope.id).status, 'declined');
+    assert.equal(orders.listWhere({ quoteVersionId: resubmitted.result.version.id }).length, 0, 'a decline creates no order');
+    assert.equal(orders.list().length, 1);
+
+    // Signature and order records are read-only publicly, like every other
+    // piece of commercial evidence.
+    for (const name of ['signature-envelope', 'signature-signer', 'signature-event', 'signed-artifact', 'order', 'order-line', 'order-component', 'order-tier', 'order-total']) {
+      const module = app.modules.get(name);
+      assert.deepEqual(module.capabilities, ['get', 'list'], name);
+      assert.equal(module.service.create, undefined, `no public create on ${name}`);
+      assert.equal(module.service.update, undefined, `no public update on ${name}`);
+    }
+
     console.log(JSON.stringify({
       ok: true,
-      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads with immutable snapshots, runs and assignment history; synced a composite fixture catalog idempotently (flat, per-unit, volume and graduated components across one-time, monthly and annual charges, plus one unsupported metered offer refused for quoting) and built mixed quotes with grouped one-time/monthly/annual totals — one auto-approved, one through human discount approval with reject → revise → version 2 — then proved a tier/price change creates new offer revisions while the historical quote version stays unchanged; CRUD cannot set lifecycle, conversion, pipeline, intelligence or commercial fields.',
+      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads with immutable snapshots, runs and assignment history; synced a composite fixture catalog idempotently (flat, per-unit, volume and graduated components across one-time, monthly and annual charges, plus one unsupported metered offer refused for quoting) and built mixed quotes with grouped one-time/monthly/annual totals — one auto-approved, one through human discount approval with reject → revise → version 2 — then proved a tier/price change creates new offer revisions while the historical quote version stays unchanged; sent an approved quote version for signature as a human actor (agents refused), refused a forged webhook, ingested verified delivered and completed events, produced signed-artifact evidence and exactly one immutable Order with its lines, components, tiers and grouped totals, proved replay and out-of-order events change nothing and a decline creates no order; CRUD cannot set lifecycle, conversion, pipeline, intelligence, commercial, signature or order fields.',
       leads: leads.list().length,
       tasks: tasks.list().length,
       companies: app.services.companies.list().length,

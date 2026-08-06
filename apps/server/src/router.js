@@ -1,6 +1,6 @@
 // @ts-check
 
-/** @typedef {{method: string, pattern: RegExp, keys: string[], handler: Function}} Route */
+/** @typedef {{method: string, pattern: RegExp, keys: string[], handler: Function, options: {rawBody?: boolean, maxBodyBytes?: number}}} Route */
 
 export class Router {
   constructor() {
@@ -8,8 +8,15 @@ export class Router {
     this.routes = [];
   }
 
-  /** @param {string} method @param {string} path @param {Function} handler */
-  add(method, path, handler) {
+  /**
+   * @param {string} method @param {string} path @param {Function} handler
+   * @param {{rawBody?: boolean, maxBodyBytes?: number}} [options] Per-route
+   *   body policy. `rawBody` hands the handler the exact bytes instead of
+   *   parsed JSON — required wherever a payload must be signature-verified
+   *   before it is trusted (ADR-017), because re-serializing JSON would not
+   *   reproduce what the provider signed.
+   */
+  add(method, path, handler, options = {}) {
     const keys = [];
     const escaped = path
       .split('/')
@@ -26,6 +33,7 @@ export class Router {
       pattern: new RegExp(`^${escaped}/?$`),
       keys,
       handler,
+      options,
     });
     return this;
   }
@@ -42,7 +50,7 @@ export class Router {
         const params = Object.fromEntries(
           route.keys.map((key, index) => [key, decodeURIComponent(match[index + 1])]),
         );
-        return { handler: route.handler, params };
+        return { handler: route.handler, params, options: route.options ?? {} };
       } catch {
         return null;
       }

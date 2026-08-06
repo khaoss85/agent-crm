@@ -1,0 +1,91 @@
+{
+  "manifestVersion": 1,
+  "name": "signed-artifact",
+  "description": "Immutable completion evidence for a signature envelope (ADR-017): document and artifact hashes, provider artifact reference and signer evidence. The artifact bytes are NOT stored; long-term object-storage durability is not claimed.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "envelopeId",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "quoteId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "quoteVersionId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "providerArtifactId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "documentHash",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "documentFormat",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "documentJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "artifactHash",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "mimeType",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "sizeBytes",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "storageRef",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "completionEventId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "completedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "signerEvidenceJson",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

@@ -3,6 +3,9 @@
 import { randomUUID } from 'node:crypto';
 import { AppError, NotFoundError, ValidationError, normalizeError } from './errors.js';
 import { nowIso } from './time.js';
+// Cycle-safe: both modules export hoisted function declarations only, and
+// neither touches the other at module-evaluation time (ADR-017).
+import { runExternalOperation } from './external-operation.js';
 
 /**
  * Stable error for an action attempted from an invalid lifecycle state.
@@ -63,6 +66,20 @@ export function validateActionInput(schema, body) {
         throw new ValidationError(`${field.name} must be one of: ${(field.values ?? []).join(', ')}`, { field: field.name });
       }
       out[field.name] = raw;
+    } else if (field.type === 'json') {
+      // Bounded structured input (e.g. a signer list): plain JSON-safe data
+      // only — functions, symbols, cycles and non-plain objects are refused,
+      // dangerous keys are dropped, and the serialized size is bounded so a
+      // pathological payload cannot bloat records, audit and traces. The
+      // action still validates the domain shape itself.
+      if (typeof raw !== 'object') {
+        throw new ValidationError(`${field.name} must be a JSON object or array`, { field: field.name });
+      }
+      const value = sanitizeJsonSafe(raw, field.name);
+      if (JSON.stringify(value ?? null).length > ACTION_STRING_MAX_LENGTH) {
+        throw new ValidationError(`${field.name} is too large`, { field: field.name });
+      }
+      out[field.name] = value;
     } else if (field.type === 'integer') {
       // JSON numbers only — never numeric strings — and only safe integers:
       // fractions, NaN/Infinity and unsafe magnitudes are all rejected, so an
@@ -120,6 +137,14 @@ export async function runRecordAction(params) {
 
   const validatedInput = validateActionInput(definition.input ?? [], input);
 
+  // External-operation actions (ADR-017) need TWO local write transactions
+  // around a remote call, which the single-transaction envelope below cannot
+  // represent honestly. They are routed to the bounded external-operation
+  // runner instead — the action still declares phases, never transactions.
+  if (definition.externalOperation) {
+    return runExternalRecordAction(params, definition, validatedInput);
+  }
+
   const runId = randomUUID();
   const startedAt = nowIso();
   /** @type {Array<{name: string, status: string, output?: unknown, error?: string}>} */
@@ -155,7 +180,7 @@ export async function runRecordAction(params) {
     // trace and never opens the transaction.
     if (typeof definition.prepare === 'function') {
       const previewRecord = service.get(recordId); // NotFoundError → honest 404, no provider call
-      prepared = sanitizePreparedResult(
+      prepared = sanitizeJsonSafe(
         await definition.prepare({
           record: previewRecord,
           input: validatedInput,
@@ -262,6 +287,78 @@ export async function runRecordAction(params) {
   return { ok: true, module, action, recordId, runId, result };
 }
 
+/**
+ * Run an external-operation action (ADR-017): intent inside transaction A, the
+ * provider call outside every transaction, finalize inside transaction B, and
+ * compensation in its own transaction when either failed.
+ *
+ * The write phases receive the same context an ordinary action's `execute`
+ * does; the external phase receives only frozen JSON-safe data plus the
+ * provider registries it needs — no database, no modules, no managed writes.
+ *
+ * @param {any} params @param {any} definition @param {Record<string, unknown>} validatedInput
+ */
+async function runExternalRecordAction(params, definition, validatedInput) {
+  const { database, events, services, modules, module, action, recordId, actor } = params;
+  const service = modules.get(module).service;
+  const stateField = definition.stateField ?? 'status';
+
+  const writeContext = () => ({
+    services,
+    modules,
+    database,
+    core: params.core ?? Object.freeze({}),
+    pipelines: params.pipelines ?? Object.freeze({ forModule: () => null, get: () => null, list: () => [] }),
+    intelligence: params.intelligence ?? Object.freeze({}),
+    commercial: params.commercial ?? Object.freeze({}),
+    signature: params.signature ?? Object.freeze({
+      getSignatureProvider: () => { throw new NotFoundError('Signature provider', 'none registered'); },
+    }),
+    config: params.config ?? {},
+    managed: (id, patch) => service.applyManaged(id, patch, { actor }),
+  });
+
+  const { result, runId } = await runExternalOperation({
+    database,
+    events,
+    name: `${module}.${action}`,
+    input: { recordId, input: validatedInput },
+    actor,
+    timeoutMs: definition.timeoutMs ?? params.config?.externalTimeoutMs,
+    intent: (ctx) => {
+      const record = service.get(recordId); // NotFoundError → rolled back
+      if (Array.isArray(definition.fromStates) && !definition.fromStates.includes(record[stateField])) {
+        throw new InvalidStateError(
+          `${module}.${action} is not allowed from state "${record[stateField]}"`,
+          { field: stateField, from: record[stateField], action },
+        );
+      }
+      return definition.intent({ ...ctx, ...writeContext(), record, input: validatedInput });
+    },
+    external: typeof definition.external === 'function'
+      // Deliberately narrow: frozen intent data, the validated input, the actor
+      // and the provider registries. Nothing here can write to the database.
+      ? (ctx) => definition.external({
+        intent: ctx.intent,
+        input: validatedInput,
+        actor,
+        signature: params.signature ?? Object.freeze({}),
+        commercial: params.commercial ?? Object.freeze({}),
+        config: params.config ?? {},
+        step: ctx.step,
+        now: ctx.now,
+      })
+      : null,
+    finalize: typeof definition.finalize === 'function'
+      ? (ctx) => definition.finalize({ ...ctx, ...writeContext(), record: service.get(recordId), input: validatedInput })
+      : null,
+    compensate: typeof definition.compensate === 'function'
+      ? (ctx) => definition.compensate({ ...ctx, ...writeContext(), record: service.get(recordId), input: validatedInput })
+      : null,
+  });
+  return { ok: true, module, action, recordId, runId, result };
+}
+
 const READ_ONLY_SERVICE_METHODS = ['get', 'list', 'listWhere', 'countWhere'];
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -288,38 +385,42 @@ function readOnlyModulesView(modules) {
 }
 
 /**
- * Normalize a prepare result to plain JSON-safe data and deep-freeze it.
- * Fail closed on anything that cannot round-trip deterministically.
+ * Normalize a value to plain JSON-safe data and deep-freeze it. Fail closed on
+ * anything that cannot round-trip deterministically: functions, symbols,
+ * bigints, non-finite numbers, non-plain objects and cycles are refused, and
+ * `__proto__`/`constructor`/`prototype` keys are dropped rather than
+ * re-assigned. Shared by the prepare phase, structured action input and the
+ * external-operation phase boundaries (ADR-015/017).
  * @param {unknown} value @param {string} [path]
  */
-function sanitizePreparedResult(value, path = 'prepared', seen = new Set()) {
+export function sanitizeJsonSafe(value, path = 'value', seen = new Set()) {
   if (value === undefined || value === null) return value ?? undefined;
   const type = typeof value;
   if (type === 'string' || type === 'boolean') return value;
   if (type === 'number') {
-    if (!Number.isFinite(value)) throw new ValidationError(`prepare returned a non-finite number at ${path}`);
+    if (!Number.isFinite(value)) throw new ValidationError(`non-finite number at ${path}`);
     return value;
   }
   if (type === 'function' || type === 'bigint' || type === 'symbol') {
-    throw new ValidationError(`prepare must return plain JSON-safe data (found ${type} at ${path})`);
+    throw new ValidationError(`plain JSON-safe data required (found ${type} at ${path})`);
   }
   if (seen.has(value)) {
-    throw new ValidationError(`prepare returned a cyclic structure at ${path}`);
+    throw new ValidationError(`cyclic structure at ${path}`);
   }
   seen.add(value);
   try {
     if (Array.isArray(value)) {
-      return Object.freeze(value.map((item, index) => sanitizePreparedResult(item, `${path}[${index}]`, seen) ?? null));
+      return Object.freeze(value.map((item, index) => sanitizeJsonSafe(item, `${path}[${index}]`, seen) ?? null));
     }
     const proto = Object.getPrototypeOf(value);
     if (proto !== Object.prototype && proto !== null) {
-      throw new ValidationError(`prepare must return plain JSON-safe data (non-plain object at ${path})`);
+      throw new ValidationError(`plain JSON-safe data required (non-plain object at ${path})`);
     }
     /** @type {Record<string, unknown>} */
     const out = {};
     for (const key of Object.keys(value)) {
       if (DANGEROUS_KEYS.has(key)) continue; // dropped, never re-assigned
-      const item = sanitizePreparedResult(/** @type {any} */ (value)[key], `${path}.${key}`, seen);
+      const item = sanitizeJsonSafe(/** @type {any} */ (value)[key], `${path}.${key}`, seen);
       if (item !== undefined) out[key] = item;
     }
     return Object.freeze(out);

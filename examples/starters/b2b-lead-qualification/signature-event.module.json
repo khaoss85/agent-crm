@@ -1,0 +1,101 @@
+{
+  "manifestVersion": 1,
+  "name": "signature-event",
+  "description": "Append-only inbox of provider-verified signature events (ADR-017). The provider event id is DB-unique, so a replayed webhook is idempotent; the effect records whether the event advanced the envelope, was ignored as out-of-order or was quarantined for an unknown envelope.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "provider",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "providerVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "providerFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "providerEventId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "providerEnvelopeId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "payloadFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "envelopeId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "sent",
+        "delivered",
+        "completed",
+        "declined",
+        "voided"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "sequence",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "occurredAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "receivedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "processed",
+      "type": "boolean",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "effect",
+      "type": "enum",
+      "values": [
+        "pending",
+        "applied",
+        "ignored",
+        "quarantined"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "effectReason",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

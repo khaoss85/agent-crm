@@ -65,6 +65,23 @@
       "name": "recurringGroupCount",
       "type": "integer",
       "writable": "managed"
+    },
+    {
+      "name": "signatureEnvelopeId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "signatureStatus",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "orderId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
     }
   ]
 }
