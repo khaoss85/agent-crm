@@ -23,9 +23,24 @@ const CONTRACTS_DOMAIN = {
     { kind: 'order-activation-policy', name: 'b2b-saas-order-activation', version: 1, label: 'B2B SaaS order activation', fingerprint: 'c'.repeat(64) },
     { kind: 'order-activation-policy', name: 'b2b-saas-order-activation', version: 2, label: 'B2B SaaS order activation (storage mapped)', fingerprint: 'd'.repeat(64) },
   ],
-  classificationTypes: ['subscription', 'delivery', 'service', 'other', 'ambiguous'],
-  overridableTypes: ['subscription', 'delivery', 'service', 'other'],
-  term: { format: 'YYYY-MM-DD calendar dates; termEndDate is inclusive', renewalNotice: 'recorded only — no scheduler exists, so nothing fires on it' },
+  classification: {
+    dimensions: ['commercial', 'obligations'],
+    commercialActivation: ['subscription', 'non_subscription', 'ambiguous'],
+    overridableCommercialActivation: ['subscription', 'non_subscription'],
+    obligations: ['delivery', 'service'],
+    note: 'Two independent axes.',
+  },
+  term: {
+    format: 'YYYY-MM-DD calendar dates; termEndDate is inclusive',
+    renewalNotice: 'recorded only — no scheduler exists, so nothing fires on it; a notice period requires autoRenew',
+    source: 'post-signature-operational-activation',
+    limitation: 'Operational activation metadata recorded after signature: the signed document package carries no term, so these values are not part of the signed agreement.',
+    requiresReason: true,
+  },
+  activationState: {
+    states: ['scheduled', 'active'],
+    limitation: 'no scheduler exists: a scheduled contract never becomes active on its own',
+  },
   notModeled: [
     'billing', 'invoicing', 'payment', 'usage rating', 'proration', 'tax', 'FX',
     'revenue recognition', 'MRR/ARR/TCV', 'amendments', 'seat changes', 'renewal',
@@ -56,18 +71,23 @@ const PLAN_COMPONENTS = [
   {
     orderComponentId: 'oc1', componentKey: 'fixture:offer:enterprise:1:ent-platform', label: 'Platform fee', sku: 'ENT',
     chargeType: 'recurring', interval: 'month', intervalCount: 1, quantity: 1, netAmountCents: 285_000,
-    classification: 'subscription', reason: 'component "ent-platform" is mapped to subscription', overridden: false, requiresOverride: false,
+    commercialActivation: 'subscription', obligations: [], policyCommercialActivation: 'subscription', policyObligations: [],
+    reason: 'component "ent-platform" is mapped to subscription and owes nothing further',
+    overridden: false, overriddenDimensions: [], ambiguousDimensions: [], requiresOverride: false,
   },
   {
     orderComponentId: 'oc2', componentKey: 'fixture:offer:enterprise:1:ent-setup', label: 'Onboarding', sku: 'ENT',
     chargeType: 'one_time', interval: null, intervalCount: null, quantity: 1, netAmountCents: 475_000,
-    classification: 'delivery', reason: 'component "ent-setup" is mapped to delivery', overridden: false, requiresOverride: false,
+    commercialActivation: 'non_subscription', obligations: ['delivery'], policyCommercialActivation: 'non_subscription', policyObligations: ['delivery'],
+    reason: 'component "ent-setup" is mapped to non_subscription and owes delivery',
+    overridden: false, overriddenDimensions: [], ambiguousDimensions: [], requiresOverride: false,
   },
   {
     orderComponentId: 'oc3', componentKey: 'fixture:offer:storage-monthly:1:storage-gb', label: 'Storage', sku: 'STORAGE',
     chargeType: 'recurring', interval: 'month', intervalCount: 1, quantity: 100, netAmountCents: 10_000,
-    classification: 'ambiguous', reason: 'component "storage-gb" (SKU "STORAGE") is not mapped by this policy version',
-    overridden: false, requiresOverride: true,
+    commercialActivation: 'ambiguous', obligations: 'ambiguous', policyCommercialActivation: 'ambiguous', policyObligations: 'ambiguous',
+    reason: 'component "storage-gb" (SKU "STORAGE") is not mapped by this policy version',
+    overridden: false, overriddenDimensions: [], ambiguousDimensions: ['commercial', 'obligations'], requiresOverride: true,
   },
 ];
 
@@ -75,24 +95,38 @@ const planPayload = (components, counts) => ({
   orderId: 'ord1', currency: 'EUR', customerName: 'Acme SpA', quoteVersionId: 'v1',
   signature: { envelopeId: 'env1', signedArtifactId: 'a1', documentHash: 'd'.repeat(64) },
   alreadyActivated: false, contractId: null, activatable: counts.ambiguous === 0,
-  requiredInputs: ['effectiveDate', 'termStartDate', 'termEndDate'],
+  requiredInputs: ['effectiveDate', 'termStartDate', 'termEndDate', 'termsReason'],
+  termsProvenance: {
+    source: 'post-signature-operational-activation',
+    note: 'Operational activation metadata recorded after signature by a human actor: the signed document package carries no term, renewal clause or notice period, so these values are not part of the signed agreement.',
+  },
   counts, components,
   totals: [{ kind: 'recurring', currency: 'EUR', interval: 'month', intervalCount: 1, netAmountCents: 295_000 }],
   notModeled: ['billing', 'invoicing', 'payment'],
 });
 
-const AMBIGUOUS_PLAN = planPayload(PLAN_COMPONENTS, { subscription: 1, delivery: 1, service: 0, other: 0, ambiguous: 1 });
+const AMBIGUOUS_PLAN = planPayload(PLAN_COMPONENTS, { subscriptionLines: 1, delivery: 1, service: 0, noObligation: 1, ambiguous: 1 });
 const RESOLVED_PLAN = planPayload(
   PLAN_COMPONENTS.map((component) => component.orderComponentId === 'oc3'
-    ? { ...component, classification: 'subscription', reason: 'storage is sold as a recurring right', overridden: true, requiresOverride: false }
+    ? {
+      ...component,
+      commercialActivation: 'subscription',
+      obligations: [],
+      reason: 'storage is sold as a recurring right',
+      overridden: true,
+      overriddenDimensions: ['commercial', 'obligations'],
+      ambiguousDimensions: [],
+      requiresOverride: false,
+    }
     : component),
-  { subscription: 2, delivery: 1, service: 0, other: 0, ambiguous: 0 },
+  { subscriptionLines: 2, delivery: 1, service: 0, noObligation: 2, ambiguous: 0 },
 );
 
 const CONTRACT = {
   id: 'ct1', orderId: 'ord1', status: 'active', customerName: 'Acme SpA', currency: 'EUR',
   effectiveDate: '2026-09-01', termStartDate: '2026-09-01', termEndDate: '2027-08-31', termDays: 365,
   autoRenew: true, renewalNoticeDays: 30, currentVersionId: 'cv1',
+  termsSource: 'post-signature-operational-activation', termsReason: 'agreed by email after signature',
   policy: 'b2b-saas-order-activation', policyVersion: 1, policyFingerprint: 'c'.repeat(64),
   documentHash: 'd'.repeat(64), activatedAt: '2026-08-06T09:00:00.000Z',
 };
@@ -101,23 +135,32 @@ const CONTRACT_LINES = [
   {
     id: 'cl1', contractId: 'ct1', orderId: 'ord1', position: 1, componentKey: 'ent-platform', label: 'Platform fee', sku: 'ENT',
     chargeType: 'recurring', interval: 'month', intervalCount: 1, netAmountCents: 285_000, currency: 'EUR',
-    classification: 'subscription', classificationReason: 'component "ent-platform" is mapped to subscription',
-    classificationPolicy: 'b2b-saas-order-activation', classificationPolicyVersion: 1,
-    policyClassification: 'subscription', overridden: false, overrideReason: null, overriddenBy: null,
+    commercialActivation: 'subscription', obligationsJson: JSON.stringify([]),
+    policyCommercialActivation: 'subscription', policyObligationsJson: JSON.stringify([]),
+    commercialOverridden: false, commercialOverrideReason: null,
+    obligationsOverridden: false, obligationsOverrideReason: null,
+    classificationReason: 'component "ent-platform" is mapped to subscription',
+    classificationPolicy: 'b2b-saas-order-activation', classificationPolicyVersion: 1, overriddenBy: null,
   },
   {
     id: 'cl2', contractId: 'ct1', orderId: 'ord1', position: 2, componentKey: 'ent-setup', label: 'Onboarding', sku: 'ENT',
     chargeType: 'one_time', interval: null, intervalCount: null, netAmountCents: 475_000, currency: 'EUR',
-    classification: 'delivery', classificationReason: 'component "ent-setup" is mapped to delivery',
-    classificationPolicy: 'b2b-saas-order-activation', classificationPolicyVersion: 1,
-    policyClassification: 'delivery', overridden: false, overrideReason: null, overriddenBy: null,
+    commercialActivation: 'non_subscription', obligationsJson: JSON.stringify(['delivery']),
+    policyCommercialActivation: 'non_subscription', policyObligationsJson: JSON.stringify(['delivery']),
+    commercialOverridden: false, commercialOverrideReason: null,
+    obligationsOverridden: false, obligationsOverrideReason: null,
+    classificationReason: 'component "ent-setup" is mapped to delivery',
+    classificationPolicy: 'b2b-saas-order-activation', classificationPolicyVersion: 1, overriddenBy: null,
   },
   {
     id: 'cl3', contractId: 'ct1', orderId: 'ord1', position: 3, componentKey: 'storage-gb', label: 'Storage', sku: 'STORAGE',
     chargeType: 'recurring', interval: 'month', intervalCount: 1, netAmountCents: 10_000, currency: 'EUR',
-    classification: 'subscription', classificationReason: 'storage is sold as a recurring right',
-    classificationPolicy: 'b2b-saas-order-activation', classificationPolicyVersion: 1,
-    policyClassification: 'ambiguous', overridden: true, overrideReason: 'storage is sold as a recurring right', overriddenBy: 'admin',
+    commercialActivation: 'subscription', obligationsJson: JSON.stringify([]),
+    policyCommercialActivation: 'ambiguous', policyObligationsJson: JSON.stringify('ambiguous'),
+    commercialOverridden: true, commercialOverrideReason: 'storage is sold as a recurring right',
+    obligationsOverridden: true, obligationsOverrideReason: 'storage is sold as a recurring right',
+    classificationReason: 'storage is sold as a recurring right',
+    classificationPolicy: 'b2b-saas-order-activation', classificationPolicyVersion: 1, overriddenBy: 'admin',
   },
 ];
 const SUBSCRIPTION = {
@@ -196,7 +239,10 @@ test('planning is read-only, and every classification arrives with its reason', 
   assert.ok(text.includes('1 delivery obligation(s)'));
   assert.ok(text.includes('is mapped to subscription'), 'each decision shows the policy reason');
   assert.ok(text.includes('EUR 2,850.00 net'), 'the server amount is displayed, never recomputed');
-  assert.equal(byClass(mount, 'div', 'activation-component').getAttribute('data-classification'), 'subscription');
+  const first = byClass(mount, 'div', 'activation-component');
+  assert.equal(first.getAttribute('data-commercial'), 'subscription');
+  assert.equal(first.getAttribute('data-obligations'), '', 'both axes are shown, not one merged label');
+  assert.ok(text.includes('no subscription line · delivery'), 'a delivery obligation that is not a subscription reads as both facts');
   // The amount is server-side: nothing in the payload carries money, product or hash.
   assert.equal(/amount|Cents|documentHash|productId/.test(post.body), false, post.body);
 });
@@ -224,18 +270,24 @@ test('an ambiguous component blocks activation until a human decides it, with a 
   assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore, 'no request without a reason');
   assert.ok(mount.textContent.includes('Every override needs a reason'));
 
-  flagged.__type.value = 'subscription';
-  flagged.__reason.value = 'storage is sold as a recurring right';
+  // Each undecided axis has its own control and its own reason.
+  assert.ok(flagged.__commercial, 'the commercial axis has an editor');
+  assert.ok(flagged.__obligations, 'the obligations axis has its own editor');
+  flagged.__commercial.value = 'subscription';
+  flagged.__commercialReason.value = 'storage is sold as a recurring right';
+  flagged.__obligations.value = '';
+  flagged.__obligationsReason.value = 'nothing further is owed';
   await result.__preview();
   const replan = client.calls.filter((call) => call.method === 'POST').at(-1);
   assert.deepEqual(JSON.parse(replan.body).classificationOverrides, [
-    { orderComponentId: 'oc3', type: 'subscription', reason: 'storage is sold as a recurring right' },
+    { orderComponentId: 'oc3', dimension: 'commercial', value: 'subscription', reason: 'storage is sold as a recurring right' },
+    { orderComponentId: 'oc3', dimension: 'obligations', value: [], reason: 'nothing further is owed' },
   ]);
 
   // The resolved plan shows the decision as a human override, and only now
   // does the term form and the single activation control appear.
   const text = mount.textContent;
-  assert.ok(text.includes('(human override)'), text);
+  assert.ok(text.includes('human override: commercial and obligations'), text);
   assert.ok(text.includes('2 subscription line(s)'));
   assert.ok(byClass(mount, 'div', 'activation-term'), 'the term is collected only when activation is possible');
   assert.ok(byClass(mount, 'div', 'activation-activate'));
@@ -247,11 +299,13 @@ test('an ambiguous component blocks activation until a human decides it, with a 
   resolved.__effectiveDate.value = '2026-09-01';
   resolved.__termStartDate.value = '2026-09-01';
   resolved.__termEndDate.value = '2027-08-31';
+  resolved.__termsReason.value = 'agreed by email after signature';
   await resolved.__activate();
   const activate = client.calls.filter((call) => call.method === 'POST').at(-1);
   assert.equal(activate.path, '/api/modules/order/records/ord1/actions/activate-contract');
   assert.deepEqual(JSON.parse(activate.body).classificationOverrides, [
-    { orderComponentId: 'oc3', type: 'subscription', reason: 'storage is sold as a recurring right' },
+    { orderComponentId: 'oc3', dimension: 'commercial', value: 'subscription', reason: 'storage is sold as a recurring right' },
+    { orderComponentId: 'oc3', dimension: 'obligations', value: [], reason: 'nothing further is owed' },
   ]);
 });
 
@@ -267,6 +321,9 @@ test('the term is collected as calendar dates and the activation control is sing
   assert.ok(text.includes('nothing in this milestone schedules, bills or renews anything'));
   assert.ok(text.includes('requires a signed-in user actor'), 'the human-actor boundary is stated');
   assert.ok(text.includes('not Finance or Legal role enforcement'), 'the boundary is not overclaimed');
+  // The term's provenance is stated where it is entered, not in a footnote.
+  assert.ok(text.includes('not part of the signed agreement'), text);
+  assert.ok(text.includes('recorded as scheduled'), 'future-dated activation is disclosed');
   for (const input of ['effectiveDate', 'termStartDate', 'termEndDate']) {
     const control = mount.findAll('input').find((node) => node.getAttribute('name') === input);
     assert.equal(control.getAttribute('type'), 'date', `${input} is a calendar date`);
@@ -277,6 +334,7 @@ test('the term is collected as calendar dates and the activation control is sing
   result.__termEndDate.value = '2027-08-31';
   result.__autoRenew.checked = true;
   result.__noticeDays.value = '30';
+  result.__termsReason.value = 'agreed by email after signature';
   await result.__activate();
 
   const activate = client.calls.filter((call) => call.method === 'POST').at(-1);
@@ -285,6 +343,7 @@ test('the term is collected as calendar dates and the activation control is sing
     policy: 'b2b-saas-order-activation', policyVersion: 1,
     effectiveDate: '2026-09-01', termStartDate: '2026-09-01', termEndDate: '2027-08-31',
     autoRenew: true, renewalNoticeDays: 30,
+    termsReason: 'agreed by email after signature',
   });
   // The button disabled itself: a second click cannot double-activate.
   assert.equal(result.__activateButton.disabled, true, 'the activation control does not allow a second submit');
@@ -308,7 +367,9 @@ test('an activated order shows evidence only — no obligation, billing or renew
   assert.ok(text.includes('2026-09-01 → 2027-08-31 (inclusive, 365 day(s))'), text);
   assert.ok(text.includes('b2b-saas-order-activation@1'), 'the deciding policy version is evidence');
   assert.ok(text.includes('c'.repeat(64)), 'the policy fingerprint is shown');
-  assert.ok(text.includes('Human override by admin: the policy said "ambiguous"'), 'the override and the policy decision both survive');
+  assert.ok(text.includes('commercial treatment overridden by admin (the policy said "ambiguous")'), text);
+  assert.ok(text.includes('post-signature-operational-activation'), 'the term provenance is evidence too');
+  assert.ok(text.includes('subscription line · no further obligation'), 'both axes are readable per line');
   assert.ok(text.includes('EUR 2,850.00 net per period'), 'subscription lines show the per-period amount');
   assert.ok(text.includes('pending_handover'), 'the delivery obligation is a pending marker');
   assert.ok(text.includes('Nothing executes, schedules, staffs or completes them'));
