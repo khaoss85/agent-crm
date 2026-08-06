@@ -69,6 +69,8 @@ otherwise, and `docs/PROJECT_STATUS.md` is the file that says so.
 | External providers | none; every provider that ships is a deterministic offline fixture |
 | Cloud | design only (`AGENT_CRM_CLOUD.md`); no control plane, no deployment code |
 
+**Public multi-user use is gated by the Production Spine** — authentication, tenancy, RBAC, PostgreSQL, secrets and backups (`EXECUTION_ROADMAP.md` Phase 6). Until it lands, the HTTP server is a local-development surface, actor headers are a declared identity rather than an authenticated one, and no document, milestone or JTBD row may claim a real external, role-scoped or multi-tenant user.
+
 ## What this gate must leave behind
 
 1. **Core-versus-domain boundaries** — ADR-018 in `DECISIONS.md`.
