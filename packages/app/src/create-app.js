@@ -30,7 +30,7 @@ import { CommercialRegistries } from '../../core/src/commercial-registry.js';
 import { createCatalogSync } from '../../core/src/catalog-sync.js';
 import { SignatureRegistries } from '../../core/src/signature-registry.js';
 import { createSignatureOperations } from '../../core/src/signature-operations.js';
-import { DomainRegistries } from '../../core/src/domain-registry.js';
+import { PackageRegistry } from '../../core/src/package-registry.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
 import { ActionRegistry } from '../../core/src/action-registry.js';
 import { runRecordAction } from '../../core/src/action-runtime.js';
@@ -161,7 +161,7 @@ export function createAgentCrmApp(options = {}) {
   // generic contract: a package contributes actions and versioned policies,
   // and the application composes it here. With none registered, everything
   // below behaves exactly as it did before this seam existed.
-  const domains = new DomainRegistries({ domains: generatedDomains });
+  const domains = new PackageRegistry({ packages: generatedDomains });
   domains.persistFingerprints(database);
   // A domain's actions join the same registry, under the same validation and
   // the same eligibility rules as any other action. Registration order is

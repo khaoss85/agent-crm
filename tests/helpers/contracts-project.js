@@ -40,13 +40,25 @@ export const DOMAIN_MODULES = [
   'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
 ];
 
+/** The Delivery package's own record modules (M13). */
+export const DELIVERY_MANIFESTS = [
+  'delivery-handover-run.module.json', 'delivery-project.module.json',
+  'delivery-work-package.module.json', 'delivery-milestone.module.json',
+  'delivery-partner-engagement.module.json',
+];
+export const DELIVERY_MODULES = [
+  'delivery-handover-run', 'delivery-project', 'delivery-work-package',
+  'delivery-milestone', 'delivery-partner-engagement',
+];
+export const DELIVERY_POLICY = { policy: 'b2b-delivery-handover', policyVersion: 1 };
+
 /**
  * @param {import('node:test').TestContext} t
  * @param {{withDomain?: boolean}} [options] `withDomain: false` builds the same
  *   project **without** the contracts package, which is how domain isolation is
  *   proven rather than asserted.
  */
-export function project(t, { withDomain = true } = {}) {
+export function project(t, { withDomain = true, withDelivery = false, withCustomPackage = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'agent-crm-contracts-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
@@ -63,6 +75,8 @@ export function project(t, { withDomain = true } = {}) {
   };
   for (const manifest of STARTER_MANIFESTS) apply(join(starter, manifest));
   if (withDomain) for (const manifest of DOMAIN_MANIFESTS) apply(join(root, 'packages/contracts/modules', manifest));
+  if (withDelivery) for (const manifest of DELIVERY_MANIFESTS) apply(join(root, 'packages/delivery/modules', manifest));
+  if (withCustomPackage) apply(join(root, 'examples/custom-packages/partner-scorecard/modules/partner-scorecard.module.json'));
 
   writeFileSync(
     join(root, 'packages/actions/generated/index.js'),
@@ -92,12 +106,25 @@ export function project(t, { withDomain = true } = {}) {
     ].join('\n'),
   );
   if (withDomain) {
+    // The composition file is the ONLY place a project names its packages:
+    // this is the same static import list a customer edits by hand.
     writeFileSync(
       join(root, 'packages/domains/generated/index.js'),
       [
         "import { createContractsDomain } from '../../contracts/src/index.js';",
         "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
-        'export const generatedDomains = [createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] })];',
+        ...(withDelivery ? [
+          "import { createDeliveryPackage } from '../../delivery/src/index.js';",
+          "import { b2bDeliveryHandoverV1 } from '../../../examples/starters/b2b-lead-qualification/delivery.js';",
+        ] : []),
+        ...(withCustomPackage ? [
+          "import { createPartnerScorecardPackage } from '../../../examples/custom-packages/partner-scorecard/src/index.js';",
+        ] : []),
+        'export const generatedDomains = [',
+        '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
+        ...(withDelivery ? ['  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1] }),'] : []),
+        ...(withCustomPackage ? ['  createPartnerScorecardPackage(),'] : []),
+        '];',
         '',
       ].join('\n'),
     );
@@ -181,4 +208,26 @@ function hash(text) {
   let value = 0;
   for (const character of text) value = (value * 31 + character.charCodeAt(0)) | 0;
   return value;
+}
+
+
+/** The standard M12 activation input: dates plus the reason the term exists. */
+export const ACTIVATION_INPUT = {
+  ...TERM,
+  termsReason: 'agreed with the customer after signature',
+};
+
+/**
+ * Drive a signed order all the way to an activated contract, which is where
+ * every Delivery (M13) test starts.
+ */
+export async function activatedContract(root, app, options = {}) {
+  const actor = { type: 'user', id: 'e2e' };
+  const signed = await signedOrder(root, app, options);
+  await app.runAction({
+    module: 'order', action: 'activate-contract', recordId: signed.order.id,
+    input: { ...POLICY, ...ACTIVATION_INPUT, ...(options.activation ?? {}) }, actor,
+  });
+  const contract = app.modules.get('commercial-contract').service.listWhere({ orderId: signed.order.id })[0];
+  return { ...signed, contract };
 }

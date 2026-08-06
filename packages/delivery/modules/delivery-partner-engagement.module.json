@@ -1,0 +1,87 @@
+{
+  "manifestVersion": 1,
+  "name": "delivery-partner-engagement",
+  "description": "A planned third-party delivery partner for one project (M13). It is a business reference and a name snapshot: it grants no account, no login, no portal, no permission, no fee or revenue share and no SLA, and this milestone models at most one partner per project.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "deliveryProjectId",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "contractId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "partnerRef",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "partnerNameSnapshot",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "role",
+      "type": "enum",
+      "values": [
+        "delivery_partner"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "planned"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "workPackageIdsJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "workPackageCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "scopeSnapshot",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "assignedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "assignmentReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "handoverRunId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "plannedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

@@ -1,12 +1,18 @@
 {
   "manifestVersion": 1,
-  "name": "delivery-obligation",
-  "description": "A pending delivery obligation created at activation (M12) for a component classified as delivery work. Milestone 13 will turn these into delivery projects and work packages; this is not a project, and nothing is scheduled or fulfilled. A delivery package may mark it handed over through the contracts package's declared delivery-obligations capability; nothing else may change it.",
+  "name": "delivery-work-package",
+  "description": "One planned work package per source delivery obligation (M13), with the commercial snapshot it came from and the explicit decision about who delivers it. No progress, percent complete, time, cost or margin exists in this milestone.",
   "fields": [
     {
       "name": "sourceKey",
       "type": "string",
       "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "deliveryProjectId",
+      "type": "string",
+      "index": true,
       "writable": "managed"
     },
     {
@@ -16,15 +22,14 @@
       "writable": "managed"
     },
     {
-      "name": "contractLineId",
+      "name": "obligationId",
       "type": "string",
-      "index": true,
+      "unique": true,
       "writable": "managed"
     },
     {
-      "name": "orderId",
+      "name": "contractLineId",
       "type": "string",
-      "index": true,
       "writable": "managed"
     },
     {
@@ -34,21 +39,12 @@
       "writable": "managed"
     },
     {
-      "name": "status",
-      "type": "enum",
-      "values": [
-        "pending_handover",
-        "handed_over"
-      ],
-      "writable": "managed"
-    },
-    {
-      "name": "label",
+      "name": "componentKey",
       "type": "string",
       "writable": "managed"
     },
     {
-      "name": "componentKey",
+      "name": "label",
       "type": "string",
       "writable": "managed"
     },
@@ -106,24 +102,81 @@
       "writable": "managed"
     },
     {
-      "name": "provider",
+      "name": "deliveryMode",
+      "type": "enum",
+      "values": [
+        "internal",
+        "partner"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "policyDeliveryMode",
+      "type": "enum",
+      "values": [
+        "internal",
+        "partner",
+        "ambiguous"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "modeOverridden",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "modeOverrideReason",
       "type": "string",
       "writable": "managed"
     },
     {
-      "name": "activationId",
+      "name": "modeReason",
       "type": "string",
       "writable": "managed"
     },
     {
-      "name": "handoverRef",
+      "name": "overriddenBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "partnerRef",
       "type": "string",
       "index": true,
       "writable": "managed"
     },
     {
-      "name": "handedOverAt",
-      "type": "timestamp",
+      "name": "policy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "planned"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "handoverRunId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "position",
+      "type": "integer",
       "writable": "managed"
     }
   ]

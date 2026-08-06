@@ -3,12 +3,12 @@ name: build-contract-activation
 description: Add or extend contract activation in an Agent CRM project - turning a signed immutable Order into a Commercial Contract, Contract Version and Lines, a Subscription with its lines, and pending delivery/service obligations, through a versioned Order Activation Policy. Use for contract, subscription, obligation or activation-policy work, and for building a new optional domain package. Do not use for signature/order work (build-signature-order), catalog/quote/discount work (build-commercial-operations) or CRUD module changes (create-crm-module).
 ---
 
-Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and both its Milestone 12 addenda) and `docs/CONTRACT_ACTIVATION.md` first.
+Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda), `docs/CONTRACT_ACTIVATION.md` and `docs/PACKAGE_AUTHORING.md` first.
 
 ## Build it as a domain package, not in core
 
 1. A new domain lives in `packages/<domain>/` and is registered through the checked-in `packages/domains/generated/index.js` — the same path a third-party package uses. The kernel must never import it, and removing that one static import must leave every other milestone working. Prove it: boot the same project without the package and assert the kernel is unchanged.
-2. The domain declaration is plain data: `{ name, domainContract: 1, label, actions[], policies[{kind, definition}], metadata() }`. `metadata()` returns function-free JSON for `/api/schema`; never a handler, a credential or a path.
+2. The declaration is plain data built with `definePackage` from the public surface `packages/core/index.js`: `{ packageContract: 1, name, version, label, resources[], requires[], capabilities[], actions[], policies[{kind, definition}], metadata() }`. `metadata()` returns function-free JSON for `/api/schema`; never a handler, a credential or a path. Import nothing else under `packages/core` — `docs/PACKAGE_AUTHORING.md` and `crm package validate` are the contract.
 3. If the domain needs something the runtime does not have, that is a **generic** runtime capability with no domain word in it, recorded as an ADR-018 addendum — never a domain concept smuggled into `packages/core`. M12 needed exactly three: the domain registry seam, a strict `boolean` input type and an injectable application clock.
 4. Domain records are ordinary manifests (`writable: "managed"` throughout → capabilities `get`/`list`) applied by the project, not written by hand.
 

@@ -1,6 +1,6 @@
 # Admin manual browser smoke checklist
 
-Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (re-run at each milestone; 27 automated checks at Milestone 12, all passing, including the XSS-as-text, malformed-hash, composite-pricing, signature/order and contract-activation cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
+Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (re-run at each milestone; 28 automated checks at Milestone 13, all passing, including the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation and delivery-handover cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
 
 ## Setup
 
@@ -29,6 +29,14 @@ npm run dev   # http://localhost:4000
 13. Narrow the window to phone width → layout stays usable; table scrolls, no horizontal page scroll.
 14. In the Supplier collection, a record value containing `<b>x</b>` renders as literal text (paste it into Name) — no bold, no script.
 15. Restart `npm run dev` → both modules and their records are still present.
+
+Delivery handover (Milestone 13, the delivery domain package — requires the delivery package registered and its five manifests applied; the section is absent without it):
+
+36. Under an activated contract, a **Delivery handover** section offers a policy selector and **Plan delivery handover**, stating that planning is read-only. The plan lists every pending delivery obligation with who delivers it *and the reason*, plus the proposed milestone plan.
+37. An obligation whose delivery mode the policy could not decide is highlighted as blocking, with a mode selector and a required reason; no planning window, no partner input and no handover control appear while anything is undecided. Applying a decision without a reason is refused before any request leaves the browser.
+38. Once nothing is undecided, the planning window asks for target start and end as calendar dates and states that these are **post-sale planning data, not a customer commitment**, that both are supplied together or not at all, and that nothing schedules them. A partner reference and name are requested **only** when some work package is partner-delivered, alongside the statement that a partner engagement **grants no access of any kind**.
+39. Creating the handover once re-renders to evidence: project facts (status `pending_kickoff`, planning window and its source, policy version and fingerprint), work packages with each mode's reason and any human decision next to what the policy said, the milestone plan with the note that it is not a contractual or billing milestone, and the partner engagement with its no-access limitation. The handover control does not accept a second click.
+40. On a handed-over contract the whole section exposes no input, button or selector, and no control exists to start, progress, complete, staff, cost, bill or accept anything.
 
 Report any step that fails; do not mark the Admin browser-validated unless all pass.
 

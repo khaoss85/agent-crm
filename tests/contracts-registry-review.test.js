@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { DomainRegistries, validateDomainDefinition } from '../packages/core/src/domain-registry.js';
+import { PackageRegistry, validatePackageDefinition } from '../packages/core/index.js';
 import { DOMAIN_MANIFESTS, DOMAIN_MODULES, POLICY, TERM, boot, project, signedOrder } from './helpers/contracts-project.js';
 
 /**
@@ -27,7 +27,7 @@ function bootInChild(root, dbPath) {
 }
 
 const domain = (over = {}) => ({
-  name: 'd', domainContract: 1, label: 'D', actions: [], policies: [], metadata: () => ({}), ...over,
+  name: 'd', packageContract: 1, version: 1, label: 'D', actions: [], policies: [], metadata: () => ({}), ...over,
 });
 
 test('the domain seam refuses everything malformed, fail-closed', () => {
@@ -35,17 +35,17 @@ test('the domain seam refuses everything malformed, fail-closed', () => {
 
   // Identity.
   for (const name of ['', 'D', '1domain', 'has space', 'has_underscore', '__proto__x'.replace('x', ''), null, 42]) {
-    refuses(() => validateDomainDefinition(domain({ name })), /name must match|must be an object/);
+    refuses(() => validatePackageDefinition(domain({ name })), /name must match|must be an object/);
   }
-  refuses(() => validateDomainDefinition(domain({ domainContract: 2 })), /domainContract/);
-  refuses(() => validateDomainDefinition(domain({ domainContract: undefined })), /domainContract/);
-  refuses(() => validateDomainDefinition(domain({ actions: 'nope' })), /actions must be an array/);
-  refuses(() => validateDomainDefinition(domain({ policies: {} })), /policies must be an array/);
-  refuses(() => validateDomainDefinition(null), /must be an object/);
-  refuses(() => validateDomainDefinition([]), /must be an object|name must match/);
+  refuses(() => validatePackageDefinition(domain({ packageContract: 2 })), /packageContract/);
+  refuses(() => validatePackageDefinition(domain({ packageContract: undefined })), /packageContract/);
+  refuses(() => validatePackageDefinition(domain({ actions: 'nope' })), /actions must be an array/);
+  refuses(() => validatePackageDefinition(domain({ policies: {} })), /policies must be an array/);
+  refuses(() => validatePackageDefinition(null), /must be an object/);
+  refuses(() => validatePackageDefinition([]), /must be an object|name must match/);
 
   // Prototype-shaped names never become registry keys.
-  const registry = new DomainRegistries({ domains: [domain({ policies: [{ kind: 'k', definition: policy() }] })] });
+  const registry = new PackageRegistry({ packages: [domain({ policies: [{ kind: 'k', definition: policy() }] })] });
   assert.equal(registry.has('__proto__'), false);
   assert.equal(registry.has('constructor'), false);
   assert.throws(() => registry.getPolicy('__proto__', 'k', 'p', 1), /Domain policy/);
@@ -54,23 +54,26 @@ test('the domain seam refuses everything malformed, fail-closed', () => {
   assert.equal(Object.prototype.polluted, undefined);
 
   // Duplicate identities are startup failures, not last-one-wins.
-  assert.throws(() => new DomainRegistries({ domains: [domain(), domain()] }), /Duplicate domain/);
+  assert.throws(() => new PackageRegistry({ packages: [domain(), domain()] }), /Duplicate domain/);
   assert.throws(
-    () => new DomainRegistries({ domains: [domain({ policies: [{ kind: 'k', definition: policy() }, { kind: 'k', definition: policy() }] })] }),
+    () => new PackageRegistry({ packages: [domain({ policies: [{ kind: 'k', definition: policy() }, { kind: 'k', definition: policy() }] })] }),
     /Duplicate policy identity/,
   );
   // Two different domains may carry the same policy name: identity is scoped.
-  const scoped = new DomainRegistries({
+  const scoped = new PackageRegistry({
     domains: [
       domain({ name: 'a', policies: [{ kind: 'k', definition: policy() }] }),
       domain({ name: 'b', policies: [{ kind: 'k', definition: policy() }] }),
     ],
   });
-  assert.equal(scoped.policies.size, 2);
+  // Identity is scoped per package; the registry publishes it, it does not
+  // expose the Map (adversarial review of PR #17).
+  assert.equal(scoped.metadata().a.policies.length, 1);
+  assert.equal(scoped.metadata().b.policies.length, 1);
   assert.notEqual(scoped.getPolicy('a', 'k', 'p', 1), scoped.getPolicy('b', 'k', 'p', 1));
 
   // Metadata is deterministic, function-free and never introspected blindly.
-  const meta = new DomainRegistries({
+  const meta = new PackageRegistry({
     domains: [
       domain({ name: 'b', metadata: () => ({ z: 1, a: 2 }) }),
       domain({ name: 'a', metadata: () => ({ nested: { fn: undefined } }) }),
@@ -79,12 +82,12 @@ test('the domain seam refuses everything malformed, fail-closed', () => {
   assert.deepEqual(Object.keys(meta), ['a', 'b'], 'domains are ordered deterministically');
   assert.equal(JSON.stringify(meta).includes('function'), false);
   assert.throws(
-    () => new DomainRegistries({ domains: [domain({ metadata: () => 'nope' })] }).metadata(),
+    () => new PackageRegistry({ packages: [domain({ metadata: () => 'nope' })] }).metadata(),
     /must return a plain object/,
   );
   // Two registries never share state.
-  const first = new DomainRegistries({ domains: [domain()] });
-  const second = new DomainRegistries({ domains: [] });
+  const first = new PackageRegistry({ packages: [domain()] });
+  const second = new PackageRegistry({ packages: [] });
   assert.equal(first.has('d'), true);
   assert.equal(second.has('d'), false);
 });
@@ -122,7 +125,7 @@ test('policy fingerprints are persisted, drift-checked and all-or-nothing', asyn
   // A registration that fails halfway leaves nothing behind: the whole set is
   // written in one transaction.
   const before = app.database.raw.prepare("SELECT COUNT(*) AS n FROM definition_versions WHERE type LIKE 'domain-policy:%'").get().n;
-  const registry = new DomainRegistries({
+  const registry = new PackageRegistry({
     domains: [domain({
       name: 'partial',
       policies: [
@@ -199,7 +202,7 @@ test('the dependency direction is one-way, and the package is genuinely removabl
     const { createAgentCrmApp } = await import(${JSON.stringify(pathToFileURL(join(root, 'packages/app/src/index.js')).href)});
     const app = createAgentCrmApp({ dbPath: ${JSON.stringify(dbPath)} });
     const out = {
-      domains: app.domains.domains.size,
+      domains: app.domains.size,
       hasPlan: app.actions.listForModule('order').some((a) => a.name === 'plan-activation'),
       contracts: app.database.raw.prepare('SELECT COUNT(*) AS n FROM commercial_contracts').get().n,
       subscriptionLines: app.database.raw.prepare('SELECT COUNT(*) AS n FROM subscription_lines').get().n,

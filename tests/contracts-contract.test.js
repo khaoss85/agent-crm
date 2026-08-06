@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DomainRegistries, validateDomainDefinition } from '../packages/core/src/domain-registry.js';
+import { PackageRegistry, validatePackageDefinition } from '../packages/core/index.js';
 import {
   COMMERCIAL_ACTIVATIONS,
   OBLIGATION_TYPES,
@@ -35,7 +35,8 @@ const policy = (overrides = {}) => ({
 
 const domain = (overrides = {}) => ({
   name: 'contracts',
-  domainContract: 1,
+  packageContract: 1,
+  version: 1,
   label: 'Contracts',
   actions: [],
   policies: [{ kind: 'order-activation-policy', definition: policy() }],
@@ -44,23 +45,23 @@ const domain = (overrides = {}) => ({
 });
 
 test('the domain-package contract is generic and validated fail-closed', () => {
-  assert.equal(validateDomainDefinition(domain()).name, 'contracts');
-  refuses(() => validateDomainDefinition({ ...domain(), name: 'Contracts' }), /name must match/);
-  refuses(() => validateDomainDefinition({ ...domain(), name: '__proto__' }), /name must match/);
-  refuses(() => validateDomainDefinition({ ...domain(), domainContract: 2 }), /domainContract must be 1/);
-  refuses(() => validateDomainDefinition({ ...domain(), actions: 'nope' }), /actions must be an array/);
-  refuses(() => validateDomainDefinition({ ...domain(), metadata: 'nope' }), /metadata must be a function/);
-  refuses(() => validateDomainDefinition({ ...domain(), policies: [{ kind: 'Bad Kind', definition: policy() }] }), /policy kind must match/);
-  refuses(() => validateDomainDefinition({ ...domain(), policies: [{ kind: 'k', definition: { ...policy(), version: 0 } }] }), /version must be a positive integer/);
-  refuses(() => validateDomainDefinition({ ...domain(), policies: [{ kind: 'k', definition: { ...policy(), config: 'x' } }] }), /config must be a plain object/);
+  assert.equal(validatePackageDefinition(domain()).name, 'contracts');
+  refuses(() => validatePackageDefinition({ ...domain(), name: 'Contracts' }), /name must match/);
+  refuses(() => validatePackageDefinition({ ...domain(), name: '__proto__' }), /name must match/);
+  refuses(() => validatePackageDefinition({ ...domain(), packageContract: 2 }), /packageContract must be 1/);
+  refuses(() => validatePackageDefinition({ ...domain(), actions: 'nope' }), /actions must be an array/);
+  refuses(() => validatePackageDefinition({ ...domain(), metadata: 'nope' }), /metadata must be a function/);
+  refuses(() => validatePackageDefinition({ ...domain(), policies: [{ kind: 'Bad Kind', definition: policy() }] }), /policy kind must match/);
+  refuses(() => validatePackageDefinition({ ...domain(), policies: [{ kind: 'k', definition: { ...policy(), version: 0 } }] }), /version must be a positive integer/);
+  refuses(() => validatePackageDefinition({ ...domain(), policies: [{ kind: 'k', definition: { ...policy(), config: 'x' } }] }), /config must be a plain object/);
 
   // The kernel seam knows nothing about contracts: the same registry accepts
   // any domain, which is the whole point of ADR-018.
-  assert.equal(validateDomainDefinition({ ...domain(), name: 'delivery', policies: [] }).name, 'delivery');
+  assert.equal(validatePackageDefinition({ ...domain(), name: 'delivery', policies: [] }).name, 'delivery');
 });
 
 test('the domain registry is Map-backed, unique, fingerprinted and function-free', () => {
-  const registry = new DomainRegistries({ domains: [domain()] });
+  const registry = new PackageRegistry({ packages: [domain()] });
   const entry = registry.getPolicy('contracts', 'order-activation-policy', 'b2b-activation', 1);
   assert.match(entry.fingerprint, /^[0-9a-f]{64}$/);
   assert.equal(registry.has('contracts'), true);
@@ -68,38 +69,43 @@ test('the domain registry is Map-backed, unique, fingerprinted and function-free
   refuses(() => registry.get('__proto__'), /Domain package/);
   refuses(() => registry.getPolicy('contracts', 'order-activation-policy', 'b2b-activation', 2), /Domain policy/);
   refuses(() => registry.getPolicy('__proto__', 'k', 'n', 1), /Domain policy/);
-  refuses(() => new DomainRegistries({ domains: [domain(), domain()] }), /Duplicate domain package/);
+  refuses(() => new PackageRegistry({ packages: [domain(), domain()] }), /Duplicate domain package/);
 
   // Declared config is inside the fingerprint: an edited mapping is a
   // different definition, which is what stops a silent change at boot.
-  const changed = new DomainRegistries({
+  const changed = new PackageRegistry({
     domains: [domain({ policies: [{ kind: 'order-activation-policy', definition: policy({ config: { componentKeys: { seats: 'delivery' } } }) }] })],
   });
   assert.notEqual(changed.getPolicy('contracts', 'order-activation-policy', 'b2b-activation', 1).fingerprint, entry.fingerprint);
 
   // …and so is the handler source.
-  const rewritten = new DomainRegistries({
+  const rewritten = new PackageRegistry({
     domains: [domain({ policies: [{ kind: 'order-activation-policy', definition: policy({ classifyComponent: () => ({ commercialActivation: 'non_subscription', obligations: ['delivery'] }) }) }] })],
   });
   assert.notEqual(rewritten.getPolicy('contracts', 'order-activation-policy', 'b2b-activation', 1).fingerprint, entry.fingerprint);
 
   const metadata = registry.metadata();
-  assert.equal(metadata.contracts.domainContract, 1);
+  assert.equal(metadata.contracts.packageContract, 1);
   assert.equal(metadata.contracts.policies[0].fingerprint, entry.fingerprint);
   assert.equal(JSON.stringify(metadata).includes('function'), false);
   // No registered domain means no metadata at all, not an empty shell.
-  assert.deepEqual(new DomainRegistries().metadata(), {});
-  assert.deepEqual(new DomainRegistries().actions(), []);
+  assert.deepEqual(new PackageRegistry().metadata(), {});
+  assert.deepEqual(new PackageRegistry().actions(), []);
 });
 
 test('the contracts domain declares its resources, limits and human boundary', () => {
   const built = createContractsDomain({ policies: [policy()] });
   assert.equal(built.name, 'contracts');
-  assert.equal(built.domainContract, 1);
+  assert.equal(built.packageContract, 1);
   assert.deepEqual(built.actions.map((action) => `${action.module}.${action.name}`), ['order.plan-activation', 'order.activate-contract']);
 
   const metadata = built.metadata();
-  assert.equal(metadata.resources.length, 8);
+  // Resources are declared on the package itself now — that is what makes a
+  // collision between two packages detectable before boot.
+  assert.equal(built.resources.length, 8);
+  assert.ok(built.resources.includes('delivery-obligation'));
+  // …and the package offers exactly one capability to other packages.
+  assert.deepEqual(built.capabilities.map((entry) => `${entry.name}@${entry.version}`), ['delivery-obligations@1']);
   assert.deepEqual(metadata.classification.commercialActivation, [...COMMERCIAL_ACTIVATIONS]);
   assert.deepEqual(metadata.classification.obligations, [...OBLIGATION_TYPES]);
   assert.deepEqual(metadata.classification.dimensions, ['commercial', 'obligations']);

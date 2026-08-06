@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
-  "name": "delivery-obligation",
-  "description": "A pending delivery obligation created at activation (M12) for a component classified as delivery work. Milestone 13 will turn these into delivery projects and work packages; this is not a project, and nothing is scheduled or fulfilled. A delivery package may mark it handed over through the contracts package's declared delivery-obligations capability; nothing else may change it.",
+  "name": "delivery-project",
+  "description": "One planned delivery project (commessa) per activated contract handed to delivery (M13). It carries its own customer snapshot so it reads without a live CRM row, and it plans work \u2014 it never executes, progresses, schedules, costs or bills it.",
   "fields": [
     {
       "name": "sourceKey",
@@ -12,101 +12,11 @@
     {
       "name": "contractId",
       "type": "string",
-      "index": true,
+      "unique": true,
       "writable": "managed"
     },
     {
-      "name": "contractLineId",
-      "type": "string",
-      "index": true,
-      "writable": "managed"
-    },
-    {
-      "name": "orderId",
-      "type": "string",
-      "index": true,
-      "writable": "managed"
-    },
-    {
-      "name": "orderComponentId",
-      "type": "string",
-      "index": true,
-      "writable": "managed"
-    },
-    {
-      "name": "status",
-      "type": "enum",
-      "values": [
-        "pending_handover",
-        "handed_over"
-      ],
-      "writable": "managed"
-    },
-    {
-      "name": "label",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "componentKey",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "sku",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "chargeType",
-      "type": "enum",
-      "values": [
-        "one_time",
-        "recurring"
-      ],
-      "writable": "managed"
-    },
-    {
-      "name": "interval",
-      "type": "enum",
-      "values": [
-        "month",
-        "year"
-      ],
-      "writable": "managed"
-    },
-    {
-      "name": "intervalCount",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "quantity",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "netAmountCents",
-      "type": "integer",
-      "writable": "managed"
-    },
-    {
-      "name": "currency",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "productId",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "productVersionId",
-      "type": "string",
-      "writable": "managed"
-    },
-    {
-      "name": "provider",
+      "name": "contractVersionId",
       "type": "string",
       "writable": "managed"
     },
@@ -116,13 +26,116 @@
       "writable": "managed"
     },
     {
-      "name": "handoverRef",
+      "name": "orderId",
       "type": "string",
       "index": true,
       "writable": "managed"
     },
     {
-      "name": "handedOverAt",
+      "name": "handoverRunId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "customerName",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "customerEmail",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "companyId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "contactId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "opportunityId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "pending_kickoff"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "workPackageCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "milestoneCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "partnerCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "targetStartDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "targetEndDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "planDays",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "datesSource",
+      "type": "enum",
+      "values": [
+        "post-sale-delivery-planning"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "plannedAt",
       "type": "timestamp",
       "writable": "managed"
     }

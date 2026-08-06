@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError } from '../../core/src/errors.js';
+import { AppError } from '../../core/index.js';
 import {
   OBLIGATIONS_AMBIGUOUS,
   assertClassificationCoherent,

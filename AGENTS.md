@@ -14,9 +14,10 @@ This repository is an agent-native CRM framework. Preserve the separation betwee
 6. Do not add a production dependency unless it removes more complexity than it adds; record the reason in `DECISIONS.md`.
 7. Run `npm run verify` before considering work complete.
 8. Update `TASKS.md` and relevant docs when behavior changes.
-9. Follow `docs/QUALITY_GATES.md` for every feature PR, and **use the `adversarial-review` skill for any milestone review or pre-merge review task** (`.claude/skills/adversarial-review/SKILL.md`, mirrored at `.agents/skills/adversarial-review/SKILL.md`). A milestone that skipped the review is unreviewed, not finished.
-10. Respect the core budget rule (ADR-018): **new domain-specific business behavior does not go into `packages/core`** unless it is first proven to be a reusable runtime capability. A PR that adds a domain concept to core must say which runtime capability it is and why a domain package cannot own it.
-11. Read `docs/PROJECT_STATUS.md` for what is true in the repository today — merged milestone, main SHA, test count, open PRs, production blockers — and update it in the same PR as a milestone merge. Do not put volatile status in `MASTER_PLAN.md`.
+9. **Domain-package work requires the `build-custom-domain-package` skill** (`.claude/skills/build-custom-domain-package/SKILL.md`, mirrored at `.agents/skills/build-custom-domain-package/SKILL.md`) and `docs/PACKAGE_AUTHORING.md`. A package imports only `packages/core/index.js`, reaches another package only through a declared capability, and is registered by one static import in `packages/domains/generated/index.js`. A single custom object is a module, not a package.
+10. Follow `docs/QUALITY_GATES.md` for every feature PR, and **use the `adversarial-review` skill for any milestone review or pre-merge review task** (`.claude/skills/adversarial-review/SKILL.md`, mirrored at `.agents/skills/adversarial-review/SKILL.md`). A milestone that skipped the review is unreviewed, not finished.
+11. Respect the core budget rule (ADR-018): **new domain-specific business behavior does not go into `packages/core`** unless it is first proven to be a reusable runtime capability. A PR that adds a domain concept to core must say which runtime capability it is and why a domain package cannot own it.
+12. Read `docs/PROJECT_STATUS.md` for what is true in the repository today — merged milestone, main SHA, test count, open PRs, production blockers — and update it in the same PR as a milestone merge. Do not put volatile status in `MASTER_PLAN.md`.
 
 ## Coding conventions
 

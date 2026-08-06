@@ -250,7 +250,10 @@ subscriptions and obligations — in `packages/contracts/` without adding a
 domain concept to core. It needed exactly **two** generic runtime additions,
 both of which pass the core budget rule because they name no domain:
 
-**1. A domain registry seam (`packages/core/src/domain-registry.js`).** A
+**1. A domain registry seam (`packages/core/src/domain-registry.js`).**
+*Superseded by addendum 3: the file is now
+`packages/core/src/package-registry.js` and the field is `packageContract`.
+The paragraph below records what Milestone 12 shipped.* A
 domain package hands the application a plain declaration —
 `{name, domainContract: 1, label, actions[], policies[{kind, definition}],
 metadata()}` — and the runtime does what it already does for every other
@@ -348,3 +351,115 @@ the third and last addition M12 asked of the kernel.
 
 **Also corrected:** a renewal notice period without `autoRenew` is refused
 rather than stored as a clause that can never apply.
+
+### ADR-018 addendum 3 — the public domain-package contract
+
+**Status:** accepted (Milestone 13, the second package and the first customer-authored one).
+
+ADR-018 said domain behavior belongs in optional packages. Milestone 12 proved
+one package could exist outside the kernel. This addendum makes the seam a
+**public contract**: the way a customer's own package attaches is the way the
+first-party packages attach, and there is no second, privileged mechanism.
+
+**The contract.** A package exports one static definition:
+
+```js
+definePackage({
+  packageContract: 1,        // the contract it is written against
+  name: 'delivery',          // canonical, unique, Map-keyed
+  version: 1,                // the package's own version
+  label, description,
+  resources: [...],          // the record modules it owns
+  requires: [{ package, capability, version }],
+  capabilities: [{ name, version, description, create(ctx) }],
+  actions: [...], policies: [{kind, definition}],
+  metadata(),                // function-free, additive schema block
+})
+```
+
+Validated fail-closed at startup: an unsupported contract version, a
+non-canonical or prototype-shaped name, a duplicate package or policy identity,
+a resource or capability two packages both claim, a missing or mis-versioned
+dependency, a self-dependency and a dependency cycle all stop the application
+with the offending edge named.
+
+**Capabilities are the only cross-package reach.** A capability is created per
+call with the **caller's** runtime handles, so it reads and writes inside the
+caller's transaction while the provider keeps its services and tables private —
+that is what makes a cross-package commit atomic without sharing a database
+handle. A package that did not *declare* the requirement is refused even when
+the capability exists: the dependency graph in the definition is the truth, not
+a comment. Deep-importing another package's source is never allowed.
+
+**A public kernel surface.** `packages/core/index.js` is what a package may
+import: the package contract, the error types, the ADR-015 fingerprint helpers,
+the money helpers and bounds, and the shared validators. Everything under
+`packages/core/src/*` is private and may change without notice. The CLI and the
+conformance helper both fail a package that reaches into it, and M12 was
+migrated to the public surface in the same PR that introduced it.
+
+**Static composition, deliberately.** Packages are checked-in source registered
+by one import in `packages/domains/generated/index.js`. No dynamic import, no
+`eval`, no remote install, no signing, no marketplace, no hot loading. The
+security model is "you can read the source in your own repository", and adding
+distribution would replace it with a different, larger problem.
+
+**What this addendum defers, with the reason.** A `crm package new` scaffold
+waits until Delivery and Service have settled the file shape — generating the
+wrong skeleton into every customer repository is harder to undo than writing
+four files. A package registry, publication and updates are a distribution
+problem with their own threat model, and authoring does not need them.
+
+**Consequences.** Two first-party packages and one customer-authored example
+now attach through the identical contract, and `tests/custom-package-e2e.test.js`
+fingerprints every kernel file before and after to prove the customer path
+needs no kernel change. The extraction of M9–M11 stays deferred until a third
+independent package (Service, M15) has exercised the contract.
+
+
+### ADR-018 addendum 4 — what the package contract enforces, exactly
+
+**Status:** accepted (adversarial review of Milestone 13 / PR #17).
+
+Addendum 3 said capabilities are the only cross-package reach and that the
+declaration "is the truth, not a comment". The review proved that was true only
+of the polite path. Four corrections, each with a regression test:
+
+1. **The registry's state is private.** `packages`, `policies`, `capabilities`
+   and `resources` were public mutable `Map`s on the object handed to every
+   package action. A package could add a capability, rewrite another package's
+   `requires` and then open anything. They are now `#private`, with
+   `size`, `names()` and `resources()` as frozen read-only views.
+
+2. **`get()` returns a summary, not a definition.** It used to return the
+   definition — including `capabilities[].create`. Reaching a capability you did
+   not declare took one property access. It now returns a frozen public summary
+   with no function on it.
+
+3. **A capability opens only from the package the declaration named.** The
+   open-time check matched on capability name and version alone; it now also
+   requires `offered.package` to equal the declared `package`.
+
+4. **`metadata()` may not restate the composition.** The declared block was
+   spread *last*, so a package could publish `requires: []`, its own
+   `version`, or an empty `policies` list — and `/api/schema` would disagree
+   with `package inspect` silently. Reserved keys are now refused, and the
+   block must be plain, function-free data (the "function-free" claim had never
+   been enforced).
+
+Two boundaries are now stated rather than implied, because they cannot be
+enforced in-process and pretending otherwise is the more dangerous error:
+
+- **The consumer identity is self-asserted.** `capability({consumer, …})` trusts
+  the name. A package that deliberately impersonates another consumer is a
+  trusted-source problem. Binding the identity at dispatch time is a runtime
+  change, not a package-contract change, and is deferred with this written down.
+- **`crm package validate|inspect` executes the package it reads.** A code-first
+  definition is read by importing it. The commands themselves touch no file,
+  database or network, but the package's module body runs with full authority.
+  The guide now says so instead of calling them read-only.
+
+The private-import rule was also quote-sensitive — `from "…/core/src/…"` with
+double quotes passed both the CLI and the conformance helper. It now matches any
+quote style and `import()`/`require()` as well.
+

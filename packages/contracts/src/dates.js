@@ -1,6 +1,6 @@
 // @ts-check
 
-import { ValidationError } from '../../core/src/errors.js';
+import { ValidationError } from '../../core/index.js';
 
 /**
  * Commercial term boundaries are **calendar dates**, not instants.

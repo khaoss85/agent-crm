@@ -1,0 +1,20 @@
+{
+  "manifestVersion": 1,
+  "name": "partner-scorecard",
+  "description": "A human rating of a delivery partner after an engagement (customer-authored example package). Read-only publicly: a scorecard exists only through the package's rate-partner action, and it grants the partner nothing.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "engagementId", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "deliveryProjectId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "partnerRef", "type": "string", "index": true, "writable": "managed" },
+    { "name": "partnerNameSnapshot", "type": "string", "writable": "managed" },
+    { "name": "score", "type": "integer", "writable": "managed" },
+    { "name": "rating", "type": "enum", "values": ["preferred", "approved", "watch"], "writable": "managed" },
+    { "name": "reason", "type": "string", "writable": "managed" },
+    { "name": "policy", "type": "string", "writable": "managed" },
+    { "name": "policyVersion", "type": "integer", "writable": "managed" },
+    { "name": "policyFingerprint", "type": "string", "writable": "managed" },
+    { "name": "ratedBy", "type": "string", "writable": "managed" },
+    { "name": "ratedAt", "type": "timestamp", "writable": "managed" }
+  ]
+}
