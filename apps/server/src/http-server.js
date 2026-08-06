@@ -137,7 +137,7 @@ function buildRouter(app) {
     ...(app.signature ? { signature: app.signature.metadata() } : {}),
     // Optional domain packages (ADR-018 addendum). Additive and function-free;
     // absent entirely when no domain is registered.
-    ...(app.domains && app.domains.domains.size > 0 ? { domains: app.domains.metadata() } : {}),
+    ...(app.domains && app.domains.packages.size > 0 ? { domains: app.domains.metadata() } : {}),
   }));
 
   // Catalog synchronization (ADR-016). Local-development surface like every
