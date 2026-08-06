@@ -493,8 +493,18 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
       row.appendChild(el('span', undefined, String(value ?? '—')));
       state.appendChild(row);
     }
+    // Uncertainty is stated, never smoothed over: whether the provider has the
+    // envelope is a different fact from whether the local phase failed.
+    const TERMINAL = ['completed', 'declined', 'voided'];
     if (envelope.failureCode) {
-      state.appendChild(el('p', 'signature-failure', `The ${envelope.failurePhase} phase failed (${envelope.failureCode}). The provider may still hold this envelope — reconcile it rather than requesting a second signature.`));
+      const outcome = envelope.failureCode === 'PROVIDER_ENVELOPE_ABSENT'
+        ? 'The provider does not have this envelope: it was never accepted. This quote version cannot be sent again in this milestone — its signature request is closed.'
+        : envelope.providerEnvelopeId
+          ? 'The provider DID accept this envelope; only the local step after it failed. Reconcile to pick the outcome back up.'
+          : 'Whether the provider accepted this envelope is UNKNOWN. Reconcile to find out — never request a second signature.';
+      state.appendChild(el('p', 'signature-failure', `The ${envelope.failurePhase} phase failed (${envelope.failureCode}). ${outcome}`));
+    }
+    if (!TERMINAL.includes(envelope.status)) {
       const reconcileButton = el('button', undefined, 'Reconcile with provider');
       busy.push(reconcileButton);
       const reconcile = () => withBusy(() => client.request(`/api/signature/envelopes/${encodeURIComponent(envelope.id)}/reconcile`, { method: 'POST', body: '{}' }));
