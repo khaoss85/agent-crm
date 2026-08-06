@@ -2,6 +2,7 @@
 
 import { definePackage } from '../../core/index.js';
 import { buildDeliveryActions } from './handover.js';
+import { buildExecutionActions, executionMetadata } from './execution.js';
 import { DELIVERY_MODES, OVERRIDABLE_MODES, defineDeliveryHandoverPolicy } from './handover-policy.js';
 import { DATES_NOTE, DATES_SOURCE, MAX_PLAN_DAYS } from './dates.js';
 
@@ -46,14 +47,14 @@ export function createDeliveryPackage(options = {}) {
   return definePackage({
     packageContract: 1,
     name: DELIVERY_PACKAGE,
-    version: 1,
     label: 'Delivery handover',
-    description: 'Plans the handover of a signed, activated contract to delivery: a delivery project, work packages, milestones and an optional partner engagement.',
+    version: 2,
+    description: 'Plans the handover of a signed, activated contract to delivery, and records its execution: a delivery project, work packages, milestones, an optional partner engagement, and bounded human-driven state transitions.',
     // The one declared reach into another package. Without it, this package
     // refuses to register — it cannot invent the obligations it plans.
     requires: [{ package: 'contracts', capability: 'delivery-obligations', version: 1 }],
     resources: [...DELIVERY_RESOURCES],
-    actions: buildDeliveryActions(options.modules),
+    actions: [...buildDeliveryActions(options.modules), ...buildExecutionActions(options.modules)],
     policies,
     /** Function-free, additive schema metadata — never a handler or a secret. */
     metadata() {
@@ -75,8 +76,9 @@ export function createDeliveryPackage(options = {}) {
           limitation: 'a partner engagement grants NO access of any kind: no account, no login, no portal, no invitation, no permission, no fee or revenue share, and no SLA. Multiple partners per project are not modelled.',
         },
         source: 'the pending delivery obligations published by the contracts package are the only source; the live catalog, the quote and CRM records are never read',
+        execution: executionMetadata(),
         notModeled: [
-          'delivery execution', 'progress', 'status transitions', 'time tracking',
+          'time tracking',
           'expenses', 'cost', 'margin', 'resource scheduling', 'capacity',
           'change requests', 'customer acceptance', 'billing milestones',
           'invoicing', 'partner access', 'partner portal', 'revenue share',

@@ -1,5 +1,6 @@
 {
   "manifestVersion": 1,
+  "revision": 2,
   "name": "delivery-work-package",
   "description": "One planned work package per source delivery obligation (M13), with the commercial snapshot it came from and the explicit decision about who delivers it. No progress, percent complete, time, cost or margin exists in this milestone.",
   "fields": [
@@ -165,7 +166,10 @@
       "name": "status",
       "type": "enum",
       "values": [
-        "planned"
+        "planned",
+        "in_progress",
+        "blocked",
+        "completed"
       ],
       "writable": "managed"
     },
@@ -177,6 +181,21 @@
     {
       "name": "position",
       "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "startedAt",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "completedAt",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "executionNote",
+      "type": "string",
       "writable": "managed"
     }
   ]

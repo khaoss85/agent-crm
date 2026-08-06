@@ -166,13 +166,22 @@ test('the first-party delivery package conforms and depends only through a capab
     definition: createDeliveryPackage({ policies: [b2bDeliveryHandoverV1] }),
     dir: join(repoRoot, 'packages/delivery'),
     expected: {
+      // Version 2: M14a added the execution transitions to the same package.
       name: 'delivery',
-      version: 1,
+      version: 2,
       resources: [
         'delivery-project', 'delivery-work-package', 'delivery-milestone',
         'delivery-partner-engagement', 'delivery-handover-run',
       ],
-      actions: ['commercial-contract.create-delivery-handover', 'commercial-contract.plan-delivery-handover'],
+      actions: [
+        'commercial-contract.create-delivery-handover',
+        'commercial-contract.plan-delivery-handover',
+        'delivery-milestone.complete-milestone',
+        'delivery-milestone.start-milestone',
+        'delivery-project.start-delivery-project',
+        'delivery-work-package.complete-work-package',
+        'delivery-work-package.start-work-package',
+      ],
       requires: ['contracts/delivery-obligations@1'],
       provides: [],
     },
@@ -211,7 +220,7 @@ test('a customer-authored package conforms through the identical contract', () =
   });
   assert.deepEqual([...registry.names()], ['contracts', 'delivery', 'partner-scorecard']);
   assert.deepEqual(Object.keys(registry.metadata()), ['contracts', 'delivery', 'partner-scorecard']);
-  assert.equal(registry.actions().length, 5);
+  assert.equal(registry.actions().length, 10, "M14a added five execution transitions to the delivery package");
   assert.equal(registry.resources().length, 14);
 });
 

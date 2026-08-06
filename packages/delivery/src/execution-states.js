@@ -18,40 +18,41 @@ import { AppError, ValidationError } from '../../core/index.js';
  *   given) and an untested reopen path is worse than none.
  * - **no clock transition.** Nothing here fires on a date. There is no
  *   scheduler in this framework, so no state changes without an actor.
- * - **acceptance is not completion.** A milestone that is `completed` says the
- *   work finished; `accepted` says the customer agreed it finished. Different
- *   facts, different authors, different states.
+ * - **acceptance is not completion, and is not here.** A milestone that is
+ *   `completed` says the work finished; whether the customer agreed is a
+ *   different fact with a different author, and it belongs to M14b. No
+ *   acceptance state is declared, because an enum value nothing can reach is a
+ *   capability claim without a capability.
  */
 
-export const PROJECT_STATES = Object.freeze(['pending_kickoff', 'active', 'completed']);
-export const WORK_PACKAGE_STATES = Object.freeze(['planned', 'active', 'completed']);
-export const MILESTONE_STATES = Object.freeze(['planned', 'active', 'completed', 'accepted', 'rejected']);
+export const PROJECT_STATES = Object.freeze(['pending_kickoff', 'in_progress', 'completed']);
+export const WORK_PACKAGE_STATES = Object.freeze(['planned', 'in_progress', 'blocked', 'completed']);
+export const MILESTONE_STATES = Object.freeze(['planned', 'in_progress', 'completed']);
 
 /**
  * The allowed transitions, as data. Each entry maps a current state to the
  * states it may become. A state absent from a table is terminal.
  */
 export const PROJECT_TRANSITIONS = Object.freeze({
-  pending_kickoff: Object.freeze(['active']),
-  active: Object.freeze(['completed']),
+  pending_kickoff: Object.freeze(['in_progress']),
+  in_progress: Object.freeze(['completed']),
 });
 
 export const WORK_PACKAGE_TRANSITIONS = Object.freeze({
-  planned: Object.freeze(['active']),
-  active: Object.freeze(['completed']),
+  planned: Object.freeze(['in_progress']),
+  // Blocked is a real operational state and it is reversible: work resumes.
+  in_progress: Object.freeze(['blocked', 'completed']),
+  blocked: Object.freeze(['in_progress']),
 });
 
 export const MILESTONE_TRANSITIONS = Object.freeze({
-  planned: Object.freeze(['active']),
-  active: Object.freeze(['completed']),
-  // Acceptance is recorded against completed work only, and both answers are
-  // terminal: a rejection does not erase that the work was completed.
-  completed: Object.freeze(['accepted', 'rejected']),
+  planned: Object.freeze(['in_progress']),
+  in_progress: Object.freeze(['completed']),
 });
 
 /** The states in which delivery consumption (time, expense) may be recorded. */
-export const RECORDING_PROJECT_STATES = Object.freeze(['active', 'completed']);
-export const RECORDING_WORK_PACKAGE_STATES = Object.freeze(['active', 'completed']);
+export const RECORDING_PROJECT_STATES = Object.freeze(['in_progress', 'completed']);
+export const RECORDING_WORK_PACKAGE_STATES = Object.freeze(['in_progress', 'blocked', 'completed']);
 
 const TABLES = Object.freeze({
   'delivery-project': { states: PROJECT_STATES, transitions: PROJECT_TRANSITIONS },
@@ -133,7 +134,7 @@ export function transitionMetadata() {
     'delivery-work-package': { states: [...WORK_PACKAGE_STATES], transitions: plain(WORK_PACKAGE_TRANSITIONS) },
     'delivery-milestone': { states: [...MILESTONE_STATES], transitions: plain(MILESTONE_TRANSITIONS) },
     terminal: 'completed work does not reopen in this milestone, and no state changes on a clock — there is no scheduler',
-    acceptance: 'accepted and rejected are recorded against completed milestones only; a rejection does not erase completion',
+    acceptance: 'not modeled in this milestone: whether a customer accepted the work is a separate fact with a separate author (M14b)',
   };
 }
 

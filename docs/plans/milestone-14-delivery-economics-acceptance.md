@@ -1,12 +1,32 @@
 # ExecPlan — Milestone 14: Delivery Economics & Customer Acceptance
 
-**Status: in progress.** Extends `packages/delivery` (M13). Guides:
+**Status: split. M14a (execution) is implemented; M14b is not started.** Extends `packages/delivery` (M13). Guides:
 `docs/DELIVERY_ECONOMICS.md`, `packages/delivery/README.md`. Decision: ADR-019.
 
 Context: `docs/strategy/DELIVERY_SERVICE.md` (the domain),
 `docs/PACKAGE_AUTHORING.md` and ADR-018 addenda 3–4 (the package contract this
 extends), and Milestone 13, which produced the planned project this milestone
 executes against.
+
+## The split, and why
+
+M14 as scoped covered execution, economics, change requests and acceptance —
+four domains with four different invariants. It is delivered in two milestones
+so each ships coherent:
+
+| | Scope | Status |
+|---|---|---|
+| **M14a — Delivery execution** | the revision-2 evolution of the three M13 records, explicit transition tables, and the five human-driven transition actions | **implemented, this PR** |
+| **M14b — Economics, change requests and acceptance** | time and expense evidence, the versioned economics plan and snapshot, governed change requests, deliverables and acceptance evidence | **not started** |
+
+`cost-policy.js` and `economics.js` are present and unwired: they are M14b's
+domain modules, written during the original M14 attempt and carried forward so
+nothing is lost. They contribute no action, no record and no schema block, and
+the package metadata does not mention them.
+
+Acceptance states are deliberately **absent from the manifests**. Declaring
+`accepted` on a milestone that nothing can move there would be a capability
+claim without a capability.
 
 ## What this milestone is, in one sentence
 

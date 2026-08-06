@@ -44,6 +44,10 @@ test('an activated contract is planned and handed over to delivery', async (t) =
   ]);
   assert.deepEqual(schema.domains.delivery.actions, [
     'commercial-contract.create-delivery-handover', 'commercial-contract.plan-delivery-handover',
+    // M14a: the execution transitions live in the same package.
+    'delivery-milestone.complete-milestone', 'delivery-milestone.start-milestone',
+    'delivery-project.start-delivery-project',
+    'delivery-work-package.complete-work-package', 'delivery-work-package.start-work-package',
   ]);
   assert.match(schema.domains.delivery.partner.limitation, /grants NO access/i);
   assert.match(schema.domains.delivery.dates.limitation, /not a customer commitment/i);
