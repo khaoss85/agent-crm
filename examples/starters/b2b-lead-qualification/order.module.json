@@ -131,6 +131,17 @@
       "name": "sourceFingerprint",
       "type": "string",
       "writable": "managed"
+    },
+    {
+      "name": "contractId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "activatedAt",
+      "type": "timestamp",
+      "writable": "managed"
     }
   ]
 }
