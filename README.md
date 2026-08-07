@@ -126,6 +126,10 @@ evidence is required to leave it.
   in every commercial CRM, and none of them has a milestone yet.
 - **This is a framework, not a product you sign up for.** There is no hosted CRM, no free
   tier, no account. The output is an application you run.
+- **Ownership today means copying source, not installing a dependency.** There is no
+  create-project CLI and no published package. `examples/starters/b2b-lead-qualification/install.mjs`
+  copies `packages/`, `apps/` and `examples/` into a new project and applies the manifests. You
+  own the result outright — and upgrading means merging, not bumping a version.
 
 ## Architecture in five folders
 

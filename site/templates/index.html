@@ -206,7 +206,13 @@
               <td>Who runs the system</td>
               <td>The platform</td>
               <td>You</td>
-              <td>You — the framework is a dependency, like any library</td>
+              <td>You — nothing of ours runs underneath your application</td>
+            </tr>
+            <tr>
+              <td>How you get the code <span class="muted">(today)</span></td>
+              <td>You do not — you configure a running platform</td>
+              <td>You write it</td>
+              <td><strong>You copy the source into your project.</strong> There is no create-command and no published package yet</td>
             </tr>
             <tr>
               <td>Process semantics</td>
@@ -249,6 +255,7 @@
         <div class="limit-card"><h3>{{limitation:L-05.headline}}</h3><p>{{limitation:L-05.text}}</p></div>
         <div class="limit-card"><h3>{{limitation:L-06.headline}}</h3><p>{{limitation:L-06.text}}</p></div>
         <div class="limit-card"><h3>{{limitation:L-07.headline}}</h3><p>{{limitation:L-07.text}}</p></div>
+        <div class="limit-card"><h3>{{limitation:L-08.headline}}</h3><p>{{limitation:L-08.text}}</p></div>
       </div>
     </section>
   </div>
@@ -348,6 +355,19 @@ npm run crm -- solution check my-plan.json
           down in the repository, and choosing a replacement needs a registrar check and a trademark
           screen that a person has to do. Everything on this page is generated from a single tokens
           file, so the rename is one edit rather than a rewrite.
+        </p>
+      </details>
+
+      <details>
+        <summary>&ldquo;Own the CRM it builds&rdquo; — owned how, exactly?</summary>
+        <p>
+          Today: by copying the source into your project. The one working installer copies the
+          framework packages and the app into a new directory, applies the module manifests, and
+          leaves you with a repository that has no runtime dependency on us. That is real ownership,
+          and it is <em>not</em> the same thing as <span class="mono">npm create</span> plus a
+          versioned dependency — which is what the roadmap says and what does not exist yet. The
+          practical consequence is that upgrading means merging rather than bumping a version. We
+          would rather you learn that here than after you have built on it.
         </p>
       </details>
 

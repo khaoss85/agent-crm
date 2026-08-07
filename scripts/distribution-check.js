@@ -23,6 +23,9 @@ const root = process.cwd();
 const failures = [];
 const notes = [];
 
+/** Brand tokens gate publication, so they are read before anything is judged against them. */
+const brand = JSON.parse(readFileSync(join(root, 'site/brand.json'), 'utf8'));
+
 /** Manifests, and the paths inside them that must resolve on disk. */
 const manifests = [
   { path: '.claude-plugin/plugin.json', pathFields: ['skills', 'mcpServers'] },
@@ -149,9 +152,47 @@ for (const directory of ['.claude/skills', '.agents/skills']) {
   }
 }
 
+// ---------------------------------------------------------------- skill portability
+
+/**
+ * A marketplace install is one moment of attention, and a plugin that loads,
+ * announces itself and then does nothing spends it badly.
+ *
+ * These skills instruct an agent to read repository-internal files —
+ * ARCHITECTURE.md, DECISIONS.md, docs/*.md, packages/*. Inside this repository or
+ * a project built by copying it, those paths resolve. Installed into an unrelated
+ * project they do not, and the skill degrades into confident instructions about
+ * files that are not there. Until the create-project CLI emits those documents
+ * into a customer's own repository (EXECUTION_ROADMAP Phase 5, not implemented),
+ * every repo-bound skill is a listing we should not publish.
+ */
+const repoBoundPattern = /\b(?:ARCHITECTURE|DECISIONS|AGENTS|PRODUCT|TASKS)\.md\b|\bdocs\/[A-Za-z_]+\.md\b|\bpackages\/[a-z]+\/|\btests\/[\w.-]+\.test\.js\b/;
+const repoBound = [];
+for (const skill of readdirSync(join(root, '.claude/skills'))) {
+  const path = join(root, '.claude/skills', skill, 'SKILL.md');
+  if (!existsSync(path)) continue;
+  const body = readFileSync(path, 'utf8').replace(/^---\n[\s\S]*?\n---/, '');
+  if (repoBoundPattern.test(body)) repoBound.push(skill);
+}
+
+if (repoBound.length) {
+  const portable = readdirSync(join(root, '.claude/skills')).length - repoBound.length;
+  notes.push(
+    `${repoBound.length} of ${repoBound.length + portable} skills instruct the agent to read repository-internal paths `
+    + `(${repoBound.slice(0, 3).join(', ')}${repoBound.length > 3 ? ', …' : ''}). `
+    + 'They work in this repository and in projects built from it, and no-op in an unrelated project. '
+    + 'Do not publish the plugin until the create-project CLI emits those documents, or until the skills are rewritten to discover context through `crm app inspect` instead of fixed paths.',
+  );
+  if (brand.name.status === 'chosen' && claudePlugin?.metadata?.releaseStatus !== 'portable') {
+    fail(
+      'A name has been chosen, so publication is imminent — but the bundled skills are still repo-bound. '
+      + 'Publishing now ships a plugin that installs and does nothing. Resolve this before listing anywhere.',
+    );
+  }
+}
+
 // ---------------------------------------------------------------- publication gate
 
-const brand = JSON.parse(readFileSync(join(root, 'site/brand.json'), 'utf8'));
 if (brand.name.status !== 'chosen') {
   notes.push('The public name is undecided, so none of these manifests may be published: the plugin name namespaces every skill, and changing it later breaks installed users.');
 }

@@ -274,6 +274,16 @@
       "surfaces": ["site", "readme"]
     },
     {
+      "id": "L-08",
+      "headline": "Ownership today means copying source, not installing a dependency.",
+      "text": "There is no create-project CLI and no published package. The one working installer copies packages/, apps/ and examples/ into a new project — you own the result outright, but the ergonomics of `npm create` and a versioned framework dependency do not exist yet. Until they do, upgrading means merging, not bumping.",
+      "evidence": {
+        "docs": ["docs/PROJECT_STATUS.md", "examples/starters/b2b-lead-qualification/install.mjs"],
+        "repoFacts": ["examples/starters/b2b-lead-qualification/install.mjs copies packages, apps, examples and package.json into a temporary project", "the create-project CLI is EXECUTION_ROADMAP Phase 5 and is not implemented", "no npm package is published"]
+      },
+      "surfaces": ["site", "readme", "launch"]
+    },
+    {
       "id": "L-07",
       "headline": "This is a framework, not a product you sign up for.",
       "text": "There is no hosted CRM, no free tier and no account. The output is an application in your repository that you run.",
