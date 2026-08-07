@@ -27,6 +27,22 @@
       <p class="cta-note">
         {{measured.tests}} tests · no third-party runtime dependencies · Node 22 · {{brand.license}}
       </p>
+
+      <div class="code" style="margin-top:34px">
+<pre><span class="c"># clone it, install nothing, and watch it compose itself</span>
+npm run tour
+
+<span class="c">  modules       55        resources     19        policies       5</span>
+<span class="c">  packages       3        actions       35        providers     10</span>
+
+<span class="c"># then the part most tools leave out</span>
+<span class="k">  production posture</span> — local development only: no authentication,
+                       tenancy or RBAC exists, and actor headers
+                       are not identity</pre>
+      </div>
+      <p class="cta-note" style="margin-top:14px">
+        {{claim:C-22.limitation}}
+      </p>
     </header>
   </div>
 

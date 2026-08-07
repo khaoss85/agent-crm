@@ -82,6 +82,11 @@ before a commenter gets to say them.
 >   versioned and explainable, not a model's judgement about a person.) [L-09]
 > - **It is a framework, not a product.** There is nothing to sign up for. [L-07]
 >
+> If you want to judge it in a minute rather than read about it: clone and run `npm run tour`.
+> There is nothing to install. It composes the whole application from manifests — 55 modules, 19
+> resources, 35 actions, 5 policies, 10 providers — drives it end to end, and then prints the
+> eleven things its own inspector says it cannot see. [C-22]
+>
 > What does work, and what I would like broken: every mutation goes through a module service or
 > a named workflow and leaves an audit event and a step-level trace [C-16]; there are no
 > third-party runtime dependencies, so it is Node 22 and a checkout [C-17]; and one command

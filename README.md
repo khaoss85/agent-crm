@@ -69,10 +69,28 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 Node.js 22.16 or newer. There are no third-party runtime dependencies and no build step.
 
 ```bash
+npm run tour     # compose the whole application and inspect it
 npm run verify   # 373 tests
 npm run demo     # the approval slice, end to end
 npm run dev      # http://localhost:4000
 ```
+
+`npm run tour` is the fastest way to see what this actually is. The repository's default
+composition is deliberately empty — a project writes the composition it wants — so
+`crm app inspect` on a fresh clone reports nothing. The tour runs the starter installer (the
+same one CI runs on every push) into a directory it keeps, then inspects the result:
+
+```text
+  modules       55        resources     19        policies       5
+  packages       3        actions       35        providers     10
+
+  production posture — local development only: no authentication, tenancy or RBAC
+                       exists, and actor headers are not identity
+```
+
+It ends on the eleven things the inspector says it cannot see, because a tour that shows only
+the good half is not worth running. `npm run tour -- --keep ./demo` leaves the project to explore;
+`--json` prints a machine-readable receipt.
 
 `npm run demo` creates two renewals and is asserted by `scripts/smoke.js` on every push:
 

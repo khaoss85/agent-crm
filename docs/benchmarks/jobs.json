@@ -1,0 +1,1441 @@
+{
+  "counts": {
+    "not supported": 102,
+    "partially supported": 27,
+    "technically supported": 0,
+    "total": 149,
+    "validated end to end": 20
+  },
+  "generatedFrom": "docs/benchmarks/CRM_JTBD_MATRIX.md",
+  "jobs": [
+    {
+      "docs": [
+        "docs/ADMIN.md",
+        "docs/ADMIN_SMOKE.md"
+      ],
+      "id": "JTBD-01",
+      "section": "CRM JTBD validation matrix",
+      "status": "validated end to end",
+      "summary": "create the object type, then list/create/view/edit its records through the Admin.",
+      "tests": [
+        "tests/admin-core.test.js",
+        "tests/admin-modules.test.js",
+        "tests/generated-api-e2e.test.js",
+        "tests/module-factory-e2e.test.js"
+      ],
+      "title": "Manage a custom CRM business object end to end"
+    },
+    {
+      "docs": [
+        "docs/MODULE_FACTORY.md"
+      ],
+      "id": "JTBD-01b",
+      "section": "CRM JTBD validation matrix",
+      "status": "validated end to end",
+      "summary": "(Milestone 5), for generated-to-generated many-to-one references only.",
+      "tests": [
+        "tests/admin-modules.test.js",
+        "tests/module-factory.test.js",
+        "tests/reference-fields-e2e.test.js",
+        "tests/reference-resolver.test.js"
+      ],
+      "title": "Associate a generated CRM record with another generated CRM record"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-02",
+      "section": "CRM JTBD validation matrix",
+      "status": "validated end to end",
+      "summary": "(Milestone 0), for the built-in renewal object.",
+      "tests": [
+        "tests/api.test.js",
+        "tests/workflow.test.js"
+      ],
+      "title": "Request commercial approval on a deal"
+    },
+    {
+      "docs": [
+        "docs/ADMIN_SMOKE.md"
+      ],
+      "id": "JTBD-03",
+      "section": "CRM JTBD validation matrix",
+      "status": "validated end to end",
+      "summary": "(Milestone 8) for code-first pipelines on the built-in Opportunity module. The legacy fixed stage enum remains what the renewal-approval policy runs on (unchanged evidence: tests/workflow.test.js).",
+      "tests": [
+        "tests/admin-pipeline.test.js",
+        "tests/opportunity-pipeline-e2e.test.js",
+        "tests/pipeline-contract.test.js",
+        "tests/workflow.test.js"
+      ],
+      "title": "Manage a deal through pipeline stages"
+    },
+    {
+      "docs": [
+        "docs/ADMIN_SMOKE.md"
+      ],
+      "id": "JTBD-04",
+      "section": "CRM JTBD validation matrix",
+      "status": "validated end to end",
+      "summary": "(Milestone 6), for the starter's Lead model.",
+      "tests": [
+        "tests/lead-qualification-e2e.test.js"
+      ],
+      "title": "Capture a lead"
+    },
+    {
+      "docs": [
+        "docs/ADMIN_SMOKE.md"
+      ],
+      "id": "JTBD-05",
+      "section": "CRM JTBD validation matrix",
+      "status": "validated end to end",
+      "summary": "(Milestone 6), for the starter's qualify/disqualify actions.",
+      "tests": [
+        "tests/action-contract.test.js",
+        "tests/action-runtime-semantics.test.js",
+        "tests/admin-actions.test.js",
+        "tests/lead-qualification-e2e.test.js"
+      ],
+      "title": "Qualify (or disqualify) a lead"
+    },
+    {
+      "docs": [
+        "docs/ADMIN_SMOKE.md"
+      ],
+      "id": "JTBD-05b",
+      "section": "CRM JTBD validation matrix",
+      "status": "validated end to end",
+      "summary": "(Milestone 7), for the starter's convert action.",
+      "tests": [
+        "tests/action-contract.test.js",
+        "tests/admin-actions.test.js",
+        "tests/lead-conversion-e2e.test.js"
+      ],
+      "title": "Convert a qualified lead into Company, Contact and Opportunity"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-06",
+      "section": "CRM JTBD validation matrix",
+      "status": "partially supported",
+      "summary": "— generated CRUD is validated (JTBD-01), but the factory does not yet generate workflows/approvals for custom objects.",
+      "tests": [],
+      "title": "Manage a custom object with an approval rule"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-07",
+      "section": "CRM JTBD validation matrix",
+      "status": "partially supported",
+      "summary": "— narrowly: the first follow-up Task is created as part of Lead qualification (Milestone 6). There is still no reusable task engine, no scheduling/delayed-workflow primitive, no reminders, no queues, no recurring work.",
+      "tests": [
+        "tests/lead-qualification-e2e.test.js"
+      ],
+      "title": "Schedule next actions / follow-ups"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-08",
+      "section": "CRM JTBD validation matrix",
+      "status": "partially supported",
+      "summary": "— cross-module workflows with compensation exist as a primitive, and activating a contract (M12) records explicit pending delivery and service obligations from the signed order. Nothing executes, schedules, staffs or completes them: there is no handover process, no delivery project and no acceptance.",
+      "tests": [
+        "tests/contracts-activation-e2e.test.js",
+        "tests/workflow.test.js"
+      ],
+      "title": "Hand off a won deal"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-09",
+      "section": "CRM JTBD validation matrix",
+      "status": "not supported",
+      "summary": "— no checklist/onboarding primitives.",
+      "tests": [],
+      "title": "Onboard a customer"
+    },
+    {
+      "docs": [
+        "docs/CONTRACT_ACTIVATION.md"
+      ],
+      "id": "JTBD-10",
+      "section": "CRM JTBD validation matrix",
+      "status": "partially supported",
+      "summary": "— a contract can now be *activated* from a signed Order with an explicit term (M12), and the renewal-approval workflow slice is validated. Renewal itself is not supported: auto-renew and the notice period are recorded only, nothing fires on them (no scheduler), and amendments, cancellation and non-renewal do not exist.",
+      "tests": [
+        "tests/contracts-activation-e2e.test.js",
+        "tests/workflow.test.js"
+      ],
+      "title": "Manage contracts and renewals"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-11",
+      "section": "CRM JTBD validation matrix",
+      "status": "not supported",
+      "summary": "— no health-scoring/activity primitives.",
+      "tests": [],
+      "title": "Identify churn risk"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-12",
+      "section": "CRM JTBD validation matrix",
+      "status": "not supported",
+      "summary": "— no usage/entitlement primitives.",
+      "tests": [],
+      "title": "Identify upsell"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-13",
+      "section": "CRM JTBD validation matrix",
+      "status": "partially supported",
+      "summary": "— data is queryable via API/SDK and the dashboard shows counts; no reporting/aggregation surface for generated modules.",
+      "tests": [],
+      "title": "Report pipeline"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-14",
+      "section": "CRM JTBD validation matrix",
+      "status": "not supported",
+      "summary": "— only an in-memory notification provider contract exists; no email/calendar/marketing adapters.",
+      "tests": [],
+      "title": "Integrate email / calendar / marketing"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-15",
+      "section": "CRM JTBD validation matrix",
+      "status": "not supported",
+      "summary": "— no authentication, tenancy or RBAC. The server is local-development-only. This is a hard prerequisite before any remote exposure.",
+      "tests": [],
+      "title": "Enforce team / tenant permissions"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AN-01",
+      "section": "Analytics (target: M16)",
+      "status": "not supported",
+      "summary": "no semantic model or metric-definition primitives",
+      "tests": [],
+      "title": "Define a trusted, explainable metric"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AN-02",
+      "section": "Analytics (target: M16)",
+      "status": "not supported",
+      "summary": "no report/query-compilation primitives",
+      "tests": [],
+      "title": "Create a report from approved metrics/dimensions"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AN-03",
+      "section": "Analytics (target: M16)",
+      "status": "not supported",
+      "summary": "requires RBAC at the query boundary — gated by the Production Spine",
+      "tests": [],
+      "title": "Create a role-aware dashboard"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AN-04",
+      "section": "Analytics (target: M16)",
+      "status": "not supported",
+      "summary": "no dashboard-version primitives",
+      "tests": [],
+      "title": "Version and roll back a dashboard"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AN-05",
+      "section": "Analytics (target: M16)",
+      "status": "not supported",
+      "summary": "no metric test harness",
+      "tests": [],
+      "title": "Validate metric correctness against fixtures"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AX-01",
+      "section": "Agent experience (AX0–AX5, cross-cutting)",
+      "status": "validated end to end",
+      "summary": "crm app inspect [--json] (AX1) answers it in one deterministic document: the installed package graph with its five distinct version axes, the resolved capability graph including unresolved edges, records with their revisions, actions with declared transition metadata, policies and provider definitions. An invalid composition still produces a complete report with deterministic problems[], and limitations[] names every gap by code — tests/app-inspect.test.js. Source-only: no database is opened, no provider is contacted, and JTBD/quality evidence is referenced by path, never parsed",
+      "tests": [
+        "tests/app-inspect.test.js"
+      ],
+      "title": "Discover installed packages, capabilities and policies"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AX-02",
+      "section": "Agent experience (AX0–AX5, cross-cutting)",
+      "status": "validated end to end",
+      "summary": "the package contract: a customer-authored package attaches, works and detaches with every kernel file fingerprinted unchanged (JTBD-PK-01/PK-02). A record that must gain a field or a status evolves by revision (ADR-019)",
+      "tests": [],
+      "title": "Extend the CRM for a goal without patching the kernel"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AX-03",
+      "section": "Agent experience (AX0–AX5, cross-cutting)",
+      "status": "partially supported",
+      "summary": "AX2 (open PR): solutionPlanContract: 1 with a revision and a canonical fingerprint, six decision types mapped to the repository's own hierarchy, six evidence categories with resolving citations, a closed approval vocabulary, and crm solution inspect|validate|check — check binds the plan to this project's app inspect report and reports PLAN_STALE when the composition has moved. A plan cannot carry a command, rung 5 cannot be a step, rung 3 and above must evidence the rungs they inspected, and citations follow a DAG over evidence categories so a conclusion cannot be cited as a premise — tests/solution-plan.test.js. Partial, not validated: nothing writes the plan (there is no planner) and nothing executes it (there is no runtime); the contract makes a hand-written plan checkable, which is a different job from producing one",
+      "tests": [
+        "tests/solution-plan.test.js"
+      ],
+      "title": "Turn a business objective into a reviewable solution plan"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AX-04",
+      "section": "Agent experience (AX0–AX5, cross-cutting)",
+      "status": "partially supported",
+      "summary": "true for modules, actions, policies, packages and Admin views that exist today; the analytics and campaign parts of a typical funnel goal cannot be built at all",
+      "tests": [],
+      "title": "Build the solution as checked-in, customer-owned source"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AX-05",
+      "section": "Agent experience (AX0–AX5, cross-cutting)",
+      "status": "partially supported",
+      "summary": "Quality Gates, crm package validate, the test suites, the clean-clone run and the JTBD matrix are real and enforced; there is no automated goal-to-acceptance runner (AX3)",
+      "tests": [],
+      "title": "Verify the solution against defined acceptance"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AX-06",
+      "section": "Agent experience (AX0–AX5, cross-cutting)",
+      "status": "partially supported",
+      "summary": "the JTBD matrix and package metadata make the honest answer *available*; nothing enforces that an agent uses it, which is why the Skill states it as a rule",
+      "tests": [],
+      "title": "Report unavailable capabilities honestly"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AX-07",
+      "section": "Agent experience (AX0–AX5, cross-cutting)",
+      "status": "not supported",
+      "summary": "needs Analytics Studio and a funnel primitive",
+      "tests": [],
+      "title": "Analyse a funnel and identify a drop from a goal"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AX-08",
+      "section": "Agent experience (AX0–AX5, cross-cutting)",
+      "status": "not supported",
+      "summary": "MK1; no Campaign Proposal object exists",
+      "tests": [],
+      "title": "Propose an optimization campaign from an insight"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AX-09",
+      "section": "Agent experience (AX0–AX5, cross-cutting)",
+      "status": "not supported",
+      "summary": "AX4; hard-gated by the Production Spine and Cloud",
+      "tests": [],
+      "title": "Deploy, observe and fix a solution in production"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-AX-10",
+      "section": "Agent experience (AX0–AX5, cross-cutting)",
+      "status": "not supported",
+      "summary": "AX5; needs Marketing, Analytics, Data Governance and Durable Automation",
+      "tests": [],
+      "title": "Close the loop: measure, learn, propose the next version"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CM-01",
+      "section": "Communications (no milestone assigned)",
+      "status": "not supported",
+      "summary": "no email provider; needs the Integration Runtime",
+      "tests": [],
+      "title": "Sync email with CRM records"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CM-02",
+      "section": "Communications (no milestone assigned)",
+      "status": "not supported",
+      "summary": "no calendar provider",
+      "tests": [],
+      "title": "Sync calendar events"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CM-03",
+      "section": "Communications (no milestone assigned)",
+      "status": "not supported",
+      "summary": "no Activity model",
+      "tests": [],
+      "title": "Log meetings and calls"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CM-04",
+      "section": "Communications (no milestone assigned)",
+      "status": "partially supported",
+      "summary": "qualification creates exactly one follow-up Task with a deterministic source key (M6); there is no scheduler, reminder or task engine — the same limit JTBD-07 states",
+      "tests": [],
+      "title": "Schedule and track a follow-up"
+    },
+    {
+      "docs": [
+        "docs/strategy/DATA_GOVERNANCE.md"
+      ],
+      "id": "JTBD-CM-05",
+      "section": "Communications (no milestone assigned)",
+      "status": "not supported",
+      "summary": "no preference or suppression model (DATA_GOVERNANCE.md)",
+      "tests": [],
+      "title": "Honor unsubscribe and communication preferences"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CO-01",
+      "section": "Commercial Operations / CPQ (Milestones 10-11 implemented for the local slice, ADR-016 and ADR-017)",
+      "status": "validated end to end",
+      "summary": "narrow wording: Opportunity → one price book → composite Offers (rate plans with several price components) → controlled server-priced lines mixing one-time and recurring charges with flat / per-unit / volume / graduated models and deterministic tier breakdowns → grouped one-time + per-period totals (never a single grand total) → immutable Quote Version snapshotting component definitions, tier schedules, breakdowns and provenance. NOT included: metered usage, overage, taxes, FX, proration, ramps, minimum commitments, attribute-based pricing, ARR/MRR/TCV",
+      "tests": [],
+      "title": "Create a Quote from a Price Book"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CO-02",
+      "section": "Commercial Operations / CPQ (Milestones 10-11 implemented for the local slice, ADR-016 and ADR-017)",
+      "status": "partially supported",
+      "summary": "validated only for a deterministic fixture catalog provider: immutable product versions and whole-offer revisions (components + tiers), idempotent re-sync, preserved provider provenance (sourcePricingModel, external ids), unsupported models refused rather than flattened, trace. The normalized model can represent Stripe one_time/recurring + volume/graduated tiers and Zuora one-time/recurring + Volume/Tiered pricing, but real Stripe/Zuora/ERP adapters are not supported (no credentials, no adapter ships) and full Stripe Billing / Zuora support is NOT claimed",
+      "tests": [],
+      "title": "Synchronize an external catalog (Stripe/Zuora/ERP/custom)"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CO-03",
+      "section": "Commercial Operations / CPQ (Milestones 10-11 implemented for the local slice, ADR-016 and ADR-017)",
+      "status": "validated end to end",
+      "summary": "basis-point line discounts applied uniformly per component after tier calculation, evaluated by a versioned, fingerprinted discount policy over the grouped totals and component mix, with an explainable bounded decision recorded on the Quote Version",
+      "tests": [],
+      "title": "Request a discount under a deterministic policy"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CO-04",
+      "section": "Commercial Operations / CPQ (Milestones 10-11 implemented for the local slice, ADR-016 and ADR-017)",
+      "status": "partially supported",
+      "summary": "the human-actor boundary is validated (agent actors refused 403; one atomic decision per version; concurrent decisions resolve to one winner) — but requiredApprovalKey is a label: secure Sales-Manager/Finance role enforcement is not validated before RBAC (JTBD-15)",
+      "tests": [],
+      "title": "Obtain required commercial approval on a discount"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CO-05",
+      "section": "Commercial Operations / CPQ (Milestones 10-11 implemented for the local slice, ADR-016 and ADR-017)",
+      "status": "partially supported",
+      "summary": "validated only for the deterministic fixture signature provider: human-actor send boundary (agents refused 403), exactly one envelope per quote version with a deterministic idempotency key, the provider call outside every transaction, a monotonic envelope/signer state machine, and a recoverable failed state with explicit reconciliation. No real DocuSign / Adobe Sign / Dropbox Sign integration exists or is claimed, and no credential ships",
+      "tests": [],
+      "title": "Create a signature envelope with a provider"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CO-06",
+      "section": "Commercial Operations / CPQ (Milestones 10-11 implemented for the local slice, ADR-016 and ADR-017)",
+      "status": "partially supported",
+      "summary": "provider events are verified as the raw signed bytes before any state changes (constant-time HMAC + replay window in the fixture), replay is idempotent by DB-unique provider event id, out-of-order and post-terminal events are recorded and ignored, unknown envelopes are quarantined, and completion produces signed-artifact evidence (hashes, provider reference, signer evidence). Replay scope is provider + event id + payload fingerprint, a reused id with different bytes is refused, and a delivery whose processing failed is resumed rather than stranded. The fixture verification key is test-only: production webhook security, secret management and legally qualified signature assurance are NOT supported, artifactHash is provider-reported, and no artifact byte is downloaded, hashed or cryptographically verified",
+      "tests": [],
+      "title": "Verify signing via verified provider events"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CO-07",
+      "section": "Commercial Operations / CPQ (Milestones 10-11 implemented for the local slice, ADR-016 and ADR-017)",
+      "status": "validated end to end",
+      "summary": "narrow wording: a verified completed signature creates, in one transaction, exactly one immutable Order (DB-unique per quote version) with lines, components, complete tier schedules, band breakdowns and grouped totals copied from the approved Quote Version snapshot, never re-read from the live catalog; duplicate, concurrent and reconciled completions still produce one Order; a real killed process mid-operation recovers by reconciliation with no second envelope; completion fault injection at artifact, order, line, component and total rolls back whole and retries to exactly one complete Order; a later catalog change leaves it byte-identical, and the Order renders its customer, offer, quantities, tier bands, recurrence and grouped totals from order rows alone; a decline or failure creates none. NOT included: fulfillment, billing, invoicing, payment, tax, FX, revenue recognition, amendments, cancellation, renewals",
+      "tests": [],
+      "title": "Create an immutable signed Order snapshot"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CS-01",
+      "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
+      "status": "partially supported",
+      "summary": "order.activate-contract (human actor only) creates one contract, its immutable version and one line per order component, atomically and idempotently, with every amount copied from the signed Order — but the term is not signed: the document package carries no dates, so effective/start/end, auto-renew and notice are operational metadata recorded after signature (termsSource, with a required reason). A signed commercial agreement end to end needs a pre-signature term snapshot, which does not exist. Evidence: tests/contracts-activation-e2e.test.js, tests/contracts-review.test.js, starter install.mjs",
+      "tests": [
+        "tests/contracts-activation-e2e.test.js",
+        "tests/contracts-review.test.js"
+      ],
+      "title": "Activate a commercial contract from a signed Order"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CS-02",
+      "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
+      "status": "partially supported",
+      "summary": "one subscription per contract, with a line for every component whose commercial axis is subscription — including recurring components that also carry a service or delivery obligation, so no recurring commitment is lost. It is a commercial activation record only: nothing bills, prorates, renews or cancels it; a future-dated subscription is scheduled and nothing transitions it (no scheduler); and the term itself is post-signature operational metadata",
+      "tests": [],
+      "title": "Activate a subscription with lines and an initial term"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CS-03",
+      "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
+      "status": "not supported",
+      "summary": "no amendment primitives",
+      "tests": [],
+      "title": "Amend seats or quantity on a live subscription"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CS-04",
+      "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
+      "status": "not supported",
+      "summary": "no amendment classification",
+      "tests": [],
+      "title": "Record an expansion or contraction, classified at the time of change"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CS-05",
+      "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
+      "status": "not supported",
+      "summary": "deliberately not derived — M12 now provides a term and an active subscription, but normalizing unlike periods into one figure is a stated business policy that does not exist here; the Admin and the schema say so rather than implying a number",
+      "tests": [],
+      "title": "Calculate MRR, ARR and TCV from real contract data"
+    },
+    {
+      "docs": [
+        "docs/strategy/JOBS_AND_OUTBOX.md"
+      ],
+      "id": "JTBD-CS-06",
+      "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
+      "status": "not supported",
+      "summary": "needs both this layer and a scheduler (JOBS_AND_OUTBOX.md)",
+      "tests": [],
+      "title": "Schedule a renewal ahead of term end"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CS-07",
+      "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
+      "status": "not supported",
+      "summary": "needs CS-06",
+      "tests": [],
+      "title": "Create a renewal opportunity from an expiring subscription"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CS-08",
+      "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
+      "status": "not supported",
+      "summary": "the versioned-policy mechanism exists (ADR-015/016/018) and M12 uses it to classify, but the renewal domain does not exist",
+      "tests": [],
+      "title": "Apply a versioned price-uplift policy at renewal"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CS-09",
+      "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
+      "status": "not supported",
+      "summary": "no cancellation primitives",
+      "tests": [],
+      "title": "Cancel or non-renew with an audited reason"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-CS-10",
+      "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
+      "status": "not supported",
+      "summary": "no amendments exist; what M12 does record is the activation itself — who activated, from which order, under which policy version, and both classification axes with their reasons and any human override",
+      "tests": [],
+      "title": "Read a complete amendment history"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DC-01",
+      "section": "Design-to-CRM (design only — DESIGN_TO_CRM.md)",
+      "status": "not supported",
+      "summary": "one stylesheet, no token layer",
+      "tests": [],
+      "title": "Apply a brand's colors and typography"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DC-02",
+      "section": "Design-to-CRM (design only — DESIGN_TO_CRM.md)",
+      "status": "not supported",
+      "summary": "navigation is derived from module metadata",
+      "tests": [],
+      "title": "Choose and group Admin navigation"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DC-03",
+      "section": "Design-to-CRM (design only — DESIGN_TO_CRM.md)",
+      "status": "not supported",
+      "summary": "layout is generated from field order in the manifest",
+      "tests": [],
+      "title": "Control field order, sections and responsive layout"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DC-04",
+      "section": "Design-to-CRM (design only — DESIGN_TO_CRM.md)",
+      "status": "partially supported",
+      "summary": "the ADR-009 override seam exists and carries the pipeline board and the quote/signature view — but it is an internal seam with no declared contract, registry or plugin path",
+      "tests": [],
+      "title": "Replace a component without forking the Admin"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DC-05",
+      "section": "Design-to-CRM (design only — DESIGN_TO_CRM.md)",
+      "status": "not supported",
+      "summary": "pixel-perfect generation is explicitly not claimed",
+      "tests": [],
+      "title": "Generate a CRM UI from a Figma file or screenshot"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DC-06",
+      "section": "Design-to-CRM (design only — DESIGN_TO_CRM.md)",
+      "status": "not supported",
+      "summary": "no visual regression; browser tests are not in CI",
+      "tests": [],
+      "title": "Prove the UI still matches its design after a change"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DC-07",
+      "section": "Design-to-CRM (design only — DESIGN_TO_CRM.md)",
+      "status": "not supported",
+      "summary": "no automated checks",
+      "tests": [],
+      "title": "Meet a stated accessibility bar"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DG-01",
+      "section": "Data governance (no milestone assigned — DATA_GOVERNANCE.md)",
+      "status": "not supported",
+      "summary": "no consent primitive",
+      "tests": [],
+      "title": "Record consent and lawful basis"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DG-02",
+      "section": "Data governance (no milestone assigned — DATA_GOVERNANCE.md)",
+      "status": "not supported",
+      "summary": "no outbound paths and no suppression list",
+      "tests": [],
+      "title": "Honor an opt-out across outbound paths"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DG-03",
+      "section": "Data governance (no milestone assigned — DATA_GOVERNANCE.md)",
+      "status": "not supported",
+      "summary": "no subject-access path",
+      "tests": [],
+      "title": "Export everything held about a subject"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DG-04",
+      "section": "Data governance (no milestone assigned — DATA_GOVERNANCE.md)",
+      "status": "not supported",
+      "summary": "the hardest design in the track: commercial evidence is deliberately immutable",
+      "tests": [],
+      "title": "Anonymize or delete a subject while preserving immutable evidence"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DG-05",
+      "section": "Data governance (no milestone assigned — DATA_GOVERNANCE.md)",
+      "status": "not supported",
+      "summary": "needs the scheduler",
+      "tests": [],
+      "title": "Apply a retention policy and evidence that it ran"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DG-06",
+      "section": "Data governance (no milestone assigned — DATA_GOVERNANCE.md)",
+      "status": "not supported",
+      "summary": "M9 records inbound provenance only",
+      "tests": [],
+      "title": "Inspect what was shared with which provider"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DG-07",
+      "section": "Data governance (no milestone assigned — DATA_GOVERNANCE.md)",
+      "status": "not supported",
+      "summary": "needs RBAC",
+      "tests": [],
+      "title": "Restrict sensitive fields by role"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DG-08",
+      "section": "Data governance (no milestone assigned — DATA_GOVERNANCE.md)",
+      "status": "not supported",
+      "summary": "needs DG-04",
+      "tests": [],
+      "title": "Prove a deletion request completed"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DO-01",
+      "section": "Data operations (no milestone assigned)",
+      "status": "not supported",
+      "summary": "no import path; records are created one at a time through services or actions",
+      "tests": [],
+      "title": "Import records from CSV"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DO-02",
+      "section": "Data operations (no milestone assigned)",
+      "status": "not supported",
+      "summary": "unique constraints exist per field; no matching or scoring",
+      "tests": [],
+      "title": "Detect duplicates on import or entry"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DO-03",
+      "section": "Data operations (no milestone assigned)",
+      "status": "not supported",
+      "summary": "no merge primitive; references would have to be re-pointed and evidence preserved",
+      "tests": [],
+      "title": "Merge two Companies or Contacts"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DO-04",
+      "section": "Data operations (no milestone assigned)",
+      "status": "not supported",
+      "summary": "no export endpoint; list is page-bounded by design",
+      "tests": [],
+      "title": "Export records"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DO-05",
+      "section": "Data operations (no milestone assigned)",
+      "status": "not supported",
+      "summary": "every mutation is single-record",
+      "tests": [],
+      "title": "Bulk update a set of records"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DO-06",
+      "section": "Data operations (no milestone assigned)",
+      "status": "not supported",
+      "summary": "no saved-view primitive",
+      "tests": [],
+      "title": "Save and share a filtered view"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DO-07",
+      "section": "Data operations (no milestone assigned)",
+      "status": "not supported",
+      "summary": "no global search; exact indexed lookups are per-module",
+      "tests": [],
+      "title": "Search across modules"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DO-08",
+      "section": "Data operations (no milestone assigned)",
+      "status": "not supported",
+      "summary": "audit and trace exist per record but there is no Activity model or timeline view",
+      "tests": [],
+      "title": "See a unified activity timeline for a record"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DO-09",
+      "section": "Data operations (no milestone assigned)",
+      "status": "not supported",
+      "summary": "no note or attachment primitive",
+      "tests": [],
+      "title": "Attach notes or files to a record"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DS-01",
+      "section": "Delivery & Service (handover at M13 and execution at M14a, both merged — docs/DELIVERY_HANDOVER.md; economics at M14b1 on an open PR, not on main — docs/DELIVERY_ECONOMICS.md; change, deliverables and acceptance are M14b2, not started)",
+      "status": "validated end to end",
+      "summary": "commercial-contract.create-delivery-handover (human actor only) turns the activated contract's pending delivery obligations into a planned Delivery Project with work packages and milestones, atomically and idempotently, marking exactly those obligations handed over across a package boundary — tests/delivery-handover-e2e.test.js, starter install.mjs. It hands the work over; it does not execute it",
+      "tests": [
+        "tests/delivery-handover-e2e.test.js"
+      ],
+      "title": "Hand over a won Deal to delivery"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DS-02",
+      "section": "Delivery & Service (handover at M13 and execution at M14a, both merged — docs/DELIVERY_HANDOVER.md; economics at M14b1 on an open PR, not on main — docs/DELIVERY_ECONOMICS.md; change, deliverables and acceptance are M14b2, not started)",
+      "status": "partially supported",
+      "summary": "one Delivery Project per activated contract, with one work package per delivery obligation and a milestone plan, each carrying its own snapshot; a project is created from the Contract rather than directly from the Order. M14a adds execution: the project starts, its work packages start, block with a stated reason, resume and complete, and it closes only over completed work — tests/delivery-execution-e2e.test.js. Still no percent complete, scheduling, staffing, cost or billing",
+      "tests": [
+        "tests/delivery-execution-e2e.test.js"
+      ],
+      "title": "Create a Commessa / Delivery Project from an Order"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DS-03",
+      "section": "Delivery & Service (handover at M13 and execution at M14a, both merged — docs/DELIVERY_HANDOVER.md; economics at M14b1 on an open PR, not on main — docs/DELIVERY_ECONOMICS.md; change, deliverables and acceptance are M14b2, not started)",
+      "status": "partially supported",
+      "summary": "at most one planned Partner Engagement per project, naming the partner, its role and the work packages it covers, required exactly when work is partner-delivered. It is a business reference and a name snapshot: no account, login, portal, invitation, permission, fee, revenue share or SLA, and multiple partners are not modelled",
+      "tests": [],
+      "title": "Involve a third-party delivery partner (engagement, role, scope)"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DS-04",
+      "section": "Delivery & Service (handover at M13 and execution at M14a, both merged — docs/DELIVERY_HANDOVER.md; economics at M14b1 on an open PR, not on main — docs/DELIVERY_ECONOMICS.md; change, deliverables and acceptance are M14b2, not started)",
+      "status": "not supported",
+      "summary": "requires RBAC/tenancy — hard-gated by the Production Spine (JTBD-15). M13 records a partner engagement; it grants no access to restrict",
+      "tests": [],
+      "title": "Restrict partner access to assigned work only"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DS-05",
+      "section": "Delivery & Service (handover at M13 and execution at M14a, both merged — docs/DELIVERY_HANDOVER.md; economics at M14b1 on an open PR, not on main — docs/DELIVERY_ECONOMICS.md; change, deliverables and acceptance are M14b2, not started)",
+      "status": "partially supported",
+      "summary": "a canonical, ordered milestone plan is created with the project and linked to its work packages, and M14a lets a human start and complete one under a running project. Nothing schedules, accepts or bills a milestone, it is never a contractual milestone, and deliverables do not exist as objects — the job is half met",
+      "tests": [],
+      "title": "Manage milestones and deliverables"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DS-06",
+      "section": "Delivery & Service (handover at M13 and execution at M14a, both merged — docs/DELIVERY_HANDOVER.md; economics at M14b1 on an open PR, not on main — docs/DELIVERY_ECONOMICS.md; change, deliverables and acceptance are M14b2, not started)",
+      "status": "validated end to end",
+      "summary": "M14b1 (open PR): append-only time and expense evidence on a running work package, costed server-side by a versioned fingerprinted policy at roundHalfUp(ratePerHourCents × minutes / 60). No public create, update or delete exists on any of it; a client-supplied cost is ignored; internal and partner cost are separable — tests/delivery-economics-e2e.test.js, starter install.mjs. Not payroll, not accounting, and no receipt or invoice is stored or verified",
+      "tests": [
+        "tests/delivery-economics-e2e.test.js"
+      ],
+      "title": "Track hours and costs on delivery"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DS-07",
+      "section": "Delivery & Service (handover at M13 and execution at M14a, both merged — docs/DELIVERY_HANDOVER.md; economics at M14b1 on an open PR, not on main — docs/DELIVERY_ECONOMICS.md; change, deliverables and acceptance are M14b2, not started)",
+      "status": "partially supported",
+      "summary": "M14b1 (open PR) produces a variance to the latest immutable plan version and a reproducible delivery contribution estimate — the latter only where every commercial input in that currency is one-time. A project carrying a recurring obligation gets contributionBasis: \"unavailable\" with a reason and a null estimate, and its recurring input is preserved as evidence grouped by charge type, interval and interval count. It is deliberately not a margin: no revenue is recognized, no accounting or gross margin is computed, no cost of goods sold exists, no ARR/MRR/TCV or annualization exists, periods are never summed, and currencies are never summed because there is no FX",
+      "tests": [],
+      "title": "Calculate delivery margin (forecast vs actual)"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DS-08",
+      "section": "Delivery & Service (handover at M13 and execution at M14a, both merged — docs/DELIVERY_HANDOVER.md; economics at M14b1 on an open PR, not on main — docs/DELIVERY_ECONOMICS.md; change, deliverables and acceptance are M14b2, not started)",
+      "status": "not supported",
+      "summary": "approval primitive exists (JTBD-02) but no change-request object or versioned project scope",
+      "tests": [],
+      "title": "Manage a Change Request with impact and approval"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DS-09",
+      "section": "Delivery & Service (handover at M13 and execution at M14a, both merged — docs/DELIVERY_HANDOVER.md; economics at M14b1 on an open PR, not on main — docs/DELIVERY_ECONOMICS.md; change, deliverables and acceptance are M14b2, not started)",
+      "status": "not supported",
+      "summary": "no acceptance primitives; real *customer* actors gated by the Production Spine. M14a's completed states say the work finished — not that anyone accepted it, and no acceptance state is declared. Acceptance is M14b2",
+      "tests": [],
+      "title": "Collect customer acceptance on deliverables"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DS-10",
+      "section": "Delivery & Service (handover at M13 and execution at M14a, both merged — docs/DELIVERY_HANDOVER.md; economics at M14b1 on an open PR, not on main — docs/DELIVERY_ECONOMICS.md; change, deliverables and acceptance are M14b2, not started)",
+      "status": "not supported",
+      "summary": "no billing-milestone primitives",
+      "tests": [],
+      "title": "Activate billing on accepted milestones"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DS-11",
+      "section": "Delivery & Service (handover at M13 and execution at M14a, both merged — docs/DELIVERY_HANDOVER.md; economics at M14b1 on an open PR, not on main — docs/DELIVERY_ECONOMICS.md; change, deliverables and acceptance are M14b2, not started)",
+      "status": "not supported",
+      "summary": "no service primitives",
+      "tests": [],
+      "title": "Activate a Service Contract with Entitlements and SLA"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-DS-12",
+      "section": "Delivery & Service (handover at M13 and execution at M14a, both merged — docs/DELIVERY_HANDOVER.md; economics at M14b1 on an open PR, not on main — docs/DELIVERY_ECONOMICS.md; change, deliverables and acceptance are M14b2, not started)",
+      "status": "not supported",
+      "summary": "no case/escalation primitives",
+      "tests": [],
+      "title": "Manage support cases and escalation"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-LI-01",
+      "section": "Lead Intelligence & Routing (Milestone 9 — implemented for the local slice, ADR-015)",
+      "status": "validated end to end",
+      "summary": "with a deterministic fixture provider behind the real provider contract — a real paid external provider is explicitly NOT validated (needs human-approved credentials)",
+      "tests": [],
+      "title": "Enrich a Lead from external sources with snapshot + provenance"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-LI-02",
+      "section": "Lead Intelligence & Routing (Milestone 9 — implemented for the local slice, ADR-015)",
+      "status": "validated end to end",
+      "summary": "versioned model → ScoreRun + per-rule contributions; reproducible for identical inputs; bounds clamped",
+      "tests": [],
+      "title": "Calculate an explainable lead score"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-LI-03",
+      "section": "Lead Intelligence & Routing (Milestone 9 — implemented for the local slice, ADR-015)",
+      "status": "partially supported",
+      "summary": "the managed score exists on every scored lead; no sorted/prioritized list surface exists yet",
+      "tests": [],
+      "title": "Prioritize Leads by score"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-LI-04",
+      "section": "Lead Intelligence & Routing (Milestone 9 — implemented for the local slice, ADR-015)",
+      "status": "validated end to end",
+      "summary": "versioned policy → RoutingRun (policy + target-set fingerprints) + per-target route-evaluation evidence + Assignment history; deterministic tie-break; fallback queue; active-workload capacity (released on conversion/disqualification); one final assignment under concurrency incl. a two-connection last-slot race",
+      "tests": [],
+      "title": "Route a Lead automatically under a published policy"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-LI-05",
+      "section": "Lead Intelligence & Routing (Milestone 9 — implemented for the local slice, ADR-015)",
+      "status": "partially supported",
+      "summary": "declared capacity against ACTIVE workload is enforced (full target excluded; slot released when a lead converts/disqualifies — tested); real availability/calendar data is NOT modeled",
+      "tests": [],
+      "title": "Use sales capacity and availability in routing"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-LI-06",
+      "section": "Lead Intelligence & Routing (Milestone 9 — implemented for the local slice, ADR-015)",
+      "status": "not supported",
+      "summary": "the assignment record carries source/previousAssignmentId/reason as future data, but no override action exists and none may claim manager permissions before the Production Spine (JTBD-15)",
+      "tests": [],
+      "title": "Manually reassign with permission and reason"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-LI-07",
+      "section": "Lead Intelligence & Routing (Milestone 9 — implemented for the local slice, ADR-015)",
+      "status": "validated end to end",
+      "summary": "narrow wording: publication = code-first registration at startup; each version's fingerprint is persisted in definition_versions; an edited registered version stops the app; no runtime publishing UI",
+      "tests": [],
+      "title": "Version and publish a scoring/routing policy"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-LI-08",
+      "section": "Lead Intelligence & Routing (Milestone 9 — implemented for the local slice, ADR-015)",
+      "status": "partially supported",
+      "summary": "the mechanism is proven (a new version derived from an earlier definition registers cleanly; history immutable) but no end-to-end starter flow routes with a rolled-back version yet",
+      "tests": [],
+      "title": "Roll back a policy to an earlier version"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-LI-09",
+      "section": "Lead Intelligence & Routing (Milestone 9 — implemented for the local slice, ADR-015)",
+      "status": "partially supported",
+      "summary": "runs persist model/policy identity + declared fingerprints, target-set fingerprint, per-target evaluation evidence (in/out, reason, load, capacity, priority) and fingerprints of the mutable lead inputs — but mutable lead-field VALUES are fingerprinted, not copied, and no automated re-execution harness exists",
+      "tests": [],
+      "title": "Reproduce a historical routing decision exactly"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-01",
+      "section": "Audience and governance",
+      "status": "not supported",
+      "summary": "MK2; no audience primitive",
+      "tests": [],
+      "title": "Create a dynamic audience from CRM data"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-02",
+      "section": "Audience and governance",
+      "status": "not supported",
+      "summary": "MK2; no snapshot primitive",
+      "tests": [],
+      "title": "Freeze an audience snapshot for a send"
+    },
+    {
+      "docs": [
+        "docs/strategy/DATA_GOVERNANCE.md"
+      ],
+      "id": "JTBD-MK-03",
+      "section": "Audience and governance",
+      "status": "not supported",
+      "summary": "MK2; DATA_GOVERNANCE.md",
+      "tests": [],
+      "title": "Apply exclusions and suppression sets"
+    },
+    {
+      "docs": [
+        "docs/strategy/DATA_GOVERNANCE.md"
+      ],
+      "id": "JTBD-MK-04",
+      "section": "Audience and governance",
+      "status": "not supported",
+      "summary": "MK2; DATA_GOVERNANCE.md — hard",
+      "tests": [],
+      "title": "Verify consent and communication preferences"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-05",
+      "section": "Audience and governance",
+      "status": "not supported",
+      "summary": "MK2; needs campaign history",
+      "tests": [],
+      "title": "Apply a cross-campaign frequency cap"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-06",
+      "section": "Audience and governance",
+      "status": "not supported",
+      "summary": "MK6; no provider adapter",
+      "tests": [],
+      "title": "Sync an audience to a provider"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-07",
+      "section": "Campaign planning",
+      "status": "not supported",
+      "summary": "MK1; funnel primitives, better with Analytics Studio",
+      "tests": [],
+      "title": "Diagnose a funnel drop"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-08",
+      "section": "Campaign planning",
+      "status": "not supported",
+      "summary": "MK1 — the first milestone, and it needs no provider",
+      "tests": [],
+      "title": "Create a complete Campaign Proposal"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-09",
+      "section": "Campaign planning",
+      "status": "not supported",
+      "summary": "MK1/MK2; provider contracts",
+      "tests": [],
+      "title": "Select a channel and an installed provider, with rationale"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-10",
+      "section": "Campaign planning",
+      "status": "not supported",
+      "summary": "MK1",
+      "tests": [],
+      "title": "Recommend a send time and window"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-11",
+      "section": "Campaign planning",
+      "status": "not supported",
+      "summary": "MK3",
+      "tests": [],
+      "title": "Define content, creative, landing page and CTA"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-12",
+      "section": "Campaign planning",
+      "status": "not supported",
+      "summary": "MK3",
+      "tests": [],
+      "title": "Define a tracking plan (UTM, conversion events)"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-13",
+      "section": "Campaign planning",
+      "status": "not supported",
+      "summary": "MK1; real roles need the Production Spine",
+      "tests": [],
+      "title": "Request human approval of a proposal"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-14",
+      "section": "Execution",
+      "status": "not supported",
+      "summary": "MK2; fixture provider first",
+      "tests": [],
+      "title": "Run a one-shot email campaign"
+    },
+    {
+      "docs": [
+        "docs/strategy/JOBS_AND_OUTBOX.md"
+      ],
+      "id": "JTBD-MK-15",
+      "section": "Execution",
+      "status": "not supported",
+      "summary": "MK4; JOBS_AND_OUTBOX.md — hard",
+      "tests": [],
+      "title": "Run a rolling campaign"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-16",
+      "section": "Execution",
+      "status": "not supported",
+      "summary": "MK4; durable event inbox — hard",
+      "tests": [],
+      "title": "Run a triggered campaign"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-17",
+      "section": "Execution",
+      "status": "not supported",
+      "summary": "MK4; scheduler and durable waits — hard",
+      "tests": [],
+      "title": "Run a multi-step multichannel journey"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-18",
+      "section": "Execution",
+      "status": "not supported",
+      "summary": "MK4",
+      "tests": [],
+      "title": "Pause or stop a running campaign"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-19",
+      "section": "Execution",
+      "status": "not supported",
+      "summary": "MK2; inbound provider events",
+      "tests": [],
+      "title": "Handle bounces and unsubscribes"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-20",
+      "section": "Content",
+      "status": "not supported",
+      "summary": "MK3",
+      "tests": [],
+      "title": "Generate email content"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-21",
+      "section": "Content",
+      "status": "not supported",
+      "summary": "MK3",
+      "tests": [],
+      "title": "Generate SMS/WhatsApp messaging content"
+    },
+    {
+      "docs": [
+        "docs/strategy/DESIGN_TO_CRM.md"
+      ],
+      "id": "JTBD-MK-22",
+      "section": "Content",
+      "status": "not supported",
+      "summary": "MK3; design ownership per DESIGN_TO_CRM.md",
+      "tests": [],
+      "title": "Generate a landing page, form and CTA"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-23",
+      "section": "Content",
+      "status": "not supported",
+      "summary": "MK3",
+      "tests": [],
+      "title": "Publish a preview"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-24",
+      "section": "Content",
+      "status": "not supported",
+      "summary": "MK3; human approval mandatory",
+      "tests": [],
+      "title": "Publish an approved asset to production"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-25",
+      "section": "Experimentation",
+      "status": "not supported",
+      "summary": "MK5",
+      "tests": [],
+      "title": "Create an A/B test"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-26",
+      "section": "Experimentation",
+      "status": "not supported",
+      "summary": "MK5; fingerprinted assignment rule",
+      "tests": [],
+      "title": "Assign a deterministic control group"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-27",
+      "section": "Experimentation",
+      "status": "not supported",
+      "summary": "MK5",
+      "tests": [],
+      "title": "Create a holdout"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-28",
+      "section": "Experimentation",
+      "status": "not supported",
+      "summary": "MK5/MK7",
+      "tests": [],
+      "title": "Measure lift against control"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-29",
+      "section": "Experimentation",
+      "status": "not supported",
+      "summary": "MK5; human approval where risk exists",
+      "tests": [],
+      "title": "Select and publish a winner"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-30",
+      "section": "Paid media",
+      "status": "not supported",
+      "summary": "MK6",
+      "tests": [],
+      "title": "Prepare a Media Plan"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-31",
+      "section": "Paid media",
+      "status": "not supported",
+      "summary": "MK6; consent rules",
+      "tests": [],
+      "title": "Sync an audience to an ads platform"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-32",
+      "section": "Paid media",
+      "status": "not supported",
+      "summary": "MK6; human spend approval mandatory",
+      "tests": [],
+      "title": "Launch an approved ads campaign"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-33",
+      "section": "Paid media",
+      "status": "not supported",
+      "summary": "MK6; provider adapters",
+      "tests": [],
+      "title": "Ingest spend and results"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-34",
+      "section": "Paid media",
+      "status": "not supported",
+      "summary": "MK6; a proposal, never an action",
+      "tests": [],
+      "title": "Propose a budget change"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-35",
+      "section": "Analytics and attribution",
+      "status": "not supported",
+      "summary": "MK1/MK7",
+      "tests": [],
+      "title": "Define a funnel"
+    },
+    {
+      "docs": [
+        "docs/strategy/ANALYTICS_STUDIO.md"
+      ],
+      "id": "JTBD-MK-36",
+      "section": "Analytics and attribution",
+      "status": "not supported",
+      "summary": "MK1; ANALYTICS_STUDIO.md",
+      "tests": [],
+      "title": "Identify and segment a drop"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-37",
+      "section": "Analytics and attribution",
+      "status": "not supported",
+      "summary": "MK2 onward",
+      "tests": [],
+      "title": "Report a campaign result"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-38",
+      "section": "Analytics and attribution",
+      "status": "not supported",
+      "summary": "MK7; identity/touchpoint model",
+      "tests": [],
+      "title": "First-touch attribution"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-39",
+      "section": "Analytics and attribution",
+      "status": "not supported",
+      "summary": "MK7",
+      "tests": [],
+      "title": "Last-touch attribution"
+    },
+    {
+      "docs": [
+        "docs/strategy/ANALYTICS_STUDIO.md"
+      ],
+      "id": "JTBD-MK-40",
+      "section": "Analytics and attribution",
+      "status": "not supported",
+      "summary": "MK7; ANALYTICS_STUDIO.md — hard",
+      "tests": [],
+      "title": "Multi-touch attribution"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-41",
+      "section": "Analytics and attribution",
+      "status": "not supported",
+      "summary": "MK7",
+      "tests": [],
+      "title": "Connect a campaign to an Opportunity or Order"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-42",
+      "section": "Analytics and attribution",
+      "status": "not supported",
+      "summary": "MK7",
+      "tests": [],
+      "title": "Calculate campaign ROI"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-MK-43",
+      "section": "Analytics and attribution",
+      "status": "not supported",
+      "summary": "MK7; closes the loop",
+      "tests": [],
+      "title": "Recommend the next campaign version"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-PK-01",
+      "section": "Package developer (Custom Package Authoring v1, M13)",
+      "status": "validated end to end",
+      "summary": "a customer-authored package attaches through the identical definePackage contract, works over the generic API, and detaches — with every kernel file fingerprinted before and after to prove no kernel change. One static import composes it; deleting the line removes the surface and leaves the data",
+      "tests": [],
+      "title": "Create and compose a custom local domain package"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-PK-02",
+      "section": "Package developer (Custom Package Authoring v1, M13)",
+      "status": "validated end to end",
+      "summary": "declared capabilities only. packages/delivery reaches packages/contracts through delivery-obligations@1, inside the caller's transaction. An undeclared reach, a wrong declared provider, a missing or mis-versioned dependency and a cycle are all startup failures naming the edge",
+      "tests": [],
+      "title": "Depend on another package without importing its source"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-PK-03",
+      "section": "Package developer (Custom Package Authoring v1, M13)",
+      "status": "partially supported",
+      "summary": "crm package validate|inspect runs the startup validator, reports collisions and private kernel imports, and exits non-zero. It imports and executes the package's own module body: it is not static analysis and not a sandbox",
+      "tests": [],
+      "title": "Validate a package before booting it"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-PK-04",
+      "section": "Package developer (Custom Package Authoring v1, M13)",
+      "status": "partially supported",
+      "summary": "removing the import removes actions, schema block and Admin section; the tables and rows are left untouched. There is no uninstall, no data migration and no cleanup command — orphaned tables stay orphaned",
+      "tests": [],
+      "title": "Remove a package without losing its data"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-PK-05",
+      "section": "Package developer (Custom Package Authoring v1, M13)",
+      "status": "not supported",
+      "summary": "crm package new deliberately deferred until a third package settles the file shape",
+      "tests": [],
+      "title": "Scaffold a new package from a template"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-PK-06",
+      "section": "Package developer (Custom Package Authoring v1, M13)",
+      "status": "not supported",
+      "summary": "no registry, publication, remote install, auto-update, signing or hot loading. Packages are checked-in source, by design",
+      "tests": [],
+      "title": "Install a package from a registry or marketplace"
+    },
+    {
+      "docs": [],
+      "id": "JTBD-PK-07",
+      "section": "Package developer (Custom Package Authoring v1, M13)",
+      "status": "not supported",
+      "summary": "and not planned at this layer. Repository source is trusted: a package's module body, actions and policies run in-process with full authority, and the consumer name passed when opening a capability is asserted by the caller (ADR-018 addendum 4)",
+      "tests": [],
+      "title": "Run an untrusted package safely"
+    }
+  ],
+  "jobsContract": 1,
+  "statusVocabulary": [
+    "not supported",
+    "partially supported",
+    "technically supported",
+    "validated end to end"
+  ]
+}

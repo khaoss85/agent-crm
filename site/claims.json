@@ -166,6 +166,17 @@
       "surfaces": ["site", "readme", "launch"]
     },
     {
+      "id": "C-22",
+      "text": "One command composes the whole thing and then inspects it: 55 modules, 3 packages, 19 resources, 35 actions, 5 policies and 10 providers, applied from manifests and driven end to end — then it prints the eleven things the inspector says it cannot see.",
+      "evidence": {
+        "tests": ["tests/app-inspect.test.js", "tests/contracts-activation-e2e.test.js", "tests/delivery-economics-e2e.test.js"],
+        "docs": ["docs/APPLICATION_INSPECTION.md"],
+        "repoFacts": ["npm run tour runs examples/starters/b2b-lead-qualification/install.mjs, which CI runs on every push, into a directory it keeps", "the counts are the app inspect report of that composed project", "scripts/tour.js exits non-zero if the composed application is ever empty"]
+      },
+      "limitation": "It composes the starter's application, not yours, and it runs entirely locally against SQLite with no authentication. The counts describe what that starter applies; a different composition gives different numbers. Wall-clock time varies by machine and is deliberately not claimed.",
+      "surfaces": ["site", "readme", "launch"]
+    },
+    {
       "id": "C-21",
       "text": "The same refusal holds where the money is: an agent actor asking to approve a discounted quote is refused with a 403, and only a human user actor can decide.",
       "evidence": {
