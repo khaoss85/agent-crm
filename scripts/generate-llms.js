@@ -249,8 +249,8 @@ function whatItIsSection() {
  */
 function doesNotExistSection() {
   const lines = ledger.limitations.map((limitation) => {
-    const link = evidenceLink(limitation.evidence);
-    const suffix = link ? ` ${link}` : '';
+    const doc = primaryDoc(limitation.evidence);
+    const suffix = doc ? ` ([${doc}](${doc}))` : '';
     return `- **${limitation.id} — ${limitation.headline}** ${limitation.text}${suffix}`;
   });
 
@@ -272,9 +272,9 @@ function doesNotExistSection() {
 /** Every claim with the limitation that travels with it, on the same line. */
 function provenSection() {
   const lines = ledger.claims.map((claim) => {
-    const link = evidenceLink(claim.evidence);
+    const doc = primaryDoc(claim.evidence);
     const label = claim.evidence?.jtbd ? `${claim.id} · ${claim.evidence.jtbd}` : claim.id;
-    const head = link ? `[${label}]${link.slice(1)}` : `**${label}**`;
+    const head = doc ? `[${label}](${doc})` : `**${label}**`;
     const proof = (claim.evidence?.tests ?? [])[0];
     const tail = proof ? ` Proof: \`${proof}\`.` : '';
     return `- ${head} — ${claim.text} **Limit:** ${claim.limitation}${tail}`;
@@ -601,14 +601,13 @@ function firstSentence(markdown) {
 }
 
 /**
- * A markdown link to the first document that evidences an entry, in `(path)` form
- * ready to follow a `[label]`.
+ * The first document that evidences an entry — the link target for its line. A
+ * ledger entry evidenced only by tests or repo facts has no document to point at.
  * @param {Record<string, any> | undefined} evidence
  * @returns {string | null}
  */
-function evidenceLink(evidence) {
-  const doc = (evidence?.docs ?? [])[0];
-  return doc ? `([${doc}](${doc}))` : null;
+function primaryDoc(evidence) {
+  return (evidence?.docs ?? [])[0] ?? null;
 }
 
 /** @param {Record<string, any> | undefined} evidence */

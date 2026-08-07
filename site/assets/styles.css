@@ -122,19 +122,19 @@ a:focus-visible, button:focus-visible, summary:focus-visible {
 
 /* ---------------------------------------------------------------- hero */
 
-.hero { padding: 74px 0 12px; }
+.hero { padding: 56px 0 12px; }
 .eyebrow, .kicker {
   margin: 0 0 14px; font-size: 11px; font-weight: 850;
   letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
 }
 h1 {
-  margin: 0; max-width: 16ch;
-  font-size: clamp(40px, 7.2vw, 82px); line-height: .97; letter-spacing: -.045em; font-weight: 800;
+  margin: 0; max-width: 19ch;
+  font-size: clamp(36px, 5.4vw, 64px); line-height: 1.0; letter-spacing: -.04em; font-weight: 800;
 }
-.lede { max-width: 62ch; margin: 26px 0 0; color: var(--muted); font-size: clamp(17px, 2.2vw, 20px); }
+.lede { max-width: 62ch; margin: 22px 0 0; color: var(--muted); font-size: clamp(17px, 2.2vw, 20px); }
 .lede strong { color: var(--ink); font-weight: 650; }
 
-.cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; align-items: center; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; align-items: center; }
 .button {
   display: inline-flex; align-items: center; gap: 9px;
   border-radius: 12px; padding: 13px 20px; font-weight: 750; font-size: 15px;
