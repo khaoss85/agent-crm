@@ -198,15 +198,17 @@ GET /api/schema                            # modules, actions, pipelines,
 
 Plus the checked-in composition file (`packages/domains/generated/index.js`), each package's README, `docs/PROJECT_STATUS.md` and the JTBD matrix.
 
-**Planned, and not implemented — do not call it:**
+**Implemented (AX1) — start here:**
 
 ```bash
-npm run crm -- app inspect --json          # PLANNED (AX1)
+npm run crm -- app inspect --json
 ```
 
-Its intended output: the installed package graph with versions, the resolved capability graph, missing or unsatisfiable dependencies, configured providers and their status, the schema contracts, and the current Quality-Gate and JTBD status — one deterministic document an agent reads instead of assembling five sources by hand.
+One deterministic document: the installed package graph with its versions, the resolved capability graph including the edges that do **not** resolve, records with their revisions, actions with their declared transition metadata, policies and provider definitions, and an explicit machine-readable list of everything the report cannot know. Guide: `docs/APPLICATION_INSPECTION.md`.
 
-Until AX1 exists, an agent assembles that picture from the surfaces above. That is slower and more error-prone, which is precisely the argument for AX1.
+**A correction to what this document previously said.** AX1 was described here as also carrying "the current Quality-Gate and JTBD status". It does not, and deliberately: both live in Markdown maintained by people, and parsing prose into structured claims produces *structured* output with *unstructured* reliability — which an agent then trusts. `evidence` carries the paths and the status `not_aggregated`. Machine-readable evidence is future work (AX3), named rather than quietly missing.
+
+AX1 also does not open the configured database, so nothing it reports is a claim about a running system.
 
 ---
 
@@ -225,8 +227,8 @@ Real approval **roles** require the Production Spine (auth, tenancy, RBAC). Unti
 Cross-cutting; it does not renumber or delay the Delivery/Service milestones or the Marketing MK track.
 
 ```text
-AX0  Goal-to-Solution strategy + Skill              ← this PR
-AX1  Application capability inspection
+AX0  Goal-to-Solution strategy + Skill              implemented
+AX1  Application capability inspection              implemented — crm app inspect
 AX2  Machine-readable Solution Plan
 AX3  Objective-driven local build benchmark
 AX4  Objective-driven deploy / observe / fix through Cloud
@@ -242,7 +244,7 @@ AX5  Closed-loop optimization with Marketing + Analytics
 | AX4 | the Production Spine and Agent CRM Cloud |
 | AX5 | Marketing, Analytics Studio, Data Governance and Durable Automation |
 
-**Nothing in AX1–AX5 is implemented.** AX0 ships a strategy and a Skill; the Skill is useful today precisely because it tells the agent to report missing capabilities honestly rather than pretend.
+**AX1 is implemented; AX2–AX5 are not.** AX0 ships a strategy and a Skill, AX1 ships the discovery surface that Skill now starts from. Both are useful today precisely because they report missing capabilities honestly rather than pretend.
 
 ---
 

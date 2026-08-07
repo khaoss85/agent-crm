@@ -340,9 +340,20 @@ See `docs/strategy/OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md` and the
   package today.
 - **Hot loading.** Registration is static and composed at startup, on purpose.
 
+## Seeing your package in the application
+
+`crm package validate|inspect <dir>` reads one package in isolation. Once it is
+registered in `packages/domains/generated/index.js`, `crm app inspect --json`
+shows it as part of the whole composition — its resolved capability edges, the
+records it owns and their revisions, its actions and its policy fingerprints —
+and reports every collision, missing dependency or cycle deterministically
+rather than stopping at the first fault. Guide:
+`docs/APPLICATION_INSPECTION.md`.
+
 ## Related
 
 `ARCHITECTURE.md` (domain packages) · ADR-018 and its addenda in `DECISIONS.md`
-· `docs/MODULE_FACTORY.md` · `docs/ACTIONS.md` · `docs/QUALITY_GATES.md` ·
+· `docs/MODULE_FACTORY.md` · `docs/ACTIONS.md` · `docs/APPLICATION_INSPECTION.md` ·
+`docs/QUALITY_GATES.md` ·
 `.claude/skills/build-custom-domain-package/SKILL.md` (mirrored at
 `.agents/skills/build-custom-domain-package/SKILL.md`).

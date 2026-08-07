@@ -17,18 +17,43 @@ This workflow is usable **today**, including where capabilities are missing — 
 
 Read, do not assume: `AGENTS.md` · `docs/PROJECT_STATUS.md` · `docs/QUALITY_GATES.md` · the JTBD matrix · `docs/PACKAGE_AUTHORING.md` · the composition file `packages/domains/generated/index.js` · each package's README.
 
-Then inspect the running system:
+**Start here — one command answers most of it:**
 
 ```bash
-npm run crm -- package inspect <package-dir>    # identity, resources, actions,
-                                                # policies, requires/provides
+npm run crm -- app inspect --json    # installed packages, the resolved capability
+                                     # graph, records and their revisions, actions,
+                                     # policies, providers, problems, limitations
+```
+
+Read it in this order, and do not skip a step:
+
+1. `valid` — is the composition sound at all?
+2. `problems[]` — every missing capability, version mismatch, collision and cycle, each with a code. Fix or report these before planning anything on top of them.
+3. `limitations[]` — what the report **cannot** know. Each has a machine-readable code; treat every one as a hard boundary on what you may claim.
+4. `packages[]`, `capabilities[]`, `resources[]`, `actions[]` — what you may build on.
+
+Exit codes are the contract: `0` valid · `1` problems (the full report is still printed) · `2` the project could not be read.
+
+Then, where you need per-package or runtime detail:
+
+```bash
+npm run crm -- package inspect <package-dir>    # one package in isolation
 ```
 
 ```text
-GET /api/schema     # modules, actions, and every registered package's block
+GET /api/schema     # the same picture from a running server
 ```
 
-`npm run crm -- app inspect` does **not** exist. Do not call it, and do not tell the user it exists — assemble the picture from the surfaces above.
+Guide: `docs/APPLICATION_INSPECTION.md`.
+
+**What `app inspect` does not tell you, and you must not infer:**
+
+- whether any **database** has applied a migration, holds data, or holds *good* data — it reads source only;
+- whether a **provider** is configured, authenticated or reachable. A provider entry means a definition was composed in source, nothing more. Never infer credentials;
+- any **runtime authorization**. There is no auth, tenancy or RBAC in this framework, so no role is enforced anywhere;
+- **JTBD or quality-gate status.** `evidence.status` is `not_aggregated` and carries paths, not claims. Read the documents yourself.
+
+Verify the reliability of source **data** separately: `app inspect` says a record exists, never that its rows are complete, deduplicated or correct. Count the nulls yourself.
 
 The JTBD matrix is the repository's own honest statement of what is supported. Treat a row marked `not supported` as authoritative over your intuition.
 

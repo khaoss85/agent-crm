@@ -24,6 +24,7 @@ The first unchecked item is the default next task for Codex.
 - [x] **Module Evolution v1 (ADR-019).** A generic kernel capability: a generated module gains fields, enum values and indexes through an explicit `revision`, a checked-in `module.state.json` and append-only `migrations[]`. Merged in PR #19; **the prerequisite M14 was waiting on.**
 - [x] **AX0 — Objective-driven agent experience (documentation and Agent Skills only).** The Goal-to-Solution lifecycle, the SolutionPlan design, capability-discovery guidance, the mirrored `solve-business-goal` Skill, the canonical full-funnel worked example, 10 JTBD-AX rows and the E2E-G1 benchmark gates. **No runtime code; AX1–AX5 are not implemented.**
 - [x] **M14a — Delivery execution.** The three M13 delivery records evolve to revision 2 and gain a lifecycle: eight human-driven transitions over explicit tables, block evidence with a required reason, and a hierarchy gate that closes a project only over completed work (`docs/plans/milestone-14-delivery-economics-acceptance.md`, ADR-019 addendum 1).
+- [x] **AX1 — Deterministic application inspection (platform).** `crm app inspect [--json]`: one deterministic, source-only, read-only document describing the composed application — the package graph, the resolved capability graph including unresolved edges, records with their revisions, actions with declared transition metadata, policies and provider definitions, deterministic problems for an invalid composition, and machine-readable limitations (`docs/APPLICATION_INSPECTION.md`). Open PR, awaiting the adversarial review. It does **not** aggregate JTBD or quality-gate evidence, and does not open any database.
 - [ ] **M14b — Delivery economics, change requests, deliverables and acceptance.** The next Delivery-domain milestone. Partial source preserved on `claude/m14b-economics-change-acceptance-preserved`.
 
 ## Future platform items
@@ -31,7 +32,8 @@ The first unchecked item is the default next task for Codex.
 Recorded so they are not lost, and deliberately not bundled into a domain milestone:
 
 - [ ] **Generic Admin action availability.** The generated Admin renders every action a module declares and does not filter by the record's current state, so actions invalid for that state are still offered. The server is authoritative and refuses them with a `409` naming the allowed moves, and the schema already exposes per-action `from`/`to` metadata — a future generic Admin enhancement should hide or disable what the current state cannot take. A package-owned Admin (M14b) may use state-aware controls before that lands.
-- [ ] **Machine-readable JTBD and quality-gate evidence.** Today both live in Markdown and are read by people, not machines.
+- [ ] **Machine-readable JTBD and quality-gate evidence.** Today both live in Markdown and are read by people, not machines; AX1 deliberately references them by path rather than parsing prose into structured claims. Targeted at AX3.
 - [ ] **Provider-instance discovery and health.**
-- [ ] **Runtime and database inspection** — what a particular database has actually applied, as opposed to what the checked-in source declares.
+- [ ] **Runtime and database inspection** — what a particular database has actually applied, as opposed to what the checked-in source AX1 reads declares.
+- [ ] **AX2 — a machine-readable Solution Plan**, consuming AX1's report as its input.
 - [ ] **Data Operations** — deduplication, merge, quality remediation.
