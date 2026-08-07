@@ -115,6 +115,9 @@ about it says what it is not.
 two-connection races, exact reads past 500 rows, exact audit/event/trace counts,
 the SLA boundaries, hostile input),
 `tests/service-operations-integration.test.js` (AX1, AX2, detach),
+`examples/starters/b2b-lead-qualification/install.mjs` (the full journey, from a
+pending obligation to a closed case, with the commercial rows fingerprinted
+before and after),
 `examples/solution-plans/activate-support-and-manage-cases.plan.json`,
 `packages/service/src/`,
 `docs/plans/milestone-15-service-operations.md`.
