@@ -210,6 +210,23 @@ One deterministic document: the installed package graph with its versions, the r
 
 AX1 also does not open the configured database, so nothing it reports is a claim about a running system.
 
+**What the agent reaches these surfaces through.** Today: a shell command, an
+exit code and JSON — nothing else (`docs/AGENT_HARNESS_COMPATIBILITY.md`). The
+MCP server that ships (`docs/MCP.md`) predates AX1 and AX2 and exposes a sample
+domain rather than these contracts, so an agent asking *"what is this
+application"* gets a better answer from `app inspect` than from any of its
+tools. Mirroring the stable contracts as MCP reads is **DX13, not built**; the
+exposure policy that would govern it — tiers, bounded output, and the list of
+things that may never become a tool at all — is written first in
+`docs/architecture/AGENT_TOOL_SURFACE.md`.
+
+**And what the agent will find missing.** Three domains still live in
+`packages/core/src/` rather than behind the package seam, so an agent can cite
+their actions and record revisions but there is no package or capability to
+cite. `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` records that per domain, so
+the gap is a stated limitation rather than something an agent discovers by
+finding nothing.
+
 ---
 
 ## 6. Human approval boundaries

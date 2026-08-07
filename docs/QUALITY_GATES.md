@@ -15,7 +15,8 @@ policy, so it stops depending on the length of a one-off prompt. Agents:
 6. **Conservative JTBD update.** Status changes only for what the merged tests prove; narrow wording; "not supported" is the default (§3).
 7. **Clean-clone verification.** Fresh `git clone`, fresh `npm install`, then `verify`, `smoke`, the starter from an empty project, and the browser smoke where supported.
 8. **No secrets or artifacts.** No `.env`, database, log, build output, browser profile, webhook capture, signed file, generated starter output or `node_modules` in the tree.
-9. **Human merge.** An agent never merges its own milestone PR without an explicit instruction, and never squashes a milestone: regular merge commits keep the history readable.
+9. **Compatibility Backfill Rule.** A PR that introduces or changes a **horizontal** capability — one every domain could use — records every existing domain's status against it in `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, using `aligned | partial | deferred | not_applicable | needs_extraction` with a one-line reason, and names the closing milestone for anything `deferred`. **Declaring the gap is mandatory; closing it in the same PR is not** — retrofitting five domains inside a feature PR is how a feature PR stops being reviewable. A capability only the newest domain has, that nobody wrote down, is a fork rather than a platform. A missing row is a review blocker in the same way a missing test is.
+10. **Human merge.** An agent never merges its own milestone PR without an explicit instruction, and never squashes a milestone: regular merge commits keep the history readable.
 
 ## 2. Adversarial review categories
 
@@ -73,6 +74,7 @@ A milestone is **not** complete because its happy path works:
 implementation
 → adversarial review
 → fixes in-place, with regression tests
+→ compatibility backfill declared (§1.9)
 → clean-clone verification
 → CI green
 → human merge

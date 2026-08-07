@@ -37,7 +37,7 @@ re-describing it.
 |---|---|---|
 | **DX3** | `crm package scaffold` | dry-run by default, explicit apply, a deterministic package skeleton, **no remote install**. Scaffolding a shape nobody has built three times bakes in the wrong shape |
 | **DX4** | `crm package test <path> --json` | conformance: attach/detach, dependency and capability resolution, migrations and evolution, boundaries, audit and trace, exact reads, hostile input. It makes ADR-018's seam self-enforcing — and needs M15 to know which invariants are actually general |
-| **—** | first existing-domain extraction pilot | one of Intelligence / Commercial / Signature moved out of core, once DX4 can prove the result still conforms |
+| **—** | first existing-domain extraction pilot | one of Intelligence / Commercial / Signature moved out of core, once DX4 can prove the result still conforms. The per-domain status that decides the candidate is `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, which records **Lead Intelligence** as the working hypothesis and the evidence that must exist before it is chosen |
 
 ### Before an AX3 public benchmark
 
@@ -59,7 +59,7 @@ whose evidence is prose is a benchmark nobody can check.
 | **DX8** | `crm explain <ERROR_CODE> --json` | every published problem code in one place: meaning, likely causes, retryability, safe diagnostics and the doc that covers it |
 | **DX11** | `crm upgrade plan --json` | package and capability compatibility, the Module Evolution and migration work a version bump requires, and the tests that must pass |
 | **DX12** | provider contract test kit | tracked with the Integration Runtime: config, timeout, late settlement, idempotency, webhook, rate limits, sandbox, secret hygiene and error shape |
-| **DX13** | Project MCP parity | the stable CLI contracts mirrored as read surfaces — `app_inspect`, `solution_check`, `doctor`, `verify`, `scenario`, `change_inspect`, `explain`, `context_pack`, `trace_query`. **Remote mutation stays Production-Spine and human-approval work** |
+| **DX13** | Project MCP parity | the stable CLI contracts mirrored as read surfaces — `app_inspect`, `solution_check`, `doctor`, `verify`, `scenario`, `change_inspect`, `explain`, `context_pack`, `trace_query`. **Remote mutation stays Production-Spine and human-approval work.** The exposure policy — tiers, what may never become a tool, and what the harnesses actually document — is written first in `docs/architecture/AGENT_TOOL_SURFACE.md`, which is strategy, not implementation |
 
 DX7 and DX8 may land opportunistically as small platform slices; neither blocks
 anything.
@@ -89,11 +89,12 @@ Parallel / immediately after:
 
 Then:
   M15 Service package
+  review the M15 learnings against the seam
 
 After Service learning:
   DX3 Package Scaffold
   DX4 Package Conformance
-  first old-domain extraction pilot
+  the controlled Legacy Domain Alignment Pass — one domain, one PR
 
 Before AX3:
   DX5 Project Verify
@@ -133,4 +134,6 @@ one.
 `docs/APPLICATION_INSPECTION.md`, `docs/SOLUTION_PLAN.md`,
 `docs/AGENT_HARNESS_COMPATIBILITY.md`, `docs/PACKAGE_AUTHORING.md`,
 `docs/MODULE_FACTORY.md`, `docs/MCP.md`,
+`docs/architecture/AGENT_TOOL_SURFACE.md`,
+`docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`,
 `docs/benchmarks/CRM_JTBD_MATRIX.md` (the AX section).
