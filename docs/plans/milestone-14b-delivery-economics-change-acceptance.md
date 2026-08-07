@@ -75,6 +75,33 @@ throughout, with every intermediate bounded well inside the safe-integer range.
 | actual delivery cost | cost of goods sold |
 | delivery contribution estimate | gross margin · profit · accounting margin |
 | variance to plan | forecast variance |
+| one-time commercial value | ARR · MRR · TCV · annualized value |
+
+## The recurrence boundary (adversarial review of PR #23)
+
+The first implementation summed every work package's `netAmountCents` into one
+`commercialDeliveryValueCents` and subtracted total actual cost from it. A
+recurring delivery obligation prices **one period**; recorded cost is a **spend
+to date**. The starter fixture happens to contain only one-time obligations, so
+nothing failed — but any project with a subscription obligation would have
+produced a confident, meaningless number.
+
+The v1 rule now implemented:
+
+- commercial input is grouped by **currency + charge type + interval + interval
+  count** and published as `commercialInputs[]`;
+- `deliveryContributionEstimateCents` is computed **only** when every input in
+  that currency is one-time, and is `null` otherwise;
+- `contributionBasis` is `one_time` or `unavailable`, with
+  `contributionUnavailableReason` ∈ {`recurring_commercial_input`,
+  `unknown_commercial_shape`, `no_commercial_input`};
+- a snapshot with no recognizable charge type is *unknown*, never assumed
+  one-time;
+- `varianceToPlanCents` compares two costs and stays available everywhere.
+
+No ARR, MRR or TCV; no annualization; no sum across periods; no sum across
+currencies. Term and normalization semantics are out of scope until a contract
+term model exists.
 
 ## What ships
 

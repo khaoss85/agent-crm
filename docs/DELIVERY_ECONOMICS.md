@@ -60,6 +60,11 @@ even an input, and a test proves a forged one is ignored.
 total is grouped by currency and a group is a complete answer for that currency
 alone. There is no grand total, deliberately.
 
+**Periods are never mixed either.** A recurring obligation prices one *period*;
+recorded cost is a spend to date. Nothing here normalizes the two, so a
+contribution estimate exists only where the commercial input is one-time — see
+below.
+
 **Recording is a human decision.** `record-delivery-time`,
 `record-delivery-expense`, `publish-economic-plan` and
 `snapshot-delivery-economics` each require `actor.type === 'user'`; an agent is
@@ -92,6 +97,7 @@ the safe-integer boundary.
 | actual delivery cost | cost of goods sold |
 | delivery contribution estimate | gross margin · accounting margin · profit |
 | variance to plan | forecast variance |
+| one-time commercial value | ARR · MRR · TCV · annualized value |
 
 ## The commercial input
 
@@ -99,6 +105,47 @@ It comes **only** from the immutable work-package snapshot M13 copied from the
 M12 delivery obligation. No live catalog read, no quote draft, no re-pricing,
 and no client-supplied value. An obligation with no deterministic amount is
 reported as unavailable evidence rather than invented.
+
+Inside a currency group it is split by **charge type, interval and interval
+count** and published as `commercialInputs[]`, never flattened into one figure:
+
+```json
+{ "currency": "EUR",
+  "oneTimeCommercialValueCents": 500000,
+  "commercialInputs": [
+    { "chargeType": "one_time",  "interval": null,    "intervalCount": null, "netAmountCents": 500000, "workPackageCount": 1 },
+    { "chargeType": "recurring", "interval": "month", "intervalCount": 1,    "netAmountCents": 120000, "workPackageCount": 1 }
+  ],
+  "contributionBasis": "unavailable",
+  "contributionUnavailableReason": "recurring_commercial_input",
+  "deliveryContributionEstimateCents": null }
+```
+
+## When a contribution estimate exists — and when it does not
+
+A recurring obligation prices **one period**. The costs recorded against a
+delivery project are a **spend to date**. There is no term over which the two
+are comparable, and inventing one would require contract-term semantics this
+framework does not have. So the estimate is computed on exactly one basis:
+
+| `contributionBasis` | `contributionUnavailableReason` | Meaning |
+|---|---|---|
+| `one_time` | `null` | every commercial input in this currency is one-time; the estimate is one-time value minus actual cost |
+| `unavailable` | `recurring_commercial_input` | at least one obligation prices a period — no estimate is produced |
+| `unavailable` | `unknown_commercial_shape` | a snapshot carries no recognizable charge type; a missing field is not read as "one-time" |
+| `unavailable` | `no_commercial_input` | cost was recorded in a currency nothing is priced in |
+
+A mixed project gets no estimate at all rather than one computed against the
+one-time subtotal: the recorded cost covers *all* the work in that currency,
+including delivering the recurring obligation, so a subtotal comparison would
+understate the number in a way no label can rescue.
+
+`varianceToPlanCents` compares two costs, so it is unaffected and stays
+available in every group.
+
+There is **no ARR, MRR or TCV**, no implicit annualization, no sum across
+periods and no sum across currencies — and a test asserts that none of those
+figures appears anywhere in the serialized output.
 
 ## The cost policy
 
@@ -131,8 +178,9 @@ accepts nothing.
 Invoicing, payment, tax, FX, accounting, revenue recognition, gross or
 accounting margin, profit, payroll, employee identity, resource scheduling,
 capacity, partner payout, billing eligibility, receipt or document storage,
-reimbursement — and, deferred to M14b2: change requests, deliverables and
-customer acceptance.
+reimbursement, contract term or renewal semantics, subscription lifetime value
+— and, deferred to M14b2: change requests, deliverables and customer
+acceptance.
 
 The schema says so in `notModeled`, and the Admin says so on screen.
 

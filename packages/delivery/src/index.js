@@ -116,6 +116,9 @@ export function createDeliveryPackage(options = {}) {
 export { defineDeliveryHandoverPolicy, DELIVERY_MODES, OVERRIDABLE_MODES };
 export { defineDeliveryCostPolicy, COST_POLICY_KIND } from './cost-policy.js';
 export { ECONOMICS_CAPABILITY, PLAN_LINE_KINDS, CONTRIBUTOR_TYPES } from './economics-actions.js';
-export { ROUNDING_RULE, ECONOMICS_BASIS, ECONOMICS_NOTE, computeEconomics, costOfMinutes } from './economics.js';
+export {
+  ROUNDING_RULE, ECONOMICS_BASIS, ECONOMICS_NOTE, computeEconomics, costOfMinutes,
+  CONTRIBUTION_BASIS, CONTRIBUTION_UNAVAILABLE_REASONS,
+} from './economics.js';
 export { buildDeliveryActions } from './handover.js';
 export { requireDeliveryWindow, requireCalendarDate, daysBetween, DATES_SOURCE, DATES_NOTE } from './dates.js';

@@ -176,8 +176,13 @@ package may declare a dependency on. Full guide:
 ## What it does not do
 
 Invoicing, payment, tax, FX, accounting, revenue recognition, gross or
-accounting margin, profit, payroll, employee identity, resource scheduling,
-capacity, partner payout, billing eligibility, receipt storage, reimbursement,
-partner access, revenue share, service contracts, entitlements, SLA and support
-cases. Change requests, deliverables and customer acceptance are **M14b2**, and
-none of their code ships here.
+accounting margin, profit, ARR/MRR/TCV or any term arithmetic, payroll,
+employee identity, resource scheduling, capacity, partner payout, billing
+eligibility, receipt storage, reimbursement, partner access, revenue share,
+service contracts, entitlements, SLA and support cases. Change requests,
+deliverables and customer acceptance are **M14b2**, and none of their code
+ships here.
+
+A contribution estimate is produced only where every commercial input in a
+currency is one-time; a recurring obligation leaves it explicitly unavailable
+rather than normalized.

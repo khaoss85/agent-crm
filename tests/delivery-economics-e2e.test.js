@@ -219,9 +219,18 @@ test('a plan is versioned, never edited, and a snapshot reproduces from evidence
   assert.equal(group.actualExpenseCostCents, 12_345);
   assert.equal(group.totalActualCostCents, group.actualTimeCostCents + group.actualExpenseCostCents);
   assert.equal(group.plannedCostCents, 360_000, 'the latest plan version, not the sum of both');
+  // The starter's delivery obligations are all one-time, so a contribution
+  // estimate is defensible here — and the basis says so rather than leaving a
+  // reader to assume it.
+  assert.equal(group.contributionBasis, 'one_time');
+  assert.equal(group.contributionUnavailableReason, null);
+  assert.deepEqual(
+    group.commercialInputs.map((input) => input.chargeType), ['one_time'],
+    'every priced obligation in this project is one-time',
+  );
   assert.equal(
     group.deliveryContributionEstimateCents,
-    group.commercialDeliveryValueCents - group.totalActualCostCents,
+    group.oneTimeCommercialValueCents - group.totalActualCostCents,
     'an estimate, derived and named as one',
   );
   assert.equal(Object.prototype.hasOwnProperty.call(group, 'grossMarginCents'), false, 'no accounting vocabulary');
@@ -248,8 +257,8 @@ test('currencies are grouped and never summed', async (t) => {
   // no fixture can produce a two-currency project through the M13 handover.
   const computed = computeEconomics({
     workPackages: [
-      { currency: 'EUR', netAmountCents: 100_000 },
-      { currency: 'USD', netAmountCents: 250_000 },
+      { currency: 'EUR', netAmountCents: 100_000, chargeType: 'one_time' },
+      { currency: 'USD', netAmountCents: 250_000, chargeType: 'one_time' },
     ],
     plan: null,
     planLines: [{ currency: 'EUR', plannedTotalCostCents: 40_000 }],
@@ -262,8 +271,8 @@ test('currencies are grouped and never summed', async (t) => {
   assert.deepEqual(computed.groups.map((g) => g.currency), ['EUR', 'USD'], 'sorted, one group each');
   const eur = computed.groups[0];
   const usd = computed.groups[1];
-  assert.equal(eur.commercialDeliveryValueCents, 100_000);
-  assert.equal(usd.commercialDeliveryValueCents, 250_000);
+  assert.equal(eur.oneTimeCommercialValueCents, 100_000);
+  assert.equal(usd.oneTimeCommercialValueCents, 250_000);
   assert.equal(eur.totalActualCostCents, 18_000);
   assert.equal(usd.totalActualCostCents, 35_000);
   assert.equal(usd.actualPartnerCostCents, 30_000, 'partner cost is visible without a second query');
@@ -459,4 +468,76 @@ test('the audit and event record is exact, and a refusal writes none', async (t)
   const spans = app.database.raw.prepare("SELECT name, status FROM trace_spans WHERE name LIKE '%record-delivery-time%'").all();
   assert.ok(spans.length >= 1, 'the action is traced');
   assert.ok(row.id);
+});
+
+test('a recurring delivery obligation never becomes a contribution estimate', async (t) => {
+  // A recurring obligation prices *one period*. Recorded execution cost is a
+  // spend to date. Subtracting one from the other produces a number with no
+  // meaning, so the group must refuse to produce it — and say why.
+  const recurring = computeEconomics({
+    workPackages: [
+      { currency: 'EUR', netAmountCents: 500_000, chargeType: 'one_time' },
+      { currency: 'EUR', netAmountCents: 120_000, chargeType: 'recurring', interval: 'month', intervalCount: 1 },
+    ],
+    plan: null,
+    planLines: [],
+    timeEntries: [{ currency: 'EUR', costCents: 60_000, minutes: 300 }],
+    expenses: [],
+  });
+  const [eur] = recurring.groups;
+  assert.equal(eur.contributionBasis, 'unavailable');
+  assert.equal(eur.contributionUnavailableReason, 'recurring_commercial_input');
+  assert.equal(eur.deliveryContributionEstimateCents, null, 'no number is better than a wrong one');
+
+  // The commercial input survives as evidence, split by exactly the dimensions
+  // that make it incomparable — never flattened into one figure.
+  assert.deepEqual(eur.commercialInputs, [
+    { chargeType: 'one_time', interval: null, intervalCount: null, netAmountCents: 500_000, workPackageCount: 1 },
+    { chargeType: 'recurring', interval: 'month', intervalCount: 1, netAmountCents: 120_000, workPackageCount: 1 },
+  ]);
+  assert.equal(eur.oneTimeCommercialValueCents, 500_000, 'the one-time subtotal is still stated');
+  assert.equal(eur.totalActualCostCents, 60_000, 'cost is unaffected — it is a cost');
+  assert.equal(eur.varianceToPlanCents, 60_000, 'variance compares two costs, so it stays available');
+
+  // Nothing anywhere annualizes, normalizes or sums across periods.
+  const serialized = JSON.stringify(recurring);
+  for (const forbidden of [620_000, 1_440_000, 1_940_000, 440_000]) {
+    assert.equal(serialized.includes(String(forbidden)), false, `no term arithmetic produced ${forbidden}`);
+  }
+
+  // Two recurring obligations on different terms stay separate buckets.
+  const mixed = computeEconomics({
+    workPackages: [
+      { currency: 'EUR', netAmountCents: 100_000, chargeType: 'recurring', interval: 'month', intervalCount: 1 },
+      { currency: 'EUR', netAmountCents: 900_000, chargeType: 'recurring', interval: 'year', intervalCount: 1 },
+      { currency: 'EUR', netAmountCents: 50_000, chargeType: 'recurring', interval: 'month', intervalCount: 3 },
+    ],
+    plan: null, planLines: [], timeEntries: [], expenses: [],
+  });
+  assert.deepEqual(
+    mixed.groups[0].commercialInputs.map((i) => [i.interval, i.intervalCount, i.netAmountCents]),
+    [['month', 1, 100_000], ['month', 3, 50_000], ['year', 1, 900_000]],
+    'grouped by interval and interval count, sorted deterministically',
+  );
+  assert.equal(mixed.groups[0].oneTimeCommercialValueCents, 0);
+  assert.equal(mixed.groups[0].deliveryContributionEstimateCents, null);
+
+  // A snapshot predating the charge-type field is unknown, not one-time.
+  const legacy = computeEconomics({
+    workPackages: [{ currency: 'EUR', netAmountCents: 100_000 }],
+    plan: null, planLines: [], timeEntries: [], expenses: [],
+  });
+  assert.equal(legacy.groups[0].contributionUnavailableReason, 'unknown_commercial_shape');
+  assert.equal(legacy.groups[0].deliveryContributionEstimateCents, null);
+
+  // Cost in a currency nothing is priced in is not a contribution of −cost.
+  const orphan = computeEconomics({
+    workPackages: [],
+    plan: null, planLines: [],
+    timeEntries: [{ currency: 'CHF', costCents: 4_000, minutes: 30 }],
+    expenses: [],
+  });
+  assert.equal(orphan.groups[0].contributionUnavailableReason, 'no_commercial_input');
+  assert.equal(orphan.groups[0].deliveryContributionEstimateCents, null);
+  assert.ok(t);
 });

@@ -2,7 +2,8 @@
 
 import { AppError, ValidationError, optionalString, requiredString } from '../../core/index.js';
 import {
-  ECONOMICS_BASIS, ECONOMICS_NOTE, MAX_MINUTES_PER_ENTRY, ROUNDING_RULE,
+  CONTRIBUTION_UNAVAILABLE_REASONS, ECONOMICS_BASIS, ECONOMICS_NOTE,
+  MAX_MINUTES_PER_ENTRY, ROUNDING_RULE,
   computeEconomics, costOfMinutes, requireCurrency, requireMinorUnits, requireMinutes,
   requirePlannedMinutes,
 } from './economics.js';
@@ -565,7 +566,7 @@ export function economicsMetadata(costPolicies = []) {
     money: {
       units: 'integer minor units, 1/100 of the currency unit, two decimals — no ISO-4217 exponent is claimed',
       rounding: ROUNDING_RULE,
-      grouping: 'every total is grouped by currency; there is no FX and two currencies are never summed',
+      grouping: 'every total is grouped by currency; there is no FX and two currencies are never summed. Within a currency, commercial input is further grouped by charge type, interval and interval count, and periods are never summed or annualized',
       authority: 'cost is computed server-side from recorded minutes and the policy rate; no client-supplied cost or total is authoritative',
     },
     humanApproval: 'recording time or an expense, publishing a plan and taking a snapshot each require actor.type === "user"; an agent is refused 403 HUMAN_APPROVAL_REQUIRED and may call preview-delivery-economics only. This is a human-actor boundary, not Delivery Manager role enforcement',
@@ -576,6 +577,12 @@ export function economicsMetadata(costPolicies = []) {
         'delivery-work-package': [...RECORDING_WORK_PACKAGE_STATES],
       },
       commercialSource: 'the commercial delivery input is the immutable work-package snapshot M13 copied from the M12 delivery obligation; no live catalog, quote or price is read, and an obligation with no deterministic amount is reported as unavailable rather than invented',
+    },
+    contribution: {
+      supportedBasis: 'one_time',
+      rule: 'a delivery contribution estimate is computed only where every commercial input in that currency is a one-time amount; otherwise contributionBasis is "unavailable", deliveryContributionEstimateCents is null and contributionUnavailableReason states why',
+      unavailableReasons: Object.values(CONTRIBUTION_UNAVAILABLE_REASONS).sort(),
+      recurringInput: 'preserved as evidence in commercialInputs[], grouped by charge type, interval and interval count; never annualized, normalized or summed across periods',
     },
     costPolicies: costPolicies.map((entry) => ({
       kind: COST_POLICY_KIND,
@@ -591,7 +598,8 @@ export function economicsMetadata(costPolicies = []) {
       'revenue recognition', 'gross or accounting margin', 'profit',
       'payroll', 'employee identity', 'resource scheduling', 'capacity',
       'partner payout', 'billing eligibility', 'receipt or document storage',
-      'reimbursement', 'change requests', 'deliverables', 'customer acceptance',
+      'reimbursement', 'contract term or renewal semantics', 'ARR, MRR or TCV',
+      'subscription lifetime value', 'change requests', 'deliverables', 'customer acceptance',
     ],
   };
 }
