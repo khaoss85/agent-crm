@@ -216,11 +216,11 @@ MK7  Attribution and Closed-loop Optimization      hard-blocked on ANALYTICS_STU
 
 ## Agent Experience track (AX0–AX5)
 
-Cross-cutting, and **not** a pillar of its own: it is how a user reaches every other pillar. It does not renumber or delay the M-lane or the Marketing MK track. Design: `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`. **Nothing in AX1–AX5 is implemented.**
+Cross-cutting, and **not** a pillar of its own: it is how a user reaches every other pillar. It does not renumber or delay the M-lane or the Marketing MK track. Design: `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`. **AX1 is implemented; AX2–AX5 are not.**
 
 ```text
 AX0  Goal-to-Solution strategy + Skill
-AX1  Application capability inspection            crm app inspect --json
+AX1  Application capability inspection            crm app inspect --json  — implemented
 AX2  Machine-readable Solution Plan
 AX3  Objective-driven local build benchmark       E2E-G1
 AX4  Objective-driven deploy / observe / fix through Cloud
@@ -233,10 +233,11 @@ AX5  Closed-loop optimization with Marketing + Analytics
 - **Deliverables:** the strategy document, the worked full-funnel example, the mirrored `solve-business-goal` Skill, the E2E-G1 benchmark gates.
 - **Acceptance:** the Skill never instructs an agent to claim an unimplemented capability; documentation only.
 
-### AX1 — Application capability inspection
+### AX1 — Application capability inspection — **implemented**
 
 - **Outcome:** one deterministic document answering "what is installed, what does it provide, what is missing" — instead of an agent assembling five surfaces by hand.
-- **Deliverables:** `crm app inspect --json`: installed package graph with versions, resolved capability graph, unsatisfiable dependencies, configured providers, schema contracts, Quality-Gate and JTBD status. Function-free, deterministic, no absolute paths.
+- **Deliverables:** `crm app inspect [--json]`: the installed package graph with its versions, the resolved capability graph including unresolved edges, records with their revisions and migration identities, actions with declared transition metadata, policies and provider definitions, deterministic `problems[]` for an invalid composition, and a machine-readable `limitations[]`. Function-free, byte-deterministic, no absolute path, no secret, source-only and read-only. Guide: `docs/APPLICATION_INSPECTION.md`.
+- **Not delivered, and corrected from the original scope:** Quality-Gate and JTBD status. Both are prose maintained by people; parsing them would produce structured claims with unstructured reliability. `evidence` carries their paths and the status `not_aggregated`. Machine-readable evidence moves to AX3.
 - **Dependencies:** the package contract (merged).
 
 ### AX2 — Machine-readable Solution Plan

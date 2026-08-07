@@ -18,6 +18,7 @@ This repository is an agent-native CRM framework. Preserve the separation betwee
 10. Follow `docs/QUALITY_GATES.md` for every feature PR, and **use the `adversarial-review` skill for any milestone review or pre-merge review task** (`.claude/skills/adversarial-review/SKILL.md`, mirrored at `.agents/skills/adversarial-review/SKILL.md`). A milestone that skipped the review is unreviewed, not finished.
 11. Respect the core budget rule (ADR-018): **new domain-specific business behavior does not go into `packages/core`** unless it is first proven to be a reusable runtime capability. A PR that adds a domain concept to core must say which runtime capability it is and why a domain package cannot own it.
 12. Read `docs/PROJECT_STATUS.md` for what is true in the repository today — merged milestone, main SHA, test count, open PRs, production blockers — and update it in the same PR as a milestone merge. Do not put volatile status in `MASTER_PLAN.md`.
+13. To learn what an application actually has, run `npm run crm -- app inspect --json` rather than assembling it from source and prose (`docs/APPLICATION_INSPECTION.md`). Read `valid`, then `problems[]`, then `limitations[]` — every limitation is a hard boundary on what you may claim. It reads checked-in source only: it opens no database, contacts no provider, and reports no runtime or authorization state.
 
 ## Coding conventions
 

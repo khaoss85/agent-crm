@@ -2,7 +2,8 @@
 
 import { randomUUID } from 'node:crypto';
 import { ValidationError, NotFoundError, AppError } from './errors.js';
-import { computeDefinitionFingerprint, validateDeclaredConfig } from './intelligence-registry.js';
+import { validateDeclaredConfig } from './intelligence-registry.js';
+import { resolvePackageComposition } from './package-composition.js';
 
 /**
  * The public **domain-package contract** (ADR-018, addendum 3).
@@ -258,121 +259,33 @@ function assertPlainMetadata(name, value, path) {
  * domain is never served.
  */
 export class PackageRegistry {
-  /** @param {{domains?: any[], packages?: any[]}} [definitions] */
   /** @type {Map<string, any>} */
-  #packages = new Map();
+  #packages;
   /** @type {Map<string, {domain: string, kind: string, definition: any, fingerprint: string}>} */
-  #policies = new Map();
+  #policies;
   /** @type {Map<string, {package: string, entry: any}>} */
-  #capabilities = new Map();
+  #capabilities;
   /** @type {Map<string, string>} */
-  #resources = new Map();
+  #resources;
+
+  /** @param {{domains?: any[], packages?: any[]}} [definitions] */
 
   constructor(definitions = {}) {
-
     const list = definitions.packages ?? definitions.domains ?? [];
-    for (const pkg of list) {
-      validatePackageDefinition(pkg);
-      if (this.#packages.has(pkg.name)) {
-        throw new ValidationError(`Duplicate domain package name: ${pkg.name}`);
-      }
-      this.#packages.set(pkg.name, pkg);
-
-      // A resource belongs to exactly one package: two packages claiming the
-      // same record module would fight over its table and its meaning.
-      for (const resource of pkg.resources ?? []) {
-        const owner = this.#resources.get(resource);
-        if (owner !== undefined) {
-          throw new ValidationError(
-            `Resource collision: "${resource}" is claimed by packages "${owner}" and "${pkg.name}"`,
-          );
-        }
-        this.#resources.set(resource, pkg.name);
-      }
-
-      for (const entry of pkg.capabilities ?? []) {
-        const key = `${entry.name}@${entry.version}`;
-        const existing = this.#capabilities.get(key);
-        if (existing !== undefined) {
-          throw new ValidationError(
-            `Capability collision: "${key}" is offered by packages "${existing.package}" and "${pkg.name}"`,
-          );
-        }
-        this.#capabilities.set(key, { package: pkg.name, entry });
-      }
-
-      for (const { kind, definition } of pkg.policies ?? []) {
-        const key = `${pkg.name}/${kind}/${definition.name}@${definition.version}`;
-        if (this.#policies.has(key)) {
-          throw new ValidationError(`Duplicate policy identity: ${key}`);
-        }
-        this.#policies.set(key, {
-          domain: pkg.name,
-          kind,
-          definition,
-          // The declared-definition fingerprint (ADR-015): canonical source
-          // plus declared JSON-safe config. Closure-held values stay invisible
-          // to it, which is why thresholds belong in `config`.
-          fingerprint: computeDefinitionFingerprint({
-            type: `domain-policy:${kind}`,
-            domain: pkg.name,
-            name: definition.name,
-            version: definition.version,
-            config: definition.config ?? null,
-            handlers: Object.keys(definition)
-              .filter((property) => typeof definition[property] === 'function')
-              .sort()
-              .map((property) => ({ property, source: definition[property] })),
-          }),
-        });
-      }
+    // One set of composition rules, two presentations. `resolvePackageComposition`
+    // collects every problem; the registry needs the first one and needs to
+    // stop, because a half-registered composition must never boot. The
+    // inspector prints them all. Neither can drift from the other, because
+    // there is nothing to drift.
+    const resolved = resolvePackageComposition(list);
+    if (resolved.problems.length > 0) {
+      const first = resolved.problems[0];
+      throw first.error ?? new ValidationError(first.message);
     }
-
-    this.#assertDependenciesResolvable();
-  }
-
-  /**
-   * Every declared requirement must be offered by a registered package at the
-   * declared version, and the dependency graph must be acyclic. Both are
-   * startup failures with the missing edge named, because a package that
-   * silently loses a dependency would fail later, inside a transaction.
-   */
-  #assertDependenciesResolvable() {
-    for (const pkg of this.#packages.values()) {
-      for (const entry of pkg.requires ?? []) {
-        const provider = this.#packages.get(entry.package);
-        if (!provider) {
-          throw new ValidationError(
-            `Package "${pkg.name}" requires package "${entry.package}", which is not registered`,
-          );
-        }
-        const offered = this.#capabilities.get(`${entry.capability}@${entry.version}`);
-        if (!offered || offered.package !== entry.package) {
-          const available = [...this.#capabilities.entries()]
-            .filter(([, value]) => value.package === entry.package)
-            .map(([key]) => key);
-          throw new ValidationError(
-            `Package "${pkg.name}" requires "${entry.package}" capability ${entry.capability}@${entry.version}, `
-              + `which it does not offer (offers: ${available.join(', ') || 'none'})`,
-          );
-        }
-      }
-    }
-    // Depth-first cycle detection over the declared graph.
-    const state = new Map();
-    const visit = (name, trail) => {
-      const mark = state.get(name);
-      if (mark === 'done') return;
-      if (mark === 'visiting') {
-        throw new ValidationError(`Cyclic package dependency: ${[...trail, name].join(' → ')}`);
-      }
-      state.set(name, 'visiting');
-      for (const entry of this.#packages.get(name)?.requires ?? []) {
-        visit(entry.package, [...trail, name]);
-      }
-      state.set(name, 'done');
-    };
-    for (const name of this.#packages.keys()) visit(name, []);
+    this.#packages = resolved.packages;
+    this.#resources = resolved.resources;
+    this.#capabilities = resolved.capabilities;
+    this.#policies = resolved.policies;
   }
 
   /** Every action contributed by every registered package, in registration order. */

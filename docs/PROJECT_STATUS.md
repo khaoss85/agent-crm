@@ -14,14 +14,14 @@ Generated: **2026-08-07**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **the Objective-Driven Agent Experience** (AX0, documentation and Skill only) on top of **Module Evolution v1** (ADR-019) and **M13 — Delivery Handover + Custom Package Authoring v1** (ADR-018 + addenda 1–4) |
-| Main SHA at generation | `28753ff` (merge of PR #20; full SHA `28753ff9403f9a8c68c5695ff4b670abf253deb9`) |
-| Tests on clean main | **299 passing, 0 failing** (`npm run verify` from a fresh clone of `775713c`; `28753ff` adds no code) |
+| Latest merged milestone | **M14a — Delivery execution** (ADR-019 addendum 1) on top of AX0, **Module Evolution v1** (ADR-019) and **M13 — Delivery Handover + Custom Package Authoring v1** (ADR-018 + addenda 1–4) |
+| Main SHA at generation | `007828d` (merge of PR #21; full SHA `007828d15ca16f69996bb704565677a69ac09c7e`) |
+| Tests on clean main | **314 passing, 0 failing** (`npm run verify` from a fresh clone of `007828d`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **PR #21 — M14a Delivery execution** (`claude/milestone-14-delivery-economics-acceptance`): 313 passing on the branch. Reviewed adversarially, hardened in place, left open for a human merge. |
+| Open PRs | **AX1 — Deterministic application inspection** (`claude/platform-application-inspection-v1`): a platform capability, `crm app inspect`. Open and unmerged, awaiting the adversarial review. |
 
 ## Completed functional path
 
@@ -46,7 +46,7 @@ Lead capture
   close it only over completed work packages and milestones                   M14a
 ```
 
-M14a is on an open PR, not on main.
+M14a is merged.
 
 Framework underneath: module manifest + generated migrations (M1), module
 factory (M2), one generated resource contract over API/SDK (M3), generated
@@ -73,13 +73,15 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 | — | Platform alignment gate: core-vs-domain boundary | ADR-018 |
 | M12 | Contract & Subscription activation — the first domain package outside core | ADR-018 addenda 1–2 |
 | M13 | Delivery handover + the public package contract and custom-package authoring | ADR-018 addenda 3–4 |
+| — | Module Evolution v1: revisions, a checked-in state file and append-only migrations | ADR-019 |
+| M14a | Delivery execution: eight human-driven transitions, block evidence, a hierarchy gate | ADR-019 addendum 1 |
 
 ## Next planned development
 
-1. **M14a — Delivery execution** — implemented on PR #21, awaiting a human
-   merge. Bounded execution states on the delivery package: eight human-driven
-   transitions over explicit tables, block evidence, and a hierarchy gate on
-   closing a project.
+1. **AX1 — Deterministic application inspection** — implemented on an open PR:
+   `crm app inspect [--json]`, one deterministic source-only document
+   describing the composed application. A cross-cutting platform capability; it
+   does not renumber or delay the Delivery or Marketing tracks.
 2. **M14b — Delivery Economics, Change Requests, Deliverables & Acceptance** —
    not started. Append-only time and expense evidence, a versioned operational
    economics plan and reproducible snapshot, governed change requests,
@@ -95,8 +97,8 @@ Two parallel tracks run alongside and are not gated by domain progress: the
 auth/tenancy/RBAC, Jobs & durable outbox, Integration Runtime, Data Governance,
 Design-to-CRM, Cloud), the **Marketing & Growth track** (MK0–MK7 — design only;
 `MARKETING_GROWTH_OPERATIONS.md`) and the cross-cutting **Agent Experience
-track** (AX0–AX5 — AX0 is a strategy and a Skill, AX1–AX5 are not implemented;
-`OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequencing and dependencies are in
+track** (AX0–AX5 — AX0 is a strategy and a Skill, AX1 is implemented on an open
+PR, AX2–AX5 are not implemented; `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequencing and dependencies are in
 `EXECUTION_ROADMAP.md`.
 
 ## Known platform limitations (not blockers, but not forgotten)
@@ -129,10 +131,10 @@ public use. None of it is started.
 **Implemented (merged):** module manifest and factory; module evolution and
 adoption; generated API/SDK/Admin; references; actions; core adapters;
 pipelines; Lead Intelligence; Commercial Operations; Signature and Order;
-Contract activation and subscriptions; the public domain-package contract and
-the delivery handover; MCP server; CLI.
+Contract activation and subscriptions; the public domain-package contract, the
+delivery handover and delivery execution; MCP server; CLI.
 
-**Implemented, open PR (not on main):** delivery execution (M14a).
+**Implemented, open PR (not on main):** deterministic application inspection (AX1).
 
 **Documentation only (no code):** renewal, billing and everything downstream of
 activation; delivery economics, change requests, deliverables and acceptance

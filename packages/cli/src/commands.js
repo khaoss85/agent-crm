@@ -1,12 +1,11 @@
 // @ts-check
 
 import { resolve } from 'node:path';
-import { createAgentCrmApp } from '../../app/src/index.js';
-import { createHttpServer } from '../../../apps/server/src/index.js';
 import { scaffoldModule } from './scaffold-module.js';
 import { validateManifestCommand, generateMigrationCommand, readManifestFile } from './manifest-commands.js';
 import { planModule, applyModulePlan } from './module-factory.js';
 import { validatePackageCommand, inspectPackageCommand } from './package-commands.js';
+import { inspectApplicationCommand } from './app-inspect-command.js';
 
 /** @param {string[]} argv */
 export async function runCli(argv) {
@@ -22,7 +21,31 @@ export async function runCli(argv) {
     command = `package:${positional[0]}`;
     positional = positional.slice(1);
   }
+  // "app inspect" reads the checked-in composition and answers "what is this
+  // application". It opens no database, so it is handled before the app is
+  // constructed — the same place `package validate|inspect` sits.
+  if (command === 'app' && positional[0] === 'inspect') {
+    command = 'app:inspect';
+    positional = positional.slice(1);
+  }
   const dbPath = typeof flags.db === 'string' ? resolve(flags.db) : undefined;
+
+  // Help is not a database operation. It used to fall through to the branch
+  // that constructs the application, so asking for help created a SQLite file;
+  // now that the app import is lazy, there is no reason for it to.
+  if (command === 'help' || command === undefined) {
+    console.log(helpText());
+    return;
+  }
+
+  if (command === 'app:inspect') {
+    const result = await inspectApplicationCommand({
+      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+      json: flags.json === true,
+    });
+    process.exitCode = result.exitCode;
+    return;
+  }
 
   if (command === 'package:validate' || command === 'package:inspect') {
     const run = command === 'package:validate' ? validatePackageCommand : inspectPackageCommand;
@@ -90,6 +113,20 @@ export async function runCli(argv) {
     return;
   }
 
+  // Only these commands need a running application. Checking first means an
+  // unknown command reports itself instead of quietly creating a database on
+  // the way to saying it does not exist.
+  const APP_COMMANDS = new Set(['serve', 'seed', 'demo', 'doctor', 'db:migrate', 'workflow:list', 'trace:list']);
+  if (!APP_COMMANDS.has(String(command))) {
+    throw new Error(`Unknown command: ${command}\n\n${helpText()}`);
+  }
+
+  // The application is imported here, not at the top of this file, because
+  // `packages/app` statically imports the project's checked-in composition. A
+  // top-level import made every CLI command — including the read-only ones —
+  // fail to load when the composition was broken, which is precisely when
+  // `app inspect` and `package validate` are the commands you need.
+  const { createAgentCrmApp } = await import('../../app/src/index.js');
   const app = createAgentCrmApp({ dbPath });
   let shouldClose = true;
   try {
@@ -97,6 +134,7 @@ export async function runCli(argv) {
       case 'serve': {
         const port = Number(flags.port ?? process.env.PORT ?? 4000);
         const host = String(flags.host ?? '127.0.0.1');
+        const { createHttpServer } = await import('../../../apps/server/src/index.js');
         const server = createHttpServer(app);
         await new Promise((resolveListen, reject) => {
           server.once('error', reject);
@@ -135,12 +173,6 @@ export async function runCli(argv) {
       case 'trace:list':
         print({ items: app.workflows.listRuns({ limit: Number(flags.limit ?? 20) }) });
         break;
-      case 'help':
-      case undefined:
-        console.log(helpText());
-        break;
-      default:
-        throw new Error(`Unknown command: ${command}\n\n${helpText()}`);
     }
   } finally {
     if (shouldClose) app.close();
@@ -205,6 +237,7 @@ Usage:
   agent-crm demo [--db path]
   agent-crm doctor [--db path]
   agent-crm db:migrate [--db path]
+  agent-crm app inspect [--json] [--root dir]
   agent-crm workflow:list [--db path]
   agent-crm trace:list [--limit 20] [--db path]
   agent-crm module:plan <manifest.json> [--root path] [--json]
