@@ -1,15 +1,15 @@
 {
-  "$comment": "Single source of brand truth for every public asset. The public name is a PENDING HUMAN DECISION (docs/strategy/BRAND_REQUIREMENTS.md, MASTER_PLAN.md §10). Nothing else in site/ or docs/marketing/ may hardcode a name, domain or package scope: they read these tokens. Renaming the project is an edit to this file plus `npm run site:build`.",
+  "$comment": "Single source of brand truth for every public asset. The public name is a PENDING HUMAN DECISION (docs/strategy/BRAND_REQUIREMENTS.md, MASTER_PLAN.md \u00a710). Nothing else in site/ or docs/marketing/ may hardcode a name, domain or package scope: they read these tokens. Renaming the project is an edit to this file plus `npm run site:build`.",
   "name": {
-    "status": "working-title",
-    "value": "Agent CRM",
-    "slug": "agent-crm",
-    "note": "Working title only. BRAND_REQUIREMENTS.md documents why this fails as a public brand (ungoogleable, category-confusing, no namespace). Shortlist: Accordo, Pactio, Vinculo, Relato — none chosen. A human must register the name, screen the trademark and update this file before any public launch."
+    "status": "chosen",
+    "value": "Accordo",
+    "slug": "accordo",
+    "note": "Chosen by the founder on 2026-08-07 over Pactar (more distinctive, but a live PACT word-mark in class 9) and Pactio (a live UK legal-tech namesake in adjacent software). Research and the eliminated candidates are in docs/marketing/NAME_VERIFICATION.md. The trademark screen has NOT been run \u2014 if it comes back badly, scripts/brand-set.js runs again with a different name."
   },
   "domain": {
-    "status": "not-registered",
-    "value": "example.invalid",
-    "note": "RFC 2606 reserved TLD, deliberately unresolvable. Every absolute URL in the built site points here until a human registers a domain, so a premature deploy is obviously broken rather than quietly wrong."
+    "status": "selected",
+    "value": "accordo.dev",
+    "note": "Selected, not confirmed registered. DNS showed no A record on 2026-08-07, which is indicative and not proof of availability. Move status to \"registered\" only once a registrar receipt exists; until then absolute URLs built from this token may point at something nobody owns."
   },
   "repository": {
     "status": "private",
@@ -18,14 +18,14 @@
   },
   "npm": {
     "status": "unpublished",
-    "scope": "@agent-crm",
-    "createCommand": "npm create agent-crm",
-    "note": "No package is published. The scope is unclaimed and follows the name decision."
+    "scope": "@accordo",
+    "createCommand": "npm create accordo",
+    "note": "Unpublished and unclaimed. accordo, create-accordo and @accordo/core were all free on the npm registry on 2026-08-07 \u2014 verified, not assumed. Registering them is a human action and is urgent: namespaces are unrenameable."
   },
   "license": {
     "status": "provisional",
     "value": "MIT",
-    "note": "MIT is the repository license today. Final confirmation before public launch is an explicit ADR-gated human decision (MASTER_PLAN.md §10.2)."
+    "note": "MIT is the repository license today. Final confirmation before public launch is an explicit ADR-gated human decision (MASTER_PLAN.md \u00a710.2)."
   },
   "promise": "Describe your sales process to your coding agent; own the CRM it builds.",
   "colors": {

@@ -215,22 +215,40 @@ function firstProseLine(lines) {
 }
 
 /**
+ * Words carrying no signal in a question about a CRM framework. Dropping them
+ * matters more than it looks: "can the customer do this" scored a match against
+ * every job in the index through "customer" and "the", which is how a search
+ * tool ends up confidently answering a question nobody asked.
+ */
+const STOPWORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'do', 'does', 'for', 'from',
+  'has', 'have', 'how', 'i', 'in', 'is', 'it', 'its', 'me', 'my', 'of', 'on', 'or',
+  'our', 'that', 'the', 'their', 'this', 'to', 'we', 'what', 'when', 'which', 'will',
+  'with', 'you', 'your',
+]);
+
+/**
  * Split a query into search terms. Punctuation that carries meaning in this
  * repository's vocabulary is kept: `JTBD-CO-01`, `docs/MCP.md` and `C-08` must
  * survive tokenisation intact.
+ *
+ * Stopwords are dropped — unless that would leave nothing, in which case the
+ * caller genuinely did search for "the" and gets what they asked for.
  *
  * @param {string} query
  * @returns {string[]}
  */
 export function tokenize(query) {
-  const terms = [];
+  /** @type {string[]} */
+  const all = [];
   for (const raw of query.toLowerCase().split(/[^a-z0-9_./:-]+/)) {
     const term = raw.replace(/^[.:/-]+|[.:/-]+$/g, '');
-    if (term === '' || terms.includes(term)) continue;
-    terms.push(term);
-    if (terms.length === MAX_TERMS) break;
+    if (term === '' || all.includes(term)) continue;
+    all.push(term);
+    if (all.length === MAX_TERMS) break;
   }
-  return terms;
+  const meaningful = all.filter((term) => !STOPWORDS.has(term));
+  return meaningful.length > 0 ? meaningful : all;
 }
 
 /**

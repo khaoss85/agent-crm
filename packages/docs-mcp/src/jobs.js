@@ -130,7 +130,7 @@ export function createJobsIndex({ rootDir, ledger }) {
       const terms = tokenize(query);
       const scored = rankJobs(loaded.jobs ?? [], terms);
       const matches = scored.slice(0, limit).map((entry) => toJob(entry.job, ledger));
-      const verdict = summarise(matches, query, loaded);
+      const verdict = summarise(scored, matches, query, loaded, ledger);
 
       return {
         available: true,
@@ -181,11 +181,18 @@ export function toJob(job, ledger) {
 }
 
 /**
+ * A job qualifies only if the query hits its id or its title.
+ *
+ * Summary and section text is deliberately not enough on its own. Every section
+ * name in the matrix contains "CRM", every other summary contains "customer",
+ * and letting those qualify turned a nonsense query into 108 matches — one of
+ * which was inevitably "validated end to end".
+ *
  * @param {any[]} jobs
  * @param {string[]} terms
  */
 function rankJobs(jobs, terms) {
-  /** @type {{score: number, id: string, job: any}[]} */
+  /** @type {{score: number, coverage: number, id: string, job: any}[]} */
   const scored = [];
   if (terms.length === 0) return scored;
 
@@ -196,15 +203,17 @@ function rankJobs(jobs, terms) {
     const section = String(job.section ?? '').toLowerCase();
 
     let score = 0;
+    let covered = 0;
     for (const term of terms) {
-      if (id === term) score += 20;
-      else if (id.includes(term)) score += 6;
-      if (title.includes(term)) score += 4;
+      const inId = id === term ? 20 : id.includes(term) ? 6 : 0;
+      const inTitle = title.includes(term) ? 4 : 0;
+      if (inId > 0 || inTitle > 0) covered += 1;
+      score += inId + inTitle;
       if (summary.includes(term)) score += 2;
       if (section.includes(term)) score += 1;
     }
-    if (score === 0) continue;
-    scored.push({ score, id: String(job.id ?? ''), job });
+    if (covered === 0) continue;
+    scored.push({ score, coverage: covered / terms.length, id: String(job.id ?? ''), job });
   }
 
   scored.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -212,17 +221,33 @@ function rankJobs(jobs, terms) {
 }
 
 /**
- * One verdict for a result set. The strongest status among the matches, because
- * an agent asking "can it do X" is asking whether any evidence exists — and the
- * text always names how many of the matches are weaker.
+ * A query must be answered by the job it actually asked about, not by the
+ * strongest status anywhere in the result set.
  *
- * @param {any[]} matches
+ * Answering from the strongest status is the bug that matters here: "send a
+ * marketing email campaign" would return "partially supported" on the strength
+ * of an unrelated job that happened to be in the list, and "teleport the
+ * customer to mars" would return "validated end to end". A tool whose whole
+ * purpose is to stop an agent overclaiming must not be the thing that
+ * overclaims.
+ *
+ * So the verdict comes from the top-scoring job alone, ties are broken toward
+ * the *weakest* status, and a query that no title really covers is answered
+ * `unknown` with its near-misses listed rather than resolved into a status.
+ */
+const MINIMUM_COVERAGE = 0.5;
+
+/**
+ * @param {{score: number, coverage: number, id: string, job: any}[]} scored
+ * @param {any[]} matches the jobs actually returned, already limited
  * @param {string} query
  * @param {any} loaded
+ * @param {any} ledger
  */
-function summarise(matches, query, loaded) {
+function summarise(scored, matches, query, loaded, ledger) {
   const total = Array.isArray(loaded.jobs) ? loaded.jobs.length : 0;
-  if (matches.length === 0) {
+
+  if (scored.length === 0) {
     return {
       answer: 'unknown',
       text:
@@ -232,30 +257,48 @@ function summarise(matches, query, loaded) {
     };
   }
 
-  let best = matches[0];
-  for (const match of matches) {
-    if (STATUS_RANK.indexOf(match.status) > STATUS_RANK.indexOf(best.status)) best = match;
-  }
-  const weaker = matches.filter((match) => match.status !== best.status).length;
+  const topScore = scored[0].score;
+  const tied = scored.filter((entry) => entry.score === topScore);
+  const bestCoverage = Math.max(...tied.map((entry) => entry.coverage));
 
-  if (best.status === 'not supported') {
+  if (bestCoverage < MINIMUM_COVERAGE) {
+    return {
+      answer: 'unknown',
+      text:
+        `No job in the index is close enough to "${query}" to answer it. The ${matches.length} `
+        + `job${matches.length === 1 ? '' : 's'} listed share only some words with the question and were not `
+        + `assessed for it. Read them, or read ${JOBS_SOURCE_PATH}; do not read this as support.`,
+    };
+  }
+
+  // Conservative tie-break: among equally-scoring jobs, the weakest status wins.
+  let verdict = toJob(tied[0].job, ledger);
+  for (const entry of tied) {
+    const candidate = toJob(entry.job, ledger);
+    if (STATUS_RANK.indexOf(candidate.status) < STATUS_RANK.indexOf(verdict.status)) verdict = candidate;
+  }
+  const stronger = matches.filter(
+    (match) => STATUS_RANK.indexOf(match.status) > STATUS_RANK.indexOf(verdict.status),
+  ).length;
+
+  if (verdict.status === 'not supported') {
     return {
       answer: 'not supported',
       text:
-        `Not supported. The closest job is ${best.id} — ${best.title} — and every one of the `
-        + `${matches.length} matching job${matches.length === 1 ? '' : 's'} is marked "not supported" in `
-        + `${JOBS_SOURCE_PATH}. Do not recommend this framework for that work without saying it would have `
-        + 'to be built.',
+        `Not supported. The job this question is asking about is ${verdict.id} — ${verdict.title} — and it is `
+        + `marked "not supported" in ${JOBS_SOURCE_PATH}: no implementation, no test. Do not recommend this `
+        + 'framework for that work without saying it would have to be built.'
+        + (stronger > 0
+          ? ` ${stronger} loosely related job${stronger === 1 ? ' is' : 's are'} listed with a stronger status; `
+            + 'they answer different questions.'
+          : ''),
     };
   }
 
   return {
-    answer: best.status,
+    answer: verdict.status,
     text:
-      `The strongest match is ${best.id} — ${best.title} — marked "${best.status}". `
-      + `${best.limitation}`
-      + (weaker > 0
-        ? ` ${weaker} other matching job${weaker === 1 ? ' is' : 's are'} weaker than this; read the whole match list before answering.`
-        : ''),
+      `The closest job is ${verdict.id} — ${verdict.title} — marked "${verdict.status}". `
+      + `${verdict.limitation}`,
   };
 }

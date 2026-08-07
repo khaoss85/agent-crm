@@ -7,12 +7,12 @@ into something you can work through in an afternoon.
 
 Nothing here is blocked on more engineering. It is blocked on you.
 
-## The five decisions
+## The five decisions — one down, four to go
 
 | # | Decision | What it unblocks | Notes before you decide |
 |---|---|---|---|
-| 1 | **Public name** | npm scope and the `create-*` package, GitHub organisation, domain, both plugin marketplaces, the MCP registry namespace, every listing — effectively the whole install-time discovery layer | Shortlist and cleanliness checks are in `docs/strategy/BRAND_REQUIREMENTS.md`: Accordo (cleanest), Pactio (best npm/GitHub position but a live UK legal-tech namesake), Vinculo, Relato (domains taken). DNS non-resolution is **not** proof of availability — re-verify with a registrar, and commission a real EUIPO + USPTO class 9/42 screen. Then set `site/brand.json` and rebuild |
-| 2 | **Final licence confirmation** | The permissive-core claim, which is load-bearing in every comparison; the Vercel checklist; every listing's licence field | MIT is the repository licence today; keeping it is still an explicit ADR-gated decision |
+| 1 | ~~Public name~~ — **DECIDED 2026-08-07: Accordo, accordo.dev** | — | Applied to `site/brand.json`; the public surface rebuilt from one edit. **Three follow-ups are now urgent and are yours:** the trademark screen (EUIPO + USPTO classes 9 and 42) has not been run and is the only thing that can still invalidate the choice; the domain is *selected*, not confirmed registered; and `accordo`, `create-accordo` and `@accordo` are free but unclaimed — namespaces are unrenameable, so a gap here is permanent |
+| 2 | **Final licence confirmation** — **now the critical path** | Three distribution manifests assert MIT while `brand.json` records it as provisional. `npm run distribution:check` fails on this as of the naming decision, by design: a manifest's licence field is an assertion to a marketplace | MIT is the repository licence today and the permissive-core claim is load-bearing in every comparison, so confirming it is almost certainly what you want. It still needs to be an explicit ADR entry rather than an assumption |
 | 3 | **Repository visibility** | Every `{{brand.repository}}` link, the "read the test" call to action, both self-hosted marketplaces, and the whole slow-burn retrieval channel | Follows the name — a public repository under the working title teaches the wrong one |
 | 4 | **Telemetry policy** | The generated-projects and successful-deployments metrics | No collection code should ship before the policy exists; shipping it presumes the decision |
 | 5 | **Every public claim and the launch timing** | `docs/marketing/LAUNCH_PACKET.md` | Includes the pre-commitment to publish the benchmark result whatever it says. An agent must not make that commitment on your behalf |
