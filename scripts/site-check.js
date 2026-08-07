@@ -20,6 +20,7 @@
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join, relative } from 'node:path';
 
 const root = process.cwd();
@@ -91,6 +92,71 @@ for (const entry of [...ledger.claims, ...ledger.limitations]) {
     || templateSource.includes(`{{limitation:${entry.id}`);
   if (!referenced) {
     fail(`claims.json ${entry.id}: declared for the site surface but no template references it. Use it or drop the surface.`);
+  }
+}
+
+// ---------------------------------------------------------------- 3b. the other surfaces
+//
+// A ledger entry declares the surfaces it is promised to. Enforcing only the site
+// surface left `readme` and `launch` as decoration — a claim could name README.md
+// and never appear there, which is the exact rot the ledger exists to prevent.
+//
+// The two surfaces are checked differently because they fail differently. A README
+// paraphrases, so demanding its sentences match the ledger verbatim would be
+// unusable; what must not drift is the *evidence*, so a readme-surface claim has to
+// cite at least one of the test files the ledger names. A limitation has no
+// paraphrase licence at all — its headline is the whole point — so that is matched
+// literally. A launch-surface entry must be addressed by id in the launch packet,
+// where copy is written per channel and cannot be diffed textually.
+
+const readmePath = join(root, 'README.md');
+const readme = existsSync(readmePath) ? readFileSync(readmePath, 'utf8') : '';
+if (!readme) fail('README.md is missing — claims declare it as a surface');
+
+for (const claim of ledger.claims) {
+  if (!claim.surfaces?.includes('readme')) continue;
+  const tests = claim.evidence?.tests ?? [];
+  if (tests.length === 0) continue;
+  if (!tests.some((path) => readme.includes(path))) {
+    fail(
+      `claims.json ${claim.id}: declared for the readme surface, but README.md cites none of its `
+      + `evidence (${tests.join(', ')}). Either the claim is not actually made there, or it is made `
+      + 'without its proof.',
+    );
+  }
+}
+
+for (const limitation of ledger.limitations) {
+  if (!limitation.surfaces?.includes('readme')) continue;
+  if (!readme.includes(limitation.headline)) {
+    fail(`claims.json ${limitation.id}: declared for the readme surface, but README.md does not contain its headline verbatim — "${limitation.headline}"`);
+  }
+}
+
+const launchDir = join(root, 'docs', 'marketing');
+const launchSource = collect(launchDir, '.md').map((path) => readFileSync(path, 'utf8')).join('\n');
+for (const entry of [...ledger.claims, ...ledger.limitations]) {
+  if (!entry.surfaces?.includes('launch')) continue;
+  if (!launchSource.includes(entry.id)) {
+    fail(`claims.json ${entry.id}: declared for the launch surface, but no document under docs/marketing/ references it by id`);
+  }
+}
+
+// ---------------------------------------------------------------- 3c. ledger freshness
+
+const headSha = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout?.trim();
+const ledgerSha = String(ledger.measuredAgainst?.sha ?? '');
+if (headSha && ledgerSha) {
+  if (headSha.startsWith(ledgerSha)) {
+    notes.push('The ledger was measured against HEAD.');
+  } else {
+    const known = spawnSync('git', ['cat-file', '-e', `${ledgerSha}^{commit}`], { encoding: 'utf8' });
+    if (known.status !== 0) {
+      fail(`claims.json measuredAgainst.sha ${ledgerSha} is not a commit in this repository`);
+    } else {
+      const behind = spawnSync('git', ['rev-list', '--count', `${ledgerSha}..HEAD`], { encoding: 'utf8' }).stdout?.trim();
+      notes.push(`The ledger was measured ${behind} commit(s) ago at ${ledgerSha}. Re-run npm run verify and update measuredAgainst before publishing anything.`);
+    }
   }
 }
 

@@ -50,6 +50,7 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 | Generated objects reference each other: foreign key, runtime target validation, Admin selector | generated-to-generated many-to-one only; no many-to-many, inverse collections or cascade | `tests/reference-fields-e2e.test.js` |
 | Deterministic approval policy: a renewal at or above the threshold waits for a named human | the built-in renewal object and one value threshold | `tests/workflow.test.js`, `tests/api.test.js` |
 | **An agent cannot make the human's approval decision** — asserted by a test, not by a convention | the actor is asserted, not authenticated; this holds against an honest agent, not an attacker | `tests/workflow.test.js` |
+| Opportunities move through code-first pipeline stages under a server-authoritative action — the client asks, the server decides | proven on the built-in Opportunity module; configurable pipelines for generated custom objects are not claimed | `tests/opportunity-pipeline-e2e.test.js`, `tests/pipeline-contract.test.js` |
 | Lead capture, enrichment, explainable versioned scoring, deterministic routing, qualification, conversion | enrichment runs against a fixture provider; no real data source is wired | `tests/lead-intelligence-e2e.test.js`, `tests/lead-conversion-e2e.test.js` |
 | Server-priced composite quotes, immutable quote versions, versioned discount policy with approval | fixture catalog provider; integer cents with no FX — currencies are never summed | `tests/commercial-e2e.test.js` |
 | Signature envelope → verified events → signed-artifact evidence → exactly one immutable Order | fixture signature provider, test-only webhook key, provider-reported artifact hash | `tests/signature-order-e2e.test.js` |
@@ -103,7 +104,9 @@ Exit codes are the contract: `0` valid · `1` problems, report still printed · 
 The MCP server runs over stdio (`node --no-warnings packages/mcp/bin/server.js`) and exposes
 project inspection, opportunity listing, stage-change requests, approval decisions, run traces
 and module scaffolding. Code-generating and destructive tools are **dry-run unless you pass an
-explicit apply flag** — [`docs/MCP.md`](docs/MCP.md).
+explicit apply flag** (`tests/mcp.test.js`, `tests/scaffold.test.js` — [`docs/MCP.md`](docs/MCP.md)).
+It is stdio-only and local-only: there is no hosted or authenticated MCP endpoint, and the server
+inherits the authority of the process that starts it.
 
 ## Where it stops
 
@@ -118,7 +121,7 @@ evidence is required to leave it.
   percentage attributed to this project is fabricated —
   [`docs/strategy/CRM_BUILD_BENCHMARK.md`](docs/strategy/CRM_BUILD_BENCHMARK.md) is the
   protocol, not a result.
-- **No scheduler, task engine or reminders.** One follow-up Task is created inside lead
+- **No scheduler, no task engine, no reminders.** One follow-up Task is created inside lead
   qualification; nothing recurring exists, so renewal notice periods are recorded and never fire.
 - **No email, calendar or marketing integrations.** A notification provider contract exists;
   no adapter sends anything to anyone.
