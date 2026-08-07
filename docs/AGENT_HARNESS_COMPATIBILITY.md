@@ -81,7 +81,7 @@ The two supported copies are byte-identical and `scripts/check.js` enforces it,
 so no harness reads a stale one. That is also the honest description of the
 current architecture: there is **no canonical semantic source with generated
 adapters** — there are two copies kept in step by a checker. Building the
-canonical source and a deterministic sync is tracked as **DX7** in
+canonical source and a deterministic sync is tracked as **DX2** in
 `docs/CODER_TOOLING_ROADMAP.md`.
 
 No Gemini file exists, and none should be added by guessing. Its conventions —
