@@ -233,6 +233,19 @@ AX5  Closed-loop optimization with Marketing + Analytics
 - **Deliverables:** the strategy document, the worked full-funnel example, the mirrored `solve-business-goal` Skill, the E2E-G1 benchmark gates.
 - **Acceptance:** the Skill never instructs an agent to claim an unimplemented capability; documentation only.
 
+### M14b1 / M14b2 — the Delivery economics split
+
+M14b was scoped as economics, change requests, deliverables and acceptance —
+four models with four different invariants, and not one reviewable PR. It ships
+as two:
+
+- **M14b1 — Delivery economics** (open PR): the cost policy, append-only time
+  and expense evidence, the immutable versioned plan, the reproducible
+  contribution estimate and the `delivery-economics@1` capability.
+- **M14b2 — Change, deliverables and acceptance** (not started): governed
+  non-commercial replans, the commercial-change handoff, deliverable evidence
+  and recorded customer acceptance. Scope intact; deferred, not dropped.
+
 ### AX1 — Application capability inspection — **implemented**
 
 - **Outcome:** one deterministic document answering "what is installed, what does it provide, what is missing" — instead of an agent assembling five surfaces by hand.

@@ -1,9 +1,9 @@
 ---
 name: build-delivery-handover
-description: Add or extend delivery handover and delivery execution in an Agent CRM project - turning the pending delivery obligations of an activated contract into a planned delivery project with work packages, milestones and an optional third-party partner engagement through a versioned handover policy, and running that project through bounded human-driven state transitions. Use for delivery project/commessa, work package, delivery milestone, partner engagement, handover, or starting/blocking/resuming/completing delivery work. Do not use for delivery economics, time, cost, change requests, deliverables or customer acceptance (none of which exist), contract activation (build-contract-activation), signature/order work (build-signature-order) or a single custom object (create-crm-module).
+description: Add or extend delivery handover, delivery execution and delivery economics in an Agent CRM project - turning the pending delivery obligations of an activated contract into a planned delivery project with work packages, milestones and an optional third-party partner engagement through a versioned handover policy, and running that project through bounded human-driven state transitions. Use for delivery project/commessa, work package, delivery milestone, partner engagement, handover, or starting/blocking/resuming/completing delivery work. Do not use for change requests, deliverables or customer acceptance (none of which exist yet), contract activation (build-contract-activation), signature/order work (build-signature-order) or a single custom object (create-crm-module).
 ---
 
-Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda, and ADR-019 with addendum 1), `docs/DELIVERY_HANDOVER.md`, `docs/MODULE_EVOLUTION.md` and `docs/PACKAGE_AUTHORING.md` first.
+Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda, and ADR-019 with addendum 1), `docs/DELIVERY_HANDOVER.md`, `docs/DELIVERY_ECONOMICS.md`, `docs/MODULE_EVOLUTION.md` and `docs/PACKAGE_AUTHORING.md` first.
 
 ## It plans and runs; it does not cost, bill or accept
 
@@ -58,8 +58,23 @@ Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda, and ADR-019 wit
 1. Adding a state to a shipped record is a **module evolution**: bump `revision` in the manifest and apply it. A module generated before ADR-019 has no `module.state.json` and is adopted automatically on the first evolution.
 2. The upgrade path is not theoretical — prove it. Build a project with the previous milestone's own CLI, upgrade the framework in place, apply the new manifests, and check the original create-migration checksums are unchanged.
 
+## Economics: evidence, not accounting
+
+1. Time and expense are **evidence**. Every record is `writable: "managed"` — no public create, update or delete anywhere — because a snapshot computed on Tuesday must still be reproducible on Wednesday. A correction is a new entry.
+2. **The server computes money.** A caller supplies minutes; the versioned cost policy supplies the rate; the action multiplies and rounds. A client-supplied cost, rate or currency is not authoritative and must not even be an input.
+3. State the rounding rule and publish it: `roundHalfUp(ratePerHourCents × minutes / 60)`, integers throughout, the product checked before the division. Test 1, 30, 60 and 61 minutes, an exact half-cent tie, zero, and the safe-integer boundary.
+4. **Group by currency, never sum across them.** There is no FX here, so there is no grand total. A policy returning a rate in another currency than the work is a refusal, not a conversion.
+5. The commercial input comes **only** from the immutable work-package snapshot. Never a live catalog, a quote draft or a client number. An obligation with no deterministic amount is unavailable evidence, not an invented one.
+6. Use the honest word: **delivery contribution estimate**. Never gross margin, accounting margin, recognized revenue or profit.
+7. An idempotency key is not an edit handle. A retry whose values differ from what that key stored is a `409` conflict naming the divergent fields — never a silent `created: false` over the old values.
+8. Whatever the caller names — policy, version, or both — must exist. Never substitute another rate card and store it as evidence.
+9. A contribution estimate exists only where every commercial input in that currency is **one-time**. If the project carries a recurring obligation, `contributionBasis` is `unavailable` and the estimate is `null` — report it as unavailable and say why. Never annualize, normalize or sum across periods to manufacture one.
+10. Rates live in the policy's `config`, so they are inside the declared-definition fingerprint — a rate is versioned as strictly as the code. A rate table is not payroll and identifies nobody.
+11. Recording, publishing and snapshotting require `actor.type === 'user'`. An agent may preview and nothing else, and a preview must say `stored: false`.
+12. Consumption is recorded only while work is happening: the project `in_progress`, the work package `in_progress` or `blocked`. A blocked package still consumes time; a completed one does not.
+
 ## Do not implement here
 
-Time and expense, cost, margin, economics snapshots, resource scheduling, capacity, change requests, deliverables, customer acceptance, billing milestones, invoicing, partner access or portal, revenue share, service contracts, entitlements, SLA, support cases, reopening completed work, a scheduler, a durable outbox, auth/tenancy/RBAC.
+Invoicing, payment, tax, FX, accounting, revenue recognition, gross or accounting margin, profit, payroll, employee identity, resource scheduling, capacity, partner payout, billing eligibility, receipt or document storage, reimbursement, partner access or portal, revenue share, service contracts, entitlements, SLA, support cases, reopening completed work, a scheduler, a durable outbox, auth/tenancy/RBAC — and change requests, deliverables and customer acceptance, which are M14b2.
 
 Finish with `npm run verify` and the starter (`node examples/starters/b2b-lead-qualification/install.mjs`).

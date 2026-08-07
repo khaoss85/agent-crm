@@ -45,10 +45,16 @@ export const DELIVERY_MANIFESTS = [
   'delivery-handover-run.module.json', 'delivery-project.module.json',
   'delivery-work-package.module.json', 'delivery-milestone.module.json',
   'delivery-partner-engagement.module.json',
+  // M14b1: the immutable economics evidence.
+  'delivery-time-entry.module.json', 'delivery-expense-entry.module.json',
+  'delivery-economic-plan.module.json', 'delivery-economic-plan-line.module.json',
+  'delivery-economic-snapshot.module.json',
 ];
 export const DELIVERY_MODULES = [
   'delivery-handover-run', 'delivery-project', 'delivery-work-package',
   'delivery-milestone', 'delivery-partner-engagement',
+  'delivery-time-entry', 'delivery-expense-entry',
+  'delivery-economic-plan', 'delivery-economic-plan-line', 'delivery-economic-snapshot',
 ];
 export const DELIVERY_POLICY = { policy: 'b2b-delivery-handover', policyVersion: 1 };
 
@@ -116,13 +122,14 @@ export function project(t, { withDomain = true, withDelivery = false, withCustom
         ...(withDelivery ? [
           "import { createDeliveryPackage } from '../../delivery/src/index.js';",
           "import { b2bDeliveryHandoverV1 } from '../../../examples/starters/b2b-lead-qualification/delivery.js';",
+          "import { b2bDeliveryCostV1 } from '../../../examples/starters/b2b-lead-qualification/delivery-cost.js';",
         ] : []),
         ...(withCustomPackage ? [
           "import { createPartnerScorecardPackage } from '../../../examples/custom-packages/partner-scorecard/src/index.js';",
         ] : []),
         'export const generatedDomains = [',
         '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
-        ...(withDelivery ? ['  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1] }),'] : []),
+        ...(withDelivery ? ['  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1], costPolicies: [b2bDeliveryCostV1] }),'] : []),
         ...(withCustomPackage ? ['  createPartnerScorecardPackage(),'] : []),
         '];',
         '',

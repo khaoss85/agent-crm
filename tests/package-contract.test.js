@@ -166,13 +166,16 @@ test('the first-party delivery package conforms and depends only through a capab
     definition: createDeliveryPackage({ policies: [b2bDeliveryHandoverV1] }),
     dir: join(repoRoot, 'packages/delivery'),
     expected: {
-      // Version 2: M14a added the eight execution transitions to the same
-      // package — additively, without touching packageContract: 1.
+      // Version 3: M14a added the execution transitions and M14b1 the
+      // economics evidence — additively, and without touching
+      // packageContract: 1 either time.
       name: 'delivery',
-      version: 2,
+      version: 3,
       resources: [
         'delivery-project', 'delivery-work-package', 'delivery-milestone',
         'delivery-partner-engagement', 'delivery-handover-run',
+        'delivery-time-entry', 'delivery-expense-entry',
+        'delivery-economic-plan', 'delivery-economic-plan-line', 'delivery-economic-snapshot',
       ],
       actions: [
         'commercial-contract.create-delivery-handover',
@@ -183,11 +186,16 @@ test('the first-party delivery package conforms and depends only through a capab
         'delivery-project.start-delivery-project',
         'delivery-work-package.block-work-package',
         'delivery-work-package.complete-work-package',
+        'delivery-project.preview-delivery-economics',
+        'delivery-project.publish-economic-plan',
+        'delivery-project.snapshot-delivery-economics',
+        'delivery-work-package.record-delivery-expense',
+        'delivery-work-package.record-delivery-time',
         'delivery-work-package.resume-work-package',
         'delivery-work-package.start-work-package',
       ],
       requires: ['contracts/delivery-obligations@1'],
-      provides: [],
+      provides: ['delivery-economics@1'],
     },
     forbiddenImports: [/from '[^']*contracts\//],
   });
@@ -224,8 +232,8 @@ test('a customer-authored package conforms through the identical contract', () =
   });
   assert.deepEqual([...registry.names()], ['contracts', 'delivery', 'partner-scorecard']);
   assert.deepEqual(Object.keys(registry.metadata()), ['contracts', 'delivery', 'partner-scorecard']);
-  assert.equal(registry.actions().length, 13, 'M14a added eight execution transitions to the delivery package');
-  assert.equal(registry.resources().length, 14);
+  assert.equal(registry.actions().length, 18, 'M14b1 added five economics actions on top of M14a\'s eight transitions');
+  assert.equal(registry.resources().length, 19);
 });
 
 test('the kernel never depends on a package, in either direction', () => {

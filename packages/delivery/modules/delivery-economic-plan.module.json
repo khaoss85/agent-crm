@@ -1,0 +1,59 @@
+{
+  "manifestVersion": 1,
+  "name": "delivery-economic-plan",
+  "description": "One immutable version of the delivery cost plan for a project. Publishing again creates the next version; a plan is never edited. It plans cost only — it schedules nobody, reserves no capacity and commits no money.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "writable": "managed",
+      "unique": true
+    },
+    {
+      "name": "deliveryProjectId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "version",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "lineCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "publishedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "publishedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

@@ -105,6 +105,12 @@ try {
     'delivery-work-package.module.json',
     'delivery-milestone.module.json',
     'delivery-partner-engagement.module.json',
+    // Milestone 14b1: the immutable economics evidence.
+    'delivery-time-entry.module.json',
+    'delivery-expense-entry.module.json',
+    'delivery-economic-plan.module.json',
+    'delivery-economic-plan-line.module.json',
+    'delivery-economic-snapshot.module.json',
   ]) {
     applyModule(root, join(root, 'packages', 'delivery', 'modules', manifest));
   }
@@ -170,12 +176,13 @@ try {
       "import { createPartnerScorecardPackage } from '../../../examples/custom-packages/partner-scorecard/src/index.js';",
       "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
       "import { b2bDeliveryHandoverV1 } from '../../../examples/starters/b2b-lead-qualification/delivery.js';",
+      "import { b2bDeliveryCostV1 } from '../../../examples/starters/b2b-lead-qualification/delivery-cost.js';",
       '',
       '// The composition file is the ONLY place a project names its packages.',
       '// Deleting a line removes that package; nothing in the kernel changes.',
       'export const generatedDomains = [',
       '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
-      '  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1] }),',
+      '  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1], costPolicies: [b2bDeliveryCostV1] }),',
       '  createPartnerScorecardPackage(),',
       '];',
       '',
@@ -886,6 +893,125 @@ try {
     assert.equal(engagement.partnerNameSnapshot, PARTNER.partnerName);
     assert.equal(engagement.status, 'planned', 'a planned engagement grants the partner nothing at all');
     assert.equal(engagement.workPackageCount, 1);
+
+    // ---- Milestone 14a + 14b1: run the project, and record what it consumed ----
+    //
+    // Everything below is a human decision, and every number the server
+    // computes. These are operational delivery estimates: nothing is invoiced,
+    // paid, recognized as revenue or converted between currencies.
+    const runDelivery = (module, id, action, input, as = actor) =>
+      app.runAction({ module, action, recordId: id, input, actor: as });
+
+    await runDelivery('delivery-project', deliveryProject.id, 'start-delivery-project', { note: 'kickoff held' });
+    const internalPackage = packageBy('ent-setup');
+    const partnerPackage = packageBy('migration-records');
+    for (const workPackage of [internalPackage, partnerPackage]) {
+      await runDelivery('delivery-work-package', workPackage.id, 'start-work-package', {});
+    }
+
+    // An agent may look at the economics; it may not record any of it.
+    await assert.rejects(
+      () => runDelivery('delivery-work-package', internalPackage.id, 'record-delivery-time', {
+        entryKey: 'bot', contributorRef: 'bot', contributorType: 'internal',
+        workDate: today, minutes: 60, category: 'consulting',
+      }, { type: 'agent', id: 'bot' }),
+      (error) => error.code === 'HUMAN_APPROVAL_REQUIRED' && error.status === 403,
+    );
+
+    await runDelivery('delivery-work-package', internalPackage.id, 'record-delivery-time', {
+      entryKey: 'onboarding-day-1', contributorRef: 'consultant:ana', contributorType: 'internal',
+      workDate: today, minutes: 480, category: 'consulting', note: 'environment setup and first workshop',
+    });
+    await runDelivery('delivery-work-package', partnerPackage.id, 'record-delivery-time', {
+      entryKey: 'migration-day-1', contributorRef: 'abc:marco', contributorType: 'partner',
+      workDate: today, minutes: 300, category: 'migration', note: 'record migration dry run',
+    });
+    await runDelivery('delivery-work-package', internalPackage.id, 'record-delivery-expense', {
+      entryKey: 'travel-1', expenseDate: today, category: 'travel',
+      amountCents: 24_500, vendorRef: 'rail-operator', evidenceRef: 'exp-2026-0042',
+    });
+
+    const timeEntries = app.modules.get('delivery-time-entry').service.listWhere({ deliveryProjectId: deliveryProject.id });
+    assert.equal(timeEntries.length, 2);
+    const internalEntry = timeEntries.find((row) => row.contributorType === 'internal');
+    const partnerEntry = timeEntries.find((row) => row.contributorType === 'partner');
+    // 8 hours of internal consulting at the mapped 120.00/hour rate.
+    assert.equal(internalEntry.ratePerHourCents, 12_000);
+    assert.equal(internalEntry.costCents, 96_000, 'the server computed the cost from the policy rate');
+    // 5 hours of partner migration at the mapped 90.00/hour rate.
+    assert.equal(partnerEntry.ratePerHourCents, 9_000);
+    assert.equal(partnerEntry.costCents, 45_000);
+    assert.ok(partnerEntry.partnerEngagementId, 'partner time is attributed to the planned engagement');
+    assert.ok(internalEntry.policyFingerprint.length >= 32, 'and to a fingerprinted policy version');
+
+    // Evidence is evidence: there is no public write path to any of it.
+    assert.equal(app.modules.get('delivery-time-entry').service.create, undefined);
+    assert.equal(app.modules.get('delivery-time-entry').service.update, undefined);
+    assert.equal(app.modules.get('delivery-economic-snapshot').service.update, undefined);
+
+    const planV1 = await runDelivery('delivery-project', deliveryProject.id, 'publish-economic-plan', {
+      reason: 'initial plan from the signed obligations',
+      lines: [
+        { kind: 'internal_time', category: 'consulting', plannedMinutes: 2400, plannedTotalCostCents: 480_000, currency: 'EUR', deliveryWorkPackageId: internalPackage.id },
+        { kind: 'partner', category: 'migration', plannedMinutes: 1200, plannedTotalCostCents: 180_000, currency: 'EUR', deliveryWorkPackageId: partnerPackage.id },
+        { kind: 'expense', category: 'travel', plannedTotalCostCents: 60_000, currency: 'EUR' },
+      ],
+    });
+    assert.equal(planV1.result.plan.version, 1);
+
+    const planV2 = await runDelivery('delivery-project', deliveryProject.id, 'publish-economic-plan', {
+      reason: 'the customer added a second migration window',
+      lines: [
+        { kind: 'internal_time', category: 'consulting', plannedMinutes: 2400, plannedTotalCostCents: 480_000, currency: 'EUR', deliveryWorkPackageId: internalPackage.id },
+        { kind: 'partner', category: 'migration', plannedMinutes: 1800, plannedTotalCostCents: 270_000, currency: 'EUR', deliveryWorkPackageId: partnerPackage.id },
+        { kind: 'expense', category: 'travel', plannedTotalCostCents: 60_000, currency: 'EUR' },
+      ],
+    });
+    assert.equal(planV2.result.plan.version, 2, 'a plan is versioned, never edited');
+    assert.equal(
+      app.modules.get('delivery-economic-plan').service.get(planV1.result.plan.id).reason,
+      'initial plan from the signed obligations',
+      'and version 1 stays exactly as it was published',
+    );
+
+    const snapshot = await runDelivery('delivery-project', deliveryProject.id, 'snapshot-delivery-economics', {
+      snapshotKey: 'week-1',
+    });
+    const groups = JSON.parse(snapshot.result.snapshot.groupsJson);
+    assert.equal(groups.length, 1, 'one group per currency, and this project is single-currency');
+    const [economics] = groups;
+    assert.equal(economics.currency, 'EUR');
+    assert.equal(economics.actualTimeCostCents, 141_000, '96 000 internal + 45 000 partner');
+    assert.equal(economics.actualPartnerCostCents, 45_000, 'the subcontracted share is visible on its own');
+    assert.equal(economics.actualExpenseCostCents, 24_500);
+    assert.equal(economics.totalActualCostCents, 165_500);
+    assert.equal(economics.plannedCostCents, 810_000, 'measured against the latest plan version');
+    // Every delivery obligation in this starter is one-time, so a contribution
+    // estimate is defensible — and the group says so on the record rather than
+    // leaving a reader to assume it. A project carrying a recurring obligation
+    // would report `unavailable` here instead of a number that compares a
+    // per-period price against a spend to date.
+    assert.deepEqual(
+      economics.commercialInputs.map((input) => input.chargeType), ['one_time'],
+      'the delivery obligations handed over here are all one-time',
+    );
+    assert.equal(economics.contributionBasis, 'one_time');
+    assert.equal(economics.contributionUnavailableReason, null);
+    assert.equal(
+      economics.deliveryContributionEstimateCents,
+      economics.oneTimeCommercialValueCents - economics.totalActualCostCents,
+      'an estimate, named as one — never a margin, a profit or recognized revenue',
+    );
+    assert.equal(snapshot.result.snapshot.timeEntryCount, 2);
+    assert.match(snapshot.result.snapshot.roundingRule, /roundHalfUp/);
+
+    // A snapshot is reproducible: the same evidence recomputes identically.
+    const preview = await runDelivery('delivery-project', deliveryProject.id, 'preview-delivery-economics', {}, { type: 'agent', id: 'bot' });
+    assert.deepEqual(preview.result.economics.groups, groups, 'and an agent may read it');
+    assert.equal(preview.result.stored, false, 'a preview is never evidence');
+
+    // Nothing above billed, paid or accepted anything.
+    assert.equal(app.modules.list().some((module) => /invoice|payment|acceptance/i.test(module.name)), false);
 
     // The cross-package write: exactly those obligations are handed over, and
     // the service obligation is not Delivery's business.

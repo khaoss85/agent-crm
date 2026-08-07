@@ -14,14 +14,14 @@ Generated: **2026-08-07**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **M14a — Delivery execution** (ADR-019 addendum 1) on top of AX0, **Module Evolution v1** (ADR-019) and **M13 — Delivery Handover + Custom Package Authoring v1** (ADR-018 + addenda 1–4) |
-| Main SHA at generation | `007828d` (merge of PR #21; full SHA `007828d15ca16f69996bb704565677a69ac09c7e`) |
-| Tests on clean main | **314 passing, 0 failing** (`npm run verify` from a fresh clone of `007828d`) |
+| Latest merged milestone | **AX1 — Deterministic application inspection** on top of **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
+| Main SHA at generation | `dff2767` (merge of PR #22; full SHA `dff276715f462cf6e22165a096db7f55ab87db02`) |
+| Tests on clean main | **338 passing, 0 failing** (`npm run verify` from a fresh clone of `dff2767`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **AX1 — Deterministic application inspection** (`claude/platform-application-inspection-v1`): a platform capability, `crm app inspect`. Open and unmerged, awaiting the adversarial review. |
+| Open PRs | **M14b1 — Delivery economics** (`claude/milestone-14b-delivery-economics-change-acceptance`): 350 passing on the branch. Open and unmerged, awaiting the adversarial review. |
 
 ## Completed functional path
 
@@ -44,9 +44,11 @@ Lead capture
   with the obligations marked handed over                                     M13
 → run the project: start, block with a stated reason, resume, complete;       M14a
   close it only over completed work packages and milestones                   M14a
+→ record what it consumed: time and expense evidence, a versioned cost plan,  M14b1
+  a reproducible contribution estimate grouped by currency                    M14b1
 ```
 
-M14a is merged.
+M14a and AX1 are merged. M14b1 is on an open PR.
 
 Framework underneath: module manifest + generated migrations (M1), module
 factory (M2), one generated resource contract over API/SDK (M3), generated
@@ -75,19 +77,20 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 | M13 | Delivery handover + the public package contract and custom-package authoring | ADR-018 addenda 3–4 |
 | — | Module Evolution v1: revisions, a checked-in state file and append-only migrations | ADR-019 |
 | M14a | Delivery execution: eight human-driven transitions, block evidence, a hierarchy gate | ADR-019 addendum 1 |
+| AX1 | Deterministic application inspection: `crm app inspect`, source-only and read-only | — |
 
 ## Next planned development
 
-1. **AX1 — Deterministic application inspection** — implemented on an open PR:
-   `crm app inspect [--json]`, one deterministic source-only document
-   describing the composed application. A cross-cutting platform capability; it
-   does not renumber or delay the Delivery or Marketing tracks.
-2. **M14b — Delivery Economics, Change Requests, Deliverables & Acceptance** —
-   not started. Append-only time and expense evidence, a versioned operational
-   economics plan and reproducible snapshot, governed change requests,
-   deliverables and customer acceptance evidence. Operational estimates,
-   **not** accounting, billing or a legally binding sign-off. Partial work
-   preserved on `claude/m14b-economics-change-acceptance-preserved`.
+1. **M14b1 — Delivery economics** — implemented on an open PR: a versioned
+   fingerprinted cost policy, append-only time and expense evidence, an
+   immutable versioned plan and a reproducible contribution estimate grouped by
+   currency (`docs/DELIVERY_ECONOMICS.md`).
+2. **M14b2 — Delivery change requests, deliverables and acceptance** — not
+   started, and split out of M14b deliberately rather than quietly dropped.
+   Governed non-commercial replans, the commercial-change handoff that never
+   touches a signed Order, deliverable evidence, and recorded customer
+   acceptance — evidence a local user actor recorded, never an authenticated
+   customer, a legal signature or a billing trigger.
 3. Then M15 Service Operations, the **package contract review** and the first
    legacy extraction (one of Intelligence / Commercial / Signature), then M16
    Analytics Studio — `EXECUTION_ROADMAP.md`.
@@ -132,13 +135,14 @@ public use. None of it is started.
 adoption; generated API/SDK/Admin; references; actions; core adapters;
 pipelines; Lead Intelligence; Commercial Operations; Signature and Order;
 Contract activation and subscriptions; the public domain-package contract, the
-delivery handover and delivery execution; MCP server; CLI.
+delivery handover and delivery execution; deterministic application inspection
+(AX1); MCP server; CLI.
 
-**Implemented, open PR (not on main):** deterministic application inspection (AX1).
+**Implemented, open PR (not on main):** delivery economics (M14b1).
 
 **Documentation only (no code):** renewal, billing and everything downstream of
 activation; delivery economics, change requests, deliverables and acceptance
-(M14b); Service; Analytics Studio; Integration Runtime; Jobs & durable outbox;
+(M14b2); Service; Analytics Studio; Integration Runtime; Jobs & durable outbox;
 Data Governance; Design-to-CRM; Agent CRM Cloud; create-project CLI;
 PostgreSQL; auth/tenancy/RBAC; Marketing & Growth (MK0–MK7); the Agent
 Experience track beyond AX0; benchmark execution.

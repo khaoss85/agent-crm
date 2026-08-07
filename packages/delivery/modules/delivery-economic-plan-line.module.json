@@ -1,0 +1,72 @@
+{
+  "manifestVersion": 1,
+  "name": "delivery-economic-plan-line",
+  "description": "One planned cost item of one immutable delivery economic plan version, in exactly one currency. Lines are the evidence a plan total is derived from, so a total is never an opaque number nobody can trace.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "writable": "managed",
+      "unique": true
+    },
+    {
+      "name": "deliveryEconomicPlanId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "deliveryProjectId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "deliveryWorkPackageId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "kind",
+      "type": "enum",
+      "writable": "managed",
+      "values": [
+        "internal_time",
+        "partner",
+        "expense",
+        "contingency"
+      ]
+    },
+    {
+      "name": "category",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "plannedMinutes",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "plannedTotalCostCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "note",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "position",
+      "type": "integer",
+      "writable": "managed"
+    }
+  ]
+}

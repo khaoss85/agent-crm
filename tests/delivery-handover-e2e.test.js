@@ -17,6 +17,12 @@ import {
  * partner) and annual support (a service obligation Delivery must ignore).
  */
 
+/** The records the M13 handover itself writes — each carries a contractId. */
+const HANDOVER_MODULES = [
+  'delivery-handover-run', 'delivery-project', 'delivery-work-package',
+  'delivery-milestone', 'delivery-partner-engagement',
+];
+
 const DELIVERY_OFFERS = ['fixture:offer:enterprise', 'fixture:offer:setup', 'fixture:offer:support-annual'];
 const WINDOW = { targetStartDate: '2026-09-20', targetEndDate: '2026-12-20' };
 const PARTNER = { partnerRef: 'partner:abc-consulting', partnerName: 'ABC Consulting', reason: 'they run our migrations' };
@@ -46,8 +52,11 @@ test('an activated contract is planned and handed over to delivery', async (t) =
     'commercial-contract.create-delivery-handover', 'commercial-contract.plan-delivery-handover',
     // M14a: the execution transitions live in the same package.
     'delivery-milestone.complete-milestone', 'delivery-milestone.start-milestone',
-    'delivery-project.complete-delivery-project', 'delivery-project.start-delivery-project',
+    'delivery-project.complete-delivery-project', 'delivery-project.preview-delivery-economics',
+    'delivery-project.publish-economic-plan', 'delivery-project.snapshot-delivery-economics',
+    'delivery-project.start-delivery-project',
     'delivery-work-package.block-work-package', 'delivery-work-package.complete-work-package',
+    'delivery-work-package.record-delivery-expense', 'delivery-work-package.record-delivery-time',
     'delivery-work-package.resume-work-package', 'delivery-work-package.start-work-package',
   ]);
   assert.match(schema.domains.delivery.partner.limitation, /grants NO access/i);
@@ -282,8 +291,11 @@ test('the handover is atomic, idempotent and concurrency-safe', async (t) => {
     await assert.rejects(() => handover(contract.id), /injected failure/, moduleName);
     service[method] = real;
 
-    // Nothing partial survives, and the source obligations stay pending.
-    for (const module of DELIVERY_MODULES) {
+    // Nothing partial survives, and the source obligations stay pending. Only
+    // the records the handover itself writes carry a contractId; the M14b1
+    // economics evidence is written by a different action against a project
+    // that does not exist yet.
+    for (const module of HANDOVER_MODULES) {
       assert.equal(
         app.modules.get(module).service.listWhere({ contractId: contract.id }).length, 0,
         `${moduleName} failure: no ${module} row survives`,

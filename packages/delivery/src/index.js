@@ -3,6 +3,10 @@
 import { definePackage } from '../../core/index.js';
 import { buildDeliveryActions } from './handover.js';
 import { buildExecutionActions, executionMetadata } from './execution.js';
+import {
+  buildEconomicsActions, createEconomicsCapability, economicsMetadata,
+} from './economics-actions.js';
+import { COST_POLICY_KIND, defineDeliveryCostPolicy } from './cost-policy.js';
 import { DELIVERY_MODES, OVERRIDABLE_MODES, defineDeliveryHandoverPolicy } from './handover-policy.js';
 import { DATES_NOTE, DATES_SOURCE, MAX_PLAN_DAYS } from './dates.js';
 
@@ -30,6 +34,9 @@ export const HANDOVER_POLICY_KIND = 'delivery-handover-policy';
 export const DELIVERY_RESOURCES = Object.freeze([
   'delivery-project', 'delivery-work-package', 'delivery-milestone',
   'delivery-partner-engagement', 'delivery-handover-run',
+  // M14b1: the immutable economics evidence.
+  'delivery-time-entry', 'delivery-expense-entry',
+  'delivery-economic-plan', 'delivery-economic-plan-line', 'delivery-economic-snapshot',
 ]);
 
 /**
@@ -44,19 +51,33 @@ export function createDeliveryPackage(options = {}) {
     kind: HANDOVER_POLICY_KIND,
     definition: defineDeliveryHandoverPolicy(definition),
   }));
+  // Cost policies are a separate kind with their own contract: a handover
+  // policy decides who delivers, a cost policy decides what an hour costs, and
+  // conflating them would version two unrelated decisions together.
+  const costPolicies = (options.costPolicies ?? []).map((definition) => ({
+    kind: COST_POLICY_KIND,
+    definition: defineDeliveryCostPolicy(definition),
+  }));
 
   return definePackage({
     packageContract: 1,
     name: DELIVERY_PACKAGE,
     label: 'Delivery handover',
-    version: 2,
-    description: 'Plans the handover of a signed, activated contract to delivery, and records its execution: a delivery project, work packages, milestones, an optional partner engagement, and bounded human-driven state transitions.',
+    version: 3,
+    description: 'Plans the handover of a signed, activated contract to delivery, records its execution through bounded human-driven transitions, and records what it consumed: immutable time and expense evidence, a versioned cost plan and a reproducible contribution estimate.',
     // The one declared reach into another package. Without it, this package
     // refuses to register — it cannot invent the obligations it plans.
     requires: [{ package: 'contracts', capability: 'delivery-obligations', version: 1 }],
+    // Additive: `delivery-obligations@1` stays exactly as it was, and this
+    // package now also offers what it learned while running the work.
+    capabilities: [createEconomicsCapability({ modules: options.modules })],
     resources: [...DELIVERY_RESOURCES],
-    actions: [...buildDeliveryActions(options.modules), ...buildExecutionActions(options.modules)],
-    policies,
+    actions: [
+      ...buildDeliveryActions(options.modules),
+      ...buildExecutionActions(options.modules),
+      ...buildEconomicsActions({ modules: options.modules, costPolicies }),
+    ],
+    policies: [...policies, ...costPolicies],
     /** Function-free, additive schema metadata — never a handler or a secret. */
     metadata() {
       return {
@@ -78,13 +99,14 @@ export function createDeliveryPackage(options = {}) {
         },
         source: 'the pending delivery obligations published by the contracts package are the only source; the live catalog, the quote and CRM records are never read',
         execution: executionMetadata(),
+        economics: economicsMetadata(costPolicies),
         notModeled: [
-          'time tracking',
-          'expenses', 'cost', 'margin', 'resource scheduling', 'capacity',
-          'change requests', 'customer acceptance', 'billing milestones',
+          'resource scheduling', 'capacity',
+          'billing milestones',
           'invoicing', 'partner access', 'partner portal', 'revenue share',
           'service contracts', 'entitlements', 'SLA', 'support cases',
           'deliverables', 'reopening completed work', 'a scheduler',
+          'change requests', 'customer acceptance',
         ],
       };
     },
@@ -92,5 +114,11 @@ export function createDeliveryPackage(options = {}) {
 }
 
 export { defineDeliveryHandoverPolicy, DELIVERY_MODES, OVERRIDABLE_MODES };
+export { defineDeliveryCostPolicy, COST_POLICY_KIND } from './cost-policy.js';
+export { ECONOMICS_CAPABILITY, PLAN_LINE_KINDS, CONTRIBUTOR_TYPES } from './economics-actions.js';
+export {
+  ROUNDING_RULE, ECONOMICS_BASIS, ECONOMICS_NOTE, computeEconomics, costOfMinutes,
+  CONTRIBUTION_BASIS, CONTRIBUTION_UNAVAILABLE_REASONS,
+} from './economics.js';
 export { buildDeliveryActions } from './handover.js';
 export { requireDeliveryWindow, requireCalendarDate, daysBetween, DATES_SOURCE, DATES_NOTE } from './dates.js';
