@@ -1,0 +1,47 @@
+  <footer>
+    <div class="shell">
+      <div class="footer-grid">
+        <div>
+          <h4>Understand it</h4>
+          <a href="{{brand.repository}}/blob/main/PRODUCT.md">What it is</a>
+          <a href="{{brand.repository}}/blob/main/ARCHITECTURE.md">Architecture</a>
+          <a href="{{brand.repository}}/blob/main/DECISIONS.md">Decision log</a>
+          <a href="{{brand.repository}}/blob/main/docs/QUALITY_GATES.md">Quality gates</a>
+        </div>
+        <div>
+          <h4>Build with it</h4>
+          <a href="{{brand.repository}}/blob/main/docs/MODULE_MANIFEST.md">Module manifests</a>
+          <a href="{{brand.repository}}/blob/main/docs/ACTIONS.md">Record actions</a>
+          <a href="{{brand.repository}}/blob/main/docs/PACKAGE_AUTHORING.md">Domain packages</a>
+          <a href="{{brand.repository}}/blob/main/docs/MCP.md">MCP server</a>
+        </div>
+        <div>
+          <h4>Check our work</h4>
+          <a href="evidence.html">Claims and evidence</a>
+          <a href="{{brand.repository}}/blob/main/docs/benchmarks/CRM_JTBD_MATRIX.md">JTBD matrix</a>
+          <a href="{{brand.repository}}/blob/main/docs/PROJECT_STATUS.md">Project status</a>
+          <a href="{{brand.repository}}/blob/main/docs/strategy/CRM_BUILD_BENCHMARK.md">Benchmark protocol</a>
+        </div>
+        <div>
+          <h4>For agents</h4>
+          <a href="llms.txt">llms.txt</a>
+          <a href="{{brand.repository}}/blob/main/AGENTS.md">AGENTS.md</a>
+          <a href="{{brand.repository}}/blob/main/CLAUDE.md">CLAUDE.md</a>
+          <a href="{{brand.repository}}/blob/main/docs/AGENT_HARNESS_COMPATIBILITY.md">Harness compatibility</a>
+        </div>
+      </div>
+      <div class="colophon">
+        <p>
+          {{brand.license}}-licensed, pending a final human confirmation before launch.
+          &ldquo;{{brand.name}}&rdquo; is a working title, not the public name.
+          Claims on this site are generated from a ledger bound to the test suite, measured at
+          <span class="mono">{{measured.sha}}</span> on {{measured.date}}:
+          <strong>{{measured.tests}} tests, 0 failing</strong>.
+        </p>
+        <p style="margin-top:10px">
+          If you find a claim here that the tests do not support, that is a bug — open an issue and
+          we will remove the claim or add the test.
+        </p>
+      </div>
+    </div>
+  </footer>

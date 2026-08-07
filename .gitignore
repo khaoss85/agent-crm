@@ -9,3 +9,6 @@ coverage/
 .DS_Store
 *.log
 .tmp/
+
+# Built site output — regenerate with `npm run site:build`
+site/dist/

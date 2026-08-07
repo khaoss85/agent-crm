@@ -1,0 +1,49 @@
+{
+  "$comment": "Single source of brand truth for every public asset. The public name is a PENDING HUMAN DECISION (docs/strategy/BRAND_REQUIREMENTS.md, MASTER_PLAN.md §10). Nothing else in site/ or docs/marketing/ may hardcode a name, domain or package scope: they read these tokens. Renaming the project is an edit to this file plus `npm run site:build`.",
+  "name": {
+    "status": "working-title",
+    "value": "Agent CRM",
+    "slug": "agent-crm",
+    "note": "Working title only. BRAND_REQUIREMENTS.md documents why this fails as a public brand (ungoogleable, category-confusing, no namespace). Shortlist: Accordo, Pactio, Vinculo, Relato — none chosen. A human must register the name, screen the trademark and update this file before any public launch."
+  },
+  "domain": {
+    "status": "not-registered",
+    "value": "example.invalid",
+    "note": "RFC 2606 reserved TLD, deliberately unresolvable. Every absolute URL in the built site points here until a human registers a domain, so a premature deploy is obviously broken rather than quietly wrong."
+  },
+  "repository": {
+    "status": "private",
+    "value": "https://github.com/khaoss85/agent-crm",
+    "note": "Public visibility is a human decision. Links resolve only once the repository is public."
+  },
+  "npm": {
+    "status": "unpublished",
+    "scope": "@agent-crm",
+    "createCommand": "npm create agent-crm",
+    "note": "No package is published. The scope is unclaimed and follows the name decision."
+  },
+  "license": {
+    "status": "provisional",
+    "value": "MIT",
+    "note": "MIT is the repository license today. Final confirmation before public launch is an explicit ADR-gated human decision (MASTER_PLAN.md §10.2)."
+  },
+  "promise": "Describe your sales process to your coding agent; own the CRM it builds.",
+  "colors": {
+    "ink": "#18211c",
+    "muted": "#647067",
+    "line": "#dce1da",
+    "surface": "#ffffff",
+    "paper": "#f3f5f1",
+    "accent": "#1f6f50",
+    "accentSoft": "#e4f2eb",
+    "warning": "#9b5c0a",
+    "warningSoft": "#fff0d8",
+    "danger": "#a23636",
+    "dangerSoft": "#fbe7e7"
+  },
+  "colorsNote": "Inherited verbatim from apps/admin/public/styles.css so the site and the product it ships are visibly the same thing.",
+  "typography": {
+    "sans": "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    "mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+  }
+}

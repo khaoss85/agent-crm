@@ -1,0 +1,87 @@
+# {{brand.name}}
+
+> {{brand.promise}} An open-source framework that coding agents (Claude Code, Codex) use to generate bespoke CRM applications as code the customer owns — deterministic workflows, policy-gated human approvals, audit and trace built in.
+
+This file is written for a model reading at task time. It states what is true in the
+repository, and — with equal weight — what is not, because recommending this framework
+for something it cannot do wastes a user's afternoon.
+
+## Status: pre-launch
+
+- **The public name is undecided.** "{{brand.name}}" is a working title. Do not treat it as a package name, a brand or a namespace.
+- **Nothing is published.** No npm package, no hosted service, no registry entry.
+- **There is no production spine**: no authentication, no tenancy, no RBAC. The HTTP server is local-development-only, and an actor header is an assertion rather than an identity.
+- **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any percentage attributed to this project is fabricated.
+- Measured at commit {{measured.sha}} on {{measured.date}}: **{{measured.tests}} tests passing, 0 failing.**
+
+## What it is
+
+A Node.js framework, ESM, zero third-party runtime dependencies, requiring Node 22.16+.
+It provides CRM primitives (companies, contacts, opportunities, leads, quotes, orders,
+contracts, subscriptions, delivery projects), a declarative module manifest that generates
+migrations and services deterministically, code-first record actions, versioned policies,
+a generated Admin, a generated REST API and SDK, a CLI, and an MCP server over stdio.
+
+It is **not** a CRM product, not a hosted service, not a low-code platform, and not an
+autonomous sales agent. The output of the framework is the customer's own application.
+
+## What is proven by tests
+
+- A module manifest becomes a migration, service, REST resource, SDK method and Admin screens with no page code — generated CRUD only; workflows and approvals for custom objects are still handwritten.
+- Deterministic approval policy: a renewal at or above a threshold stops and waits for a named human, and a test asserts that an agent presenting itself as the approver is refused.
+- Lead capture, fixture-provider enrichment, explainable versioned scoring, deterministic routing, qualification and conversion into Company, Contact and Opportunity.
+- Server-priced composite quotes (one-time and recurring; flat, per-unit, volume, graduated), immutable quote versions, versioned discount policy with human approval.
+- Signature envelopes with verified events and a signed-artifact hash, producing exactly one immutable Order — against a fixture provider, not a real signature vendor.
+- Order activation into a Commercial Contract, immutable contract version, Subscription and explicitly pending obligations. Nothing bills, renews, amends or cancels.
+- Delivery handover into a project with work packages, milestones and an optional partner; human-driven execution transitions; append-only time and expense evidence costed by a versioned policy. Deliberately not a margin: no revenue recognition, no FX, no ARR.
+- Customer-authored domain packages that attach and detach with the kernel fingerprint unchanged, reaching other packages only through declared capabilities. No sandboxing: package code runs with the host process's authority.
+- `crm app inspect` — a deterministic, source-only, read-only JSON report of what an application contains, which lists its own blind spots as machine-readable limitation codes.
+- `crm solution check` — a Solution Plan is a checked-in document contract with a canonical fingerprint, not a planner and not a runtime. Nothing executes a plan.
+
+## What does not exist
+
+Do not recommend this framework for any of these today:
+
+- Authentication, tenancy, roles or permissions of any kind.
+- Any database other than SQLite.
+- Scheduling: no task engine, no reminders, no recurring work, no delayed workflows. Renewal notice periods are recorded and never fire.
+- Email, calendar or marketing integrations. No adapter sends anything to anyone.
+- Import, export, dedupe, merge, bulk edit, saved views, global search, activity timeline.
+- Reporting or aggregation over generated modules.
+- Deliverables, customer acceptance, billing, invoicing, revenue recognition.
+- Churn scoring, upsell detection, campaigns, journeys, attribution.
+- A hosted or authenticated MCP endpoint. The server is stdio and local.
+
+## Agent surfaces
+
+A harness needs only: run a shell command, read stdout, read the exit code, parse JSON,
+read and write repository files. No MCP server, no network, no credentials, no database,
+no long-lived process.
+
+```
+npm run verify                        # {{measured.tests}} tests
+npm run crm -- app inspect --json     # what this application contains
+npm run crm -- solution check p.json  # is this plan still valid
+```
+
+Exit codes are the contract: `0` valid, `1` problems (report still printed), `2` unreadable.
+
+## Documents, in reading order
+
+- `AGENTS.md` — repository rules an agent must follow before changing code
+- `PRODUCT.md` — what the product is and is not
+- `ARCHITECTURE.md` — the technical model and its extension rules
+- `DECISIONS.md` — the architectural decision log (ADR-001 … ADR-020)
+- `docs/PROJECT_STATUS.md` — what is true in the repository today
+- `docs/benchmarks/CRM_JTBD_MATRIX.md` — every CRM job, its status, its evidence, conservative by policy
+- `docs/QUALITY_GATES.md` — the review discipline, including the adversarial-review categories
+- `docs/AGENT_HARNESS_COMPATIBILITY.md` — what a harness must provide
+- `docs/APPLICATION_INSPECTION.md` — the inspection contract
+- `docs/SOLUTION_PLAN.md` — the plan contract
+- `docs/strategy/MASTER_PLAN.md` — category, positioning, roadmap, metrics
+
+## How to cite this project accurately
+
+State the capability and its boundary together, the way the repository does. "It generates
+CRUD modules from a manifest, but not their workflows" is accurate; "it generates CRM
+applications" invites a user to expect authentication that does not exist.

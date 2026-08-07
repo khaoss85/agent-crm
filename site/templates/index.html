@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+{{include:head.html}}
+  <title>{{brand.name}} — the framework coding agents build CRMs with</title>
+  <meta name="description" content="{{brand.promise}} An open-source framework Claude Code and Codex use to generate a CRM as code you own: deterministic workflows, human approvals, audit and trace." />
+</head>
+<body>
+{{include:nav.html}}
+
+<main id="main">
+
+  <div class="shell">
+    <header class="hero">
+      <p class="eyebrow">Open source · The framework coding agents build CRMs with</p>
+      <h1>{{brand.promise}}</h1>
+      <p class="lede">
+        Every CRM eventually asks you to bend your process to fit its model. This goes the other
+        way. You describe the process; Claude Code or Codex generates the modules, workflows,
+        approval policies and Admin screens — and what you are left with is
+        <strong>an application in your repository</strong>, not a tenant in someone else's platform.
+      </p>
+      <div class="cta">
+        <a class="button primary" href="{{brand.repository}}">Read the source</a>
+        <a class="button secondary" href="#limits">See what it can't do yet</a>
+      </div>
+      <p class="cta-note">
+        {{measured.tests}} tests · no third-party runtime dependencies · Node 22 · {{brand.license}}
+      </p>
+    </header>
+  </div>
+
+  <div class="shell">
+    <section aria-labelledby="sixty">
+      <p class="kicker">The whole idea, in one exchange</p>
+      <h2 id="sixty">A rule you say out loud becomes a rule the system enforces.</h2>
+      <p class="section-lede">
+        This is the demo that ships in the repository. <span class="mono">npm run demo</span> runs it;
+        <span class="mono">scripts/smoke.js</span> asserts the outcome on every push.
+      </p>
+      <div class="code">
+<pre><span class="c">you  →</span> Renewals of €50,000 or more shouldn't reach Proposal
+       without a manager signing off.
+
+<span class="c">agent→</span> reads AGENTS.md, ARCHITECTURE.md and the renewal workflow
+       encodes the threshold as <span class="k">deterministic policy</span>, not a prompt
+       runs <span class="k">npm run verify</span>  <span class="c">→ {{measured.tests}} passing</span>
+
+<span class="c">then →</span> €20,000 renewal  <span class="c">→</span> Proposal
+       €80,000 renewal  <span class="c">→</span> Approval Pending  <span class="c">— waiting on a named human</span>
+
+<span class="c">and  →</span> a test named <span class="s">"approval workflow rejects an agent
+       pretending to make the human decision"</span> now fails
+       if that boundary is ever removed.</pre>
+      </div>
+      <p class="section-lede" style="margin-top:24px">
+        The last line is the part that matters. An agent wrote the policy; an agent cannot execute
+        the decision the policy defers to a person. That is not a convention in a style guide — it is
+        a test in the suite.
+      </p>
+    </section>
+  </div>
+
+  <div class="shell">
+    <section aria-labelledby="how">
+      <p class="kicker">How it works</p>
+      <h2 id="how">Four moving parts, none of them hidden.</h2>
+      <div class="flow">
+        <div>
+          <span>1</span>
+          <strong>You describe the outcome</strong>
+          <small>In business language. A brief, a rule, a stage that should exist, a threshold that should stop a deal.</small>
+        </div>
+        <div>
+          <span>2</span>
+          <strong>The agent reads the project</strong>
+          <small>AGENTS.md and CLAUDE.md, eleven repository skills, an MCP server, and one command that reports what the application actually contains.</small>
+        </div>
+        <div>
+          <span>3</span>
+          <strong>It generates real code</strong>
+          <small>Manifests become migrations, services, REST resources, SDK methods and Admin screens. Code generation is dry-run until you pass <span class="mono">--apply</span>.</small>
+        </div>
+        <div>
+          <span>4</span>
+          <strong>The runtime keeps it honest</strong>
+          <small>Every mutation goes through a service or a named workflow, leaving an audit event and a step-level trace. Policy decides; the model does not.</small>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="shell">
+    <section id="proven" aria-labelledby="proven-h">
+      <p class="kicker">What is actually built</p>
+      <h2 id="proven-h">Every sentence below is bound to a test.</h2>
+      <p class="section-lede">
+        These are not roadmap items. Each card is generated from a ledger that names the tests
+        proving it, and the build fails if a claim loses its evidence — or its limitation.
+        The full list of twenty is on the <a href="evidence.html">evidence page</a>.
+      </p>
+
+      <div class="cards">
+        <article class="card">
+          <h3>Describe an object, get an application</h3>
+          <p>{{claim:C-01}}</p>
+          <div class="evidence"><code>tests/module-factory-e2e.test.js</code><code>tests/admin-modules.test.js</code></div>
+          <p class="limit"><b>Limit</b>{{claim:C-01.limitation}}</p>
+        </article>
+
+        <article class="card">
+          <h3>Policy is code, not judgement</h3>
+          <p>{{claim:C-03}}</p>
+          <div class="evidence"><code>tests/workflow.test.js</code><code>tests/api.test.js</code></div>
+          <p class="limit"><b>Limit</b>{{claim:C-03.limitation}}</p>
+        </article>
+
+        <article class="card">
+          <h3>The agent cannot approve for you</h3>
+          <p>{{claim:C-04}}</p>
+          <div class="evidence"><code>tests/workflow.test.js</code></div>
+          <p class="limit"><b>Limit</b>{{claim:C-04.limitation}}</p>
+        </article>
+
+        <article class="card">
+          <h3>Lead to Order, end to end</h3>
+          <p>{{claim:C-06}}</p>
+          <div class="evidence"><code>tests/lead-intelligence-e2e.test.js</code><code>tests/lead-conversion-e2e.test.js</code></div>
+          <p class="limit"><b>Limit</b>{{claim:C-06.limitation}}</p>
+        </article>
+
+        <article class="card">
+          <h3>Quotes priced by the server</h3>
+          <p>{{claim:C-08}}</p>
+          <div class="evidence"><code>tests/commercial-e2e.test.js</code></div>
+          <p class="limit"><b>Limit</b>{{claim:C-08.limitation}}</p>
+        </article>
+
+        <article class="card">
+          <h3>Signature evidence, then one immutable Order</h3>
+          <p>{{claim:C-09}}</p>
+          <div class="evidence"><code>tests/signature-order-e2e.test.js</code></div>
+          <p class="limit"><b>Limit</b>{{claim:C-09.limitation}}</p>
+        </article>
+
+        <article class="card">
+          <h3>The work after the signature</h3>
+          <p>{{claim:C-11}}</p>
+          <div class="evidence"><code>tests/delivery-handover-e2e.test.js</code><code>tests/delivery-execution-e2e.test.js</code></div>
+          <p class="limit"><b>Limit</b>{{claim:C-11.limitation}}</p>
+        </article>
+
+        <article class="card">
+          <h3>One command tells an agent what exists</h3>
+          <p>{{claim:C-14}}</p>
+          <div class="evidence"><code>tests/app-inspect.test.js</code></div>
+          <p class="limit"><b>Limit</b>{{claim:C-14.limitation}}</p>
+        </article>
+
+        <article class="card">
+          <h3>Nothing runs underneath you</h3>
+          <p>{{claim:C-17}}</p>
+          <div class="evidence"><code>package.json</code><code>tests/api.test.js</code></div>
+          <p class="limit"><b>Limit</b>{{claim:C-17.limitation}}</p>
+        </article>
+      </div>
+    </section>
+  </div>
+
+  <div class="shell">
+    <section id="compare" aria-labelledby="compare-h">
+      <p class="kicker">Where this sits</p>
+      <h2 id="compare-h">One question separates this from everything adjacent.</h2>
+      <blockquote class="callout">
+        <p><strong>If the vendor disappears tomorrow, what are you left with?</strong></p>
+        <p>
+          With a CRM platform you configure: a runtime you now have to operate, and customization
+          expressed as metadata inside someone else's database. With this: an application in your
+          repository, in a language your team reads, with a dependency you could delete.
+        </p>
+      </blockquote>
+
+      <div class="table-wrap" style="margin-top:36px">
+        <table>
+          <caption class="muted" style="caption-side:bottom;padding:14px 18px;text-align:left;font-size:13px">
+            Competitor research and its caveats are maintained in the repository, not here —
+            see <span class="mono">docs/strategy/COMPETITOR_MAP.md</span>, which names where each
+            comparison is sourced and where the alternative is the better choice.
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col"></th>
+              <th scope="col">Configure a CRM platform</th>
+              <th scope="col">Build it from scratch</th>
+              <th scope="col">This framework</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>What the agent produces</td>
+              <td>Extensions deployed into the platform's runtime</td>
+              <td>Whatever it invents, differently each time</td>
+              <td>A standalone application in your repository</td>
+            </tr>
+            <tr>
+              <td>Who runs the system</td>
+              <td>The platform</td>
+              <td>You</td>
+              <td>You — the framework is a dependency, like any library</td>
+            </tr>
+            <tr>
+              <td>Process semantics</td>
+              <td>Their workflow engine and permission model</td>
+              <td>Re-derived per project, usually late</td>
+              <td>Deterministic workflows, approval policy, audit and trace as primitives</td>
+            </tr>
+            <tr>
+              <td>Deep customization</td>
+              <td>Fork the platform and carry its release train</td>
+              <td>Unlimited, and entirely your problem</td>
+              <td>Regenerate or extend your own code</td>
+            </tr>
+            <tr>
+              <td>Honest downside</td>
+              <td>Works today, at a ceiling you meet later</td>
+              <td>Total freedom, no governance until you build it</td>
+              <td>No auth, no hosting, no scheduler — see the limits below</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="shell">
+    <section id="limits" data-limits aria-labelledby="limits-h">
+      <p class="kicker">Read this before the rest</p>
+      <h2 id="limits-h">What it cannot do yet.</h2>
+      <p class="section-lede">
+        This section is not a disclaimer at the bottom of a page. It is the reason to trust the
+        section above it. Each item is tracked in the repository's own jobs-to-be-done matrix,
+        where &ldquo;not supported&rdquo; is the default status and evidence is required to leave it.
+      </p>
+      <div class="limits-grid">
+        <div class="limit-card"><h3>{{limitation:L-01.headline}}</h3><p>{{limitation:L-01.text}}</p></div>
+        <div class="limit-card"><h3>{{limitation:L-02.headline}}</h3><p>{{limitation:L-02.text}}</p></div>
+        <div class="limit-card"><h3>{{limitation:L-03.headline}}</h3><p>{{limitation:L-03.text}}</p></div>
+        <div class="limit-card"><h3>{{limitation:L-04.headline}}</h3><p>{{limitation:L-04.text}}</p></div>
+        <div class="limit-card"><h3>{{limitation:L-05.headline}}</h3><p>{{limitation:L-05.text}}</p></div>
+        <div class="limit-card"><h3>{{limitation:L-06.headline}}</h3><p>{{limitation:L-06.text}}</p></div>
+        <div class="limit-card"><h3>{{limitation:L-07.headline}}</h3><p>{{limitation:L-07.text}}</p></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="shell">
+    <section aria-labelledby="agents-h">
+      <p class="kicker">If you are an agent reading this</p>
+      <h2 id="agents-h">The surfaces you need are plain files and plain commands.</h2>
+      <p class="section-lede">
+        No MCP server is required, no network call, no credential, no long-lived process. Two
+        commands and a checkout cover it — the compatibility contract is written down in
+        <span class="mono">docs/AGENT_HARNESS_COMPATIBILITY.md</span>.
+      </p>
+      <div class="code">
+<pre><span class="c"># what does this application actually contain?</span>
+npm run crm -- app inspect --json
+
+<span class="c"># is this plan still valid against that composition?</span>
+npm run crm -- solution check my-plan.json
+
+<span class="c"># exit codes are the contract, not the prose</span>
+<span class="k">0</span>  valid
+<span class="k">1</span>  problems — the full report is still printed
+<span class="k">2</span>  could not be read at all</pre>
+      </div>
+      <div class="cards" style="margin-top:24px">
+        <article class="card">
+          <h3>Read the machine summary</h3>
+          <p>A single plain-text file describing the framework, its boundaries and where each document lives.</p>
+          <div class="evidence"><a href="llms.txt"><code>llms.txt</code></a></div>
+        </article>
+        <article class="card">
+          <h3>Narrow write tools</h3>
+          <p>{{claim:C-18}}</p>
+          <div class="evidence"><code>tests/mcp.test.js</code></div>
+          <p class="limit"><b>Limit</b>{{claim:C-18.limitation}}</p>
+        </article>
+        <article class="card">
+          <h3>Plans that know when they are stale</h3>
+          <p>{{claim:C-15}}</p>
+          <div class="evidence"><code>tests/solution-plan.test.js</code></div>
+          <p class="limit"><b>Limit</b>{{claim:C-15.limitation}}</p>
+        </article>
+      </div>
+    </section>
+  </div>
+
+  <div class="narrow">
+    <section aria-labelledby="faq-h">
+      <p class="kicker">Straight answers</p>
+      <h2 id="faq-h">Questions a sceptical developer asks first.</h2>
+
+      <details>
+        <summary>Can I run this in production?</summary>
+        <p>
+          No. There is no authentication, no tenancy and no role model, and an actor header is an
+          assertion rather than an identity. The framework says so itself: <span class="mono">crm app
+          inspect</span> reports a production posture of &ldquo;local development only&rdquo; in its
+          own machine-readable output. Building the production spine is the next platform track, not
+          a footnote.
+        </p>
+      </details>
+
+      <details>
+        <summary>How is this different from an open-source CRM with an AI SDK?</summary>
+        <p>
+          Their agents extend a running platform; this one authors an application. The distinction is
+          not marketing — it decides who operates the system, who owns the schema, and what you hold
+          if the project stops. The comparison, including the places where the alternative is the
+          better answer, is maintained in the repository rather than curated here.
+        </p>
+      </details>
+
+      <details>
+        <summary>Does the AI make commercial decisions?</summary>
+        <p>
+          It composes and recommends; it never decides. Approval is deterministic policy, and there is
+          a test asserting that an agent presenting itself as the approver is refused. If that
+          property ever breaks, the build breaks with it.
+        </p>
+      </details>
+
+      <details>
+        <summary>Why is there no benchmark number on this page?</summary>
+        <p>
+          Because the benchmark has not been run. The protocol for measuring how often an agent can
+          build a working CRM from a brief is designed and published in the repository; until it has
+          been executed, publishing a rate would be inventing one. When it runs, the number and the
+          full transcripts — including the failures — get published together.
+        </p>
+      </details>
+
+      <details>
+        <summary>What is the project actually called?</summary>
+        <p>
+          It does not have a public name yet. The working title fails as a brand for reasons written
+          down in the repository, and choosing a replacement needs a registrar check and a trademark
+          screen that a person has to do. Everything on this page is generated from a single tokens
+          file, so the rename is one edit rather than a rewrite.
+        </p>
+      </details>
+
+      <details>
+        <summary>What happens if this project is abandoned?</summary>
+        <p>
+          You keep a working application, in your repository, with no third-party runtime
+          dependencies and a database file you can open with any SQLite client. That is a deliberate
+          design constraint rather than a reassurance: the framework is a dependency you could delete
+          and still ship.
+        </p>
+      </details>
+    </section>
+  </div>
+
+</main>
+
+{{include:footer.html}}
+</body>
+</html>
