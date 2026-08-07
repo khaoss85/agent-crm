@@ -1,5 +1,6 @@
 {
   "manifestVersion": 1,
+  "revision": 2,
   "name": "delivery-milestone",
   "description": "A planned delivery milestone (M13): a canonical key, its order and the work packages it covers. It is a plan, not a contractual milestone: nothing signed it, nothing schedules it, and no billing or acceptance attaches to it.",
   "fields": [
@@ -40,7 +41,9 @@
       "name": "status",
       "type": "enum",
       "values": [
-        "planned"
+        "planned",
+        "in_progress",
+        "completed"
       ],
       "writable": "managed"
     },
@@ -66,6 +69,21 @@
     },
     {
       "name": "handoverRunId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "startedAt",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "completedAt",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "executionNote",
       "type": "string",
       "writable": "managed"
     }

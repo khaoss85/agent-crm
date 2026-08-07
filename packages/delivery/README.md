@@ -2,11 +2,12 @@
 
 The second domain package built under ADR-018, and the first that **depends on
 another package**. It turns the pending Delivery Obligations of an activated
-contract into a planned delivery project: one work package per obligation, a
-milestone plan, and an optional third-party partner engagement.
+contract into a planned delivery project — one work package per obligation, a
+milestone plan, and an optional third-party partner engagement (M13) — and then
+lets a human **run** that project through an explicit transition table (M14a).
 
-It **plans**. It does not execute delivery — nothing starts, progresses,
-completes, schedules, staffs, costs, bills or grants access.
+It plans and records execution. Nothing here schedules, staffs, costs, bills,
+accepts or grants access, and nothing moves on a clock.
 
 Full guide: [`docs/DELIVERY_HANDOVER.md`](../../docs/DELIVERY_HANDOVER.md).
 Authoring a package of your own:
@@ -97,12 +98,44 @@ Worked example with the starter's fixture:
 ## Layout
 
 ```text
-src/index.js           createDeliveryPackage(): actions, policies, schema metadata
-src/handover.js        plan-delivery-handover (read-only) and create-delivery-handover
-src/handover-policy.js the policy contract, delivery modes, human overrides, partner validation
-src/dates.js           post-sale planning dates
-modules/               five read-only record manifests
+src/index.js            createDeliveryPackage(): actions, policies, schema metadata
+src/handover.js         plan-delivery-handover (read-only) and create-delivery-handover
+src/handover-policy.js  the policy contract, delivery modes, human overrides, partner validation
+src/dates.js            post-sale planning dates
+src/execution-states.js the transition tables, as data
+src/execution.js        the eight human-driven execution transitions
+modules/                five read-only record manifests
 ```
+
+## Running the project (M14a)
+
+Eight actions move a delivery project through execution. The allowed moves are
+an explicit table, every one requires `actor.type === 'user'`, and a caller may
+pass `expectedState` to have a stale view refused rather than silently applied.
+
+```text
+delivery-project        pending_kickoff → in_progress → completed
+delivery-work-package   planned → in_progress ⇄ blocked, in_progress → completed
+delivery-milestone      planned → in_progress → completed
+```
+
+Three rules make the model honest rather than decorative:
+
+- **every declared state is reachable.** `start-delivery-project`,
+  `complete-delivery-project`, `start-work-package`, `block-work-package`,
+  `resume-work-package`, `complete-work-package`, `start-milestone` and
+  `complete-milestone` between them produce every state above. The schema
+  publishes which action produces which state, and the suite checks it.
+- **work happens under a running project.** A work package or milestone moves
+  only while its project is `in_progress`, and the project closes only once
+  every work package and milestone is `completed` — a blocked work package
+  holds it open.
+- **a block states its reason.** `block-work-package` requires one, and records
+  who blocked it and when. `resume-work-package` clears those three fields; the
+  block that was cleared stays in the audit log.
+
+`completed` is terminal — there is no reopen in this milestone — and nothing
+moves on a clock, because there is no scheduler.
 
 ## The partner boundary, stated plainly
 
@@ -113,7 +146,8 @@ Nothing here notifies the partner or lets them see anything.
 
 ## What it does not do
 
-Delivery execution, progress, status transitions, time tracking, expenses,
-cost, margin, resource scheduling, capacity, change requests, customer
-acceptance, billing milestones, invoicing, partner access, revenue share,
-service contracts, entitlements, SLA and support cases.
+Time tracking, expenses, cost, margin, resource scheduling, capacity, change
+requests, deliverables, customer acceptance, billing milestones, invoicing,
+partner access, revenue share, service contracts, entitlements, SLA and support
+cases. Economics, change requests, deliverables and acceptance are M14b, and
+none of their code ships here.

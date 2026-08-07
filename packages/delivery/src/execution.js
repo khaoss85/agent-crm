@@ -1,0 +1,333 @@
+// @ts-check
+
+import { AppError, ValidationError, optionalString, requiredString } from '../../core/index.js';
+import {
+  MILESTONE_TRANSITIONS,
+  PROJECT_TRANSITIONS,
+  WORK_PACKAGE_TRANSITIONS,
+  assertExpectedState,
+  assertStateIn,
+  assertTransition,
+} from './execution-states.js';
+import { resolvedNames } from './handover.js';
+
+/**
+ * Delivery execution (Milestone 14a).
+ *
+ * M13 planned a delivery project. This file lets a human **run** it: start the
+ * project, start, block, resume and complete its work packages, start and
+ * complete its milestones, and close the project once all of them are done.
+ *
+ * Everything here is a bounded, server-authoritative transition:
+ *
+ * - the allowed moves are an explicit table (`execution-states.js`), never a
+ *   rank comparison;
+ * - every state a manifest declares is reachable through an action, and every
+ *   action moves a record somewhere the table allows. A declared state nothing
+ *   can reach would be a capability claim without a capability;
+ * - nothing transitions on a clock — there is no scheduler in this framework;
+ * - every mutation requires `actor.type === 'user'`. That is a **human-actor
+ *   boundary, not Delivery Manager RBAC**: it says a person did this, not that
+ *   the person was authorized;
+ * - a caller may state the state it believed the record was in, and a
+ *   disagreement is a stable `409` rather than a silent overwrite.
+ *
+ * It records execution. It does not bill, invoice, recognize revenue, grant a
+ * partner anything, or claim a customer accepted anything.
+ */
+
+/** Every free-text field here is bounded, and the bound is enforced here. */
+const MAX_TEXT = 500;
+/** An actor id is an identifier, not prose; it is stored truncated. */
+const MAX_ACTOR = 120;
+
+/**
+ * Rejects every C0 control except tab, newline and carriage return, plus DEL
+ * and the Unicode line/paragraph separators: U+2028 and U+2029 terminate a line
+ * in a JavaScript string context, so they belong with the controls.
+ *
+ * Written with escapes, deliberately. The same class spelled with literal bytes
+ * makes this file a binary blob to git and grep — the diff a reviewer needs
+ * most becomes "Binary files differ".
+ */
+const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u2028\u2029]/;
+
+/** @param {any} actor */
+function requireHuman(actor, what) {
+  if (!actor || actor.type !== 'user') {
+    throw new AppError(`${what} is a human decision: sign in as a user actor`, {
+      code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+    });
+  }
+}
+
+/** Trusted read-only managed storage handle; a CRUD-writable module is refused. */
+function trusted(modules, name) {
+  const service = modules.get(name).service;
+  if (typeof service.applyManaged !== 'function') {
+    throw new AppError(`Module "${name}" is not a read-only managed record module — regenerate it from the current manifest`, {
+      code: 'DELIVERY_STORAGE_INVALID', status: 500,
+    });
+  }
+  return service;
+}
+
+/**
+ * Operator free text: bounded in length and free of control characters.
+ *
+ * The length bound is applied here rather than passed to the validator: the
+ * kernel's `optionalString`/`requiredString` take no options, so an options
+ * object handed to them is silently ignored and the field is unbounded.
+ *
+ * @param {unknown} value @param {string} field @param {{required?: boolean}} [options]
+ */
+function boundedText(value, field, { required = false } = {}) {
+  const text = required ? requiredString(value, field) : optionalString(value, field);
+  if (text === null) return null;
+  if (text.length > MAX_TEXT) {
+    throw new ValidationError(`${field} must be at most ${MAX_TEXT} characters`, { field });
+  }
+  if (CONTROL_CHARACTERS.test(text)) {
+    throw new ValidationError(`${field} must not contain control characters`, { field });
+  }
+  return text;
+}
+
+/** The actor id as stored evidence: who did this, truncated to an identifier. */
+function actorId(actor) {
+  return String(actor?.id ?? 'unknown').slice(0, MAX_ACTOR);
+}
+
+/**
+ * One transition action. The shape is identical for every record kind, which is
+ * the point: the differences live in the transition table, not in the code.
+ *
+ * @param {{
+ *   config: any, module: 'project'|'workPackage'|'milestone', name: string,
+ *   label: string, description: string, kind: string, from: string[], to: string,
+ *   stamp?: string, event: string,
+ *   extraInput?: any[],
+ *   guard?: (context: any) => void,
+ *   patch?: (context: any) => Record<string, unknown>,
+ * }} spec
+ */
+function transitionAction(spec) {
+  const names = resolvedNames(spec.config);
+  return {
+    module: names[spec.module],
+    name: spec.name,
+    label: spec.label,
+    description: spec.description,
+    actionContract: 1,
+    input: [
+      { name: 'expectedState', type: 'string', required: false, hint: 'The state you believed this was in; a mismatch is refused.' },
+      ...(spec.extraInput ?? []),
+      { name: 'note', type: 'string', required: false, hint: `Why, in the operator's words. Stored as text, at most ${MAX_TEXT} characters.` },
+    ],
+    /** @param {any} ctx */
+    async execute({ record, input, modules, actor, now, step }) {
+      requireHuman(actor, spec.label);
+      assertExpectedState({ kind: spec.kind, id: record.id, expected: input.expectedState, actual: record.status });
+      assertTransition({ kind: spec.kind, from: record.status, to: spec.to, id: record.id });
+      // The table says which moves exist; this says which of them *this* action
+      // performs. Two actions can share a target state — starting a work package
+      // and resuming a blocked one both end in `in_progress` — and without this
+      // check, resuming something that was never blocked would succeed and skip
+      // the start stamp.
+      assertStateIn({
+        kind: spec.kind, id: record.id, state: record.status,
+        allowed: spec.from, operation: spec.label.toLowerCase(),
+      });
+      if (spec.guard) spec.guard({ record, modules, names });
+
+      const patch = { status: spec.to };
+      if (spec.stamp) patch[spec.stamp] = now();
+      if (spec.patch) Object.assign(patch, spec.patch({ record, input, modules, names, actor, now }));
+      const note = boundedText(input.note, 'note');
+      if (note) patch.executionNote = note;
+
+      const service = trusted(modules, names[spec.module]);
+      const updated = await service.applyManaged(record.id, patch, { actor });
+      step(spec.event, { id: record.id, from: record.status, to: spec.to });
+      return { [spec.module]: updated, from: record.status, to: spec.to };
+    },
+  };
+}
+
+/**
+ * A work package or milestone may only move while its project is running.
+ * Working on a project nobody kicked off — or on one already closed — is the
+ * kind of thing a state machine exists to refuse.
+ */
+function projectMustBeRunning({ record, modules, names }) {
+  const project = modules.get(names.project).service.get(record.deliveryProjectId);
+  assertStateIn({
+    kind: 'delivery-project', id: project.id, state: project.status,
+    allowed: ['in_progress'], operation: 'start or complete work on it',
+  });
+}
+
+/**
+ * A delivery project closes when its work is finished, not because somebody
+ * says so: every work package and every milestone must be `completed`. A
+ * blocked work package is not completed, so it holds the project open — which
+ * is the honest answer.
+ *
+ * The counts come from `countWhere`, an exact indexed read, not from a paged
+ * list: a correctness decision must never depend on a page bound.
+ */
+function hierarchyMustBeComplete({ record, modules, names }) {
+  const open = [
+    ['work packages', names.workPackage, 'completed'],
+    ['milestones', names.milestone, 'completed'],
+  ].map(([label, module, done]) => {
+    const service = modules.get(module).service;
+    const total = service.countWhere({ deliveryProjectId: record.id });
+    const finished = service.countWhere({ deliveryProjectId: record.id, status: done });
+    return { label, open: total - finished };
+  }).filter((entry) => entry.open > 0);
+
+  if (open.length > 0) {
+    throw new AppError(
+      `delivery-project "${record.id}" still has ${open.map((entry) => `${entry.open} ${entry.label}`).join(' and ')} that are not completed`,
+      {
+        code: 'DELIVERY_HIERARCHY_INCOMPLETE', status: 409,
+        details: { id: record.id, open: Object.fromEntries(open.map((entry) => [entry.label, entry.open])) },
+      },
+    );
+  }
+}
+
+/**
+ * Every transition this package ships, as data. Keeping it a list rather than
+ * seven inline calls is what lets the package publish — and the suite check —
+ * which action produces which state, instead of asserting reachability in a
+ * comment.
+ */
+const TRANSITION_SPECS = Object.freeze([
+  Object.freeze({
+    module: 'project', kind: 'delivery-project',
+    from: ['pending_kickoff'],
+    name: 'start-delivery-project', label: 'Start delivery project',
+    description: 'Move a planned delivery project into execution. Records who started it and when.',
+    to: 'in_progress', stamp: 'startedAt', event: 'delivery.project.started',
+  }),
+  Object.freeze({
+    module: 'project', kind: 'delivery-project',
+    from: ['in_progress'],
+    name: 'complete-delivery-project', label: 'Complete delivery project',
+    description: 'Close a delivery project once every work package and milestone is completed. It does not accept, invoice or bill anything.',
+    to: 'completed', stamp: 'completedAt', event: 'delivery.project.completed',
+    guard: hierarchyMustBeComplete,
+  }),
+  Object.freeze({
+    module: 'workPackage', kind: 'delivery-work-package',
+    from: ['planned'],
+    name: 'start-work-package', label: 'Start work package',
+    description: 'Begin work on one work package of a running delivery project.',
+    to: 'in_progress', stamp: 'startedAt', event: 'delivery.work-package.started',
+    guard: projectMustBeRunning,
+  }),
+  Object.freeze({
+    module: 'workPackage', kind: 'delivery-work-package',
+    from: ['in_progress'],
+    name: 'block-work-package', label: 'Block work package',
+    description: 'Record that work has stopped and why. A blocked work package holds its project open until it resumes and completes.',
+    to: 'blocked', stamp: 'blockedAt', event: 'delivery.work-package.blocked',
+    guard: projectMustBeRunning,
+    extraInput: [{ name: 'reason', type: 'string', required: true, hint: 'What is blocking this. Required: a block with no stated reason is not evidence.' }],
+    patch: ({ input, actor }) => ({
+      blockedReason: boundedText(input.reason, 'reason', { required: true }),
+      blockedBy: actorId(actor),
+    }),
+  }),
+  Object.freeze({
+    module: 'workPackage', kind: 'delivery-work-package',
+    from: ['blocked'],
+    name: 'resume-work-package', label: 'Resume work package',
+    description: 'Record that a block is cleared and work continues. The block that was cleared stays in the audit log.',
+    to: 'in_progress', event: 'delivery.work-package.resumed',
+    guard: projectMustBeRunning,
+    // The three block fields describe the block a work package is under *now*.
+    // Clearing them on resume keeps the record truthful; every block that ever
+    // held, with its reason, actor and time, is in the audit log.
+    patch: () => ({ blockedReason: null, blockedAt: null, blockedBy: null }),
+  }),
+  Object.freeze({
+    module: 'workPackage', kind: 'delivery-work-package',
+    from: ['in_progress'],
+    name: 'complete-work-package', label: 'Complete work package',
+    description: 'Record that the work in this package is finished. It does not accept it — that is the customer\'s answer, not ours.',
+    to: 'completed', stamp: 'completedAt', event: 'delivery.work-package.completed',
+    guard: projectMustBeRunning,
+  }),
+  Object.freeze({
+    module: 'milestone', kind: 'delivery-milestone',
+    from: ['planned'],
+    name: 'start-milestone', label: 'Start milestone',
+    description: 'Mark a planned milestone of a running delivery project as being worked on.',
+    to: 'in_progress', stamp: 'startedAt', event: 'delivery.milestone.started',
+    guard: projectMustBeRunning,
+  }),
+  Object.freeze({
+    module: 'milestone', kind: 'delivery-milestone',
+    from: ['in_progress'],
+    name: 'complete-milestone', label: 'Complete milestone',
+    description: 'Record that a milestone is finished. This is not a contractual or billing milestone, and nothing is invoiced by it.',
+    to: 'completed', stamp: 'completedAt', event: 'delivery.milestone.completed',
+    guard: projectMustBeRunning,
+  }),
+]);
+
+/** Every execution action this package contributes. */
+export function buildExecutionActions(config = {}) {
+  return TRANSITION_SPECS.map((spec) => transitionAction({ ...spec, config }));
+}
+
+/**
+ * Which shipped action moves a record of each kind from which states to which
+ * state. Published so a client can offer only the actions a record can take,
+ * instead of guessing from the transition table — two actions may share a
+ * target state, so the table alone does not answer it.
+ */
+function producedStates() {
+  /** @type {Record<string, Record<string, {from: string[], to: string}>>} */
+  const out = {};
+  for (const spec of TRANSITION_SPECS) {
+    out[spec.kind] = { ...out[spec.kind], [spec.name]: { from: [...spec.from], to: spec.to } };
+  }
+  return out;
+}
+
+/** Function-free schema metadata for the execution surface. */
+export function executionMetadata() {
+  return {
+    executionContract: 1,
+    humanApproval: 'every execution transition requires actor.type === "user"; an agent is refused 403 HUMAN_APPROVAL_REQUIRED. This is a human-actor boundary, not Delivery Manager role enforcement',
+    concurrency: 'supply expectedState to refuse a transition when someone else already moved the record (409 DELIVERY_STATE_CONFLICT)',
+    hierarchy: 'a work package or milestone moves only while its delivery project is in_progress, and the project completes only once every work package and milestone is completed (409 DELIVERY_HIERARCHY_INCOMPLETE)',
+    blocking: 'blocking a work package requires a stated reason and records who blocked it and when; resuming clears those three fields, and every block remains in the audit log',
+    textLimits: { note: MAX_TEXT, reason: MAX_TEXT },
+    // Published, not asserted in prose: which shipped action moves a record of
+    // each kind into which state. An agent reads this to plan; a reviewer reads
+    // it against `transitions` below to see that no declared state is
+    // unreachable and no declared edge is a promise nothing keeps.
+    producedStates: producedStates(),
+    transitions: {
+      'delivery-project': plain(PROJECT_TRANSITIONS),
+      'delivery-work-package': plain(WORK_PACKAGE_TRANSITIONS),
+      'delivery-milestone': plain(MILESTONE_TRANSITIONS),
+    },
+    notModeled: [
+      'billing', 'invoicing', 'payment', 'revenue recognition', 'accounting',
+      'partner access', 'partner portal', 'customer acceptance', 'SLA',
+      'service contracts', 'resource scheduling', 'capacity', 'a scheduler',
+      'time tracking', 'expenses', 'cost', 'margin', 'change requests',
+    ],
+  };
+}
+
+/** @param {Record<string, readonly string[]>} table */
+function plain(table) {
+  return Object.fromEntries(Object.entries(table).map(([from, to]) => [from, [...to]]));
+}

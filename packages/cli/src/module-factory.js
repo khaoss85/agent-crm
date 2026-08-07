@@ -238,6 +238,10 @@ export function planModule(input) {
     module: manifest.name,
     table: manifest.table,
     migrationName: migration.migrationName,
+    // Surfaced before the apply: this module predates module.state.json, so its
+    // revision 1 was reconstructed from the manifest and generated source and
+    // verified against them. The apply writes the state file, once.
+    adopted: previousState?.adopted === true,
     // A module whose every field is managed generates NO public create/update
     // at all (capabilities get/list; records only via trusted actions) —
     // surfaced here so the reviewer sees the write policy before applying.
@@ -1181,16 +1185,21 @@ export const generatedModules = [];
 `;
   }
   const names = moduleNames.map(buildNames);
+  // A namespace import, not a named one: applying any module regenerates this
+  // file for *every* installed module, including ones generated before ADR-019
+  // whose migration.js exports a single `<camel>Migration` and no
+  // `<camel>Migrations` array. A named import of the array would make this file
+  // fail to load — an upgrade would break modules that did not change.
   const imports = names
     .flatMap((name) => [
       `import { create${name.pascal}Module } from '../${name.module}/src/index.js';`,
-      `import { ${name.camel}Migrations } from '../${name.module}/src/migration.js';`,
+      `import * as ${name.camel}MigrationSource from '../${name.module}/src/migration.js';`,
     ])
     .join('\n');
   const entries = names
     .map(
       (name) =>
-        `  { name: '${name.module}', createModule: create${name.pascal}Module, migrations: ${name.camel}Migrations },`,
+        `  { name: '${name.module}', createModule: create${name.pascal}Module, migrations: migrationsOf(${name.camel}MigrationSource, '${name.camel}', '${name.module}') },`,
     )
     .join('\n');
   return `// @ts-check
@@ -1199,6 +1208,25 @@ export const generatedModules = [];
 // You can edit it by hand, but the next apply rewrites it from the manifests on disk.
 
 ${imports}
+
+/**
+ * A module's migrations, in the order they must run. A module generated under
+ * ADR-019 exports the append-only \`<camel>Migrations\` array; one generated
+ * before it exports a single \`<camel>Migration\`. Both are read, so upgrading
+ * the framework never requires regenerating modules that did not change.
+ *
+ * @param {Record<string, any>} source @param {string} camel @param {string} moduleName
+ */
+function migrationsOf(source, camel, moduleName) {
+  const list = source[camel + 'Migrations'];
+  if (Array.isArray(list)) return list;
+  const single = source[camel + 'Migration'];
+  if (single) return [single];
+  throw new Error(
+    'Generated module "' + moduleName + '" exports no migration from src/migration.js; '
+      + 'regenerate it from its module.manifest.json',
+  );
+}
 
 /** @type {Array<{name: string, createModule: (deps: {database: any, audit: any, events: any}) => any, migrations: Array<{name: string, sql: string}>}>} */
 export const generatedModules = [
