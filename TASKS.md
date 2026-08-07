@@ -22,4 +22,16 @@ The first unchecked item is the default next task for Codex.
 - [ ] **MK0 — Marketing & Growth Operations roadmap (documentation only).** Strategy (`docs/strategy/MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md`), the MK0–MK7 track in `EXECUTION_ROADMAP.md`, 43 JTBD-MK rows (all **not supported**) and five planned E2E-M benchmark scenarios. Opened as a documentation-only PR (#18) targeting `main`. **No Marketing runtime is implemented, and MK1 does not start in it.**
 
 - [x] **Module Evolution v1 (ADR-019).** A generic kernel capability: a generated module gains fields, enum values and indexes through an explicit `revision`, a checked-in `module.state.json` and append-only `migrations[]`. Merged in PR #19; **the prerequisite M14 was waiting on.**
-- [ ] **AX0 — Objective-driven agent experience (documentation and Agent Skills only).** The Goal-to-Solution lifecycle, the SolutionPlan design, capability-discovery guidance, the mirrored `solve-business-goal` Skill, the canonical full-funnel worked example, 10 JTBD-AX rows and the E2E-G1 benchmark gates. **No runtime code; AX1–AX5 are not implemented.**
+- [x] **AX0 — Objective-driven agent experience (documentation and Agent Skills only).** The Goal-to-Solution lifecycle, the SolutionPlan design, capability-discovery guidance, the mirrored `solve-business-goal` Skill, the canonical full-funnel worked example, 10 JTBD-AX rows and the E2E-G1 benchmark gates. **No runtime code; AX1–AX5 are not implemented.**
+- [x] **M14a — Delivery execution.** The three M13 delivery records evolve to revision 2 and gain a lifecycle: eight human-driven transitions over explicit tables, block evidence with a required reason, and a hierarchy gate that closes a project only over completed work (`docs/plans/milestone-14-delivery-economics-acceptance.md`, ADR-019 addendum 1).
+- [ ] **M14b — Delivery economics, change requests, deliverables and acceptance.** The next Delivery-domain milestone. Partial source preserved on `claude/m14b-economics-change-acceptance-preserved`.
+
+## Future platform items
+
+Recorded so they are not lost, and deliberately not bundled into a domain milestone:
+
+- [ ] **Generic Admin action availability.** The generated Admin renders every action a module declares and does not filter by the record's current state, so actions invalid for that state are still offered. The server is authoritative and refuses them with a `409` naming the allowed moves, and the schema already exposes per-action `from`/`to` metadata — a future generic Admin enhancement should hide or disable what the current state cannot take. A package-owned Admin (M14b) may use state-aware controls before that lands.
+- [ ] **Machine-readable JTBD and quality-gate evidence.** Today both live in Markdown and are read by people, not machines.
+- [ ] **Provider-instance discovery and health.**
+- [ ] **Runtime and database inspection** — what a particular database has actually applied, as opposed to what the checked-in source declares.
+- [ ] **Data Operations** — deduplication, merge, quality remediation.

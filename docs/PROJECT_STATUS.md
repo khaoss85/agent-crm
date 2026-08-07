@@ -99,6 +99,14 @@ track** (AX0–AX5 — AX0 is a strategy and a Skill, AX1–AX5 are not implemen
 `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequencing and dependencies are in
 `EXECUTION_ROADMAP.md`.
 
+## Known platform limitations (not blockers, but not forgotten)
+
+| Limitation | Consequence today | Tracked |
+|---|---|---|
+| The generated Admin renders **every** action a module declares and does not filter by the record's current state | a delivery record offers buttons its state cannot take; the server refuses them with a `409` naming the allowed moves, and the schema already publishes per-action `from`/`to` metadata a client can filter on | `TASKS.md` → Future platform items |
+| JTBD and quality-gate evidence live in Markdown | no machine can aggregate them; a coding agent must read prose | `TASKS.md` |
+| Source-only view of module evolution | the checked-in revision and migration list are knowable; what a particular database applied is not | `TASKS.md` |
+
 ## Production blockers
 
 Everything below must land before the framework is safe for multi-user or
