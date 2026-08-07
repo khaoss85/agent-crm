@@ -8,7 +8,7 @@ export function createToolRegistry({ app, rootDir }) {
   const definitions = [
     {
       name: 'crm_project_context',
-      title: 'Agent CRM Project Context',
+      title: 'Accordo Project Context',
       description: 'Inspect modules, workflows, providers, schema and architectural rules before changing the project.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: readOnlyAnnotations(),
@@ -167,7 +167,7 @@ export function createToolRegistry({ app, rootDir }) {
     },
     {
       name: 'crm_doctor',
-      title: 'Diagnose Agent CRM Runtime',
+      title: 'Diagnose Accordo Runtime',
       description: 'Inspect database, modules, workflows, providers and entity counts.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: readOnlyAnnotations(),

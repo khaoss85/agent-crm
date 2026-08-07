@@ -241,7 +241,7 @@ AX5  Closed-loop optimization with Marketing + Analytics
 | AX1 | application-level package and capability inspection (`app inspect`) |
 | AX2 | a versioned plan contract, and AX1 for its inputs |
 | AX3 | package authoring (merged) and a benchmark runner |
-| AX4 | the Production Spine and Agent CRM Cloud |
+| AX4 | the Production Spine and Accordo Cloud |
 | AX5 | Marketing, Analytics Studio, Data Governance and Durable Automation |
 
 **AX1 is implemented; AX2–AX5 are not.** AX0 ships a strategy and a Skill, AX1 ships the discovery surface that Skill now starts from. Both are useful today precisely because they report missing capabilities honestly rather than pretend.

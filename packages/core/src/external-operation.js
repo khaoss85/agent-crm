@@ -113,7 +113,7 @@ export async function runExternalOperation(operation) {
     } catch (error) {
       const dispatchFailure = normalizeError(error);
       steps.push({ name: `${name}.${phase}.events`, status: 'failed', error: dispatchFailure.message });
-      console.error(`[agent-crm] ${name} run ${runId}: ${phase} committed but event dispatch failed: ${dispatchFailure.message}`);
+      console.error(`[accordo] ${name} run ${runId}: ${phase} committed but event dispatch failed: ${dispatchFailure.message}`);
     }
     return value;
   });
@@ -172,7 +172,7 @@ export async function runExternalOperation(operation) {
       } catch (compensateError) {
         const normalized = normalizeError(compensateError);
         steps.push({ name: `${name}.compensate`, status: 'failed', error: normalized.message });
-        console.error(`[agent-crm] ${name} run ${runId}: compensation failed: ${normalized.message}`);
+        console.error(`[accordo] ${name} run ${runId}: compensation failed: ${normalized.message}`);
       }
     }
   }
@@ -189,7 +189,7 @@ export async function runExternalOperation(operation) {
       steps,
     });
   } catch (traceError) {
-    console.error(`[agent-crm] ${name} run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`);
+    console.error(`[accordo] ${name} run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`);
   }
 
   if (failure) {

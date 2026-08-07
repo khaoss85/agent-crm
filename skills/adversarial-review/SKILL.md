@@ -1,6 +1,6 @@
 ---
 name: adversarial-review
-description: Adversarially review an Agent CRM milestone PR before it merges - verify live PR state, attack the implementation across the standing review categories, fix defects in-place, re-verify from a clean clone and report by severity. Use for milestone review, pre-merge review or "review PR N" tasks. Do not use for building a feature (see the build-* skills) or for debugging a single failing run (debug-crm-run).
+description: Adversarially review an Accordo milestone PR before it merges - verify live PR state, attack the implementation across the standing review categories, fix defects in-place, re-verify from a clean clone and report by severity. Use for milestone review, pre-merge review or "review PR N" tasks. Do not use for building a feature (see the build-* skills) or for debugging a single failing run (debug-crm-run).
 requires:
   tier: repository
   command: "crm app inspect"

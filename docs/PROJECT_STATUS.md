@@ -145,7 +145,7 @@ delivery handover and delivery execution; deterministic application inspection
 
 **Documentation only (no code):** renewal, billing and everything downstream of
 activation; delivery change requests, deliverables and acceptance (M14b2); Service; Analytics Studio; Integration Runtime; Jobs & durable outbox;
-Data Governance; Design-to-CRM; Agent CRM Cloud; create-project CLI;
+Data Governance; Design-to-CRM; Accordo Cloud; create-project CLI;
 PostgreSQL; auth/tenancy/RBAC; Marketing & Growth (MK0–MK7); the Agent
 Experience track beyond AX0; benchmark execution.
 

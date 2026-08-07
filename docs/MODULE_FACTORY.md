@@ -1,6 +1,6 @@
 # Module factory
 
-The module factory turns a validated manifest (`docs/MODULE_MANIFEST.md`) into a complete, runnable backend module: readable service code, deterministic migration, module definition, tests — and automatic registration. After an explicit apply, no manual step remains: the next `createAgentCrmApp` start migrates and serves the module.
+The module factory turns a validated manifest (`docs/MODULE_MANIFEST.md`) into a complete, runnable backend module: readable service code, deterministic migration, module definition, tests — and automatic registration. After an explicit apply, no manual step remains: the next `createAccordoApp` start migrates and serves the module.
 
 ## Commands
 
@@ -39,7 +39,7 @@ Generated files carry a header stating their origin; they are **yours to edit** 
 
 ## How registration works
 
-`packages/modules/generated/index.js` is a checked-in registry with static imports, regenerated on every apply from the `module.manifest.json` copies found under `packages/modules/*/` (each one re-validated during the scan — a malformed manifest fails the plan loudly instead of producing a registry that breaks app boot). `createAgentCrmApp` imports it, passes each module's migration to the database layer and registers each factory. The application stays synchronous; there is no dynamic loading or runtime eval. See ADR-007.
+`packages/modules/generated/index.js` is a checked-in registry with static imports, regenerated on every apply from the `module.manifest.json` copies found under `packages/modules/*/` (each one re-validated during the scan — a malformed manifest fails the plan loudly instead of producing a registry that breaks app boot). `createAccordoApp` imports it, passes each module's migration to the database layer and registers each factory. The application stays synchronous; there is no dynamic loading or runtime eval. See ADR-007.
 
 **Collision policy** (checked at plan time, before anything is written): module names may not be `generated`, may not match a core/handwritten module (case-insensitively), and generated tables may not claim a core framework table or another generated module's table.
 
@@ -74,9 +74,9 @@ npm run dev            # start the server
 ```
 
 ```js
-import { AgentCrmClient } from './packages/sdk/src/index.js';
+import { AccordoClient } from './packages/sdk/src/index.js';
 
-const client = new AgentCrmClient({
+const client = new AccordoClient({
   baseUrl: 'http://localhost:4000',
   actor: { type: 'agent', id: 'claude-code' },
 });

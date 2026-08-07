@@ -121,7 +121,7 @@ Each prompt scores on six gates, all-or-nothing per gate:
 
 ### Managed-deployment gates (Cloud track, future)
 
-Once Agent CRM Cloud exists (`AGENT_CRM_CLOUD.md`; design only today), the full benchmark additionally tests the managed path:
+Once Accordo Cloud exists (`AGENT_CRM_CLOUD.md`; design only today), the full benchmark additionally tests the managed path:
 
 ```text
 brief → generated project → tests → managed deployment → public CRM login

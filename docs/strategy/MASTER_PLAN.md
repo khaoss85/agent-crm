@@ -12,7 +12,7 @@ The open-source, agent-native CRM framework: Claude Code and Codex use it to gen
 
 **Volatile status lives in `docs/PROJECT_STATUS.md`** — merged milestone, main SHA, test count, open PRs, next task and production blockers. It is updated in every milestone merge PR; this file deliberately no longer carries numbers that go stale.
 
-Stable facts: milestones **M0–M11 are merged and proven in-repo** — the vertical from lead capture through enrichment, scoring, routing, qualification, conversion, pipeline, composite quoting, discount approval, verified signature evidence and an immutable Order (ADR-001…ADR-017). Working title `agent-crm`; **no public name chosen**. The repository license is currently **MIT**; final pre-launch confirmation is a pending human decision. The benchmark is designed and **not yet executed**.
+Stable facts: milestones **M0–M11 are merged and proven in-repo** — the vertical from lead capture through enrichment, scoring, routing, qualification, conversion, pipeline, composite quoting, discount approval, verified signature evidence and an immutable Order (ADR-001…ADR-017). Working title `accordo`; **no public name chosen**. The repository license is currently **MIT**; final pre-launch confirmation is a pending human decision. The benchmark is designed and **not yet executed**.
 
 A **Platform Alignment Gate** (`PLATFORM_ALIGNMENT_GATE.md`, ADR-018) was taken after M11 and before further domain code: it draws the core-versus-domain boundary, defines the capability model, corrects the post-Order roadmap and adds the missing platform tracks. It changed no runtime code.
 
@@ -26,7 +26,7 @@ A **Platform Alignment Gate** (`PLATFORM_ALIGNMENT_GATE.md`, ADR-018) was taken 
 | create-medusa-app | create-project CLI (Phase 5) |
 | Recipes docs | CI-tested recipes |
 | Agent skills repo + docs MCP + llms.txt | Same trio, free from day one |
-| Cloud (monetization, core stays MIT) | **Agent CRM Cloud** — optional managed operating layer; explicit product track in `AGENT_CRM_CLOUD.md` (design only, unbuilt) |
+| Cloud (monetization, core stays MIT) | **Accordo Cloud** — optional managed operating layer; explicit product track in `AGENT_CRM_CLOUD.md` (design only, unbuilt) |
 
 Full analysis and what *not* to copy: `MEDUSA_PLAYBOOK.md`.
 
@@ -47,7 +47,7 @@ Brief + business process + design reference → the agent scaffolds, generates m
 
 0 Foundation → 1 Brand/license → 2 CRM core (Activity/Task/pipelines) → 3 Manifest-driven generation → 4 Admin+SDK generation → 5 create-CLI → 6 Production spine (Postgres/auth/tenancy) → 7 Providers/plugins → 8 Agent surface (Skills, Docs MCP, Project MCP) → 9 Deploy/observe → 10 Three starters → 11 Distribution → 12 Public launch → 13 Flywheel. Per-phase outcomes, dependencies, acceptance criteria and human-approval points: `EXECUTION_ROADMAP.md`.
 
-**Agent CRM Cloud** is the named product track for the optional managed operating layer — Control Plane, managed runtime, agent operations CLI/MCP, plugin operations, public benchmark deployment — gated by the Production Spine (Phase 6) and specified in `AGENT_CRM_CLOUD.md` (design only; nothing implemented). The open-source framework and the self-hosting path remain first-class forever; Cloud is optional and must never create lock-in.
+**Accordo Cloud** is the named product track for the optional managed operating layer — Control Plane, managed runtime, agent operations CLI/MCP, plugin operations, public benchmark deployment — gated by the Production Spine (Phase 6) and specified in `AGENT_CRM_CLOUD.md` (design only; nothing implemented). The open-source framework and the self-hosting path remain first-class forever; Cloud is optional and must never create lock-in.
 
 ### Product workstreams (design only, unbuilt)
 
@@ -94,9 +94,9 @@ The complete vision, deliberately **modular**: these are optional domain package
 | 7 | Data governance | design only | `DATA_GOVERNANCE.md` |
 | 8 | Design-to-CRM | design only (Admin exists; the design pipeline does not) | `DESIGN_TO_CRM.md` |
 | 9 | Integration & jobs platform | design only | `INTEGRATION_RUNTIME.md`, `JOBS_AND_OUTBOX.md` |
-| 10 | Agent CRM Cloud | design only | `AGENT_CRM_CLOUD.md`, `CLOUD_JTBD.md` |
+| 10 | Accordo Cloud | design only | `AGENT_CRM_CLOUD.md`, `CLOUD_JTBD.md` |
 | 11 | JTBD and benchmark evidence | matrix live; benchmark not executed | `../benchmarks/CRM_JTBD_MATRIX.md`, `CRM_BUILD_BENCHMARK.md` |
-| 12 | Marketing & Growth Operations | design only | `MARKETING_GROWTH_OPERATIONS.md` | Sequencing, parallelization and the Production Spine gate: `EXECUTION_ROADMAP.md` (workstream milestones M9–M15). The workstreams do not gate Agent CRM Cloud: Cloud work begins when the Production Spine is done, not when all domains are done.
+| 12 | Marketing & Growth Operations | design only | `MARKETING_GROWTH_OPERATIONS.md` | Sequencing, parallelization and the Production Spine gate: `EXECUTION_ROADMAP.md` (workstream milestones M9–M15). The workstreams do not gate Accordo Cloud: Cloud work begins when the Production Spine is done, not when all domains are done.
 
 ## 7. Discovery model (three layers, never conflated)
 

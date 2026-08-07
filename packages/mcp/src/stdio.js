@@ -1,12 +1,12 @@
 // @ts-check
 
 import { createInterface } from 'node:readline';
-import { createAgentCrmApp } from '../../app/src/index.js';
+import { createAccordoApp } from '../../app/src/index.js';
 import { createMcpServer } from './server.js';
 
 /** @param {{dbPath?: string}} [options] */
 export async function startMcpStdio(options = {}) {
-  const app = createAgentCrmApp({ dbPath: options.dbPath });
+  const app = createAccordoApp({ dbPath: options.dbPath });
   const server = createMcpServer({ app });
   const readline = createInterface({ input: process.stdin, crlfDelay: Infinity });
   let closed = false;
@@ -34,7 +34,7 @@ export async function startMcpStdio(options = {}) {
       const response = await server.handle(message);
       if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
     } catch (error) {
-      console.error(`[agent-crm:mcp] ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`[accordo:mcp] ${error instanceof Error ? error.message : String(error)}`);
       process.stdout.write(`${JSON.stringify({
         jsonrpc: '2.0',
         id: null,

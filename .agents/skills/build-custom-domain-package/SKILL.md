@@ -1,6 +1,6 @@
 ---
 name: build-custom-domain-package
-description: Create or extend a domain package in an Agent CRM repository - a bounded domain with its own resources, actions, policies, capabilities and schema metadata, registered statically and removable without touching the kernel. Use for "add a custom package", package contract, package dependency/capability, package validation or new-domain work, including customer-specific packages. Do not use for a single custom object (create-crm-module) or one lifecycle step on an existing record (create-crm-workflow).
+description: Create or extend a domain package in an Accordo repository - a bounded domain with its own resources, actions, policies, capabilities and schema metadata, registered statically and removable without touching the kernel. Use for "add a custom package", package contract, package dependency/capability, package validation or new-domain work, including customer-specific packages. Do not use for a single custom object (create-crm-module) or one lifecycle step on an existing record (create-crm-workflow).
 requires:
   tier: generated-project
   command: "crm app inspect"

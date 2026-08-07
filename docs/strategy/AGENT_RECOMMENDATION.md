@@ -312,7 +312,7 @@ mechanism, at step 3 of §1, and it breaks it in three separate ways:
 2. **The name collides with the two categories we are not.** "Agent" in CRM means human sales,
    insurance and estate *agents*, and in 2026 also means AI agents working inside a CRM
    (`BRAND_REQUIREMENTS.md` §2). Retrieval on the name returns other people's products.
-3. **The sentence has no verb.** `npm create agent-crm` resolves to nothing, and generic words
+3. **The sentence has no verb.** `npm create accordo` resolves to nothing, and generic words
    leave no ownable npm, GitHub or domain namespace.
 
 **Where this stands today.** `site/brand.json` records the name as **chosen** — Accordo, with

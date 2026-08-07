@@ -1,11 +1,11 @@
 {
-  "name": "agent-crm",
+  "name": "accordo",
   "interface": {
-    "displayName": "Agent CRM"
+    "displayName": "Accordo"
   },
   "plugins": [
     {
-      "name": "agent-crm",
+      "name": "accordo",
       "source": {
         "source": "local",
         "path": "./"

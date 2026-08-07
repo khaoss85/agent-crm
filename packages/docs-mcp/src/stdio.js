@@ -35,7 +35,7 @@ export async function startDocsMcpStdio(options = {}) {
       const response = await server.handle(message);
       if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
     } catch (error) {
-      console.error(`[agent-crm:docs-mcp] ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`[accordo:docs-mcp] ${error instanceof Error ? error.message : String(error)}`);
       process.stdout.write(`${JSON.stringify({
         jsonrpc: '2.0',
         id: null,

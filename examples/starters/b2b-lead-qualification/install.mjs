@@ -30,12 +30,12 @@ const repoRoot = join(starterDir, '..', '..', '..');
 
 // The installer normally builds its project in a temp directory and deletes it,
 // because its job is to prove the guarantees and leave nothing behind. Setting
-// AGENT_CRM_KEEP_ROOT makes it build into a caller-chosen directory and keep it,
+// ACCORDO_KEEP_ROOT makes it build into a caller-chosen directory and keep it,
 // so a tour or an inspection can run against the composed application instead of
 // against the repository's deliberately empty default composition. Nothing else
 // about the run changes: the same manifests, the same assertions.
-const keepRoot = process.env.AGENT_CRM_KEEP_ROOT;
-const root = keepRoot ?? mkdtempSync(join(tmpdir(), 'agent-crm-lead-starter-'));
+const keepRoot = process.env.ACCORDO_KEEP_ROOT;
+const root = keepRoot ?? mkdtempSync(join(tmpdir(), 'accordo-lead-starter-'));
 if (keepRoot) mkdirSync(keepRoot, { recursive: true });
 try {
   // 1. Clean project copy — source only, never data or node_modules.
@@ -238,8 +238,8 @@ try {
   );
 
   // 4. Boot the app from the throwaway project and drive the flow.
-  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
-  const app = createAgentCrmApp({ dbPath: join(root, 'data', 'starter.sqlite') });
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const app = createAccordoApp({ dbPath: join(root, 'data', 'starter.sqlite') });
   const actor = { type: 'user', id: 'starter' };
   const leads = app.modules.get('lead').service;
   const tasks = app.modules.get('task').service;
@@ -1104,7 +1104,7 @@ try {
 function applyModule(root, manifestPath) {
   const result = spawnSync(
     process.execPath,
-    ['--no-warnings', join(root, 'packages/cli/bin/agent-crm.js'), 'module', 'create', manifestPath, '--apply', '--root', root],
+    ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create', manifestPath, '--apply', '--root', root],
     { encoding: 'utf8', cwd: root },
   );
   if (result.status !== 0) {

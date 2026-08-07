@@ -1,6 +1,6 @@
 // @ts-check
 
-export class AgentCrmClient {
+export class AccordoClient {
   /** @param {{baseUrl?: string, actor?: {type: string, id: string}, fetchImpl?: typeof fetch}} [options] */
   constructor(options = {}) {
     this.baseUrl = (options.baseUrl ?? 'http://localhost:4000').replace(/\/$/, '');
@@ -121,7 +121,7 @@ export class AgentCrmClient {
     }
     if (!response.ok) {
       const message = body?.error?.message
-        ?? `Agent CRM request failed (${response.status})${text && body === undefined ? `: ${text.slice(0, 200)}` : ''}`;
+        ?? `Accordo request failed (${response.status})${text && body === undefined ? `: ${text.slice(0, 200)}` : ''}`;
       const error = new Error(message);
       Object.assign(error, {
         status: response.status,
@@ -131,7 +131,7 @@ export class AgentCrmClient {
       throw error;
     }
     if (body === undefined) {
-      const error = new Error(`Agent CRM returned invalid JSON for ${path}`);
+      const error = new Error(`Accordo returned invalid JSON for ${path}`);
       Object.assign(error, { status: response.status, code: 'INVALID_RESPONSE', details: null });
       throw error;
     }

@@ -1,6 +1,6 @@
 ---
 name: build-lead-intelligence
-description: Add or extend Lead Intelligence in an Agent CRM project - enrichment providers, versioned explainable scoring models, versioned routing policies and routing targets. Use for enrich/score/route work on leads. Do not use for CRUD module changes (create-crm-module) or approval processes (create-crm-workflow).
+description: Add or extend Lead Intelligence in an Accordo project - enrichment providers, versioned explainable scoring models, versioned routing policies and routing targets. Use for enrich/score/route work on leads. Do not use for CRUD module changes (create-crm-module) or approval processes (create-crm-workflow).
 requires:
   tier: generated-project
   command: "crm app inspect"

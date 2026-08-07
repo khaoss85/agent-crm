@@ -18,11 +18,11 @@ import { inspectApplication } from '../packages/cli/src/app-inspect.js';
  */
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
-const CLI = 'packages/cli/bin/agent-crm.js';
+const CLI = 'packages/cli/bin/accordo.js';
 
 /** A throwaway project carrying the framework, with a composition we control. */
 function fixtureProject(t, { packages = '', files = {}, spaces = false } = {}) {
-  const root = mkdtempSync(join(tmpdir(), spaces ? 'agent crm inspect ' : 'agent-crm-inspect-'));
+  const root = mkdtempSync(join(tmpdir(), spaces ? 'agent crm inspect ' : 'accordo-inspect-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -323,12 +323,12 @@ test('a composition that cannot be loaded at all is a fatal exit, with the diagn
   assert.equal(report.problems.some((problem) => problem.message.includes(thrower)), false, 'no absolute path in the message');
 
   // A directory that is not a project at all cannot produce a report.
-  const empty = mkdtempSync(join(tmpdir(), 'agent-crm-not-a-project-'));
+  const empty = mkdtempSync(join(tmpdir(), 'accordo-not-a-project-'));
   t.after(() => rmSync(empty, { recursive: true, force: true }));
   const fatal = spawnSync(process.execPath, ['--no-warnings', join(repoRoot, CLI), 'app', 'inspect', '--json', '--root', empty], { encoding: 'utf8' });
   assert.equal(fatal.status, 2, 'a fatal load has its own exit code');
   assert.equal(fatal.stdout.trim(), '', 'and prints no report');
-  assert.match(fatal.stderr, /Not an agent-crm project/);
+  assert.match(fatal.stderr, /Not an accordo project/);
 });
 
 test('inspection writes nothing, opens no database and needs no network', async (t) => {

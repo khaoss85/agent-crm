@@ -532,7 +532,7 @@ export function createCatalogSync({ database, events, modules, commercial, confi
         } catch (error) {
           const dispatchFailure = normalizeError(error);
           steps.push({ name: 'events.dispatch', status: 'failed', error: dispatchFailure.message });
-          console.error(`[agent-crm] catalog.sync run ${runId}: business writes committed but event dispatch failed: ${dispatchFailure.message}`);
+          console.error(`[accordo] catalog.sync run ${runId}: business writes committed but event dispatch failed: ${dispatchFailure.message}`);
         }
         return value;
       });
@@ -553,7 +553,7 @@ export function createCatalogSync({ database, events, modules, commercial, confi
           steps,
         });
       } catch (traceError) {
-        console.error(`[agent-crm] catalog.sync run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`);
+        console.error(`[accordo] catalog.sync run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`);
       }
     }
   };

@@ -20,7 +20,7 @@ still hold; this run adds the `create-*` and scoped-package checks, which matter
 
 | Name | npm unscoped | `create-<name>` | `@<name>/core` | `.dev` | `.com` | Verdict |
 |---|---|---|---|---|---|---|
-| **Accordo** | free | free | free | no A record | taken | **Recommended** |
+| **Accordo** | free | free | free | **TAKEN** (registrar-confirmed) | taken | Name chosen; `.dev` unavailable — see below |
 | **Pactio** | free | free | free | no A record | taken | Viable, one flag |
 | **Vinculo** | free | free | free | no A record | taken | Viable |
 | Relato | free | free | free | **resolves — taken** | taken | **Out** |
@@ -90,6 +90,30 @@ and a materially worse trademark position, so Accordo wins on the axis that is h
 
 **Vinculo** is clean but three syllables with an accent-mark ambiguity (`vínculo` vs `vinculo`)
 that costs you every time someone types it from memory.
+
+## Registrar confirmation, 2026-08-07 — `.dev` is gone
+
+A registrar lookup, which is authoritative in a way DNS is not, returned:
+
+| Domain | Status |
+|---|---|
+| `accordo.dev` | **not available** |
+| `accordo.com` | not available |
+| **`accordo.io`** | **available** |
+| **`accordo.sh`** | **available** |
+| `getaccordo.com`, `accordohq.com` | available |
+
+The DNS check earlier the same day showed no A record for `accordo.dev` and this file said, in
+writing, that this was indicative and not proof. A registered but unpointed domain looks exactly
+like a free one over DNS. The warning was correct and the domain is taken.
+
+**The name is unaffected** — `accordo`, `create-accordo` and `@accordo` remain free on npm, and
+the rename is applied. Only the domain needs re-picking.
+
+**Recommendation: `accordo.io`.** It carries the same developer-tool signal as `.dev` and is the
+closest substitute in mindshare; `accordo.sh` is the alternative if the project wants to lean on
+its CLI. Avoid `getaccordo.com` — a `get`-prefix reads as a SaaS product, which is the exact
+category confusion `CATEGORY.md` spends a page avoiding.
 
 ## What a human must still do — in this order
 

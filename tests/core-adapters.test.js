@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentCrmApp } from '../packages/app/src/index.js';
+import { createAccordoApp } from '../packages/app/src/index.js';
 import {
   createCoreAdapters,
   normalizeCompanyName,
@@ -26,8 +26,8 @@ test('malformed adapter dependencies fail closed at construction', () => {
 });
 
 test('the adapter registry is frozen and per-app instances are isolated', async (t) => {
-  const appA = createAgentCrmApp({ dbPath: ':memory:' });
-  const appB = createAgentCrmApp({ dbPath: ':memory:' });
+  const appA = createAccordoApp({ dbPath: ':memory:' });
+  const appB = createAccordoApp({ dbPath: ':memory:' });
   t.after(() => { appA.close(); appB.close(); });
 
   const adaptersA = createCoreAdapters({ database: appA.database, services: appA.services });

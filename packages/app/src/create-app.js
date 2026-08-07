@@ -50,7 +50,7 @@ import {
 /**
  * @param {{dbPath?: string, approvalThresholdCents?: number, busyTimeoutMs?: number}} [options]
  */
-export function createAgentCrmApp(options = {}) {
+export function createAccordoApp(options = {}) {
   // The application clock (generic runtime capability): actions that decide
   // anything from the current instant read it here, so a test can pin "today"
   // and a run is reproducible. Defaults to the wall clock.
@@ -320,7 +320,7 @@ export function createAgentCrmApp(options = {}) {
     doctor() {
       return {
         ok: true,
-        name: 'agent-crm',
+        name: 'accordo',
         version: '0.1.0',
         node: process.version,
         database: database.path,

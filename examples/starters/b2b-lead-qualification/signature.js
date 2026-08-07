@@ -32,12 +32,12 @@ let eventCounter = 0;
 
 /**
  * A real signature provider outlives the CRM process. When
- * `AGENT_CRM_FIXTURE_SIGNATURE_STORE` names a file, the fixture keeps its
+ * `ACCORDO_FIXTURE_SIGNATURE_STORE` names a file, the fixture keeps its
  * envelopes there instead of only in memory, so a test can crash the CRM
  * mid-operation and still find the envelope the "provider" accepted. Test and
  * starter affordance only — it is never a datastore for anything real.
  */
-const storePath = () => process.env.AGENT_CRM_FIXTURE_SIGNATURE_STORE ?? null;
+const storePath = () => process.env.ACCORDO_FIXTURE_SIGNATURE_STORE ?? null;
 
 function loadStore() {
   const path = storePath();
@@ -215,7 +215,7 @@ export const fixtureSignatureProvider = {
       artifactId: `art_${envelope.providerEnvelopeId.slice(4, 20)}`,
       artifactHash,
       // A deterministic JSON package, NOT a PDF — it is never called one.
-      mimeType: 'application/vnd.agent-crm.quote-package+json',
+      mimeType: 'application/vnd.accordo.quote-package+json',
       sizeBytes: 2048,
       storageRef: `fixture://artifacts/${envelope.providerEnvelopeId}`,
       completedAt: envelope.completedAt,

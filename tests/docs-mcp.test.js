@@ -70,7 +70,7 @@ test('the server starts over stdio and lists its tools', async () => {
     { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
   ]);
 
-  assert.equal(responses.messages[0].result.serverInfo.name, 'agent-crm-docs');
+  assert.equal(responses.messages[0].result.serverInfo.name, 'accordo-docs');
   const names = responses.messages[1].result.tools.map((/** @type {any} */ tool) => tool.name);
   assert.deepEqual(names.sort(), ['check_job', 'get_capability', 'search_docs']);
 
@@ -104,7 +104,7 @@ test('the package reaches no database, no application and no module service', ()
   const banned = [
     /node:sqlite/,
     /DatabaseSync/,
-    /createAgentCrmApp/,
+    /createAccordoApp/,
     /packages\/app/,
     /\.\.\/\.\.\/(app|modules|workflows|actions|providers|commercial|contracts|delivery|intelligence|signature|pipelines|sdk|cli)\//,
     /\bwriteFileSync\b/,
@@ -486,7 +486,7 @@ test('path traversal cannot escape the doc root', async () => {
     'docs:///etc/passwd',
     'docs://docs/../../etc/passwd',
     'docs://..%2F..%2Fetc%2Fpasswd',
-    'docs://data/agent-crm.sqlite',
+    'docs://data/accordo.sqlite',
     '../../etc/passwd',
     'file:///etc/passwd',
     '',

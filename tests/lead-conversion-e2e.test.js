@@ -16,13 +16,13 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
  */
 
 let projectRoot;
-let createAgentCrmApp;
+let createAccordoApp;
 let createHttpServer;
-let AgentCrmClient;
+let AccordoClient;
 const actor = { type: 'user', id: 'convert-e2e' };
 
 test.before(async () => {
-  projectRoot = mkdtempSync(join(tmpdir(), 'agent-crm-convert-'));
+  projectRoot = mkdtempSync(join(tmpdir(), 'accordo-convert-'));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(projectRoot, entry), { recursive: true });
   }
@@ -30,7 +30,7 @@ test.before(async () => {
   for (const manifest of ['lead.module.json', 'task.module.json']) {
     const result = spawnSync(
       process.execPath,
-      ['--no-warnings', join(projectRoot, 'packages/cli/bin/agent-crm.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', projectRoot],
+      ['--no-warnings', join(projectRoot, 'packages/cli/bin/accordo.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', projectRoot],
       { encoding: 'utf8', cwd: projectRoot },
     );
     assert.equal(result.status, 0, result.stderr);
@@ -45,9 +45,9 @@ test.before(async () => {
       '',
     ].join('\n'),
   );
-  ({ createAgentCrmApp } = await import(pathToFileURL(join(projectRoot, 'packages/app/src/index.js')).href));
+  ({ createAccordoApp } = await import(pathToFileURL(join(projectRoot, 'packages/app/src/index.js')).href));
   ({ createHttpServer } = await import(pathToFileURL(join(projectRoot, 'apps/server/src/index.js')).href));
-  ({ AgentCrmClient } = await import(pathToFileURL(join(projectRoot, 'packages/sdk/src/index.js')).href));
+  ({ AccordoClient } = await import(pathToFileURL(join(projectRoot, 'packages/sdk/src/index.js')).href));
 });
 
 test.after(() => {
@@ -55,11 +55,11 @@ test.after(() => {
 });
 
 async function boot(t, dbPath = ':memory:') {
-  const app = createAgentCrmApp({ dbPath });
+  const app = createAccordoApp({ dbPath });
   const server = createHttpServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  const client = new AgentCrmClient({ baseUrl, actor });
+  const client = new AccordoClient({ baseUrl, actor });
   const close = async () => { await new Promise((resolve) => server.close(resolve)); app.close(); };
   if (t) t.after(close);
   return { app, client, close };
@@ -408,8 +408,8 @@ test('concurrency: same lead races to one conversion; shared company never dupli
 
 test('two independent connections: one winner, loser gets a stable 409, retry does not duplicate', async (t) => {
   const dbPath = join(projectRoot, 'data', `convert-race-${process.pid}.sqlite`);
-  const appA = createAgentCrmApp({ dbPath, busyTimeoutMs: 200 });
-  const appB = createAgentCrmApp({ dbPath, busyTimeoutMs: 200 });
+  const appA = createAccordoApp({ dbPath, busyTimeoutMs: 200 });
+  const appB = createAccordoApp({ dbPath, busyTimeoutMs: 200 });
   t.after(() => { appA.close(); appB.close(); });
   const lead = await qualifiedLead(appA, { companyName: 'Cross Co', email: 'cross@x.example' });
 

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { scaffoldModule } from '../packages/cli/src/scaffold-module.js';
 
 test('module scaffolding is dry-run unless apply is explicit', (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'agent-crm-scaffold-'));
+  const directory = mkdtempSync(join(tmpdir(), 'accordo-scaffold-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
 
   const dryRun = scaffoldModule({ name: 'partner', rootDir: directory });

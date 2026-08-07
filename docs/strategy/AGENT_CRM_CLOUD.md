@@ -1,8 +1,8 @@
-# Agent CRM Cloud
+# Accordo Cloud
 
-**Status: product design and roadmap track only. Nothing in this document is implemented.** No control plane, no managed runtime, no Cloud CLI, no project MCP deployment tools exist today. This document defines what "Agent CRM Cloud" means so the roadmap can name it, sequence it, and gate it honestly.
+**Status: product design and roadmap track only. Nothing in this document is implemented.** No control plane, no managed runtime, no Cloud CLI, no project MCP deployment tools exist today. This document defines what "Accordo Cloud" means so the roadmap can name it, sequence it, and gate it honestly.
 
-## 1. What Agent CRM Cloud is
+## 1. What Accordo Cloud is
 
 The optional **managed operating layer** for the open-source framework:
 
@@ -170,11 +170,11 @@ Honest status: the benchmark runner is **designed but not yet automated**; local
 
 ## 9. Roadmap structure and dependencies
 
-Agent CRM Cloud is an explicit named product track (not scattered):
+Accordo Cloud is an explicit named product track (not scattered):
 
 ```text
 Production Spine (Phase 6: PostgreSQL, auth, tenancy, RBAC, sessions/API keys)
-    → Agent CRM Cloud Control Plane   (accounts, orgs, projects, repos, environments, billing, domains, secrets)
+    → Accordo Cloud Control Plane   (accounts, orgs, projects, repos, environments, billing, domains, secrets)
     → Managed Runtime                 (provisioning, migrations, backups, zero-downtime deploys, health)
     → Agent Operations CLI/MCP        (crmcloud + project MCP, approval boundaries above)
     → Plugin Operations               (managed plugin lifecycle over the open package model)

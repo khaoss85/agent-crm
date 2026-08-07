@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 /**
  * `crm app inspect [--json] [--root <dir>]` — the CLI face of AX1.
  *
- * The work happens in a child process (`bin/agent-crm-inspect.js`) because
+ * The work happens in a child process (`bin/accordo-inspect.js`) because
  * inspection imports the project's checked-in composition, and a code-first
  * definition's module body runs on import. Isolating it means a package that
  * mutates a global, patches a built-in, changes the working directory, sets an
@@ -56,7 +56,7 @@ const MAX_NOISE_BYTES = 64 * 1024;
 /** Between asking the process group to stop and insisting. */
 const KILL_GRACE_MS = 2_000;
 
-const LOADER = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'agent-crm-inspect.js');
+const LOADER = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'accordo-inspect.js');
 
 /**
  * @param {{rootDir: string, json?: boolean, timeoutMs?: number}} options
@@ -211,7 +211,7 @@ function renderText(report) {
   const lines = [];
   const heading = (text) => lines.push('', text, '─'.repeat(text.length));
 
-  lines.push(`Agent CRM application inspection (contract ${report.applicationInspectionContract})`);
+  lines.push(`Accordo application inspection (contract ${report.applicationInspectionContract})`);
   lines.push(report.valid ? 'Composition: valid' : `Composition: ${report.problems.length} problem(s)`);
   lines.push(`Project: ${report.application.name ?? '(unnamed)'}`);
   lines.push(`Posture: ${report.application.productionPosture}`);

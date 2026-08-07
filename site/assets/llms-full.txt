@@ -171,7 +171,9 @@ The remaining documents, one line each in `llms.txt` if you need to know what th
 - [docs/MODULE_FACTORY.md](docs/MODULE_FACTORY.md)
 - [docs/MODULE_MANIFEST.md](docs/MODULE_MANIFEST.md)
 - [docs/PACKAGE_AUTHORING.md](docs/PACKAGE_AUTHORING.md)
+- [docs/RENAME_SURFACE.md](docs/RENAME_SURFACE.md)
 - [docs/SIGNATURE_ORDER.md](docs/SIGNATURE_ORDER.md)
+- [docs/SKILL_PACKAGING.md](docs/SKILL_PACKAGING.md)
 
 ## Full text: `docs/AGENT_HARNESS_COMPATIBILITY.md`
 

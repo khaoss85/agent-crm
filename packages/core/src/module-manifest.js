@@ -103,7 +103,7 @@ export function validateModuleManifest(manifest) {
 
   if (input.manifestVersion !== undefined && input.manifestVersion !== SUPPORTED_MANIFEST_VERSION) {
     throw new ValidationError(
-      `Unsupported manifestVersion: ${JSON.stringify(input.manifestVersion)}. This version of agent-crm supports manifest version ${SUPPORTED_MANIFEST_VERSION}; upgrade agent-crm or lower the manifest version.`,
+      `Unsupported manifestVersion: ${JSON.stringify(input.manifestVersion)}. This version of accordo supports manifest version ${SUPPORTED_MANIFEST_VERSION}; upgrade accordo or lower the manifest version.`,
       { manifestVersion: input.manifestVersion, supported: SUPPORTED_MANIFEST_VERSION },
     );
   }

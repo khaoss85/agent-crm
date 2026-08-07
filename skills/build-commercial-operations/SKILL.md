@@ -1,6 +1,6 @@
 ---
 name: build-commercial-operations
-description: Add or extend Commercial Operations in an Agent CRM project - catalog providers, products and price books, quotes with server-priced lines, immutable quote versions, and versioned discount policies with human approval. Use for catalog/quote/discount/CPQ work. Do not use for CRUD module changes (create-crm-module) or lead scoring/routing (build-lead-intelligence).
+description: Add or extend Commercial Operations in an Accordo project - catalog providers, products and price books, quotes with server-priced lines, immutable quote versions, and versioned discount policies with human approval. Use for catalog/quote/discount/CPQ work. Do not use for CRUD module changes (create-crm-module) or lead scoring/routing (build-lead-intelligence).
 requires:
   tier: generated-project
   command: "crm app inspect"

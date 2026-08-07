@@ -218,8 +218,8 @@ test('the delivery package is optional, and its dependency is declared', async (
     ].join('\n'),
   );
   const probe = spawnSync(process.execPath, ['--no-warnings', '-e', `
-    const { createAgentCrmApp } = await import(${JSON.stringify(pathToFileURL(join(orphan, 'packages/app/src/index.js')).href)});
-    createAgentCrmApp({ dbPath: ${JSON.stringify(join(orphan, 'data', 'orphan.sqlite'))} }).close();
+    const { createAccordoApp } = await import(${JSON.stringify(pathToFileURL(join(orphan, 'packages/app/src/index.js')).href)});
+    createAccordoApp({ dbPath: ${JSON.stringify(join(orphan, 'data', 'orphan.sqlite'))} }).close();
   `], { encoding: 'utf8', cwd: orphan });
   assert.notEqual(probe.status, 0, 'the delivery package cannot register without its dependency');
   assert.match(probe.stderr, /requires package "contracts"/);

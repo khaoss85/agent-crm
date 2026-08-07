@@ -29,7 +29,7 @@ import { createJobsIndex } from './jobs.js';
 import { createToolRegistry } from './tools.js';
 import { createResourceRegistry } from './resources.js';
 
-const SERVER_INFO = Object.freeze({ name: 'agent-crm-docs', version: '0.1.0' });
+const SERVER_INFO = Object.freeze({ name: 'accordo-docs', version: '0.1.0' });
 const CURRENT_PROTOCOL = '2026-07-28';
 const LEGACY_PROTOCOL = '2025-11-25';
 const SUPPORTED_PROTOCOLS = [CURRENT_PROTOCOL, LEGACY_PROTOCOL, '2025-06-18', '2024-11-05'];

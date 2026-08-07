@@ -37,7 +37,7 @@ if (keepIndex !== -1 && !keepDir) {
 }
 
 const root = process.cwd();
-const projectDir = keepDir ?? mkdtempSync(join(tmpdir(), 'agent-crm-tour-'));
+const projectDir = keepDir ?? mkdtempSync(join(tmpdir(), 'accordo-tour-'));
 const startedAt = process.hrtime.bigint();
 
 /** Narration goes to stderr so `--json` keeps stdout clean for a machine. */
@@ -52,7 +52,7 @@ say();
 const install = spawnSync(
   process.execPath,
   ['--no-warnings', join(root, 'examples/starters/b2b-lead-qualification/install.mjs')],
-  { encoding: 'utf8', env: { ...process.env, AGENT_CRM_KEEP_ROOT: projectDir }, cwd: root },
+  { encoding: 'utf8', env: { ...process.env, ACCORDO_KEEP_ROOT: projectDir }, cwd: root },
 );
 
 if (install.status !== 0) {
@@ -67,7 +67,7 @@ const journey = parseTrailingJson(install.stdout);
 
 const inspect = spawnSync(
   process.execPath,
-  ['--no-warnings', join(projectDir, 'packages/cli/bin/agent-crm.js'), 'app', 'inspect', '--json', '--root', projectDir],
+  ['--no-warnings', join(projectDir, 'packages/cli/bin/accordo.js'), 'app', 'inspect', '--json', '--root', projectDir],
   { encoding: 'utf8', cwd: projectDir },
 );
 
@@ -131,7 +131,7 @@ say();
 if (keepDir) {
   say(`  The composed project is in ${keepDir}`);
   say('  Explore it:');
-  say(`    cd ${keepDir} && node --no-warnings packages/cli/bin/agent-crm.js app inspect --json`);
+  say(`    cd ${keepDir} && node --no-warnings packages/cli/bin/accordo.js app inspect --json`);
   say();
 }
 

@@ -3,7 +3,7 @@
 ## Repository
 
 Target GitHub owner: `khaoss85`  
-Suggested repository: `agent-crm`
+Suggested repository: `accordo`
 
 ## First Codex prompt
 
@@ -32,12 +32,12 @@ npm run demo
 npm run dev
 npm run mcp
 npm run doctor
-node packages/cli/bin/agent-crm.js module:create partner --dry-run
+node packages/cli/bin/accordo.js module:create partner --dry-run
 ```
 
 ## Publish target
 
-The repository has been prepared for `khaoss85/agent-crm`. From a clone of the Git bundle or extracted ZIP:
+The repository has been prepared for `khaoss85/accordo`. From a clone of the Git bundle or extracted ZIP:
 
 ```bash
 git remote add origin https://github.com/khaoss85/agent-crm.git

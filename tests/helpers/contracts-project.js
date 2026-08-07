@@ -65,7 +65,7 @@ export const DELIVERY_POLICY = { policy: 'b2b-delivery-handover', policyVersion:
  *   proven rather than asserted.
  */
 export function project(t, { withDomain = true, withDelivery = false, withCustomPackage = false } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'agent-crm-contracts-'));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-contracts-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -74,7 +74,7 @@ export function project(t, { withDomain = true, withDelivery = false, withCustom
   const apply = (manifestPath) => {
     const result = spawnSync(
       process.execPath,
-      ['--no-warnings', join(root, 'packages/cli/bin/agent-crm.js'), 'module', 'create', manifestPath, '--apply', '--root', root],
+      ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create', manifestPath, '--apply', '--root', root],
       { encoding: 'utf8', cwd: root },
     );
     assert.equal(result.status, 0, `apply ${manifestPath}: ${result.stderr}`);
@@ -148,18 +148,18 @@ export const BUSINESS_NOW = '2026-09-15T10:00:00.000Z';
 
 export async function boot(root, dbPath, options = {}) {
   const { clock = () => BUSINESS_NOW, ...rest } = options;
-  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
   const { createHttpServer } = await import(pathToFileURL(join(root, 'apps/server/src/index.js')).href);
-  const { AgentCrmClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
-  const app = createAgentCrmApp({ dbPath, clock, ...rest });
+  const { AccordoClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
+  const app = createAccordoApp({ dbPath, clock, ...rest });
   const server = createHttpServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   return {
     app,
     baseUrl,
-    client: new AgentCrmClient({ baseUrl, actor: { type: 'user', id: 'e2e' } }),
-    agentClient: new AgentCrmClient({ baseUrl, actor: { type: 'agent', id: 'bot' } }),
+    client: new AccordoClient({ baseUrl, actor: { type: 'user', id: 'e2e' } }),
+    agentClient: new AccordoClient({ baseUrl, actor: { type: 'agent', id: 'bot' } }),
     async close() {
       await new Promise((resolve) => server.close(resolve));
       app.close();

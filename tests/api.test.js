@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentCrmApp } from '../packages/app/src/index.js';
+import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
 
 test('HTTP API and Admin use the same application state', async (t) => {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   const server = createHttpServer(app);
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -19,7 +19,7 @@ test('HTTP API and Admin use the same application state', async (t) => {
 
   const root = await fetch(baseUrl);
   assert.equal(root.status, 200);
-  assert.match(await root.text(), /Agent CRM/);
+  assert.match(await root.text(), /Accordo/);
 
   const demoResponse = await fetch(`${baseUrl}/api/demo/run`, {
     method: 'POST',

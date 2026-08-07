@@ -1,6 +1,6 @@
 ---
 name: debug-crm-run
-description: Diagnose a failed or unexpected Agent CRM workflow using run traces, audit events and module state. Use when a workflow, API operation, provider call or approval transition behaves incorrectly.
+description: Diagnose a failed or unexpected Accordo workflow using run traces, audit events and module state. Use when a workflow, API operation, provider call or approval transition behaves incorrectly.
 requires:
   tier: any-project
   command: "crm app inspect"

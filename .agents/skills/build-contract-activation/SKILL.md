@@ -1,6 +1,6 @@
 ---
 name: build-contract-activation
-description: Add or extend contract activation in an Agent CRM project - turning a signed immutable Order into a Commercial Contract, Contract Version and Lines, a Subscription with its lines, and pending delivery/service obligations, through a versioned Order Activation Policy. Use for contract, subscription, obligation or activation-policy work, and for building a new optional domain package. Do not use for signature/order work (build-signature-order), catalog/quote/discount work (build-commercial-operations) or CRUD module changes (create-crm-module).
+description: Add or extend contract activation in an Accordo project - turning a signed immutable Order into a Commercial Contract, Contract Version and Lines, a Subscription with its lines, and pending delivery/service obligations, through a versioned Order Activation Policy. Use for contract, subscription, obligation or activation-policy work, and for building a new optional domain package. Do not use for signature/order work (build-signature-order), catalog/quote/discount work (build-commercial-operations) or CRUD module changes (create-crm-module).
 requires:
   tier: generated-project
   command: "crm app inspect"

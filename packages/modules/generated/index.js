@@ -1,5 +1,5 @@
 // @ts-check
-// Registry of manifest-generated modules. Managed by `agent-crm module:create --apply`,
+// Registry of manifest-generated modules. Managed by `accordo module:create --apply`,
 // which regenerates this file from the module.manifest.json each generated module carries.
 // You can edit it by hand, but the next apply rewrites it from the manifests on disk.
 

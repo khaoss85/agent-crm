@@ -17,7 +17,7 @@ import { assertPackageConforms } from './helpers/package-conformance.js';
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const cli = (...args) => spawnSync(
   process.execPath,
-  ['--no-warnings', join(repoRoot, 'packages/cli/bin/agent-crm.js'), ...args],
+  ['--no-warnings', join(repoRoot, 'packages/cli/bin/accordo.js'), ...args],
   { encoding: 'utf8', cwd: repoRoot },
 );
 
@@ -301,7 +301,7 @@ test('the package CLI validates, inspects and refuses, read-only', () => {
     }
     const spacedResult = spawnSync(
       process.execPath,
-      ['--no-warnings', join(spaced, 'packages/cli/bin/agent-crm.js'), 'package', 'validate', join(spaced, 'packages/delivery')],
+      ['--no-warnings', join(spaced, 'packages/cli/bin/accordo.js'), 'package', 'validate', join(spaced, 'packages/delivery')],
       { encoding: 'utf8', cwd: spaced },
     );
     assert.equal(spacedResult.status, 0, spacedResult.stderr);

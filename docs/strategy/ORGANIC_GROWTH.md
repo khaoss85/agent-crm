@@ -25,7 +25,7 @@ The three starters from EXECUTION_ROADMAP Phase 10 (sales+approvals, agency, par
 
 - Each starter: one-command run, one-command deploy, agent instructions preloaded (AGENTS.md/CLAUDE.md/skills), a "how an agent built this" transcript.
 - Starters are the unit we submit to template galleries (Vercel) and link from every comparison and article.
-- Once Agent CRM Cloud exists (`AGENT_CRM_CLOUD.md`; design only today), each starter additionally gets a one-approval managed deploy path — a real distribution asset only when the deployed demo is genuinely reproducible by a reader; no Cloud-dependent content ships before the capability does.
+- Once Accordo Cloud exists (`AGENT_CRM_CLOUD.md`; design only today), each starter additionally gets a one-approval managed deploy path — a real distribution asset only when the deployed demo is genuinely reproducible by a reader; no Cloud-dependent content ships before the capability does.
 
 ## 3. Tested tutorials
 

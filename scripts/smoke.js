@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createAgentCrmApp } from '../packages/app/src/index.js';
+import { createAccordoApp } from '../packages/app/src/index.js';
 
-const directory = mkdtempSync(join(tmpdir(), 'agent-crm-smoke-'));
-const app = createAgentCrmApp({ dbPath: join(directory, 'smoke.sqlite') });
+const directory = mkdtempSync(join(tmpdir(), 'accordo-smoke-'));
+const app = createAccordoApp({ dbPath: join(directory, 'smoke.sqlite') });
 
 try {
   const demo = await app.runDemo();

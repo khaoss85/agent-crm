@@ -12,7 +12,7 @@ const partnerManifest = JSON.parse(
 );
 
 function tempRoot(t) {
-  const directory = mkdtempSync(join(tmpdir(), 'agent-crm-factory-'));
+  const directory = mkdtempSync(join(tmpdir(), 'accordo-factory-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }

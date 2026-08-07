@@ -385,7 +385,7 @@ export class SignatureRegistries {
       terminalStates: [...TERMINAL_ENVELOPE_STATES],
       allowedTransitions: Object.fromEntries(ENVELOPE_STATES.map((state) => [state, [...allowedTransitions(state)]])),
       replayScope: 'provider + providerEventId; the payload fingerprint must match or the reuse is refused 409 EVENT_ID_CONFLICT',
-      artifactHash: 'provider-reported; agent-crm does not download or hash the artifact bytes and verifies no signature cryptographically',
+      artifactHash: 'provider-reported; accordo does not download or hash the artifact bytes and verifies no signature cryptographically',
       signerSemantics: 'all signers required; declared order is recorded, not sequentially gated; 1-5 signers; no conditional routing; signer identity assurance is not claimed',
       maxSigners: MAX_SIGNERS,
       humanApproval: 'request-signature requires actor.type === "user"; agent actors are refused 403 HUMAN_APPROVAL_REQUIRED',

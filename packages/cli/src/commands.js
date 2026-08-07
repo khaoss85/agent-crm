@@ -145,8 +145,8 @@ export async function runCli(argv) {
   // top-level import made every CLI command — including the read-only ones —
   // fail to load when the composition was broken, which is precisely when
   // `app inspect` and `package validate` are the commands you need.
-  const { createAgentCrmApp } = await import('../../app/src/index.js');
-  const app = createAgentCrmApp({ dbPath });
+  const { createAccordoApp } = await import('../../app/src/index.js');
+  const app = createAccordoApp({ dbPath });
   let shouldClose = true;
   try {
     switch (command) {
@@ -161,7 +161,7 @@ export async function runCli(argv) {
         });
         const address = server.address();
         const actualPort = typeof address === 'object' && address ? address.port : port;
-        console.log(`Agent CRM running at http://${host}:${actualPort}`);
+        console.log(`Accordo running at http://${host}:${actualPort}`);
         console.log(`Database: ${app.database.path}`);
         shouldClose = false;
         const shutdown = () => {
@@ -248,28 +248,28 @@ function parseArgs(argv) {
 }
 
 function helpText() {
-  return `Agent CRM CLI
+  return `Accordo CLI
 
 Usage:
-  agent-crm serve [--port 4000] [--db ./data/agent-crm.sqlite]
-  agent-crm seed [--db path]
-  agent-crm demo [--db path]
-  agent-crm doctor [--db path]
-  agent-crm db:migrate [--db path]
-  agent-crm app inspect [--json] [--root dir]
-  agent-crm solution inspect <plan.json> [--json]
-  agent-crm solution validate <plan.json> [--json]
-  agent-crm solution check <plan.json> [--json] [--root dir]
-  agent-crm workflow:list [--db path]
-  agent-crm trace:list [--limit 20] [--db path]
-  agent-crm module:plan <manifest.json> [--root path] [--json]
-  agent-crm module:create <manifest.json> [--apply] [--root path]
-  agent-crm module:create <name> [--apply] [--root path]
-  agent-crm module:validate <manifest.json>
-  agent-crm module:migration <manifest.json> [--dry-run] [--out file.sql] [--force]
-  agent-crm package:validate <package-directory>
-  agent-crm package:inspect <package-directory>
-  agent-crm mcp [--db path]
+  accordo serve [--port 4000] [--db ./data/accordo.sqlite]
+  accordo seed [--db path]
+  accordo demo [--db path]
+  accordo doctor [--db path]
+  accordo db:migrate [--db path]
+  accordo app inspect [--json] [--root dir]
+  accordo solution inspect <plan.json> [--json]
+  accordo solution validate <plan.json> [--json]
+  accordo solution check <plan.json> [--json] [--root dir]
+  accordo workflow:list [--db path]
+  accordo trace:list [--limit 20] [--db path]
+  accordo module:plan <manifest.json> [--root path] [--json]
+  accordo module:create <manifest.json> [--apply] [--root path]
+  accordo module:create <name> [--apply] [--root path]
+  accordo module:validate <manifest.json>
+  accordo module:migration <manifest.json> [--dry-run] [--out file.sql] [--force]
+  accordo package:validate <package-directory>
+  accordo package:inspect <package-directory>
+  accordo mcp [--db path]
 
 "module plan", "module create", "module validate" and "module migration" are accepted aliases.
 module:plan is always read-only. module:create with a manifest generates a complete

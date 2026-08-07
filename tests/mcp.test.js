@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentCrmApp } from '../packages/app/src/index.js';
+import { createAccordoApp } from '../packages/app/src/index.js';
 import { createMcpServer } from '../packages/mcp/src/index.js';
 
 test('MCP exposes project context, tools and resources for coding agents', async (t) => {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   t.after(() => app.close());
   await app.runDemo();
   const mcp = createMcpServer({ app });
@@ -19,7 +19,7 @@ test('MCP exposes project context, tools and resources for coding agents', async
       clientInfo: { name: 'test', version: '1.0.0' },
     },
   });
-  assert.equal(initialize.result.serverInfo.name, 'agent-crm');
+  assert.equal(initialize.result.serverInfo.name, 'accordo');
 
   const list = await mcp.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   assert.ok(list.result.tools.some((tool) => tool.name === 'crm_request_stage_change'));
@@ -59,7 +59,7 @@ test('MCP exposes project context, tools and resources for coding agents', async
 });
 
 test('MCP approval tool requires an explicit human identity', async (t) => {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   t.after(() => app.close());
   await app.runDemo();
   const approval = app.services.approvals.list({ status: 'pending' })[0];
@@ -79,7 +79,7 @@ test('MCP approval tool requires an explicit human identity', async (t) => {
 
 
 test('MCP cannot infer or invent the human approval identity', async (t) => {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   t.after(() => app.close());
   await app.runDemo();
   const approval = app.services.approvals.list({ status: 'pending' })[0];

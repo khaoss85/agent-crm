@@ -5,7 +5,7 @@ import { normalizeActor } from './actor.js';
 import { nowIso } from './time.js';
 
 export class AuditLog {
-  /** @param {import('./database.js').AgentCrmDatabase} database */
+  /** @param {import('./database.js').AccordoDatabase} database */
   constructor(database) {
     this.database = database;
   }

@@ -93,7 +93,7 @@ Client configuration:
 ```json
 {
   "mcpServers": {
-    "agent-crm-docs": {
+    "accordo-docs": {
       "command": "node",
       "args": ["packages/docs-mcp/bin/server.js"]
     }

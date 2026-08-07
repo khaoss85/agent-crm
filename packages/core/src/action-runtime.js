@@ -263,7 +263,7 @@ export async function runRecordAction(params) {
         ? `${dispatchFailure.message}: ${dispatchFailure.details.failures.join('; ')}`
         : dispatchFailure.message;
       steps.push({ name: 'events.dispatch', status: 'failed', error: detail });
-      console.error(`[agent-crm] ${module}.${action} run ${runId}: business writes committed but event dispatch failed: ${detail}`);
+      console.error(`[accordo] ${module}.${action} run ${runId}: business writes committed but event dispatch failed: ${detail}`);
     }
   } catch (error) {
     failure = normalizeError(error);
@@ -289,7 +289,7 @@ export async function runRecordAction(params) {
     });
   } catch (traceError) {
     console.error(
-      `[agent-crm] ${module}.${action} run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`,
+      `[accordo] ${module}.${action} run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`,
     );
   }
 

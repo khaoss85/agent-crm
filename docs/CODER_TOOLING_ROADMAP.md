@@ -1,6 +1,6 @@
 # Coder tooling roadmap
 
-The surfaces a coding agent uses to understand, plan and change an Agent CRM
+The surfaces a coding agent uses to understand, plan and change an Accordo
 project — what exists, what is next, and what is deliberately refused.
 
 This is a roadmap, not a claim. Everything under **Shipped** has merged tests

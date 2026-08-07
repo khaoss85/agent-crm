@@ -2,7 +2,7 @@
 
 ## One sentence
 
-Agent CRM is a framework that lets a user describe a commercial process to Codex or Claude Code and have the agent safely build, run, inspect and improve a CRM application.
+Accordo is a framework that lets a user describe a commercial process to Codex or Claude Code and have the agent safely build, run, inspect and improve a CRM application.
 
 ## Primary job
 
@@ -16,7 +16,7 @@ Agent CRM is a framework that lets a user describe a commercial process to Codex
 
 ## Product boundary
 
-Agent CRM is not an autonomous salesperson and is not a full Salesforce replacement in milestone 0.
+Accordo is not an autonomous salesperson and is not a full Salesforce replacement in milestone 0.
 
 It provides:
 

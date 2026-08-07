@@ -1,7 +1,7 @@
 # Cloud jobs to be done
 
 Operator and builder jobs for the optional managed layer. `AGENT_CRM_CLOUD.md`
-describes *what* Agent CRM Cloud is; this file states *what someone is trying to
+describes *what* Accordo Cloud is; this file states *what someone is trying to
 get done* and what would have to be true to claim it.
 
 **Every job below is `not supported`.** No control plane, no deployment code, no

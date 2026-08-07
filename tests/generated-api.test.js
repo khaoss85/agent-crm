@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentCrmApp } from '../packages/app/src/index.js';
+import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
-import { AgentCrmClient } from '../packages/sdk/src/index.js';
+import { AccordoClient } from '../packages/sdk/src/index.js';
 import {
   isExposableGeneratedModule,
   validateGeneratedModuleDefinition,
@@ -13,7 +13,7 @@ import {
  * app (empty generated registry): the boundary must hide everything.
  */
 test('generated-module API boundary on a core-only app', async (t) => {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   const server = createHttpServer(app);
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -98,7 +98,7 @@ test('generated-module API boundary on a core-only app', async (t) => {
 });
 
 test('a forged or malformed registry-style entry fails closed everywhere', async (t) => {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   // Simulate a hand-edited entry: kind claims generated but the contract is
   // not satisfied (no capability functions, no fields metadata).
   app.modules.register({
@@ -162,7 +162,7 @@ test('SDK survives non-JSON, empty and error responses without masking them', as
     status,
     text: async () => body,
   });
-  const clientFor = (impl) => new AgentCrmClient({ baseUrl: 'http://stub', fetchImpl: impl });
+  const clientFor = (impl) => new AccordoClient({ baseUrl: 'http://stub', fetchImpl: impl });
 
   // Non-JSON error body: server status and snippet preserved, no parse error.
   await assert.rejects(
@@ -186,7 +186,7 @@ test('SDK survives non-JSON, empty and error responses without masking them', as
   );
   // Frozen actor: mutating the original object does not change the client.
   const actor = { type: 'agent', id: 'a1' };
-  const client = new AgentCrmClient({ baseUrl: 'http://stub', actor, fetchImpl: stub(200, '{}') });
+  const client = new AccordoClient({ baseUrl: 'http://stub', actor, fetchImpl: stub(200, '{}') });
   actor.id = 'evil';
   assert.equal(client.actor.id, 'a1');
   assert.throws(() => { client.module('partner').extra = 1; }, TypeError);

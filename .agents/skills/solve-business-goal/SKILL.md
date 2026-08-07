@@ -1,6 +1,6 @@
 ---
 name: solve-business-goal
-description: Turn a business objective into a working Agent CRM solution - discover installed packages, capabilities and providers, analyse the gap, choose or create packages, produce a Solution Plan, build checked-in source, verify it and report evidence. Use when the user states a goal ("track and optimize our funnel", "we need to manage renewals") rather than a technical change. Do not use for a single custom object (create-crm-module), one lifecycle step (create-crm-workflow), a named milestone (the build-* skills) or a pre-merge review (adversarial-review).
+description: Turn a business objective into a working Accordo solution - discover installed packages, capabilities and providers, analyse the gap, choose or create packages, produce a Solution Plan, build checked-in source, verify it and report evidence. Use when the user states a goal ("track and optimize our funnel", "we need to manage renewals") rather than a technical change. Do not use for a single custom object (create-crm-module), one lifecycle step (create-crm-workflow), a named milestone (the build-* skills) or a pre-merge review (adversarial-review).
 requires:
   tier: generated-project
   command: "crm app inspect"

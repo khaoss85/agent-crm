@@ -1,6 +1,6 @@
 ---
 name: create-crm-module
-description: Create or extend an Agent CRM domain module. Use for new CRM objects, fields, service operations, module metadata, API exposure and tests. Do not use for cross-module business processes; use create-crm-workflow instead.
+description: Create or extend an Accordo domain module. Use for new CRM objects, fields, service operations, module metadata, API exposure and tests. Do not use for cross-module business processes; use create-crm-workflow instead.
 requires:
   tier: generated-project
   command: "crm app inspect"

@@ -12,7 +12,7 @@
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "@agent-crm/mcp",
+      "identifier": "@accordo/mcp",
       "version": "0.1.0",
       "transport": {
         "type": "stdio"
@@ -20,7 +20,7 @@
       "environmentVariables": [
         {
           "name": "CRM_DB_PATH",
-          "description": "Path to the project's SQLite database file. Defaults to ./data/agent-crm.sqlite relative to the working directory.",
+          "description": "Path to the project's SQLite database file. Defaults to ./data/accordo.sqlite relative to the working directory.",
           "isRequired": false,
           "isSecret": false
         }

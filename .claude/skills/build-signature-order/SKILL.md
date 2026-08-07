@@ -1,6 +1,6 @@
 ---
 name: build-signature-order
-description: Add or extend Signature and Order in an Agent CRM project - signature providers, envelope/signer/event state, verified webhooks, signed-artifact evidence, reconciliation and immutable Orders built from an approved Quote Version. Use for signature, envelope, webhook or order work. Do not use for catalog/quote/discount work (build-commercial-operations) or CRUD module changes (create-crm-module).
+description: Add or extend Signature and Order in an Accordo project - signature providers, envelope/signer/event state, verified webhooks, signed-artifact evidence, reconciliation and immutable Orders built from an approved Quote Version. Use for signature, envelope, webhook or order work. Do not use for catalog/quote/discount work (build-commercial-operations) or CRUD module changes (create-crm-module).
 requires:
   tier: generated-project
   command: "crm app inspect"

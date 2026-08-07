@@ -5,7 +5,7 @@
  */
 
 /** @type {Actor} */
-export const SYSTEM_ACTOR = Object.freeze({ type: 'system', id: 'agent-crm' });
+export const SYSTEM_ACTOR = Object.freeze({ type: 'system', id: 'accordo' });
 
 /** @param {unknown} actor @returns {Actor} */
 export function normalizeActor(actor) {

@@ -16,13 +16,13 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
  */
 
 let projectRoot;
-let createAgentCrmApp;
+let createAccordoApp;
 let createHttpServer;
-let AgentCrmClient;
+let AccordoClient;
 const actor = { type: 'user', id: 'pipeline-e2e' };
 
 test.before(async () => {
-  projectRoot = mkdtempSync(join(tmpdir(), 'agent-crm-pipeline-'));
+  projectRoot = mkdtempSync(join(tmpdir(), 'accordo-pipeline-'));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(projectRoot, entry), { recursive: true });
   }
@@ -30,7 +30,7 @@ test.before(async () => {
   for (const manifest of ['lead.module.json', 'task.module.json']) {
     const result = spawnSync(
       process.execPath,
-      ['--no-warnings', join(projectRoot, 'packages/cli/bin/agent-crm.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', projectRoot],
+      ['--no-warnings', join(projectRoot, 'packages/cli/bin/accordo.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', projectRoot],
       { encoding: 'utf8', cwd: projectRoot },
     );
     assert.equal(result.status, 0, result.stderr);
@@ -53,9 +53,9 @@ test.before(async () => {
       '',
     ].join('\n'),
   );
-  ({ createAgentCrmApp } = await import(pathToFileURL(join(projectRoot, 'packages/app/src/index.js')).href));
+  ({ createAccordoApp } = await import(pathToFileURL(join(projectRoot, 'packages/app/src/index.js')).href));
   ({ createHttpServer } = await import(pathToFileURL(join(projectRoot, 'apps/server/src/index.js')).href));
-  ({ AgentCrmClient } = await import(pathToFileURL(join(projectRoot, 'packages/sdk/src/index.js')).href));
+  ({ AccordoClient } = await import(pathToFileURL(join(projectRoot, 'packages/sdk/src/index.js')).href));
 });
 
 test.after(() => {
@@ -63,10 +63,10 @@ test.after(() => {
 });
 
 async function boot(t, dbPath = ':memory:') {
-  const app = createAgentCrmApp({ dbPath });
+  const app = createAccordoApp({ dbPath });
   const server = createHttpServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const client = new AgentCrmClient({ baseUrl: `http://127.0.0.1:${server.address().port}`, actor });
+  const client = new AccordoClient({ baseUrl: `http://127.0.0.1:${server.address().port}`, actor });
   const close = async () => { await new Promise((resolve) => server.close(resolve)); app.close(); };
   if (t) t.after(close);
   return { app, client, close };
@@ -266,8 +266,8 @@ test('concurrent conflicting moves: one winner, stable 409 loser, exactly one tr
 
 test('two independent connections: winner + retryable 409, no raw SQLite error, restart persists', async (t) => {
   const dbPath = join(projectRoot, 'data', `race-${process.pid}.sqlite`);
-  const appA = createAgentCrmApp({ dbPath, busyTimeoutMs: 200 });
-  const appB = createAgentCrmApp({ dbPath, busyTimeoutMs: 200 });
+  const appA = createAccordoApp({ dbPath, busyTimeoutMs: 200 });
+  const appB = createAccordoApp({ dbPath, busyTimeoutMs: 200 });
   t.after(() => { appA.close(); appB.close(); });
   const opportunity = await convertedOpportunity(appA);
 
@@ -290,7 +290,7 @@ test('two independent connections: winner + retryable 409, no raw SQLite error, 
   });
   assert.equal(retried.result.record.pipelineStage, 'negotiation');
 
-  const appC = createAgentCrmApp({ dbPath });
+  const appC = createAccordoApp({ dbPath });
   t.after(() => appC.close());
   assert.equal(appC.services.opportunities.get(opportunity.id).pipelineStage, 'negotiation');
 });
@@ -386,7 +386,7 @@ test('an open-target move clears corrupt terminal fields (coherence enforced)', 
 });
 
 test('a pipeline targeting a generated module is rejected at startup (no dead pipelines)', async (t) => {
-  const altRoot = mkdtempSync(join(tmpdir(), 'agent-crm-deadpipe-'));
+  const altRoot = mkdtempSync(join(tmpdir(), 'accordo-deadpipe-'));
   t.after(() => rmSync(altRoot, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(projectRoot, entry), join(altRoot, entry), { recursive: true });
@@ -403,7 +403,7 @@ test('a pipeline targeting a generated module is rejected at startup (no dead pi
       '',
     ].join('\n'),
   );
-  const { createAgentCrmApp: createAlt } = await import(pathToFileURL(join(altRoot, 'packages/app/src/index.js')).href);
+  const { createAccordoApp: createAlt } = await import(pathToFileURL(join(altRoot, 'packages/app/src/index.js')).href);
   assert.throws(
     () => createAlt({ dbPath: ':memory:' }),
     /not staged-eligible|stores pipeline state/,
@@ -412,7 +412,7 @@ test('a pipeline targeting a generated module is rejected at startup (no dead pi
 });
 
 test('a pipeline with no terminal stages is legal: moves are open→open only', async (t) => {
-  const altRoot = mkdtempSync(join(tmpdir(), 'agent-crm-openonly-'));
+  const altRoot = mkdtempSync(join(tmpdir(), 'accordo-openonly-'));
   t.after(() => rmSync(altRoot, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(altRoot, entry), { recursive: true });
@@ -435,7 +435,7 @@ test('a pipeline with no terminal stages is legal: moves are open→open only', 
       '',
     ].join('\n'),
   );
-  const { createAgentCrmApp: createAlt } = await import(pathToFileURL(join(altRoot, 'packages/app/src/index.js')).href);
+  const { createAccordoApp: createAlt } = await import(pathToFileURL(join(altRoot, 'packages/app/src/index.js')).href);
   const app = createAlt({ dbPath: ':memory:' });
   t.after(() => app.close());
   const company = await app.services.companies.create({ name: 'Endless Co' }, { actor });
@@ -460,7 +460,7 @@ test('a pipeline with no terminal stages is legal: moves are open→open only', 
 test('a second pipeline shape proves the contract is not hardcoded to one stage list', async (t) => {
   // A different project with a DIFFERENT pipeline (three stages, other keys)
   // on the same module: same runtime, same action, no code changes.
-  const altRoot = mkdtempSync(join(tmpdir(), 'agent-crm-altpipe-'));
+  const altRoot = mkdtempSync(join(tmpdir(), 'accordo-altpipe-'));
   t.after(() => rmSync(altRoot, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(altRoot, entry), { recursive: true });
@@ -491,7 +491,7 @@ test('a second pipeline shape proves the contract is not hardcoded to one stage 
       '',
     ].join('\n'),
   );
-  const { createAgentCrmApp: createAlt } = await import(pathToFileURL(join(altRoot, 'packages/app/src/index.js')).href);
+  const { createAccordoApp: createAlt } = await import(pathToFileURL(join(altRoot, 'packages/app/src/index.js')).href);
   const app = createAlt({ dbPath: ':memory:' });
   t.after(() => app.close());
   const company = await app.services.companies.create({ name: 'Alt Co' }, { actor });

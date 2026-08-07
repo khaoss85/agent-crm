@@ -1,5 +1,5 @@
 {
-  "name": "agent-crm",
+  "name": "accordo",
   "version": "0.1.0",
   "private": true,
   "description": "Agent-native CRM framework: CRM modules, deterministic workflows, MCP, CLI, trace and audit.",
@@ -8,16 +8,16 @@
     "node": ">=22.16.0"
   },
   "bin": {
-    "agent-crm": "./packages/cli/bin/agent-crm.js"
+    "accordo": "./packages/cli/bin/accordo.js"
   },
   "scripts": {
-    "dev": "node --no-warnings packages/cli/bin/agent-crm.js serve",
-    "start": "node --no-warnings packages/cli/bin/agent-crm.js serve",
+    "dev": "node --no-warnings packages/cli/bin/accordo.js serve",
+    "start": "node --no-warnings packages/cli/bin/accordo.js serve",
     "mcp": "node --no-warnings packages/mcp/bin/server.js",
-    "crm": "node --no-warnings packages/cli/bin/agent-crm.js",
-    "seed": "node --no-warnings packages/cli/bin/agent-crm.js seed",
-    "demo": "node --no-warnings packages/cli/bin/agent-crm.js demo",
-    "doctor": "node --no-warnings packages/cli/bin/agent-crm.js doctor",
+    "crm": "node --no-warnings packages/cli/bin/accordo.js",
+    "seed": "node --no-warnings packages/cli/bin/accordo.js seed",
+    "demo": "node --no-warnings packages/cli/bin/accordo.js demo",
+    "doctor": "node --no-warnings packages/cli/bin/accordo.js doctor",
     "check": "node scripts/check.js",
     "test": "node --no-warnings --test --test-reporter=spec",
     "verify": "npm run check && npm test",

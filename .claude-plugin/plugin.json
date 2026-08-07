@@ -1,11 +1,11 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
-  "name": "agent-crm",
-  "displayName": "Agent CRM",
+  "name": "accordo",
+  "displayName": "Accordo",
   "version": "0.1.0",
   "description": "Build a CRM as code you own. Eleven skills that take a coding agent from a business objective to checked-in modules, deterministic workflows, policy-gated approvals, audit and trace — plus the project MCP server, whose code-generating tools are dry-run until you pass --apply.",
   "author": {
-    "name": "Agent CRM maintainers",
+    "name": "Accordo maintainers",
     "url": "https://github.com/khaoss85/agent-crm"
   },
   "homepage": "https://github.com/khaoss85/agent-crm",

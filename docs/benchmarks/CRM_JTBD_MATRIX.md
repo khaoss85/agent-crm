@@ -189,7 +189,7 @@ The four product workstreams (`docs/strategy/REVENUE_OPERATIONS.md`, `DELIVERY_S
 ### Package developer (Custom Package Authoring v1, M13)
 
 Who: a developer — or Claude Code / Codex on their behalf — extending their own
-checked-in Agent CRM repository. Evidence for every row below is
+checked-in Accordo repository. Evidence for every row below is
 `tests/package-contract.test.js`, `tests/custom-package-e2e.test.js` and
 `examples/custom-packages/partner-scorecard`.
 

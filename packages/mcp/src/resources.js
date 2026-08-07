@@ -33,7 +33,7 @@ export function createResourceRegistry({ app, rootDir }) {
     {
       uri: 'crm://project/architecture',
       name: 'architecture',
-      title: 'Agent CRM Architecture',
+      title: 'Accordo Architecture',
       description: 'The repository architecture and extension rules.',
       mimeType: 'text/markdown',
       read: async () => readFile(join(rootDir, 'ARCHITECTURE.md'), 'utf8'),
@@ -41,7 +41,7 @@ export function createResourceRegistry({ app, rootDir }) {
     {
       uri: 'crm://project/jtbd',
       name: 'jobs-to-be-done',
-      title: 'Agent CRM Jobs To Be Done',
+      title: 'Accordo Jobs To Be Done',
       description: 'Medusa-style use cases translated to CRM.',
       mimeType: 'text/markdown',
       read: async () => readFile(join(rootDir, 'docs', 'JTBD.md'), 'utf8'),

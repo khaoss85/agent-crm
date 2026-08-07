@@ -1,4 +1,4 @@
-# Agent CRM
+# Accordo
 
 > **Describe your sales process to your coding agent; own the CRM it builds.**
 
@@ -6,7 +6,7 @@ An open-source framework that Claude Code and Codex use to generate a CRM applic
 as code you own — deterministic workflows, policy-gated human approvals, audit and trace
 built in.
 
-`agent-crm` is a working title, not the public name. The project is **pre-launch**:
+`accordo` is a working title, not the public name. The project is **pre-launch**:
 nothing is published, and it is not deployable to production. What that means precisely
 is in [Where it stops](#where-it-stops), which is worth reading before the rest.
 

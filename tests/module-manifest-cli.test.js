@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const cliPath = fileURLToPath(new URL('../packages/cli/bin/agent-crm.js', import.meta.url));
+const cliPath = fileURLToPath(new URL('../packages/cli/bin/accordo.js', import.meta.url));
 const partnerManifest = fileURLToPath(new URL('../examples/modules/partner.module.json', import.meta.url));
 
 function runCli(args) {
@@ -23,7 +23,7 @@ test('CLI validates the example partner manifest', () => {
 });
 
 test('CLI reports manifest validation failures with a non-zero exit', (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'agent-crm-manifest-'));
+  const directory = mkdtempSync(join(tmpdir(), 'accordo-manifest-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const badManifest = join(directory, 'bad.module.json');
   writeFileSync(badManifest, JSON.stringify({ name: 'partner', fields: [{ name: 'tier', type: 'enum' }] }));
@@ -34,7 +34,7 @@ test('CLI reports manifest validation failures with a non-zero exit', (t) => {
 });
 
 test('CLI migration generation is dry-run by default and writes only with --out', (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'agent-crm-migration-'));
+  const directory = mkdtempSync(join(tmpdir(), 'accordo-migration-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
 
   const dryRun = runCli(['module', 'migration', partnerManifest, '--dry-run']);
