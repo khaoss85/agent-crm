@@ -79,13 +79,29 @@ async function render(data, { fail = null, truncated = false, actions = [] } = {
     },
   };
   const busy = [];
+  // The REAL `withBusy` (apps/admin/public/admin-quotes.js) re-renders the whole
+  // quote detail whenever the callback resolves, and only shows an error when it
+  // rejects. A stub that just awaits the callback therefore cannot see the bug
+  // that shipped: a section which swallowed its own failure looked fine here
+  // while the parent silently rebuilt the DOM over the error message and the
+  // operator's typed input. `rerenders` is the observable the tests assert on.
+  const trace = { rerenders: 0, errors: [] };
+  const withBusy = async (fn) => {
+    try {
+      await fn();
+      trace.rerenders += 1;
+    } catch (error) {
+      trace.errors.push(error?.message ?? String(error));
+      for (const control of busy) control.disabled = false;
+    }
+  };
   await renderDeliveryChangeAcceptance({
     project: PROJECT, schema: SCHEMA, mount, el, client, fetchRows,
     money: (cents, currency) => `${currency} ${(cents / 100).toFixed(2)}`,
-    withBusy: async (fn) => { await fn(); },
+    withBusy,
     busy,
   });
-  return { mount, busy, actions, reads };
+  return { mount, busy, actions, reads, trace };
 }
 
 const byClass = (mount, className) =>
@@ -245,13 +261,92 @@ test('a resolved candidate is read-only, and says what the outcome did not do', 
 test('a refused follow-up outcome keeps the typed reason on screen', async (t) => {
   const actions = [];
   actions.scripted = { 'resolve-commercial-change': new Error('Recording was refused') };
-  const { mount } = await render(rows({ 'delivery-commercial-change': [candidateRow()] }), { actions });
+  const { mount, trace } = await render(rows({ 'delivery-commercial-change': [candidateRow()] }), { actions });
   const reason = mount.findAll('input').find((node) => node.getAttribute('name') === 'reason');
   reason.value = 'settled on the phone';
   await buttonLabelled(mount, 'Record follow-up outcome').dispatch('click');
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(reason.value, 'settled on the phone', 'a refusal never costs the operator their words');
   assert.match(mount.findAll('small').map((node) => node.textContent).join(' '), /Recording was refused/);
+  // And the failure reaches the parent, which is the only thing that stops it
+  // re-rendering the section and wiping both the message and the typed reason.
+  // A real Chromium run proved that a swallowed failure looks, to the operator,
+  // exactly like nothing having happened at all.
+  assert.equal(trace.rerenders, 0, 'a refused action must not look successful to the parent');
+  assert.deepEqual(trace.errors, ['Recording was refused']);
+  assert.ok(t);
+});
+
+test('every refusal in the section reaches the parent instead of being swallowed', async (t) => {
+  const pending = candidateRow();
+  const cases = [
+    ['decide-change-request', 'Approve', rows({ 'delivery-change-request': [changeRow()] })],
+    ['resolve-commercial-change', 'Record follow-up outcome', rows({ 'delivery-commercial-change': [pending] })],
+    ['plan-deliverable', 'Plan deliverable', rows({}), (mount) => {
+      // The route needs a work package id; without one the section never gets
+      // as far as the server, and this test would prove nothing.
+      const wp = mount.findAll('input').find((node) => node.getAttribute('name') === 'workPackageId');
+      wp.value = 'wp1';
+    }],
+    ['complete-deliverable', 'Complete deliverable', rows({
+      'delivery-deliverable': [{
+        id: 'dl1', deliveryProjectId: 'dp1', deliveryWorkPackageId: 'wp1', deliveryMilestoneId: 'ms1',
+        label: 'Export', scopeSnapshot: null, status: 'planned', completionEvidenceRef: null,
+        completedBy: null, completedAt: null, plannedBy: 'ops', plannedAt: 't',
+      }],
+    })],
+    ['record-acceptance', 'Record accepted', rows({
+      'delivery-acceptance-request': [{
+        id: 'ar1', deliveryProjectId: 'dp1', deliveryMilestoneId: 'ms1', deliverableRefs: '["dl1"]',
+        scopeFingerprint: 'f'.repeat(64), frozenScope: '{"deliverables":[]}', deliverableCount: 1,
+        customerRef: 'customer:acme', customerContactRef: null, customerNameSnapshot: null, evidenceRef: null,
+        status: 'pending', requestedBy: 'ops', requestedAt: 't',
+      }],
+    })],
+  ];
+  for (const [action, label, data, prepare] of cases) {
+    const actions = [];
+    actions.scripted = { [action]: new Error(`${action} refused`) };
+    const { mount, trace } = await render(data, { actions });
+    if (prepare) prepare(mount);
+    const button = buttonLabelled(mount, label);
+    assert.ok(button, `${action}: the ${label} control must exist for this state`);
+    await button.dispatch('click');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(trace.rerenders, 0, `${action}: a refusal must not be reported to the parent as success`);
+    assert.deepEqual(trace.errors, [`${action} refused`], `${action}: the parent sees the real message`);
+    assert.match(mount.findAll('small').map((node) => node.textContent).join(' '), new RegExp(`${action} refused`),
+      `${action}: and the section states it too`);
+  }
+  assert.ok(t);
+});
+
+test('a change request stops claiming follow-up is required once its candidate is settled', async (t) => {
+  const line = (mount) => byClass(mount, 'ca-outcome-candidate')[0];
+  const pending = await render(rows({
+    'delivery-change-request': [changeRow({ changeType: 'commercial_change_required', status: 'pending_commercial_followup' })],
+    'delivery-commercial-change': [candidateRow()],
+  }));
+  assert.match(line(pending.mount).textContent, /commercial follow-up required/);
+  assert.equal(line(pending.mount).getAttribute('data-candidate-status'), 'pending_commercial_followup');
+
+  for (const [status, phrase] of [
+    ['resolved_externally', /settled outside this application\. Nothing was amended/],
+    ['withdrawn', /withdrawn\. Nothing was amended/],
+  ]) {
+    const settled = await render(rows({
+      'delivery-change-request': [changeRow({ changeType: 'commercial_change_required', status: 'pending_commercial_followup' })],
+      'delivery-commercial-change': [candidateRow({ status, resolutionReason: 'r', resolvedBy: 'ops', resolvedAt: 't' })],
+    }));
+    const node = line(settled.mount);
+    assert.match(node.textContent, phrase, `${status}: the summary line must follow the candidate`);
+    assert.equal(/follow-up required/.test(node.textContent), false,
+      `${status}: a settled candidate must not still demand follow-up`);
+    assert.equal(node.getAttribute('data-candidate-status'), status);
+    // The hook is unique: `data-commercial-change` belongs to the candidate card
+    // alone, so a reader — or a test — cannot match the wrong node.
+    assert.equal(node.getAttribute('data-commercial-change'), null);
+  }
   assert.ok(t);
 });
 

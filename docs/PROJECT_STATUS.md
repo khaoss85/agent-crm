@@ -19,9 +19,9 @@ Generated: **2026-08-07**.
 | Tests on clean main | **370 passing, 0 failing** (`npm run verify` from a fresh clone of `03a2cbe`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
-| Browser smoke | 37/37 in real Chromium on the M14a branch, plus 18 further checks for the M14b2 section on its branch, both run manually — **not in CI** |
+| Browser smoke | 37/37 in real Chromium on the M14a branch, plus 22 further checks for the M14b2 section as its pre-merge gate, both run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **M14b2 — Delivery change, deliverables and acceptance** (`claude/milestone-14b2-delivery-change-acceptance`): 415 passing on the branch, plus 18 real-Chromium checks. Open and unmerged, awaiting the adversarial review. |
+| Open PRs | **M14b2 — Delivery change, deliverables and acceptance** (`claude/milestone-14b2-delivery-change-acceptance`): 421 passing on the branch, plus 22 real-Chromium checks run as the pre-merge gate. Reviewed; awaiting human merge. |
 
 ## Completed functional path
 

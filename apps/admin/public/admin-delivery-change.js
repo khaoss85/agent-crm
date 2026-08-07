@@ -177,8 +177,19 @@ function renderChangeRequests({ data, meta, project, body, el, client, money, wi
     const candidate = candidateByChange.get(change.id);
     if (candidate) {
       const link = el('p', 'ca-outcome ca-outcome-candidate');
-      link.setAttribute('data-commercial-change', candidate.id);
-      link.textContent = 'Raised a commercial change candidate — commercial follow-up required.';
+      // A distinct hook: `data-commercial-change` belongs to the candidate card
+      // below, and an attribute that matches two different nodes is how a
+      // reader — or a test — ends up asserting against the wrong one.
+      link.setAttribute('data-candidate-ref', candidate.id);
+      link.setAttribute('data-candidate-status', candidate.status);
+      // …and it must not keep saying follow-up is required after somebody
+      // recorded that it is not. The card below is the detail; this line is the
+      // change request's own summary of where its handoff got to.
+      link.textContent = candidate.status === 'pending_commercial_followup'
+        ? 'Raised a commercial change candidate — commercial follow-up required.'
+        : candidate.status === 'withdrawn'
+          ? 'Raised a commercial change candidate — the follow-up was withdrawn. Nothing was amended.'
+          : 'Raised a commercial change candidate — the follow-up was settled outside this application. Nothing was amended.';
       card.appendChild(link);
     }
 
@@ -220,6 +231,7 @@ function decisionControls({ change, el, client, withBusy, busy, refresh }) {
       error.textContent = failure?.message ?? 'The decision was refused.';
       approve.disabled = false;
       reject.disabled = false;
+      throw failure;
     }
   };
   approve.addEventListener('click', () => { void withBusy(decide('approve')); });
@@ -277,8 +289,8 @@ function proposeControls({ project, el, client, withBusy, busy, refresh }) {
         await refresh();
       } catch (failure) {
         error.textContent = failure?.message ?? 'The change was refused.';
-      } finally {
         submit.disabled = false;
+        throw failure;
       }
     });
   });
@@ -416,6 +428,7 @@ function resolveControl({ candidate, el, client, withBusy, busy, refresh }) {
         // server said no is the fastest way to lose the reason.
         error.textContent = failure?.message ?? 'Recording the outcome was refused.';
         button.disabled = false;
+        throw failure;
       }
     });
   });
@@ -480,6 +493,7 @@ function completeControl({ deliverable, el, client, withBusy, busy, refresh }) {
       } catch (failure) {
         error.textContent = failure?.message ?? 'Completion was refused.';
         button.disabled = false;
+        throw failure;
       }
     });
   });
@@ -523,8 +537,8 @@ function planDeliverableControls({ data, project, el, client, withBusy, busy, re
         await refresh();
       } catch (failure) {
         error.textContent = failure?.message ?? 'Planning was refused.';
-      } finally {
         button.disabled = false;
+        throw failure;
       }
     });
   });
@@ -632,6 +646,7 @@ function recordControls({ request, el, client, withBusy, busy, refresh }) {
       error.textContent = failure?.message ?? 'Recording was refused.';
       accept.disabled = false;
       reject.disabled = false;
+      throw failure;
     }
   };
   accept.addEventListener('click', () => { void withBusy(record('accepted')); });

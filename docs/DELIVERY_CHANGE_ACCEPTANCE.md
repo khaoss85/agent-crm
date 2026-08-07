@@ -190,6 +190,6 @@ write, two-connection races, exact reads past 500 rows, exact audit/event/trace
 counts, the scope freeze, hostile input),
 `tests/delivery-change-acceptance-integration.test.js` (AX1, AX2, upgrade,
 detach), `tests/admin-delivery-change.test.js` (the Admin section),
-`docs/ADMIN_SMOKE.md` (18 real-Chromium checks),
+`docs/ADMIN_SMOKE.md` (22 real-Chromium checks, run as the pre-merge gate),
 `packages/delivery/src/change-acceptance.js`,
 `docs/plans/milestone-14b2-delivery-change-acceptance.md`.
