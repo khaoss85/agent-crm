@@ -1,0 +1,30 @@
+{
+  "solutionPlanContract": 1,
+  "revision": 1,
+  "goal": { "id": "goal.broken", "statement": "A plan with problems", "outcome": "It is refused" },
+  "metric": { "name": "thing_rate", "definition": "Things per week" },
+  "application": {
+    "applicationInspectionContract": 1,
+    "compositionFingerprint": "abc123",
+    "packages": [],
+    "capabilities": [],
+    "modules": []
+  },
+  "evidence": {
+    "observedFacts": [{ "id": "f1", "statement": "A fact", "source": "app inspect", "citations": [] }],
+    "derivedMetrics": [{ "id": "m1", "statement": "A metric with nothing behind it", "citations": [] }],
+    "assumptions": [],
+    "inferences": [{ "id": "i1", "statement": "An inference from a fact that is not here", "citations": ["ghost"] }],
+    "recommendations": [{ "id": "r1", "statement": "A recommendation", "citations": ["i1"] }],
+    "unavailableEvidence": []
+  },
+  "decisions": [
+    { "id": "d1", "type": "provider", "target": "some-provider", "rationale": "the gap is an integration", "rungsTried": [1, 2, 3] }
+  ],
+  "steps": [
+    { "id": "s1", "decisionId": "d1", "description": "Compose the provider", "requiresCapabilities": [], "approvals": [], "verifies": [] }
+  ],
+  "approvals": [],
+  "acceptance": { "checks": ["the suite passes"], "jtbdRows": [] },
+  "limitations": []
+}

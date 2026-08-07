@@ -68,3 +68,22 @@ export {
   requiredIsoDate,
   optionalIsoDate,
 } from './src/validation.js';
+
+// AX2 — machine-readable Solution Plans. A document contract and its validator:
+// nothing here executes a plan, writes source or installs anything.
+export {
+  SOLUTION_PLAN_CONTRACT,
+  DECISION_TYPES,
+  EVIDENCE_CATEGORIES,
+  APPROVAL_CODES,
+  PLAN_PROBLEM_CODES,
+  PLAN_LIMITATIONS,
+  NON_EXECUTABLE_DECISION_TYPES,
+  MAX_PLAN_BYTES,
+  canonicalJson,
+  fingerprintPlan,
+  validateSolutionPlan,
+  bindSolutionPlan,
+  parseSolutionPlan,
+  solutionPlanVocabulary,
+} from './src/solution-plan.js';

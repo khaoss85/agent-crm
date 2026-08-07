@@ -14,14 +14,14 @@ Generated: **2026-08-07**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **AX1 — Deterministic application inspection** on top of **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
-| Main SHA at generation | `dff2767` (merge of PR #22; full SHA `dff276715f462cf6e22165a096db7f55ab87db02`) |
-| Tests on clean main | **338 passing, 0 failing** (`npm run verify` from a fresh clone of `dff2767`) |
+| Latest merged milestone | **M14b1 — Delivery economics** on top of **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
+| Main SHA at generation | `0f5845c` (merge of PR #23; full SHA `0f5845c65a82699b93d9be286eaf7b47ff6adb93`) |
+| Tests on clean main | **352 passing, 0 failing** (`npm run verify` from a fresh clone of `0f5845c`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **M14b1 — Delivery economics** (`claude/milestone-14b-delivery-economics-change-acceptance`): 350 passing on the branch. Open and unmerged, awaiting the adversarial review. |
+| Open PRs | **AX2 — Machine-readable Solution Plans** (`claude/ax2-machine-readable-solution-plan`): 362 passing on the branch. Open and unmerged, awaiting the adversarial review. |
 
 ## Completed functional path
 
@@ -48,7 +48,7 @@ Lead capture
   a reproducible contribution estimate grouped by currency                    M14b1
 ```
 
-M14a and AX1 are merged. M14b1 is on an open PR.
+M14a, AX1 and M14b1 are merged. AX2 is on an open PR.
 
 Framework underneath: module manifest + generated migrations (M1), module
 factory (M2), one generated resource contract over API/SDK (M3), generated
@@ -78,13 +78,15 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 | — | Module Evolution v1: revisions, a checked-in state file and append-only migrations | ADR-019 |
 | M14a | Delivery execution: eight human-driven transitions, block evidence, a hierarchy gate | ADR-019 addendum 1 |
 | AX1 | Deterministic application inspection: `crm app inspect`, source-only and read-only | — |
+| M14b1 | Delivery economics: cost policy, append-only time and expense evidence, versioned plan, reproducible contribution estimate | ADR-014, ADR-016 |
 
 ## Next planned development
 
-1. **M14b1 — Delivery economics** — implemented on an open PR: a versioned
-   fingerprinted cost policy, append-only time and expense evidence, an
-   immutable versioned plan and a reproducible contribution estimate grouped by
-   currency (`docs/DELIVERY_ECONOMICS.md`).
+1. **AX2 — Machine-readable Solution Plans** — implemented on an open PR: a
+   bounded plan contract with a canonical fingerprint, six decision types, six
+   evidence categories, a closed approval vocabulary, and `crm solution
+   inspect|validate|check` binding a plan to a real `app inspect` report
+   (`docs/SOLUTION_PLAN.md`, ADR-020). **Not a planner and not a runtime.**
 2. **M14b2 — Delivery change requests, deliverables and acceptance** — not
    started, and split out of M14b deliberately rather than quietly dropped.
    Governed non-commercial replans, the commercial-change handoff that never
@@ -100,8 +102,9 @@ Two parallel tracks run alongside and are not gated by domain progress: the
 auth/tenancy/RBAC, Jobs & durable outbox, Integration Runtime, Data Governance,
 Design-to-CRM, Cloud), the **Marketing & Growth track** (MK0–MK7 — design only;
 `MARKETING_GROWTH_OPERATIONS.md`) and the cross-cutting **Agent Experience
-track** (AX0–AX5 — AX0 is a strategy and a Skill, AX1 is implemented on an open
-PR, AX2–AX5 are not implemented; `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequencing and dependencies are in
+track** (AX0–AX5 — AX0 is a strategy and a Skill, AX1 is merged, AX2 is a
+machine-readable plan *contract* on an open PR — not a planner and not a
+runtime — and AX3–AX5 are not implemented; `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequencing and dependencies are in
 `EXECUTION_ROADMAP.md`.
 
 ## Known platform limitations (not blockers, but not forgotten)
@@ -136,13 +139,12 @@ adoption; generated API/SDK/Admin; references; actions; core adapters;
 pipelines; Lead Intelligence; Commercial Operations; Signature and Order;
 Contract activation and subscriptions; the public domain-package contract, the
 delivery handover and delivery execution; deterministic application inspection
-(AX1); MCP server; CLI.
+(AX1); delivery economics (M14b1); MCP server; CLI.
 
-**Implemented, open PR (not on main):** delivery economics (M14b1).
+**Implemented, open PR (not on main):** machine-readable Solution Plans (AX2).
 
 **Documentation only (no code):** renewal, billing and everything downstream of
-activation; delivery economics, change requests, deliverables and acceptance
-(M14b2); Service; Analytics Studio; Integration Runtime; Jobs & durable outbox;
+activation; delivery change requests, deliverables and acceptance (M14b2); Service; Analytics Studio; Integration Runtime; Jobs & durable outbox;
 Data Governance; Design-to-CRM; Agent CRM Cloud; create-project CLI;
 PostgreSQL; auth/tenancy/RBAC; Marketing & Growth (MK0–MK7); the Agent
 Experience track beyond AX0; benchmark execution.

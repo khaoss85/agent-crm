@@ -1,0 +1,155 @@
+{
+  "solutionPlanContract": 1,
+  "revision": 1,
+  "goal": {
+    "id": "lead-to-won",
+    "statement": "Shorten the time it takes a qualified inbound lead to become a won opportunity, without losing the approval discipline on discounts.",
+    "outcome": "A sales team that can see where a lead stalls, and an approval gate that still holds at the discount threshold."
+  },
+  "metric": {
+    "name": "median_lead_to_won_days",
+    "definition": "Median calendar days from lead capture to the opportunity reaching the Won stage, over leads captured in the trailing quarter.",
+    "baseline": "unknown — see evidence entry unavailable.no-timestamps-before-m8",
+    "target": "stated by the business; this plan does not invent one"
+  },
+  "application": {
+    "applicationInspectionContract": 1,
+    "compositionFingerprint": "example-only-not-a-real-composition",
+    "packages": [
+      { "name": "contracts", "version": 1 },
+      { "name": "delivery", "version": 3 }
+    ],
+    "capabilities": [
+      { "name": "delivery-economics", "version": 1, "status": "resolved" },
+      { "name": "delivery-obligations", "version": 1, "status": "resolved" }
+    ],
+    "modules": [
+      { "name": "lead", "revision": 1 }
+    ]
+  },
+  "evidence": {
+    "observedFacts": [
+      {
+        "id": "fact.stage-history-exists",
+        "statement": "Every opportunity stage change is recorded with its actor and reason, so the time spent in each stage is derivable without new instrumentation.",
+        "source": "app inspect: opportunity, opportunity-stage-history; docs/JTBD.md JTBD-05",
+        "citations": []
+      },
+      {
+        "id": "fact.approval-gate-is-a-policy",
+        "statement": "The discount approval threshold is a versioned, fingerprinted policy rather than a hardcoded branch, so changing it is a new policy version and not a code edit.",
+        "source": "app inspect: policies[]; ADR-015",
+        "citations": []
+      },
+      {
+        "id": "fact.no-marketing-primitive",
+        "statement": "No campaign, audience, journey, experiment or attribution record exists in this application.",
+        "source": "app inspect: resources[]; docs/benchmarks/CRM_JTBD_MATRIX.md, all JTBD-MK rows",
+        "citations": []
+      }
+    ],
+    "derivedMetrics": [
+      {
+        "id": "metric.stage-dwell",
+        "statement": "Median days in each stage, computed from the stage-history rows rather than from any new field.",
+        "citations": ["fact.stage-history-exists"]
+      }
+    ],
+    "assumptions": [
+      {
+        "id": "assume.stage-order-is-the-funnel",
+        "statement": "The declared pipeline stage order is the funnel the business means, and a skipped stage is a data problem rather than a second funnel.",
+        "citations": []
+      }
+    ],
+    "inferences": [
+      {
+        "id": "infer.gate-is-not-the-bottleneck",
+        "statement": "If dwell time concentrates before the approval stage, the approval gate is not what is slowing the funnel, and loosening it would cost discipline for nothing.",
+        "citations": ["metric.stage-dwell", "fact.approval-gate-is-a-policy"]
+      }
+    ],
+    "recommendations": [
+      {
+        "id": "rec.measure-before-changing",
+        "statement": "Publish the dwell-time view first and change nothing else until it has a quarter of data behind it.",
+        "citations": ["infer.gate-is-not-the-bottleneck", "assume.stage-order-is-the-funnel"]
+      }
+    ],
+    "unavailableEvidence": [
+      {
+        "id": "unavailable.no-timestamps-before-m8",
+        "statement": "The baseline for median_lead_to_won_days cannot be computed for leads captured before pipeline stage history existed.",
+        "reason": "Stage history begins at M8; earlier rows have no per-stage timestamps, and no backfill would be evidence.",
+        "citations": []
+      },
+      {
+        "id": "unavailable.no-source-attribution",
+        "statement": "Which channel produced a lead cannot be reported.",
+        "reason": "No marketing or attribution primitive exists in this application, and inferring one from a record name would be an invention.",
+        "citations": []
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "id": "decision.dwell-view",
+      "type": "configure",
+      "target": "admin.opportunity-board",
+      "rationale": "The stage-history rows already exist, so the funnel view is a configuration of what is displayed, not a new model.",
+      "rungsTried": [1]
+    },
+    {
+      "id": "decision.stall-reason",
+      "type": "evolve",
+      "target": "opportunity",
+      "rationale": "Recording why an opportunity stalled needs one new field on the record that owns the fact. A parallel record to avoid a revision bump would be the wrong shape (ADR-019).",
+      "rungsTried": [1, 2]
+    },
+    {
+      "id": "decision.durable-reminders",
+      "type": "propose-kernel-capability",
+      "target": "scheduled-work",
+      "rationale": "Reminding an owner about a stalled opportunity needs durable scheduled work, which no package can provide and the kernel does not have. That is an ADR discussion, not a step in this solution.",
+      "rungsTried": [1, 2, 3, 4, 5]
+    }
+  ],
+  "steps": [
+    {
+      "id": "step.publish-dwell-view",
+      "decisionId": "decision.dwell-view",
+      "description": "Show median dwell time per stage on the opportunity board, next to a data-quality note stating how many rows have complete stage history.",
+      "requiresCapabilities": [],
+      "approvals": [],
+      "verifies": ["metric.stage-dwell"]
+    },
+    {
+      "id": "step.add-stall-reason",
+      "decisionId": "decision.stall-reason",
+      "description": "Add a bounded stall-reason field to the opportunity record at a new manifest revision, written only through the existing stage-change action.",
+      "requiresCapabilities": [],
+      "approvals": [],
+      "verifies": []
+    }
+  ],
+  "approvals": [],
+  "acceptance": {
+    "checks": [
+      "the full verification suite passes from a clean clone",
+      "the b2b lead-qualification starter installs into an empty project",
+      "the dwell-time view states its data-quality caveat on the screen, not only in this plan",
+      "the record revision bump is applied through the module factory, with its state file checked in"
+    ],
+    "jtbdRows": ["JTBD-05", "JTBD-08"]
+  },
+  "limitations": [
+    {
+      "code": "NO_BASELINE",
+      "message": "The primary metric has no baseline for leads captured before stage history existed, and this plan does not backfill one."
+    },
+    {
+      "code": "NO_ATTRIBUTION",
+      "message": "Nothing here reports which channel produced a lead. No marketing or attribution primitive exists."
+    }
+  ]
+}
