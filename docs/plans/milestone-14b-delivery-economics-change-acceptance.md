@@ -187,3 +187,22 @@ guarantees, the guide, README, skill, JTBD and status updates; `npm run verify`
 and `npm run smoke` from a clean clone, the starter twice including from a path
 with spaces, and the Chromium smoke. Then per `docs/QUALITY_GATES.md` §5: the
 adversarial review, then a human merge. **The M14b1 PR is left open.**
+
+## Two further defects the adversarial review of PR #23 found
+
+**A requested cost policy version was silently ignored.** `costPolicy()` fell
+back to the first registered policy the moment no policy *name* was supplied,
+so `policyVersion: 99` alone priced the work at version 1 and stored that on the
+time entry, with a `200` and no mention of the substitution. A named policy,
+a named version, or both must now exist, or the action refuses
+`409 DELIVERY_COST_POLICY_MISSING` with the registered list. Nothing is
+substituted onto stored money evidence.
+
+**A divergent retry under a reused `entryKey` was absorbed.** Recording the same
+key with 480 minutes instead of 60 returned `200 created: false` over the old
+entry: the correction was lost and the response looked like success. The
+framework already refuses a replayed external event id carrying a different
+payload (`signature-operations.js`), and evidence money is derived from deserves
+at least that. A retry is now compared field by field against what the key
+stored, and a difference is `409 DELIVERY_EVIDENCE_CONFLICT` naming the
+divergent fields. An identical retry stays idempotent.

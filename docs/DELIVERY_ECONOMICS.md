@@ -51,6 +51,12 @@ no public create, update or delete anywhere — not through the service, HTTP,
 the SDK, the Admin or MCP. A correction is a new entry, because a snapshot
 computed on Tuesday must still be reproducible on Wednesday.
 
+An `entryKey` promises *the same call records once*. It is not an edit handle:
+a retry whose values differ from what that key already stored is refused
+`409 DELIVERY_EVIDENCE_CONFLICT`, naming the fields that diverged. Absorbing it
+would answer `200` to an operator correcting 60 minutes to 480 while the entry
+the money is derived from still said 60.
+
 **The server computes money.** A caller supplies minutes; the cost policy
 supplies the rate; the action multiplies and rounds. A client-supplied
 `costCents`, `ratePerHourCents` or `currency` is not authoritative — it is not
@@ -158,6 +164,12 @@ the code, and changing one means publishing a new version.
 
 A policy returning a rate in a different currency from the work it costs is
 refused: there is no conversion to fall back on.
+
+A caller may name the policy, the version, or both. Whatever is named must
+exist: an unregistered `policy` **or** `policyVersion` is refused
+`409 DELIVERY_COST_POLICY_MISSING` with the registered list. Nothing is
+substituted — a rate card the caller did not ask for must never end up on
+stored money evidence.
 
 It is **not payroll and not employee identity**: a contributor reference is an
 opaque operational label, nothing reads an HR system, and no salary is claimed.

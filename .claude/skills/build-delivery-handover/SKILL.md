@@ -66,10 +66,12 @@ Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda, and ADR-019 wit
 4. **Group by currency, never sum across them.** There is no FX here, so there is no grand total. A policy returning a rate in another currency than the work is a refusal, not a conversion.
 5. The commercial input comes **only** from the immutable work-package snapshot. Never a live catalog, a quote draft or a client number. An obligation with no deterministic amount is unavailable evidence, not an invented one.
 6. Use the honest word: **delivery contribution estimate**. Never gross margin, accounting margin, recognized revenue or profit.
-7. A contribution estimate exists only where every commercial input in that currency is **one-time**. If the project carries a recurring obligation, `contributionBasis` is `unavailable` and the estimate is `null` — report it as unavailable and say why. Never annualize, normalize or sum across periods to manufacture one.
-8. Rates live in the policy's `config`, so they are inside the declared-definition fingerprint — a rate is versioned as strictly as the code. A rate table is not payroll and identifies nobody.
-9. Recording, publishing and snapshotting require `actor.type === 'user'`. An agent may preview and nothing else, and a preview must say `stored: false`.
-10. Consumption is recorded only while work is happening: the project `in_progress`, the work package `in_progress` or `blocked`. A blocked package still consumes time; a completed one does not.
+7. An idempotency key is not an edit handle. A retry whose values differ from what that key stored is a `409` conflict naming the divergent fields — never a silent `created: false` over the old values.
+8. Whatever the caller names — policy, version, or both — must exist. Never substitute another rate card and store it as evidence.
+9. A contribution estimate exists only where every commercial input in that currency is **one-time**. If the project carries a recurring obligation, `contributionBasis` is `unavailable` and the estimate is `null` — report it as unavailable and say why. Never annualize, normalize or sum across periods to manufacture one.
+10. Rates live in the policy's `config`, so they are inside the declared-definition fingerprint — a rate is versioned as strictly as the code. A rate table is not payroll and identifies nobody.
+11. Recording, publishing and snapshotting require `actor.type === 'user'`. An agent may preview and nothing else, and a preview must say `stored: false`.
+12. Consumption is recorded only while work is happening: the project `in_progress`, the work package `in_progress` or `blocked`. A blocked package still consumes time; a completed one does not.
 
 ## Do not implement here
 

@@ -167,7 +167,59 @@ test('the same key records once: repeats, a race and two connections', async (t)
   await record(second_);
   assert.equal(second_.modules.get('delivery-time-entry').service.countWhere({ deliveryWorkPackageId: wp.id }), 1,
     'and another connection does not add a second');
+
+  // A reused key with *different* bytes is a conflict, not a silent success.
+  // Absorbing it would have told an operator correcting 60 minutes to 480 that
+  // the correction landed, while the entry money is derived from still said 60.
+  await assert.rejects(
+    () => app.runAction({
+      module: 'delivery-work-package', action: 'record-delivery-time', recordId: wp.id, actor,
+      input: { ...input, minutes: 480, category: 'engineering' },
+    }),
+    (error) => error.status === 409 && error.code === 'DELIVERY_EVIDENCE_CONFLICT'
+      && /correction as a new entry/.test(error.message)
+      && error.details.fields.join(',') === 'category,minutes',
+    'the divergent field is named',
+  );
+  assert.equal(app.modules.get('delivery-time-entry').service.get(first.result.timeEntry.id).minutes, 60, 'unchanged');
+  assert.equal(app.modules.get('delivery-time-entry').service.countWhere({ deliveryWorkPackageId: wp.id }), 1,
+    'and the refusal wrote nothing');
   assert.ok(row.id);
+});
+
+test('a requested cost policy version is honoured or refused, never downgraded', async (t) => {
+  const { context, workPackages } = await running(t, 'policy-version.sqlite');
+  const wp = workPackages[0];
+  const time = (extra) => context.client.module('delivery-work-package').action(wp.id, 'record-delivery-time', {
+    contributorRef: 'consultant:ana', contributorType: 'internal',
+    workDate: '2026-09-21', minutes: 60, category: 'consulting', ...extra,
+  });
+
+  // Asking for a version that is not registered used to fall back to the first
+  // policy whenever no policy *name* came with it — pricing the work at v1 and
+  // storing that as evidence, with a 200 and no mention of the substitution.
+  await assert.rejects(
+    () => time({ entryKey: 'v99', policyVersion: 99 }),
+    (error) => error.status === 409 && error.code === 'DELIVERY_COST_POLICY_MISSING'
+      && Array.isArray(error.details.available),
+    'an unregistered version is refused',
+  );
+  await assert.rejects(
+    () => time({ entryKey: 'ghost', policy: 'no-such-policy' }),
+    (error) => error.status === 409 && error.code === 'DELIVERY_COST_POLICY_MISSING',
+  );
+  await assert.rejects(
+    () => time({ entryKey: 'bad', policyVersion: 1.5 }),
+    (error) => error.status === 400,
+    'a fractional version is a validation error',
+  );
+  assert.equal(context.app.modules.get('delivery-time-entry').service.list().length, 0, 'the refusals wrote nothing');
+
+  // The registered version, named or not, still resolves.
+  const registered = context.app.modules.get('delivery-time-entry');
+  const byVersion = await time({ entryKey: 'v1', policyVersion: 1 });
+  assert.equal(byVersion.result.timeEntry.policyVersion, 1);
+  assert.equal(registered.service.list().length, 1);
 });
 
 test('a plan is versioned, never edited, and a snapshot reproduces from evidence', async (t) => {

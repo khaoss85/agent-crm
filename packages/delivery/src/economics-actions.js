@@ -139,17 +139,52 @@ function costPolicy(policies, requested) {
   }
   const name = optionalString(requested?.policy, 'policy');
   const version = requested?.policyVersion;
-  const found = name === null
-    ? available[0]
-    : available.find((entry) => entry.definition.name === name
-      && (version === undefined || entry.definition.version === version));
+  if (version !== undefined && version !== null && !Number.isSafeInteger(version)) {
+    throw new ValidationError('policyVersion must be a whole number', { field: 'policyVersion' });
+  }
+  const wanted = version === undefined || version === null ? null : Number(version);
+  // A requested version is honoured whether or not a name came with it. The
+  // earlier code fell back to the first registered policy the moment no name
+  // was given, so `policyVersion: 3` alone priced the work at version 1 and
+  // stored that as evidence — the caller's explicit choice, silently ignored,
+  // in the one place the framework is deciding money.
+  const found = available.find((entry) => (name === null || entry.definition.name === name)
+    && (wanted === null || entry.definition.version === wanted));
   if (!found) {
-    throw new AppError(`Delivery cost policy "${String(name)}@${String(version ?? 'any')}" is not registered`, {
+    throw new AppError(`Delivery cost policy "${name ?? 'any'}@${wanted ?? 'any'}" is not registered`, {
       code: 'DELIVERY_COST_POLICY_MISSING', status: 409,
       details: { available: available.map((entry) => `${entry.definition.name}@${entry.definition.version}`) },
     });
   }
   return { policy: found.definition, fingerprint: costPolicyFingerprint(found.definition) };
+}
+
+/**
+ * Compare a retry against what that key already recorded.
+ *
+ * An idempotency key promises "the same call records once". It does not promise
+ * that a *different* call under a reused key silently succeeds — and here the
+ * difference is money. An operator who resubmits `entryKey: "day-1"` with 480
+ * minutes instead of 60 got a 200 and `created: false`, and the entry still
+ * said 60. The correction was lost, and the response looked like success.
+ *
+ * The framework already takes the stricter line where an external event id is
+ * replayed with a different payload (`signature-operations.js`), and evidence
+ * that money is derived from deserves at least that. A correction is a new
+ * entry, so a divergent retry is a conflict and says so.
+ *
+ * @param {any} existing @param {Record<string, unknown>} fields @param {string} what
+ */
+function requireSameEntry(existing, fields, what) {
+  const changed = Object.entries(fields)
+    .filter(([field, value]) => (existing[field] ?? null) !== (value ?? null))
+    .map(([field]) => field)
+    .sort();
+  if (changed.length === 0) return;
+  throw new AppError(
+    `This key already recorded a different ${what} (${changed.join(', ')} differ). Recorded evidence is never edited: record a correction as a new entry with its own key.`,
+    { code: 'DELIVERY_EVIDENCE_CONFLICT', status: 409, details: { id: existing.id, fields: changed } },
+  );
 }
 
 /** Return the existing record for a source key, or null. Exact, indexed, unpaged. */
@@ -194,12 +229,6 @@ export function buildEconomicsActions(options = {}) {
         const entryKey = boundedText(input.entryKey, 'entryKey', { required: true, max: MAX_KEY });
         const sourceKey = `delivery-time-entry:${record.id}:${entryKey}`;
         const existing = bySourceKey(entries, sourceKey);
-        // "Already recorded" is the first answer on a retry, before any policy
-        // work: an idempotent action must be idempotent cheaply.
-        if (existing) {
-          step('delivery.time.already-recorded', { id: existing.id });
-          return { timeEntry: existing, created: false };
-        }
 
         const contributorType = oneOf(input.contributorType, CONTRIBUTOR_TYPES, 'contributorType');
         const contributorRef = requireReference(input.contributorRef, 'contributorRef');
@@ -207,6 +236,19 @@ export function buildEconomicsActions(options = {}) {
         const minutes = requireMinutes(input.minutes, 'minutes');
         const category = boundedText(input.category, 'category', { required: true, max: MAX_CATEGORY });
         const currency = requireCurrency(record.currency, 'work package currency');
+        const note = boundedText(input.note, 'note');
+
+        // A retry answers from the stored entry — but only once it has proved
+        // it is the same call. Divergent bytes under a reused key are refused,
+        // never absorbed. Validation runs first so a malformed retry is a
+        // validation error rather than a false "already recorded".
+        if (existing) {
+          requireSameEntry(existing, {
+            contributorRef, contributorType, workDate, minutes, category, note,
+          }, 'time entry');
+          step('delivery.time.already-recorded', { id: existing.id });
+          return { timeEntry: existing, created: false };
+        }
 
         // A partner contribution must name the engagement the project actually
         // has, so partner cost is never attributed to a partner nobody planned.
@@ -249,7 +291,7 @@ export function buildEconomicsActions(options = {}) {
           policy: rate.policy,
           policyVersion: rate.policyVersion,
           policyFingerprint: rate.policyFingerprint,
-          note: boundedText(input.note, 'note'),
+          note,
           recordedBy: actorId(actor),
           recordedAt: now(),
         }, { actor });
@@ -284,14 +326,24 @@ export function buildEconomicsActions(options = {}) {
         const entryKey = boundedText(input.entryKey, 'entryKey', { required: true, max: MAX_KEY });
         const sourceKey = `delivery-expense-entry:${record.id}:${entryKey}`;
         const existing = bySourceKey(expenses, sourceKey);
-        if (existing) {
-          step('delivery.expense.already-recorded', { id: existing.id });
-          return { expenseEntry: existing, created: false };
-        }
 
         const currency = requireCurrency(record.currency, 'work package currency');
         const amountCents = requireMinorUnits(input.amountCents, 'amountCents');
         if (amountCents <= 0) throw new ValidationError('amountCents must be a positive number of minor units', { field: 'amountCents' });
+        const expenseDate = calendarDate(input.expenseDate, 'expenseDate');
+        const category = boundedText(input.category, 'category', { required: true, max: MAX_CATEGORY });
+        const vendorRef = input.vendorRef === undefined || input.vendorRef === null || input.vendorRef === ''
+          ? null : requireReference(input.vendorRef, 'vendorRef');
+        const evidenceRef = boundedText(input.evidenceRef, 'evidenceRef', { max: MAX_REF });
+        const note = boundedText(input.note, 'note');
+
+        if (existing) {
+          requireSameEntry(existing, {
+            expenseDate, category, amountCents, vendorRef, evidenceRef, note,
+          }, 'expense');
+          step('delivery.expense.already-recorded', { id: existing.id });
+          return { expenseEntry: existing, created: false };
+        }
 
         let partnerEngagementId = null;
         if (input.partnerCost === true) {
@@ -308,15 +360,14 @@ export function buildEconomicsActions(options = {}) {
           sourceKey,
           deliveryProjectId: project.id,
           deliveryWorkPackageId: record.id,
-          expenseDate: calendarDate(input.expenseDate, 'expenseDate'),
-          category: boundedText(input.category, 'category', { required: true, max: MAX_CATEGORY }),
+          expenseDate,
+          category,
           amountCents,
           currency,
-          vendorRef: input.vendorRef === undefined || input.vendorRef === null || input.vendorRef === ''
-            ? null : requireReference(input.vendorRef, 'vendorRef'),
+          vendorRef,
           partnerEngagementId,
-          evidenceRef: boundedText(input.evidenceRef, 'evidenceRef', { max: MAX_REF }),
-          note: boundedText(input.note, 'note'),
+          evidenceRef,
+          note,
           recordedBy: actorId(actor),
           recordedAt: now(),
         }, { actor });
