@@ -20,7 +20,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -28,7 +28,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const starterDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(starterDir, '..', '..', '..');
 
-const root = mkdtempSync(join(tmpdir(), 'agent-crm-lead-starter-'));
+// The installer normally builds its project in a temp directory and deletes it,
+// because its job is to prove the guarantees and leave nothing behind. Setting
+// AGENT_CRM_KEEP_ROOT makes it build into a caller-chosen directory and keep it,
+// so a tour or an inspection can run against the composed application instead of
+// against the repository's deliberately empty default composition. Nothing else
+// about the run changes: the same manifests, the same assertions.
+const keepRoot = process.env.AGENT_CRM_KEEP_ROOT;
+const root = keepRoot ?? mkdtempSync(join(tmpdir(), 'agent-crm-lead-starter-'));
+if (keepRoot) mkdirSync(keepRoot, { recursive: true });
 try {
   // 1. Clean project copy — source only, never data or node_modules.
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
@@ -1089,7 +1097,7 @@ try {
     app.close();
   }
 } finally {
-  rmSync(root, { recursive: true, force: true });
+  if (!keepRoot) rmSync(root, { recursive: true, force: true });
 }
 
 /** @param {string} root @param {string} manifestPath */

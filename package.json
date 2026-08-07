@@ -26,7 +26,8 @@
     "site:check": "npm run site:build && node scripts/site-check.js",
     "distribution:check": "node scripts/distribution-check.js",
     "gtm:check": "npm run site:check && npm run distribution:check",
-    "site:shots": "npm run site:build && node scripts/site-shots.js"
+    "site:shots": "npm run site:build && node scripts/site-shots.js",
+    "tour": "node --no-warnings scripts/tour.js"
   },
   "keywords": [
     "crm",
