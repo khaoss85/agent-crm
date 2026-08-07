@@ -19,7 +19,7 @@ Generated: **2026-08-07**.
 | Tests on clean main | **299 passing, 0 failing** (`npm run verify` from a fresh clone of `775713c`; `28753ff` adds no code) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
-| Browser smoke | 28/28 in real Chromium, run manually — **not in CI** |
+| Browser smoke | 37/37 in real Chromium on the M14a branch, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
 | Open PRs | **PR #21 — M14a Delivery execution** (`claude/milestone-14-delivery-economics-acceptance`): 313 passing on the branch. Reviewed adversarially, hardened in place, left open for a human merge. |
 
