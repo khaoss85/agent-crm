@@ -47,15 +47,26 @@ function readPlanFile(planPath) {
 }
 
 /**
- * @param {{planPath: string, mode: 'inspect'|'validate'|'check', json?: boolean, rootDir?: string}} options
- * @returns {Promise<{exitCode: number, plan: any, problems: any[]}>}
+ * `out` and `err` exist so a caller — a test, or a future command that embeds
+ * this one — can collect the output without reaching for `process.stdout`.
+ * Patching a global stream is not a testing technique: on a pipe, the writer
+ * that owns it may be awaiting the write callback a stub forgets to call, and
+ * the process simply stops.
+ *
+ * @param {{planPath: string, mode: 'inspect'|'validate'|'check', json?: boolean,
+ *   rootDir?: string, out?: (text: string) => void, err?: (text: string) => void}} options
+ * @returns {Promise<{exitCode: number, plan: any, problems: any[], inspectionFingerprint?: string}>}
  */
-export async function solutionCommand({ planPath, mode, json = false, rootDir = process.cwd() }) {
+export async function solutionCommand({
+  planPath, mode, json = false, rootDir = process.cwd(),
+  out = (text) => process.stdout.write(text),
+  err = (text) => process.stderr.write(text),
+}) {
   let source;
   try {
     source = readPlanFile(planPath);
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    err(`${error instanceof Error ? error.message : String(error)}\n`);
     return { exitCode: 2, plan: null, problems: [] };
   }
 
@@ -63,7 +74,7 @@ export async function solutionCommand({ planPath, mode, json = false, rootDir = 
   try {
     parsed = parseSolutionPlan(source);
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    err(`${error instanceof Error ? error.message : String(error)}\n`);
     return { exitCode: 2, plan: null, problems: [] };
   }
 
@@ -71,12 +82,12 @@ export async function solutionCommand({ planPath, mode, json = false, rootDir = 
   // A plan too broken to normalize (wrong contract, not an object) has no
   // document to print, and that is a read failure rather than a bad plan.
   if (plan === null) {
-    emit({ json, plan: null, problems, current: null, mode });
+    emit({ json, plan: null, problems, current: null, mode, out });
     return { exitCode: 2, plan: null, problems };
   }
 
   if (mode !== 'check') {
-    emit({ json, plan, problems, current: null, mode });
+    emit({ json, plan, problems, current: null, mode, out });
     return { exitCode: mode === 'inspect' || valid ? 0 : 1, plan, problems };
   }
 
@@ -86,21 +97,21 @@ export async function solutionCommand({ planPath, mode, json = false, rootDir = 
   // belongs to the plan.
   const inspection = await inspectApplicationCommand({ rootDir, json: true, capture: true });
   if (inspection.report === null) {
-    process.stderr.write('The project could not be inspected, so this plan could not be checked against it.\n');
+    err('The project could not be inspected, so this plan could not be checked against it.\n');
     return { exitCode: 2, plan, problems };
   }
   const binding = bindSolutionPlan(plan, inspection.report);
   const all = [...problems, ...binding.problems];
   emit({
-    json, plan, problems: all, current: binding.current, mode,
+    json, plan, problems: all, current: binding.current, mode, out,
     inspectionFingerprint: binding.inspectionFingerprint,
   });
   return { exitCode: all.length === 0 ? 0 : 1, plan, problems: all, inspectionFingerprint: binding.inspectionFingerprint };
 }
 
-function emit({ json, plan, problems, current, mode, inspectionFingerprint = null }) {
+function emit({ json, plan, problems, current, mode, out, inspectionFingerprint = null }) {
   if (json) {
-    process.stdout.write(`${JSON.stringify({
+    out(`${JSON.stringify({
       solutionPlanContract: plan ? plan.solutionPlanContract : null,
       mode,
       valid: problems.length === 0,
@@ -115,7 +126,7 @@ function emit({ json, plan, problems, current, mode, inspectionFingerprint = nul
     }, null, 2)}\n`);
     return;
   }
-  process.stdout.write(`${renderText({ plan, problems, current, mode, inspectionFingerprint })}\n`);
+  out(`${renderText({ plan, problems, current, mode, inspectionFingerprint })}\n`);
 }
 
 function renderText({ plan, problems, current, mode, inspectionFingerprint = null }) {

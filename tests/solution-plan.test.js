@@ -689,14 +689,15 @@ test('the CLI reads awkward paths, and leaks no machine layout', async (t) => {
 
   // Nothing in the machine-readable output names this machine. A report a
   // reviewer commits must not carry the layout of the laptop that made it.
+  // Collected through the command's own sink. Patching `process.stdout` is not
+  // a testing technique: on a pipe the writer that owns it may be awaiting the
+  // write callback a stub forgets to call, and the process simply stops — which
+  // is exactly what happened in CI when this test first patched the global.
   const captured = [];
-  const write = process.stdout.write.bind(process.stdout);
-  process.stdout.write = (chunk) => { captured.push(String(chunk)); return true; };
-  try {
-    await solutionCommand({ planPath, mode: 'check', json: true, rootDir: ROOT });
-  } finally {
-    process.stdout.write = write;
-  }
+  await solutionCommand({
+    planPath, mode: 'check', json: true, rootDir: ROOT,
+    out: (text) => captured.push(text),
+  });
   const out = captured.join('');
   assert.ok(out.length > 0);
   assert.equal(out.includes(base), false, 'no temporary directory in the output');
