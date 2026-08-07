@@ -343,3 +343,43 @@ test('operator free text is actually bounded, in length and in content', async (
   await client.module('delivery-work-package').action(wp.id, 'block-work-package', { reason: typed });
   assert.equal(app.modules.get('delivery-work-package').service.get(wp.id).blockedReason, typed);
 });
+
+
+test('the record descriptions the schema publishes do not deny what the package does', async (t) => {
+  const { context } = await handedOver(t, 'truthful.sqlite');
+  const schema = await context.client.schema();
+
+  // The manifest description is the primary human- and agent-readable sentence
+  // about a record: /api/schema publishes it verbatim, the Admin renders it as
+  // the page lede directly above the action buttons, and the factory bakes it
+  // into every generated project. A description that denies the actions shipped
+  // three keys away is a falsehood in a published contract — and it was one,
+  // because M13's wording survived the revision-2 bump.
+  const executed = new Set(
+    schema.domains.delivery.actions
+      .filter((name) => !name.startsWith('commercial-contract.'))
+      .map((name) => name.split('.')[0]),
+  );
+  assert.ok(executed.size >= 3, 'the execution actions span the three record kinds');
+
+  const denials = /\bnever (executes|progresses)|does not execute|no progress\b|nothing (starts|progresses|completes)/i;
+  for (const module of executed) {
+    const description = schema.modules.find((entry) => entry.name === module)?.description ?? '';
+    assert.ok(description, `${module} publishes a description`);
+    assert.equal(
+      denials.test(description), false,
+      `${module}: the published description denies execution while the package ships actions that execute it — "${description}"`,
+    );
+  }
+
+  // What is still true must still be said: none of these records claims a
+  // capability the milestone does not have.
+  for (const module of executed) {
+    const description = schema.modules.find((entry) => entry.name === module).description;
+    assert.equal(
+      /\b(invoice|invoicing|bills it|revenue|accepted by the customer)\b/i.test(description.replace(/never [^.;]*/gi, '')),
+      false,
+      `${module}: the description claims something M14a does not do`,
+    );
+  }
+});

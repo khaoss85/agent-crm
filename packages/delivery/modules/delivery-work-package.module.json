@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "revision": 2,
   "name": "delivery-work-package",
-  "description": "One planned work package per source delivery obligation (M13), with the commercial snapshot it came from and the explicit decision about who delivers it. No progress, percent complete, time, cost or margin exists in this milestone.",
+  "description": "One work package per source delivery obligation (M13), with the commercial snapshot it came from and the explicit decision about who delivers it. It starts, blocks with a stated reason, resumes and completes (M14a); no percent complete, time, cost or margin exists in this milestone.",
   "fields": [
     {
       "name": "sourceKey",

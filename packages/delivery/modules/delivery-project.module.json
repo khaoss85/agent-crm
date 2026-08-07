@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "revision": 2,
   "name": "delivery-project",
-  "description": "One planned delivery project (commessa) per activated contract handed to delivery (M13). It carries its own customer snapshot so it reads without a live CRM row, and it plans work \u2014 it never executes, progresses, schedules, costs or bills it.",
+  "description": "One delivery project (commessa) per activated contract handed to delivery. It carries its own customer snapshot so it reads without a live CRM row. It plans the work (M13) and records its execution through bounded human-driven state transitions (M14a); it never schedules, staffs, costs, bills or accepts it, and nothing moves on a clock.",
   "fields": [
     {
       "name": "sourceKey",
