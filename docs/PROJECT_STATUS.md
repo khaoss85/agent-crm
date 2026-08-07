@@ -14,14 +14,14 @@ Generated: **2026-08-07**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **M14b1 — Delivery economics** on top of **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
-| Main SHA at generation | `0f5845c` (merge of PR #23; full SHA `0f5845c65a82699b93d9be286eaf7b47ff6adb93`) |
-| Tests on clean main | **352 passing, 0 failing** (`npm run verify` from a fresh clone of `0f5845c`) |
+| Latest merged milestone | **AX2 — Machine-readable Solution Plans** (ADR-020), on top of **M14b1 — Delivery economics**, **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
+| Main SHA at generation | `03a2cbe` (merge of PR #24; full SHA `03a2cbe35c5b2b2daf6f415bc858610c98eaf138`) |
+| Tests on clean main | **370 passing, 0 failing** at `03a2cbe`; **373** on the go-to-market branch, which adds `tests/skill-parity.test.js` |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, run manually — **not in CI** |
-| CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **AX2 — Machine-readable Solution Plans** (`claude/ax2-machine-readable-solution-plan`): 362 passing on the branch. Open and unmerged, awaiting the adversarial review. |
+| CI | `verify` ×2 + GitGuardian green, plus a `public-claims` job running `npm run gtm:check` |
+| Open PRs | **Go-to-market** (`claude/go-to-market-strategy-gkr4bz`): the claims ledger and its gate, the public site, every distribution manifest prepared and unpublished, the launch packet, and `docs/strategy/GO_TO_MARKET.md`. 373 passing on the branch. AX2 is merged. |
 
 ## Completed functional path
 

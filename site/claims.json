@@ -3,7 +3,7 @@
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used.",
   "measuredAgainst": {
     "date": "2026-08-07",
-    "sha": "03a2cbe",
+    "sha": "a52da5f",
     "command": "npm run verify",
     "tests": 373,
     "failures": 0,
