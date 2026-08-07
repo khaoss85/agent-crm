@@ -118,7 +118,7 @@
       "id": "JTBD-06",
       "section": "CRM JTBD validation matrix",
       "status": "partially supported",
-      "summary": "— generated CRUD is validated (JTBD-01), but the factory does not yet generate workflows/approvals for custom objects.",
+      "summary": "generated CRUD is validated (JTBD-01), but the factory does not yet generate workflows/approvals for custom objects.",
       "tests": [],
       "title": "Manage a custom object with an approval rule"
     },
@@ -127,7 +127,7 @@
       "id": "JTBD-07",
       "section": "CRM JTBD validation matrix",
       "status": "partially supported",
-      "summary": "— narrowly: the first follow-up Task is created as part of Lead qualification (Milestone 6). There is still no reusable task engine, no scheduling/delayed-workflow primitive, no reminders, no queues, no recurring work.",
+      "summary": "narrowly: the first follow-up Task is created as part of Lead qualification (Milestone 6). There is still no reusable task engine, no scheduling/delayed-workflow primitive, no reminders, no queues, no recurring work.",
       "tests": [
         "tests/lead-qualification-e2e.test.js"
       ],
@@ -138,7 +138,7 @@
       "id": "JTBD-08",
       "section": "CRM JTBD validation matrix",
       "status": "partially supported",
-      "summary": "— cross-module workflows with compensation exist as a primitive, and activating a contract (M12) records explicit pending delivery and service obligations from the signed order. Nothing executes, schedules, staffs or completes them: there is no handover process, no delivery project and no acceptance.",
+      "summary": "cross-module workflows with compensation exist as a primitive, and activating a contract (M12) records explicit pending delivery and service obligations from the signed order. Nothing executes, schedules, staffs or completes them: there is no handover process, no delivery project and no acceptance.",
       "tests": [
         "tests/contracts-activation-e2e.test.js",
         "tests/workflow.test.js"
@@ -150,7 +150,7 @@
       "id": "JTBD-09",
       "section": "CRM JTBD validation matrix",
       "status": "not supported",
-      "summary": "— no checklist/onboarding primitives.",
+      "summary": "no checklist/onboarding primitives.",
       "tests": [],
       "title": "Onboard a customer"
     },
@@ -161,7 +161,7 @@
       "id": "JTBD-10",
       "section": "CRM JTBD validation matrix",
       "status": "partially supported",
-      "summary": "— a contract can now be *activated* from a signed Order with an explicit term (M12), and the renewal-approval workflow slice is validated. Renewal itself is not supported: auto-renew and the notice period are recorded only, nothing fires on them (no scheduler), and amendments, cancellation and non-renewal do not exist.",
+      "summary": "a contract can now be *activated* from a signed Order with an explicit term (M12), and the renewal-approval workflow slice is validated. Renewal itself is not supported: auto-renew and the notice period are recorded only, nothing fires on them (no scheduler), and amendments, cancellation and non-renewal do not exist.",
       "tests": [
         "tests/contracts-activation-e2e.test.js",
         "tests/workflow.test.js"
@@ -173,7 +173,7 @@
       "id": "JTBD-11",
       "section": "CRM JTBD validation matrix",
       "status": "not supported",
-      "summary": "— no health-scoring/activity primitives.",
+      "summary": "no health-scoring/activity primitives.",
       "tests": [],
       "title": "Identify churn risk"
     },
@@ -182,7 +182,7 @@
       "id": "JTBD-12",
       "section": "CRM JTBD validation matrix",
       "status": "not supported",
-      "summary": "— no usage/entitlement primitives.",
+      "summary": "no usage/entitlement primitives.",
       "tests": [],
       "title": "Identify upsell"
     },
@@ -191,7 +191,7 @@
       "id": "JTBD-13",
       "section": "CRM JTBD validation matrix",
       "status": "partially supported",
-      "summary": "— data is queryable via API/SDK and the dashboard shows counts; no reporting/aggregation surface for generated modules.",
+      "summary": "data is queryable via API/SDK and the dashboard shows counts; no reporting/aggregation surface for generated modules.",
       "tests": [],
       "title": "Report pipeline"
     },
@@ -200,7 +200,7 @@
       "id": "JTBD-14",
       "section": "CRM JTBD validation matrix",
       "status": "not supported",
-      "summary": "— only an in-memory notification provider contract exists; no email/calendar/marketing adapters.",
+      "summary": "only an in-memory notification provider contract exists; no email/calendar/marketing adapters.",
       "tests": [],
       "title": "Integrate email / calendar / marketing"
     },
@@ -209,7 +209,7 @@
       "id": "JTBD-15",
       "section": "CRM JTBD validation matrix",
       "status": "not supported",
-      "summary": "— no authentication, tenancy or RBAC. The server is local-development-only. This is a hard prerequisite before any remote exposure.",
+      "summary": "no authentication, tenancy or RBAC. The server is local-development-only. This is a hard prerequisite before any remote exposure.",
       "tests": [],
       "title": "Enforce team / tenant permissions"
     },

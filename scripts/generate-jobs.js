@@ -252,7 +252,9 @@ function finishSectionJob(job, problems) {
   const classified = classifyStatus(statusLine[1], job.at, job.id, problems);
   job.status = classified.status;
 
-  const qualifier = normalize(classified.rest);
+  // `**partially supported** — narrowly: …` leaves a dangling dash once the status
+  // itself has moved into its own field.
+  const qualifier = normalize(classified.rest).replace(/^[—–-]\s*/, '');
   const desiredOutcome = /^\s*-\s*\*\*Desired outcome\*\*\s*:\s*(.*)$/m.exec(bullets);
   // The qualifier is what an agent needs ("partial — only the first follow-up Task").
   // When it carries nothing but a milestone reference, the stated outcome says more.
