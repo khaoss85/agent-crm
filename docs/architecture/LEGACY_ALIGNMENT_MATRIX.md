@@ -330,6 +330,80 @@ What must be true before it is chosen — none of which is established today:
 If any of those fails, another domain is the pilot, or none is. **Nothing in this
 document authorizes starting an extraction.**
 
+### The three candidates, measured (M15 review)
+
+The hypothesis above was written before M15 shipped. The M15 review measured the
+three candidates rather than reasoning about them, so the eventual decision is
+argued against numbers. **Still planning only: nothing here starts an
+extraction, and no extraction work is in PR #27.**
+
+| | Lead Intelligence | Commercial Operations | Signature & Order |
+|---|---|---|---|
+| kernel source to move | 1,313 lines, 2 files | 1,393 lines, 3 files | 1,488 lines, 2 files |
+| files outside the domain that name it | 11 | 16 | 10 |
+| dedicated HTTP routes in the kernel server | none | `POST /api/catalog/sync` | `POST /api/signature/providers/:provider/events`, `POST /api/signature/envelopes/:id/reconcile` |
+| dedicated method on the app object | none | `syncCatalog` | `ingestSignatureEvent`, `reconcileSignature` |
+| `/api/schema` block | `intelligence` | `commercial` | `signature` |
+| Admin files that read its schema block | 0 | 6 | 3 |
+| carries money | no | **yes** (`commercial-money.js`, 416 lines) | yes, by reference |
+| calls an external provider | yes, in a `prepare` phase the kernel already isolates | yes, outside the write transaction | **yes, and it receives inbound webhooks** |
+| depended on by another domain | no | **yes** — Contracts activates an Order; Delivery and Service reach obligations raised from it | yes — Contracts reads the signed Order |
+| what a regression looks like | a reproduction test disagrees | a stored amount disagrees | an envelope or artifact is lost, or a webhook is accepted twice |
+
+Three things the table says that prose did not:
+
+1. **Intelligence is the only candidate with no kernel HTTP surface, no app
+   method and no Admin coupling.** Its extraction is a package boundary and
+   nothing else. Commercial and Signature each require moving a route out of
+   `apps/server`, which is a second, unrelated piece of work — and one the
+   package seam does not currently support at all: **no package can contribute
+   an HTTP route today.** That is a seam gap, not a scheduling problem.
+2. **Commercial is the most depended-upon.** Contracts, Delivery and Service all
+   sit downstream of the Order it produces. Moving it first means designing
+   three capability edges at once, on the domain that carries money.
+3. **Signature is the riskiest for a reason unrelated to size.** It is the only
+   domain that accepts bytes from outside. An extraction that changes where the
+   verification code lives is an extraction that has to re-prove replay,
+   out-of-order and wrong-tenant handling — the evidence hardest to be confident
+   about after a move.
+
+**Recommendation: Lead Intelligence, at moderate confidence.** Moderate rather
+than high because two of its four preconditions are still unproved — DX4 does
+not exist, and "nothing reads Intelligence internals" is read off the file
+layout rather than established by a tool. The measurement strengthens the
+hypothesis; it does not convert it into a decision.
+
+**A precondition the table added:** before Commercial or Signature could ever be
+a candidate, the package seam needs a way for a package to own an HTTP route.
+Neither is extractable today at any confidence, and that is a finding about the
+*seam*, not about them.
+
+### Recommended next ordering
+
+Ordering, with the reason each item sits where it does. This is a
+recommendation to a human, not a plan of record:
+
+1. **DX4 — `crm package test` (conformance harness).** Everything else that
+   touches the seam is safer after it, and it is the stated gate for any
+   extraction. Without it an extraction's only proof is that the old tests still
+   pass, which is exactly the proof that misses a boundary violation.
+2. **DX3 — package scaffold.** Cheap next to DX4, and it makes DX4's contract
+   the default shape rather than something to remember.
+3. **DX1 — `crm doctor` deepening.** Independent of the seam, useful to every
+   other item, and the smallest of the four.
+4. **The extraction pilot — Lead Intelligence.** Only after 1 and 2, and only if
+   its four preconditions are established rather than assumed.
+5. **DX2 — Skill mirror sync.** Real (six domain build skills now live under
+   `.claude/` only) but nothing depends on it, and it stays a documentation
+   correctness gap rather than a runtime one.
+6. **M16 — Analytics Studio.** Last, because it is the item most likely to
+   *consume* whatever the extraction learns about reading across packages. Doing
+   it before the pilot risks writing the cross-package read pattern twice.
+
+The one ordering claim worth arguing with: DX2 sits fifth despite being the
+cheapest, because cheap and urgent are different, and the gap is already
+documented in this matrix.
+
 ## What this document is not
 
 - Not a schedule. No date, no milestone number for the alignment pass.
