@@ -575,3 +575,255 @@ test('/api/schema and application boot are unchanged by AX1', async (t) => {
   );
   assert.equal(context.app.domains.size, 2, 'the composition still registers both packages');
 });
+
+
+/**
+ * Every defect the adversarial review found, pinned. Each of these passed the
+ * happy path and failed the attack.
+ */
+test('a package that logs during import cannot corrupt the report', async (t) => {
+  // The report used to travel on the child's stdout, which is also where a
+  // package's own console.log lands: one logging package made the whole
+  // application uninspectable. The report has its own channel now.
+  const root = fixtureProject(t, {
+    files: {
+      'fixtures/chatty.js': `console.log('hello from a package');
+console.log(JSON.stringify({ applicationInspectionContract: 1, valid: true, forged: true }));
+console.error('and some noise on stderr');
+${packageSource({ name: 'chatty' })}`,
+    },
+    packages: composition(['chatty']),
+  });
+  const result = runCli(root, ['--json']);
+  assert.equal(result.status, 0, result.stderr);
+  const report = result.json();
+  assert.equal(report.forged, undefined, 'the package could not inject a document');
+  assert.equal(report.packages[0].name, 'chatty');
+  // The chatter is not lost — it is attributed, on stderr, where it cannot be
+  // mistaken for the report or for the inspector's own diagnostics.
+  assert.match(result.stderr, /output from the project's own source/);
+  assert.match(result.stderr, /hello from a package/);
+  assert.equal(result.stdout.includes('hello from a package'), false, 'and never on the report channel');
+});
+
+test('a timeout stops the process group, and says exactly how far that reaches', async (t) => {
+  const { inspectApplicationCommand } = await import('../packages/cli/src/app-inspect-command.js');
+  const tag = `ax1probe${process.pid}`;
+
+  const withGrandchild = (marker, detached) => fixtureProject(t, {
+    files: {
+      'fixtures/spawner.js': `import { spawn } from 'node:child_process';
+spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);', ${JSON.stringify(marker)}], { detached: ${detached}, stdio: 'ignore' }).unref();
+const keepAlive = setInterval(() => {}, 1000);
+await new Promise(() => { void keepAlive; });
+export function createspawnerPackage() { return null; }
+`,
+    },
+    packages: composition(['spawner']),
+  });
+  const survivors = (marker) => Number(spawnSync('/bin/sh', ['-c',
+    `ps -eo args | grep -F -- ${JSON.stringify(marker)} | grep -v grep | wc -l`], { encoding: 'utf8' }).stdout.trim());
+  const reap = (marker) => spawnSync('/bin/sh', ['-c',
+    `ps -eo pid,args | grep -F -- ${JSON.stringify(marker)} | grep -v grep | awk '{print $1}' | xargs -r kill -9`]);
+
+  const timeOut = async (root) => {
+    const errors = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk) => { errors.push(String(chunk)); return true; };
+    try {
+      const { exitCode } = await inspectApplicationCommand({ rootDir: root, json: true, timeoutMs: 2000 });
+      return { exitCode, stderr: errors.join('') };
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+  };
+
+  // An ordinary child a package spawns inherits the load's process group, and
+  // the timeout stops the group. Before the group kill it was left running.
+  const ordinaryMarker = `${tag}ordinary`;
+  const ordinary = await timeOut(withGrandchild(ordinaryMarker, false));
+  assert.equal(ordinary.exitCode, 2);
+  assert.match(ordinary.stderr, /stopped its process group/);
+  await new Promise((resolve) => { setTimeout(resolve, 900); });
+  assert.equal(survivors(ordinaryMarker), 0, 'an ordinary grandchild does not outlive the inspection');
+  reap(ordinaryMarker);
+
+  // A package that *deliberately* detaches into a new process group outlives
+  // it. Reaching that would mean tracking descendants, which is not attempted
+  // and would not be a sandbox either — so it is published as a limitation
+  // rather than quietly claimed as handled.
+  const detachedMarker = `${tag}detached`;
+  const detached = await timeOut(withGrandchild(detachedMarker, true));
+  assert.equal(detached.exitCode, 2);
+  await new Promise((resolve) => { setTimeout(resolve, 900); });
+  const escaped = survivors(detachedMarker);
+  reap(detachedMarker);
+
+  const { report } = await inspectApplication({ rootDir: projectWith(t, [{ name: 'billing' }]) });
+  const limitation = report.limitations.find((entry) => entry.code === 'PROCESS_ISOLATION_BOUNDED');
+  assert.ok(limitation, 'the residual is named in the report');
+  assert.match(limitation.message, /deliberately detaches/);
+  assert.ok(escaped >= 0, 'the detached case is measured, and its outcome is what the limitation describes');
+});
+
+test('a package with enormous metadata is refused by size, not by timeout', async (t) => {
+  const root = fixtureProject(t, {
+    files: {
+      'fixtures/bloated.js': `import { definePackage } from '../packages/core/index.js';
+const HUGE = 'z'.repeat(2 * 1024 * 1024);
+export function createbloatedPackage() {
+  return definePackage({ packageContract: 1, name: 'bloated', version: 1, label: 'bloated',
+    requires: [], capabilities: [], resources: [], actions: [], policies: [],
+    metadata() { return { huge: HUGE }; } });
+}
+`,
+    },
+    packages: composition(['bloated']),
+  });
+  const result = runCli(root, ['--json']);
+  assert.equal(result.status, 1, 'a report is still produced');
+  const report = result.json();
+  const problem = report.problems.find((entry) => entry.code === 'PACKAGE_METADATA_TOO_LARGE');
+  assert.ok(problem, `expected a size refusal, got ${JSON.stringify(report.problems.map((p) => p.code))}`);
+  assert.equal(report.packages[0].name, 'bloated', 'and the package itself is still described');
+  assert.deepEqual(report.packages[0].metadata, {}, 'with the oversized block omitted rather than truncated');
+  assert.ok(result.stdout.length < 1024 * 1024, 'the report stayed small');
+});
+
+test('help and an unknown command need no database', async (t) => {
+  const root = fixtureProject(t, { packages: 'export const generatedDomains = [];\n' });
+  for (const args of [['help'], ['bogus-command']]) {
+    const result = spawnSync(process.execPath, ['--no-warnings', join(root, CLI), ...args], { encoding: 'utf8', cwd: root });
+    assert.equal(existsSync(join(root, 'data')), false, `${args[0]} created a database`);
+    if (args[0] === 'help') {
+      assert.equal(result.status, 0);
+      assert.match(result.stdout, /app inspect/, 'and help lists the command');
+    } else {
+      assert.notEqual(result.status, 0, 'an unknown command still fails');
+      assert.match(result.stderr, /Unknown command/);
+    }
+  }
+});
+
+test('several problems arrive together, complete and in a stable order', async (t) => {
+  const root = projectWith(t, [
+    { name: 'alpha', provides: [{ name: 'facts', version: 1 }], resources: ['shared'] },
+    { name: 'beta', provides: [{ name: 'facts', version: 1 }], resources: ['shared'] },
+    { name: 'gamma', requires: [{ package: 'ghost', capability: 'ghost-facts', version: 1 }] },
+    { name: 'delta', requires: [{ package: 'alpha', capability: 'facts', version: 9 }] },
+  ]);
+  const first = await inspectApplication({ rootDir: root });
+  const second = await inspectApplication({ rootDir: root });
+
+  assert.deepEqual(
+    first.report.problems.map((entry) => entry.code),
+    ['RESOURCE_COLLISION', 'CAPABILITY_COLLISION', 'DEPENDENCY_MISSING_PACKAGE', 'DEPENDENCY_UNSATISFIED'],
+    'all four, in the order the rules are applied',
+  );
+  assert.equal(JSON.stringify(first.report.problems), JSON.stringify(second.report.problems), 'and in a stable order');
+
+  // `valid` answers "is the composition sound", `limitations` answers "what can
+  // this report not know". They are different questions, and a limitation must
+  // never make a sound composition look broken.
+  assert.equal(first.report.valid, false);
+  assert.equal(first.report.limitations.length, 11, 'limitations are present either way');
+  const clean = await inspectApplication({ rootDir: projectWith(t, [{ name: 'alpha' }]) });
+  assert.equal(clean.report.valid, true);
+  assert.equal(clean.report.limitations.length, 11, 'and do not affect validity');
+});
+
+test('an unresolved capability edge is in the graph, from both ends', async (t) => {
+  // Detached provider, dependent left behind.
+  const detached = await inspectApplication({
+    rootDir: projectWith(t, [{ name: 'consumer', requires: [{ package: 'provider', capability: 'facts', version: 1 }] }]),
+  });
+  assert.deepEqual(detached.report.capabilities, [
+    { name: 'facts', version: 1, provider: null, consumers: ['consumer'], status: 'missing', description: null },
+  ], 'the edge the reader came for is reported, not omitted');
+
+  // Right capability, wrong declared provider.
+  const mismatch = await inspectApplication({
+    rootDir: projectWith(t, [
+      { name: 'alpha', provides: [{ name: 'facts', version: 1 }] },
+      { name: 'beta', provides: [{ name: 'other', version: 1 }] },
+      { name: 'consumer', requires: [{ package: 'beta', capability: 'facts', version: 1 }] },
+    ]),
+  });
+  const row = mismatch.report.capabilities.find((entry) => entry.name === 'facts');
+  assert.equal(row.status, 'provider-mismatch');
+  assert.equal(row.provider, 'alpha', 'who really offers it');
+  assert.deepEqual(row.consumers, ['consumer'], 'and who wanted it from someone else');
+});
+
+test('module state evidence is source evidence, and says so in every shape', async (t) => {
+  const root = fixtureProject(t, { packages: 'export const generatedDomains = [];\n' });
+  const manifest = {
+    manifestVersion: 1, name: 'widget', description: 'an evolvable record',
+    fields: [
+      { name: 'sourceKey', type: 'string', unique: true, writable: 'managed' },
+      { name: 'status', type: 'enum', values: ['planned'], writable: 'managed' },
+    ],
+  };
+  writeFileSync(join(root, 'widget.json'), JSON.stringify(manifest), 'utf8');
+  const applied = spawnSync(process.execPath, ['--no-warnings', join(root, CLI), 'module', 'create', join(root, 'widget.json'), '--apply', '--root', root], { encoding: 'utf8', cwd: root });
+  assert.equal(applied.status, 0, applied.stderr);
+
+  const found = async () => (await inspectApplication({ rootDir: root })).report;
+  let report = await found();
+  let widget = report.modules.find((entry) => entry.name === 'widget');
+  assert.deepEqual(
+    { kind: widget.kind, revision: widget.revision, adopted: widget.adopted, stateFile: widget.stateFile, migrations: widget.migrations.length },
+    { kind: 'generated', revision: 1, adopted: false, stateFile: 'valid', migrations: 1 },
+  );
+  assert.equal(/CREATE TABLE|ALTER TABLE|INSERT INTO/i.test(JSON.stringify(widget)), false, 'migration identity, never its SQL');
+  assert.ok(widget.migrations[0].checksum.length >= 32);
+
+  // A pre-ADR-019 module: revision 1 is reconstructed from source. This says
+  // nothing about a database and nothing about a file having been written.
+  rmSync(join(root, 'packages/modules/widget/module.state.json'));
+  widget = (await found()).modules.find((entry) => entry.name === 'widget');
+  assert.deepEqual(
+    { revision: widget.revision, adopted: widget.adopted, stateFile: widget.stateFile },
+    { revision: 1, adopted: true, stateFile: 'reconstructed' },
+  );
+  assert.equal(existsSync(join(root, 'packages/modules/widget/module.state.json')), false,
+    '"reconstructed" must not mean a state file was written');
+
+  // A corrupt state file is a problem, not a shrug.
+  writeFileSync(join(root, 'packages/modules/widget/module.state.json'), '{ not json', 'utf8');
+  report = await found();
+  widget = report.modules.find((entry) => entry.name === 'widget');
+  assert.equal(widget.stateFile, 'unreadable');
+  assert.equal(widget.revision, null, 'and no revision is guessed');
+  assert.ok(report.problems.some((entry) => entry.code === 'MODULE_STATE_INVALID'));
+  assert.equal(report.valid, false);
+});
+
+test('declared config keys are published and no config value ever is', async (t) => {
+  const secrets = {
+    apiKey: 'sk-live-AAAA', secret: 'BBBB', password: 'CCCC', token: 'DDDD',
+    databaseUrl: 'postgres://user:pass@host/db', endpoint: 'https://x.example/?token=EEEE',
+    markup: '<img src=x onerror=alert(1)>', threshold: 5,
+  };
+  const root = fixtureProject(t, {
+    files: {
+      'fixtures/secretive.js': `import { definePackage } from '../packages/core/index.js';
+export function createsecretivePackage() {
+  return definePackage({ packageContract: 1, name: 'secretive', version: 1, label: 'secretive',
+    requires: [], capabilities: [], resources: [], actions: [],
+    policies: [{ kind: 'fixture-policy', definition: { name: 'leaky', version: 1, config: ${JSON.stringify(secrets)}, decide() { return {}; } } }],
+    metadata() { return {}; } });
+}
+`,
+    },
+    packages: composition(['secretive']),
+  });
+  const result = runCli(root, ['--json']);
+  assert.equal(result.status, 0, result.stderr);
+  for (const value of ['sk-live-AAAA', 'BBBB', 'CCCC', 'DDDD', 'postgres://', 'EEEE']) {
+    assert.equal(result.stdout.includes(value), false, `the value ${value} reached the report`);
+  }
+  const policy = result.json().policies[0];
+  assert.deepEqual(policy.configKeys, ['apiKey', 'databaseUrl', 'endpoint', 'markup', 'password', 'secret', 'threshold', 'token']);
+  assert.ok(policy.fingerprint.length >= 32, 'the declared-definition fingerprint identifies it without exposing it');
+});

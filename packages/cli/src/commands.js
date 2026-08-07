@@ -30,6 +30,14 @@ export async function runCli(argv) {
   }
   const dbPath = typeof flags.db === 'string' ? resolve(flags.db) : undefined;
 
+  // Help is not a database operation. It used to fall through to the branch
+  // that constructs the application, so asking for help created a SQLite file;
+  // now that the app import is lazy, there is no reason for it to.
+  if (command === 'help' || command === undefined) {
+    console.log(helpText());
+    return;
+  }
+
   if (command === 'app:inspect') {
     const result = await inspectApplicationCommand({
       rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
@@ -105,6 +113,14 @@ export async function runCli(argv) {
     return;
   }
 
+  // Only these commands need a running application. Checking first means an
+  // unknown command reports itself instead of quietly creating a database on
+  // the way to saying it does not exist.
+  const APP_COMMANDS = new Set(['serve', 'seed', 'demo', 'doctor', 'db:migrate', 'workflow:list', 'trace:list']);
+  if (!APP_COMMANDS.has(String(command))) {
+    throw new Error(`Unknown command: ${command}\n\n${helpText()}`);
+  }
+
   // The application is imported here, not at the top of this file, because
   // `packages/app` statically imports the project's checked-in composition. A
   // top-level import made every CLI command — including the read-only ones —
@@ -157,12 +173,6 @@ export async function runCli(argv) {
       case 'trace:list':
         print({ items: app.workflows.listRuns({ limit: Number(flags.limit ?? 20) }) });
         break;
-      case 'help':
-      case undefined:
-        console.log(helpText());
-        break;
-      default:
-        throw new Error(`Unknown command: ${command}\n\n${helpText()}`);
     }
   } finally {
     if (shouldClose) app.close();

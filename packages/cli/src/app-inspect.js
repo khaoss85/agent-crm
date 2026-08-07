@@ -46,6 +46,13 @@ import { SUPPORTED_PACKAGE_CONTRACT } from '../../core/src/package-registry.js';
 
 export const APPLICATION_INSPECTION_CONTRACT = 1;
 
+/**
+ * A package's `metadata()` block is free-form by design, so it is the one place
+ * a package can make the report arbitrarily large. Bounded here, per package,
+ * with the refusal reported rather than silently truncated.
+ */
+const MAX_METADATA_BYTES = 256 * 1024;
+
 /** The checked-in composition files, and the export each one contributes. */
 const COMPOSITION = Object.freeze([
   { key: 'packages', path: 'packages/domains/generated/index.js', exportName: 'generatedDomains' },
@@ -64,6 +71,7 @@ const CORE_MODULES = Object.freeze(['approval', 'company', 'contact', 'opportuni
 const LIMITATIONS = Object.freeze([
   ['DATABASE_NOT_INSPECTED', 'the configured application database is never opened, so what a particular database has applied, holds or is missing is unknown'],
   ['PACKAGE_SOURCE_TRUSTED', 'reading a code-first package means importing it, so package code runs with this process’s authority. Nothing here is sandboxed'],
+  ['PROCESS_ISOLATION_BOUNDED', 'the load runs in its own process group and a timeout stops that group, so an ordinary child a package spawns is stopped with it. A package that deliberately detaches a process into a new group outlives the inspection; tracking descendants is not attempted and would not be a sandbox either'],
   ['EVIDENCE_NOT_AGGREGATED', 'JTBD and quality-gate status live in Markdown maintained by people; they are referenced by path and never parsed into structured claims'],
   ['CI_EVIDENCE_NOT_INFERRED', 'no CI, browser-smoke or benchmark result is read or inferred'],
   ['SECRETS_NOT_INSPECTED', 'no secret, credential, token or environment value is read, and no provider is contacted or authenticated'],
@@ -400,7 +408,12 @@ function compare(a, b) {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/** A package's own metadata block, refused rather than published if it is not plain data. */
+/**
+ * A package's own metadata block, refused rather than published if it is not
+ * plain data — or if it is unreasonably large. The bound is here rather than
+ * only on the transport: a report is a document an agent reads, and an
+ * unbounded block turns one package into a denial of the whole document.
+ */
 function safeMetadata(pkg, problems, rootDir) {
   if (typeof pkg.metadata !== 'function') return {};
   let declared;
@@ -413,8 +426,9 @@ function safeMetadata(pkg, problems, rootDir) {
     });
     return {};
   }
+  let serialized;
   try {
-    return JSON.parse(JSON.stringify(declared ?? {}));
+    serialized = JSON.stringify(declared ?? {});
   } catch (error) {
     problems.push({
       code: 'PACKAGE_METADATA_INVALID', package: pkg.name,
@@ -422,6 +436,15 @@ function safeMetadata(pkg, problems, rootDir) {
     });
     return {};
   }
+  if (serialized.length > MAX_METADATA_BYTES) {
+    problems.push({
+      code: 'PACKAGE_METADATA_TOO_LARGE', package: pkg.name,
+      message: `Package "${pkg.name}" metadata() is ${serialized.length} bytes, over the ${MAX_METADATA_BYTES}-byte `
+        + 'bound; it is omitted from the report rather than published',
+    });
+    return {};
+  }
+  return JSON.parse(serialized);
 }
 
 /** @param {string} rootDir */

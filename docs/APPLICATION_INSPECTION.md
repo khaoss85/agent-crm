@@ -108,8 +108,12 @@ Static capability metadata, from the same `actionMetadata` function
 `fromStates`/`stateField`, whether it is an external operation, and its route.
 
 This is **not** authorization, and it is **not** a claim that an action applies
-to a particular record right now. An action with `fromStates: null` declares no
-state restriction — a different fact from "valid in every state".
+to a particular record right now.
+
+`fromStates: null` means **the action declares no state-restriction metadata**.
+It does not mean the action is valid in every runtime state — the server may
+still refuse it, from its own rules. The human view spells this out as
+"(declares no state restriction)" for the same reason.
 
 ## Providers and policies
 
@@ -125,11 +129,26 @@ Reading a code-first package means importing it, so the package's module body
 runs — the same boundary `crm package validate` documents and the same one the
 checked-in composition file has: **repository source is trusted**.
 
-The load therefore runs in an isolated child process, so a package that mutates
-a global, patches a built-in or never returns cannot damage or hang the process
-you invoked, and a hung import becomes a bounded, explained failure. That is
-**isolation, not a sandbox**: the child holds your authority. Nothing is
-downloaded, and no official package needs the network.
+The load therefore runs in an isolated child process. Three things make that
+isolation real, and each was found by attacking it rather than assumed:
+
+- **the report does not travel on stdout.** A package may `console.log` during
+  import, and that lands on the child's stdout. Sharing the stream meant one
+  logging package made the whole application uninspectable. The report comes
+  back on file descriptor 3; the child's stdout and stderr are the project's own
+  output, forwarded to your stderr under a label.
+- **the child leads its own process group**, so a timeout stops the group. An
+  ordinary child a package spawned goes with it. A package that *deliberately*
+  detaches a process into a new group outlives the inspection — reaching that
+  would mean tracking descendants, which is not attempted and would not be a
+  sandbox either (`PROCESS_ISOLATION_BOUNDED`).
+- **every stream and every metadata block is bounded**, so a package with
+  enormous `metadata()` fails as an explained size refusal
+  (`PACKAGE_METADATA_TOO_LARGE`) rather than as a mysterious timeout.
+
+That is **isolation, not a sandbox**: the child holds your authority and can
+reach whatever the filesystem, network and credentials of that process allow.
+Nothing is downloaded, and no official package needs the network.
 
 ## What it cannot know
 
@@ -140,6 +159,7 @@ them:
 |---|---|
 | `DATABASE_NOT_INSPECTED` | the configured database is never opened; what one has applied or holds is unknown |
 | `PACKAGE_SOURCE_TRUSTED` | package code runs on import; nothing is sandboxed |
+| `PROCESS_ISOLATION_BOUNDED` | the timeout stops the load's process group; a deliberately detached process escapes it |
 | `EVIDENCE_NOT_AGGREGATED` | JTBD and quality-gate status are prose, referenced by path and never parsed |
 | `CI_EVIDENCE_NOT_INFERRED` | no CI, browser-smoke or benchmark result is read |
 | `SECRETS_NOT_INSPECTED` | no secret, credential or environment value is read |

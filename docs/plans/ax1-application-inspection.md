@@ -156,6 +156,19 @@ database or runtime inspection (what a particular database has applied),
 machine-readable JTBD/Quality evidence, the generic Admin action-availability
 fix, and M14b.
 
+## What the adversarial review changed
+
+Four defects were confirmed with runnable probes and fixed in place, and one
+residual was published rather than fixed:
+
+| | Found | Resolution |
+|---|---|---|
+| **high** | a package that `console.log`s during import corrupted the report — the document shared the child's stdout, so one logging package made the whole application uninspectable | the report moved to file descriptor 3; the child's stdout and stderr are forwarded to the parent's stderr under a label |
+| **high** | a timeout killed only the immediate child, leaving a grandchild a package spawned running | the child leads its own process group and the timeout stops the group |
+| **high** | a package with a 40 MB `metadata()` produced a 60-second timeout and a diagnostic blaming a hung import | `metadata()` is bounded per package and refused with `PACKAGE_METADATA_TOO_LARGE`; every stream carries an explicit byte bound with its own diagnostic |
+| **medium** | `crm help` and an unknown command constructed the application, and so created a SQLite file — visible once the app import became lazy | both answer before the application is constructed |
+| **residual** | a package that *deliberately* detaches a process into a new group still outlives the inspection | published as `PROCESS_ISOLATION_BOUNDED`. Tracking descendants would not be a sandbox either, and claiming otherwise is worse than stating the boundary |
+
 ## Definition of done
 
 The contract, the inspector, the CLI, the fixture matrix, the canonical
