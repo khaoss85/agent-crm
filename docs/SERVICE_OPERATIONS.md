@@ -136,6 +136,13 @@ The name is the trap. Anything called *Contract* here will be read as signed, so
 the concept is **ServiceCoverage** and the first paragraph of every document
 about it says what it is not.
 
+## The Skill
+
+`.claude/skills/build-service-operations/SKILL.md` carries the rules an agent
+has to follow when extending this package. It exists under `.claude/skills/`
+only — the same DX2 mirror gap every domain build skill has, tracked in
+`docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`.
+
 ## Evidence
 
 `tests/service-operations-e2e.test.js` (the paths),
@@ -143,6 +150,8 @@ about it says what it is not.
 two-connection races, exact reads past 500 rows, exact audit/event/trace counts,
 the SLA boundaries, hostile input),
 `tests/service-operations-integration.test.js` (AX1, AX2, detach),
+`tests/service-operations-upgrade.test.js` (a shipped M12 project adopting M15
+over live obligations),
 `tests/admin-service.test.js` (the Admin section's claims and the controls it
 must not offer), `docs/ADMIN_SMOKE.md` (24 real-Chromium checks),
 `examples/starters/b2b-lead-qualification/install.mjs` (the full journey, from a

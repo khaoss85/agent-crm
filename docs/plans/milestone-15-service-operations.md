@@ -148,6 +148,7 @@ truth.
 10. **Hostile input stays inert** across every field, in evidence, in errors and on screen.
 11. **AX1 and AX2 see it** — the package, its capability edge, its resources, actions and policy fingerprint appear in `app inspect`, and a Solution Plan can cite them without AX2 executing anything.
 12. **Absence is honest** — detaching the package removes its whole surface and nothing else; a missing `service-obligations@1` fails closed at startup with a named problem.
+13. **The upgrade is real** — a shipped M12 project at revision 1, holding live service obligations, adopts M15 without losing or rewriting a single row (`tests/service-operations-upgrade.test.js`). Added in review: every other suite applied revision 2 to an empty table, which proves the manifest parses, not that a customer can adopt it.
 
 ## The Admin section
 

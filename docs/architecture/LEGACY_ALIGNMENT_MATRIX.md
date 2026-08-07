@@ -91,7 +91,7 @@ horizontal capability the way the contract intends?*
 |---|---|
 | **Core CRM (Sales)** — company, contact, opportunity, lead, task, approval | `not_applicable` on every package-seam row: these are a *project's* generated records, not a domain package, and a customer's own CRM objects must never require one. `aligned` on the kernel rows (module evolution, migration checksums, managed fields where declared, events, audit and trace, exact reads, JTBD evidence). Its Skills are `create-crm-module` and `create-crm-workflow` |
 | **Custom-package fixture** (`examples/custom-packages/partner-scorecard/`) | `aligned` on the package seam by construction — it exists to prove a customer-authored package attaches, works and detaches with no kernel change. It deliberately exercises only a slice: one resource, one action, no capability of its own, so the capability rows read `not_applicable` |
-| **Service** | **built, on an open PR (M15).** Package-native from its first commit: `aligned` on the package seam, declared capabilities (requires `contracts/service-obligations@1`, provides three), `packageContract: 1` conformance, package version discipline, managed records, the human-actor boundary, fingerprinted declared definitions, transaction-scoped events, audit and trace, exact reads, AX1 visibility, AX2 citability, detach proof, fault-injection and two-connection evidence, and JTBD rows with linked evidence. `not_applicable` on the money contract and the external-operation contract: it prices nothing and calls no provider. `partial` on the Skill mirror — a Service Skill exists under `.claude/` only, the same DX2 gap every domain has. `deferred` on a tool namespace, with the rest, to DX13 |
+| **Service** | **built, on an open PR (M15).** Package-native from its first commit: `aligned` on the package seam, declared capabilities (requires `contracts/service-obligations@1`, provides three), `packageContract: 1` conformance, package version discipline, managed records, the human-actor boundary, fingerprinted declared definitions, transaction-scoped events, audit and trace, exact reads, AX1 visibility, AX2 citability, detach proof, fault-injection and two-connection evidence, and JTBD rows with linked evidence. `not_applicable` on the money contract and the external-operation contract: it prices nothing and calls no provider. `partial` on the Skill mirror — `build-service-operations` exists under `.claude/skills/` only, the same DX2 gap every domain has. `deferred` on a tool namespace: §C.2b of `AGENT_TOOL_SURFACE.md` now works one through on Service, and it stays a proposal until DX13 |
 | **Marketing & Growth** | documentation only. No row can be assessed, and none is claimed |
 
 ¹ **Pipeline is not a domain.** `buildMoveStageAction` is a generic factory that
@@ -165,12 +165,13 @@ conformance, and the detach proof.
 ### `partial` — the Skill mirrors
 
 - **Gap.** `build-lead-intelligence`, `build-commercial-operations`,
-  `build-signature-order`, `build-contract-activation` and
-  `build-delivery-handover` exist under `.claude/skills/` only. `.agents/skills/`
-  carries six skills, none of them a domain build skill.
+  `build-signature-order`, `build-contract-activation`,
+  `build-delivery-handover` and `build-service-operations` exist under
+  `.claude/skills/` only. `.agents/skills/` carries six skills, none of them a
+  domain build skill.
 - **Evidence.** `ls .agents/skills/` versus `ls .claude/skills/`.
 - **Pass.** **DX2** (`crm agent skills sync|check`), which is where a drift check
-  belongs — hand-copying five more files just moves the problem.
+  belongs — hand-copying six more files just moves the problem.
 - **Compatibility risk.** **None.** Additive files; no runtime reads them.
 
 ### `partial` — Commercial Operations against the external-operation contract
