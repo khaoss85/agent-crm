@@ -574,3 +574,34 @@ function stdioRoundTrip(requests, options = {}) {
     for (const request of requests) child.stdin.write(`${JSON.stringify(request)}\n`);
   });
 }
+
+test('an ambiguous job question abstains instead of answering "not supported"', async () => {
+  const { createJobsIndex } = await import('../packages/docs-mcp/src/jobs.js');
+  const { createClaimsLedger } = await import('../packages/docs-mcp/src/ledger.js');
+  const index = createJobsIndex({
+    rootDir: process.cwd(),
+    ledger: createClaimsLedger({ rootDir: process.cwd(), corpus: null }),
+  });
+
+  // "human approval" ranks a marketing job (JTBD-MK-13, not supported) top by
+  // title-token overlap, while the framework's flagship approval boundary is
+  // validated end to end. Reporting the top match's status made the tool built to
+  // win that ground tell an agent we do not do it — a positive false claim, which
+  // is worse than the abstention this design already provides.
+  for (const query of ['human approval', 'approval', 'build a CRM']) {
+    const result = index.check(query, 5);
+    assert.notEqual(
+      result.answer,
+      'not supported',
+      `"${query}" resolved to a confident "not supported" while a comparably-relevant job is stronger`,
+    );
+    assert.equal(result.answer, 'unknown', `"${query}" should abstain, not pick a side`);
+    assert.match(result.answerText, /Ambiguous/, 'an abstention must say why it is abstaining');
+  }
+
+  // The anti-overclaim property must survive the fix: a specific question still
+  // gets its answer, and a genuinely unsupported job is still reported as one.
+  assert.equal(index.check('approve a discount', 5).answer, 'validated end to end');
+  assert.equal(index.check('import contacts from CSV', 5).answer, 'not supported');
+  assert.equal(index.check('teleport the customer to mars', 5).answer, 'unknown');
+});

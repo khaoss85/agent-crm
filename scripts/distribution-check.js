@@ -166,43 +166,62 @@ for (const directory of ['.claude/skills', '.agents/skills']) {
  * into a customer's own repository (EXECUTION_ROADMAP Phase 5, not implemented),
  * every repo-bound skill is a listing we should not publish.
  */
-const repoBoundPattern = /\b(?:ARCHITECTURE|DECISIONS|AGENTS|PRODUCT|TASKS)\.md\b|\bdocs\/[A-Za-z_]+\.md\b|\bpackages\/[a-z]+\/|\btests\/[\w.-]+\.test\.js\b/;
-const repoBound = [];
-for (const skill of readdirSync(join(root, '.claude/skills'))) {
-  const path = join(root, '.claude/skills', skill, 'SKILL.md');
-  if (!existsSync(path)) continue;
-  const source = readFileSync(path, 'utf8');
-  const frontmatter = source.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
-  const body = source.replace(/^---\n[\s\S]*?\n---/, '');
+const PUBLISHED = 'skills';
+const publishedSkills = existsSync(join(root, PUBLISHED))
+  ? readdirSync(join(root, PUBLISHED)).filter((name) => statSync(join(root, PUBLISHED, name)).isDirectory())
+  : [];
 
-  // Mentioning a repository path is not the defect. Mentioning one with no
-  // declared behaviour for its absence is. A skill that names its tier and says
-  // what it degrades to (docs/SKILL_PACKAGING.md) has handled the problem, and
-  // its path references are the deeper source rather than a prerequisite —
-  // which is exactly how Supabase's skills reach a stranger's project.
-  const declaresDegradation = /^\s*degradesTo:\s*\S/m.test(frontmatter) && /^\s*tier:\s*\S/m.test(frontmatter);
-  if (repoBoundPattern.test(body) && !declaresDegradation) repoBound.push(skill);
+/** @param {string} path */
+function declaredTier(path) {
+  const frontmatter = readFileSync(path, 'utf8').match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
+  return {
+    tier: frontmatter.match(/^\s*tier:\s*(\S+)/m)?.[1] ?? null,
+    degradesTo: frontmatter.match(/^\s*degradesTo:\s*(\S)/m)?.[1] ?? null,
+  };
 }
 
-const skillCount = readdirSync(join(root, '.claude/skills')).length;
-if (!repoBound.length) {
-  notes.push(`All ${skillCount} skills declare a portability tier and a documented degradation (docs/SKILL_PACKAGING.md), so a listing installed outside this repository orients through \`crm app inspect\` rather than silently doing nothing.`);
+if (publishedSkills.length === 0) {
+  fail(`${PUBLISHED}/: the published skill bundle is empty — the plugin manifests point at it`);
 }
-if (repoBound.length) {
-  const portable = skillCount - repoBound.length;
-  notes.push(
-    `${repoBound.length} of ${skillCount} skills name repository-internal paths without declaring what they degrade to `
-    + `(${repoBound.slice(0, 3).join(', ')}${repoBound.length > 3 ? ', …' : ''}). `
-    + 'They work in this repository and in projects built from it, and no-op in an unrelated project. '
-    + 'Do not publish the plugin until the create-project CLI emits those documents, or until the skills are rewritten to discover context through `crm app inspect` instead of fixed paths.',
-  );
-  if (brand.name.status === 'chosen' && claudePlugin?.metadata?.releaseStatus !== 'portable') {
+
+for (const skill of publishedSkills) {
+  const path = join(root, PUBLISHED, skill, 'SKILL.md');
+  if (!existsSync(path)) {
+    fail(`${PUBLISHED}/${skill}: no SKILL.md`);
+    continue;
+  }
+  const { tier, degradesTo } = declaredTier(path);
+  if (!tier || !degradesTo) {
     fail(
-      'A name has been chosen, so publication is imminent — but the bundled skills are still repo-bound. '
-      + 'Publishing now ships a plugin that installs and does nothing. Resolve this before listing anywhere.',
+      `${PUBLISHED}/${skill}/SKILL.md: no declared \`tier\` and \`degradesTo\` (docs/SKILL_PACKAGING.md). `
+      + 'A bundled skill must say what it needs and what it falls back to, or an install outside this '
+      + 'repository loads it, announces it, and produces confident instructions about files that are not there.',
+    );
+    continue;
+  }
+  // The one condition this gate exists for: a skill that says it only works in
+  // this repository cannot be in a bundle a stranger installs. Checking that a
+  // `degradesTo` key merely *exists* would exempt it — the key is present and
+  // its value ends "have no substitute".
+  if (tier === 'repository') {
+    fail(
+      `${PUBLISHED}/${skill}/SKILL.md declares \`tier: repository\` — it works only inside this `
+      + 'repository — but it is in the published bundle. A marketplace install is one moment of '
+      + 'attention and a skill that cannot work spends it permanently. Keep it in .claude/skills for '
+      + `maintainers and out of ${PUBLISHED}/.`,
     );
   }
 }
+
+const tiers = publishedSkills
+  .map((skill) => declaredTier(join(root, PUBLISHED, skill, 'SKILL.md')).tier)
+  .filter(Boolean);
+const tierCounts = tiers.reduce((counts, tier) => ({ ...counts, [tier]: (counts[tier] ?? 0) + 1 }), {});
+const maintainerOnly = readdirSync(join(root, '.claude/skills')).length - publishedSkills.length;
+notes.push(
+  `Published bundle: ${publishedSkills.length} skills (${Object.entries(tierCounts).map(([tier, n]) => `${n} ${tier}`).join(', ')}), `
+  + `with ${maintainerOnly} maintainer-only skill(s) deliberately held back from it.`,
+);
 
 // ---------------------------------------------------------------- licence assertions
 

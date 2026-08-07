@@ -3,7 +3,7 @@
   "name": "accordo",
   "displayName": "Accordo",
   "version": "0.1.0",
-  "description": "Build a CRM as code you own. Eleven skills that take a coding agent from a business objective to checked-in modules, deterministic workflows, policy-gated approvals, audit and trace — plus the project MCP server, whose code-generating tools are dry-run until you pass --apply.",
+  "description": "Build a CRM as code you own. Eleven skills that take a coding agent from a business objective to checked-in modules, deterministic workflows, policy-gated approvals, audit and trace \u2014 plus the project MCP server, whose code-generating tools are dry-run until you pass --apply.",
   "author": {
     "name": "Accordo maintainers",
     "url": "https://github.com/khaoss85/agent-crm"
@@ -23,13 +23,13 @@
     "revenue-operations",
     "deterministic"
   ],
-  "skills": "./.claude/skills/",
+  "skills": "./skills/",
   "mcpServers": "./.claude-plugin/mcp.json",
   "metadata": {
     "releaseStatus": "prepared-not-published",
     "blockedOn": [
       "The public name is undecided (docs/strategy/BRAND_REQUIREMENTS.md). `name` here is public-facing and namespaces every skill as `<name>:<skill>`, so publishing before the rename would break every installed user on the day it changes.",
-      "Publishing a marketplace and submitting to the community marketplace are human decisions (docs/strategy/MASTER_PLAN.md §10.4)."
+      "Publishing a marketplace and submitting to the community marketplace are human decisions (docs/strategy/MASTER_PLAN.md \u00a710.4)."
     ],
     "productionPosture": "The framework has no authentication, tenancy or RBAC; the MCP server is stdio and local, and runs with the authority of the process that starts it."
   }
