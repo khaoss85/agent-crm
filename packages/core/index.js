@@ -73,6 +73,8 @@ export {
 // nothing here executes a plan, writes source or installs anything.
 export {
   SOLUTION_PLAN_CONTRACT,
+  INSPECTION_CONTRACT,
+  ARTIFACT_KINDS,
   DECISION_TYPES,
   EVIDENCE_CATEGORIES,
   APPROVAL_CODES,
@@ -82,6 +84,7 @@ export {
   MAX_PLAN_BYTES,
   canonicalJson,
   fingerprintPlan,
+  inspectionFingerprint,
   validateSolutionPlan,
   bindSolutionPlan,
   parseSolutionPlan,

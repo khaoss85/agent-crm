@@ -21,11 +21,18 @@ package, configures a provider, starts a server or deploys anything. AX2 defines
 a document, checks one, and binds it to a real inspection. Who writes the plan
 and who carries it out are both outside this contract.
 
-A plan also **cannot carry executable content**. A step names a decision type
-and the seam it uses; it never carries a command a reader is invited to run —
-and the validator enforces that rather than documenting it as a convention. A
-format that can describe execution is one edit away from a runtime that performs
-it.
+A plan also **cannot carry executable content**, and that holds at two levels
+worth separating:
+
+- **by contract.** There is no command, script or effect field anywhere in the
+  shape, unknown keys are refused rather than ignored, and there is no code path
+  from a step to an invocation. This is the actual boundary.
+- **by text filtering.** Free text is additionally matched against shell
+  commands, substitutions, chaining, remote addresses and script tags
+  (`PLAN_EXECUTABLE_CONTENT`). This is **defense in depth, not a security
+  sandbox**: it is deliberately conservative and refuses some legitimate prose,
+  and it will miss a sufficiently encoded payload. Neither outcome changes the
+  guarantee, because nothing reads these fields as instructions.
 
 ## Why it exists
 
@@ -91,18 +98,61 @@ The set is closed **in both directions**: an invented category is refused, and a
 missing one is a problem. A gap that is stated is part of the deliverable; a gap
 that is omitted is a claim.
 
-Every derived metric, inference and recommendation must cite the ids it follows
-from, and every citation must resolve — forward or backward, because order in
-the file does not decide whether a plan is valid. A recommendation with nothing
-behind it is `PLAN_CITATION_UNRESOLVED`.
+### Citations point one way
+
+Resolving a citation is not enough — a citation has a *direction*, and the
+direction is what stops a conclusion from being laundered into a premise:
+
+| A… | may cite | because |
+|---|---|---|
+| `observedFact` | nothing | it carries a `source`, not a derivation |
+| `assumption` | nothing | it is taken as true *without* evidence, by definition |
+| `unavailableEvidence` | nothing | it carries a `reason`, and is never proof |
+| `derivedMetric` | observed facts, assumptions | a number comes from inputs, not from conclusions |
+| `inference` | observed facts, derived metrics, assumptions | |
+| `recommendation` | observed facts, derived metrics, assumptions, inferences | |
+
+The table is a DAG over categories, so the citation graph is **acyclic by
+construction**: two entries citing each other, or an entry citing itself, cannot
+be expressed. A wrong-direction edge is `PLAN_CITATION_DIRECTION`; an unknown id
+is `PLAN_CITATION_UNRESOLVED`.
+
+Every derived metric, inference and recommendation must cite at least one id,
+and citations resolve forward or backward — order in the file does not decide
+whether a plan is valid. A citation list is a **set**: repeating an id is
+refused rather than deduplicated, because it does not make one source into
+several.
 
 ## Bound to a real application, or stale
 
-A plan records the AX1 report it was written against, and `solution check`
-re-runs AX1 and compares:
+A plan records the AX1 report it was written against as a **derived**
+`inspectionFingerprint` — a 64-character hex digest computed from the canonical
+AX1 report. `validate` refuses anything that is not that shape, so a free-text
+label can no longer sit in a slot that reads as cryptographic evidence, and
+`check` recomputes it from the live report and compares.
+
+What it is: a **drift detector** over the whole composition — it catches a
+policy version, an action that disappeared or a migration checksum that moved,
+none of which a plan's own evidence lists mention. What it is **not**: proof of
+authorship, authorization or correctness. Obtaining one honestly means running
+the tooling against a real project, which is exactly what makes it evidence of
+drift; `crm solution check --json` publishes the live value so an author can
+record it.
+
+It covers package identities and versions, capability requires/provides and
+resolution, resources, declared action metadata, policy and provider identities
+with their declared-definition fingerprints, record revisions and migration
+checksums, and the problems and limitations that bound what may be planned. It
+excludes every label, description, hint and route, plus absolute paths,
+timestamps, config values, database state and runtime status.
+
+Alongside it, the plan lists the packages, capabilities and records it actually
+depends on, so `check` can name *what* moved rather than only that something
+did:
 
 | Difference | Reported as |
 |---|---|
+| the composition digest moved | `PLAN_STALE` on `inspectionFingerprint`, with both values |
 | a package is gone, or at another version | `PLAN_STALE` naming both versions |
 | a capability is gone, or stopped resolving | `PLAN_STALE` naming both statuses |
 | a record moved to another revision | `PLAN_STALE` citing ADR-019 |
@@ -152,11 +202,39 @@ plan with problems — and prints them anyway. `validate` reads **no project at
 all**, so it runs in CI, in review, or against a repository that is not the one
 the plan targets.
 
+## Rung 3 and above must show their work
+
+`provider`, `create-package` and `propose-kernel-capability` all mean "nothing
+installed can do this". The hierarchy only works if that claim is *evidenced*,
+so a decision at rung 3 or higher must record every lower rung in `rungsTried`,
+a reason per rung in `rejectedRungs`, and the capability `gap` no installed
+package fills. Anything missing is `PLAN_RUNGS_NOT_INSPECTED`.
+
+Rungs 1 and 2 carry no such burden: configuring or extending what already exists
+needs no essay.
+
+A `provider` decision also adds `PROVIDER_STATUS_UNKNOWN` to the plan's
+limitations, whatever its author wrote. A provider has five distinguishable
+states — composed in source, configured, holding credentials, reachable,
+authorized — and AX1 can evidence exactly the first.
+
+## Artifacts name a place, never content
+
+`acceptance.artifacts[]` says what a plan intends to produce: a closed `kind`
+(`admin-view`, `document`, `migration`, `module`, `package`, `policy`,
+`provider-config`, `test`), a repository-relative `path`, and a description.
+An absolute path, a `..` escape, a path claimed twice, or any field carrying
+file content is refused — an artifact holding source is the executable-content
+boundary in a different costume.
+
 ## Bounds
 
 A plan is at most 1 MiB, a text field 2 000 characters, an identifier 120, a
 list 200 entries and a citation list 50. Every bound is a refusal, never a
 truncation: a plan silently cut to 200 decisions reads as a complete plan.
+Unknown keys are refused at every level (`PLAN_FIELD_UNKNOWN`): silently
+dropping one means the plan claims something the reader never sees, and the
+fingerprint — computed over the normalized document — would not cover it.
 
 ## Using it as an agent
 

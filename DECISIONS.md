@@ -658,3 +658,53 @@ remains the agent's job; checking one is now the framework's.
 This is a document contract in `packages/core`, reachable from the CLI. It
 knows no domain: nothing in it mentions leads, contracts, delivery or any
 record this repository ships.
+
+### ADR-020 addendum 1 — the composition binding is derived, and citations have a direction
+
+The adversarial review of PR #24 found two places where the contract looked
+stronger than it was.
+
+**A `compositionFingerprint` the author typed.** The plan carried a free-text
+field in a slot that reads as cryptographic evidence of the application it was
+written against — the shipped example held the string
+`example-only-not-a-real-composition`. A label that looks like a hash is worse
+than no hash: a reader trusts it, and it proves nothing.
+
+It is replaced by `inspectionFingerprint`, a SHA-256 over the canonical AX1
+report, derived by `inspectionFingerprint(report)` and recomputed by
+`crm solution check` from the live project. `validate` refuses anything that is
+not a 64-character hex digest, so a label cannot occupy the slot at all, and
+`check --json` publishes the live value so an author can record it honestly.
+
+It covers package identities and versions, capability requires/provides and
+resolution, resources, declared action metadata, policy and provider identities
+with their ADR-015 fingerprints, record revisions and migration checksums, and
+the problems and limitations that bound what may be planned. It excludes labels,
+descriptions, hints, routes, absolute paths, timestamps, config values, database
+state and runtime status.
+
+What it is: a **drift detector** over the whole composition, catching changes no
+plan's own evidence lists mention. What it is **not**, stated in the same
+breath: proof of authorship, authorization or correctness.
+
+**Citations that resolved but had no direction.** Any evidence entry could cite
+any other, so an observed fact could rest on a recommendation, a recommendation
+could rest entirely on unavailable evidence, and two entries could cite each
+other. Each is a way to launder a conclusion into looking like a premise, and
+the validator accepted all three.
+
+Citations now follow a table that is a DAG over categories — facts, assumptions
+and unavailable evidence cite nothing; derived metrics cite facts and
+assumptions; inferences add derived metrics; recommendations add inferences — so
+the graph is **acyclic by construction** rather than by a traversal somebody has
+to maintain. A citation list is a set, and a repeated id is refused rather than
+deduplicated.
+
+**Two smaller corrections in the same review.** Unknown keys are refused at
+every level rather than ignored (`PLAN_FIELD_UNKNOWN`): silently dropping a key
+means the plan claims something its reader never sees, and the fingerprint —
+computed over the *normalized* document — would not cover it. And a decision at
+rung 3 or above must record every lower rung as inspected, with a reason per
+rung and the capability gap; the first draft accepted a `create-package`
+decision from an author who never looked at rung 1, which is precisely how a
+domain that already exists gets duplicated.

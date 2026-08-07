@@ -18,38 +18,80 @@ if it were.
 | — | `GET /api/schema` | the same picture from a running server, function-free |
 | — | the MCP server | the same operations over MCP, code-generating actions dry-run by default |
 
-## Next, in the order the gaps actually bite
+## Next, with identifiers so they can be referenced
 
-**1. Machine-readable evidence aggregation.** AX1 publishes
+Nothing below is implemented. Each is named so a plan, an ADR or a PR can point
+at it without re-describing it.
+
+### Near-term, after M14b2
+
+| | Tool | What it answers |
+|---|---|---|
+| **DX1** | `crm doctor --json` | is this *project* internally consistent — manifests applied, state files present, generated registries matching source, composition file in step? Distinct from `app inspect`, which describes a valid composition rather than diagnosing a broken checkout |
+| **DX7** | canonical Skill source + `skill sync\|check` | one semantic source per skill with thin adapters for Claude Code, Codex and Gemini, and a drift check in `verify`. Today the `.claude/` and `.agents/` copies are byte-identical by hand |
+
+### After M15 Service package learnings
+
+| | Tool | Why it waits |
+|---|---|---|
+| **DX2** | package scaffold | scaffolding a shape nobody has built three times bakes in the wrong shape |
+| **DX8** | package conformance test kit | a runnable suite a package author points at their own package, asserting the invariants the official packages hold (immutable evidence, human-actor boundaries, exact reads past the page bound). It makes ADR-018's seam self-enforcing — and needs M15 to know which invariants are actually general |
+| **DX9** | first existing-domain extraction pilot | one of Intelligence / Commercial / Signature moved out of core, once DX8 can prove the result still conforms |
+
+### Before an AX3 public benchmark
+
+| | Tool | What it answers |
+|---|---|---|
+| **DX3** | project verify report | one machine-readable document over the gates, suites and starters — the machine-readable evidence AX1 publishes as `not_aggregated` today |
+| **DX4** | JTBD / scenario runner | which rows a checkout actually earns, from linked evidence rather than prose |
+| **DX5** | benchmark runner | the scenarios end to end, reproducibly, for a public claim |
+
+**AX3 depends on DX3 and DX4**, not the other way round. A benchmark whose
+evidence is prose is a benchmark nobody can check.
+
+### Review and maintenance
+
+| | Tool | What it answers |
+|---|---|---|
+| **DX6** | change-impact inspector | given a diff, which packages, capabilities, records and JTBD rows it touches |
+| **DX10** | stable error catalog / `crm explain <code>` | every published problem code in one place, with what to do about it |
+| **DX11** | upgrade compatibility assistant | what a framework version bump requires of an existing project |
+| **DX12** | release / semver tooling | what changed at each seam, and whether the version says so |
+| **DX13** | Project MCP parity | the same operations over MCP as over the CLI, with the same dry-run defaults |
+
+### Production and Cloud
+
+All of these are hard-gated by the **Production Spine** (auth, tenancy, RBAC),
+not by effort:
+
+| | Tool |
+|---|---|
+| **DX14** | database and migration inspection |
+| **DX15** | provider health |
+| **DX16** | trace and audit query |
+| **DX17** | deploy, logs, rollback |
+| **DX18** | secret and authorization posture |
+
+## Priority, stated once
+
+```text
+M14b2 runtime remains next
+DX1 (doctor) and DX7 (Skill sync) may proceed in parallel — they block nothing
+M15 Service package
+then DX2 scaffold, DX8 conformance kit, DX9 extraction pilot
+DX3 + DX4 before any AX3 benchmark
+```
+
+Toolkit work does not displace M14b2 or M15. A developer toolkit for a
+framework whose domains are half-built optimizes the wrong thing.
+
+## The gap that bites first
+
+**Machine-readable evidence aggregation (DX3).** AX1 publishes
 `evidence.status: "not_aggregated"` and three paths, because JTBD status and
-quality-gate results are prose. An agent that must judge "is this job actually
-done" reads three documents and guesses. The fix is a contract over the JTBD
-matrix and the gate results, with the same determinism discipline — and it is
-the single highest-value remaining gap, because every other surface already
-refuses to guess and this one forces the reader to.
-
-**2. Declarative state metadata on package actions.** The delivery package
-restricts its actions to specific record states imperatively, so `/api/schema`
-and AX1 report `fromStates: null` — accurate about the declaration, but it means
-an agent cannot see the restriction without reading package metadata. Moving the
-packages to declarative `fromStates`/`stateField` would make one field answer it
-everywhere.
-
-**3. A plan-to-diff reviewer.** Given a plan and a diff, report which steps the
-diff implements, which it exceeds, and which it silently skipped. This is a
-*checker*, not an executor: it reads two things and reports, and it is the
-natural next AX surface because AX2 already made one of the two machine-readable.
-
-**4. Data-quality reporting.** `app inspect` says a record exists, never that
-its rows are complete or deduplicated. Counting the nulls is currently the
-agent's job with no tool for it, and a metric computed over mostly-missing data
-is the most common way a confident wrong answer gets produced here.
-
-**5. A conformance suite for a custom package.** `package validate` checks the
-contract; nothing checks that a package's *behaviour* holds the invariants the
-official ones do (immutable evidence, human-actor boundaries, exact reads past
-the page bound). A runnable suite a package author points at their own package
-would make ADR-018's seam self-enforcing.
+quality-gate results are prose. Every other surface in this repository refuses
+to guess; this one forces its reader to. It is the highest-value remaining item
+and the precondition for both DX4 and AX3.
 
 ## Deliberately refused
 

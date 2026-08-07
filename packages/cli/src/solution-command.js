@@ -91,27 +91,34 @@ export async function solutionCommand({ planPath, mode, json = false, rootDir = 
   }
   const binding = bindSolutionPlan(plan, inspection.report);
   const all = [...problems, ...binding.problems];
-  emit({ json, plan, problems: all, current: binding.current, mode });
-  return { exitCode: all.length === 0 ? 0 : 1, plan, problems: all };
+  emit({
+    json, plan, problems: all, current: binding.current, mode,
+    inspectionFingerprint: binding.inspectionFingerprint,
+  });
+  return { exitCode: all.length === 0 ? 0 : 1, plan, problems: all, inspectionFingerprint: binding.inspectionFingerprint };
 }
 
-function emit({ json, plan, problems, current, mode }) {
+function emit({ json, plan, problems, current, mode, inspectionFingerprint = null }) {
   if (json) {
     process.stdout.write(`${JSON.stringify({
       solutionPlanContract: plan ? plan.solutionPlanContract : null,
       mode,
       valid: problems.length === 0,
       ...(current === null ? {} : { current }),
+      // The live composition fingerprint, published so an author can record it
+      // in the plan. It is obtained by running this against a real project,
+      // which is exactly what makes it evidence of drift.
+      ...(inspectionFingerprint === null ? {} : { inspectionFingerprint }),
       plan,
       problems,
       vocabulary: solutionPlanVocabulary(),
     }, null, 2)}\n`);
     return;
   }
-  process.stdout.write(`${renderText({ plan, problems, current, mode })}\n`);
+  process.stdout.write(`${renderText({ plan, problems, current, mode, inspectionFingerprint })}\n`);
 }
 
-function renderText({ plan, problems, current, mode }) {
+function renderText({ plan, problems, current, mode, inspectionFingerprint = null }) {
   const lines = [];
   if (plan === null) {
     lines.push('This file is not a solution plan this reader understands.');
@@ -152,8 +159,11 @@ function renderText({ plan, problems, current, mode }) {
     lines.push(`${problems.length} problem${problems.length === 1 ? '' : 's'}:`);
     for (const problem of problems) lines.push(`  ${problem.code}  ${problem.path}: ${problem.message}`);
   }
-  if (mode === 'check' && current === false) {
+  if (mode === 'check' && inspectionFingerprint !== null) {
     lines.push('');
+    lines.push(`This project's composition fingerprint is ${inspectionFingerprint}`);
+  }
+  if (mode === 'check' && current === false) {
     lines.push('This plan was written against a different composition. Re-inspect the application and revise it.');
   }
   return lines.join('\n');

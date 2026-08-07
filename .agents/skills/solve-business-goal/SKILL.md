@@ -86,7 +86,11 @@ What the contract makes non-negotiable, and why each one is there:
 - **`propose-kernel-capability` may never appear in `steps[]`.** Rung 5 is a proposal you write. Putting it in steps is refused (`PLAN_DECISION_NOT_A_STEP`) because patching the kernel to make a solution fit is exactly what the hierarchy exists to prevent.
 - **six evidence categories and no others**, and every derived metric, inference and recommendation must cite what it follows from. A missing category is a problem too — an omitted gap is a claim.
 - **approval codes are a closed set.** A `provider` step must carry `install_or_configure_provider`; the validator adds the requirement rather than trusting you to remember it.
-- **a plan carries no command.** A step names a decision and the seam it uses. Anything that looks like something to run — a shell command, a URL to fetch, a substitution, a script tag — is refused (`PLAN_EXECUTABLE_CONTENT`). Nothing executes a plan, here or anywhere in this framework.
+- **citations point one way.** A fact and an assumption cite nothing; a derived metric cites facts and assumptions; an inference adds derived metrics; a recommendation adds inferences. Unavailable evidence is never a source. The graph is acyclic by construction, so you cannot cite a conclusion as a premise even by accident.
+- **rung 3 and above must show their work.** `provider`, `create-package` and `propose-kernel-capability` each require every lower rung in `rungsTried`, a reason per rung in `rejectedRungs`, and the capability `gap`. Skipping the inspection is how a domain that already exists gets duplicated.
+- **the composition fingerprint is derived, not written.** Record the `inspectionFingerprint` that `solution check --json` reports. It is a drift detector, not proof of anything — but it is not a label you compose either, and a free-text value is refused.
+- **unknown keys are refused.** If the contract has no field for what you want to say, say it in the fields that exist rather than inventing one.
+- **a plan carries no command.** A step names a decision and the seam it uses. Anything that looks like something to run — a shell command, a URL to fetch, a substitution, a script tag — is refused (`PLAN_EXECUTABLE_CONTENT`). That filter is defense in depth; the real boundary is that the shape has no field anything reads as an instruction. Nothing executes a plan, here or anywhere in this framework.
 
 The plan is what the human reviews. Code that arrives before the plan cannot be reviewed as a solution — only as a diff.
 

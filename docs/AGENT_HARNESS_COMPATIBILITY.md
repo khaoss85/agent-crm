@@ -55,6 +55,11 @@ clearly marked as such.
 `solution check` runs `app inspect` internally and captures it, so its stdout is
 the plan and only the plan.
 
+No absolute path appears in either machine-readable report — not the repository
+root, not a temporary directory, not the invoking user's home. A report is
+meant to be committed and diffed, and a machine layout in it makes two identical
+projects look different.
+
 ## Determinism, which matters more than it sounds
 
 Two runs over the same checked-in state produce byte-identical output from both
@@ -63,12 +68,30 @@ random value, no absolute path and no locale-dependent ordering appears in
 either report. A harness can therefore cache a report, diff two of them, or
 commit one, and a difference always means the project changed.
 
-## Skills and their mirrors
+## Skills, their mirrors, and what is honestly supported
 
-Agent instructions live in `.claude/skills/` for Claude Code and are mirrored
-verbatim in `.agents/skills/` for harnesses that read that convention. The
-mirrors are byte-identical and the check script enforces it, so no harness reads
-a stale copy.
+| Harness | Status |
+|---|---|
+| **Claude Code** | supported — `.claude/skills/<name>/SKILL.md` |
+| **Codex** | supported — `.agents/skills/<name>/SKILL.md`, byte-identical mirrors |
+| **Gemini CLI** | **not supported.** No file is shipped for it |
+| any other | the CLI surfaces work; there is no skill file |
+
+The two supported copies are byte-identical and `scripts/check.js` enforces it,
+so no harness reads a stale one. That is also the honest description of the
+current architecture: there is **no canonical semantic source with generated
+adapters** — there are two copies kept in step by a checker. Building the
+canonical source and a deterministic sync is tracked as **DX7** in
+`docs/CODER_TOOLING_ROADMAP.md`.
+
+No Gemini file exists, and none should be added by guessing. Its conventions —
+file name, location, front-matter and discovery rules — must be verified against
+the current Gemini CLI before anything is written, because a skill file in the
+wrong shape is worse than none: it looks supported and silently never loads.
+
+Nothing model-specific belongs in a wrapper. A harness adapter may change where
+a file lives and how it is announced; it must never change what the instructions
+say, or two harnesses stop being the same product.
 
 ## The trust boundary, stated once
 

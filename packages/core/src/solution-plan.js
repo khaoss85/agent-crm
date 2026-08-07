@@ -61,6 +61,35 @@ export const EVIDENCE_CATEGORIES = Object.freeze([
   'unavailableEvidence',
 ]);
 
+/**
+ * Which categories an entry may cite, by category. This is the evidence model's
+ * actual content, and the first draft did not have it: citations resolved
+ * against *any* id, so an observed fact could cite a recommendation, a
+ * recommendation could rest entirely on unavailable evidence, and two entries
+ * could cite each other. Each of those is a way to launder a conclusion into
+ * looking like a premise.
+ *
+ * The table is a DAG over categories, so the citation graph is **acyclic by
+ * construction** rather than by a traversal that has to be maintained:
+ *
+ * ```text
+ *   observedFacts        cite nothing — a fact carries a `source`
+ *   assumptions          cite nothing — taken as true *without* evidence, by definition
+ *   unavailableEvidence  cites nothing — it carries a `reason`, and is never proof
+ *   derivedMetrics       ← observedFacts, assumptions
+ *   inferences           ← observedFacts, derivedMetrics, assumptions
+ *   recommendations      ← observedFacts, derivedMetrics, assumptions, inferences
+ * ```
+ */
+const CITATION_SOURCES = Object.freeze({
+  observedFacts: Object.freeze([]),
+  assumptions: Object.freeze([]),
+  unavailableEvidence: Object.freeze([]),
+  derivedMetrics: Object.freeze(['observedFacts', 'assumptions']),
+  inferences: Object.freeze(['observedFacts', 'derivedMetrics', 'assumptions']),
+  recommendations: Object.freeze(['observedFacts', 'derivedMetrics', 'assumptions', 'inferences']),
+});
+
 /** Categories whose entries must cite the evidence they came from. */
 const CITING_CATEGORIES = Object.freeze(['derivedMetrics', 'inferences', 'recommendations']);
 
@@ -93,7 +122,10 @@ export const PLAN_PROBLEM_CODES = Object.freeze([
   'PLAN_TOO_LARGE',
   'PLAN_CONTRACT_UNSUPPORTED',
   'PLAN_FIELD_INVALID',
+  'PLAN_FIELD_UNKNOWN',
   'PLAN_VOCABULARY_UNKNOWN',
+  'PLAN_CITATION_DIRECTION',
+  'PLAN_RUNGS_NOT_INSPECTED',
   'PLAN_EXECUTABLE_CONTENT',
   'PLAN_CITATION_UNRESOLVED',
   'PLAN_DUPLICATE_ID',
@@ -203,8 +235,18 @@ function list(value, path, problems, { max = MAX_LIST, required = true } = {}) {
   return value;
 }
 
-/** A plain object — never an array, never a class instance, never a prototype trap. */
-function object(value, path, problems, { required = true } = {}) {
+/**
+ * A plain object — never an array, never a class instance, never a prototype
+ * trap — with a **closed** key set.
+ *
+ * Unknown keys are refused rather than ignored. On a machine contract, silently
+ * dropping a key an author wrote is the worst of both worlds: the plan claims
+ * something, the reader never sees it, and the fingerprint (computed over the
+ * *normalized* document) does not cover it, so the claim can change without the
+ * plan's identity moving. Fail closed, and the author learns immediately that
+ * this reader does not understand their field.
+ */
+function object(value, path, problems, { required = true, allowed = null } = {}) {
   if (value === undefined || value === null) {
     if (required) report(problems, 'PLAN_FIELD_INVALID', path, 'is required');
     return null;
@@ -217,6 +259,14 @@ function object(value, path, problems, { required = true } = {}) {
     if (FORBIDDEN_KEYS.includes(key)) {
       report(problems, 'PLAN_FIELD_INVALID', `${path}.${key}`, 'is a reserved key and must not appear in a plan');
       return null;
+    }
+  }
+  if (allowed !== null) {
+    for (const key of Object.keys(value)) {
+      if (!allowed.includes(key)) {
+        report(problems, 'PLAN_FIELD_UNKNOWN', `${path}.${key}`,
+          `is not part of solutionPlanContract ${SOLUTION_PLAN_CONTRACT}. Known keys here: ${[...allowed].sort().join(', ')}`);
+      }
     }
   }
   return value;
@@ -240,6 +290,89 @@ export function fingerprintPlan(plan) {
   return createHash('sha256').update(canonicalJson(rest)).digest('hex');
 }
 
+/** The AX1 contract this binding understands. Pins `applicationInspectionContract`. */
+export const INSPECTION_CONTRACT = 1;
+
+/**
+ * Derive a deterministic fingerprint of an application's **composition** from a
+ * canonical AX1 report.
+ *
+ * This exists because the first draft recorded a `compositionFingerprint` the
+ * plan's *author* typed. A free-text label that looks like a hash is worse than
+ * no hash: it reads as cryptographic evidence of the composition a plan was
+ * written against, while proving nothing at all.
+ *
+ * What it is: a **drift detector**. `check` recomputes this from the live
+ * report and compares, so a plan cannot silently survive a composition that has
+ * moved. What it is **not**: proof of authorship, authorization or correctness.
+ * An author can copy a valid fingerprint from a report they did run — that is
+ * expected, because obtaining one honestly means running the tooling, which is
+ * the whole point. It cannot be forged into matching a composition nobody
+ * inspected.
+ *
+ * It covers the facts a plan is built on and excludes everything a reader looks
+ * at rather than depends on: no label, description, hint, route, package prose,
+ * absolute path, timestamp, evidence path, database state or runtime status.
+ *
+ * @param {any} report an AX1 application-inspection report
+ */
+export function inspectionFingerprint(report) {
+  if (!report || typeof report !== 'object' || report.applicationInspectionContract !== INSPECTION_CONTRACT) {
+    throw new ValidationError(`An inspection fingerprint needs an applicationInspectionContract ${INSPECTION_CONTRACT} report`);
+  }
+  const pick = (rows, keys) => (Array.isArray(rows) ? rows : [])
+    .map((row) => Object.fromEntries(keys.map((key) => [key, row?.[key] ?? null])));
+  const facts = {
+    inspectionContract: INSPECTION_CONTRACT,
+    packageContract: report.application?.packageContract ?? null,
+    // The composition file list is the set of things this application declares
+    // it is made of; its order is decided by the kernel, not by a reader.
+    composition: [...(report.application?.composition ?? [])].sort(),
+    packages: pick(report.packages, ['name', 'version', 'packageContract']).map((row, index) => ({
+      ...row,
+      resources: [...(report.packages[index].resources ?? [])].sort(),
+      actions: [...(report.packages[index].actions ?? [])].sort(),
+      policies: [...(report.packages[index].policies ?? [])].sort(),
+      requires: pick(report.packages[index].requires, ['name', 'version']),
+      provides: pick(report.packages[index].provides, ['name', 'version']),
+    })),
+    capabilities: pick(report.capabilities, ['name', 'version', 'provider', 'status']).map((row, index) => ({
+      ...row, consumers: [...(report.capabilities[index].consumers ?? [])].sort(),
+    })),
+    resources: pick(report.resources, ['resource', 'package']),
+    // Declared action metadata only — never the label, the hint or the route,
+    // which are presentation and derivation respectively.
+    actions: pick(report.actions, ['module', 'name', 'owner', 'actionContract', 'stateField', 'externalOperation', 'confirm'])
+      .map((row, index) => ({
+        ...row,
+        fromStates: report.actions[index].fromStates === null ? null : [...report.actions[index].fromStates],
+        input: pick(report.actions[index].input, ['name', 'type', 'required']),
+      })),
+    // A policy's config *values* are inside its declared-definition fingerprint
+    // (ADR-015), so changing a rate changes this without the values appearing.
+    policies: pick(report.policies, ['owner', 'kind', 'name', 'version', 'fingerprint'])
+      .map((row, index) => ({ ...row, configKeys: [...(report.policies[index].configKeys ?? [])].sort() })),
+    // Identity and declared shape. Never a config *value*: a value can be a
+    // credential, and no fingerprint is worth leaking one.
+    providers: pick(report.providers, ['registry', 'kind', 'name', 'version', 'fixture'])
+      .map((row, index) => ({
+        ...row,
+        capabilities: [...(report.providers[index].capabilities ?? [])].sort(),
+        configKeys: [...(report.providers[index].configKeys ?? [])].sort(),
+      })),
+    // Migration identities and checksums are the record's schema identity, so a
+    // record that gained a field changes this even within one revision.
+    modules: pick(report.modules, ['name', 'owner', 'kind', 'revision', 'manifestVersion', 'stateFile'])
+      .map((row, index) => ({ ...row, migrations: pick(report.modules[index].migrations, ['name', 'checksum']) })),
+    // Problems and limitations bound what may be planned, so they are part of
+    // the composition a plan was written against.
+    problems: pick(report.problems, ['code', 'package', 'capability']),
+    limitations: (report.limitations ?? []).map((row) => row.code).sort(),
+    valid: report.valid === true,
+  };
+  return createHash('sha256').update(canonicalJson(facts)).digest('hex');
+}
+
 /**
  * Validate a Solution Plan against the contract. **Reads no project**, so a
  * plan can be checked in CI, in review, or against a repository that is not the
@@ -254,7 +387,10 @@ export function fingerprintPlan(plan) {
 export function validateSolutionPlan(input) {
   /** @type {PlanProblem[]} */
   const problems = [];
-  const raw = object(input, 'plan', problems);
+  const raw = object(input, 'plan', problems, {
+    allowed: ['solutionPlanContract', 'revision', 'fingerprint', 'goal', 'metric', 'application',
+      'evidence', 'decisions', 'steps', 'approvals', 'acceptance', 'limitations'],
+  });
   if (raw === null) return { valid: false, plan: null, problems };
 
   if (raw.solutionPlanContract !== SOLUTION_PLAN_CONTRACT) {
@@ -274,7 +410,9 @@ export function validateSolutionPlan(input) {
   const steps = normalizeSteps(raw.steps, decisions, evidence, problems);
   const approvals = normalizeApprovals(raw.approvals, steps, problems);
   const acceptance = normalizeAcceptance(raw.acceptance, problems);
-  const limitations = normalizeLimitations(raw.limitations, problems);
+  const limitations = normalizeLimitations(raw.limitations, problems, {
+    hasProviderDecision: decisions.some((decision) => decision.type === 'provider'),
+  });
 
   const plan = {
     solutionPlanContract: SOLUTION_PLAN_CONTRACT,
@@ -302,7 +440,7 @@ function sortProblems(problems) {
 }
 
 function normalizeGoal(value, problems) {
-  const goal = object(value, 'plan.goal', problems);
+  const goal = object(value, 'plan.goal', problems, { allowed: ['id', 'statement', 'outcome'] });
   if (goal === null) return { id: '', statement: '', outcome: '' };
   return {
     id: identifier(goal.id, 'plan.goal.id', problems) ?? '',
@@ -312,7 +450,7 @@ function normalizeGoal(value, problems) {
 }
 
 function normalizeMetric(value, problems) {
-  const metric = object(value, 'plan.metric', problems);
+  const metric = object(value, 'plan.metric', problems, { allowed: ['name', 'definition', 'baseline', 'target'] });
   if (metric === null) return { name: '', definition: '', baseline: null, target: null };
   // A goal with no metric cannot be verified, so the metric is required — but a
   // baseline that is genuinely unknown is stated as null, never invented.
@@ -328,12 +466,14 @@ function normalizeMetric(value, problems) {
 
 /** The AX1 report this plan was written against, recorded so it can go stale. */
 function normalizeApplication(value, problems) {
-  const app = object(value, 'plan.application', problems);
-  const empty = { applicationInspectionContract: null, compositionFingerprint: '', packages: [], capabilities: [], modules: [] };
+  const app = object(value, 'plan.application', problems, {
+    allowed: ['inspectionContract', 'inspectionFingerprint', 'packages', 'capabilities', 'modules'],
+  });
+  const empty = { inspectionContract: null, inspectionFingerprint: '', packages: [], capabilities: [], modules: [] };
   if (app === null) return empty;
-  if (app.applicationInspectionContract !== 1) {
-    report(problems, 'PLAN_FIELD_INVALID', 'plan.application.applicationInspectionContract',
-      'must be 1 — a plan binds to an AX1 report, and no other inspection contract exists');
+  if (app.inspectionContract !== INSPECTION_CONTRACT) {
+    report(problems, 'PLAN_FIELD_INVALID', 'plan.application.inspectionContract',
+      `must be ${INSPECTION_CONTRACT} — a plan binds to an AX1 report, and no other inspection contract exists`);
   }
   const packages = list(app.packages, 'plan.application.packages', problems).map((entry, index) => {
     const path = `plan.application.packages[${index}]`;
@@ -371,9 +511,23 @@ function normalizeApplication(value, problems) {
     };
   }).filter(Boolean);
 
+  // A 64-hex digest, or nothing. The earlier field took free text, so a plan
+  // could carry "example-only-not-a-real-composition" in a slot that reads as
+  // cryptographic evidence. Refusing the shape at validate time means a label
+  // can no longer masquerade as a fingerprint — before any project is read.
+  const raw = text(app.inspectionFingerprint, 'plan.application.inspectionFingerprint', problems, { max: MAX_IDENTIFIER });
+  let fingerprint = '';
+  if (raw !== null) {
+    if (/^[0-9a-f]{64}$/.test(raw)) fingerprint = raw;
+    else {
+      report(problems, 'PLAN_FIELD_INVALID', 'plan.application.inspectionFingerprint',
+        'must be the 64-character hex digest `crm solution check --json` reports for this project. It is a drift detector, not proof of authorship — but it is not a label, either');
+    }
+  }
+
   return {
-    applicationInspectionContract: 1,
-    compositionFingerprint: text(app.compositionFingerprint, 'plan.application.compositionFingerprint', problems, { max: MAX_IDENTIFIER }) ?? '',
+    inspectionContract: INSPECTION_CONTRACT,
+    inspectionFingerprint: fingerprint,
     packages: sortBy(packages, 'name'),
     capabilities: sortBy(capabilities, 'name'),
     modules: sortBy(modules, 'name'),
@@ -394,7 +548,7 @@ function sortBy(rows, key) {
  * directions: a missing category is a problem and so is an invented one.
  */
 function normalizeEvidence(value, problems) {
-  const evidence = object(value, 'plan.evidence', problems);
+  const evidence = object(value, 'plan.evidence', problems, { allowed: [...EVIDENCE_CATEGORIES] });
   /** @type {Record<string, any[]>} */
   const normalized = Object.fromEntries(EVIDENCE_CATEGORIES.map((category) => [category, []]));
   if (evidence === null) return normalized;
@@ -412,7 +566,11 @@ function normalizeEvidence(value, problems) {
     const rows = list(evidence[category], `plan.evidence.${category}`, problems);
     for (const [index, entry] of rows.entries()) {
       const path = `plan.evidence.${category}[${index}]`;
-      const row = object(entry, path, problems);
+      const row = object(entry, path, problems, {
+        allowed: ['id', 'statement', 'citations',
+          ...(category === 'observedFacts' ? ['source'] : []),
+          ...(category === 'unavailableEvidence' ? ['reason'] : [])],
+      });
       if (row === null) continue;
       const id = identifier(row.id, `${path}.id`, problems);
       if (id !== null) {
@@ -442,13 +600,28 @@ function normalizeEvidence(value, problems) {
   }
 
   // Citations resolve *after* every id is known, so order in the file does not
-  // decide whether a plan is valid.
+  // decide whether a plan is valid — and each one is checked for direction, not
+  // only for existence.
+  const categoryOf = new Map();
   for (const category of EVIDENCE_CATEGORIES) {
+    for (const row of normalized[category]) categoryOf.set(row.id, category);
+  }
+  for (const category of EVIDENCE_CATEGORIES) {
+    const allowed = CITATION_SOURCES[category];
     for (const [index, row] of normalized[category].entries()) {
+      const path = `plan.evidence.${category}[${index}].citations`;
       for (const cited of row.citations) {
         if (!ids.has(cited)) {
-          report(problems, 'PLAN_CITATION_UNRESOLVED', `plan.evidence.${category}[${index}].citations`,
+          report(problems, 'PLAN_CITATION_UNRESOLVED', path,
             `"${cited}" is not the id of any evidence entry in this plan`);
+          continue;
+        }
+        const from = categoryOf.get(cited);
+        if (!allowed.includes(from)) {
+          report(problems, 'PLAN_CITATION_DIRECTION', path,
+            allowed.length === 0
+              ? `a ${singular(category)} cites nothing — it stands on its own ${category === 'observedFacts' ? 'source' : 'statement'}, so "${cited}" must not appear here`
+              : `a ${singular(category)} may cite ${allowed.join(', ')}, and "${cited}" is a ${singular(from)}. Citing it would turn a conclusion into a premise`);
         }
       }
     }
@@ -456,11 +629,31 @@ function normalizeEvidence(value, problems) {
   return normalized;
 }
 
+/** "derivedMetrics" → "derived metric", for an error a human reads once. */
+function singular(category) {
+  return category
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .replace(/s$/, '');
+}
+
 function normalizeCitations(value, path, problems) {
   const rows = list(value, `${path}.citations`, problems, { required: false, max: MAX_CITATIONS });
-  return rows.map((entry, index) => identifier(entry, `${path}.citations[${index}]`, problems))
-    .filter((id) => id !== null)
-    .sort();
+  const ids = rows.map((entry, index) => identifier(entry, `${path}.citations[${index}]`, problems))
+    .filter((id) => id !== null);
+  // A citation list is a *set*: it is sorted, so order carries no meaning and
+  // must not move the fingerprint. A repeat is therefore either a mistake or an
+  // attempt to make one source look like several, and both are refused rather
+  // than quietly deduplicated.
+  const seen = new Set();
+  for (const id of ids) {
+    if (seen.has(id)) {
+      report(problems, 'PLAN_DUPLICATE_ID', `${path}.citations`,
+        `"${id}" is cited more than once; a citation list is a set, and repeating an id does not make it more evidence`);
+    }
+    seen.add(id);
+  }
+  return [...seen].sort();
 }
 
 function normalizeDecisions(value, problems) {
@@ -469,7 +662,9 @@ function normalizeDecisions(value, problems) {
   const ids = new Set();
   return rows.map((entry, index) => {
     const path = `plan.decisions[${index}]`;
-    const row = object(entry, path, problems);
+    const row = object(entry, path, problems, {
+      allowed: ['id', 'type', 'target', 'rationale', 'rungsTried', 'rejectedRungs', 'gap'],
+    });
     if (row === null) return null;
     const id = identifier(row.id, `${path}.id`, problems);
     if (id !== null) {
@@ -482,18 +677,62 @@ function normalizeDecisions(value, problems) {
         `must be one of ${Object.keys(DECISION_TYPES).sort().join(', ')}`);
     }
     const known = type !== null && Object.prototype.hasOwnProperty.call(DECISION_TYPES, type);
+    const rung = known ? DECISION_TYPES[type].rung : 0;
+    const rungsTried = list(row.rungsTried, `${path}.rungsTried`, problems, { required: false, max: 5 })
+      .map((entryRung, position) => (Number.isSafeInteger(entryRung) && entryRung >= 1 && entryRung <= 5
+        ? Number(entryRung)
+        : refuseRung(`${path}.rungsTried[${position}]`, problems)))
+      .filter((entryRung) => entryRung > 0)
+      .sort((a, b) => a - b);
+
+    const rejectedRungs = list(row.rejectedRungs, `${path}.rejectedRungs`, problems, { required: false, max: 5 })
+      .map((entryValue, position) => {
+        const rejectedPath = `${path}.rejectedRungs[${position}]`;
+        const rejected = object(entryValue, rejectedPath, problems, { allowed: ['rung', 'reason'] });
+        if (rejected === null) return null;
+        const rejectedRung = Number.isSafeInteger(rejected.rung) && rejected.rung >= 1 && rejected.rung <= 5
+          ? Number(rejected.rung)
+          : refuseRung(`${rejectedPath}.rung`, problems);
+        return {
+          rung: rejectedRung,
+          reason: text(rejected.reason, `${rejectedPath}.reason`, problems) ?? '',
+        };
+      })
+      .filter((rejected) => rejected !== null && rejected.rung > 0)
+      .sort((a, b) => a.rung - b.rung);
+
+    // Rung 3 and above mean "nothing installed can do this". The hierarchy only
+    // works if that claim is *evidenced*: the first draft accepted a
+    // `create-package` decision from an author who never looked at rung 1, which
+    // is precisely how a domain gets duplicated. Every lower rung must be named
+    // as tried, and each must carry the reason it was rejected.
+    if (known && rung >= 3) {
+      const lower = Array.from({ length: rung - 1 }, (_, position) => position + 1);
+      const missingTried = lower.filter((entryRung) => !rungsTried.includes(entryRung));
+      const missingReason = lower.filter((entryRung) => !rejectedRungs.some((rejected) => rejected.rung === entryRung));
+      if (missingTried.length > 0) {
+        report(problems, 'PLAN_RUNGS_NOT_INSPECTED', `${path}.rungsTried`,
+          `a "${type}" decision is rung ${rung}, so rungs ${lower.join(', ')} must each be recorded as inspected; ${missingTried.join(', ')} ${missingTried.length === 1 ? 'is' : 'are'} missing`);
+      }
+      if (missingReason.length > 0) {
+        report(problems, 'PLAN_RUNGS_NOT_INSPECTED', `${path}.rejectedRungs`,
+          `each lower rung needs the reason it was rejected; ${missingReason.join(', ')} ${missingReason.length === 1 ? 'has' : 'have'} none`);
+      }
+      if (text(row.gap, `${path}.gap`, problems) === null) {
+        report(problems, 'PLAN_RUNGS_NOT_INSPECTED', `${path}.gap`,
+          `a "${type}" decision must name the capability gap no installed package fills`);
+      }
+    }
+
     return {
       id: id ?? '',
       type: known ? type : '',
-      rung: known ? DECISION_TYPES[type].rung : 0,
+      rung,
       target: text(row.target, `${path}.target`, problems, { max: MAX_IDENTIFIER }) ?? '',
       rationale: text(row.rationale, `${path}.rationale`, problems) ?? '',
-      rungsTried: list(row.rungsTried, `${path}.rungsTried`, problems, { required: false, max: 5 })
-        .map((rung, position) => (Number.isSafeInteger(rung) && rung >= 1 && rung <= 5
-          ? Number(rung)
-          : refuseRung(`${path}.rungsTried[${position}]`, problems)))
-        .filter((rung) => rung > 0)
-        .sort((a, b) => a - b),
+      gap: row.gap === undefined || row.gap === null ? null : text(row.gap, `${path}.gap`, problems),
+      rungsTried,
+      rejectedRungs,
     };
   }).filter(Boolean);
 }
@@ -511,7 +750,9 @@ function normalizeSteps(value, decisions, evidence, problems) {
   const ids = new Set();
   return rows.map((entry, index) => {
     const path = `plan.steps[${index}]`;
-    const row = object(entry, path, problems);
+    const row = object(entry, path, problems, {
+      allowed: ['id', 'decisionId', 'description', 'requiresCapabilities', 'approvals', 'verifies'],
+    });
     if (row === null) return null;
     const id = identifier(row.id, `${path}.id`, problems);
     if (id !== null) {
@@ -570,7 +811,7 @@ function normalizeApprovals(value, steps, problems) {
   const rows = list(value, 'plan.approvals', problems, { required: false });
   const declared = rows.map((entry, index) => {
     const path = `plan.approvals[${index}]`;
-    const row = object(entry, path, problems);
+    const row = object(entry, path, problems, { allowed: ['code', 'stepId', 'reason'] });
     if (row === null) return null;
     return {
       code: normalizeApprovalCode(row.code, `${path}.code`, problems) ?? '',
@@ -604,7 +845,7 @@ function normalizeApprovals(value, steps, problems) {
 }
 
 function normalizeAcceptance(value, problems) {
-  const acceptance = object(value, 'plan.acceptance', problems);
+  const acceptance = object(value, 'plan.acceptance', problems, { allowed: ['checks', 'jtbdRows', 'artifacts'] });
   if (acceptance === null) return { checks: [], jtbdRows: [] };
   return {
     checks: list(acceptance.checks, 'plan.acceptance.checks', problems)
@@ -616,18 +857,75 @@ function normalizeAcceptance(value, problems) {
       .map((entry, index) => identifier(entry, `plan.acceptance.jtbdRows[${index}]`, problems))
       .filter((entry) => entry !== null)
       .sort(),
+    artifacts: normalizeArtifacts(acceptance.artifacts, problems),
   };
+}
+
+/** The kinds of thing a plan may say it intends to produce. Closed. */
+export const ARTIFACT_KINDS = Object.freeze([
+  'admin-view', 'document', 'migration', 'module', 'package', 'policy', 'provider-config', 'test',
+]);
+
+/**
+ * What a step is expected to produce — a *name and a place*, never content.
+ *
+ * A path is repo-relative and normalized. An absolute path leaks a machine
+ * layout into a document meant to be reviewed and diffed anywhere, and `..`
+ * escapes the repository the plan describes; both are refused. There is
+ * deliberately no field for file *content*: an artifact carrying source or SQL
+ * is the executable-content boundary in a different costume.
+ */
+function normalizeArtifacts(value, problems) {
+  const rows = list(value, 'plan.acceptance.artifacts', problems, { required: false });
+  /** @type {Set<string>} */
+  const seen = new Set();
+  return rows.map((entry, index) => {
+    const path = `plan.acceptance.artifacts[${index}]`;
+    const row = object(entry, path, problems, { allowed: ['kind', 'path', 'description'] });
+    if (row === null) return null;
+    const kind = text(row.kind, `${path}.kind`, problems, { max: 40 });
+    if (kind !== null && !ARTIFACT_KINDS.includes(kind)) {
+      report(problems, 'PLAN_VOCABULARY_UNKNOWN', `${path}.kind`,
+        `must be one of ${ARTIFACT_KINDS.join(', ')}`);
+    }
+    let repoPath = text(row.path, `${path}.path`, problems, { max: MAX_IDENTIFIER * 2 });
+    if (repoPath !== null) {
+      if (repoPath.startsWith('/') || /^[a-z]:[\\/]/i.test(repoPath)) {
+        report(problems, 'PLAN_FIELD_INVALID', `${path}.path`,
+          'must be repository-relative; an absolute path describes one machine, not the repository this plan is about');
+        repoPath = null;
+      } else if (repoPath.split('/').includes('..')) {
+        report(problems, 'PLAN_FIELD_INVALID', `${path}.path`,
+          'must stay inside the repository: ".." escapes the project the plan describes');
+        repoPath = null;
+      } else if (seen.has(repoPath)) {
+        report(problems, 'PLAN_DUPLICATE_ID', `${path}.path`,
+          `"${repoPath}" is claimed by more than one artifact; two steps cannot both own one file without saying which wins`);
+      }
+      if (repoPath !== null) seen.add(repoPath);
+    }
+    return {
+      kind: kind !== null && ARTIFACT_KINDS.includes(kind) ? kind : '',
+      path: repoPath ?? '',
+      description: text(row.description, `${path}.description`, problems) ?? '',
+    };
+  }).filter(Boolean).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 /**
  * The author's limitations, plus the four every plan carries. A plan that
  * claims otherwise does not get to.
  */
-function normalizeLimitations(value, problems) {
+const PROVIDER_LIMITATION = Object.freeze({
+  code: 'PROVIDER_STATUS_UNKNOWN',
+  message: 'A provider decision can be evidenced only as a *definition composed in source*. Whether it is configured, holds credentials, is reachable, is authenticated or is authorized is unknown here, and AX1 cannot answer it either.',
+});
+
+function normalizeLimitations(value, problems, { hasProviderDecision = false } = {}) {
   const authored = list(value, 'plan.limitations', problems, { required: false })
     .map((entry, index) => {
       const path = `plan.limitations[${index}]`;
-      const row = object(entry, path, problems);
+      const row = object(entry, path, problems, { allowed: ['code', 'message'] });
       if (row === null) return null;
       return {
         code: text(row.code, `${path}.code`, problems, { max: 60 }) ?? '',
@@ -636,7 +934,11 @@ function normalizeLimitations(value, problems) {
     })
     .filter(Boolean);
   const codes = new Set(authored.map((row) => row.code));
-  const inherent = PLAN_LIMITATIONS.filter((row) => !codes.has(row.code));
+  // A plan that touches a provider carries the provider limitation whether or
+  // not its author wrote it. The five states a provider can be in are the most
+  // reliable place for a plan to overclaim, and AX1 can evidence exactly one.
+  const required = hasProviderDecision ? [...PLAN_LIMITATIONS, PROVIDER_LIMITATION] : PLAN_LIMITATIONS;
+  const inherent = required.filter((row) => !codes.has(row.code));
   return [...authored, ...inherent].sort((a, b) => (a.code < b.code ? -1 : 1));
 }
 
@@ -654,9 +956,22 @@ function normalizeLimitations(value, problems) {
 export function bindSolutionPlan(plan, report) {
   /** @type {PlanProblem[]} */
   const problems = [];
-  if (!report || typeof report !== 'object' || report.applicationInspectionContract !== 1) {
-    report_(problems, 'PLAN_UNREADABLE', 'report', 'is not an application-inspection report');
-    return { current: false, problems };
+  if (!report || typeof report !== 'object' || report.applicationInspectionContract !== INSPECTION_CONTRACT) {
+    report_(problems, 'PLAN_UNREADABLE', 'report',
+      `is not an applicationInspectionContract ${INSPECTION_CONTRACT} report; this reader understands no other version`);
+    return { current: false, problems, inspectionFingerprint: null };
+  }
+
+  // The whole-composition check, before the specific ones. This catches drift
+  // the plan's own evidence lists cannot see — a policy version, an action that
+  // disappeared, a migration checksum — and it is derived here rather than
+  // trusted from the plan, which is the entire point of replacing the
+  // author-supplied label it used to carry.
+  const actualFingerprint = inspectionFingerprint(report);
+  if (plan.application.inspectionFingerprint !== ''
+    && plan.application.inspectionFingerprint !== actualFingerprint) {
+    report_(problems, 'PLAN_STALE', 'plan.application.inspectionFingerprint',
+      `the plan was written against composition ${plan.application.inspectionFingerprint.slice(0, 16)}…; this project is ${actualFingerprint.slice(0, 16)}…. Something in the composition moved — the differences below name what this plan actually depends on, and anything not listed there changed outside its evidence`);
   }
 
   const actualPackages = new Map((report.packages ?? []).map((row) => [row.name, row.version]));
@@ -718,7 +1033,14 @@ export function bindSolutionPlan(plan, report) {
     }
   }
 
-  return { current: problems.length === 0, problems: sortProblems(problems) };
+  return {
+    current: problems.length === 0,
+    problems: sortProblems(problems),
+    // Published so an author can record it. Obtaining one honestly means
+    // running the tooling against a real project, which is what makes it
+    // evidence of drift rather than of nothing.
+    inspectionFingerprint: actualFingerprint,
+  };
 }
 
 /** Named apart so `report` the parameter never shadows `report` the helper. */
@@ -755,6 +1077,11 @@ export function solutionPlanVocabulary() {
       .sort((a, b) => (a.type < b.type ? -1 : 1)),
     evidenceCategories: [...EVIDENCE_CATEGORIES],
     citingCategories: [...CITING_CATEGORIES],
+    citationSources: Object.fromEntries(
+      Object.entries(CITATION_SOURCES).map(([category, sources]) => [category, [...sources]]),
+    ),
+    artifactKinds: [...ARTIFACT_KINDS],
+    inspectionContract: INSPECTION_CONTRACT,
     approvalCodes: [...APPROVAL_CODES],
     requiredApprovals: { ...REQUIRED_APPROVALS },
     problemCodes: [...PLAN_PROBLEM_CODES],
@@ -765,6 +1092,11 @@ export function solutionPlanVocabulary() {
       maxIdentifier: MAX_IDENTIFIER,
       maxList: MAX_LIST,
       maxCitations: MAX_CITATIONS,
+    },
+    executableContent: {
+      rule: 'a plan is non-executable **by contract**: there is no command, script or effect field anywhere in the shape, and no code path from a step to an invocation',
+      textFiltering: 'the pattern match over free text is defense in depth, not a security sandbox. It is deliberately conservative and will refuse some legitimate prose; it will also miss a sufficiently encoded payload. Neither outcome changes the contract, because nothing reads these fields as instructions',
+      shapes: EXECUTABLE_SHAPES.map((shape) => shape.name),
     },
     notModeled: [
       'a planner or LLM', 'an agent runtime or orchestrator', 'executing a plan',

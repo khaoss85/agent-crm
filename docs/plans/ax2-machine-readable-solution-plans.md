@@ -209,3 +209,21 @@ package or provider installation · production deploy · database or
 runtime-health inspection · Marketing runtime · Analytics Studio · Data
 Operations · generic Admin action filtering · Service · PostgreSQL · Cloud ·
 package extraction or refactoring · M14b2.
+
+## What the adversarial review of PR #24 corrected
+
+| Severity | Defect | Fix |
+|---|---|---|
+| High | `compositionFingerprint` was author-supplied free text in a slot that reads as cryptographic evidence — the shipped example held `example-only-not-a-real-composition` | replaced by `inspectionFingerprint`, derived from the canonical AX1 report, shape-refused at validate time and recomputed by `check` |
+| High | citations resolved against any id, so a fact could cite a recommendation, a recommendation could rest on unavailable evidence, and two entries could cite each other | a citation-source table that is a DAG over categories; wrong-direction edges are `PLAN_CITATION_DIRECTION` and cycles cannot be expressed |
+| Medium | unknown keys were silently ignored, so a claim could sit outside both the report and the fingerprint | refused at every level as `PLAN_FIELD_UNKNOWN` |
+| Medium | rung 3+ decisions needed no evidence that lower rungs were inspected | `rungsTried`, `rejectedRungs` with a reason each, and `gap` are required at rung 3 and above (`PLAN_RUNGS_NOT_INSPECTED`) |
+| Low | a provider decision could imply more than AX1 can evidence | `PROVIDER_STATUS_UNKNOWN` is added automatically, naming the five states and the one AX1 answers |
+| Low | acceptance had no way to name intended outputs, so they leaked into prose | `acceptance.artifacts[]` with a closed `kind`, a repository-relative `path`, and no content field |
+| Low | the executable-content rule was documented as if it were a boundary | the boundary is the *shape*; the text filter is published as defense in depth, with its false negatives demonstrated by a passing encoded payload |
+
+The canonical example was rebuilt to bind to **this repository's own
+composition**, so `crm solution check examples/solution-plans/lead-to-won.plan.json`
+exits `0` here — and a test asserts it, which makes the example a tripwire: if
+the repository's composition moves and nobody regenerates the plan, the suite
+says so.
