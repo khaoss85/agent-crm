@@ -166,16 +166,18 @@ test('the first-party delivery package conforms and depends only through a capab
     definition: createDeliveryPackage({ policies: [b2bDeliveryHandoverV1] }),
     dir: join(repoRoot, 'packages/delivery'),
     expected: {
-      // Version 3: M14a added the execution transitions and M14b1 the
-      // economics evidence — additively, and without touching
-      // packageContract: 1 either time.
+      // Version 4: M14a added the execution transitions, M14b1 the economics
+      // evidence and M14b2 change, deliverables and acceptance — additively
+      // every time, and without touching packageContract: 1 once.
       name: 'delivery',
-      version: 3,
+      version: 4,
       resources: [
         'delivery-project', 'delivery-work-package', 'delivery-milestone',
         'delivery-partner-engagement', 'delivery-handover-run',
         'delivery-time-entry', 'delivery-expense-entry',
         'delivery-economic-plan', 'delivery-economic-plan-line', 'delivery-economic-snapshot',
+        'delivery-change-request', 'delivery-plan-revision', 'delivery-commercial-change',
+        'delivery-deliverable', 'delivery-acceptance-request', 'delivery-acceptance-evidence',
       ],
       actions: [
         'commercial-contract.create-delivery-handover',
@@ -193,9 +195,19 @@ test('the first-party delivery package conforms and depends only through a capab
         'delivery-work-package.record-delivery-time',
         'delivery-work-package.resume-work-package',
         'delivery-work-package.start-work-package',
+        'delivery-project.propose-change-request',
+        'delivery-change-request.decide-change-request',
+        'delivery-work-package.plan-deliverable',
+        'delivery-deliverable.complete-deliverable',
+        'delivery-milestone.request-acceptance',
+        'delivery-acceptance-request.record-acceptance',
       ],
       requires: ['contracts/delivery-obligations@1'],
-      provides: ['delivery-economics@1'],
+      provides: [
+        'delivery-economics@1',
+        'delivery-change-management@1',
+        'delivery-acceptance-evidence@1',
+      ],
     },
     forbiddenImports: [/from '[^']*contracts\//],
   });
@@ -232,8 +244,8 @@ test('a customer-authored package conforms through the identical contract', () =
   });
   assert.deepEqual([...registry.names()], ['contracts', 'delivery', 'partner-scorecard']);
   assert.deepEqual(Object.keys(registry.metadata()), ['contracts', 'delivery', 'partner-scorecard']);
-  assert.equal(registry.actions().length, 18, 'M14b1 added five economics actions on top of M14a\'s eight transitions');
-  assert.equal(registry.resources().length, 19);
+  assert.equal(registry.actions().length, 24, 'M14b2 added six change and acceptance actions on top of M14b1\'s five');
+  assert.equal(registry.resources().length, 25);
 });
 
 test('the kernel never depends on a package, in either direction', () => {

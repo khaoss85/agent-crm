@@ -14,14 +14,14 @@ Generated: **2026-08-07**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **M14b1 — Delivery economics** on top of **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
-| Main SHA at generation | `0f5845c` (merge of PR #23; full SHA `0f5845c65a82699b93d9be286eaf7b47ff6adb93`) |
-| Tests on clean main | **352 passing, 0 failing** (`npm run verify` from a fresh clone of `0f5845c`) |
+| Latest merged milestone | **AX2 — Machine-readable Solution Plans** on top of **M14b1 — Delivery economics** on top of **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
+| Main SHA at generation | `03a2cbe` (merge of PR #24; full SHA `03a2cbe35c5b2b2daf6f415bc858610c98eaf138`) |
+| Tests on clean main | **370 passing, 0 failing** (`npm run verify` from a fresh clone of `03a2cbe`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **AX2 — Machine-readable Solution Plans** (`claude/ax2-machine-readable-solution-plan`): 362 passing on the branch. Open and unmerged, awaiting the adversarial review. |
+| Open PRs | **M14b2 — Delivery change, deliverables and acceptance** (`claude/milestone-14b2-delivery-change-acceptance`): 379 passing on the branch. Open and unmerged, awaiting the adversarial review. |
 
 ## Completed functional path
 
@@ -82,11 +82,11 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **AX2 — Machine-readable Solution Plans** — implemented on an open PR: a
-   bounded plan contract with a canonical fingerprint, six decision types, six
-   evidence categories, a closed approval vocabulary, and `crm solution
-   inspect|validate|check` binding a plan to a real `app inspect` report
-   (`docs/SOLUTION_PLAN.md`, ADR-020). **Not a planner and not a runtime.**
+1. **M14b2 — Delivery change, deliverables and acceptance** — implemented on an
+   open PR: governed change requests, immutable plan revisions, the
+   commercial-change handoff that touches no commercial record, deliverable
+   evidence and recorded customer acceptance
+   (`docs/DELIVERY_CHANGE_ACCEPTANCE.md`).
 2. **M14b2 — Delivery change requests, deliverables and acceptance** — not
    started, and split out of M14b deliberately rather than quietly dropped.
    Governed non-commercial replans, the commercial-change handoff that never
@@ -139,12 +139,12 @@ adoption; generated API/SDK/Admin; references; actions; core adapters;
 pipelines; Lead Intelligence; Commercial Operations; Signature and Order;
 Contract activation and subscriptions; the public domain-package contract, the
 delivery handover and delivery execution; deterministic application inspection
-(AX1); delivery economics (M14b1); MCP server; CLI.
+(AX1); delivery economics (M14b1); machine-readable Solution Plans (AX2); MCP server; CLI.
 
-**Implemented, open PR (not on main):** machine-readable Solution Plans (AX2).
+**Implemented, open PR (not on main):** delivery change, deliverables and acceptance (M14b2).
 
 **Documentation only (no code):** renewal, billing and everything downstream of
-activation; delivery change requests, deliverables and acceptance (M14b2); Service; Analytics Studio; Integration Runtime; Jobs & durable outbox;
+activation; Service; Analytics Studio; Integration Runtime; Jobs & durable outbox;
 Data Governance; Design-to-CRM; Agent CRM Cloud; create-project CLI;
 PostgreSQL; auth/tenancy/RBAC; Marketing & Growth (MK0–MK7); the Agent
 Experience track beyond AX0; benchmark execution.

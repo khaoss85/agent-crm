@@ -111,6 +111,13 @@ try {
     'delivery-economic-plan.module.json',
     'delivery-economic-plan-line.module.json',
     'delivery-economic-snapshot.module.json',
+    // M14b2: change, deliverables and acceptance evidence.
+    'delivery-change-request.module.json',
+    'delivery-plan-revision.module.json',
+    'delivery-commercial-change.module.json',
+    'delivery-deliverable.module.json',
+    'delivery-acceptance-request.module.json',
+    'delivery-acceptance-evidence.module.json',
   ]) {
     applyModule(root, join(root, 'packages', 'delivery', 'modules', manifest));
   }
@@ -1010,8 +1017,14 @@ try {
     assert.deepEqual(preview.result.economics.groups, groups, 'and an agent may read it');
     assert.equal(preview.result.stored, false, 'a preview is never evidence');
 
-    // Nothing above billed, paid or accepted anything.
-    assert.equal(app.modules.list().some((module) => /invoice|payment|acceptance/i.test(module.name)), false);
+    // Nothing above billed or paid anything. Acceptance records now exist —
+    // M14b2 added them — so the assertion names what must not exist rather
+    // than lumping acceptance in with billing: acceptance is evidence a human
+    // recorded, and it authorizes nothing.
+    assert.equal(
+      app.modules.list().some((module) => /invoice|payment|billing/i.test(module.name)), false,
+      'no invoice, payment or billing record exists anywhere in this framework',
+    );
 
     // The cross-package write: exactly those obligations are handed over, and
     // the service obligation is not Delivery's business.
