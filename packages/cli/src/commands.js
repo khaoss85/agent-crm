@@ -6,6 +6,7 @@ import { validateManifestCommand, generateMigrationCommand, readManifestFile } f
 import { planModule, applyModulePlan } from './module-factory.js';
 import { validatePackageCommand, inspectPackageCommand } from './package-commands.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
+import { solutionCommand } from './solution-command.js';
 
 /** @param {string[]} argv */
 export async function runCli(argv) {
@@ -28,6 +29,13 @@ export async function runCli(argv) {
     command = 'app:inspect';
     positional = positional.slice(1);
   }
+  // "solution inspect|validate|check <plan.json>" reads a machine-readable
+  // Solution Plan (AX2). Like `app inspect`, none of it constructs the
+  // application or opens a database, and none of it executes the plan.
+  if (command === 'solution' && ['inspect', 'validate', 'check'].includes(positional[0])) {
+    command = `solution:${positional[0]}`;
+    positional = positional.slice(1);
+  }
   const dbPath = typeof flags.db === 'string' ? resolve(flags.db) : undefined;
 
   // Help is not a database operation. It used to fall through to the branch
@@ -42,6 +50,17 @@ export async function runCli(argv) {
     const result = await inspectApplicationCommand({
       rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
       json: flags.json === true,
+    });
+    process.exitCode = result.exitCode;
+    return;
+  }
+
+  if (command === 'solution:inspect' || command === 'solution:validate' || command === 'solution:check') {
+    const result = await solutionCommand({
+      planPath: positional[0],
+      mode: /** @type {'inspect'|'validate'|'check'} */ (command.slice('solution:'.length)),
+      json: flags.json === true,
+      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
     });
     process.exitCode = result.exitCode;
     return;
@@ -238,6 +257,9 @@ Usage:
   agent-crm doctor [--db path]
   agent-crm db:migrate [--db path]
   agent-crm app inspect [--json] [--root dir]
+  agent-crm solution inspect <plan.json> [--json]
+  agent-crm solution validate <plan.json> [--json]
+  agent-crm solution check <plan.json> [--json] [--root dir]
   agent-crm workflow:list [--db path]
   agent-crm trace:list [--limit 20] [--db path]
   agent-crm module:plan <manifest.json> [--root path] [--json]
@@ -258,5 +280,10 @@ Migration generation is a dry-run unless --out is provided; --force allows overw
 they run the same domain-package validator the application runs at startup, write
 nothing, open no database and reach no network, and exit non-zero on any problem.
 Manifest schema: docs/MODULE_MANIFEST.md — module factory: docs/MODULE_FACTORY.md
-Package contract: docs/PACKAGE_AUTHORING.md`;
+"solution inspect|validate|check" read a machine-readable Solution Plan (AX2).
+validate reads no project at all; check binds the plan to this project's app
+inspect report and reports PLAN_STALE when the composition has moved. None of
+them executes a plan, writes source, installs anything or opens a database.
+Package contract: docs/PACKAGE_AUTHORING.md
+Application inspection: docs/APPLICATION_INSPECTION.md — plans: docs/SOLUTION_PLAN.md`;
 }

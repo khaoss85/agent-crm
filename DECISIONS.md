@@ -589,3 +589,122 @@ regenerating modules that did not change.
 
 Adoption is generic. It names no domain, and nothing in it knows that Delivery
 was the milestone that needed it first.
+
+## ADR-020 — A Solution Plan is a bounded document contract, never an executable one
+
+**Status:** accepted (AX2).
+
+AX1 gave a project one deterministic answer to *what has this application
+composed*. The next question an agent must answer — *what are you going to do
+about it, and on what evidence* — had no shape at all. The
+`solve-business-goal` Skill asked for a Solution Plan with sixteen named parts,
+and every agent wrote it differently: different section names, different order,
+different words for "we do not know". A human could not diff two of them, a
+second agent could not read one, and nothing could tell whether the application
+a plan was written against was still the application in front of the reader.
+
+The obvious answer — a workflow or DAG format with typed steps and effects —
+was rejected, and the reason is the whole decision. A format expressive enough
+to describe execution invites a runtime, and the first runtime that reads a plan
+is one source edit away from applying it. The framework already refuses an
+expression language over money for the same reason; a plan that can carry
+commands is the same mistake wearing a different name.
+
+**Decision.**
+
+1. **A plan is a document with a contract**, `solutionPlanContract: 1`, carrying
+   its own `revision` and a SHA-256 `fingerprint` over canonical bytes — keys
+   sorted at every depth — so two plans that say the same thing hash the same
+   and a silent edit cannot hide.
+2. **It cannot carry executable content.** A step names a decision type and the
+   seam it uses. A shell command, a command substitution, a chained invocation,
+   a remote address or a script tag anywhere in the document is refused
+   (`PLAN_EXECUTABLE_CONTENT`). This is enforced by the validator, not stated as
+   a convention.
+3. **Every classification a reader acts on is a closed vocabulary**: six
+   decision types mapped to the repository's own decision hierarchy, six
+   evidence categories, eleven approval codes, and a fixed problem-code list.
+   An unknown value is refused; an invented evidence category is refused; a
+   *missing* evidence category is a problem too, because an omitted gap is a
+   claim.
+4. **Rung 5 is not a step.** `propose-kernel-capability` exists as a decision
+   type so a plan can state it, and is refused in `steps[]`
+   (`PLAN_DECISION_NOT_A_STEP`). Patching the kernel to make a solution fit is
+   precisely what the hierarchy exists to prevent, and a format that lets a plan
+   schedule it as work has conceded the point.
+5. **Derived claims cite their evidence.** Every derived metric, inference and
+   recommendation names the ids it follows from, and every citation must
+   resolve — forward or backward, because order in the file does not decide
+   validity.
+6. **A plan is bound to a real AX1 report.** `crm solution check` re-runs the
+   inspection and reports `PLAN_STALE` naming the specific difference — a
+   package version, a capability that stopped resolving, a record revision — and
+   `CAPABILITY_NOT_AVAILABLE` for a step that needs something this application
+   does not have. A plan whose premises have changed is not a plan.
+7. **Exit codes mirror AX1's**: `0` valid, `1` problems with the complete list
+   still printed, `2` unreadable. `validate` reads no project at all, so a plan
+   can be checked in CI, in review, or against a repository that is not the one
+   it targets.
+8. **Approval is a human-actor boundary, not RBAC**, and every plan carries that
+   limitation along with `PLAN_NOT_EXECUTED`, `EVIDENCE_NOT_VERIFIED` and
+   `BINDING_IS_SOURCE_ONLY`, whether or not its author wrote them.
+
+**Consequences.** The framework gains no planner and no runtime, and gains no
+ability to act on a plan. It gains the ability to say, mechanically, that a plan
+is well-formed, honestly cited, correctly scoped against the decision hierarchy,
+and current against the application it claims to describe. Producing a plan
+remains the agent's job; checking one is now the framework's.
+
+This is a document contract in `packages/core`, reachable from the CLI. It
+knows no domain: nothing in it mentions leads, contracts, delivery or any
+record this repository ships.
+
+### ADR-020 addendum 1 — the composition binding is derived, and citations have a direction
+
+The adversarial review of PR #24 found two places where the contract looked
+stronger than it was.
+
+**A `compositionFingerprint` the author typed.** The plan carried a free-text
+field in a slot that reads as cryptographic evidence of the application it was
+written against — the shipped example held the string
+`example-only-not-a-real-composition`. A label that looks like a hash is worse
+than no hash: a reader trusts it, and it proves nothing.
+
+It is replaced by `inspectionFingerprint`, a SHA-256 over the canonical AX1
+report, derived by `inspectionFingerprint(report)` and recomputed by
+`crm solution check` from the live project. `validate` refuses anything that is
+not a 64-character hex digest, so a label cannot occupy the slot at all, and
+`check --json` publishes the live value so an author can record it honestly.
+
+It covers package identities and versions, capability requires/provides and
+resolution, resources, declared action metadata, policy and provider identities
+with their ADR-015 fingerprints, record revisions and migration checksums, and
+the problems and limitations that bound what may be planned. It excludes labels,
+descriptions, hints, routes, absolute paths, timestamps, config values, database
+state and runtime status.
+
+What it is: a **drift detector** over the whole composition, catching changes no
+plan's own evidence lists mention. What it is **not**, stated in the same
+breath: proof of authorship, authorization or correctness.
+
+**Citations that resolved but had no direction.** Any evidence entry could cite
+any other, so an observed fact could rest on a recommendation, a recommendation
+could rest entirely on unavailable evidence, and two entries could cite each
+other. Each is a way to launder a conclusion into looking like a premise, and
+the validator accepted all three.
+
+Citations now follow a table that is a DAG over categories — facts, assumptions
+and unavailable evidence cite nothing; derived metrics cite facts and
+assumptions; inferences add derived metrics; recommendations add inferences — so
+the graph is **acyclic by construction** rather than by a traversal somebody has
+to maintain. A citation list is a set, and a repeated id is refused rather than
+deduplicated.
+
+**Two smaller corrections in the same review.** Unknown keys are refused at
+every level rather than ignored (`PLAN_FIELD_UNKNOWN`): silently dropping a key
+means the plan claims something its reader never sees, and the fingerprint —
+computed over the *normalized* document — would not cover it. And a decision at
+rung 3 or above must record every lower rung as inspected, with a reason per
+rung and the capability gap; the first draft accepted a `create-package`
+decision from an author who never looked at rung 1, which is precisely how a
+domain that already exists gets duplicated.

@@ -62,7 +62,7 @@ const LOADER = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'agent
  * @param {{rootDir: string, json?: boolean, timeoutMs?: number}} options
  * @returns {Promise<{exitCode: number, report: any}>}
  */
-export async function inspectApplicationCommand({ rootDir, json = false, timeoutMs = LOAD_TIMEOUT_MS }) {
+export async function inspectApplicationCommand({ rootDir, json = false, timeoutMs = LOAD_TIMEOUT_MS, capture = false }) {
   const root = isAbsolute(rootDir) ? rootDir : resolve(process.cwd(), rootDir);
   if (!existsSync(root)) {
     process.stderr.write(`Not a directory: ${rootDir}\n`);
@@ -79,7 +79,11 @@ export async function inspectApplicationCommand({ rootDir, json = false, timeout
   if (outcome.diagnostic) process.stderr.write(outcome.diagnostic);
   if (outcome.report === null) return { exitCode: 2, report: null };
 
-  process.stdout.write(json ? `${JSON.stringify(outcome.report, null, 2)}\n` : `${renderText(outcome.report)}\n`);
+  // A caller that wants the report as data — `crm solution check` — gets it
+  // without a line on stdout: that stream belongs to whatever *it* is printing.
+  if (!capture) {
+    process.stdout.write(json ? `${JSON.stringify(outcome.report, null, 2)}\n` : `${renderText(outcome.report)}\n`);
+  }
   return { exitCode: outcome.report.valid ? 0 : 1, report: outcome.report };
 }
 

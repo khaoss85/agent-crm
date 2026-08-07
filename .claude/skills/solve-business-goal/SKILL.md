@@ -71,7 +71,26 @@ Produce: capability coverage, package reuse, missing capabilities, **data-qualit
 
 ## 5. Produce a Solution Plan before writing code
 
-Machine-readable plus a prose companion: goal, primary metric, assumptions, installed packages, reused capabilities, missing capabilities, packages to create, providers to configure, data model, events and tracking, policies, Admin experience, analytics, tests, approval gates, known limitations, execution order.
+The plan is a **checked file with a contract**, not prose with headings — `solutionPlanContract: 1`, guide `docs/SOLUTION_PLAN.md`, canonical example `examples/solution-plans/lead-to-won.plan.json`.
+
+```bash
+npm run crm -- solution validate <plan.json>   # the contract alone; reads no project
+npm run crm -- solution check    <plan.json>   # validate, then bind to this project's app inspect report
+```
+
+Write the plan, record the `app inspect` report you read in step 2 into `application`, and run `check` before writing any code. Fix every problem it reports. Re-run it before the review: a plan bound to a composition that has since moved reports `PLAN_STALE`, and a stale plan is not a plan.
+
+What the contract makes non-negotiable, and why each one is there:
+
+- **six decision types**, one per rung of the hierarchy below — `configure`, `extend`, `evolve`, `provider`, `create-package`, `propose-kernel-capability`. Say which rungs you tried in `rungsTried`.
+- **`propose-kernel-capability` may never appear in `steps[]`.** Rung 5 is a proposal you write. Putting it in steps is refused (`PLAN_DECISION_NOT_A_STEP`) because patching the kernel to make a solution fit is exactly what the hierarchy exists to prevent.
+- **six evidence categories and no others**, and every derived metric, inference and recommendation must cite what it follows from. A missing category is a problem too — an omitted gap is a claim.
+- **approval codes are a closed set.** A `provider` step must carry `install_or_configure_provider`; the validator adds the requirement rather than trusting you to remember it.
+- **citations point one way.** A fact and an assumption cite nothing; a derived metric cites facts and assumptions; an inference adds derived metrics; a recommendation adds inferences. Unavailable evidence is never a source. The graph is acyclic by construction, so you cannot cite a conclusion as a premise even by accident.
+- **rung 3 and above must show their work.** `provider`, `create-package` and `propose-kernel-capability` each require every lower rung in `rungsTried`, a reason per rung in `rejectedRungs`, and the capability `gap`. Skipping the inspection is how a domain that already exists gets duplicated.
+- **the composition fingerprint is derived, not written.** Record the `inspectionFingerprint` that `solution check --json` reports. It is a drift detector, not proof of anything — but it is not a label you compose either, and a free-text value is refused.
+- **unknown keys are refused.** If the contract has no field for what you want to say, say it in the fields that exist rather than inventing one.
+- **a plan carries no command.** A step names a decision and the seam it uses. Anything that looks like something to run — a shell command, a URL to fetch, a substitution, a script tag — is refused (`PLAN_EXECUTABLE_CONTENT`). That filter is defense in depth; the real boundary is that the shape has no field anything reads as an instruction. Nothing executes a plan, here or anywhere in this framework.
 
 The plan is what the human reviews. Code that arrives before the plan cannot be reviewed as a solution — only as a diff.
 
