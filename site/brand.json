@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of brand truth for every public asset. The public name is a PENDING HUMAN DECISION (docs/strategy/BRAND_REQUIREMENTS.md, MASTER_PLAN.md \u00a710). Nothing else in site/ or docs/marketing/ may hardcode a name, domain or package scope: they read these tokens. Renaming the project is an edit to this file plus `npm run site:build`.",
+  "$comment": "Single source of brand truth for every public asset. Nothing in site/ or docs/marketing/ may hardcode a name, domain or package scope: they read these tokens. The name was decided on 2026-08-07 (Accordo) and the code surface renamed with scripts/brand-set.js; the tokens remain the single edit point, because a trademark screen could still force a second rename.",
   "name": {
     "status": "chosen",
     "value": "Accordo",
@@ -7,9 +7,9 @@
     "note": "Chosen by the founder on 2026-08-07 over Pactar (more distinctive, but a live PACT word-mark in class 9) and Pactio (a live UK legal-tech namesake in adjacent software). Research and the eliminated candidates are in docs/marketing/NAME_VERIFICATION.md. The trademark screen has NOT been run \u2014 if it comes back badly, scripts/brand-set.js runs again with a different name."
   },
   "domain": {
-    "status": "blocked",
-    "value": "example.invalid",
-    "note": "accordo.dev was chosen and is NOT AVAILABLE \u2014 confirmed against a registrar on 2026-08-07, after a DNS lookup had shown no A record. That is precisely the trap this field warned about: an unpointed registered domain is indistinguishable from a free one over DNS. accordo.com is also taken. Verified available and unclaimed at the same moment: accordo.io, accordo.sh, getaccordo.com, accordohq.com. Awaiting the founder's pick; until then this stays a reserved TLD so a premature deploy is obviously broken rather than quietly wrong."
+    "status": "registered",
+    "value": "accordo.dev",
+    "note": "Registered by the founder on 2026-08-07. The registrar showed it as unavailable in a check run minutes earlier, which is consistent with that purchase \u2014 a DNS lookup the same morning had shown no A record, and this field warned that DNS silence is not proof either way. Ownership is the founder's statement; this environment can confirm the domain is registered, not to whom."
   },
   "repository": {
     "status": "private",
@@ -23,9 +23,9 @@
     "note": "Unpublished and unclaimed. accordo, create-accordo and @accordo/core were all free on the npm registry on 2026-08-07 \u2014 verified, not assumed. Registering them is a human action and is urgent: namespaces are unrenameable."
   },
   "license": {
-    "status": "provisional",
+    "status": "confirmed",
     "value": "MIT",
-    "note": "MIT is the repository license today. Final confirmation before public launch is an explicit ADR-gated human decision (MASTER_PLAN.md \u00a710.2)."
+    "note": "Confirmed by the founder on 2026-08-07 (ADR-021). MIT has been the repository licence since Milestone 0; what changed is that a distribution manifest may now assert it to a marketplace, which scripts/distribution-check.js refuses while the status is provisional."
   },
   "promise": "Describe your sales process to your coding agent; own the CRM it builds.",
   "colors": {

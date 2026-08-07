@@ -7,13 +7,13 @@ into something you can work through in an afternoon.
 
 Nothing here is blocked on more engineering. It is blocked on you.
 
-## The five decisions — one down, four to go
+## The five decisions — three down, two to go
 
 | # | Decision | What it unblocks | Notes before you decide |
 |---|---|---|---|
-| 1 | ~~Public name~~ — **DECIDED 2026-08-07: Accordo, accordo.dev** | — | Applied to `site/brand.json`; the public surface rebuilt from one edit. **Three follow-ups are now urgent and are yours:** the trademark screen (EUIPO + USPTO classes 9 and 42) has not been run and is the only thing that can still invalidate the choice; the domain is *selected*, not confirmed registered; and `accordo`, `create-accordo` and `@accordo` are free but unclaimed — namespaces are unrenameable, so a gap here is permanent |
-| 2 | **Final licence confirmation** — **now the critical path** | Three distribution manifests assert MIT while `brand.json` records it as provisional. `npm run distribution:check` fails on this as of the naming decision, by design: a manifest's licence field is an assertion to a marketplace | MIT is the repository licence today and the permissive-core claim is load-bearing in every comparison, so confirming it is almost certainly what you want. It still needs to be an explicit ADR entry rather than an assumption |
-| 3 | **Repository visibility** | Every `{{brand.repository}}` link, the "read the test" call to action, both self-hosted marketplaces, and the whole slow-burn retrieval channel | Follows the name — a public repository under the working title teaches the wrong one |
+| 1 | ~~Public name~~ — **DECIDED 2026-08-07: Accordo** | — | Applied to the whole tree by `scripts/brand-set.js --apply`: 389 occurrences across 139 files, 410 tests still passing. **`accordo.dev` is registered.** Two follow-ups remain and are yours: the trademark screen (EUIPO + USPTO, classes 9 and 42) has not been run and is the only thing that can still force a second rename; and `accordo`, `create-accordo` and `@accordo` were free on npm this morning but are still unclaimed — namespaces are first-come and unrenameable |
+| 2 | ~~Final licence confirmation~~ — **DECIDED 2026-08-07: MIT, ADR-021** | — | `license.status` is `confirmed`, so a distribution manifest may now state it. The ADR records why the licence is load-bearing rather than incidental: a copyleft core would weaken the ownership claim the whole positioning rests on, and a source-available one would make it false |
+| 3 | **Repository visibility** — **now the critical path** | Every `{{brand.repository}}` link, the "read the test" call to action, both self-hosted marketplaces, `npx skills add`, and the whole slow-burn retrieval channel | The name is decided and applied, so the reason to wait is gone. Renaming the GitHub repository to `accordo` at the same time keeps the URLs consistent with everything else |
 | 4 | **Telemetry policy** | The generated-projects and successful-deployments metrics | No collection code should ship before the policy exists; shipping it presumes the decision |
 | 5 | **Every public claim and the launch timing** | `docs/marketing/LAUNCH_PACKET.md` | Includes the pre-commitment to publish the benchmark result whatever it says. An agent must not make that commitment on your behalf |
 
@@ -38,7 +38,6 @@ Recorded here so the queue above is honestly *only* five decisions.
 
 | Gap | Why it blocks a listing | Where it is tracked |
 |---|---|---|
-| **Skill portability.** Ten of eleven skills instruct the agent to read repository-internal paths, so installed into an unrelated project they load, announce themselves and do nothing useful | A marketplace install is one moment of attention and a no-op listing spends it permanently | `npm run distribution:check` reports it; it fails outright once a name is chosen |
 | **No hosted Docs MCP** | Rules out the Anthropic Connectors Directory and the OpenAI plugin directory. Both want a hosted MCP server, and the right one to submit is a **documentation** MCP — it serves docs, not customer records, so it needs none of the CRM's auth or tenancy. These are the only two reviewed directories reachable before the production spine, and treating them as spine-blocked closes them for no reason | `docs/strategy/AGENT_DISCOVERY.md`, Phase 8 |
 | **No production spine** | Rules out Vercel templates, deploy buttons and any hosted demo — all of them assert deployability | `docs/PROJECT_STATUS.md` production blockers |
 | **Benchmark unexecuted** | Rules out the strongest version of the launch story | `docs/strategy/CRM_BUILD_BENCHMARK.md` |

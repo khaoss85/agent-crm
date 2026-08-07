@@ -171,14 +171,27 @@ const repoBound = [];
 for (const skill of readdirSync(join(root, '.claude/skills'))) {
   const path = join(root, '.claude/skills', skill, 'SKILL.md');
   if (!existsSync(path)) continue;
-  const body = readFileSync(path, 'utf8').replace(/^---\n[\s\S]*?\n---/, '');
-  if (repoBoundPattern.test(body)) repoBound.push(skill);
+  const source = readFileSync(path, 'utf8');
+  const frontmatter = source.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
+  const body = source.replace(/^---\n[\s\S]*?\n---/, '');
+
+  // Mentioning a repository path is not the defect. Mentioning one with no
+  // declared behaviour for its absence is. A skill that names its tier and says
+  // what it degrades to (docs/SKILL_PACKAGING.md) has handled the problem, and
+  // its path references are the deeper source rather than a prerequisite —
+  // which is exactly how Supabase's skills reach a stranger's project.
+  const declaresDegradation = /^\s*degradesTo:\s*\S/m.test(frontmatter) && /^\s*tier:\s*\S/m.test(frontmatter);
+  if (repoBoundPattern.test(body) && !declaresDegradation) repoBound.push(skill);
 }
 
+const skillCount = readdirSync(join(root, '.claude/skills')).length;
+if (!repoBound.length) {
+  notes.push(`All ${skillCount} skills declare a portability tier and a documented degradation (docs/SKILL_PACKAGING.md), so a listing installed outside this repository orients through \`crm app inspect\` rather than silently doing nothing.`);
+}
 if (repoBound.length) {
-  const portable = readdirSync(join(root, '.claude/skills')).length - repoBound.length;
+  const portable = skillCount - repoBound.length;
   notes.push(
-    `${repoBound.length} of ${repoBound.length + portable} skills instruct the agent to read repository-internal paths `
+    `${repoBound.length} of ${skillCount} skills name repository-internal paths without declaring what they degrade to `
     + `(${repoBound.slice(0, 3).join(', ')}${repoBound.length > 3 ? ', …' : ''}). `
     + 'They work in this repository and in projects built from it, and no-op in an unrelated project. '
     + 'Do not publish the plugin until the create-project CLI emits those documents, or until the skills are rewritten to discover context through `crm app inspect` instead of fixed paths.',

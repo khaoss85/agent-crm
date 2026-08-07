@@ -708,3 +708,31 @@ rung 3 or above must record every lower rung as inspected, with a reason per
 rung and the capability gap; the first draft accepted a `create-package`
 decision from an author who never looked at rung 1, which is precisely how a
 domain that already exists gets duplicated.
+
+## ADR-021 — MIT is confirmed as the licence, before any distribution manifest asserts it
+
+**Decision.** The framework ships under MIT, confirmed rather than assumed. `site/brand.json`
+moves `license.status` to `confirmed`, which is what `scripts/distribution-check.js` reads before
+it will let a plugin manifest, a marketplace entry or a registry record state a licence to a
+third party.
+
+**Why it needed an ADR at all.** MIT has been the repository's licence since Milestone 0, so
+nothing about the file changes. What changes is the *kind of statement* being made.
+`docs/strategy/MASTER_PLAN.md` §10.2 reserved the final confirmation as an explicit human
+decision, and three distribution manifests already carry a `license` field. A licence in a
+manifest is an assertion to a marketplace and to everyone who installs from it — not a
+description of the working tree — so the check refuses to let an unconfirmed one out. Choosing
+the public name is what made that refusal binding, because it is the point at which publication
+stops being hypothetical.
+
+**Why MIT and not a source-available or copyleft licence.** The positioning depends on it.
+`docs/strategy/CATEGORY.md` differentiates structurally, not rhetorically, on ownership: the
+customer's application must run without us, with no share-alike obligation reaching their
+product and no enterprise-gated files in the tree. A copyleft core would make the central claim —
+*"if the vendor disappears tomorrow you keep an application you own"* — materially weaker than
+the alternative it is drawn against, and a source-available licence would make it false. The
+licence is load-bearing for the strategy, which is exactly why it could not be left implicit.
+
+**What this does not decide.** Nothing about a future managed offering, and nothing about the
+licence of anything a customer generates — generated code belongs to the customer under whatever
+terms they choose, which is the point of generating it.
