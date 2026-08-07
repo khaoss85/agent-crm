@@ -6,9 +6,9 @@ An open-source framework that Claude Code and Codex use to generate a CRM applic
 as code you own — deterministic workflows, policy-gated human approvals, audit and trace
 built in.
 
-The name is chosen, but nothing is registered under it: no npm scope, no domain
-receipt, no trademark screen. The project is **pre-launch**: nothing is published, and
-it is not deployable to production. What that means precisely is in
+The name is chosen and the domain registered, but the npm package and scope are still
+unclaimed and no trademark screen has been run. The project is **pre-launch**: nothing
+is published, and it is not deployable to production. What that means precisely is in
 [Where it stops](#where-it-stops), which is worth reading before the rest.
 
 ```text

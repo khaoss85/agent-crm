@@ -113,9 +113,9 @@ This server is *prepared* for the Anthropic Connectors Directory and equivalent
 listings — it serves documentation rather than customer records, so it needs none
 of the CRM's auth or tenancy, and it can be reviewed without a production spine.
 
-Nothing here submits it anywhere. The public name is chosen but unregistered — no npm
-scope, no domain receipt, no trademark screen
-(`site/brand.json`, `docs/strategy/BRAND_REQUIREMENTS.md`) — nothing is published to a registry, and
+Nothing here submits it anywhere. The public name is chosen and the domain registered,
+but the npm package and scope are still unclaimed and no trademark screen has been run
+(`site/brand.json`) — nothing is published to a registry, and
 every external submission is a human decision
 (`docs/strategy/MASTER_PLAN.md` §10.4, `docs/marketing/PENDING_HUMAN_SUBMISSION.md`).
 Before any listing, re-measure `site/claims.json`'s `measuredAgainst` block: a
