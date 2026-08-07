@@ -1,0 +1,37 @@
+{
+  "name": "agent-crm",
+  "version": "0.1.0",
+  "description": "Build a CRM as code you own. Skills that take a coding agent from a business objective to checked-in modules, deterministic workflows, policy-gated approvals, audit and trace, plus the project MCP server whose code-generating tools are dry-run until you pass --apply.",
+  "author": {
+    "name": "Agent CRM maintainers",
+    "url": "https://github.com/khaoss85/agent-crm"
+  },
+  "homepage": "https://github.com/khaoss85/agent-crm",
+  "repository": "https://github.com/khaoss85/agent-crm",
+  "license": "MIT",
+  "keywords": [
+    "crm",
+    "framework",
+    "code-generation",
+    "workflows",
+    "approvals",
+    "audit",
+    "mcp",
+    "revenue-operations"
+  ],
+  "skills": "./.agents/skills/",
+  "mcpServers": "./.codex-plugin/mcp.json",
+  "interface": {
+    "displayName": "Agent CRM",
+    "shortDescription": "Describe a commercial process; get a CRM as reviewable code you own",
+    "longDescription": "An open-source framework coding agents use to build custom CRM applications: declarative module manifests that generate migrations, services, a REST API, an SDK and Admin screens; code-first record actions; deterministic workflows with step-level trace; versioned policies; and human approvals an agent cannot make on the user's behalf. The framework has no authentication, tenancy or RBAC, and is local-development-only today.",
+    "developerName": "Agent CRM maintainers",
+    "category": "Business & Operations",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/khaoss85/agent-crm",
+    "defaultPrompt": "Read AGENTS.md, then run `npm run crm -- app inspect --json` and tell me which parts of my commercial process this project already supports and which it does not",
+    "brandColor": "#1f6f50",
+    "composerIcon": "./site/assets/mark.svg",
+    "screenshots": []
+  }
+}

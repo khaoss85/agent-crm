@@ -23,7 +23,9 @@
     "verify": "npm run check && npm test",
     "smoke": "node --no-warnings scripts/smoke.js",
     "site:build": "node scripts/site-build.js",
-    "site:check": "npm run site:build && node scripts/site-check.js"
+    "site:check": "npm run site:build && node scripts/site-check.js",
+    "distribution:check": "node scripts/distribution-check.js",
+    "gtm:check": "npm run site:check && npm run distribution:check"
   },
   "keywords": [
     "crm",

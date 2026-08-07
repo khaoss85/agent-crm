@@ -1,0 +1,20 @@
+{
+  "name": "agent-crm",
+  "interface": {
+    "displayName": "Agent CRM"
+  },
+  "plugins": [
+    {
+      "name": "agent-crm",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Business & Operations"
+    }
+  ]
+}

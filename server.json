@@ -1,0 +1,30 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.khaoss85/agent-crm",
+  "description": "Project context and narrow write tools for an agent-native CRM framework: inspect the project, list opportunities, request a stage change, decide an approval, read a workflow trace, scaffold a module. Code-generating tools are dry-run unless apply is explicitly true.",
+  "version": "0.1.0",
+  "websiteUrl": "https://github.com/khaoss85/agent-crm",
+  "repository": {
+    "url": "https://github.com/khaoss85/agent-crm",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@agent-crm/mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "CRM_DB_PATH",
+          "description": "Path to the project's SQLite database file. Defaults to ./data/agent-crm.sqlite relative to the working directory.",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
