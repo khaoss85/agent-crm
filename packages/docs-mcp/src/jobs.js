@@ -171,7 +171,14 @@ export function toJob(job, ledger) {
     // boundary otherwise. Never absent — `assertLimitationsPresent` holds the line.
     limitation: capability ? capability.limitation : statusLimitation(status),
     limitationSource: capability ? `site/claims.json ${capability.id}.limitation` : `status "${status}"`,
-    claim: capability ? { id: capability.id, text: capability.claim } : null,
+    // The claim's own evidence travels with the job. Some matrix rows are marked
+    // validated without naming a test in the row itself (a known gap, held by
+    // tests/jobs-json.test.js) — and a "validated end to end" job served with an
+    // empty evidence list reads as an unproven claim. Where the ledger has the
+    // proof, it is shown here rather than left one tool call away.
+    claim: capability
+      ? { id: capability.id, text: capability.claim, tests: capability.evidence.tests }
+      : null,
     evidence: {
       tests: Array.isArray(job.tests) ? job.tests.map(String) : [],
       docs: Array.isArray(job.docs) ? job.docs.map(String) : [],
@@ -220,24 +227,23 @@ function rankJobs(jobs, terms) {
   return scored;
 }
 
+/** Below this share of the query's terms matched in a title or id, nothing is answered. */
+const MINIMUM_COVERAGE = 0.5;
+
 /**
  * A query must be answered by the job it actually asked about, not by the
  * strongest status anywhere in the result set.
  *
  * Answering from the strongest status is the bug that matters here: "send a
- * marketing email campaign" would return "partially supported" on the strength
- * of an unrelated job that happened to be in the list, and "teleport the
- * customer to mars" would return "validated end to end". A tool whose whole
- * purpose is to stop an agent overclaiming must not be the thing that
- * overclaims.
+ * marketing email campaign" returned "partially supported" on the strength of
+ * an unrelated job that happened to be in the list, and "teleport the customer
+ * to mars" returned "validated end to end". A tool whose whole purpose is to
+ * stop an agent overclaiming must not be the thing that overclaims.
  *
  * So the verdict comes from the top-scoring job alone, ties are broken toward
  * the *weakest* status, and a query that no title really covers is answered
  * `unknown` with its near-misses listed rather than resolved into a status.
- */
-const MINIMUM_COVERAGE = 0.5;
-
-/**
+ *
  * @param {{score: number, coverage: number, id: string, job: any}[]} scored
  * @param {any[]} matches the jobs actually returned, already limited
  * @param {string} query

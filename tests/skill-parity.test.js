@@ -20,6 +20,10 @@ import { join } from 'node:path';
 
 const CLAUDE = '.claude/skills';
 const CODEX = '.agents/skills';
+// A third copy at the repository root, which is what Gemini CLI extensions read
+// (gemini-extension.json, skills/<name>/SKILL.md) and what `npx skills add` finds
+// first. One directory, two channels — and a third chance to drift.
+const ROOT = 'skills';
 
 /** @param {string} directory */
 function skillNames(directory) {
@@ -28,9 +32,16 @@ function skillNames(directory) {
     .sort();
 }
 
-test('every skill exists for both harnesses', () => {
+test('every skill exists for every harness', () => {
   const claude = skillNames(CLAUDE);
   const codex = skillNames(CODEX);
+  const root = skillNames(ROOT);
+
+  assert.deepEqual(
+    claude.filter((name) => !root.includes(name)),
+    [],
+    'skills missing from the root skills/ directory, which Gemini CLI and `npx skills add` read',
+  );
 
   const missingFromCodex = claude.filter((name) => !codex.includes(name));
   const missingFromClaude = codex.filter((name) => !claude.includes(name));
@@ -53,6 +64,8 @@ test('mirrored skills are byte-identical', () => {
   for (const name of skillNames(CLAUDE)) {
     const claude = readFileSync(join(CLAUDE, name, 'SKILL.md'), 'utf8');
     const codex = readFileSync(join(CODEX, name, 'SKILL.md'), 'utf8');
+    const root = readFileSync(join(ROOT, name, 'SKILL.md'), 'utf8');
+    assert.equal(root, claude, `${name}/SKILL.md differs between .claude/skills and the root skills/ mirror`);
     assert.equal(
       codex,
       claude,
@@ -64,7 +77,7 @@ test('mirrored skills are byte-identical', () => {
 });
 
 test('every skill declares a name matching its directory and a usable description', () => {
-  for (const directory of [CLAUDE, CODEX]) {
+  for (const directory of [CLAUDE, CODEX, ROOT]) {
     for (const name of skillNames(directory)) {
       const source = readFileSync(join(directory, name, 'SKILL.md'), 'utf8');
       const frontmatter = source.match(/^---\n([\s\S]*?)\n---/);
