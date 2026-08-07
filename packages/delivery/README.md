@@ -6,8 +6,9 @@ contract into a planned delivery project — one work package per obligation, a
 milestone plan, and an optional third-party partner engagement (M13) — and then
 lets a human **run** that project through an explicit transition table (M14a).
 
-It plans and records execution. Nothing here schedules, staffs, costs, bills,
-accepts or grants access, and nothing moves on a clock.
+It plans a project (M13), records its execution (M14a) and records what it
+consumed (M14b1). Nothing here schedules, staffs, bills, pays, accepts or
+grants access, and nothing moves on a clock.
 
 Full guide: [`docs/DELIVERY_HANDOVER.md`](../../docs/DELIVERY_HANDOVER.md).
 Authoring a package of your own:
@@ -104,7 +105,10 @@ src/handover-policy.js  the policy contract, delivery modes, human overrides, pa
 src/dates.js            post-sale planning dates
 src/execution-states.js the transition tables, as data
 src/execution.js        the eight human-driven execution transitions
-modules/                five read-only record manifests
+src/cost-policy.js      the versioned, fingerprinted rate decision
+src/economics.js        the pure money arithmetic and grouping
+src/economics-actions.js the five economics actions and the capability
+modules/                ten read-only record manifests
 ```
 
 ## Running the project (M14a)
@@ -144,10 +148,36 @@ no account, no login, no portal, no invitation, no permission, no fee or
 revenue share and no SLA, and at most one partner is modelled per project.
 Nothing here notifies the partner or lets them see anything.
 
+## Recording what it consumed (M14b1)
+
+```text
+delivery-work-package.record-delivery-time      minutes → policy rate → server-computed cost
+delivery-work-package.record-delivery-expense   an amount in the work package currency
+delivery-project.publish-economic-plan          a new immutable version, never an edit
+delivery-project.snapshot-delivery-economics    reproducible, grouped by currency
+delivery-project.preview-delivery-economics     read-only; an agent may call it
+```
+
+All evidence is `writable: "managed"` — no public create, update or delete
+exists anywhere, and a correction is a new entry. Cost is computed server-side
+as `roundHalfUp(ratePerHourCents × minutes / 60)`; a client-supplied cost is
+not an input. Currencies are grouped and never summed, because there is no FX.
+
+Supply a **Delivery Cost Policy** alongside the handover policy:
+
+```js
+createDeliveryPackage({ policies: [myHandoverPolicy], costPolicies: [myCostPolicy] })
+```
+
+The package also offers `delivery-economics@1`, a read-only capability another
+package may declare a dependency on. Full guide:
+[`docs/DELIVERY_ECONOMICS.md`](../../docs/DELIVERY_ECONOMICS.md).
+
 ## What it does not do
 
-Time tracking, expenses, cost, margin, resource scheduling, capacity, change
-requests, deliverables, customer acceptance, billing milestones, invoicing,
+Invoicing, payment, tax, FX, accounting, revenue recognition, gross or
+accounting margin, profit, payroll, employee identity, resource scheduling,
+capacity, partner payout, billing eligibility, receipt storage, reimbursement,
 partner access, revenue share, service contracts, entitlements, SLA and support
-cases. Economics, change requests, deliverables and acceptance are M14b, and
+cases. Change requests, deliverables and customer acceptance are **M14b2**, and
 none of their code ships here.
