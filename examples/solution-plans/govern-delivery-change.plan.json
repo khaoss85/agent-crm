@@ -1,0 +1,198 @@
+{
+  "solutionPlanContract": 1,
+  "revision": 1,
+  "goal": {
+    "id": "govern-delivery-change",
+    "statement": "Govern a delivery scope change and record customer acceptance evidence, without any of it touching the signed commercial record.",
+    "outcome": "A delivery team that can replan under a governed decision, hand a commercial change to the people who own pricing, and hold defensible evidence of what a customer said about the work."
+  },
+  "metric": {
+    "name": "share_of_scope_changes_with_a_recorded_decision",
+    "definition": "Proportion of delivery scope changes that carry an approved or rejected change request with a stated reason, over changes observed in the period.",
+    "baseline": "unknown — see evidence entry unavailable.no-prior-change-record",
+    "target": "stated by the delivery organization; this plan does not invent one"
+  },
+  "application": {
+    "inspectionContract": 1,
+    "inspectionFingerprint": "60cb855350772aef66c81d655caec65e57f0b1f5476a106cd21061987f21add8",
+    "packages": [
+      { "name": "contracts", "version": 1 },
+      { "name": "delivery", "version": 4 }
+    ],
+    "capabilities": [
+      { "name": "delivery-acceptance-evidence", "version": 1, "status": "resolved" },
+      { "name": "delivery-change-management", "version": 1, "status": "resolved" },
+      { "name": "delivery-economics", "version": 1, "status": "resolved" },
+      { "name": "delivery-obligations", "version": 1, "status": "resolved" }
+    ],
+    "modules": [
+      { "name": "delivery-change-request", "revision": 1 },
+      { "name": "delivery-acceptance-request", "revision": 1 }
+    ]
+  },
+  "evidence": {
+    "observedFacts": [
+      {
+        "id": "fact.change-management-exists",
+        "statement": "The delivery package already owns governed change requests, immutable plan revisions and a commercial-change handoff, offered read-only as delivery-change-management@1.",
+        "source": "app inspect: capabilities[], resources[]; docs/DELIVERY_CHANGE_ACCEPTANCE.md",
+        "citations": []
+      },
+      {
+        "id": "fact.acceptance-is-evidence",
+        "statement": "Acceptance is recorded by a user actor against a frozen scope fingerprint. The schema states it is not an authenticated customer action, not a legal signature and not authorization to bill.",
+        "source": "app inspect: actions[] record-acceptance; schema domains.delivery.changeAcceptance.acceptanceMeaning",
+        "citations": []
+      },
+      {
+        "id": "fact.commercial-boundary-enforced",
+        "statement": "A change with commercial consequence raises an immutable candidate and stops; no Quote, Order, Contract or Subscription is created or altered by the delivery package.",
+        "source": "schema domains.delivery.changeAcceptance.commercialBoundary; tests/delivery-change-acceptance-e2e.test.js",
+        "citations": []
+      },
+      {
+        "id": "fact.no-amendment-runtime",
+        "statement": "No commercial amendment, invoice, payment or billing-eligibility record type exists anywhere in this application.",
+        "source": "app inspect: resources[]; docs/benchmarks/CRM_JTBD_MATRIX.md",
+        "citations": []
+      }
+    ],
+    "derivedMetrics": [
+      {
+        "id": "metric.governed-change-share",
+        "statement": "Share of scope changes carrying a decided change request, computed from the change-request records rather than from any new instrumentation.",
+        "citations": ["fact.change-management-exists"]
+      }
+    ],
+    "assumptions": [
+      {
+        "id": "assume.delivery-lead-records-promptly",
+        "statement": "A delivery lead records a change request at the time the change is agreed, rather than reconstructing it later from memory.",
+        "citations": []
+      },
+      {
+        "id": "assume.one-contact-speaks-for-the-customer",
+        "statement": "The contact reference recorded on an acceptance request is the person the business treats as speaking for the customer on that scope.",
+        "citations": []
+      }
+    ],
+    "inferences": [
+      {
+        "id": "infer.handoff-is-the-control-point",
+        "statement": "Because the package can raise a commercial candidate but cannot amend anything, the pending_commercial_followup state is the only place a commercial change can stall — so that is where a reviewer should look, not in the quote history.",
+        "citations": ["fact.commercial-boundary-enforced", "fact.no-amendment-runtime"]
+      },
+      {
+        "id": "infer.acceptance-defensibility-comes-from-the-freeze",
+        "statement": "Because the request freezes its scope and the evidence binds to that fingerprint, the defensibility of an acceptance record comes from the freeze rather than from who clicked it.",
+        "citations": ["fact.acceptance-is-evidence", "assume.one-contact-speaks-for-the-customer"]
+      }
+    ],
+    "recommendations": [
+      {
+        "id": "rec.use-the-existing-package",
+        "statement": "Configure and extend the delivery package rather than modelling change management anywhere else: the domain already has an owner, and a second model would split the evidence.",
+        "citations": ["fact.change-management-exists", "metric.governed-change-share"]
+      },
+      {
+        "id": "rec.review-the-handoff-queue",
+        "statement": "Give the commercial team a standing view of outstanding change candidates, because nothing in delivery will ever resolve one.",
+        "citations": ["infer.handoff-is-the-control-point"]
+      }
+    ],
+    "unavailableEvidence": [
+      {
+        "id": "unavailable.no-prior-change-record",
+        "statement": "The baseline share of governed scope changes cannot be computed for work delivered before change requests existed.",
+        "reason": "Change requests begin at M14b2; earlier scope changes left no record, and a reconstruction would be an invention rather than evidence.",
+        "citations": []
+      },
+      {
+        "id": "unavailable.no-customer-identity",
+        "statement": "Whether the person who accepted was authorized by the customer to accept cannot be reported.",
+        "reason": "There is no authentication, tenancy or RBAC in this framework, and no customer portal. The record states who a user actor asserted accepted, and nothing more.",
+        "citations": []
+      },
+      {
+        "id": "unavailable.no-commercial-outcome",
+        "statement": "Whether a raised commercial change was ever quoted, agreed or invoiced cannot be reported.",
+        "reason": "No commercial amendment or billing runtime exists; the candidate is where this application's knowledge stops.",
+        "citations": []
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "id": "decision.use-change-management",
+      "type": "configure",
+      "target": "delivery.change-management",
+      "rationale": "The delivery package already owns governed change, plan revisions and the commercial handoff. Using it is configuration of what exists, not new modelling.",
+      "rungsTried": [1]
+    },
+    {
+      "id": "decision.acceptance-review-view",
+      "type": "extend",
+      "target": "admin.delivery-change-acceptance",
+      "rationale": "The evidence exists; what a reviewer needs is a view that shows the frozen scope and states the acceptance disclaimers on screen rather than in a document nobody opens.",
+      "rungsTried": [1, 2]
+    }
+  ],
+  "steps": [
+    {
+      "id": "step.record-changes",
+      "decisionId": "decision.use-change-management",
+      "description": "Record every delivery scope change as a change request with a stated reason, and decide it as a human before any replanning happens.",
+      "requiresCapabilities": ["delivery-change-management"],
+      "approvals": [],
+      "verifies": ["metric.governed-change-share"]
+    },
+    {
+      "id": "step.route-commercial-changes",
+      "decisionId": "decision.use-change-management",
+      "description": "Route a change with commercial consequence to the commercial team through the candidate the approval raises, and review the outstanding candidates as a standing queue.",
+      "requiresCapabilities": ["delivery-change-management"],
+      "approvals": [],
+      "verifies": []
+    },
+    {
+      "id": "step.acceptance-review",
+      "decisionId": "decision.acceptance-review-view",
+      "description": "Show the frozen acceptance scope and the recorded outcome together, with the limits of that record stated beside it rather than assumed.",
+      "requiresCapabilities": ["delivery-acceptance-evidence"],
+      "approvals": [],
+      "verifies": []
+    }
+  ],
+  "approvals": [],
+  "acceptance": {
+    "checks": [
+      "every scope change in the period carries a decided change request with a stated reason",
+      "no commercial record differs before and after a commercial change is handed off",
+      "an acceptance record names the frozen scope it answers, and the screen states what that record is not",
+      "a rejected acceptance leaves completed execution untouched, and a replan produces a new scope fingerprint"
+    ],
+    "jtbdRows": ["JTBD-DS-08", "JTBD-DS-09"],
+    "artifacts": [
+      {
+        "kind": "admin-view",
+        "path": "apps/admin/public/admin-delivery-change.js",
+        "description": "The change and acceptance section, showing the frozen scope and the disclaimers that bound what it means."
+      },
+      {
+        "kind": "document",
+        "path": "docs/DELIVERY_CHANGE_ACCEPTANCE.md",
+        "description": "What each record means, and the four things acceptance evidence is not."
+      }
+    ]
+  },
+  "limitations": [
+    {
+      "code": "NO_COMMERCIAL_RESOLUTION",
+      "message": "Nothing in this plan resolves a commercial change. The candidate is where delivery's knowledge stops, and no amendment runtime exists to consume it yet."
+    },
+    {
+      "code": "NO_CUSTOMER_IDENTITY",
+      "message": "Acceptance records who a user actor asserted accepted. No customer is authenticated, and no legal weight is claimed."
+    }
+  ]
+}
