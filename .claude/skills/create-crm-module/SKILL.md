@@ -1,11 +1,33 @@
 ---
 name: create-crm-module
 description: Create or extend an Agent CRM domain module. Use for new CRM objects, fields, service operations, module metadata, API exposure and tests. Do not use for cross-module business processes; use create-crm-workflow instead.
+requires:
+  tier: generated-project
+  command: "crm app inspect"
+  projectSurface: ["packages/modules/", "examples/modules/partner.module.json"]
+  repositorySurface: ["ARCHITECTURE.md", "DECISIONS.md", "docs/MODULE_MANIFEST.md", "docs/MODULE_FACTORY.md", "docs/ACTIONS.md", "docs/MODULE_EVOLUTION.md", "docs/ADMIN.md"]
+  degradesTo: "the module factory CLI — `crm module validate|plan|create` — which checks a manifest, prints the deterministic plan and refuses an unsafe evolution before any write, reading no document"
 ---
+
+## Orient yourself first
+
+```bash
+npm run crm -- app inspect --json
+```
+
+Read `valid`, then `problems[]`, then `limitations[]`, in that order. Every problem is fixed or reported before anything is built on top of it, and **every limitation is a hard boundary on what you may claim.** Then read `packages[]`, `capabilities[]`, `resources[]`, `actions[]`, `policies[]` and `providers[]`: that list is what exists. A capability absent from the report does not exist, whatever a record name, a label or a document suggests.
+
+If the repository documents this skill names are absent, you are in a project built from this framework rather than in the framework itself. The inspection report is then the source of truth and those documents are optional background — do not guess at their contents, and do not assume a path exists because this skill names it.
+
+`modules[]` is where you check whether the record you are about to create already exists, which package owns it, its checked-in `revision` and its declared fields — read it before writing a manifest, not after.
 
 Preferred path — module factory (manifest-driven):
 
-1. Read `ARCHITECTURE.md`, `DECISIONS.md`, `docs/MODULE_MANIFEST.md` and `docs/MODULE_FACTORY.md`.
+1. Background, where they exist: `ARCHITECTURE.md`, `DECISIONS.md`, `docs/MODULE_MANIFEST.md`
+   and `docs/MODULE_FACTORY.md`. The commands in the steps below carry the contract
+   themselves — `module validate` refuses a manifest these documents would have
+   refused — so read them for the reasoning, and proceed without them if they are
+   not in this project.
 2. Write a manifest (see `examples/modules/partner.module.json`); validate it:
    `npm run crm -- module validate <manifest.json>`.
 3. Inspect the deterministic plan (always read-only):

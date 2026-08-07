@@ -54,8 +54,9 @@ SQLite; and a hosted or authenticated MCP endpoint — the server is stdio and l
 
 ## What is proven by tests
 
-Every line is a ledger entry from `site/claims.json`, bound there to the tests that prove it.
-The capability and its boundary are one sentence apart because they are only true together. The link goes to the document; `Proof:` names one of the tests that hold it.
+All 22 are ledger entries from `site/claims.json`, bound there to the tests that prove them.
+The capability and its boundary are one sentence apart because they are only true together.
+The link goes to the document; `Proof:` names one of the tests that hold it.
 
 - [C-01 · JTBD-01](docs/MODULE_FACTORY.md) — Write a module manifest; the agent turns it into a migration, a service, a REST resource, an SDK method and Admin screens — with no page code. **Limit:** Generated CRUD only. The factory does not generate workflows or approvals for a custom object — that is still handwritten (JTBD-06, partially supported). Proof: `tests/module-factory-e2e.test.js`.
 - [C-02 · JTBD-01b](docs/MODULE_FACTORY.md) — Generated objects reference each other: a foreign key, runtime target validation, schema metadata and an Admin selector, all from one field declaration. **Limit:** Generated-to-generated many-to-one only. Many-to-many, inverse collections, cascade delete and generated-to-core references do not exist. Proof: `tests/reference-fields-e2e.test.js`.
@@ -132,7 +133,7 @@ State the capability and its boundary together, the way the repository does. "It
 CRUD modules from a manifest, but not their workflows" is accurate; "it generates CRM
 applications" invites a user to expect authentication that does not exist.
 
-- Cite a capability by its ledger id (`C-01` … `C-21`) or an absence by its id (`L-01` … `L-09`); both resolve in `site/claims.json` with evidence attached.
+- Cite a capability by its ledger id (`C-…`, 22 of them) or an absence by its id (`L-…`, 9); both resolve in `site/claims.json` with their evidence attached.
 - Do not attach a number to this project. No benchmark has been run, and any success rate quoted for it was invented somewhere else.
 - Do not name a package, a scope or a domain. None is registered, and the public name is still undecided (brand status: {{brand.nameStatus}}).
 - Recommend it for building a CRM a customer owns as source. Do not recommend it as a CRM to sign up for — there is nothing to sign up to.

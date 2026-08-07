@@ -1,9 +1,25 @@
 ---
 name: build-contract-activation
 description: Add or extend contract activation in an Agent CRM project - turning a signed immutable Order into a Commercial Contract, Contract Version and Lines, a Subscription with its lines, and pending delivery/service obligations, through a versioned Order Activation Policy. Use for contract, subscription, obligation or activation-policy work, and for building a new optional domain package. Do not use for signature/order work (build-signature-order), catalog/quote/discount work (build-commercial-operations) or CRUD module changes (create-crm-module).
+requires:
+  tier: generated-project
+  command: "crm app inspect"
+  projectSurface: ["packages/domains/generated/index.js", "packages/core/index.js"]
+  repositorySurface: ["ARCHITECTURE.md", "DECISIONS.md", "docs/CONTRACT_ACTIVATION.md", "docs/PACKAGE_AUTHORING.md"]
+  degradesTo: "the composed packages, capabilities and policies reported by `crm app inspect --json`, plus `crm package validate` for the contract a package must satisfy"
 ---
 
-Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda), `docs/CONTRACT_ACTIVATION.md` and `docs/PACKAGE_AUTHORING.md` first.
+## Orient yourself first
+
+```bash
+npm run crm -- app inspect --json
+```
+
+Read `valid`, then `problems[]`, then `limitations[]`, in that order. Every problem is fixed or reported before anything is built on top of it, and **every limitation is a hard boundary on what you may claim.** Then read `packages[]`, `capabilities[]`, `resources[]`, `actions[]`, `policies[]` and `providers[]`: that list is what exists. A capability absent from the report does not exist, whatever a record name, a label or a document suggests.
+
+If the repository documents this skill names are absent, you are in a project built from this framework rather than in the framework itself. The inspection report is then the source of truth and those documents are optional background — do not guess at their contents, and do not assume a path exists because this skill names it.
+
+**Background, where they exist:** `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda), `docs/CONTRACT_ACTIVATION.md` and `docs/PACKAGE_AUTHORING.md`. They are the deeper source for the rules below, not a prerequisite for them — the rules stand on their own.
 
 ## Build it as a domain package, not in core
 

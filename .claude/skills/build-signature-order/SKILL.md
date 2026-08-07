@@ -1,9 +1,27 @@
 ---
 name: build-signature-order
 description: Add or extend Signature and Order in an Agent CRM project - signature providers, envelope/signer/event state, verified webhooks, signed-artifact evidence, reconciliation and immutable Orders built from an approved Quote Version. Use for signature, envelope, webhook or order work. Do not use for catalog/quote/discount work (build-commercial-operations) or CRUD module changes (create-crm-module).
+requires:
+  tier: generated-project
+  command: "crm app inspect"
+  projectSurface: ["packages/signature/generated/index.js"]
+  repositorySurface: ["ARCHITECTURE.md", "DECISIONS.md", "docs/SIGNATURE_ORDER.md"]
+  degradesTo: "the composed signature providers, actions and records reported by `crm app inspect --json`"
 ---
 
-Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-016 and ADR-017) and `docs/SIGNATURE_ORDER.md` first.
+## Orient yourself first
+
+```bash
+npm run crm -- app inspect --json
+```
+
+Read `valid`, then `problems[]`, then `limitations[]`, in that order. Every problem is fixed or reported before anything is built on top of it, and **every limitation is a hard boundary on what you may claim.** Then read `packages[]`, `capabilities[]`, `resources[]`, `actions[]`, `policies[]` and `providers[]`: that list is what exists. A capability absent from the report does not exist, whatever a record name, a label or a document suggests.
+
+If the repository documents this skill names are absent, you are in a project built from this framework rather than in the framework itself. The inspection report is then the source of truth and those documents are optional background — do not guess at their contents, and do not assume a path exists because this skill names it.
+
+`providers[]` reports declared metadata and the **keys** of a declared config, never a value. It is never evidence that a signature provider is credentialed, reachable or legally qualified — `PROVIDER_HEALTH_UNKNOWN` and `SECRETS_NOT_INSPECTED` are in `limitations[]` for exactly that reason.
+
+**Background, where they exist:** `ARCHITECTURE.md`, `DECISIONS.md` (ADR-016 and ADR-017) and `docs/SIGNATURE_ORDER.md`. They are the deeper source for the rules below, not a prerequisite for them — the rules stand on their own.
 
 ## Sequence an external side effect
 

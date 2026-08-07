@@ -1,9 +1,27 @@
 ---
 name: build-custom-domain-package
 description: Create or extend a domain package in an Agent CRM repository - a bounded domain with its own resources, actions, policies, capabilities and schema metadata, registered statically and removable without touching the kernel. Use for "add a custom package", package contract, package dependency/capability, package validation or new-domain work, including customer-specific packages. Do not use for a single custom object (create-crm-module) or one lifecycle step on an existing record (create-crm-workflow).
+requires:
+  tier: generated-project
+  command: "crm app inspect"
+  projectSurface: ["packages/domains/generated/index.js", "packages/core/index.js", "examples/custom-packages/partner-scorecard"]
+  repositorySurface: ["docs/PACKAGE_AUTHORING.md", "DECISIONS.md", "docs/QUALITY_GATES.md", "docs/benchmarks/CRM_JTBD_MATRIX.md"]
+  degradesTo: "`crm package validate <dir>` and `crm package inspect <dir>` — the same validator startup runs — plus the composition reported by `crm app inspect --json`"
 ---
 
-Read `docs/PACKAGE_AUTHORING.md` first, then `DECISIONS.md` (ADR-018 and its addenda). The reference packages are `examples/custom-packages/partner-scorecard` (smallest, customer-authored), `packages/delivery` (depends on another package) and `packages/contracts` (offers a capability).
+## Orient yourself first
+
+```bash
+npm run crm -- app inspect --json
+```
+
+Read `valid`, then `problems[]`, then `limitations[]`, in that order. Every problem is fixed or reported before anything is built on top of it, and **every limitation is a hard boundary on what you may claim.** Then read `packages[]`, `capabilities[]`, `resources[]`, `actions[]`, `policies[]` and `providers[]`: that list is what exists. A capability absent from the report does not exist, whatever a record name, a label or a document suggests.
+
+If the repository documents this skill names are absent, you are in a project built from this framework rather than in the framework itself. The inspection report is then the source of truth and those documents are optional background — do not guess at their contents, and do not assume a path exists because this skill names it.
+
+The package contract itself is enforced by a command, not by a document: `npm run crm -- package validate <dir>` runs the same validator startup runs, and its problems are the authority on whether a package is well-formed.
+
+**Background, where they exist:** `docs/PACKAGE_AUTHORING.md` and `DECISIONS.md` (ADR-018 and its addenda). The reference packages, where the project carries them, are `examples/custom-packages/partner-scorecard` (smallest, customer-authored), `packages/delivery` (depends on another package) and `packages/contracts` (offers a capability). They are the deeper source for the rules below, not a prerequisite for them — the rules stand on their own.
 
 ## Decide whether it is a package at all
 
@@ -32,12 +50,12 @@ Read `docs/PACKAGE_AUTHORING.md` first, then `DECISIONS.md` (ADR-018 and its add
 1. Registration is one static import in `packages/domains/generated/index.js`. No dynamic import, no `eval`, no remote install, no marketplace, no hot loading.
 2. Run `npm run crm -- package validate <dir>` and `package inspect <dir>` — read-only, same validator as startup, non-zero exit on any problem.
 3. Prove optionality: the same project without your package boots and behaves identically, and removing the import leaves the data alone.
-4. Reuse `tests/helpers/package-conformance.js`, then add an end-to-end test that drives your action over the real HTTP/SDK path in a clean project.
+4. Reuse the shared package-conformance helper where the project ships one (`tests/helpers/package-conformance.js` in this repository); otherwise write the same assertions yourself. Then add an end-to-end test that drives your action over the real HTTP/SDK path in a clean project.
 5. Ship a README: what it owns, what it needs, how to enable it, what it deliberately does not do.
 
 ## Claims discipline
 
-Update `docs/benchmarks/CRM_JTBD_MATRIX.md` conservatively — a row moves only with linked evidence, and a data model is not a completed job. Never describe a stored reference as access, permission or an account.
+Where the project carries a jobs matrix (`docs/benchmarks/CRM_JTBD_MATRIX.md` in this repository), update it conservatively — a row moves only with linked evidence, and a data model is not a completed job. Where it carries none, the rule still holds against whatever the project claims in its README and its package metadata. Never describe a stored reference as access, permission or an account.
 
 ## Do not implement here
 
