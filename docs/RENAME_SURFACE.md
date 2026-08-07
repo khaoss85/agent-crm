@@ -8,6 +8,13 @@ script prints the same groups with the same counts.
 node scripts/brand-set.js <name> [--slug <slug>] [--apply]
 ```
 
+> **The rename has run.** `37606ee` on `claude/go-to-market-strategy-gkr4bz` applied it: the code,
+> the distribution manifests and the prose all say Accordo. The inventory below is the measurement
+> of the tree *before* that commit — it is what the rename cost, kept because the script recomputes
+> it on every run and because a second rename would pay it again. A dry run on the current tree
+> reports zero occurrences in every group. What is still `agent-crm` is the [held back](#held-back)
+> set, and it stays that way until a human renames the GitHub repository.
+
 ## What is actually there
 
 The working title appears in five casings, and each one is a different kind of surface:
@@ -58,8 +65,8 @@ The script writes five fields: `name.status` → `"chosen"`, `name.value`, `name
 slug and would otherwise be left contradicting it. `name.note` is human rationale and is not
 touched; `domain.value` is a registration, not a derivation, and is not touched either.
 
-This group is already ahead of the others: the founder's decision landed in `brand.json` on
-2026-08-07 and nowhere else. The site says one name and the code says another until the rename runs.
+This group ran ahead of the others: the founder's decision landed in `brand.json` first and nowhere
+else, so for one commit the site said one name and the code said another. `37606ee` closed the gap.
 
 ### distribution — 26 files, 39 occurrences
 
@@ -130,6 +137,35 @@ run, so nothing is skipped silently.
 - `DECISIONS.md` and `docs/plans/` — ADR and merged-ExecPlan history. A record states what was
   true when it was written; retroactively editing it is falsification, not a rename.
 - This file.
+
+## What the rename costs a branch already in flight
+
+A rename is not a merge conflict. Git sees a branch that changed `createAgentCrmApp` in files the
+other branch never touched, merges both sides cleanly, and produces a tree that does not run. The
+damage is silent and it lands at `npm test`, not at `git merge`.
+
+Merging `de448d4` (M14b2 + the agent-tool-surface docs) into this branch is the worked example.
+Two conflicts, both textual and both in documents. Then three real breakages that no conflict
+marker announced:
+
+| Where | What | Why git said nothing |
+| --- | --- | --- |
+| `tests/delivery-change-acceptance-evidence.test.js` | `createAgentCrmApp` (×2) | new file on main; the symbol was renamed on this branch |
+| `tests/delivery-change-acceptance-integration.test.js` | `createAgentCrmApp` (×2) | same |
+| `docs/architecture/AGENT_TOOL_SURFACE.md` | `agent-crm` / `agent_crm` as the naming example | new file on main, written against the old name |
+
+`docs/benchmarks/jobs.json` also went stale — not a rename effect, but the same class of failure:
+generated output that two branches both feed.
+
+**The check is one command.** `node scripts/brand-set.js accordo` after any merge, before
+`npm run verify`. It reports zero in every group when the merge is clean and names the file and the
+token when it is not; it changes nothing without `--apply`.
+
+**Sequencing.** `claude/milestone-15-service-operations` is 6 commits ahead of `main` and carries
+one instance of the same breakage — `tests/service-operations-upgrade.test.js` spawns
+`packages/cli/bin/agent-crm.js`, a path this branch renamed. It is cheaper for M15 to merge to
+`main` first and for this branch to absorb it once than for M15 to rebase onto a rename mid-flight:
+the fix is mechanical in either direction, but only one direction pays for it once.
 
 ## How the command behaves
 

@@ -51,11 +51,18 @@ test('an activated contract is planned and handed over to delivery', async (t) =
   assert.deepEqual(schema.domains.delivery.actions, [
     'commercial-contract.create-delivery-handover', 'commercial-contract.plan-delivery-handover',
     // M14a: the execution transitions live in the same package.
-    'delivery-milestone.complete-milestone', 'delivery-milestone.start-milestone',
+    'delivery-acceptance-request.record-acceptance',
+    'delivery-change-request.decide-change-request',
+    'delivery-commercial-change.resolve-commercial-change',
+    'delivery-deliverable.complete-deliverable',
+    'delivery-milestone.complete-milestone', 'delivery-milestone.request-acceptance',
+    'delivery-milestone.start-milestone',
     'delivery-project.complete-delivery-project', 'delivery-project.preview-delivery-economics',
+    'delivery-project.propose-change-request',
     'delivery-project.publish-economic-plan', 'delivery-project.snapshot-delivery-economics',
     'delivery-project.start-delivery-project',
     'delivery-work-package.block-work-package', 'delivery-work-package.complete-work-package',
+    'delivery-work-package.plan-deliverable',
     'delivery-work-package.record-delivery-expense', 'delivery-work-package.record-delivery-time',
     'delivery-work-package.resume-work-package', 'delivery-work-package.start-work-package',
   ]);

@@ -62,7 +62,7 @@ Module migrations run after core `MIGRATIONS`, each in its own transaction, reco
 
 ## Rollback / failure behavior
 
-Apply is staged: all contents built in memory → collision check (any existing target ⇒ `ConflictError`, never silent overwrite; registry is the only `modify` target and its original content is retained) → write every file to a `.tmp-agent-crm` sibling → rename all → on any error, delete temp files and any renamed new files and restore the registry's original bytes. No partial project mutation survives a failure.
+Apply is staged: all contents built in memory → collision check (any existing target ⇒ `ConflictError`, never silent overwrite; registry is the only `modify` target and its original content is retained) → write every file to a `.tmp-accordo` sibling → rename all → on any error, delete temp files and any renamed new files and restore the registry's original bytes. No partial project mutation survives a failure.
 
 ## Safety
 

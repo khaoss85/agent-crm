@@ -328,6 +328,42 @@ change, and two of them matter more in that mode:
 See `docs/strategy/OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md` and the
 `solve-business-goal` Skill.
 
+## Moving an existing domain into a package
+
+Three domains — Lead Intelligence, Commercial Operations, and Signature & Order
+— predate this seam and still live in `packages/core/src/`. Their status against
+every horizontal capability is recorded in
+`docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` as `needs_extraction`: the gap is
+structural, and no amount of care inside a core file closes it.
+
+**Do not extract one as part of another piece of work.** A behavior-preserving
+extraction is its own PR, its own review and its own acceptance criterion, and
+it is sequenced:
+
+```text
+1.  M14b2, reviewed and merged
+2.  M15 — Service, built on this seam
+3.  review the M15 learnings: what the seam still cannot express
+4.  DX4 (`crm package test`) — mechanical conformance
+5.  one controlled extraction, one domain, one PR
+```
+
+Steps 3 and 4 are not ceremony. Contracts and Delivery are two data points and
+only Delivery has *consumed* another package's capability; Service is the third
+and the first built with a mature seam. And an extraction whose only proof is
+"the existing tests still pass" is exactly the proof that misses a boundary
+violation — DX4 is what makes conformance mechanical rather than argued.
+
+When the time comes, the acceptance criterion is **behavior preservation, proved
+from the outside**: every historical decision the domain recorded still
+reproduces identically, the same actions answer on the same routes, the audit
+and trace shape is unchanged, and the package detaches cleanly. A "cleaner"
+extraction that changes one recorded outcome has failed.
+
+`docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` records Lead Intelligence as the
+**working hypothesis** for the first extraction, with the evidence that must
+exist first. It is a hypothesis, and nothing in this guide authorizes starting.
+
 ## What is deliberately not here yet
 
 - **A scaffold command.** `crm package new <name>` will exist once Delivery and
@@ -354,6 +390,7 @@ rather than stopping at the first fault. Guide:
 
 `ARCHITECTURE.md` (domain packages) · ADR-018 and its addenda in `DECISIONS.md`
 · `docs/MODULE_FACTORY.md` · `docs/ACTIONS.md` · `docs/APPLICATION_INSPECTION.md` ·
-`docs/QUALITY_GATES.md` ·
+`docs/QUALITY_GATES.md` · `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` ·
+`docs/architecture/AGENT_TOOL_SURFACE.md` ·
 `.claude/skills/build-custom-domain-package/SKILL.md` (mirrored at
 `.agents/skills/build-custom-domain-package/SKILL.md`).

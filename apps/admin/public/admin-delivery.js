@@ -1,6 +1,7 @@
 // @ts-check
 
 import { formatMinorUnits } from './admin-core.js';
+import { renderDeliveryChangeAcceptance } from './admin-delivery-change.js';
 
 /**
  * Delivery handover Admin (Milestone 13, the delivery domain package).
@@ -48,6 +49,11 @@ export async function renderDeliveryHandover({ contract, schema, mount, el, clie
   }
   if (projects[0]) {
     await renderProject({ project: projects[0], domain, panel, el, fetchRows, money });
+    // M14b2 hangs off the same project, in its own section: change and
+    // acceptance are a different question from "what was handed over".
+    await renderDeliveryChangeAcceptance({
+      project: projects[0], schema, mount, el, client, fetchRows, money, withBusy, busy,
+    });
     return;
   }
   renderPlanner({ contract, domain, panel, el, client, withBusy, busy });

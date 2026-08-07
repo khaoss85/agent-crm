@@ -295,21 +295,25 @@ function summarise(scored, matches, query, loaded, ledger) {
     (match) => STATUS_RANK.indexOf(match.status) > STATUS_RANK.indexOf(verdict.status),
   ).length;
 
-  // Refusing to answer from the strongest match is right. Answering a flat
-  // "not supported" while a comparably-relevant job is marked validated is not:
-  // that is a positive false claim, and abstention is the safe answer this
-  // design already provides. "human approval" ranked a marketing job top and
-  // reported that the framework does not do the one thing it is built around.
+  // Refusing to answer from the strongest match is right. Answering from the
+  // top match alone while a comparably-relevant job is marked stronger is not:
+  // that is a claim about the framework the question never actually asked for.
+  // "human approval" ranked a marketing job top and reported that the framework
+  // does not do the one thing it is built around; the same query one rank up
+  // reports "partially supported" over a flagship boundary that is validated.
   //
   // So a disagreement at comparable relevance resolves to `unknown` with both
-  // sides shown, and only an unambiguous match answers "not supported".
+  // sides shown, whatever the top match's status. Only an unambiguous match —
+  // one no comparably-relevant job outranks — answers with a status. A query
+  // whose top match is already the strongest status has no contenders by
+  // construction, so a specific question still gets its specific answer.
   const contenders = scored.filter(
     (entry) => entry.score >= topScore - NEAR_MISS_MARGIN
       && entry.coverage >= MINIMUM_COVERAGE
       && STATUS_RANK.indexOf(toJob(entry.job, ledger).status) > STATUS_RANK.indexOf(verdict.status),
   );
 
-  if (verdict.status === 'not supported' && contenders.length > 0) {
+  if (contenders.length > 0) {
     const best = contenders
       .map((entry) => toJob(entry.job, ledger))
       .sort((a, b) => STATUS_RANK.indexOf(b.status) - STATUS_RANK.indexOf(a.status))[0];
@@ -317,7 +321,7 @@ function summarise(scored, matches, query, loaded, ledger) {
       answer: 'unknown',
       text:
         `Ambiguous — the question matches jobs with different answers, so this tool will not pick one for you. `
-        + `${verdict.id} (${verdict.title}) is "not supported", while ${best.id} (${best.title}) is `
+        + `${verdict.id} (${verdict.title}) is "${verdict.status}", while ${best.id} (${best.title}) is `
         + `"${best.status}" and scores comparably. Read both rather than taking either as the answer: `
         + `${best.limitation}`,
     };

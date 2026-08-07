@@ -73,6 +73,10 @@ Verify the reliability of source **data** separately: `app inspect` says a recor
 
 The JTBD matrix is the repository's own honest statement of what is supported. Treat a row marked `not supported` as authoritative over your intuition.
 
+**Where the report will look thinner than the repository.** Three domains — Lead Intelligence, Commercial Operations, and Signature & Order — predate the domain package seam and live in `packages/core/src/`. Their actions and record revisions are reported; there is **no package or capability of theirs to cite**, and that absence means "built before the seam", not "missing". `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` records exactly what each domain has. Do not plan an extraction to fix it: extraction is sequenced work with its own gate, and a goal-driven build is not the place for it.
+
+**How you reach these surfaces.** A shell command, an exit code and JSON — that is the whole requirement (`docs/AGENT_HARNESS_COMPATIBILITY.md`). The MCP server this repository ships (`docs/MCP.md`) predates AX1 and AX2 and exposes a sample domain rather than these contracts; prefer `app inspect`. Mirroring the stable contracts as MCP reads is **DX13, not built**, and `docs/architecture/AGENT_TOOL_SURFACE.md` is the policy it would be built against — read it before proposing any new tool, and never claim a tool listed there exists.
+
 ## 3. Assess the gap in writing
 
 Produce: capability coverage, package reuse, missing capabilities, **data-quality gaps**, provider gaps, hard dependencies, approval requirements and risks. Count the nulls before quoting a rate — a metric computed over mostly-missing data is misleading, and saying so is your job.
@@ -169,4 +173,4 @@ Finish with `npm run verify` and the starter (`node examples/starters/b2b-lead-q
 
 ## Never
 
-Invent a command, a provider, a package or a capability that does not exist · claim an unimplemented capability is available · move a JTBD row without linked evidence · patch the kernel to make a solution fit · send, publish or spend without an explicit human approval · describe any of this as sandboxed or authenticated.
+Invent a command, a provider, a package or a capability that does not exist · claim an unimplemented capability is available · claim a proposed MCP tool surface exists · move a JTBD row without linked evidence · patch the kernel to make a solution fit · refactor a legacy domain out of `packages/core` on the way past · send, publish or spend without an explicit human approval · describe any of this as sandboxed or authenticated.

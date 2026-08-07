@@ -1,6 +1,6 @@
 # Admin manual browser smoke checklist
 
-Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (re-run at each milestone; 37 automated checks at Milestone 14a, all passing, including the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation, delivery-handover and delivery-execution cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
+Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium, and re-run at each milestone: 37 automated checks at Milestone 14a, all passing, covering the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation, delivery-handover and delivery-execution cases; and 22 **further** checks for the Milestone 14b2 Delivery Change & Acceptance section, all passing. The 22 are additive and scoped to the new section — they do not re-run or replace the 37, which were last exercised on the Milestone 14a branch. Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
 
 ## Setup
 
@@ -127,3 +127,61 @@ Contract activation (Milestone 12, ADR-018 addendum — requires the contracts d
 35. On an activated order the whole section exposes no input, button or selector, no ARR/MRR/TCV figure is derived, and the omissions (billing, invoicing, renewal, cancellation, delivery execution…) are listed rather than implied.
 
 Report any step that fails; do not mark the actions UI browser-validated unless all pass.
+
+## Delivery change & acceptance (Milestone 14b2)
+
+Validated in real Chromium — most recently as the **pre-merge gate**, after the
+independent review added the `resolve-commercial-change` control: **22 checks,
+all passing**, scoped to this section. The 37 Milestone 14a checks above were
+**not re-run in that pass**; nothing here supersedes them. Automated browser
+testing is still **not in CI**; this run was driven manually against a seeded
+project and is reproducible from the steps below.
+
+**That rerun found two defects the fake-DOM tests could not.** The first was
+serious: every refusal in this section was *invisible*. The section caught its
+own failure and did not re-throw, so the parent `withBusy` treated the call as a
+success and re-rendered the whole quote detail — destroying both the error
+message the section had just written and the operator's typed input. Clicking
+"Record follow-up outcome" with an empty reason returned `400` and left the
+screen looking exactly as if nothing had happened. Every handler now re-throws,
+and the DOM test stub models the real `withBusy` — re-render on success, error on
+rejection — so a swallowed failure fails in CI instead of in a browser.
+
+The second: a change request kept saying *"commercial follow-up required"* after
+its candidate had been resolved or withdrawn, and its hook reused
+`data-commercial-change`, an attribute that already identified the candidate
+card. The sentence now follows the candidate's status and the hook is
+`data-candidate-ref`.
+
+The run found one real defect the DOM-level tests had missed: the section called
+`client.module().action()`, an SDK API the Admin's own request client does not
+have. The stub in `tests/admin-delivery-change.test.js` now mirrors the Admin's
+real `request(path, options)` shape, so the same class of mistake fails in CI
+rather than in a browser.
+
+Setup: compose a project with the delivery package, activate a contract, hand it
+over, start the project and its work packages, then open the quote detail route
+(`#/quotes/<quoteId>`) where the delivery sections render.
+
+1. A pending commercial follow-up blocks acceptance server-side before the browser opens.
+2. The quote route loads and the **Delivery change & acceptance** section renders.
+3. The pending candidate is shown as **commercial follow-up required**.
+4. It states **"No Quote, Order or Contract has been amended"**.
+5. The **Record follow-up outcome** control is visible on a pending candidate.
+6. Its own copy says recording an outcome amends nothing.
+7. `resolved_externally` and `withdrawn` are the only offered outcomes.
+8. An **empty reason is refused**, the message names the field, and it is visible on screen.
+9. That refusal wrote nothing: the candidate is still pending.
+10. No amend / invoice / bill / payment / charge / renew control exists anywhere.
+11. A hostile deliverable label renders as **text**.
+12. No element is created from record data.
+13. `resolved_externally` is recorded and rendered read-only.
+14. A resolved candidate offers no second outcome control.
+15. The screen states that recording the outcome amended nothing.
+16. Acceptance becomes available only once the follow-up outcome is recorded.
+17. **No commercial row moved** across the whole browser session.
+18. The `withdrawn` path validates and renders its own outcome.
+19. A direct route plus refresh restores the section.
+20. The frozen scope renders from storage and says it is never rebuilt.
+21. No failed resource or unexpected API response during the run.
+22. No uncaught JavaScript error during the run.

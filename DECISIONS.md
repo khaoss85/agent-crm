@@ -196,7 +196,7 @@ The review found two defects that could each destroy an Order permanently, and f
 
 **Webhook bytes stay bytes.** The raw body travels as a `Buffer` from the socket to verification: decoding to a UTF-8 string first would replace invalid bytes and verify something the provider never signed. Verification is over `timestamp || rawBody` with a constant-time comparison of equal-length buffers, a ±300 s window whose boundary is inclusive, and a 64 KiB bound.
 
-**`artifactHash` is provider-reported.** agent-crm does not download or hash the artifact bytes and verifies no signature cryptographically. The schema says so, the guide says so, and the Admin says so.
+**`artifactHash` is provider-reported.** Accordo does not download or hash the artifact bytes and verifies no signature cryptographically. The schema says so, the guide says so, and the Admin says so.
 
 **One limitation is retained deliberately and stated everywhere:** there is exactly one signature envelope per Quote Version, **ever**. A quote version whose envelope failed — including one the provider never received (`PROVIDER_ENVELOPE_ABSENT`, distinguished from an unknown outcome) — cannot be re-sent in M11; reconciliation is the only recovery path, and no resend framework exists. The Admin states which of the three cases applies rather than implying the provider's state is known when it is not.
 

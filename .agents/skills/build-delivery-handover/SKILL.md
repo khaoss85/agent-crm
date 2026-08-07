@@ -1,11 +1,11 @@
 ---
 name: build-delivery-handover
-description: Add or extend delivery handover, delivery execution and delivery economics in an Accordo project - turning the pending delivery obligations of an activated contract into a planned delivery project with work packages, milestones and an optional third-party partner engagement through a versioned handover policy, and running that project through bounded human-driven state transitions. Use for delivery project/commessa, work package, delivery milestone, partner engagement, handover, or starting/blocking/resuming/completing delivery work. Do not use for change requests, deliverables or customer acceptance (none of which exist yet), contract activation (build-contract-activation), signature/order work (build-signature-order) or a single custom object (create-crm-module).
+description: Add or extend delivery handover, delivery execution, delivery economics and delivery change, deliverables and acceptance evidence in an Accordo project - turning the pending delivery obligations of an activated contract into a planned delivery project with work packages, milestones and an optional third-party partner engagement through a versioned handover policy, running that project through bounded human-driven state transitions, and recording governed change requests, plan revisions, deliverables and customer acceptance evidence. Use for delivery project/commessa, work package, delivery milestone, partner engagement, handover, starting/blocking/resuming/completing delivery work, change requests, deliverables or recorded customer acceptance. Do not use for contract amendment, invoicing or billing (none of which exist), contract activation (build-contract-activation), signature/order work (build-signature-order) or a single custom object (create-crm-module).
 requires:
   tier: generated-project
   command: "crm app inspect"
   projectSurface: ["packages/domains/generated/index.js", "packages/contracts/", "packages/core/index.js"]
-  repositorySurface: ["ARCHITECTURE.md", "DECISIONS.md", "docs/DELIVERY_HANDOVER.md", "docs/DELIVERY_ECONOMICS.md", "docs/MODULE_EVOLUTION.md", "docs/PACKAGE_AUTHORING.md"]
+  repositorySurface: ["ARCHITECTURE.md", "DECISIONS.md", "docs/DELIVERY_HANDOVER.md", "docs/DELIVERY_ECONOMICS.md", "docs/DELIVERY_CHANGE_ACCEPTANCE.md", "docs/MODULE_EVOLUTION.md", "docs/PACKAGE_AUTHORING.md"]
   degradesTo: "the capability graph in `crm app inspect --json` — which reports whether `contracts/delivery-obligations@1` resolves for this project — plus `crm package validate`"
 ---
 
@@ -21,7 +21,7 @@ If the repository documents this skill names are absent, you are in a project bu
 
 This skill depends on one capability, so check it in the report before anything else: `capabilities[]` must carry `delivery-obligations` with `status: "resolved"`. A `missing` or `provider-mismatch` edge is the answer to why nothing here will work, and it is reported rather than worked around.
 
-**Background, where they exist:** `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda, and ADR-019 with addendum 1), `docs/DELIVERY_HANDOVER.md`, `docs/DELIVERY_ECONOMICS.md`, `docs/MODULE_EVOLUTION.md` and `docs/PACKAGE_AUTHORING.md`. They are the deeper source for the rules below, not a prerequisite for them — the rules stand on their own.
+**Background, where they exist:** `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda, and ADR-019 with addendum 1), `docs/DELIVERY_HANDOVER.md`, `docs/DELIVERY_ECONOMICS.md`, `docs/DELIVERY_CHANGE_ACCEPTANCE.md`, `docs/MODULE_EVOLUTION.md` and `docs/PACKAGE_AUTHORING.md`. They are the deeper source for the rules below, not a prerequisite for them — the rules stand on their own.
 
 ## It plans and runs; it does not cost, bill or accept
 
@@ -91,8 +91,17 @@ This skill depends on one capability, so check it in the report before anything 
 11. Recording, publishing and snapshotting require `actor.type === 'user'`. An agent may preview and nothing else, and a preview must say `stored: false`.
 12. Consumption is recorded only while work is happening: the project `in_progress`, the work package `in_progress` or `blocked`. A blocked package still consumes time; a completed one does not.
 
+## Change, deliverables and acceptance: evidence, not authority
+
+1. A change request is **decided once** by a `user` actor, from `proposed`. Approving a non-commercial replan writes an immutable, versioned Plan Revision; it never rewrites the M13 handover snapshot, the signed Order or completed execution.
+2. A change with commercial consequence raises an immutable `delivery-commercial-change` candidate and **stops**. Never create or alter a Quote, Order, Contract, Contract Version or Subscription here, never recognize an amount, never emit an amendment event.
+3. That candidate must have an end. It blocks acceptance over the scope it touches, and the change request's `pending_commercial_followup` is terminal — so `resolve-commercial-change` records what the follow-up concluded **elsewhere** (`resolved_externally` or `withdrawn`). Recording it amends nothing. Any gate you add on a terminal state needs the same treatment: a refusal with no exit is a trap, not a guarantee.
+4. A deliverable completes only from a work package the **server** says is completed, and the result says `accepted: false`. Completed work is not customer acceptance; say so wherever one is shown.
+5. An acceptance request **freezes** its scope and stores it. Never rebuild that scope from the current deliverable set — old testimony would silently re-point at new work. Fingerprint the body of work only: never fold an unverified operator label such as `customerRef` into a fingerprint a correctness rule depends on.
+6. Acceptance evidence is what a **user actor recorded a customer as saying**. Not an authenticated customer action, not a legal signature, not a verified identity, not authorization to bill. Every screen and every capability description must say so.
+
 ## Do not implement here
 
-Invoicing, payment, tax, FX, accounting, revenue recognition, gross or accounting margin, profit, payroll, employee identity, resource scheduling, capacity, partner payout, billing eligibility, receipt or document storage, reimbursement, partner access or portal, revenue share, service contracts, entitlements, SLA, support cases, reopening completed work, a scheduler, a durable outbox, auth/tenancy/RBAC — and change requests, deliverables and customer acceptance, which are M14b2.
+Invoicing, payment, tax, FX, accounting, revenue recognition, gross or accounting margin, profit, payroll, employee identity, resource scheduling, capacity, partner payout, billing eligibility, receipt or document storage, reimbursement, partner access or portal, revenue share, service contracts, entitlements, SLA, support cases, reopening completed work, a scheduler, a durable outbox, auth/tenancy/RBAC — and contract amendment, legal acceptance, authenticated customer identity, a customer portal and any external send or notification, none of which exist.
 
 Finish with `npm run verify` and the starter (`node examples/starters/b2b-lead-qualification/install.mjs`).

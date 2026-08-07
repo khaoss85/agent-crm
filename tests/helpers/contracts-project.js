@@ -49,12 +49,18 @@ export const DELIVERY_MANIFESTS = [
   'delivery-time-entry.module.json', 'delivery-expense-entry.module.json',
   'delivery-economic-plan.module.json', 'delivery-economic-plan-line.module.json',
   'delivery-economic-snapshot.module.json',
+  // M14b2: change, deliverables and acceptance evidence.
+  'delivery-change-request.module.json', 'delivery-plan-revision.module.json',
+  'delivery-commercial-change.module.json', 'delivery-deliverable.module.json',
+  'delivery-acceptance-request.module.json', 'delivery-acceptance-evidence.module.json',
 ];
 export const DELIVERY_MODULES = [
   'delivery-handover-run', 'delivery-project', 'delivery-work-package',
   'delivery-milestone', 'delivery-partner-engagement',
   'delivery-time-entry', 'delivery-expense-entry',
   'delivery-economic-plan', 'delivery-economic-plan-line', 'delivery-economic-snapshot',
+  'delivery-change-request', 'delivery-plan-revision', 'delivery-commercial-change',
+  'delivery-deliverable', 'delivery-acceptance-request', 'delivery-acceptance-evidence',
 ];
 export const DELIVERY_POLICY = { policy: 'b2b-delivery-handover', policyVersion: 1 };
 

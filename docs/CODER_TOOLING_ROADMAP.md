@@ -20,44 +20,49 @@ if it were.
 
 ## Next, with identifiers so they can be referenced
 
-Nothing below is implemented. Each is named so a plan, an ADR or a PR can point
-at it without re-describing it.
+**Nothing below is implemented, and nothing below ships in a delivery
+milestone.** Each is named so a plan, an ADR or a PR can point at it without
+re-describing it.
 
 ### Near-term, after M14b2
 
 | | Tool | What it answers |
 |---|---|---|
-| **DX1** | `crm doctor --json` | is this *project* internally consistent — manifests applied, state files present, generated registries matching source, composition file in step? Distinct from `app inspect`, which describes a valid composition rather than diagnosing a broken checkout |
-| **DX7** | canonical Skill source + `skill sync\|check` | one semantic source per skill with thin adapters for Claude Code, Codex and Gemini, and a drift check in `verify`. Today the `.claude/` and `.agents/` copies are byte-identical by hand |
+| **DX1** | `crm doctor --json` | is this *project* internally consistent — composition, module-state and migration drift, generated-source drift, package dependencies, Skills, docs and hygiene? Distinct from `app inspect`, which describes a valid composition rather than diagnosing a broken checkout. It makes **no runtime or provider-health claim** unless a future explicit mode adds one |
+| **DX2** | Skill portability: `crm agent skills sync\|check` | one canonical semantic source per skill plus deterministic adapters for Claude Code, Codex, Gemini and generic AGENTS-compatible agents, with a drift check in `verify`. Today the `.claude/` and `.agents/` copies are byte-identical by hand, and no Gemini file exists — its conventions must be verified before one is written. Each skill now declares a `requires` block (`tier: repository \| generated-project \| any-project`, the surfaces it reads and what it `degradesTo`), and `skills/` is the published subset that holds no `tier: repository` skill; `scripts/distribution-check.js` enforces both. That is the input DX2's adapters would consume, not DX2 itself |
 
 ### After M15 Service package learnings
 
 | | Tool | Why it waits |
 |---|---|---|
-| **DX2** | package scaffold | scaffolding a shape nobody has built three times bakes in the wrong shape |
-| **DX8** | package conformance test kit | a runnable suite a package author points at their own package, asserting the invariants the official packages hold (immutable evidence, human-actor boundaries, exact reads past the page bound). It makes ADR-018's seam self-enforcing — and needs M15 to know which invariants are actually general |
-| **DX9** | first existing-domain extraction pilot | one of Intelligence / Commercial / Signature moved out of core, once DX8 can prove the result still conforms |
+| **DX3** | `crm package scaffold` | dry-run by default, explicit apply, a deterministic package skeleton, **no remote install**. Scaffolding a shape nobody has built three times bakes in the wrong shape |
+| **DX4** | `crm package test <path> --json` | conformance: attach/detach, dependency and capability resolution, migrations and evolution, boundaries, audit and trace, exact reads, hostile input. It makes ADR-018's seam self-enforcing — and needs M15 to know which invariants are actually general |
+| **—** | first existing-domain extraction pilot | one of Intelligence / Commercial / Signature moved out of core, once DX4 can prove the result still conforms. The per-domain status that decides the candidate is `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, which records **Lead Intelligence** as the working hypothesis and the evidence that must exist before it is chosen |
 
 ### Before an AX3 public benchmark
 
 | | Tool | What it answers |
 |---|---|---|
-| **DX3** | project verify report | one machine-readable document over the gates, suites and starters — the machine-readable evidence AX1 publishes as `not_aggregated` today |
-| **DX4** | JTBD / scenario runner | which rows a checkout actually earns, from linked evidence rather than prose |
-| **DX5** | benchmark runner | the scenarios end to end, reproducibly, for a public claim |
+| **DX5** | `crm project verify --json` | machine-readable orchestration of the existing verify, smoke, inspect, module-state, links, Skills and hygiene checks — the evidence AX1 publishes as `not_aggregated` today |
+| **DX6** | `crm scenario run <scenario> --json` | which JTBD rows a checkout actually earns, from linked evidence rather than prose |
+| **DX9** | `crm context pack --plan plan.json --json` | the smallest deterministic context an agent needs, derived from AX1, AX2, the relevant package docs and Skills, schema and action contracts and the Quality Gates. Token-budgeted, deterministic, source-path references only — **no secrets, no PII, no data rows, no arbitrary source bodies**, fingerprinted for staleness, and **advisory only, never authorization** |
+| **DX10** | `ImplementationEvidence` + `crm solution verify plan.json --json` | maps each SolutionPlan requirement to the package, module, action, provider, source files, tests, Admin/CLI evidence and JTBD evidence that satisfy it, marked `implemented \| partial \| blocked`. It closes `goal → plan → build → proof`, and stops an agent claiming a plan is complete while work is missing |
 
-**AX3 depends on DX3 and DX4**, not the other way round. A benchmark whose
-evidence is prose is a benchmark nobody can check.
+**AX3 depends on DX5, DX6, DX9 and DX10**, not the other way round. A benchmark
+whose evidence is prose is a benchmark nobody can check.
 
 ### Review and maintenance
 
 | | Tool | What it answers |
 |---|---|---|
-| **DX6** | change-impact inspector | given a diff, which packages, capabilities, records and JTBD rows it touches |
-| **DX10** | stable error catalog / `crm explain <code>` | every published problem code in one place, with what to do about it |
-| **DX11** | upgrade compatibility assistant | what a framework version bump requires of an existing project |
-| **DX12** | release / semver tooling | what changed at each seam, and whether the version says so |
-| **DX13** | Project MCP parity | the same operations over MCP as over the CLI, with the same dry-run defaults |
+| **DX7** | `crm change inspect --base main --json` | maps a diff to the packages, capabilities, modules, migrations, actions, tests, Quality Gates, JTBD rows and docs it touches |
+| **DX8** | `crm explain <ERROR_CODE> --json` | every published problem code in one place: meaning, likely causes, retryability, safe diagnostics and the doc that covers it |
+| **DX11** | `crm upgrade plan --json` | package and capability compatibility, the Module Evolution and migration work a version bump requires, and the tests that must pass |
+| **DX12** | provider contract test kit | tracked with the Integration Runtime: config, timeout, late settlement, idempotency, webhook, rate limits, sandbox, secret hygiene and error shape |
+| **DX13** | Project MCP parity | the stable CLI contracts mirrored as read surfaces — `app_inspect`, `solution_check`, `doctor`, `verify`, `scenario`, `change_inspect`, `explain`, `context_pack`, `trace_query`. **Remote mutation stays Production-Spine and human-approval work.** The exposure policy — nine commitments (CLI-first, a capability is not a tool, a package is not a tool, job-oriented tools, a small always-on surface, deferred namespaces, read separated from mutation, a dynamic allow-list, human approval for sensitive mutation), four tiers, and what may never become a tool at all — is written first in `docs/architecture/AGENT_TOOL_SURFACE.md`, which is strategy, not implementation |
+
+DX7 and DX8 may land opportunistically as small platform slices; neither blocks
+anything.
 
 ### Production and Cloud
 
@@ -75,23 +80,31 @@ not by effort:
 ## Priority, stated once
 
 ```text
-M14b2 runtime remains next
-DX1 (doctor) and DX7 (Skill sync) may proceed in parallel — they block nothing
-M15 Service package
-then DX2 scaffold, DX8 conformance kit, DX9 extraction pilot
-DX3 + DX4 before any AX3 benchmark
+Now:
+  complete + independently review M14b2
+
+Parallel / immediately after:
+  DX1 Project Doctor
+  DX2 Skill sync/check
+
+Then:
+  M15 Service package
+  review the M15 learnings against the seam
+
+After Service learning:
+  DX3 Package Scaffold
+  DX4 Package Conformance
+  the controlled Legacy Domain Alignment Pass — one domain, one PR
+
+Before AX3:
+  DX5 Project Verify
+  DX6 Scenario Runner
+  DX9 Context Pack
+  DX10 Plan-to-Implementation Evidence
 ```
 
-Toolkit work does not displace M14b2 or M15. A developer toolkit for a
-framework whose domains are half-built optimizes the wrong thing.
-
-## The gap that bites first
-
-**Machine-readable evidence aggregation (DX3).** AX1 publishes
-`evidence.status: "not_aggregated"` and three paths, because JTBD status and
-quality-gate results are prose. Every other surface in this repository refuses
-to guess; this one forces its reader to. It is the highest-value remaining item
-and the precondition for both DX4 and AX3.
+Toolkit work does not displace M14b2 or M15. A developer toolkit for a framework
+whose domains are half-built optimizes the wrong thing.
 
 ## Deliberately refused
 
@@ -121,4 +134,6 @@ one.
 `docs/APPLICATION_INSPECTION.md`, `docs/SOLUTION_PLAN.md`,
 `docs/AGENT_HARNESS_COMPATIBILITY.md`, `docs/PACKAGE_AUTHORING.md`,
 `docs/MODULE_FACTORY.md`, `docs/MCP.md`,
+`docs/architecture/AGENT_TOOL_SURFACE.md`,
+`docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`,
 `docs/benchmarks/CRM_JTBD_MATRIX.md` (the AX section).

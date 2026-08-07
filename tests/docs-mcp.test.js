@@ -575,7 +575,7 @@ function stdioRoundTrip(requests, options = {}) {
   });
 }
 
-test('an ambiguous job question abstains instead of answering "not supported"', async () => {
+test('an ambiguous job question abstains instead of answering from the top match alone', async () => {
   const { createJobsIndex } = await import('../packages/docs-mcp/src/jobs.js');
   const { createClaimsLedger } = await import('../packages/docs-mcp/src/ledger.js');
   const index = createJobsIndex({
@@ -597,6 +597,21 @@ test('an ambiguous job question abstains instead of answering "not supported"', 
     );
     assert.equal(result.answer, 'unknown', `"${query}" should abstain, not pick a side`);
     assert.match(result.answerText, /Ambiguous/, 'an abstention must say why it is abstaining');
+  }
+
+  // The abstention is not special-cased to one status. "approval" ranks a
+  // *partially supported* job top while validated jobs score comparably, so the
+  // same disagreement one rank up must abstain too — and the message must report
+  // the statuses it actually found rather than a hardcoded pair. Both quoted
+  // statuses are checked against the jobs the query returned, so this holds as
+  // the matrix moves.
+  const ambiguous = index.check('approval', 5);
+  const quoted = [...ambiguous.answerText.matchAll(/is "([^"]+)"/g)].map((match) => match[1]);
+  assert.equal(quoted.length, 2, 'an abstention names exactly the two sides it could not choose between');
+  assert.notEqual(quoted[0], quoted[1], 'abstaining between two identical statuses is not a disagreement');
+  const returned = new Set(ambiguous.matches.map((/** @type {any} */ job) => job.status));
+  for (const status of quoted) {
+    assert.ok(returned.has(status), `the abstention quoted "${status}", which no matched job carries`);
   }
 
   // The anti-overclaim property must survive the fix: a specific question still

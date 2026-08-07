@@ -82,7 +82,20 @@ Every machine-facing command supports `--json` with a stable, versioned output s
 
 ### 4.2 Project MCP surface (conceptual)
 
-An MCP server Claude Code and Codex use to operate a Cloud project:
+**Conceptual means conceptual: none of these tools exists, in this repository or
+anywhere else.** The list names a shape so the roadmap can reference it; it is
+not a specification, and quoting it as an available surface would be a false
+claim about the product.
+
+Two rules govern it before anything is built. First, the **exposure policy** in
+`docs/architecture/AGENT_TOOL_SURFACE.md` applies here in full — a Cloud tool
+gets a tier from what it *can* do, and the "never a tool" list is not relaxed by
+the fact that a control plane exists. Second, every mutating tool below is
+**hard-gated on the Production Spine** (auth, tenancy, RBAC): without it there
+is nobody to authorize a remote write, so the gate is an absence of meaning, not
+a missing feature.
+
+An MCP server Claude Code and Codex would use to operate a Cloud project:
 
 ```text
 project_status · create_preview · deploy_preview · deploy_production

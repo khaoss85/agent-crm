@@ -68,6 +68,7 @@ const DESCRIPTIONS = {
   'docs/API.md': 'the generated REST surface and its conventions',
   'docs/JTBD.md': 'the jobs-to-be-done framing the repository is organised around',
   'docs/DELIVERY_ECONOMICS.md': 'append-only time and expense evidence costed by a versioned policy — deliberately not a margin',
+  'docs/DELIVERY_CHANGE_ACCEPTANCE.md': 'governed change requests, immutable plan revisions, deliverables, and acceptance recorded by a human — never a commercial amendment and never an authenticated customer',
   'docs/HANDOVER_CODEX.md': 'an internal handover note; of no use to a reader outside this repository',
   'docs/ADMIN_SMOKE.md': 'how the generated Admin is covered at the DOM level',
 };
