@@ -14,3 +14,15 @@ jobs:
           node-version: 22.16.0
       - run: npm run verify
       - run: npm run smoke
+
+  # Public claims are held to the same standard as the code that backs them:
+  # a marketing sentence whose evidence has moved fails the build, exactly like a
+  # test would. See scripts/site-check.js and scripts/distribution-check.js.
+  public-claims:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+      - run: npm run gtm:check
