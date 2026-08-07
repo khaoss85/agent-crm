@@ -1,6 +1,6 @@
 # Admin manual browser smoke checklist
 
-Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (re-run at each milestone; 37 automated checks at Milestone 14a; 18 further checks for the Milestone 14b2 Delivery Change & Acceptance section, all passing, all passing, including the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation, delivery-handover and delivery-execution cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
+Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium, and re-run at each milestone: 37 automated checks at Milestone 14a, all passing, covering the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation, delivery-handover and delivery-execution cases; and 18 **further** checks for the Milestone 14b2 Delivery Change & Acceptance section, all passing. The 18 are additive and scoped to the new section — they do not re-run or replace the 37, which were last exercised on the Milestone 14a branch. Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
 
 ## Setup
 
@@ -131,8 +131,10 @@ Report any step that fails; do not mark the actions UI browser-validated unless 
 ## Delivery change & acceptance (Milestone 14b2)
 
 Validated in real Chromium during the M14b2 completion pass — **18 checks, all
-passing**. Automated browser testing is still **not in CI**; this run was driven
-manually against a seeded project and is reproducible from the steps below.
+passing**, scoped to this section. The 37 Milestone 14a checks above were **not
+re-run in that pass**; nothing here supersedes them. Automated browser testing is
+still **not in CI**; this run was driven manually against a seeded project and is
+reproducible from the steps below.
 
 The run found one real defect the DOM-level tests had missed: the section called
 `client.module().action()`, an SDK API the Admin's own request client does not

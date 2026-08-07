@@ -1,7 +1,7 @@
 {
  "manifestVersion": 1,
  "name": "delivery-commercial-change",
- "description": "An immutable candidate handed to a future commercial amendment. It records that a delivery change has commercial consequence and stops there: no Quote, Order, Contract, Subscription or amendment is created or altered, no amount is recognized, and nothing is sent anywhere.",
+ "description": "An immutable candidate for a future commercial amendment, raised when an approved change has commercial consequence. It is a handoff, never an amendment: no Quote, Order, Contract, Contract Version or Subscription is created or altered, no amount is recognized and nothing is sent. A human records what the commercial follow-up concluded outside this application — resolved_externally or withdrawn — which is what stops a raised candidate blocking acceptance evidence forever.",
  "fields": [
   {
    "name": "sourceKey",
@@ -47,8 +47,30 @@
    "type": "enum",
    "writable": "managed",
    "values": [
-    "pending_commercial_followup"
+    "pending_commercial_followup",
+    "resolved_externally",
+    "withdrawn"
    ]
+  },
+  {
+   "name": "resolutionReason",
+   "type": "string",
+   "writable": "managed"
+  },
+  {
+   "name": "resolutionEvidenceRef",
+   "type": "string",
+   "writable": "managed"
+  },
+  {
+   "name": "resolvedBy",
+   "type": "string",
+   "writable": "managed"
+  },
+  {
+   "name": "resolvedAt",
+   "type": "timestamp",
+   "writable": "managed"
   },
   {
    "name": "raisedBy",

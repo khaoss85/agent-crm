@@ -1,6 +1,6 @@
 # ExecPlan — Milestone 14b2: Delivery Change, Deliverables and Acceptance
 
-**Status: implemented, this PR (open, unmerged).** Extends `packages/delivery`
+**Status: implemented and independently reviewed, this PR (open, unmerged).** Extends `packages/delivery`
 (M13 handover, M14a execution, M14b1 economics) additively. Guides:
 `packages/delivery/README.md`, `docs/DELIVERY_CHANGE_ACCEPTANCE.md`. Decisions:
 ADR-018 and its addenda (the package contract), ADR-019 (module evolution),
@@ -89,6 +89,8 @@ taken on Tuesday must still reproduce on Wednesday.
 | May an agent decide a change request or record acceptance? | **No.** `actor.type === 'user'`, refused `403 HUMAN_APPROVAL_REQUIRED`. A human-actor boundary, not RBAC |
 | Does anything bill? | **No.** No invoice, payment, billing eligibility or revenue event exists |
 | Does anything schedule? | **No.** There is no scheduler; no state moves on a clock |
+| Does a raised commercial candidate ever end? | **Yes, and it must.** A candidate blocks acceptance over the scope it touches, and the change request's `pending_commercial_followup` is terminal — so without `resolve-commercial-change` one approval would have blocked a project's acceptance evidence permanently. Recording the outcome amends nothing; it says a human closed the question elsewhere |
+| Does the customer label decide whether a scope can be re-asked? | **No.** `customerRef` is an unverified operator label, so it is frozen and stored but kept out of the scope fingerprint. Otherwise a rejected scope could be re-asked as "Acme" instead of "ACME" |
 
 ## Not modeled — stated, not implied
 
@@ -111,3 +113,4 @@ package scaffold and generic Admin action filtering, which are tooling items on
 8. **Truthful events** — the seven M14b2 events exist; `quote.amended`, `invoice.created`, `payment.received`, `customer.authenticated`, `customer.legally-accepted` and `service.activated` do not.
 9. **Hostile input stays inert** across every field, in evidence and in errors.
 10. **AX1 and AX2 see it** — the new resources, actions and capabilities appear in `app inspect`, and a Solution Plan can cite them without AX2 executing anything.
+11. **No refusal is a dead end** — every state this milestone can refuse from has a stated, human-driven way out, and the two that could have trapped a project (an unresolved commercial candidate, a settled acceptance scope) are proved recoverable rather than argued to be.

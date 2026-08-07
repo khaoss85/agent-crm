@@ -191,6 +191,70 @@ test('a commercial candidate says no commercial record was amended, and offers n
   assert.ok(t);
 });
 
+const candidateRow = (over = {}) => ({
+  id: 'cc1', deliveryProjectId: 'dp1', deliveryChangeRequestId: 'cr1', contractId: 'ct1',
+  summary: 'Add a second migration wave', estimatedDeltaCents: 1_250_000, currency: 'EUR',
+  status: 'pending_commercial_followup',
+  resolutionReason: null, resolutionEvidenceRef: null, resolvedBy: null, resolvedAt: null,
+  raisedBy: 'ops', raisedAt: '2026-10-02T09:00:00.000Z', ...over,
+});
+
+test('a pending candidate offers the follow-up outcome, and says recording it amends nothing', async (t) => {
+  const { mount, actions } = await render(rows({ 'delivery-commercial-change': [candidateRow()] }));
+  const record = buttonLabelled(mount, 'Record follow-up outcome');
+  assert.ok(record, 'a raised candidate is not a dead end on screen either');
+  assert.match(one(mount, 'ca-resolve-note').textContent,
+    /amends nothing here: no Quote, Order, Contract or Subscription is created or altered, and no amount is recognized/);
+
+  // Every field the control offers is labelled for a screen reader.
+  for (const node of mount.findAll('select').concat(mount.findAll('input'))) {
+    assert.ok(node.getAttribute('aria-label'), `${node.getAttribute('name')} needs an aria-label`);
+  }
+
+  await record.dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(actions.at(-1), {
+    module: 'delivery-commercial-change', id: 'cc1', action: 'resolve-commercial-change',
+    input: { resolution: 'resolved_externally', reason: '' },
+  }, 'it posts to the real action route with the selected resolution');
+  assert.ok(t);
+});
+
+test('a resolved candidate is read-only, and says what the outcome did not do', async (t) => {
+  for (const [status, phrase] of [['resolved_externally', /settled outside this application/], ['withdrawn', /nobody is pursuing it/]]) {
+    const { mount } = await render(rows({
+      'delivery-commercial-change': [candidateRow({
+        status, resolutionReason: 'signed as a separate order', resolutionEvidenceRef: 'CRM-1234',
+        resolvedBy: 'ops', resolvedAt: '2026-10-09T09:00:00.000Z',
+      })],
+    }));
+    assert.equal(buttonLabelled(mount, 'Record follow-up outcome'), null, `${status} is recorded once`);
+    assert.match(mount.findAll('p').map((node) => node.textContent).join(' '), phrase);
+    assert.match(one(mount, 'ca-commercial-resolved').textContent,
+      /Recording this outcome amended nothing/);
+    // The candidate is settled, and the amendment claim is still refused.
+    assert.match(one(mount, 'ca-commercial-warning').textContent,
+      /No Quote, Order or Contract has been amended/);
+    for (const forbidden of ['Amend', 'Invoice', 'Bill', 'Payment', 'Quote']) {
+      assert.equal(buttonLabelled(mount, forbidden), null, `no "${forbidden}" control belongs in Delivery`);
+    }
+  }
+  assert.ok(t);
+});
+
+test('a refused follow-up outcome keeps the typed reason on screen', async (t) => {
+  const actions = [];
+  actions.scripted = { 'resolve-commercial-change': new Error('Recording was refused') };
+  const { mount } = await render(rows({ 'delivery-commercial-change': [candidateRow()] }), { actions });
+  const reason = mount.findAll('input').find((node) => node.getAttribute('name') === 'reason');
+  reason.value = 'settled on the phone';
+  await buttonLabelled(mount, 'Record follow-up outcome').dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reason.value, 'settled on the phone', 'a refusal never costs the operator their words');
+  assert.match(mount.findAll('small').map((node) => node.textContent).join(' '), /Recording was refused/);
+  assert.ok(t);
+});
+
 test('plan revisions show the chain and state what they do not rewrite', async (t) => {
   const { mount } = await render(rows({
     'delivery-plan-revision': [

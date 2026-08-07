@@ -6,9 +6,11 @@ contract into a planned delivery project — one work package per obligation, a
 milestone plan, and an optional third-party partner engagement (M13) — and then
 lets a human **run** that project through an explicit transition table (M14a).
 
-It plans a project (M13), records its execution (M14a) and records what it
-consumed (M14b1). Nothing here schedules, staffs, bills, pays, accepts or
-grants access, and nothing moves on a clock.
+It plans a project (M13), records its execution (M14a), records what it consumed
+(M14b1), and records what **changed** about it, what it **produced** and what a
+human says the customer said about it (M14b2). Nothing here schedules, staffs,
+bills, pays, amends a commercial record, authenticates a customer or grants
+access, and nothing moves on a clock.
 
 Full guide: [`docs/DELIVERY_HANDOVER.md`](../../docs/DELIVERY_HANDOVER.md).
 Authoring a package of your own:
@@ -108,7 +110,8 @@ src/execution.js        the eight human-driven execution transitions
 src/cost-policy.js      the versioned, fingerprinted rate decision
 src/economics.js        the pure money arithmetic and grouping
 src/economics-actions.js the five economics actions and the capability
-modules/                ten read-only record manifests
+src/change-acceptance.js the seven change, deliverable and acceptance actions and two capabilities
+modules/                sixteen read-only record manifests
 ```
 
 ## Running the project (M14a)
@@ -173,15 +176,40 @@ The package also offers `delivery-economics@1`, a read-only capability another
 package may declare a dependency on. Full guide:
 [`docs/DELIVERY_ECONOMICS.md`](../../docs/DELIVERY_ECONOMICS.md).
 
+## Recording what changed, what it produced and who accepted it (M14b2)
+
+```text
+delivery-project.propose-change-request                a proposal; nothing replans or re-prices
+delivery-change-request.decide-change-request          approve → immutable plan revision,
+                                                       or a commercial change → an immutable candidate
+delivery-commercial-change.resolve-commercial-change   what the commercial follow-up concluded
+                                                       ELSEWHERE; it amends nothing
+delivery-work-package.plan-deliverable                 something this work package will produce
+delivery-deliverable.complete-deliverable              only from a completed work package
+delivery-milestone.request-acceptance                  freezes the exact scope, and fingerprints it
+delivery-acceptance-request.record-acceptance          what a USER ACTOR says the customer said
+```
+
+A change with commercial consequence raises an immutable candidate and stops: no
+Quote, Order, Contract, Contract Version or Subscription is created or altered
+anywhere in this package. Acceptance is **evidence, not authentication** — not
+an authenticated customer action, not a legal signature, not a verified identity
+and not authorization to bill.
+
+Two more read-only capabilities: `delivery-change-management@1` and
+`delivery-acceptance-evidence@1`. Full guide:
+[`docs/DELIVERY_CHANGE_ACCEPTANCE.md`](../../docs/DELIVERY_CHANGE_ACCEPTANCE.md).
+
 ## What it does not do
 
 Invoicing, payment, tax, FX, accounting, revenue recognition, gross or
 accounting margin, profit, ARR/MRR/TCV or any term arithmetic, payroll,
 employee identity, resource scheduling, capacity, partner payout, billing
 eligibility, receipt storage, reimbursement, partner access, revenue share,
-service contracts, entitlements, SLA and support cases. Change requests,
-deliverables and customer acceptance are **M14b2**, and none of their code
-ships here.
+service contracts, entitlements, SLA and support cases. Contract amendment,
+legal acceptance, authenticated customer identity, a customer portal and any
+external send are **not** modelled either: M14b2 records change and acceptance
+as evidence, and stops at the boundary of every one of them.
 
 A contribution estimate is produced only where every commercial input in a
 currency is one-time; a recurring obligation leaves it explicitly unavailable

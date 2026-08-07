@@ -1,5 +1,6 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DELIVERY_POLICY, activatedContract, boot, project } from './helpers/contracts-project.js';
 
@@ -24,8 +25,30 @@ const M14B2_MODULES = [
   'delivery-deliverable', 'delivery-acceptance-request', 'delivery-acceptance-evidence',
 ];
 
+/**
+ * One composed project root for the whole file, and a fresh database per test.
+ *
+ * Building the root is 4.2s — it copies the repository and applies forty-odd
+ * manifests through the real CLI — while booting a new database on an existing
+ * root is 250ms. Every test here needs its own *data*, not its own copy of the
+ * framework, so rebuilding it eleven times spent about forty seconds of CI on
+ * nothing. Nothing is written into the root after it is built, so sharing it
+ * cannot couple two tests.
+ */
+let sharedRoot = null;
+after(() => {
+  if (sharedRoot) rmSync(sharedRoot, { recursive: true, force: true });
+});
+
+function composedRoot() {
+  // `project` registers its cleanup on the test context it is handed; this root
+  // outlives every test in the file, so the file disposes of it instead.
+  if (!sharedRoot) sharedRoot = project({ after: () => {} }, { withDelivery: true });
+  return sharedRoot;
+}
+
 async function running(t, file) {
-  const root = project(t, { withDelivery: true });
+  const root = composedRoot();
   const context = await boot(root, join(root, 'data', file));
   t.after(() => context.close());
   const { contract } = await activatedContract(root, context.app, { name: 'Evidence', offers: OFFERS });
@@ -101,6 +124,37 @@ test('every business write rolls back completely when it fails', async (t) => {
       `${moduleName}.${method}: the retry produced exactly one`);
     for (const module of M14B2_MODULES) app.database.raw.exec(`DELETE FROM ${app.modules.get(module).table};`);
   }
+
+  // `complete-deliverable` is the seventh write in the graph and the only
+  // single-write one that reaches storage through `applyManaged` rather than
+  // `createManaged`. A graph with one uninjected write is not an injected graph.
+  const forCompletion = await client.module('delivery-work-package').action(wp.id, 'plan-deliverable', {
+    deliverableKey: 'to-complete', label: 'Migrated set', milestoneId: milestone.id,
+  });
+  await client.module('delivery-work-package').action(wp.id, 'complete-work-package', {});
+  {
+    const service = app.modules.get('delivery-deliverable').service;
+    const real = service.applyManaged.bind(service);
+    service.applyManaged = async (...args) => { await real(...args); throw new Error('injected failure after applyManaged'); };
+    const auditBefore = app.audit.list({ entityType: 'delivery-deliverable' }).length;
+    await assert.rejects(() => app.runAction({
+      module: 'delivery-deliverable', action: 'complete-deliverable',
+      recordId: forCompletion.result.deliverable.id, actor: ACTOR, input: { completionEvidenceRef: 'ref' },
+    }), /injected failure/);
+    service.applyManaged = real;
+    const after = app.modules.get('delivery-deliverable').service.get(forCompletion.result.deliverable.id);
+    assert.equal(after.status, 'planned', 'a failed completion leaves the deliverable planned');
+    assert.equal(after.completedBy, null, 'and claims nobody completed it');
+    assert.equal(after.completionEvidenceRef, null);
+    assert.equal(app.audit.list({ entityType: 'delivery-deliverable' }).length, auditBefore,
+      'and no audit row claims a completion that did not happen');
+    const done = await client.module('delivery-deliverable').action(forCompletion.result.deliverable.id, 'complete-deliverable', {
+      completionEvidenceRef: 'ref',
+    });
+    assert.equal(done.result.deliverable.status, 'completed', 'the retry completes it exactly once');
+    assert.equal(done.result.accepted, false, 'and still says completion is not acceptance');
+  }
+  for (const module of M14B2_MODULES) app.database.raw.exec(`DELETE FROM ${app.modules.get(module).table};`);
 
   // The multi-write actions, injected at each of their two writes in turn.
   const proposed = await client.module('delivery-project').action(row.id, 'propose-change-request', {
@@ -220,7 +274,15 @@ test('two connections racing every decision produce exactly one winner', async (
   // both, which is what "two connections" actually means here.
   await client.module('delivery-work-package').action(workPackages[0].id, 'complete-work-package', {});
   const { createAgentCrmApp } = await import(`file://${join(root, 'packages/app/src/index.js')}`);
-  const second = createAgentCrmApp({ dbPath: app.database.path, clock: () => '2026-09-15T10:00:00.000Z' });
+  // A short busy timeout on the second connection, because the loser must not
+  // be *waited out* to prove the point. The default 5000ms made each contended
+  // race sit on the SQLite lock for five seconds — around fifty seconds of CI
+  // spent sleeping — and the outcome is identical at 5000ms, 250ms and 0ms: the
+  // losing connection is refused with a typed `409 CONFLICT`, never a raw
+  // SQLITE error. The races below are unchanged; only the waiting is gone.
+  const second = createAgentCrmApp({
+    dbPath: app.database.path, busyTimeoutMs: 250, clock: () => '2026-09-15T10:00:00.000Z',
+  });
   t.after(() => second.close());
 
   /** Both apps run the same request; exactly one may succeed. */
@@ -588,6 +650,25 @@ test('the acceptance scope is frozen, and an unchanged question is not re-asked'
     'an unchanged scope is not a new question',
   );
 
+  // And retyping the customer's name is not a replan. `customerRef` is an
+  // unverified operator label; folding it into the fingerprint would have made
+  // the rule bypassable by a single keystroke, with nothing in the record
+  // saying the second question was over identical work.
+  for (const relabelled of ['Customer:Acme', 'customer:acme ', ' customer:acme', 'customer:acme s.p.a.']) {
+    await assert.rejects(
+      () => client.module('delivery-milestone').action(milestone.id, 'request-acceptance', {
+        requestKey: `relabel-${relabelled.trim().length}-${relabelled}`, customerRef: relabelled,
+      }),
+      (error) => error.status === 409 && error.code === 'DELIVERY_ACCEPTANCE_SCOPE_SETTLED',
+      `"${relabelled}" must not buy a second answer over identical work`,
+    );
+  }
+  // The label is still frozen and stored — it is part of the testimony. It just
+  // does not decide whether the question may be asked again.
+  assert.equal(JSON.parse(stored.frozenScope).customerRef, 'customer:acme',
+    'the customer reference as it read then is still part of the frozen scope');
+  assert.equal(JSON.parse(stored.frozenScope).deliverables.length, stored.deliverableCount);
+
   // Replan: a governed change, a new deliverable, a genuinely different scope.
   const change = await client.module('delivery-project').action(
     app.modules.get('delivery-project').service.get(request.deliveryProjectId).id,
@@ -664,6 +745,83 @@ test('an unresolved commercial change blocks acceptance over the scope it touche
   );
   assert.equal(app.modules.get('delivery-acceptance-request').service.countWhere({ status: 'pending' }), 0,
     'and the refusal wrote nothing');
+
+  // The block is not a dead end. Reading the change request's
+  // `pending_commercial_followup` — which is terminal — would have made it one:
+  // an approved commercial change would have stopped this project ever
+  // recording acceptance again. The block reads the candidate, and a human can
+  // record what the commercial follow-up concluded.
+  const candidate = app.modules.get('delivery-commercial-change').service
+    .listWhere({ deliveryChangeRequestId: here.result.changeRequest.id })[0];
+  const resolved = await client.module('delivery-commercial-change').action(candidate.id, 'resolve-commercial-change', {
+    resolution: 'resolved_externally', reason: 'quoted and signed as a separate order', evidenceRef: 'CRM-1234',
+  });
+  assert.equal(resolved.result.commercialChange.status, 'resolved_externally');
+  assert.equal(resolved.result.amended, false, 'recording an outcome amends nothing');
+  assert.equal(app.modules.get('delivery-change-request').service.get(here.result.changeRequest.id).status,
+    'pending_commercial_followup', 'and the change request keeps the decision it was given');
+
+  const unblocked = await client.module('delivery-milestone').action(milestone.id, 'request-acceptance', {
+    requestKey: 'unblocked', customerRef: 'customer:acme',
+  });
+  assert.equal(unblocked.result.acceptanceRequest.status, 'pending',
+    'acceptance is askable again once the commercial question is recorded as closed');
+
+  // Resolved once, and only once.
+  await assert.rejects(
+    () => client.module('delivery-commercial-change').action(candidate.id, 'resolve-commercial-change', {
+      resolution: 'withdrawn', reason: 'changed my mind',
+    }),
+    (error) => error.status === 409,
+    'a recorded outcome is evidence, not a field somebody edits',
+  );
+  // And it is a human decision, like every other decision in this milestone.
+  await assert.rejects(
+    () => context.agentClient.module('delivery-commercial-change').action(candidate.id, 'resolve-commercial-change', {
+      resolution: 'withdrawn', reason: 'the agent decided',
+    }),
+    (error) => error.status === 403 || error.status === 409,
+    'an agent does not close a commercial question',
+  );
+});
+
+test('a project-wide commercial change blocks every milestone, and is still recoverable', async (t) => {
+  const { context, project: row, workPackages, milestones } = await running(t, 'projectwide.sqlite');
+  const { client, app } = context;
+  await withDeliverable(context, workPackages[0], milestones[1].id);
+
+  // A change naming nothing is read as project-wide: the safe reading of "we
+  // have not decided what this project includes".
+  const wide = await client.module('delivery-project').action(row.id, 'propose-change-request', {
+    changeKey: 'wide', changeType: 'commercial_change_required', title: 'Rescope the engagement', reason: 'r',
+    commercialDeltaCents: 500_00, currency: 'EUR',
+  });
+  const decided = await client.module('delivery-change-request').action(wide.result.changeRequest.id, 'decide-change-request', {
+    decision: 'approve', reason: 'take it to commercial',
+  });
+  await assert.rejects(
+    () => client.module('delivery-milestone').action(milestones[1].id, 'request-acceptance', {
+      requestKey: 'blocked', customerRef: 'customer:acme',
+    }),
+    (error) => error.code === 'DELIVERY_COMMERCIAL_CHANGE_UNRESOLVED'
+      && error.details.commercialChanges.includes(decided.result.commercialChange.id),
+    'a project-wide unresolved change covers this milestone too',
+  );
+
+  // Withdrawing it is the other honest outcome, and it unblocks the same way.
+  const withdrawn = await client.module('delivery-commercial-change').action(decided.result.commercialChange.id, 'resolve-commercial-change', {
+    resolution: 'withdrawn', reason: 'the customer dropped the request',
+  });
+  assert.equal(withdrawn.result.commercialChange.status, 'withdrawn');
+  const asked = await client.module('delivery-milestone').action(milestones[1].id, 'request-acceptance', {
+    requestKey: 'after', customerRef: 'customer:acme',
+  });
+  assert.equal(asked.result.acceptanceRequest.status, 'pending');
+
+  // The capability offers the amendment milestone only what is still pending.
+  assert.equal(app.modules.get('delivery-commercial-change').service
+    .listWhere({ status: 'pending_commercial_followup' }).length, 0,
+    'a resolved candidate is no longer offered as pending commercial work');
 });
 
 test('a divergent retry is refused on every write that takes a key', async (t) => {

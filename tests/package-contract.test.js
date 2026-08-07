@@ -201,6 +201,7 @@ test('the first-party delivery package conforms and depends only through a capab
         'delivery-deliverable.complete-deliverable',
         'delivery-milestone.request-acceptance',
         'delivery-acceptance-request.record-acceptance',
+        'delivery-commercial-change.resolve-commercial-change',
       ],
       requires: ['contracts/delivery-obligations@1'],
       provides: [
@@ -244,7 +245,7 @@ test('a customer-authored package conforms through the identical contract', () =
   });
   assert.deepEqual([...registry.names()], ['contracts', 'delivery', 'partner-scorecard']);
   assert.deepEqual(Object.keys(registry.metadata()), ['contracts', 'delivery', 'partner-scorecard']);
-  assert.equal(registry.actions().length, 24, 'M14b2 added six change and acceptance actions on top of M14b1\'s five');
+  assert.equal(registry.actions().length, 25, 'M14b2 added seven change and acceptance actions on top of M14b1\'s five');
   assert.equal(registry.resources().length, 25);
 });
 

@@ -1171,11 +1171,54 @@ try {
       'a replanned scope is a different question, with a different fingerprint');
     assert.equal(reasked.result.acceptanceRequest.deliverableCount, 2);
 
+    // A commercial change the business has not answered blocks acceptance over
+    // the scope it touches — and, crucially, that block ends. A candidate whose
+    // outcome nobody could record would have stopped this project recording
+    // acceptance evidence for the rest of its life.
+    const wide = await runDelivery('delivery-project', deliveryProject.id, 'propose-change-request', {
+      changeKey: 'rescope', changeType: 'commercial_change_required',
+      title: 'Rescope the engagement', reason: 'the customer wants a different shape',
+      commercialDeltaCents: 400_000, currency: 'EUR',
+    });
+    const wideCandidate = await runDelivery('delivery-change-request', wide.result.changeRequest.id,
+      'decide-change-request', { decision: 'approve', reason: 'take it to commercial' });
+    // The v2 question is answered first: a pending request freezes its milestone,
+    // so new work cannot be planned under an open question.
+    await runDelivery('delivery-acceptance-request', reasked.result.acceptanceRequest.id, 'record-acceptance', {
+      outcome: 'accepted', assertedCustomerRef: 'customer:acme',
+    });
+    const exportV3 = await runDelivery('delivery-work-package', secondWp.id, 'plan-deliverable', {
+      deliverableKey: 'export-v3', label: 'Data export, third pass', milestoneId: rejectMilestone.id,
+    });
+    await runDelivery('delivery-deliverable', exportV3.result.deliverable.id, 'complete-deliverable', {});
+    await assert.rejects(
+      () => runDelivery('delivery-milestone', rejectMilestone.id, 'request-acceptance', {
+        requestKey: 'export-acceptance-v3', customerRef: 'customer:acme',
+      }),
+      (error) => error.code === 'DELIVERY_COMMERCIAL_CHANGE_UNRESOLVED',
+      'commercially disputed scope is never quietly acceptable',
+    );
+    const resolved = await runDelivery('delivery-commercial-change',
+      wideCandidate.result.commercialChange.id, 'resolve-commercial-change', {
+        resolution: 'resolved_externally', reason: 'quoted and signed as a separate order',
+        evidenceRef: 'CRM-2026-0198',
+      });
+    assert.equal(resolved.result.commercialChange.status, 'resolved_externally');
+    assert.equal(resolved.result.amended, false, 'recording the outcome amends nothing');
+    assert.equal(commercialRows(), commercialBefore,
+      'and recording it moved no commercial row either — the boundary holds on the way out too');
+    const afterResolution = await runDelivery('delivery-milestone', rejectMilestone.id, 'request-acceptance', {
+      requestKey: 'export-acceptance-v3', customerRef: 'customer:acme',
+    });
+    assert.equal(afterResolution.result.acceptanceRequest.deliverableCount, 3,
+      'the question is askable again once the commercial answer is recorded');
+
     // An agent may read all of it and write none of it.
     for (const [module, id, action, input] of [
       ['delivery-project', deliveryProject.id, 'propose-change-request', { changeKey: 'bot', changeType: 'non_commercial_replan', title: 't', reason: 'r' }],
       ['delivery-work-package', deliveryWp.id, 'plan-deliverable', { deliverableKey: 'bot', label: 'l' }],
       ['delivery-milestone', acceptanceMilestone.id, 'request-acceptance', { requestKey: 'bot', customerRef: 'c' }],
+      ['delivery-commercial-change', handedOffChange.result.commercialChange.id, 'resolve-commercial-change', { resolution: 'withdrawn', reason: 'r' }],
     ]) {
       await assert.rejects(
         () => runDelivery(module, id, action, input, { type: 'agent', id: 'bot' }),
@@ -1186,9 +1229,12 @@ try {
 
     // …and after all of it, still nothing commercial moved and nothing bills.
     assert.equal(commercialRows(), commercialBefore, 'the commercial record is exactly as the sale left it');
-    assert.equal(
-      app.modules.get('delivery-commercial-change').service.listWhere({ deliveryProjectId: deliveryProject.id }).length,
-      1, 'exactly one commercial follow-up is outstanding, and it is a candidate, not an amendment',
+    const candidates = app.modules.get('delivery-commercial-change').service
+      .listWhere({ deliveryProjectId: deliveryProject.id });
+    assert.equal(candidates.length, 2, 'two candidates were raised, and both are candidates, not amendments');
+    assert.deepEqual(candidates.map((row) => row.status).sort(),
+      ['pending_commercial_followup', 'resolved_externally'],
+      'one still awaits a commercial answer; the other records the answer somebody gave elsewhere',
     );
 
     // The cross-package write: exactly those obligations are handed over, and

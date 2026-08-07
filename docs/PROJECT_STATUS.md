@@ -19,7 +19,7 @@ Generated: **2026-08-07**.
 | Tests on clean main | **370 passing, 0 failing** (`npm run verify` from a fresh clone of `03a2cbe`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
-| Browser smoke | 37/37 in real Chromium on the M14a branch, run manually — **not in CI** |
+| Browser smoke | 37/37 in real Chromium on the M14a branch, plus 18 further checks for the M14b2 section on its branch, both run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
 | Open PRs | **M14b2 — Delivery change, deliverables and acceptance** (`claude/milestone-14b2-delivery-change-acceptance`): 415 passing on the branch, plus 18 real-Chromium checks. Open and unmerged, awaiting the adversarial review. |
 
@@ -83,17 +83,11 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 ## Next planned development
 
 1. **M14b2 — Delivery change, deliverables and acceptance** — implemented on an
-   open PR: governed change requests, immutable plan revisions, the
-   commercial-change handoff that touches no commercial record, deliverable
-   evidence and recorded customer acceptance
-   (`docs/DELIVERY_CHANGE_ACCEPTANCE.md`).
-2. **M14b2 — Delivery change requests, deliverables and acceptance** — not
-   started, and split out of M14b deliberately rather than quietly dropped.
-   Governed non-commercial replans, the commercial-change handoff that never
-   touches a signed Order, deliverable evidence, and recorded customer
-   acceptance — evidence a local user actor recorded, never an authenticated
-   customer, a legal signature or a billing trigger.
-3. Then M15 Service Operations, the **package contract review** and the first
+   open PR, reviewed, still unmerged: governed change requests, immutable plan
+   revisions, the commercial-change handoff that touches no commercial record
+   and now has a recorded end, deliverable evidence and recorded customer
+   acceptance over a frozen scope (`docs/DELIVERY_CHANGE_ACCEPTANCE.md`).
+2. Then M15 Service Operations, the **package contract review** and the first
    legacy extraction (one of Intelligence / Commercial / Signature), then M16
    Analytics Studio — `EXECUTION_ROADMAP.md`.
 

@@ -106,7 +106,7 @@ export async function renderDeliveryChangeAcceptance({ project, schema, mount, e
 function render({ data, meta, project, body, el, client, money, withBusy, busy, refresh }) {
   renderChangeRequests({ data, meta, project, body, el, client, money, withBusy, busy, refresh });
   renderRevisions({ data, body, el });
-  renderCandidates({ data, meta, body, el, money });
+  renderCandidates({ data, meta, body, el, money, client, withBusy, busy, refresh });
   renderDeliverables({ data, meta, project, body, el, client, withBusy, busy, refresh });
   renderAcceptance({ data, meta, body, el, client, withBusy, busy, refresh });
 
@@ -321,7 +321,7 @@ function renderRevisions({ data, body, el }) {
   body.appendChild(section);
 }
 
-function renderCandidates({ data, meta, body, el, money }) {
+function renderCandidates({ data, meta, body, el, money, client, withBusy, busy, refresh }) {
   const section = el('div', 'commercial-changes');
   section.appendChild(el('h4', undefined, `Commercial change candidates (${data.candidates.rows.length})`));
   if (data.candidates.rows.length === 0) {
@@ -331,7 +331,9 @@ function renderCandidates({ data, meta, body, el, money }) {
     const card = el('div', 'commercial-change');
     card.setAttribute('data-commercial-change', candidate.id);
     card.setAttribute('data-status', candidate.status);
-    card.appendChild(el('h5', undefined, 'Commercial follow-up required'));
+    card.appendChild(el('h5', undefined, candidate.status === 'pending_commercial_followup'
+      ? 'Commercial follow-up required'
+      : 'Commercial follow-up recorded'));
     card.appendChild(fact(el, 'Summary', candidate.summary));
     if (candidate.estimatedDeltaCents !== null && candidate.estimatedDeltaCents !== undefined) {
       card.appendChild(fact(el, 'Estimated delta', money(candidate.estimatedDeltaCents, candidate.currency)));
@@ -342,12 +344,84 @@ function renderCandidates({ data, meta, body, el, money }) {
     const warning = el('p', 'ca-commercial-warning');
     warning.textContent = 'No Quote, Order or Contract has been amended. This is a candidate for a commercial amendment that does not exist yet.';
     card.appendChild(warning);
+    if (candidate.status === 'pending_commercial_followup') {
+      card.appendChild(resolveControl({ candidate, el, client, withBusy, busy, refresh }));
+    } else {
+      card.appendChild(fact(el, 'Outcome', candidate.status === 'withdrawn'
+        ? 'withdrawn — nobody is pursuing it'
+        : 'settled outside this application'));
+      card.appendChild(fact(el, 'Reason', candidate.resolutionReason));
+      card.appendChild(fact(el, 'Reference', candidate.resolutionEvidenceRef));
+      card.appendChild(fact(el, 'Recorded', `${candidate.resolvedBy} · ${candidate.resolvedAt}`));
+      const settled = el('p', 'ca-commercial-resolved');
+      settled.textContent = 'Recording this outcome amended nothing. It says a human closed the commercial question elsewhere, which is what lets acceptance be requested over this scope again.';
+      card.appendChild(settled);
+    }
     section.appendChild(card);
   }
   section.appendChild(el('p', 'muted ca-commercial-boundary',
     meta.commercialBoundary ?? 'A commercial change raises a candidate and stops. Nothing here alters a commercial record.'));
-  // Deliberately no approval control: Delivery does not own commercial truth.
+  // Still deliberately no *approval* control: Delivery does not own commercial
+  // truth, and recording that somebody else settled the question is not the
+  // same act as settling it here.
   body.appendChild(section);
+}
+
+/**
+ * Record what the commercial follow-up concluded — outside this application.
+ *
+ * Without it a raised candidate is a dead end that blocks acceptance evidence
+ * for the rest of the project's life. The copy has to carry the whole weight of
+ * the distinction, because the control sits next to money: this records an
+ * outcome, it does not produce one, and nothing commercial moves.
+ */
+function resolveControl({ candidate, el, client, withBusy, busy, refresh }) {
+  const controls = el('div', 'commercial-change-resolve');
+  controls.appendChild(el('p', 'muted ca-resolve-note',
+    'Record what the commercial follow-up concluded elsewhere. This amends nothing here: no Quote, Order, Contract or Subscription is created or altered, and no amount is recognized.'));
+  const resolution = el('select');
+  resolution.setAttribute('name', 'resolution');
+  resolution.setAttribute('aria-label', 'What the commercial follow-up concluded');
+  for (const [value, label] of [
+    ['resolved_externally', 'Settled outside this application'],
+    ['withdrawn', 'Withdrawn — nobody is pursuing it'],
+  ]) {
+    const option = el('option', undefined, label);
+    option.setAttribute('value', value);
+    resolution.appendChild(option);
+    if (!resolution.value) resolution.value = value;
+  }
+  const reason = el('input');
+  reason.setAttribute('name', 'reason');
+  reason.setAttribute('aria-label', 'What was settled, in your words');
+  const evidence = el('input');
+  evidence.setAttribute('name', 'evidenceRef');
+  evidence.setAttribute('aria-label', 'Your reference to the amendment or decision, optional');
+  const error = el('small', 'field-error', '');
+  const button = el('button', 'resolve', 'Record follow-up outcome');
+  button.setAttribute('type', 'button');
+  button.addEventListener('click', () => {
+    void withBusy(async () => {
+      error.textContent = '';
+      button.disabled = true;
+      try {
+        await runAction(client, 'delivery-commercial-change', candidate.id, 'resolve-commercial-change', {
+          resolution: resolution.value,
+          reason: reason.value,
+          ...(evidence.value === '' ? {} : { evidenceRef: evidence.value }),
+        });
+        await refresh();
+      } catch (failure) {
+        // The typed input survives a refusal: retyping a reason because the
+        // server said no is the fastest way to lose the reason.
+        error.textContent = failure?.message ?? 'Recording the outcome was refused.';
+        button.disabled = false;
+      }
+    });
+  });
+  busy.push(button);
+  for (const node of [resolution, reason, evidence, button, error]) controls.appendChild(node);
+  return controls;
 }
 
 function renderDeliverables({ data, meta, project, body, el, client, withBusy, busy, refresh }) {

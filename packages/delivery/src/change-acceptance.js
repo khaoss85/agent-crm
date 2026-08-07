@@ -55,6 +55,26 @@ export const CHANGE_TRANSITIONS = Object.freeze({
   rejected: Object.freeze([]),
   pending_commercial_followup: Object.freeze([]),
 });
+/**
+ * A raised candidate waits for a commercial answer this package cannot give,
+ * and then a human records what that answer was. Without this the state is a
+ * dead end: `pending_commercial_followup` is terminal on the change request, no
+ * public write path exists on managed storage, and a project whose disputed
+ * scope is never closed could never record acceptance evidence again.
+ *
+ * Recording the outcome **amends nothing**. It says a human settled the
+ * commercial question somewhere else — in a Quote, an amendment, or a
+ * conversation — so delivery can stop treating the scope as disputed. The
+ * Commercial Amendment milestone that actually performs an amendment is still
+ * unbuilt, and this is deliberately not it.
+ */
+export const COMMERCIAL_CHANGE_RESOLUTIONS = Object.freeze(['resolved_externally', 'withdrawn']);
+export const COMMERCIAL_CHANGE_STATES = Object.freeze(['pending_commercial_followup', ...COMMERCIAL_CHANGE_RESOLUTIONS]);
+export const COMMERCIAL_CHANGE_TRANSITIONS = Object.freeze({
+  pending_commercial_followup: Object.freeze([...COMMERCIAL_CHANGE_RESOLUTIONS]),
+  resolved_externally: Object.freeze([]),
+  withdrawn: Object.freeze([]),
+});
 export const DELIVERABLE_STATES = Object.freeze(['planned', 'completed']);
 export const ACCEPTANCE_STATES = Object.freeze(['pending', 'accepted', 'rejected']);
 export const ACCEPTANCE_OUTCOMES = Object.freeze(['accepted', 'rejected']);
@@ -152,7 +172,8 @@ function canonical(value) {
 }
 
 /**
- * The exact scope an acceptance request froze, and its fingerprint.
+ * The exact scope an acceptance request froze, and the fingerprint of the work
+ * inside it.
  *
  * Acceptance is testimony about a *specific* body of work. Rebuilding that
  * scope later from the current deliverable set would silently re-point old
@@ -160,17 +181,21 @@ function canonical(value) {
  * been accepted by a customer who never saw it. So the request stores the scope
  * it saw, and every later reader uses the stored copy.
  *
- * The fingerprint deliberately excludes the request's own timestamp and key: it
- * identifies *what* was accepted, not *when it was asked*. That is what lets
- * the framework refuse a second request over scope somebody already accepted or
- * rejected, and it is why replanning — which changes the deliverables — yields
- * a different one.
+ * The fingerprint covers the **body of work only**: the project, the milestone
+ * and every deliverable in it. It excludes the request's own timestamp and key,
+ * because it identifies *what* was accepted rather than *when it was asked* —
+ * and it excludes `customerRef` for the same reason with more force. That field
+ * is an unverified operator label, and folding it in would have made the
+ * settled-scope rule bypassable by retyping the customer's name: a rejected
+ * scope re-asked as "Acme" instead of "ACME" would have been a new question
+ * over identical work, with nothing in the record saying so. The label is still
+ * frozen and stored — it is part of the testimony — it just cannot buy a second
+ * answer.
  */
 function freezeScope({ projectId, milestoneId, deliverables, customerRef }) {
-  const scope = {
+  const work = {
     projectId,
     milestoneId,
-    customerRef,
     deliverables: [...deliverables]
       .map((row) => ({
         id: row.id,
@@ -181,9 +206,15 @@ function freezeScope({ projectId, milestoneId, deliverables, customerRef }) {
         completionEvidenceRef: row.completionEvidenceRef ?? null,
         deliveryWorkPackageId: row.deliveryWorkPackageId,
       }))
-      .sort((a, b) => (a.id < b.id ? -1 : 1)),
+      .sort((a, b) => {
+        if (a.id === b.id) return 0;
+        return a.id < b.id ? -1 : 1;
+      }),
   };
-  return { scope, fingerprint: createHash('sha256').update(canonical(scope)).digest('hex') };
+  return {
+    scope: { ...work, customerRef },
+    fingerprint: createHash('sha256').update(canonical(work)).digest('hex'),
+  };
 }
 
 /** Return the existing record for a source key, or null. Exact, indexed, unpaged. */
@@ -426,6 +457,7 @@ export function buildChangeAcceptanceActions(options = {}) {
             estimatedDeltaCents: record.commercialDeltaCents,
             currency: record.currency,
             status: 'pending_commercial_followup',
+            resolutionReason: null, resolutionEvidenceRef: null, resolvedBy: null, resolvedAt: null,
             raisedBy: actorId(actor), raisedAt: now(),
           }, { actor });
           const handed = await changes.applyManaged(record.id, {
@@ -464,6 +496,47 @@ export function buildChangeAcceptanceActions(options = {}) {
         step('delivery.plan-revision.created', { id: revision.id, version });
         step('delivery.change-request.decided', { id: record.id, decision: 'approved' });
         return { changeRequest: approved, decision: 'approved', planRevision: revision, commercialChange: null };
+      },
+    },
+
+    {
+      module: names.commercialChange,
+      name: 'resolve-commercial-change',
+      label: 'Record the commercial follow-up outcome',
+      description: 'Record what happened to this candidate outside this application. It amends nothing: no Quote, Order, Contract, Contract Version or Subscription is created or altered here, no amendment record exists and no amount is recognized. It says a human closed the commercial question, so Delivery can stop treating the scope as disputed.',
+      actionContract: 1,
+      fromStates: ['pending_commercial_followup'],
+      input: [
+        { name: 'resolution', type: 'string', required: true, hint: 'resolved_externally — the commercial question was settled elsewhere; or withdrawn — nobody is pursuing it.' },
+        { name: 'reason', type: 'string', required: true, hint: 'What was settled, in the operator\'s words. An unexplained resolution is not evidence.' },
+        { name: 'evidenceRef', type: 'string', required: false, hint: 'Your own reference to the amendment or the decision. Nothing is stored, fetched or verified here.' },
+      ],
+      /** @param {any} ctx */
+      async execute({ record, input, modules, actor, now, step }) {
+        requireHuman(actor, 'Recording a commercial follow-up outcome');
+        // Stated here as well as in `fromStates`, so the rule is readable where
+        // the decision is made: a candidate is resolved exactly once.
+        if (!COMMERCIAL_CHANGE_TRANSITIONS[record.status].length) {
+          throw new AppError(`delivery-commercial-change "${record.id}" was already resolved ("${record.status}")`, {
+            code: 'DELIVERY_TRANSITION_NOT_ALLOWED', status: 409,
+            details: { id: record.id, from: record.status, allowed: [] },
+          });
+        }
+        const resolution = oneOf(input.resolution, COMMERCIAL_CHANGE_RESOLUTIONS, 'resolution');
+        const reason = boundedText(input.reason, 'reason', { required: true });
+        const evidenceRef = boundedText(input.evidenceRef, 'evidenceRef', { max: MAX_REF });
+        const candidates = trusted(modules, names.commercialChange);
+
+        const resolved = await candidates.applyManaged(record.id, {
+          status: resolution,
+          resolutionReason: reason,
+          resolutionEvidenceRef: evidenceRef,
+          resolvedBy: actorId(actor), resolvedAt: now(),
+        }, { actor });
+        step('delivery.commercial-change.resolved', { id: record.id, resolution });
+        // Said in the result the way `complete-deliverable` says `accepted:
+        // false`: the caller is told what did *not* happen, not left to assume.
+        return { commercialChange: resolved, amended: false };
       },
     },
 
@@ -632,15 +705,27 @@ export function buildChangeAcceptanceActions(options = {}) {
         // A change the business has not resolved may add or remove exactly the
         // work being submitted, so asking a customer to accept it now would
         // freeze testimony about a scope nobody has agreed.
-        const unresolved = modules.get(names.changeRequest).service
+        //
+        // The block reads the *candidate*, not the change request, because the
+        // change request's `pending_commercial_followup` is terminal. Reading
+        // the terminal state would have made this refusal permanent: one
+        // approved project-wide commercial change would have stopped every
+        // milestone in the project from ever recording acceptance again, with
+        // no action anywhere able to clear it.
+        const changeService = modules.get(names.changeRequest).service;
+        const unresolved = modules.get(names.commercialChange).service
           .listWhere({ deliveryProjectId: record.deliveryProjectId, status: 'pending_commercial_followup' })
-          .filter((change) => affectsMilestone(change, record.id, deliverables));
+          .map((candidate) => ({ candidate, change: changeService.get(candidate.deliveryChangeRequestId) }))
+          .filter(({ change }) => affectsMilestone(change, record.id, deliverables));
         if (unresolved.length > 0) {
           throw new AppError(
-            `${unresolved.length} commercial change(s) affecting this scope are still awaiting commercial follow-up, so acceptance cannot be requested over it`,
+            `${unresolved.length} commercial change(s) affecting this scope are still awaiting commercial follow-up, so acceptance cannot be requested over it. Record the follow-up outcome on each candidate once the commercial question is settled outside this application`,
             {
               code: 'DELIVERY_COMMERCIAL_CHANGE_UNRESOLVED', status: 409,
-              details: { changeRequests: unresolved.map((change) => change.id).sort() },
+              details: {
+                changeRequests: unresolved.map(({ change }) => change.id).sort(),
+                commercialChanges: unresolved.map(({ candidate }) => candidate.id).sort(),
+              },
             },
           );
         }
@@ -753,10 +838,15 @@ export function changeAcceptanceMetadata() {
     changeTransitions: Object.fromEntries(
       Object.entries(CHANGE_TRANSITIONS).map(([from, to]) => [from, [...to]]),
     ),
+    commercialChangeStates: [...COMMERCIAL_CHANGE_STATES],
+    commercialChangeTransitions: Object.fromEntries(
+      Object.entries(COMMERCIAL_CHANGE_TRANSITIONS).map(([from, to]) => [from, [...to]]),
+    ),
     deliverableStates: [...DELIVERABLE_STATES],
     acceptanceStates: [...ACCEPTANCE_STATES],
-    humanApproval: 'proposing, deciding, planning, completing, requesting and recording each require actor.type === "user"; an agent is refused 403 HUMAN_APPROVAL_REQUIRED. This is a human-actor boundary, not Delivery Manager or customer role enforcement',
+    humanApproval: 'proposing, deciding, planning, completing, requesting, recording and resolving each require actor.type === "user"; an agent is refused 403 HUMAN_APPROVAL_REQUIRED. This is a human-actor boundary, not Delivery Manager or customer role enforcement',
     commercialBoundary: 'a change with commercial consequence raises an immutable delivery-commercial-change candidate and stops. No Quote, Order, Contract, Contract Version or Subscription is created or altered, no amendment exists, no amount is recognized and nothing is sent. A future Commercial Amendment milestone consumes the candidate through a declared capability',
+    commercialResolution: 'recording a follow-up outcome on a candidate (resolved_externally or withdrawn) amends nothing: it records that a human settled the commercial question outside this application, which is what stops a raised candidate blocking acceptance evidence for the rest of the project\'s life',
     acceptanceMeaning: 'acceptance evidence records what a USER ACTOR says a customer said. It is not an authenticated customer action, not a legal signature, not a verified identity, and not authorization to bill',
     rejectionSemantics: 'a rejected acceptance preserves execution history: it is recorded, and replanning requires a new change request. Completed work is never destructively reopened, because M14b1 economics snapshots must stay reproducible',
     immutability: 'change requests, plan revisions, commercial-change candidates, deliverables, acceptance requests and acceptance evidence have no public create, update or delete; a correction is a new record',
@@ -796,9 +886,11 @@ export function createChangeCapability(options = {}) {
           };
         },
         /**
-         * The candidates a future Commercial Amendment milestone would consume.
-         * Reading one changes nothing: consuming it is that milestone's job, in
-         * the package that owns commercial truth.
+         * The candidates a future Commercial Amendment milestone would consume
+         * — the ones still awaiting a commercial answer, never those a human
+         * has already recorded as settled elsewhere or withdrawn. Reading one
+         * changes nothing: consuming it is that milestone's job, in the package
+         * that owns commercial truth.
          */
         pendingCommercialChanges() {
           return modules.get(names.commercialChange).service

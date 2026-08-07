@@ -53,6 +53,7 @@ test('an activated contract is planned and handed over to delivery', async (t) =
     // M14a: the execution transitions live in the same package.
     'delivery-acceptance-request.record-acceptance',
     'delivery-change-request.decide-change-request',
+    'delivery-commercial-change.resolve-commercial-change',
     'delivery-deliverable.complete-deliverable',
     'delivery-milestone.complete-milestone', 'delivery-milestone.request-acceptance',
     'delivery-milestone.start-milestone',
