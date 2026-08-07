@@ -1,10 +1,11 @@
 // @ts-check
 
 /**
- * Renders the built site to PNGs: the GitHub social preview and the launch gallery.
+ * Renders the built site to PNGs: the GitHub social preview and page captures.
  *
- * These are the images a repository card, a Product Hunt gallery and a link
- * unfurl show, and hand-made ones drift from the product within a release. Here
+ * These are the images a repository card and a link unfurl show, and the source
+ * material a launch gallery gets cropped from. Hand-made ones drift from the
+ * product within a release; here
  * they are generated from the same templates and the same claims ledger as the
  * site, so an image can no longer claim something the tests stopped supporting.
  *
@@ -15,7 +16,7 @@
  * Run: npm run site:shots      Output: site/dist/shots/
  */
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
@@ -51,28 +52,33 @@ const targets = [
     note: 'GitHub social preview — Settings → General → Social preview',
   },
   {
-    name: 'gallery-landing.png',
+    name: 'hero.png',
     file: 'index.html',
     width: 1270,
     height: 760,
     scale: 2,
-    note: 'Launch gallery 1 — the promise and the proof',
+    note: 'Above the fold — the promise, the proof line and the two calls to action',
+  },
+  // Full-page renders rather than per-section frames. A #fragment does not settle
+  // before a headless screenshot fires, so anchor-targeted shots silently return
+  // the hero — an image that looks fine and shows the wrong thing. Capturing the
+  // whole page is deterministic; crop from it for a gallery when there is a launch
+  // to build one for.
+  {
+    name: 'page-landing.png',
+    file: 'index.html',
+    width: 1270,
+    height: 5200,
+    scale: 1,
+    note: 'Full landing page, top to bottom',
   },
   {
-    name: 'gallery-evidence.png',
+    name: 'page-evidence.png',
     file: 'evidence.html',
     width: 1270,
-    height: 760,
-    scale: 2,
-    note: 'Launch gallery 2 — every claim bound to its tests',
-  },
-  {
-    name: 'gallery-limits.png',
-    file: 'index.html#limits',
-    width: 1270,
-    height: 760,
-    scale: 2,
-    note: 'Launch gallery 3 — what it cannot do yet',
+    height: 4200,
+    scale: 1,
+    note: 'Full evidence page — the complete claims ledger',
   },
 ];
 
@@ -97,6 +103,8 @@ try {
       '--no-sandbox',
       '--disable-gpu',
       '--hide-scrollbars',
+      // Let layout and any web font settle before the frame is captured.
+      '--virtual-time-budget=2000',
       `--force-device-scale-factor=${target.scale}`,
       `--screenshot=${join(shots, target.name)}`,
       `--window-size=${target.width},${target.height}`,
@@ -160,7 +168,7 @@ function findChromium() {
 /** @param {string} directory */
 function readDirSafe(directory) {
   try {
-    return require('node:fs').readdirSync(directory);
+    return readdirSync(directory);
   } catch {
     return [];
   }
