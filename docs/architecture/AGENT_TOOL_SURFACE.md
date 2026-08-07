@@ -18,8 +18,12 @@ claim's warranty:
 | Section | Means |
 |---|---|
 | **A — Official facts** | stated by the vendor's own current documentation, quoted, with the URL and the date it was read |
-| **B — Framework inference** | what follows *for this repository* from those facts. Reasoning, not vendor policy |
+| **U — Unverified** | believed, from a secondary source, and **not** an official fact. Never quote it as one |
+| **B — Framework inference** | what follows *for this repository* from the facts in A. Reasoning, not vendor policy |
 | **C — Proposed policy** | what this repository should do. **Not implemented, not decided** |
+
+Section **U** exists because deleting a weak claim and silently keeping the
+policy it inspired is worse than labelling it. Nothing in B or C may lean on U.
 
 Mixing the three is how a strategy document becomes a false claim about
 somebody else's product. If a fact below cannot be re-verified at its URL, treat
@@ -73,24 +77,46 @@ CLI documentation.
 > are different mechanisms, and only the first is confirmed above. DX2 owns the
 > verification.
 
-### A.3 Codex
+---
 
-**Read this section's warranty first.** `developers.openai.com` — the first-party
-documentation host — is **blocked by this environment's network egress proxy**,
-so the facts below could not be fetched directly. They come from search-engine
-summaries of those official pages plus the public `openai/codex` repository, on
-2026-08-07. They are **second-hand and must be re-verified from an environment
-with access** before any of them is built against.
+## U — Unverified: Codex, secondary sources only
 
-| Claim | Confidence |
+**Nothing in this section is an official fact, and none of it may be quoted as
+one.** It is kept, rather than deleted, so a future reader knows what was
+believed and exactly how weak the evidence was.
+
+**Verification attempts, 2026-08-07, all failed from this environment:**
+
+| Attempted | Result |
 |---|---|
-| MCP servers are configured in TOML under an `[mcp_servers]` table, in `~/.codex/config.toml`, with per-project `.codex/config.toml` for trusted projects | high — consistent across independent sources |
-| `codex mcp add <name> --env K=V -- <command>` adds a stdio server | high |
-| Codex can itself run as an MCP server (`codex mcp-server`), which is how the Agents SDK drives it | high |
-| Codex reads an MCP server's `instructions` field as server-wide guidance, and advises keeping *"the first 512 characters self-contained"* | medium — quoted in a summary of the official page, not read directly |
-| keys including `startup_timeout_sec`, `tool_timeout_sec` and `bearer_token_env_var` exist | **low** — sourced from repository issues, not documentation |
-| `AGENTS.md` is the instruction file Codex reads | high — and independently true of this repository, which already ships one |
-| a stated tool-count cap | **not found**; absence of evidence, not evidence of absence |
+| `https://developers.openai.com/codex/mcp` | blocked by this environment's network egress proxy |
+| `https://raw.githubusercontent.com/openai/codex/main/docs/mcp.md` | 404 |
+| `https://raw.githubusercontent.com/openai/codex/main/docs/advanced.md` | 404 |
+| `https://raw.githubusercontent.com/openai/codex/main/README.md` | fetched; no MCP or configuration content |
+| `openai/codex` → `docs/config.md`, via raw and via the blob view | fetched; the string `mcp_servers` was not found in what came back |
+
+What remains is search-engine summaries of the first-party pages, plus public
+issues in the `openai/codex` repository. Treated as **claims**, not facts:
+
+| Claim | Source class |
+|---|---|
+| MCP servers are configured in TOML under an `[mcp_servers]` table, in `~/.codex/config.toml`, with per-project `.codex/config.toml` for trusted projects | summary of a first-party page, not read directly |
+| `codex mcp add <name> --env K=V -- <command>` adds a stdio server | summary of a first-party page |
+| Codex can itself run as an MCP server (`codex mcp-server`) | summary of a first-party page |
+| Codex reads an MCP server's `instructions` field, advising that the first 512 characters be self-contained | summary only — the number is **not** verified and nothing here depends on it |
+| a streamable-HTTP server uses a `url` key, behind `experimental_use_rmcp_client` | repository issues — the weakest class |
+| keys such as `startup_timeout_sec`, `tool_timeout_sec`, `bearer_token_env_var` | repository issues |
+| `AGENTS.md` is the instruction file Codex reads | independently true of this repository, which ships one |
+| a stated tool-count cap | **not found.** Absence of evidence, not evidence of absence |
+
+**No policy in section C depends on any of the above**, and in particular no
+rule anywhere in this repository depends on an unverified numeric threshold. The
+one Codex-shaped fact this repository does rely on — that `AGENTS.md` is read —
+is verified by the repository's own use of it, not by this table.
+
+**Before anything is built against Codex**, re-run the table above from an
+environment that can reach `developers.openai.com`, and move whatever verifies
+into section A with its retrieval date.
 
 ---
 
@@ -107,7 +133,7 @@ supports it.** What the sources actually say:
   removes.
 - Gemini CLI states **no cap**, and ships `includeTools`/`excludeTools` because
   operators want to narrow a surface for their own reasons.
-- For Codex, no cap was found, from sources that could not be read directly.
+- For Codex no cap was found either — but from **secondary sources only** (section U), so it is recorded as "not found", never as "none exists".
 
 The honest generalization is about **cost and confusion, not a ceiling**: a large
 tool surface competes for context and for the model's attention, and near-duplicate
@@ -163,6 +189,42 @@ gets a better answer today from `crm app inspect` than from any of the nine.
 
 **Nothing in this section exists.** No tool listed here is implemented, and
 listing one is not a commitment to build it.
+
+### C.0 The shape of the surface, before any tool exists
+
+Nine commitments, in the order they constrain a design. They are **policy**, not
+implementation, and none of them is a guarantee about a model's behavior.
+
+| | Commitment |
+|---|---|
+| 1 | **CLI-first.** The CLI is the contract; any tool surface mirrors it. A harness with no MCP loses convenience, never capability |
+| 2 | **A capability is not a tool.** `delivery-change-management@1` exists so *packages* can read each other. Exposing it as a tool would publish an internal seam as a public verb |
+| 3 | **A package is not a tool.** Adding a package must not add tools. Otherwise the surface grows with the domain model, which is exactly backwards |
+| 4 | **Tools are job-oriented.** A tool answers a question somebody actually has — "what is this application", "is this plan still true" — not "call this method" |
+| 5 | **A small always-on discovery and solution surface.** Enough to find everything else. The design target is **3–5 always-on families**; a target, not a promise |
+| 6 | **Domain namespaces are deferred and searchable**, not resident. Compact namespaces are a design target too |
+| 7 | **Read is separated from mutation** at the surface, not only in the docs. A read tool that can write is a write tool |
+| 8 | **The allow-list is dynamic**, derived from the goal, the plan and the actual composition — never a static union of everything installed |
+| 9 | **Sensitive mutation requires human approval**, per call, never a blanket allow |
+
+Three things this repository will not claim about that surface:
+
+- **No flat MCP surface** that exposes every package method as a tool. Point 3
+  is the whole reason.
+- **No Project MCP exists.** DX13 is unbuilt. Describing its shape is not
+  describing a product.
+- **Remote mutation stays gated by the Production Spine.** Without auth, tenancy
+  and RBAC there is nobody to authorize a remote write, so the gate is an
+  absence of meaning rather than a missing feature.
+
+**On multiple providers of one capability.** Capability providers in this
+repository are **singleton**: one package provides `delivery-obligations@1`, and
+the registry resolves one edge. Nothing in the current package graph supports two
+packages competing to provide the same capability, and no document here should
+imply otherwise. A future world with several interchangeable channel or provider
+implementations needs an explicit provider **registry with instances** — a
+design that does not exist — or it stays future work. A tool surface must not be
+designed as if that already resolved.
 
 ### C.1 Four tiers, and the rule that assigns them
 

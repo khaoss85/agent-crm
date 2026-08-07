@@ -39,13 +39,15 @@ Verified against the working tree, 2026-08-07.
 
 | Domain | Runtime home | Is it a package? |
 |---|---|---|
+| Core CRM (Sales) | project-generated modules: company, contact, opportunity, lead, task, approval | no — these are a project's own records, not a domain package |
 | Pipeline | `packages/core/src/pipeline-*.js`; `packages/pipelines/generated/` | no — and correctly so, see ¹ |
 | Lead Intelligence | `packages/core/src/intelligence-registry.js`, `intelligence-actions.js`; `packages/intelligence/generated/` | no |
 | Commercial Operations | `packages/core/src/commercial-*.js`, `catalog-sync.js`; `packages/commercial/generated/` | no |
 | Signature & Order | `packages/core/src/signature-*.js`, `external-operation.js`; `packages/signature/generated/` | no |
 | Contract Activation | `packages/contracts/` — `src/`, `modules/`, `README.md` | **yes** |
 | Delivery | `packages/delivery/` — `src/`, `modules/`, `README.md` | **yes** |
-| Service | not built | — |
+| Custom-package fixture | `examples/custom-packages/partner-scorecard/` | **yes** — the customer-authoring proof |
+| Service | not built (M15) | — |
 | Marketing & Growth | documentation only (`docs/strategy/`) | — |
 
 Each of the four has a `packages/<name>/generated/` directory and nothing else:
@@ -77,7 +79,20 @@ horizontal capability the way the contract intends?*
 | **Package-scoped Admin section** — renders only while the package's schema metadata is published | `not_applicable` — the board is a core Admin feature | `not_applicable` | `partial` — the quote screens are core Admin, not gated on package metadata | `partial` | `aligned` | `aligned` |
 | **Detach/reattach proof** — removing the domain removes its whole surface and nothing else | `not_applicable` ¹ | `needs_extraction` | `needs_extraction` | `needs_extraction` | `aligned` | `aligned` |
 | **Fault-injection and two-connection evidence** | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
+| **Migration array with per-entry checksums** — an applied migration cannot be edited | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
+| **Declared action metadata** — `fromStates`/`toState` published in the schema and in `app inspect` | `aligned` | `not_applicable` — scoring and routing are not transitions | `aligned` | `aligned` | `aligned` | `aligned` |
+| **A domain Skill, mirrored in `.claude/` and `.agents/`** | `partial` — covered by `create-crm-workflow`, no pipeline-specific Skill | `partial` — `.claude/` only; no `.agents/` mirror | `partial` — `.claude/` only | `partial` — `.claude/` only | `partial` — `.claude/` only | `partial` — `.claude/` only |
+| **A tool namespace of its own** | `not_applicable` | `deferred` — DX13 | `deferred` — DX13 | `deferred` — DX13 | `deferred` — DX13 | `deferred` — DX13 |
 | **JTBD rows with linked evidence** | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
+
+### The domains outside the six-column table
+
+| Domain | Where it stands |
+|---|---|
+| **Core CRM (Sales)** — company, contact, opportunity, lead, task, approval | `not_applicable` on every package-seam row: these are a *project's* generated records, not a domain package, and a customer's own CRM objects must never require one. `aligned` on the kernel rows (module evolution, migration checksums, managed fields where declared, events, audit and trace, exact reads, JTBD evidence). Its Skills are `create-crm-module` and `create-crm-workflow` |
+| **Custom-package fixture** (`examples/custom-packages/partner-scorecard/`) | `aligned` on the package seam by construction — it exists to prove a customer-authored package attaches, works and detaches with no kernel change. It deliberately exercises only a slice: one resource, one action, no capability of its own, so the capability rows read `not_applicable` |
+| **Service** | not built. M15 is the next runtime milestone and must arrive package-native on every seam row from its first commit; the Compatibility Backfill Rule applies to it as an author, not as a legacy |
+| **Marketing & Growth** | documentation only. No row can be assessed, and none is claimed |
 
 ¹ **Pipeline is not a domain.** `buildMoveStageAction` is a generic factory that
 stages *any* module a project points it at — a reusable runtime capability, which
@@ -109,6 +124,104 @@ Everything else is `partial` or `not_applicable`, and `partial` is where an
 argument is worth having — `not_applicable` rows are settled by the domain's
 nature.
 
+## Every non-aligned cell, in full
+
+The matrix gives a status. A status without a consequence is a colour. Each
+entry below states the **gap**, the **evidence** it rests on, the **pass that
+closes it**, and the **compatibility risk** of closing it.
+
+### `needs_extraction` — Lead Intelligence, Commercial Operations, Signature & Order
+
+Four rows, one gap: the package seam, declared capabilities, `packageContract`
+conformance, and the detach proof.
+
+- **Gap.** The domain's runtime lives in `packages/core/src/`, so it declares no
+  package, owns no resources through a package, publishes no capability and
+  cannot be detached.
+- **Evidence.** `packages/{intelligence,commercial,signature}/` contain only
+  `generated/`; the runtime is `packages/core/src/{intelligence,commercial,signature}-*.js`.
+  `app inspect` on a composed project lists their actions and modules and **no
+  package entry** for them.
+- **Pass that closes it.** The controlled Legacy Domain Alignment Pass, after
+  M15 and after DX4 makes conformance mechanical. One domain, one PR.
+- **Compatibility risk.** **High, and it is data risk, not code risk.** These
+  domains own scoring runs, quote versions, signed orders and provider
+  definitions whose fingerprints are checked at startup. A move must preserve
+  every source key, every stored fingerprint and every historical decision
+  byte-for-byte. The acceptance criterion is behavior preservation proved from
+  outside — a "cleaner" extraction that changes one recorded outcome has failed.
+
+### `partial` — AX1 visibility and AX2 citability, same three domains
+
+- **Gap.** An agent can cite an action or a record revision, but there is no
+  package version or capability to cite, so a Solution Plan cannot bind to them
+  the way it binds to `delivery@4`.
+- **Evidence.** `packages: []` for them in `app inspect`; the AX2 example plan
+  can only pin `contracts` and `delivery`.
+- **Pass.** Closes automatically with extraction — it is the same gap seen from
+  the agent's side, not separate work.
+- **Compatibility risk.** Low on its own; it inherits the extraction's risk.
+
+### `partial` — the Skill mirrors
+
+- **Gap.** `build-lead-intelligence`, `build-commercial-operations`,
+  `build-signature-order`, `build-contract-activation` and
+  `build-delivery-handover` exist under `.claude/skills/` only. `.agents/skills/`
+  carries six skills, none of them a domain build skill.
+- **Evidence.** `ls .agents/skills/` versus `ls .claude/skills/`.
+- **Pass.** **DX2** (`crm agent skills sync|check`), which is where a drift check
+  belongs — hand-copying five more files just moves the problem.
+- **Compatibility risk.** **None.** Additive files; no runtime reads them.
+
+### `partial` — Commercial Operations against the external-operation contract
+
+- **Gap.** Catalog sync predates ADR-017 and uses its own
+  fetch-outside-the-transaction then reconcile-inside-one shape rather than the
+  intent / call / finalize / compensate contract Signature established.
+- **Evidence.** `packages/core/src/catalog-sync.js` versus
+  `packages/core/src/external-operation.js`.
+- **Pass.** Deferred, with no milestone named — and deliberately so. Catalog sync
+  is idempotent by DB-unique source keys and has its own tests; rewriting a
+  working external boundary to match a later contract is a change with real risk
+  and no user-visible benefit.
+- **Compatibility risk.** **Medium.** It touches a provider boundary and a
+  reconciliation path that customers' catalogs depend on.
+
+### `partial` — the Admin sections of Commercial Operations and Signature & Order
+
+- **Gap.** Their screens are core Admin, not gated on package metadata, so they
+  do not disappear when a package does.
+- **Evidence.** `apps/admin/public/admin-quotes.js` and `admin-signature.js`
+  render unconditionally; `admin-delivery-change.js` returns early without
+  `schema.domains.delivery.changeAcceptance`.
+- **Pass.** Follows extraction; there is nothing to gate on until a package
+  publishes metadata.
+- **Compatibility risk.** Low.
+
+### `partial` — Pipeline's managed records, human boundary and fingerprints
+
+- **Gap.** A stage is current state rather than append-only evidence; the human
+  boundary lives in the approval workflow around a staged move rather than in
+  `move-stage`; a pipeline definition is validated but carries no
+  content-addressed version.
+- **Evidence.** `packages/core/src/pipeline-actions.js` and
+  `pipeline-registry.js`; the human check is in
+  `packages/workflows/src/decide-opportunity-approval.js`.
+- **Pass.** **None planned, and none needed.** These are properties of a generic
+  staging mechanism, not gaps in a domain. Recording them stops a future reader
+  concluding Pipeline was overlooked.
+- **Compatibility risk.** Not applicable.
+
+### `deferred` — a tool namespace, every domain
+
+- **Gap.** No domain has an MCP namespace; the shipped MCP server exposes a
+  sample domain that predates AX1 and AX2.
+- **Evidence.** `docs/MCP.md`; `docs/architecture/AGENT_TOOL_SURFACE.md` §B.3.
+- **Pass.** **DX13**, and only after the exposure policy in that document is a
+  decision rather than a proposal.
+- **Compatibility risk.** Low — additive — but it is the row most likely to be
+  closed badly. §C.0 exists to stop "one tool per package" being the answer.
+
 ## The Compatibility Backfill Rule
 
 > When a PR introduces or changes a **horizontal** capability — one that every
@@ -120,6 +233,22 @@ nature.
 > Retrofitting five domains inside a feature PR is how a feature PR stops being
 > reviewable. But a capability that only the newest domain has, and that nobody
 > wrote down, is a fork rather than a platform.
+
+Five questions, answered in the PR body:
+
+```text
+Which old domains does this touch?
+Which are already aligned?
+Which need metadata only?
+Which need a code backfill?
+Was the Legacy Alignment Matrix updated?
+```
+
+The distinction between the third and fourth is the useful one. A metadata gap —
+a manifest flag, a published field, a Skill file — is cheap and can often be
+closed immediately. A code backfill is a change to a domain's runtime, and for a
+`needs_extraction` domain it is not closeable at all until that domain moves. A
+PR that cannot tell the two apart has not looked.
 
 Three practical consequences:
 
