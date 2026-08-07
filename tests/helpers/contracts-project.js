@@ -70,7 +70,18 @@ export const DELIVERY_POLICY = { policy: 'b2b-delivery-handover', policyVersion:
  *   project **without** the contracts package, which is how domain isolation is
  *   proven rather than asserted.
  */
-export function project(t, { withDomain = true, withDelivery = false, withCustomPackage = false } = {}) {
+export const SERVICE_MANIFESTS = [
+  'service-coverage.module.json', 'service-entitlement.module.json',
+  'service-activation-run.module.json', 'support-case.module.json',
+  'support-case-activity.module.json', 'service-sla-evaluation.module.json',
+  'service-escalation.module.json',
+];
+export const SERVICE_MODULES = [
+  'service-coverage', 'service-entitlement', 'service-activation-run',
+  'support-case', 'support-case-activity', 'service-sla-evaluation', 'service-escalation',
+];
+
+export function project(t, { withDomain = true, withDelivery = false, withCustomPackage = false, withService = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'agent-crm-contracts-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
@@ -88,6 +99,7 @@ export function project(t, { withDomain = true, withDelivery = false, withCustom
   for (const manifest of STARTER_MANIFESTS) apply(join(starter, manifest));
   if (withDomain) for (const manifest of DOMAIN_MANIFESTS) apply(join(root, 'packages/contracts/modules', manifest));
   if (withDelivery) for (const manifest of DELIVERY_MANIFESTS) apply(join(root, 'packages/delivery/modules', manifest));
+  if (withService) for (const manifest of SERVICE_MANIFESTS) apply(join(root, 'packages/service/modules', manifest));
   if (withCustomPackage) apply(join(root, 'examples/custom-packages/partner-scorecard/modules/partner-scorecard.module.json'));
 
   writeFileSync(
@@ -130,12 +142,17 @@ export function project(t, { withDomain = true, withDelivery = false, withCustom
           "import { b2bDeliveryHandoverV1 } from '../../../examples/starters/b2b-lead-qualification/delivery.js';",
           "import { b2bDeliveryCostV1 } from '../../../examples/starters/b2b-lead-qualification/delivery-cost.js';",
         ] : []),
+        ...(withService ? [
+          "import { createServicePackage } from '../../service/src/index.js';",
+          "import { b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1 } from '../../../examples/starters/b2b-lead-qualification/service.js';",
+        ] : []),
         ...(withCustomPackage ? [
           "import { createPartnerScorecardPackage } from '../../../examples/custom-packages/partner-scorecard/src/index.js';",
         ] : []),
         'export const generatedDomains = [',
         '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
         ...(withDelivery ? ['  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1], costPolicies: [b2bDeliveryCostV1] }),'] : []),
+        ...(withService ? ['  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1] }),'] : []),
         ...(withCustomPackage ? ['  createPartnerScorecardPackage(),'] : []),
         '];',
         '',

@@ -1,0 +1,76 @@
+{
+  "manifestVersion": 1,
+  "name": "support-case-activity",
+  "description": "Append-only evidence about one support case: a note, a state transition's context, a customer reply a user actor recorded, or an escalation reason. The visibility label is an assertion by the recorder, never an access grant: no customer can read anything here. No attachment bytes are stored.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "writable": "managed",
+      "unique": true
+    },
+    {
+      "name": "supportCaseId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "serviceCoverageId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "type",
+      "type": "enum",
+      "writable": "managed",
+      "values": [
+        "note",
+        "transition",
+        "customer_reply",
+        "internal_note",
+        "escalation"
+      ]
+    },
+    {
+      "name": "body",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "evidenceRef",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "visibility",
+      "type": "enum",
+      "writable": "managed",
+      "values": [
+        "internal",
+        "customer_visible"
+      ]
+    },
+    {
+      "name": "fromStatus",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "toStatus",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "recordedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "occurredAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

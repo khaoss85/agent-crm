@@ -1,7 +1,8 @@
 {
   "manifestVersion": 1,
+  "revision": 2,
   "name": "service-obligation",
-  "description": "A pending service obligation created at activation (M12) for a component classified as service or support. It is NOT a service contract, an entitlement or an SLA — none of those exist yet.",
+  "description": "One service obligation per activated contract component the Order Activation Policy classified as service work. It starts pending_activation and becomes activated when the optional Service package records the coverage it belongs to. Activating one is an operational fact: no Contract, Contract Version, Subscription or Order is created or altered by it.",
   "fields": [
     {
       "name": "sourceKey",
@@ -37,7 +38,8 @@
       "name": "status",
       "type": "enum",
       "values": [
-        "pending_activation"
+        "pending_activation",
+        "activated"
       ],
       "writable": "managed"
     },
@@ -97,6 +99,16 @@
     {
       "name": "activationId",
       "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "coverageRef",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "activatedAt",
+      "type": "timestamp",
       "writable": "managed"
     }
   ]

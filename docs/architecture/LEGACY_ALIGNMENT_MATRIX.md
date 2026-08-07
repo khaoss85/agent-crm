@@ -91,7 +91,7 @@ horizontal capability the way the contract intends?*
 |---|---|
 | **Core CRM (Sales)** — company, contact, opportunity, lead, task, approval | `not_applicable` on every package-seam row: these are a *project's* generated records, not a domain package, and a customer's own CRM objects must never require one. `aligned` on the kernel rows (module evolution, migration checksums, managed fields where declared, events, audit and trace, exact reads, JTBD evidence). Its Skills are `create-crm-module` and `create-crm-workflow` |
 | **Custom-package fixture** (`examples/custom-packages/partner-scorecard/`) | `aligned` on the package seam by construction — it exists to prove a customer-authored package attaches, works and detaches with no kernel change. It deliberately exercises only a slice: one resource, one action, no capability of its own, so the capability rows read `not_applicable` |
-| **Service** | not built. M15 is the next runtime milestone and must arrive package-native on every seam row from its first commit; the Compatibility Backfill Rule applies to it as an author, not as a legacy |
+| **Service** | **built, on an open PR (M15).** Package-native from its first commit: `aligned` on the package seam, declared capabilities (requires `contracts/service-obligations@1`, provides three), `packageContract: 1` conformance, package version discipline, managed records, the human-actor boundary, fingerprinted declared definitions, transaction-scoped events, audit and trace, exact reads, AX1 visibility, AX2 citability, detach proof, fault-injection and two-connection evidence, and JTBD rows with linked evidence. `not_applicable` on the money contract and the external-operation contract: it prices nothing and calls no provider. `partial` on the Skill mirror — a Service Skill exists under `.claude/` only, the same DX2 gap every domain has. `deferred` on a tool namespace, with the rest, to DX13 |
 | **Marketing & Growth** | documentation only. No row can be assessed, and none is claimed |
 
 ¹ **Pipeline is not a domain.** `buildMoveStageAction` is a generic factory that
@@ -258,6 +258,25 @@ Three practical consequences:
    it is the honest name for a structural blocker.
 3. A reviewer may reject a PR for a missing row the same way they reject a
    missing test — and `docs/QUALITY_GATES.md` §1 now says so.
+
+## The M15 backfill answer, as the rule requires
+
+M15 introduced one horizontal change: a **second capability on an existing
+package**, `contracts/service-obligations@1`, and with it the first evolution of
+a shipped M12 record (`service-obligation` → revision 2, gaining `coverageRef`
+and `activatedAt` and an `activated` status).
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **Contracts only.** It gains a capability and a record revision; nothing else in the repository changed shape |
+| Which are already aligned? | Contracts is `aligned` on every seam row and stays so: the capability is additive, `delivery-obligations@1` is byte-identical, and `packageContract: 1` did not move |
+| Which need metadata only? | **None.** No other domain gained a concept it must now declare |
+| Which need a code backfill? | **None.** Service is a new package and owns its own surface; the three `needs_extraction` domains are untouched and no closer to extraction than before |
+| Was the matrix updated? | Yes — the Service row above, and this section |
+
+The honest note: M15 is *not* evidence that the seam is finished. It is the
+third package and the second consumer, and what it showed the seam still cannot
+express is the input to step 3 of the sequencing below.
 
 ## Sequencing, which this document does not change
 

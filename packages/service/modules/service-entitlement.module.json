@@ -1,0 +1,111 @@
+{
+  "manifestVersion": 1,
+  "name": "service-entitlement",
+  "description": "Immutable evidence of what one service obligation entitles the customer to: a support tier, the case categories and priorities it covers, and the elapsed-time response targets. It is not a billing unit, not a consumption meter and not a permission: it grants no access to anything and authorizes no charge.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "writable": "managed",
+      "unique": true
+    },
+    {
+      "name": "serviceCoverageId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "contractId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "serviceObligationId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "label",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "supportTier",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "categories",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "priorities",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "firstResponseTargetMinutes",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "resolutionTargetMinutes",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "maxOpenCases",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "quantity",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "startDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "endDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyName",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "decisionReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "createdBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "issuedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

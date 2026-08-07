@@ -11,6 +11,7 @@ import { buildContractActions } from './activation.js';
 import { MAX_NOTICE_DAYS, MAX_TERM_DAYS, TERMS_NOTE, TERMS_SOURCE } from './dates.js';
 import { definePackage } from '../../core/index.js';
 import { createDeliveryObligationsCapability } from './capabilities.js';
+import { createServiceObligationsCapability } from './service-capability.js';
 
 /**
  * The Contracts domain package (Milestone 12) — the first domain built under
@@ -54,11 +55,16 @@ export function createContractsDomain(options = {}) {
   return definePackage({
     packageContract: 1,
     name: CONTRACTS_DOMAIN,
-    version: 1,
+    version: 2,
     label: 'Contracts and subscriptions',
     description: 'Activates a signed immutable Order into a commercial contract, a subscription and pending delivery/service obligations.',
     resources: [...CONTRACTS_RESOURCES],
-    capabilities: [createDeliveryObligationsCapability(options.modules)],
+    // Additive: `delivery-obligations@1` is untouched, and the package now also
+    // offers the service half of the same idea to the optional Service package.
+    capabilities: [
+      createDeliveryObligationsCapability(options.modules),
+      createServiceObligationsCapability(options.modules),
+    ],
     actions: buildContractActions(options.modules),
     policies,
     /** Function-free, additive schema metadata — never a handler or a secret. */

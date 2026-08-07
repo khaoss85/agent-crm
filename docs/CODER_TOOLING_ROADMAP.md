@@ -81,14 +81,13 @@ not by effort:
 
 ```text
 Now:
-  complete + independently review M14b2
+  M14b2 merged; M15 Service on an open PR, awaiting adversarial review
 
 Parallel / immediately after:
   DX1 Project Doctor
   DX2 Skill sync/check
 
 Then:
-  M15 Service package
   review the M15 learnings against the seam
 
 After Service learning:

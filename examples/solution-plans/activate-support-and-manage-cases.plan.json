@@ -1,0 +1,292 @@
+{
+  "solutionPlanContract": 1,
+  "revision": 1,
+  "goal": {
+    "id": "activate-support-and-manage-cases",
+    "statement": "Activate premium support from what the customer already bought, enforce response targets, and manage a support case from first report to close.",
+    "outcome": "A support team that can see exactly what each customer is covered for, refuse work nobody bought, and hold defensible evidence of when it responded — without anyone claiming a signature, a bill or a customer login that does not exist."
+  },
+  "metric": {
+    "name": "share_of_cases_with_a_recorded_first_response_inside_target",
+    "definition": "Proportion of support cases whose recorded first response is at or before the elapsed-time target on their entitlement, over cases opened in the period.",
+    "baseline": "unknown — see evidence entry unavailable.no-prior-case-history",
+    "target": "stated by the support organization; this plan does not invent one"
+  },
+  "application": {
+    "inspectionContract": 1,
+    "inspectionFingerprint": "f3095b6d913d7f50b69b355e0f17e1d23d30891643553bfd963302541deb1c22",
+    "packages": [
+      {
+        "name": "contracts",
+        "version": 2
+      },
+      {
+        "name": "service",
+        "version": 1
+      }
+    ],
+    "capabilities": [
+      {
+        "name": "service-obligations",
+        "version": 1,
+        "status": "resolved"
+      },
+      {
+        "name": "service-coverage",
+        "version": 1,
+        "status": "resolved"
+      },
+      {
+        "name": "service-case-management",
+        "version": 1,
+        "status": "resolved"
+      },
+      {
+        "name": "service-sla-evidence",
+        "version": 1,
+        "status": "resolved"
+      }
+    ],
+    "modules": [
+      {
+        "name": "service-coverage",
+        "revision": 1
+      },
+      {
+        "name": "service-entitlement",
+        "revision": 1
+      },
+      {
+        "name": "support-case",
+        "revision": 1
+      },
+      {
+        "name": "service-obligation",
+        "revision": 2
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "id": "decision.use-service-package",
+      "type": "configure",
+      "target": "service.activation",
+      "rationale": "The service package already owns coverage, entitlements and cases, and reaches the commercial source only through contracts/service-obligations@1. Using it is configuration of what exists, not new modelling.",
+      "rungsTried": [
+        1
+      ]
+    },
+    {
+      "id": "decision.author-an-activation-policy",
+      "type": "extend",
+      "target": "service.activation-policy",
+      "rationale": "What an obligation entitles a customer to is a business decision, so it belongs in a versioned, fingerprinted policy rather than in code that reads a label. The package supplies the contract; the organization supplies the rules.",
+      "rungsTried": [
+        1,
+        2
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "id": "step.plan-before-activating",
+      "decisionId": "decision.use-service-package",
+      "description": "Read what the contract's pending service obligations would become, before writing anything. Planning records nothing, so it is safe to run as often as it takes to agree.",
+      "requiresCapabilities": [
+        "service-obligations"
+      ],
+      "approvals": [],
+      "verifies": [
+        "metric.first-response-share"
+      ]
+    },
+    {
+      "id": "step.activate-coverage",
+      "decisionId": "decision.author-an-activation-policy",
+      "description": "A human activates the coverage. An obligation the policy cannot decide is refused rather than guessed, and a human override carries a stated reason. What is produced is operational and is not a signed agreement: the commercial record is not touched by any of it.",
+      "requiresCapabilities": [
+        "service-obligations",
+        "service-coverage"
+      ],
+      "approvals": [],
+      "verifies": [
+        "metric.first-response-share"
+      ]
+    },
+    {
+      "id": "step.manage-cases",
+      "decisionId": "decision.use-service-package",
+      "description": "Record cases against an entitlement, answer them, move them over the declared transition table, and append every note as evidence. The entitlement is enforced server-side: an uncovered category, an uncovered priority or a full open-case limit is refused.",
+      "requiresCapabilities": [
+        "service-case-management"
+      ],
+      "approvals": [],
+      "verifies": [
+        "metric.first-response-share"
+      ]
+    },
+    {
+      "id": "step.record-sla-and-escalation",
+      "decisionId": "decision.use-service-package",
+      "description": "Record what the elapsed-time targets said at a stated instant, and record an escalation when a human decides to escalate. Nothing evaluates or escalates on a clock, because no scheduler exists.",
+      "requiresCapabilities": [
+        "service-sla-evidence"
+      ],
+      "approvals": [],
+      "verifies": [
+        "metric.first-response-share"
+      ]
+    }
+  ],
+  "approvals": [],
+  "evidence": {
+    "observedFacts": [
+      {
+        "id": "fact.obligations-exist",
+        "statement": "Activating a contract already raises pending service obligations, which sit unconsumed until something activates them.",
+        "source": "app inspect: modules[] service-obligation; packages/contracts/src/activation.js",
+        "citations": []
+      },
+      {
+        "id": "fact.service-package-owns-support",
+        "statement": "The service package owns coverage, entitlements, cases, case activity, SLA evaluations and escalations, and offers three read-only capabilities.",
+        "source": "app inspect: packages[] service@1, capabilities[], resources[]",
+        "citations": []
+      },
+      {
+        "id": "fact.one-way-dependency",
+        "statement": "Service reaches the commercial source only through contracts/service-obligations@1; contracts does not know Service exists.",
+        "source": "app inspect: packages[].requires, packages[].provides",
+        "citations": []
+      },
+      {
+        "id": "fact.sla-is-elapsed-time",
+        "statement": "SLA targets are elapsed wall-clock minutes from the injected UTC clock, with no calendar, no holidays and no paused clock.",
+        "source": "schema domains.service.slaBasis",
+        "citations": []
+      },
+      {
+        "id": "fact.coverage-is-not-a-contract",
+        "statement": "A service coverage is an operational record: it is not a signed agreement, nobody signed it, it has no envelope, signer or artifact, and it neither amends nor replaces the Commercial Contract it was activated from.",
+        "source": "schema domains.service.coverageMeaning; packages/service/src/index.js",
+        "citations": []
+      }
+    ],
+    "assumptions": [
+      {
+        "id": "assume.recurring-means-support",
+        "statement": "The organization sells ongoing support as a recurring component, so a recurring obligation is what establishes coverage.",
+        "citations": []
+      },
+      {
+        "id": "assume.one-coverage-per-contract",
+        "statement": "One coverage per contract is sufficient for this organization; multiple concurrent coverages per contract are not planned here.",
+        "citations": []
+      }
+    ],
+    "derivedMetrics": [
+      {
+        "id": "metric.first-response-share",
+        "statement": "The share of cases answered inside their first-response target is computable from a recorded SLA evaluation per case, because the evaluation stores the exact inputs it used.",
+        "citations": [
+          "fact.sla-is-elapsed-time",
+          "fact.service-package-owns-support"
+        ]
+      }
+    ],
+    "inferences": [
+      {
+        "id": "infer.refusal-beats-a-guess",
+        "statement": "An obligation the policy cannot classify should refuse rather than default, because a defaulted support tier is a promise nobody in the business made.",
+        "citations": [
+          "fact.service-package-owns-support",
+          "assume.recurring-means-support"
+        ]
+      }
+    ],
+    "recommendations": [
+      {
+        "id": "rec.use-the-existing-package",
+        "statement": "Configure and extend the service package rather than modelling support anywhere else: the domain already has an owner, and a second model would split the evidence.",
+        "citations": [
+          "fact.coverage-is-not-a-contract",
+          "fact.service-package-owns-support",
+          "metric.first-response-share"
+        ]
+      },
+      {
+        "id": "rec.version-the-policy",
+        "statement": "Put the entitlement rules in a versioned activation policy so a stored coverage always names the exact rules that produced it, and changing the rules later cannot rewrite what an old coverage meant.",
+        "citations": [
+          "fact.service-package-owns-support",
+          "infer.refusal-beats-a-guess"
+        ]
+      },
+      {
+        "id": "rec.do-not-promise-a-calendar",
+        "statement": "State the elapsed-time basis wherever an SLA figure is shown. A target presented without it will be read as a business-hours commitment, which this application cannot honour.",
+        "citations": [
+          "fact.sla-is-elapsed-time",
+          "infer.refusal-beats-a-guess"
+        ]
+      }
+    ],
+    "unavailableEvidence": [
+      {
+        "id": "unavailable.no-prior-case-history",
+        "statement": "No baseline for first-response performance exists, because no case history has been recorded in this application yet.",
+        "reason": "Support cases begin at M15; nothing recorded a case before it, and reconstructing a first-response history would be an invention rather than evidence.",
+        "citations": []
+      },
+      {
+        "id": "unavailable.no-business-hours",
+        "statement": "Whether the organization's targets are meant as business hours cannot be known here, and no calendar exists to express one.",
+        "reason": "No calendar exists in this framework, so an intended business-hours reading cannot be represented, let alone verified against what the organization meant.",
+        "citations": []
+      },
+      {
+        "id": "unavailable.no-customer-identity",
+        "statement": "Whether a case was genuinely reported by the customer cannot be established: no customer is authenticated and no channel is integrated.",
+        "reason": "No customer is authenticated and no channel is integrated, so who actually reported a case is an assertion by the recorder and nothing here can check it.",
+        "citations": []
+      }
+    ]
+  },
+  "limitations": [],
+  "acceptance": {
+    "checks": [
+      "planning writes no record, no audit row and no event",
+      "an obligation the policy cannot decide refuses activation until a human overrides it with a reason",
+      "no commercial row differs before and after an activation",
+      "a case against an uncovered category, an uncovered priority or a full entitlement is refused server-side",
+      "a recorded SLA evaluation names the instant and the inputs it used, and never claims to be current",
+      "an escalation records that a human escalated, and routes and notifies nothing"
+    ],
+    "jtbdRows": [
+      "JTBD-DS-11",
+      "JTBD-DS-12"
+    ],
+    "artifacts": [
+      {
+        "kind": "package",
+        "path": "packages/service/src/index.js",
+        "description": "The Service package definition, its capabilities and its declared dependency."
+      },
+      {
+        "kind": "policy",
+        "path": "examples/starters/b2b-lead-qualification/service.js",
+        "description": "Two worked activation policies, one of which deliberately cannot decide an ordinary support obligation."
+      },
+      {
+        "kind": "admin-view",
+        "path": "apps/admin/public/admin-service.js",
+        "description": "The package-scoped service section: coverage, entitlements, cases, SLA evidence and escalation."
+      },
+      {
+        "kind": "test",
+        "path": "tests/service-operations-evidence.test.js",
+        "description": "Fault injection, two-connection races, exact reads past 500 rows, SLA boundaries and hostile input."
+      }
+    ]
+  }
+}

@@ -14,14 +14,14 @@ Generated: **2026-08-07**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **AX2 — Machine-readable Solution Plans** on top of **M14b1 — Delivery economics** on top of **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
-| Main SHA at generation | `03a2cbe` (merge of PR #24; full SHA `03a2cbe35c5b2b2daf6f415bc858610c98eaf138`) |
-| Tests on clean main | **370 passing, 0 failing** (`npm run verify` from a fresh clone of `03a2cbe`) |
+| Latest merged milestone | **M14b2 — Delivery change, deliverables and acceptance**, and the Agent Tool Surface / Legacy Alignment strategy docs, on top of **AX2 — Machine-readable Solution Plans** on top of **M14b1 — Delivery economics** on top of **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
+| Main SHA at generation | `de448d4` (merge of PR #26; PR #25 merged as `0d2a11d`) |
+| Tests on clean main | **421 passing, 0 failing** (`npm run verify` from a fresh clone of `0d2a11d`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, plus 22 further checks for the M14b2 section as its pre-merge gate, both run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **M14b2 — Delivery change, deliverables and acceptance** (`claude/milestone-14b2-delivery-change-acceptance`): 421 passing on the branch, plus 22 real-Chromium checks run as the pre-merge gate. Reviewed; awaiting human merge. |
+| Open PRs | **M15 — Service operations** (`claude/milestone-15-service-operations`): 439 passing on the branch. Open and unmerged, awaiting the adversarial review. |
 
 ## Completed functional path
 
@@ -82,12 +82,15 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **M14b2 — Delivery change, deliverables and acceptance** — implemented on an
-   open PR, reviewed, still unmerged: governed change requests, immutable plan
-   revisions, the commercial-change handoff that touches no commercial record
-   and now has a recorded end, deliverable evidence and recorded customer
-   acceptance over a frozen scope (`docs/DELIVERY_CHANGE_ACCEPTANCE.md`).
-2. Then M15 Service Operations, the **package contract review** and the first
+1. **M15 — Service operations** — implemented on an open PR, unmerged and
+   awaiting the adversarial review: pending Service Obligations activated by a
+   human into an operational Service Coverage with immutable Entitlements, a
+   support case over an explicit transition table, elapsed-time SLA evidence and
+   manually recorded escalation (`docs/SERVICE_OPERATIONS.md`). **No legacy
+   domain extraction has begun**, and the Accordo public-brand and GTM work is a
+   separate track that is neither merged nor approved here.
+2. Then the **package-system learnings review**, DX package scaffold and
+   conformance tooling, and the first
    legacy extraction (one of Intelligence / Commercial / Signature), then M16
    Analytics Studio — `EXECUTION_ROADMAP.md`.
 

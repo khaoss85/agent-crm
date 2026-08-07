@@ -1,0 +1,70 @@
+{
+  "manifestVersion": 1,
+  "name": "service-activation-run",
+  "description": "Immutable evidence of one service activation: which contract it read, which obligations it consumed, under which policy version and fingerprint, and who decided. A plan produces none of these; only an executed activation does.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "writable": "managed",
+      "unique": true
+    },
+    {
+      "name": "contractId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "serviceCoverageId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "obligationRefs",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "obligationCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "entitlementCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyName",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "overrideCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "activatedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "activatedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

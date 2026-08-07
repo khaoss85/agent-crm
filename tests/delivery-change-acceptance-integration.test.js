@@ -98,8 +98,19 @@ test('AX1 reports the M14b2 surface of a real composed project', async (t) => {
     'service-obligation-activation', 'customer-portal']) {
     assert.equal(resources.has(forbidden), false, `no ${forbidden} resource exists`);
   }
-  assert.equal(Object.keys(capabilities).some((name) => /amend|billing|invoice|payment|sla|service/i.test(name)), false,
-    'no capability implies a commercial amendment, billing or Service');
+  // Scoped to the DELIVERY package's own capabilities. Since M15 the contracts
+  // package also provides `service-obligations@1`, which is a Service concern
+  // and correctly none of Delivery's business: the claim under test is that
+  // Delivery implies no amendment, billing, SLA or Service — not that the word
+  // never appears anywhere in a composition that may include other packages.
+  const deliveryPackage = report.packages.find((entry) => entry.name === 'delivery');
+  const deliverySurface = [
+    ...(deliveryPackage?.provides ?? []).map((entry) => entry.name),
+    ...(deliveryPackage?.requires ?? []).map((entry) => entry.capability ?? entry.name),
+  ];
+  assert.equal(deliverySurface.some((name) => /amend|billing|invoice|payment|sla|service/i.test(name)), false,
+    'no delivery capability implies a commercial amendment, billing, an SLA or Service');
+  assert.ok(deliverySurface.length > 0, 'and the delivery package does declare a surface');
   assert.equal(/"authenticated"\s*:\s*true/.test(serialized), false, 'nothing claims an authenticated anybody');
 
   // AX1 stays source-only: nothing here reports database or auth state.
