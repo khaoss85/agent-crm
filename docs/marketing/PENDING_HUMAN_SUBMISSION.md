@@ -23,7 +23,7 @@ Nothing here is blocked on more engineering. It is blocked on you.
 |---|---|---|---|
 | Claude Code plugin + self-hosted marketplace | `.claude-plugin/` | Push public, then `/plugin marketplace add <owner>/<repo>` works with no third-party approval | 1, 3, and skill portability (below) |
 | Anthropic community marketplace listing | same manifests | Submit via the Console form | 1, 3 |
-| Codex plugin + marketplace | `.codex-plugin/`, `.agents/plugins/marketplace.json` | Same, self-hosted | 1, 3 |
+| Codex plugin + marketplace | `.codex-plugin/`, `.agents/plugins/marketplace.json` | Same, self-hosted — skill parity is now 11/11 and held by `tests/skill-parity.test.js` | 1, 3 |
 | MCP registry entry | `server.json` | `mcp-publisher` under the `io.github.<owner>` namespace | 1, plus an actually-published npm package |
 | npm packages | root `package.json` is `private: true`; no per-package manifests exist | Publish with provenance | 1, 2 |
 | GitHub repository metadata | `docs/marketing/GITHUB_LISTING.md` | Apply description, topics and social preview | 1, 3 |
@@ -39,8 +39,8 @@ Recorded here so the queue above is honestly *only* five decisions.
 | Gap | Why it blocks a listing | Where it is tracked |
 |---|---|---|
 | **Skill portability.** Ten of eleven skills instruct the agent to read repository-internal paths, so installed into an unrelated project they load, announce themselves and do nothing useful | A marketplace install is one moment of attention and a no-op listing spends it permanently | `npm run distribution:check` reports it; it fails outright once a name is chosen |
-| **Codex skill parity.** `.claude/skills` has eleven, `.agents/skills` has six | The Codex listing would ship a smaller product than the Claude one, silently | `npm run distribution:check` |
-| **No production spine** | Rules out the Connectors Directory, the OpenAI plugin directory, Vercel templates, deploy buttons and any hosted demo — all of them assert deployability | `docs/PROJECT_STATUS.md` production blockers |
+| **No hosted Docs MCP** | Rules out the Anthropic Connectors Directory and the OpenAI plugin directory. Both want a hosted MCP server, and the right one to submit is a **documentation** MCP — it serves docs, not customer records, so it needs none of the CRM's auth or tenancy. These are the only two reviewed directories reachable before the production spine, and treating them as spine-blocked closes them for no reason | `docs/strategy/AGENT_DISCOVERY.md`, Phase 8 |
+| **No production spine** | Rules out Vercel templates, deploy buttons and any hosted demo — all of them assert deployability | `docs/PROJECT_STATUS.md` production blockers |
 | **Benchmark unexecuted** | Rules out the strongest version of the launch story | `docs/strategy/CRM_BUILD_BENCHMARK.md` |
 
 ## The rule that does not bend

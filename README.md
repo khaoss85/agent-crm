@@ -62,14 +62,14 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 | `crm solution check` — a Solution Plan is a checked-in contract with a canonical fingerprint | a document contract, not a planner and not a runtime; nothing executes a plan | `tests/solution-plan.test.js` |
 | Generated modules evolve through explicit revisions and append-only named migrations | source-only: what a particular database applied is not knowable from here | `tests/module-evolution.test.js` |
 
-**370 tests, 0 failing** at `03a2cbe`, run on every push together with the smoke test.
+**373 tests, 0 failing**, run on every push together with the smoke test.
 
 ## Run it
 
 Node.js 22.16 or newer. There are no third-party runtime dependencies and no build step.
 
 ```bash
-npm run verify   # 370 tests
+npm run verify   # 373 tests
 npm run demo     # the approval slice, end to end
 npm run dev      # http://localhost:4000
 ```
@@ -127,6 +127,10 @@ evidence is required to leave it.
   no adapter sends anything to anyone.
 - **No import, export, dedupe, merge, bulk edit, saved views or global search.** Table stakes
   in every commercial CRM, and none of them has a milestone yet.
+- **You cannot put real customer data in this yet.** No authentication, no tenancy, no export
+  and no erasure path — so a data-subject access or deletion request cannot be serviced with it.
+  `docs/strategy/DATA_GOVERNANCE.md` is design-only. The one thing that does hold: lead scoring is
+  deterministic, versioned and explainable, not a model's judgement about a person.
 - **This is a framework, not a product you sign up for.** There is no hosted CRM, no free
   tier, no account. The output is an application you run.
 - **Ownership today means copying source, not installing a dependency.** There is no

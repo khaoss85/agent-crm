@@ -191,6 +191,41 @@ if (repoBound.length) {
   }
 }
 
+// ---------------------------------------------------------------- licence assertions
+
+/**
+ * A `license` field in a distribution manifest is an assertion to a marketplace,
+ * not a description of the working tree. MIT is the repository's licence today,
+ * and confirming it before public launch is an explicit ADR-gated decision
+ * (MASTER_PLAN.md §10.2) — so a manifest may carry the field while nothing is
+ * published, and must not carry an unconfirmed one at the moment it goes out.
+ */
+const licenceAsserting = ['.claude-plugin/plugin.json', '.codex-plugin/plugin.json', '.claude-plugin/marketplace.json'];
+const asserted = licenceAsserting.filter((path) => {
+  const manifest = loaded.get(path);
+  const value = manifest?.license ?? manifest?.plugins?.[0]?.license;
+  return typeof value === 'string';
+});
+if (asserted.length) {
+  if (brand.license.status === 'confirmed') {
+    for (const path of asserted) {
+      const manifest = loaded.get(path);
+      const value = manifest?.license ?? manifest?.plugins?.[0]?.license;
+      if (value !== brand.license.value) {
+        fail(`${path}: asserts licence "${value}" but brand.json confirms "${brand.license.value}"`);
+      }
+    }
+  } else if (brand.name.status === 'chosen') {
+    fail(
+      `${asserted.length} manifest(s) assert a licence while brand.json records it as `
+      + `"${brand.license.status}". A name has been chosen, so publication is imminent: confirm the `
+      + 'licence (MASTER_PLAN.md §10.2) before a marketplace is told what it is.',
+    );
+  } else {
+    notes.push(`${asserted.length} manifest(s) carry license "${brand.license.value}", which brand.json records as ${brand.license.status}. Confirm it before publishing — a manifest's licence field is an assertion to a marketplace, not a description of the working tree.`);
+  }
+}
+
 // ---------------------------------------------------------------- publication gate
 
 if (brand.name.status !== 'chosen') {

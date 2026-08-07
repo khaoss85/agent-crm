@@ -5,7 +5,7 @@
     "date": "2026-08-07",
     "sha": "03a2cbe",
     "command": "npm run verify",
-    "tests": 370,
+    "tests": 373,
     "failures": 0,
     "note": "Re-measure and update this block before any public launch. A claims file measured against a stale SHA is a claims file that lies."
   },
@@ -166,6 +166,19 @@
       "surfaces": ["site", "readme", "launch"]
     },
     {
+      "id": "C-21",
+      "text": "The same refusal holds where the money is: an agent actor asking to approve a discounted quote is refused with a 403, and only a human user actor can decide.",
+      "evidence": {
+        "jtbd": "JTBD-CO-03",
+        "tests": ["tests/commercial-e2e.test.js"],
+        "docs": ["docs/COMMERCIAL_OPERATIONS.md"],
+        "testName": "commercial e2e: approval boundary, revise/version-2, concurrency, fault injection, provider failures, drift",
+        "assertion": "tests/commercial-e2e.test.js — quote.approve with actor { type: 'agent' } rejects with status 403 and code HUMAN_APPROVAL_REQUIRED"
+      },
+      "limitation": "The assertion lives inside a composite end-to-end test rather than a test named for it, so the citation is a file and a line rather than a test name. Extracting it into a named test is tracked in docs/strategy/GO_TO_MARKET.md; until then, cite the line.",
+      "surfaces": ["site", "readme", "launch"]
+    },
+    {
       "id": "C-15",
       "text": "A Solution Plan is a checked-in file with a contract and a canonical fingerprint, validated against a real inspection — so a plan written against a composition that has since moved reports itself stale.",
       "evidence": {
@@ -280,6 +293,18 @@
       "evidence": {
         "docs": ["docs/PROJECT_STATUS.md", "examples/starters/b2b-lead-qualification/install.mjs"],
         "repoFacts": ["examples/starters/b2b-lead-qualification/install.mjs copies packages, apps, examples and package.json into a temporary project", "the create-project CLI is EXECUTION_ROADMAP Phase 5 and is not implemented", "no npm package is published"]
+      },
+      "surfaces": ["site", "readme", "launch"]
+    },
+    {
+      "id": "L-09",
+      "headline": "You cannot put real customer data in this yet.",
+      "text": "A CRM is a personal-data system by definition, and this one has no authentication, no tenancy, no export and no erasure path — so there is no way to service a data-subject access or deletion request with it. Data governance is designed and unimplemented. The one thing that does hold today: lead scoring is deterministic, versioned and explainable, not a model's judgement about a person.",
+      "evidence": {
+        "jtbd": "JTBD-15",
+        "tests": ["tests/lead-intelligence-e2e.test.js"],
+        "docs": ["docs/strategy/DATA_GOVERNANCE.md", "docs/benchmarks/CRM_JTBD_MATRIX.md"],
+        "repoFacts": ["DATA_GOVERNANCE.md records the whole track as design only", "no import or export exists (L-06)", "scoring is a deterministic weighted model with a persisted version fingerprint (C-07)"]
       },
       "surfaces": ["site", "readme", "launch"]
     },

@@ -54,9 +54,10 @@ before a commenter gets to say them.
 > your repository rather than inside someone's platform. [C-01]
 >
 > The part I actually want feedback on is the boundary. The agent writes the policy; it is not
-> allowed to execute the decision the policy defers to a person, and that is asserted by a test
-> named "approval workflow rejects an agent pretending to make the human decision". Delete the
-> guard and the suite goes red. [C-04] [C-03]
+> allowed to execute the decision the policy defers to a person. On renewals that is asserted by
+> a test named "approval workflow rejects an agent pretending to make the human decision"
+> (`tests/workflow.test.js`); on discounts, an agent actor calling `quote.approve` is refused
+> with a 403 (`tests/commercial-e2e.test.js`, in the approval-boundary case). [C-04] [C-03] [C-21]
 >
 > Before anyone has to find these out for themselves, the things that will annoy you:
 >
@@ -75,6 +76,10 @@ before a commenter gets to say them.
 >   wrong order to sell it in. [C-06]
 > - **"Own the CRM it builds" means copying source today**, not installing a dependency. There is
 >   no create-command and no published package, so upgrading means merging rather than bumping. [L-08]
+> - **Do not put real customer data in it.** No auth, no tenancy, no export, no erasure path — so
+>   you could not service a data-subject access or deletion request. If you are in the EU that is
+>   disqualifying today, and it should be. (What does hold: lead scoring is deterministic,
+>   versioned and explainable, not a model's judgement about a person.) [L-09]
 > - **It is a framework, not a product.** There is nothing to sign up for. [L-07]
 >
 > What does work, and what I would like broken: every mutation goes through a module service or

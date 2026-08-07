@@ -5,7 +5,7 @@ unfired, and what is waiting on a human. Positioning and category are in `CATEGO
 channel mechanics are in `AGENT_DISCOVERY.md`; the content engine and its quality gates are in
 `ORGANIC_GROWTH.md`. This document is the operating plan that sits on top of them.
 
-Written against `HEAD` on 2026-08-07 with 370 tests passing. Volatile facts live in
+Written against `HEAD` on 2026-08-07 with 373 tests passing. Volatile facts live in
 `../PROJECT_STATUS.md`; this file holds the plan.
 
 ---
@@ -64,13 +64,25 @@ the refusal where you are interrupting someone (Show HN, Product Hunt, compariso
 Each resolves to a ledger id, and each ships with its limitation in the same block, at the same
 type size. That rule is the credibility architecture — see §7.
 
-1. **The refusal is a test, not a convention.** [C-04, C-03] · *Limit:* the actor is asserted,
-   not authenticated, and the policy is proven on one built-in object and one threshold.
+1. **The refusal is a test, not a convention.** [C-04, C-03, C-21] · *Limit:* the actor is
+   asserted, not authenticated, and the renewal policy is proven on one built-in object and one
+   threshold.
+   **Cite it correctly.** The named test — *"approval workflow rejects an agent pretending to
+   make the human decision"* — is the **renewal** boundary (`tests/workflow.test.js`). The
+   **discount** refusal is equally real but is asserted inside a composite test
+   (`tests/commercial-e2e.test.js`: `quote.approve` with an agent actor rejects `403
+   HUMAN_APPROVAL_REQUIRED`). A headline that says *discount* must cite that line, not the
+   renewal test. **Move: extract it into a named test** so the strongest sentence we own cites a
+   test name rather than a line number.
 2. **The tool reports its own blind spots.** `crm app inspect --json` returns a machine-readable
-   list of what it cannot see. [C-14] · *Limit:* source-only and read-only.
-3. **A complete commercial spine, merged and tested end to end** — lead to delivery
-   contribution estimate. [C-06, C-08…C-12] · *Limit:* every provider underneath is an offline
-   fixture, and nothing fires on a schedule because there is no scheduler.
+   list of what it cannot see. [C-14] · *Limit:* source-only and read-only — **and today, run on
+   the default composition, it returns six empty arrays.** Do not use this proof point in public
+   until move 0.1 lands.
+3. **The commercial spine runs end to end, and stops where the ledger says it stops** — lead
+   capture through to a reproducible delivery contribution estimate. [C-06, C-08…C-12] ·
+   *Limit:* every provider underneath is an offline fixture, and nothing bills, renews or fires
+   on a schedule because there is no scheduler. Avoid the word *complete*: it is unfalsifiable
+   and four ledger limitations contradict it.
 4. **Nothing underneath you.** Zero third-party runtime dependencies. [C-17] · *Limit:* a
    property of the framework, not of what you add on top.
 
@@ -92,8 +104,14 @@ type size. That rule is the credibility architecture — see §7.
 > **The difference that survives:** their agent writes extensions that run *inside their
 > runtime*. Ours writes an application that runs *without us*.
 >
-> **The test:** delete the vendor and run `npm test`. With a platform there is nothing left to
-> run. Here your application still passes, because the rules are code in your repository.
+> **The test:** *"if this project disappears tomorrow, what am I left with?"* Here: a Node
+> application in your repository, no third-party runtime dependencies, and a SQLite file any
+> client can open. With a platform, the answer is a runtime you must keep operating.
+>
+> Say it that way and not *"the framework is a dependency you could remove"* — today you get the
+> code by copying it, not installing it, so upgrading means merging rather than bumping a
+> version (`L-08`). That sentence was removed from the site for exactly this reason; it must not
+> come back through a comparison page.
 
 Sourcing, caveats and the places the alternative genuinely wins are maintained in
 `COMPETITOR_MAP.md` and must be cited from it, never re-asserted from memory.
@@ -118,7 +136,7 @@ Sourcing, caveats and the places the alternative genuinely wins are maintained i
 
 | Asset | Where | State |
 |---|---|---|
-| Claims ledger — 20 capabilities, 8 limitations, each bound to tests and paired with its boundary | `site/claims.json` | ✅ |
+| Claims ledger — 21 capabilities, 9 limitations, each bound to tests and paired with its boundary | `site/claims.json` | ✅ |
 | Brand tokens — name, domain, npm scope, licence, palette | `site/brand.json` | ✅ |
 | Landing page and evidence page, built from the ledger, `noindex` | `site/templates/`, `npm run site:build` | ✅ |
 | Claims gate — evidence exists, limitation present, three surfaces enforced, brand leaks, eleven overclaim patterns, ledger freshness | `scripts/site-check.js` | ✅ |
@@ -131,6 +149,7 @@ Sourcing, caveats and the places the alternative genuinely wins are maintained i
 | The human decision queue | `docs/marketing/PENDING_HUMAN_SUBMISSION.md` | ✅ |
 | GitHub listing pack | `docs/marketing/GITHUB_LISTING.md` | ✅ prepared |
 | Objection bank | `docs/marketing/OBJECTIONS.md` | ✅ |
+| Corrections log, seeded before the first public correction | `docs/marketing/CORRECTIONS.md` | ✅ |
 | Content pillars and editorial calendar | `docs/marketing/CONTENT_PILLARS.md` | ✅ |
 | CI job holding public claims to the same standard as the code | `.github/workflows/ci.yml` → `public-claims` | ✅ |
 
@@ -155,7 +174,7 @@ Ordered by how much each one removes a reason not to launch. Every item names it
 | # | Move | Artifact |
 |---|---|---|
 | 1.1 | Fold the claims gate into the local loop: `verify` = `check && test && gtm:check` | `package.json` |
-| 1.2 | **Codex skill parity** — five `build-*` skills exist only for Claude; mirror them and add a test so the asymmetry cannot return | `.agents/skills/`, `tests/skill-parity.test.js` |
+
 | 1.3 | **Skill portability contract** — `requires` frontmatter per skill declaring the repository surface it needs, and a packaging document stating that today's honest target is this repository and projects built from it | `docs/SKILL_PACKAGING.md` |
 | 1.4 | **Split the plugin** into skills-only (no MCP server) and full, so the safe half can list without carrying a server that resolves to nothing outside a checkout | `.claude-plugin/`, `.codex-plugin/` |
 | 1.5 | **Regenerate `PROJECT_STATUS.md`** and automate it — it currently reports a stale SHA, 352 tests and AX2 as an open PR | `scripts/status.js` |
@@ -181,6 +200,12 @@ failure and transcript → Show HN on the benchmark rather than on the product �
 pitched the data → Product Hunt, once.
 
 The launch is a scoreboard with failures in it, not a product announcement.
+
+**Standing rule for every move above.** A move that changes runtime behaviour — the loopback
+lock, the ejection proof, the plugin split, the npm shape — opens with an ExecPlan under
+`docs/plans/` and closes with a `DECISIONS.md` entry and `npm run verify`. Go-to-market work is
+held to the milestone discipline in `AGENTS.md` and `docs/QUALITY_GATES.md`, not exempted from
+it because the motivation is distribution.
 
 ### Wave 4 — post-spine only
 
@@ -208,7 +233,8 @@ marketplaces and registries, **(c)** the in-session agent surface.
 | **In-session agent surface** | **c** | AGENTS.md, CLAUDE.md, skills ×2 harnesses, MCP config ×2, `app inspect`, harness compatibility | **Strongest layer** | **None — fully ours** |
 | Show HN | launch | `LAUNCH_PACKET.md` §2 | Written | Human posts |
 | Product Hunt | launch | `LAUNCH_PACKET.md` §3 | Written | Human posts, once, on the benchmark |
-| Connectors Directory, OpenAI directory, Vercel templates | b | Hosted authenticated MCP, deploy URL | Impossible today | **Production spine** |
+| Anthropic Connectors Directory, OpenAI plugin directory | b | A **hosted Docs MCP** — not the project runtime — plus an endpoint, an auth mode and a privacy policy | Does not exist | **`packages/docs-mcp` (Phase 8) + hosting + a privacy policy.** *Not* the production spine: a documentation MCP serves docs, not customer records, so it needs none of the CRM's auth, tenancy or RBAC. `AGENT_DISCOVERY.md` says this twice, and treating these as spine-blocked closes the only two reviewed directories reachable before Phase 6 |
+| Vercel template gallery, deploy buttons, hosted demo | b | A template with a working deploy and a live demo URL | Cannot be met honestly | **Production spine** — these assert deployability |
 | Discord / Slack | — | — | Deliberately not done | Reconsider at two consecutive months of 20+ substantive Discussions threads **and** a named human on call |
 
 Dominate (c), be present in every (b), and let (a) follow from published proof plus time —
@@ -228,17 +254,31 @@ only remaining blockers are the five human decisions:
 5. `claims.json` `measuredAgainst.sha` equals HEAD and its test count equals the last run.
 6. Every claim declaring the `readme` surface appears in `README.md`; every `launch` claim
    appears in the launch packet. **Enforced today.**
-7. Zero brand leaks outside `site/brand.json`. **Enforced today.**
+7. Zero brand leaks across `site/**`, `docs/marketing/**` and built output. **Enforced today.**
+   Deliberately *not* the whole repository: the working title is also the package name, the CLI
+   binary and the database filename, so a repository-wide assertion could only ever be satisfied
+   by renaming the codebase — and an assertion that cannot pass gets quietly weakened, which is
+   the failure mode §10.4 warns about.
 8. `npm run distribution:check` exits 0. **Enforced today.**
-9. Skill parity is 11/11, asserted by a test.
-10. The composed example's `app inspect` golden snapshot matches current output.
+9. Skill parity is 11/11, asserted by `tests/skill-parity.test.js`. **Enforced today.**
+10. The composed example's `app inspect` golden snapshot matches current output **and its
+    `packages`, `capabilities`, `resources`, `actions`, `policies` and `providers` are all
+    non-empty.** Equality alone is satisfied forever by a file of six empty arrays, which is
+    exactly the state this assertion exists to end.
 11. Either `examples/ejected/` verifies green, or `L-08` is in the ledger **and** the scope
     qualifier appears on every surface asserting the promise. **Currently satisfied by L-08.**
 12. Edition L pilot results are present, or explicitly recorded as not-run with a reason.
 13. `PENDING_HUMAN_SUBMISSION.md` enumerates exactly the five decisions and nothing else.
 
-**Rename cost is a measured metric:** swap the tokens in `site/brand.json`, rebuild, grep the
-built output for the old slug. Target: **1 file changed, 0 hits.**
+**Rename cost is measured, and it is not one file.** Assertion 7 above is scoped to
+`site/**`, `docs/marketing/**` and built output — where the target genuinely is *one edit to
+`site/brand.json`, zero hits for the old slug*. The working title is also the npm package name,
+the `bin` key, the CLI binary filename, the `.mcp.json` server key (which every installed user
+would have in their own config), the plugin name that namespaces every skill, the MCP registry
+namespace, the SQLite filename and `.env.example`. Publishing "one file" and then shipping a
+thirty-file rename commit is a self-inflicted credibility wound in the one repository that
+cannot afford one. Write the inventory down (`docs/RENAME_SURFACE.md`) before the name is chosen,
+and report two numbers: **public surface — 1 file; code surface — measured, and stated.**
 
 ---
 
@@ -259,7 +299,7 @@ human-approved policy.
 | Falsification coverage | Refusal properties with a proven load-bearing mutation ÷ refusal properties claimed | 100% |
 | Ledger coverage | Assertive sentences resolving to a ledger id across README, built site and `docs/marketing` | 100% |
 | Ledger freshness lag | Commits between HEAD and `measuredAgainst.sha` | 0 at publication |
-| Agent-surface parity | `.agents/skills` ÷ `.claude/skills` | 11/11 (today 6/11) |
+| Agent-surface parity | `.agents/skills` ÷ `.claude/skills` | 11/11 — **reached, and held by a test** |
 | Overclaim hits | Occurrences in built output | 0, permanently |
 | SABR-local (Edition L) | Fully-passing prompts ÷ attempted on G1–G4, per framework SHA × agent × model, ≥2-of-3 runs | Internal; publication is a human decision |
 | Manual interventions per run | Per the benchmark definition — an edit or unrequested fix counts; a clarifying answer does not | The number that actually predicts whether the promise is true |
