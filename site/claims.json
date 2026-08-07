@@ -3,9 +3,9 @@
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used.",
   "measuredAgainst": {
     "date": "2026-08-07",
-    "sha": "37606ee",
+    "sha": "36bfa98",
     "command": "npm run verify",
-    "tests": 421,
+    "tests": 472,
     "failures": 0,
     "note": "Re-measure and update this block before any public launch. A claims file measured against a stale SHA is a claims file that lies."
   },
@@ -245,9 +245,9 @@
     },
     {
       "id": "C-20",
-      "text": "370 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
+      "text": "472 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
       "evidence": {
-        "repoFacts": ["npm run verify at 03a2cbe: 370 passing, 0 failing", ".github/workflows/ci.yml runs verify and smoke on push and pull_request"],
+        "repoFacts": ["npm run verify at 36bfa98: 472 passing, 0 failing", ".github/workflows/ci.yml runs verify and smoke on push and pull_request"],
         "docs": ["docs/QUALITY_GATES.md"]
       },
       "limitation": "A test count measures effort, not correctness — read the adversarial-review categories in docs/QUALITY_GATES.md to see what is actually attacked. Real-browser tests are run manually and are not in CI.",
