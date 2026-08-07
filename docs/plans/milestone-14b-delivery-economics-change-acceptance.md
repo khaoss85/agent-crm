@@ -103,6 +103,12 @@ No ARR, MRR or TCV; no annualization; no sum across periods; no sum across
 currencies. Term and normalization semantics are out of scope until a contract
 term model exists.
 
+This is not a new rule — it is the rule the framework already had. Core pricing
+(`groupComponentTotals` in `packages/core/src/commercial-money.js`, ADR-016)
+has grouped quote and order totals by charge type, interval and interval count
+since M10, precisely so that unlike periods are never summed. M14b1's first
+implementation was the one place that quietly broke it.
+
 ## What ships
 
 **A cost policy** (`delivery-cost-policy`), versioned and fingerprinted with

@@ -986,9 +986,20 @@ try {
     assert.equal(economics.actualExpenseCostCents, 24_500);
     assert.equal(economics.totalActualCostCents, 165_500);
     assert.equal(economics.plannedCostCents, 810_000, 'measured against the latest plan version');
+    // Every delivery obligation in this starter is one-time, so a contribution
+    // estimate is defensible — and the group says so on the record rather than
+    // leaving a reader to assume it. A project carrying a recurring obligation
+    // would report `unavailable` here instead of a number that compares a
+    // per-period price against a spend to date.
+    assert.deepEqual(
+      economics.commercialInputs.map((input) => input.chargeType), ['one_time'],
+      'the delivery obligations handed over here are all one-time',
+    );
+    assert.equal(economics.contributionBasis, 'one_time');
+    assert.equal(economics.contributionUnavailableReason, null);
     assert.equal(
       economics.deliveryContributionEstimateCents,
-      economics.commercialDeliveryValueCents - economics.totalActualCostCents,
+      economics.oneTimeCommercialValueCents - economics.totalActualCostCents,
       'an estimate, named as one — never a margin, a profit or recognized revenue',
     );
     assert.equal(snapshot.result.snapshot.timeEntryCount, 2);

@@ -24,7 +24,9 @@ import { ValidationError } from '../../core/index.js';
  * are never summed: every total is grouped by currency, and a group is a
  * complete answer for that currency alone.
  *
- * There is also **no term arithmetic**. A recurring delivery obligation prices
+ * There is also **no term arithmetic**, exactly as ADR-016 already requires of
+ * quote and order totals (`groupComponentTotals`): unlike periods are never
+ * summed. A recurring delivery obligation prices
  * one period, and the execution costs recorded against a project are a one-time
  * spend to date. Subtracting the second from the first produces a number with
  * no meaning, so this milestone refuses to produce it: recurring commercial
