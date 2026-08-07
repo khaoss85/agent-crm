@@ -1026,6 +1026,171 @@ try {
       'no invoice, payment or billing record exists anywhere in this framework',
     );
 
+    // ---- M14b2: change, deliverables and acceptance ----
+    // The commercial rows, byte-for-byte, before any of it. Nothing below may
+    // move a single one of them.
+    const commercialRows = () => JSON.stringify(['quote', 'quote-version', 'order', 'order-line',
+      'commercial-contract', 'contract-version', 'contract-line', 'subscription', 'subscription-line']
+      .map((name) => [name, app.modules.get(name).service.list({ limit: 500 })]));
+    const commercialBefore = commercialRows();
+
+    // A non-commercial replan: proposed, approved, one immutable revision.
+    const replan = await runDelivery('delivery-project', deliveryProject.id, 'propose-change-request', {
+      changeKey: 'freeze-window', changeType: 'non_commercial_replan',
+      title: 'Move go-live two weeks later',
+      reason: 'the customer moved their change-freeze window',
+      requestedEndDate: '2027-01-05',
+    });
+    assert.equal(replan.result.changeRequest.status, 'proposed');
+    await assert.rejects(
+      () => runDelivery('delivery-project', deliveryProject.id, 'propose-change-request', {
+        changeKey: 'freeze-window', changeType: 'non_commercial_replan',
+        title: 'Something else', reason: 'divergent',
+      }),
+      (error) => error.code === 'DELIVERY_EVIDENCE_CONFLICT',
+      'a divergent retry under a reused key is refused, never absorbed',
+    );
+    const approved = await runDelivery('delivery-change-request', replan.result.changeRequest.id,
+      'decide-change-request', { decision: 'approve', reason: 'agreed on the go-live call', revisedEndDate: '2027-01-05' });
+    assert.equal(approved.result.changeRequest.status, 'approved');
+    assert.equal(approved.result.planRevision.version, 1);
+    assert.equal(approved.result.commercialChange, null, 'a replan raises no commercial candidate');
+    assert.equal(
+      app.modules.get('delivery-project').service.get(deliveryProject.id).targetEndDate,
+      deliveryProject.targetEndDate,
+      'the original M13 handover window is untouched — a revision is added, never applied backwards',
+    );
+
+    // A commercial change: handed off, and stopping exactly there.
+    const commercial = await runDelivery('delivery-project', deliveryProject.id, 'propose-change-request', {
+      changeKey: 'second-wave', changeType: 'commercial_change_required',
+      title: 'Add a second migration wave', reason: 'the customer acquired another region',
+      commercialDeltaCents: 1_250_000, currency: 'EUR',
+      milestoneIds: [milestones[0].id],
+    });
+    const handedOffChange = await runDelivery('delivery-change-request', commercial.result.changeRequest.id,
+      'decide-change-request', { decision: 'approve', reason: 'delivery agrees it is in scope to quote' });
+    assert.equal(handedOffChange.result.changeRequest.status, 'pending_commercial_followup');
+    assert.equal(handedOffChange.result.commercialChange.status, 'pending_commercial_followup');
+    assert.equal(handedOffChange.result.planRevision, null);
+    assert.equal(commercialRows(), commercialBefore,
+      'not one commercial row moved: no Quote, Order, Contract or Subscription was amended');
+
+    // Deliverables, gated on the execution state the server owns.
+    const acceptanceMilestone = milestones[1];
+    const deliveryWp = internalPackage;
+    const deliverable = await runDelivery('delivery-work-package', deliveryWp.id, 'plan-deliverable', {
+      deliverableKey: 'migrated-records', label: 'Migrated record set',
+      scopeSnapshot: 'all historical rows, verified', milestoneId: acceptanceMilestone.id,
+    });
+    assert.equal(deliverable.result.deliverable.status, 'planned');
+    // Server-authoritative: the deliverable cannot outrun the work it belongs to.
+    await assert.rejects(
+      () => runDelivery('delivery-deliverable', deliverable.result.deliverable.id, 'complete-deliverable', {}),
+      (error) => error.code === 'DELIVERY_STATE_NOT_ALLOWED',
+      'a deliverable cannot complete ahead of its work package',
+    );
+    await runDelivery('delivery-work-package', deliveryWp.id, 'complete-work-package', {});
+    const completedDeliverable = await runDelivery('delivery-deliverable', deliverable.result.deliverable.id,
+      'complete-deliverable', { completionEvidenceRef: 'migration-run-2026-0042' });
+    assert.equal(completedDeliverable.result.deliverable.status, 'completed');
+    assert.equal(completedDeliverable.result.accepted, false,
+      'completing the work is not the customer accepting it');
+
+    // Acceptance: requested over a frozen scope, then answered.
+    const acceptance = await runDelivery('delivery-milestone', acceptanceMilestone.id, 'request-acceptance', {
+      requestKey: 'go-live-acceptance', customerRef: 'customer:acme',
+      customerContactRef: 'contact:jane', customerNameSnapshot: 'Acme SpA',
+    });
+    const acceptanceRequest = acceptance.result.acceptanceRequest;
+    assert.match(acceptanceRequest.scopeFingerprint, /^[0-9a-f]{64}$/);
+    assert.equal(acceptanceRequest.deliverableCount, 1);
+    await assert.rejects(
+      () => runDelivery('delivery-work-package', deliveryWp.id, 'plan-deliverable', {
+        deliverableKey: 'snuck-in', label: 'Added after the question was asked',
+        milestoneId: acceptanceMilestone.id,
+      }),
+      (error) => error.code === 'DELIVERY_ACCEPTANCE_SCOPE_FROZEN',
+      'a pending request freezes its milestone scope',
+    );
+    const accepted = await runDelivery('delivery-acceptance-request', acceptanceRequest.id, 'record-acceptance', {
+      outcome: 'accepted', assertedCustomerRef: 'customer:acme', assertedContactRef: 'contact:jane',
+      note: 'confirmed by Jane on the go-live call',
+    });
+    assert.equal(accepted.result.acceptanceEvidence.outcome, 'accepted');
+    assert.equal(accepted.result.acceptanceEvidence.recordedBy, actor.id, 'a USER recorded it, not the customer');
+    assert.equal(accepted.result.acceptanceEvidence.scopeFingerprint, acceptanceRequest.scopeFingerprint);
+
+    // The rejected path, on a second milestone: rejection preserves execution
+    // history and forces a governed replan before a new question may be asked.
+    const rejectMilestone = milestones[2];
+    const secondWp = partnerPackage;
+    await runDelivery('delivery-work-package', secondWp.id, 'complete-work-package', {});
+    const exportDeliverable = await runDelivery('delivery-work-package', secondWp.id, 'plan-deliverable', {
+      deliverableKey: 'export-v1', label: 'Data export', milestoneId: rejectMilestone.id,
+    });
+    await runDelivery('delivery-deliverable', exportDeliverable.result.deliverable.id, 'complete-deliverable', {});
+    const rejectedRequest = await runDelivery('delivery-milestone', rejectMilestone.id, 'request-acceptance', {
+      requestKey: 'export-acceptance', customerRef: 'customer:acme',
+    });
+    const rejected = await runDelivery('delivery-acceptance-request', rejectedRequest.result.acceptanceRequest.id,
+      'record-acceptance', { outcome: 'rejected', assertedCustomerRef: 'customer:acme', note: 'two fields missing' });
+    assert.equal(rejected.result.acceptanceEvidence.outcome, 'rejected');
+    assert.equal(
+      app.modules.get('delivery-work-package').service.get(secondWp.id).status, 'completed',
+      'a rejection never destructively reopens completed execution',
+    );
+    assert.equal(
+      app.modules.get('delivery-deliverable').service.get(exportDeliverable.result.deliverable.id).status, 'completed',
+    );
+    await assert.rejects(
+      () => runDelivery('delivery-milestone', rejectMilestone.id, 'request-acceptance', {
+        requestKey: 'export-acceptance-again', customerRef: 'customer:acme',
+      }),
+      (error) => error.code === 'DELIVERY_ACCEPTANCE_SCOPE_SETTLED',
+      'an unchanged scope is not a new question — a "no" does not become a "yes" by persistence',
+    );
+
+    // Replan, add the missing scope, ask a genuinely different question.
+    const fix = await runDelivery('delivery-project', deliveryProject.id, 'propose-change-request', {
+      changeKey: 'export-fix', changeType: 'non_commercial_replan',
+      title: 'Redo the export with the missing fields', reason: 'the customer rejected the first export',
+    });
+    await runDelivery('delivery-change-request', fix.result.changeRequest.id, 'decide-change-request', {
+      decision: 'approve', reason: 'agreed to redo it',
+    });
+    const exportV2 = await runDelivery('delivery-work-package', secondWp.id, 'plan-deliverable', {
+      deliverableKey: 'export-v2', label: 'Data export with the missing fields', milestoneId: rejectMilestone.id,
+    });
+    await runDelivery('delivery-deliverable', exportV2.result.deliverable.id, 'complete-deliverable', {});
+    const reasked = await runDelivery('delivery-milestone', rejectMilestone.id, 'request-acceptance', {
+      requestKey: 'export-acceptance-v2', customerRef: 'customer:acme',
+    });
+    assert.notEqual(reasked.result.acceptanceRequest.scopeFingerprint,
+      rejectedRequest.result.acceptanceRequest.scopeFingerprint,
+      'a replanned scope is a different question, with a different fingerprint');
+    assert.equal(reasked.result.acceptanceRequest.deliverableCount, 2);
+
+    // An agent may read all of it and write none of it.
+    for (const [module, id, action, input] of [
+      ['delivery-project', deliveryProject.id, 'propose-change-request', { changeKey: 'bot', changeType: 'non_commercial_replan', title: 't', reason: 'r' }],
+      ['delivery-work-package', deliveryWp.id, 'plan-deliverable', { deliverableKey: 'bot', label: 'l' }],
+      ['delivery-milestone', acceptanceMilestone.id, 'request-acceptance', { requestKey: 'bot', customerRef: 'c' }],
+    ]) {
+      await assert.rejects(
+        () => runDelivery(module, id, action, input, { type: 'agent', id: 'bot' }),
+        (error) => error.status === 403 && error.code === 'HUMAN_APPROVAL_REQUIRED',
+        `an agent may not ${action}`,
+      );
+    }
+
+    // …and after all of it, still nothing commercial moved and nothing bills.
+    assert.equal(commercialRows(), commercialBefore, 'the commercial record is exactly as the sale left it');
+    assert.equal(
+      app.modules.get('delivery-commercial-change').service.listWhere({ deliveryProjectId: deliveryProject.id }).length,
+      1, 'exactly one commercial follow-up is outstanding, and it is a candidate, not an amendment',
+    );
+
     // The cross-package write: exactly those obligations are handed over, and
     // the service obligation is not Delivery's business.
     const handedOver = app.modules.get('delivery-obligation').service.listWhere({ contractId: contract.id });

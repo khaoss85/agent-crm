@@ -21,7 +21,7 @@ Generated: **2026-08-07**.
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **M14b2 — Delivery change, deliverables and acceptance** (`claude/milestone-14b2-delivery-change-acceptance`): 379 passing on the branch. Open and unmerged, awaiting the adversarial review. |
+| Open PRs | **M14b2 — Delivery change, deliverables and acceptance** (`claude/milestone-14b2-delivery-change-acceptance`): 415 passing on the branch, plus 18 real-Chromium checks. Open and unmerged, awaiting the adversarial review. |
 
 ## Completed functional path
 

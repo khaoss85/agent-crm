@@ -72,15 +72,52 @@ deliverables are never destructively reopened, because rewriting M14a execution
 evidence would stop M14b1 economics snapshots reproducing — and a snapshot taken
 on Tuesday must still reproduce on Wednesday.
 
+## The acceptance scope is frozen
+
+An acceptance request stores **the exact scope it submitted** — the milestone,
+every deliverable with its completion evidence, and the customer reference as it
+read then — plus a SHA-256 `scopeFingerprint` over it. Every reader uses the
+stored copy.
+
+Rebuilding that scope later from the current deliverable set would silently
+re-point old testimony at new work: a deliverable added afterwards would appear
+to have been accepted by a customer who never saw it. So it is never rebuilt,
+and the Admin says so on screen.
+
+Three rules follow, and each is enforced rather than documented:
+
+| Rule | What happens |
+|---|---|
+| a **pending** request freezes its milestone | planning a deliverable on it is `409 DELIVERY_ACCEPTANCE_SCOPE_FROZEN` |
+| a scope already **accepted or rejected** is settled | asking again is `409 DELIVERY_ACCEPTANCE_SCOPE_SETTLED`, naming the outcome |
+| acceptance evidence binds to the **fingerprint**, not just the request id | evidence cannot follow a request whose scope moved, because none can |
+
+Replanning changes the deliverables, so it changes the fingerprint — which is
+how a genuinely new question becomes askable after a rejection, and an unchanged
+one does not.
+
+## Commercially disputed scope is never quietly acceptable
+
+`request-acceptance` refuses while an unresolved `pending_commercial_followup`
+change touches the scope being submitted (`409
+DELIVERY_COMMERCIAL_CHANGE_UNRESOLVED`, naming the change requests). A change
+that names this milestone, or a work package behind the deliverables in scope,
+counts. A change that names **nothing** is project-wide and counts too: the safe
+reading of "we have not decided what this project includes" is that it covers
+this milestone as well.
+
 ## When each thing is allowed
 
 ```text
-propose a change      delivery-project in_progress
-decide a change       delivery-change-request proposed — exactly once
+propose a change        delivery-project in_progress
+decide a change         delivery-change-request proposed — exactly once
+plan a deliverable      the milestone has no pending acceptance request
 complete a deliverable  its work package completed (server-authoritative)
-request acceptance    every deliverable on the milestone completed,
-                      and no other request pending on it
-record acceptance     delivery-acceptance-request pending
+request acceptance      every deliverable on the milestone completed ·
+                        no other request pending on it ·
+                        this scope not already settled ·
+                        no unresolved commercial change touching it
+record acceptance       delivery-acceptance-request pending
 ```
 
 ## Evidence is immutable
@@ -103,6 +140,12 @@ another package would read them.
 
 ## Evidence
 
-`tests/delivery-change-acceptance-e2e.test.js`,
+`tests/delivery-change-acceptance-e2e.test.js` (the paths),
+`tests/delivery-change-acceptance-evidence.test.js` (fault injection on every
+write, two-connection races, exact reads past 500 rows, exact audit/event/trace
+counts, the scope freeze, hostile input),
+`tests/delivery-change-acceptance-integration.test.js` (AX1, AX2, upgrade,
+detach), `tests/admin-delivery-change.test.js` (the Admin section),
+`docs/ADMIN_SMOKE.md` (18 real-Chromium checks),
 `packages/delivery/src/change-acceptance.js`,
 `docs/plans/milestone-14b2-delivery-change-acceptance.md`.

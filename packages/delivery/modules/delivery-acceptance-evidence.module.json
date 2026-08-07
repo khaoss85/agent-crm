@@ -1,7 +1,7 @@
 {
  "manifestVersion": 1,
  "name": "delivery-acceptance-evidence",
- "description": "What a human recorded a customer as having said about an acceptance request. This is recorded evidence, not an authenticated customer action, not a legal signature, not a verified identity and not authorization to bill.",
+ "description": "What a human recorded a customer as having said about an acceptance request, bound to that request's exact frozen scope by its fingerprint. This is recorded evidence, not an authenticated customer action, not a legal signature, not a verified identity and not authorization to bill.",
  "fields": [
   {
    "name": "sourceKey",
@@ -17,6 +17,12 @@
   },
   {
    "name": "deliveryAcceptanceRequestId",
+   "type": "string",
+   "writable": "managed",
+   "index": true
+  },
+  {
+   "name": "scopeFingerprint",
    "type": "string",
    "writable": "managed",
    "index": true

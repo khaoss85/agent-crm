@@ -1,5 +1,6 @@
 // @ts-check
 
+import { createHash } from 'node:crypto';
 import { AppError, ValidationError, optionalString, requiredString } from '../../core/index.js';
 import { resolvedNames } from './handover.js';
 
@@ -143,6 +144,48 @@ function projectRefs(value, field, service, projectId) {
   return JSON.stringify([...seen].sort());
 }
 
+/** Keys sorted at every depth, so a fingerprint depends on content, not order. */
+function canonical(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+}
+
+/**
+ * The exact scope an acceptance request froze, and its fingerprint.
+ *
+ * Acceptance is testimony about a *specific* body of work. Rebuilding that
+ * scope later from the current deliverable set would silently re-point old
+ * testimony at new work — a deliverable added afterwards would appear to have
+ * been accepted by a customer who never saw it. So the request stores the scope
+ * it saw, and every later reader uses the stored copy.
+ *
+ * The fingerprint deliberately excludes the request's own timestamp and key: it
+ * identifies *what* was accepted, not *when it was asked*. That is what lets
+ * the framework refuse a second request over scope somebody already accepted or
+ * rejected, and it is why replanning — which changes the deliverables — yields
+ * a different one.
+ */
+function freezeScope({ projectId, milestoneId, deliverables, customerRef }) {
+  const scope = {
+    projectId,
+    milestoneId,
+    customerRef,
+    deliverables: [...deliverables]
+      .map((row) => ({
+        id: row.id,
+        sourceKey: row.sourceKey,
+        label: row.label,
+        scopeSnapshot: row.scopeSnapshot ?? null,
+        status: row.status,
+        completionEvidenceRef: row.completionEvidenceRef ?? null,
+        deliveryWorkPackageId: row.deliveryWorkPackageId,
+      }))
+      .sort((a, b) => (a.id < b.id ? -1 : 1)),
+  };
+  return { scope, fingerprint: createHash('sha256').update(canonical(scope)).digest('hex') };
+}
+
 /** Return the existing record for a source key, or null. Exact, indexed, unpaged. */
 function bySourceKey(service, sourceKey) {
   const rows = service.listWhere({ sourceKey });
@@ -197,6 +240,32 @@ function currencyOf(value, field) {
     throw new ValidationError(`${field} must be an uppercase three-letter currency code`, { field });
   }
   return text;
+}
+
+/**
+ * Does an unresolved change touch the scope being submitted for acceptance?
+ *
+ * A change that names this milestone, or any work package behind the
+ * deliverables in scope, plainly does. A change that names *nothing* is
+ * project-wide, and the safe reading of "we have not decided what this project
+ * includes" is that it covers this milestone too. Guessing the other way would
+ * let the broadest unresolved changes be the ones that slip through.
+ */
+function affectsMilestone(change, milestoneId, deliverables) {
+  let milestones = [];
+  let workPackages = [];
+  try {
+    milestones = JSON.parse(change.milestoneRefs ?? '[]');
+    workPackages = JSON.parse(change.workPackageRefs ?? '[]');
+  } catch {
+    // A ref list this reader cannot parse is not a reason to let the scope
+    // through: an unreadable claim about scope is treated as the widest one.
+    return true;
+  }
+  if (milestones.length === 0 && workPackages.length === 0) return true;
+  if (milestones.includes(milestoneId)) return true;
+  const inScope = new Set(deliverables.map((row) => row.deliveryWorkPackageId));
+  return workPackages.some((id) => inScope.has(id));
 }
 
 /** Record-module names, overridable by a project that renamed them. */
@@ -341,6 +410,13 @@ export function buildChangeAcceptanceActions(options = {}) {
           const project = modules.get(names.project).service.get(record.deliveryProjectId);
           const sourceKey = `delivery-commercial-change:${record.id}`;
           const already = bySourceKey(candidates, sourceKey);
+          if (already) {
+            requireSameRecord(already, {
+              summary: record.title,
+              estimatedDeltaCents: record.commercialDeltaCents,
+              currency: record.currency,
+            }, 'commercial change candidate');
+          }
           const candidate = already ?? await candidates.createManaged({
             sourceKey,
             deliveryProjectId: record.deliveryProjectId,
@@ -428,6 +504,21 @@ export function buildChangeAcceptanceActions(options = {}) {
           return { deliverable: existing, created: false };
         }
 
+        // A pending acceptance request froze what is being accepted. Adding a
+        // deliverable to that milestone now would make the customer's answer
+        // cover work they were never shown — the request's stored scope would
+        // stay honest, but the milestone would quietly stop matching it.
+        if (deliveryMilestoneId !== null) {
+          const pending = modules.get(names.acceptanceRequest).service
+            .listWhere({ deliveryMilestoneId, status: 'pending' });
+          if (pending.length > 0) {
+            throw new AppError(
+              'This milestone has a pending acceptance request, so its scope is frozen. Decide that request first, or plan this deliverable against another milestone',
+              { code: 'DELIVERY_ACCEPTANCE_SCOPE_FROZEN', status: 409, details: { acceptanceRequestId: pending[0].id } },
+            );
+          }
+        }
+
         const created = await deliverables.createManaged({
           sourceKey,
           deliveryProjectId: record.deliveryProjectId,
@@ -466,9 +557,14 @@ export function buildChangeAcceptanceActions(options = {}) {
           );
         }
         const deliverables = trusted(modules, names.deliverable);
+        const completionEvidenceRef = boundedText(input.completionEvidenceRef, 'completionEvidenceRef', { max: MAX_REF });
+        // `fromStates: ['planned']` means the kernel already refused a second
+        // completion, so reaching here twice is impossible — but a completed
+        // deliverable is immutable evidence either way, and the transition
+        // table is the thing that says so.
         const completed = await deliverables.applyManaged(record.id, {
           status: 'completed',
-          completionEvidenceRef: boundedText(input.completionEvidenceRef, 'completionEvidenceRef', { max: MAX_REF }),
+          completionEvidenceRef,
           completedBy: actorId(actor), completedAt: now(),
         }, { actor });
         step('delivery.deliverable.completed', { id: record.id });
@@ -532,16 +628,56 @@ export function buildChangeAcceptanceActions(options = {}) {
           });
         }
 
+        // Commercially disputed scope is never silently treated as acceptable.
+        // A change the business has not resolved may add or remove exactly the
+        // work being submitted, so asking a customer to accept it now would
+        // freeze testimony about a scope nobody has agreed.
+        const unresolved = modules.get(names.changeRequest).service
+          .listWhere({ deliveryProjectId: record.deliveryProjectId, status: 'pending_commercial_followup' })
+          .filter((change) => affectsMilestone(change, record.id, deliverables));
+        if (unresolved.length > 0) {
+          throw new AppError(
+            `${unresolved.length} commercial change(s) affecting this scope are still awaiting commercial follow-up, so acceptance cannot be requested over it`,
+            {
+              code: 'DELIVERY_COMMERCIAL_CHANGE_UNRESOLVED', status: 409,
+              details: { changeRequests: unresolved.map((change) => change.id).sort() },
+            },
+          );
+        }
+
+        const { scope, fingerprint } = freezeScope({
+          projectId: record.deliveryProjectId, milestoneId: record.id, deliverables, customerRef,
+        });
+
+        // Scope that has already been decided is decided. Re-asking an
+        // unchanged question after a rejection is how a "no" becomes a "yes" by
+        // persistence; replanning changes the deliverables, so it changes the
+        // fingerprint, and a genuinely new question is allowed.
+        const settled = requests.listWhere({ scopeFingerprint: fingerprint })
+          .filter((row) => row.status !== 'pending');
+        if (settled.length > 0) {
+          throw new AppError(
+            `This exact scope was already ${settled[0].status}. Record a change request and replan: an unchanged scope is not a new question`,
+            {
+              code: 'DELIVERY_ACCEPTANCE_SCOPE_SETTLED', status: 409,
+              details: { id: settled[0].id, outcome: settled[0].status, scopeFingerprint: fingerprint },
+            },
+          );
+        }
+
         const created = await requests.createManaged({
           sourceKey,
           deliveryProjectId: record.deliveryProjectId,
           deliveryMilestoneId: record.id,
-          deliverableRefs: JSON.stringify(deliverables.map((row) => row.id).sort()),
+          deliverableRefs: JSON.stringify(scope.deliverables.map((row) => row.id)),
+          scopeFingerprint: fingerprint,
+          frozenScope: JSON.stringify(scope),
+          deliverableCount: scope.deliverables.length,
           customerRef, customerContactRef, customerNameSnapshot, evidenceRef,
           status: 'pending',
           requestedBy: actorId(actor), requestedAt: now(),
         }, { actor });
-        step('delivery.acceptance.requested', { id: created.id, deliverables: deliverables.length });
+        step('delivery.acceptance.requested', { id: created.id, deliverables: scope.deliverables.length });
         return { acceptanceRequest: created, created: true };
       },
     },
@@ -567,8 +703,18 @@ export function buildChangeAcceptanceActions(options = {}) {
         const requests = trusted(modules, names.acceptanceRequest);
         const outcome = oneOf(input.outcome, ACCEPTANCE_OUTCOMES, 'outcome');
         const sourceKey = `delivery-acceptance-evidence:${record.id}`;
+        const assertedCustomerRef = boundedText(input.assertedCustomerRef, 'assertedCustomerRef', { required: true, max: MAX_REF });
+        const assertedContactRef = boundedText(input.assertedContactRef, 'assertedContactRef', { max: MAX_REF });
+        const note = boundedText(input.note, 'note');
+        const evidenceRef = boundedText(input.evidenceRef, 'evidenceRef', { max: MAX_REF });
+
         const existing = bySourceKey(evidence, sourceKey);
         if (existing) {
+          // The one place a silent absorb would be worst: a retry that changes
+          // "rejected" to "accepted" must never look like a successful repeat.
+          requireSameRecord(existing, {
+            outcome, assertedCustomerRef, assertedContactRef, note, evidenceRef,
+          }, 'acceptance evidence');
           step('delivery.acceptance.already-recorded', { id: existing.id });
           return { acceptanceEvidence: existing, acceptanceRequest: record, created: false };
         }
@@ -577,11 +723,12 @@ export function buildChangeAcceptanceActions(options = {}) {
           sourceKey,
           deliveryProjectId: record.deliveryProjectId,
           deliveryAcceptanceRequestId: record.id,
+          // Bound to the exact scope the request froze. Evidence that pointed
+          // only at a request id would follow that request if anything ever
+          // rebuilt its scope; this cannot.
+          scopeFingerprint: record.scopeFingerprint,
           outcome,
-          assertedCustomerRef: boundedText(input.assertedCustomerRef, 'assertedCustomerRef', { required: true, max: MAX_REF }),
-          assertedContactRef: boundedText(input.assertedContactRef, 'assertedContactRef', { max: MAX_REF }),
-          note: boundedText(input.note, 'note'),
-          evidenceRef: boundedText(input.evidenceRef, 'evidenceRef', { max: MAX_REF }),
+          assertedCustomerRef, assertedContactRef, note, evidenceRef,
           recordedBy: actorId(actor), recordedAt: now(),
         }, { actor });
 

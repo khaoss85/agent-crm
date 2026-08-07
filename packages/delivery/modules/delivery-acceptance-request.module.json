@@ -1,7 +1,7 @@
 {
  "manifestVersion": 1,
  "name": "delivery-acceptance-request",
- "description": "An immutable record that acceptance was asked for: which milestone and deliverables, which customer contact reference, and when. Nothing is emailed, no portal exists and no customer is authenticated — this records that a human submitted the work for acceptance.",
+ "description": "An immutable record that acceptance was asked for: the exact scope frozen at that moment — which milestone, which deliverables and their completion evidence — with a deterministic fingerprint over it, the customer reference snapshot, and when. Nothing is emailed, no portal exists and no customer is authenticated: this records that a human submitted the work for acceptance.",
  "fields": [
   {
    "name": "sourceKey",
@@ -24,6 +24,22 @@
   {
    "name": "deliverableRefs",
    "type": "string",
+   "writable": "managed"
+  },
+  {
+   "name": "scopeFingerprint",
+   "type": "string",
+   "writable": "managed",
+   "index": true
+  },
+  {
+   "name": "frozenScope",
+   "type": "string",
+   "writable": "managed"
+  },
+  {
+   "name": "deliverableCount",
+   "type": "integer",
    "writable": "managed"
   },
   {

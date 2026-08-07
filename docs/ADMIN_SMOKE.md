@@ -1,6 +1,6 @@
 # Admin manual browser smoke checklist
 
-Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (re-run at each milestone; 37 automated checks at Milestone 14a, all passing, including the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation, delivery-handover and delivery-execution cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
+Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (re-run at each milestone; 37 automated checks at Milestone 14a; 18 further checks for the Milestone 14b2 Delivery Change & Acceptance section, all passing, all passing, including the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation, delivery-handover and delivery-execution cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
 
 ## Setup
 
@@ -127,3 +127,41 @@ Contract activation (Milestone 12, ADR-018 addendum — requires the contracts d
 35. On an activated order the whole section exposes no input, button or selector, no ARR/MRR/TCV figure is derived, and the omissions (billing, invoicing, renewal, cancellation, delivery execution…) are listed rather than implied.
 
 Report any step that fails; do not mark the actions UI browser-validated unless all pass.
+
+## Delivery change & acceptance (Milestone 14b2)
+
+Validated in real Chromium during the M14b2 completion pass — **18 checks, all
+passing**. Automated browser testing is still **not in CI**; this run was driven
+manually against a seeded project and is reproducible from the steps below.
+
+The run found one real defect the DOM-level tests had missed: the section called
+`client.module().action()`, an SDK API the Admin's own request client does not
+have. The stub in `tests/admin-delivery-change.test.js` now mirrors the Admin's
+real `request(path, options)` shape, so the same class of mistake fails in CI
+rather than in a browser.
+
+Setup: compose a project with the delivery package, activate a contract, hand it
+over, start the project and its work packages, then open the quote detail route
+(`#/quotes/<quoteId>`) where the delivery sections render.
+
+1. The quote route loads and the **Delivery change & acceptance** section renders.
+2. Existing change requests list with status, type, reason and actors.
+3. A non-commercial change can be proposed from the form; it appears as `proposed`.
+4. Approving it produces a **plan revision**, shown with its version and source request.
+5. A commercial change shows **"No Quote, Order or Contract has been amended"**.
+6. No amend / invoice / bill / payment / charge control exists anywhere in the section.
+7. Deliverables list with their work package, milestone, scope and status.
+8. A completed deliverable states **"Work completed is not customer acceptance"**.
+9. The acceptance section renders its disclaimer.
+10. The disclaimer names all four limits: recorded evidence only, not authenticated
+    customer self-service, not a legal signature, not authorization to bill.
+11. An acceptance request created over the real HTTP path returns `200`.
+12. After refresh the **frozen scope** and its fingerprint render from the stored
+    copy, not rebuilt from the current deliverable set.
+13. Recording acceptance produces read-only evidence and removes the record controls.
+14. No Billing / Invoice / Payment control exists anywhere on the page.
+15. A direct route plus refresh restores the section.
+16. A hostile label renders as **text**; no image element is created anywhere in
+    the section.
+17. No failed resource or API response during the whole run.
+18. No uncaught JavaScript error during the whole run.
