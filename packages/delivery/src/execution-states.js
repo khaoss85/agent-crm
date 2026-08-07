@@ -3,31 +3,47 @@
 import { AppError, ValidationError } from '../../core/index.js';
 
 /**
- * Delivery execution states (Milestone 14).
+ * Delivery execution states (Milestone 14a).
  *
  * M13 produced a *planned* delivery project. This file is the whole answer to
  * "what may become what", and it is an explicit table rather than a rank
- * comparison: `completed > active` is arithmetic, not a business rule, and a
- * rank comparison silently permits every transition somebody later inserts
+ * comparison: `completed > in_progress` is arithmetic, not a business rule, and
+ * a rank comparison silently permits every transition somebody later inserts
  * between two numbers.
+ *
+ * **Every state declared here is reachable**, and every edge in the tables has
+ * an action that walks it (`execution.js`). A declared state nothing can reach
+ * is a capability claim without a capability, and a table edge no action uses
+ * is a promise about behaviour that does not exist. The e2e suite checks both
+ * directions against the shipped action list rather than trusting this comment.
  *
  * Three deliberate absences:
  *
- * - **no reopen.** `completed` is terminal in M14. Reopening completed work has
- *   its own invariants (what happens to recorded time, to an acceptance already
- *   given) and an untested reopen path is worse than none.
+ * - **no reopen.** `completed` is terminal in M14a. Reopening completed work
+ *   has its own invariants (what happens to recorded time, to an acceptance
+ *   already given) and an untested reopen path is worse than none.
  * - **no clock transition.** Nothing here fires on a date. There is no
  *   scheduler in this framework, so no state changes without an actor.
  * - **acceptance is not completion, and is not here.** A milestone that is
  *   `completed` says the work finished; whether the customer agreed is a
  *   different fact with a different author, and it belongs to M14b. No
- *   acceptance state is declared, because an enum value nothing can reach is a
- *   capability claim without a capability.
+ *   acceptance state is declared, for the same reason as above.
  */
 
 export const PROJECT_STATES = Object.freeze(['pending_kickoff', 'in_progress', 'completed']);
 export const WORK_PACKAGE_STATES = Object.freeze(['planned', 'in_progress', 'blocked', 'completed']);
 export const MILESTONE_STATES = Object.freeze(['planned', 'in_progress', 'completed']);
+
+/**
+ * The state each record is created in by the M13 handover. Reachability is
+ * measured against these: a state is reachable if the handover creates records
+ * in it, or some shipped action moves a record to it.
+ */
+export const INITIAL_STATES = Object.freeze({
+  'delivery-project': 'pending_kickoff',
+  'delivery-work-package': 'planned',
+  'delivery-milestone': 'planned',
+});
 
 /**
  * The allowed transitions, as data. Each entry maps a current state to the
@@ -49,10 +65,6 @@ export const MILESTONE_TRANSITIONS = Object.freeze({
   planned: Object.freeze(['in_progress']),
   in_progress: Object.freeze(['completed']),
 });
-
-/** The states in which delivery consumption (time, expense) may be recorded. */
-export const RECORDING_PROJECT_STATES = Object.freeze(['in_progress', 'completed']);
-export const RECORDING_WORK_PACKAGE_STATES = Object.freeze(['in_progress', 'blocked', 'completed']);
 
 const TABLES = Object.freeze({
   'delivery-project': { states: PROJECT_STATES, transitions: PROJECT_TRANSITIONS },
@@ -134,6 +146,7 @@ export function transitionMetadata() {
     'delivery-work-package': { states: [...WORK_PACKAGE_STATES], transitions: plain(WORK_PACKAGE_TRANSITIONS) },
     'delivery-milestone': { states: [...MILESTONE_STATES], transitions: plain(MILESTONE_TRANSITIONS) },
     terminal: 'completed work does not reopen in this milestone, and no state changes on a clock — there is no scheduler',
+    reachability: 'every state listed here is reachable through a shipped action, and every transition listed here has an action that walks it',
     acceptance: 'not modeled in this milestone: whether a customer accepted the work is a separate fact with a separate author (M14b)',
   };
 }

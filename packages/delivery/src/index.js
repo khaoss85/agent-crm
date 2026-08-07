@@ -7,16 +7,17 @@ import { DELIVERY_MODES, OVERRIDABLE_MODES, defineDeliveryHandoverPolicy } from 
 import { DATES_NOTE, DATES_SOURCE, MAX_PLAN_DAYS } from './dates.js';
 
 /**
- * The Delivery domain package (Milestone 13) — the **second** package built
- * under ADR-018, and the first one that depends on another package.
+ * The Delivery domain package — the **second** package built under ADR-018, and
+ * the first one that depends on another package.
  *
- * It turns the pending Delivery Obligations the contracts package raised into
+ * M13 turns the pending Delivery Obligations the contracts package raised into
  * a planned Delivery Project: one work package per obligation, a milestone
- * plan, and an optional third-party partner engagement.
+ * plan, and an optional third-party partner engagement. M14a lets a human
+ * **run** that project: bounded, human-driven state transitions over an
+ * explicit table, with the block that stopped work stated as evidence.
  *
- * It **plans and records** the handover. It does not execute delivery: nothing
- * starts, progresses, completes, schedules, staffs, costs, bills or grants
- * anyone access.
+ * It plans and records. Nothing here schedules, staffs, costs, bills, accepts
+ * or grants anyone access, and nothing moves on a clock.
  *
  * Its only reach into another package is the declared capability
  * `contracts/delivery-obligations@1`. It imports nothing from
@@ -83,6 +84,7 @@ export function createDeliveryPackage(options = {}) {
           'change requests', 'customer acceptance', 'billing milestones',
           'invoicing', 'partner access', 'partner portal', 'revenue share',
           'service contracts', 'entitlements', 'SLA', 'support cases',
+          'deliverables', 'reopening completed work', 'a scheduler',
         ],
       };
     },

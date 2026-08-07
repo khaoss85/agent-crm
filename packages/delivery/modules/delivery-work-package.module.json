@@ -194,6 +194,21 @@
       "writable": "managed"
     },
     {
+      "name": "blockedAt",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "blockedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "blockedReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
       "name": "executionNote",
       "type": "string",
       "writable": "managed"

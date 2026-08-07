@@ -169,3 +169,177 @@ test('the execution surface is published truthfully, with no forbidden vocabular
     assert.equal(serialized.includes(forbidden), false, `${forbidden} appears nowhere`);
   }
 });
+
+
+test('every declared state is reachable, and every declared transition has an action', async (t) => {
+  const { context } = await handedOver(t, 'reachable.sqlite');
+  const execution = (await context.client.schema()).domains.delivery.execution;
+  const initial = { 'delivery-project': 'pending_kickoff', 'delivery-work-package': 'planned', 'delivery-milestone': 'planned' };
+
+  for (const [kind, table] of Object.entries(execution.transitions)) {
+    // Exactly which edges the shipped actions walk, straight from the package.
+    const walked = new Set(Object.values(execution.producedStates[kind])
+      .flatMap((step) => step.from.map((from) => `${from} -> ${step.to}`)));
+    const declared = new Set([initial[kind], ...Object.keys(table), ...Object.values(table).flat()]);
+    const reached = new Set(Object.values(execution.producedStates[kind]).map((step) => step.to));
+
+    for (const state of declared) {
+      assert.ok(
+        state === initial[kind] || reached.has(state),
+        `${kind}: no shipped action moves a record to "${state}" — a declared state nothing reaches is a capability claim without a capability`,
+      );
+    }
+    const edges = Object.entries(table).flatMap(([from, targets]) => targets.map((to) => `${from} -> ${to}`));
+    for (const edge of edges) {
+      assert.ok(walked.has(edge), `${kind}: the table promises ${edge}, and no action walks it`);
+    }
+    for (const edge of walked) {
+      assert.ok(edges.includes(edge), `${kind}: an action walks ${edge}, which the table does not allow`);
+    }
+  }
+});
+
+test('a work package blocks with stated evidence, resumes, and holds its project open meanwhile', async (t) => {
+  const { context, project: row, workPackages, milestones } = await handedOver(t, 'blocked.sqlite');
+  const { client, app } = context;
+  const packages = app.modules.get('delivery-work-package').service;
+  const wp = workPackages[0];
+
+  await client.module('delivery-project').action(row.id, 'start-delivery-project', {});
+
+  // Resuming something that was never blocked would land in the same state as
+  // starting it, so the transition table alone does not refuse it — the action
+  // says which states it applies to, and this is not one of them.
+  await assert.rejects(
+    () => client.module('delivery-work-package').action(wp.id, 'resume-work-package', {}),
+    (error) => error.status === 409 && error.code === 'DELIVERY_STATE_NOT_ALLOWED',
+  );
+  assert.equal(packages.get(wp.id).status, 'planned', 'and it did not move');
+
+  await client.module('delivery-work-package').action(wp.id, 'start-work-package', {});
+  assert.ok(packages.get(wp.id).startedAt, 'starting stamps the start; resuming must not have skipped it');
+
+  // A block with no stated reason is not evidence, so it is refused.
+  await assert.rejects(
+    () => client.module('delivery-work-package').action(wp.id, 'block-work-package', {}),
+    (error) => error.status === 400 && /reason/.test(error.message),
+  );
+
+  await client.module('delivery-work-package').action(wp.id, 'block-work-package', { reason: 'customer VPN access not granted' });
+  const blocked = packages.get(wp.id);
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.blockedReason, 'customer VPN access not granted');
+  assert.equal(blocked.blockedBy, 'e2e', 'who blocked it is recorded — the calling user actor, not a role');
+  assert.ok(blocked.blockedAt, 'and when, from the injected clock');
+
+  // Blocked work is not completed, so the project cannot close over it.
+  await assert.rejects(
+    () => client.module('delivery-project').action(row.id, 'complete-delivery-project', {}),
+    (error) => error.status === 409 && error.code === 'DELIVERY_HIERARCHY_INCOMPLETE',
+  );
+
+  await client.module('delivery-work-package').action(wp.id, 'resume-work-package', { note: 'access granted' });
+  const resumed = packages.get(wp.id);
+  assert.equal(resumed.status, 'in_progress');
+  assert.deepEqual(
+    [resumed.blockedReason, resumed.blockedAt, resumed.blockedBy], [null, null, null],
+    'the record describes the block it is under now, and it is under none',
+  );
+  // The block that was cleared is still evidence — in the audit log, where
+  // history belongs.
+  const audited = app.audit.list({ entityType: 'delivery-work-package' })
+    .some((event) => JSON.stringify(event.data ?? {}).includes('customer VPN access not granted'));
+  assert.ok(audited, 'the cleared block survives in the audit log');
+  assert.ok(milestones.length > 0, 'the fixture has milestones to close');
+});
+
+test('a delivery project closes only when every work package and milestone is completed', async (t) => {
+  const { context, project: row, workPackages, milestones } = await handedOver(t, 'close.sqlite');
+  const { client, app } = context;
+
+  await client.module('delivery-project').action(row.id, 'start-delivery-project', {});
+
+  // Nothing finished yet.
+  await assert.rejects(
+    () => client.module('delivery-project').action(row.id, 'complete-delivery-project', {}),
+    (error) => error.status === 409 && error.code === 'DELIVERY_HIERARCHY_INCOMPLETE',
+  );
+
+  for (const wp of workPackages) {
+    await client.module('delivery-work-package').action(wp.id, 'start-work-package', {});
+    await client.module('delivery-work-package').action(wp.id, 'complete-work-package', {});
+  }
+  // Work done, milestones not: still open, and the refusal names what is left.
+  await assert.rejects(
+    () => client.module('delivery-project').action(row.id, 'complete-delivery-project', {}),
+    (error) => error.code === 'DELIVERY_HIERARCHY_INCOMPLETE' && /milestone/.test(error.message),
+  );
+
+  for (const milestone of milestones) {
+    await client.module('delivery-milestone').action(milestone.id, 'start-milestone', {});
+    await client.module('delivery-milestone').action(milestone.id, 'complete-milestone', {});
+  }
+  await client.module('delivery-project').action(row.id, 'complete-delivery-project', { note: 'all delivered' });
+  const closed = app.modules.get('delivery-project').service.get(row.id);
+  assert.equal(closed.status, 'completed');
+  assert.ok(closed.completedAt);
+
+  // A closed project is closed: nothing may be worked on under it any more.
+  await assert.rejects(
+    () => client.module('delivery-milestone').action(milestones[0].id, 'start-milestone', {}),
+    (error) => error.status === 409,
+  );
+});
+
+test('a milestone cannot move while its project is not running', async (t) => {
+  const { context, project: row, milestones } = await handedOver(t, 'milestone-guard.sqlite');
+  const { client, app } = context;
+
+  await assert.rejects(
+    () => client.module('delivery-milestone').action(milestones[0].id, 'start-milestone', {}),
+    (error) => error.status === 409 && error.code === 'DELIVERY_STATE_NOT_ALLOWED',
+    'a milestone of a project nobody kicked off',
+  );
+  assert.equal(app.modules.get('delivery-milestone').service.get(milestones[0].id).status, 'planned');
+
+  await client.module('delivery-project').action(row.id, 'start-delivery-project', {});
+  await client.module('delivery-milestone').action(milestones[0].id, 'start-milestone', {});
+  assert.equal(app.modules.get('delivery-milestone').service.get(milestones[0].id).status, 'in_progress');
+});
+
+test('operator free text is actually bounded, in length and in content', async (t) => {
+  const { context, project: row, workPackages } = await handedOver(t, 'bounds.sqlite');
+  const { client, app } = context;
+  const limit = (await context.client.schema()).domains.delivery.execution.textLimits.note;
+  assert.equal(limit, 500);
+
+  // The published bound is enforced, not merely published: it used to be passed
+  // to a validator that takes no options and ignored it entirely, so a 50 KB
+  // note was stored verbatim.
+  await assert.rejects(
+    () => client.module('delivery-project').action(row.id, 'start-delivery-project', { note: 'x'.repeat(limit + 1) }),
+    (error) => error.status === 400 && /at most 500 characters/.test(error.message),
+  );
+  await client.module('delivery-project').action(row.id, 'start-delivery-project', { note: 'x'.repeat(limit) });
+  assert.equal(app.modules.get('delivery-project').service.get(row.id).executionNote.length, limit);
+
+  const wp = workPackages[0];
+  await client.module('delivery-work-package').action(wp.id, 'start-work-package', {});
+  // NUL, DEL, and the two Unicode line terminators. Built from code points so
+  // this test file stays text a reviewer can read and git can diff.
+  for (const code of [0x0000, 0x001f, 0x007f, 0x2028, 0x2029]) {
+    await assert.rejects(
+      () => client.module('delivery-work-package').action(wp.id, 'block-work-package', { reason: `a${String.fromCodePoint(code)}b` }),
+      (error) => error.status === 400 && /control characters/.test(error.message),
+      `U+${code.toString(16).padStart(4, '0')} is refused`,
+    );
+  }
+  await assert.rejects(
+    () => client.module('delivery-work-package').action(wp.id, 'block-work-package', { reason: 'y'.repeat(limit + 1) }),
+    (error) => error.status === 400 && /at most 500 characters/.test(error.message),
+  );
+  // Tab, newline and carriage return are ordinary text an operator types.
+  const typed = ['line one', 'line', 'two'].join(String.fromCodePoint(0x0a));
+  await client.module('delivery-work-package').action(wp.id, 'block-work-package', { reason: typed });
+  assert.equal(app.modules.get('delivery-work-package').service.get(wp.id).blockedReason, typed);
+});
