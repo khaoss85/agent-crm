@@ -77,7 +77,9 @@ test('a first apply writes the state file and one migration', (t) => {
   const source = readFileSync(join(root, 'packages/modules/widget/src/migration.js'), 'utf8');
   assert.match(source, /export const widgetMigrations = \[/, 'the module exports an ordered migration list');
   const registry = readFileSync(join(root, 'packages/modules/generated/index.js'), 'utf8');
-  assert.match(registry, /migrations: widgetMigrations/, 'the registry carries the list, not a single migration');
+  // The registry reads the migration list through `migrationsOf`, not a named
+  // import: the same file is regenerated for modules that predate the list.
+  assert.match(registry, /migrationsOf\(widgetMigrationSource, 'widget', 'widget'\)/);
 });
 
 test('the state file is the source of truth, and it refuses a hand edit', (t) => {
@@ -340,7 +342,7 @@ test('a package-owned module survives detach, source evolution and reattach with
 
   // Evolve the source while detached, then reattach and let the database catch up.
   applyModulePlan(planModule({ manifest: owned(2), rootDir: root }));
-  assert.ok(readFileSync(registryPath, 'utf8').includes('sampleAssetMigrations'), 'reattached by the apply');
+  assert.ok(readFileSync(registryPath, 'utf8').includes("name: 'sample-asset'"), 'reattached by the apply');
   const migrations = await migrateInto(db, root, 'sample-asset');
   assert.equal(migrations.length, 2);
 
@@ -413,4 +415,99 @@ test('the migration runner blocks violations a migration introduced, not ones it
     () => createDatabase({ path: ':memory:', moduleMigrations: migrations }),
     'an inherited violation elsewhere does not block an unrelated migration',
   );
+});
+
+/**
+ * Adoption — the upgrade path for modules generated before `module.state.json`
+ * existed. Every module shipped before ADR-019 is on disk in exactly this
+ * shape, so without adoption none of them could ever take a newer revision of
+ * the manifest they already run.
+ */
+
+test('a module generated before the state file existed is adopted, and evolves without touching its create migration', async (t) => {
+  const root = project(t);
+  applyModulePlan(planModule({ manifest: r1(), rootDir: root }));
+  const created = readModuleState(root, 'widget').migrations[0];
+  // Exactly what a module generated before ADR-019 looks like on disk: a
+  // manifest and generated source, and no state file.
+  rmSync(join(root, 'packages/modules/widget/module.state.json'));
+
+  const adopted = readModuleState(root, 'widget');
+  assert.equal(adopted.adopted, true, 'revision 1 is reconstructed from the manifest and the generated source');
+  assert.equal(adopted.revision, 1);
+  assert.deepEqual(
+    adopted.migrations, [created],
+    'byte-identical to the migration the module really generated, so its recorded checksum stays valid',
+  );
+
+  // The upgrade the framework has to support: a newer revision of a manifest
+  // the project already runs. Before adoption this failed the apply with
+  // "Module files already exist for widget; refusing to overwrite".
+  const plan = planModule({ manifest: r2(), rootDir: root });
+  assert.equal(plan.adopted, true, 'the plan says so before anything is written');
+  applyModulePlan(plan);
+
+  const state = readModuleState(root, 'widget');
+  assert.equal(state.adopted, false, 'the apply wrote the state file, so a module is adopted at most once');
+  assert.equal(state.revision, 2);
+  assert.equal(state.migrations.length, 2);
+  assert.deepEqual(state.migrations[0], created, 'the applied create migration is unchanged');
+
+  const db = new DatabaseSync(':memory:');
+  t.after(() => db.close());
+  await migrateInto(db, root, 'widget');
+  db.exec("INSERT INTO widgets(id, source_key, status, created_at, updated_at) VALUES ('w1','k1','in_progress','t','t');");
+  assert.equal(db.prepare('SELECT status FROM widgets').get().status, 'in_progress', 'the widened enum reached the table');
+});
+
+test('adoption verifies rather than assumes, and refuses what it cannot reconstruct', (t) => {
+  const root = project(t);
+  applyModulePlan(planModule({ manifest: r1(), rootDir: root }));
+  const stateFile = join(root, 'packages/modules/widget/module.state.json');
+  const manifestFile = join(root, 'packages/modules/widget/module.manifest.json');
+  const manifest = readFileSync(manifestFile, 'utf8');
+  rmSync(stateFile);
+
+  // Someone edited the manifest and never applied it. Diffing the next revision
+  // against it would produce a migration for a schema no database ever ran.
+  writeFileSync(manifestFile, JSON.stringify(
+    { ...JSON.parse(manifest), fields: [...JSON.parse(manifest).fields, { name: 'ghost', type: 'string', writable: 'managed' }] },
+    null, 2,
+  ));
+  assert.throws(() => readModuleState(root, 'widget'), /no longer describes the migration/);
+  writeFileSync(manifestFile, manifest);
+
+  // Generated source removed: what ran against existing databases is unknown.
+  const migrationFile = join(root, 'packages/modules/widget/src/migration.js');
+  const migration = readFileSync(migrationFile, 'utf8');
+  rmSync(migrationFile);
+  assert.throws(() => readModuleState(root, 'widget'), /no src\/migration\.js/);
+  writeFileSync(migrationFile, migration);
+
+  // A module already past revision 1 whose state file was lost: revisions 2…
+  // cannot be reconstructed from the current manifest, so it is not guessed.
+  applyModulePlan(planModule({ manifest: r2(), rootDir: root }));
+  rmSync(stateFile);
+  assert.throws(() => readModuleState(root, 'widget'), /Only revision 1 can be adopted/);
+});
+
+test('a regenerated registry still loads a module generated before the migration list existed', async (t) => {
+  const root = project(t);
+  applyModulePlan(planModule({ manifest: { ...r1(), name: 'gadget' }, rootDir: root }));
+  // Rewrite gadget exactly as the pre-ADR-019 template wrote it: one migration,
+  // no list. Gadget is not being upgraded — but applying any *other* module
+  // regenerates the shared registry for it too, and a named import of a list it
+  // does not export would stop the whole application from loading.
+  const sql = readModuleState(root, 'gadget').migrations[0].sql;
+  writeFileSync(
+    join(root, 'packages/modules/gadget/src/migration.js'),
+    `export const gadgetMigration = {\n  name: 'create_gadgets',\n  sql: ${JSON.stringify(sql)},\n};\n`,
+  );
+  applyModulePlan(planModule({ manifest: r1(), rootDir: root }));
+
+  const registry = await import(`file://${join(root, 'packages/modules/generated/index.js')}?v=${Math.random()}`);
+  const gadget = registry.generatedModules.find((entry) => entry.name === 'gadget');
+  assert.equal(gadget.migrations.length, 1, 'the single migration is read as a one-entry list');
+  assert.equal(gadget.migrations[0].name, 'create_gadgets');
+  assert.equal(registry.generatedModules.find((entry) => entry.name === 'widget').migrations.length, 1);
 });

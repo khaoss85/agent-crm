@@ -384,7 +384,10 @@ export function renderModuleState({ manifest, migrations }) {
  */
 export function readModuleState(rootDir, moduleName) {
   const path = join(rootDir, 'packages', 'modules', moduleName, 'module.state.json');
-  if (!existsSync(path)) return null;
+  // No state file has two very different meanings: the module was never
+  // generated, or it was generated before this file existed. Only the first is
+  // "nothing to evolve from".
+  if (!existsSync(path)) return adoptModuleState(rootDir, moduleName);
   let parsed;
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'));
@@ -422,6 +425,7 @@ export function readModuleState(rootDir, moduleName) {
     revision: manifest.revision,
     fingerprint,
     manifest,
+    adopted: false,
     // The whole history, in order: index 0 is the create migration.
     migrations: (parsed.migrations ?? []).map((entry) => {
       if (typeof entry?.name !== 'string' || typeof entry?.sql !== 'string') {
@@ -436,6 +440,101 @@ export function readModuleState(rootDir, moduleName) {
       }
       return { migrationName: entry.name, sql: entry.sql };
     }),
+  };
+}
+
+/**
+ * **Adoption** — the upgrade path for a module generated *before* module
+ * evolution existed, which therefore has a `module.manifest.json` and generated
+ * source but no `module.state.json`.
+ *
+ * Without this, every module that shipped before ADR-019 was frozen: the
+ * factory saw no previous state, planned every file as a `create`, and the
+ * apply refused with "module files already exist". A project could never take
+ * a newer revision of a manifest it already runs — which is precisely the
+ * upgrade a framework must support.
+ *
+ * Adoption reconstructs revision 1 from what is on disk, and it is safe because
+ * it verifies rather than assumes: the manifest is only accepted as the
+ * previous definition if regenerating its create migration reproduces the
+ * migration the module actually generated, name and every SQL line. The
+ * checksum recorded in every existing database therefore stays valid.
+ *
+ * It refuses, rather than guessing, when:
+ *
+ *   - the manifest claims a revision above 1 — the migrations of revisions 2…
+ *     cannot be reconstructed from the current manifest, so the state file was
+ *     lost rather than never written, and version control is the answer;
+ *   - `src/migration.js` is missing — what ran against existing databases is
+ *     then unknown;
+ *   - the regenerated create migration does not match the generated one — the
+ *     manifest was edited without being applied, and computing the next
+ *     evolution from it would diff against a definition no database ever ran.
+ *
+ * @param {string} rootDir @param {string} moduleName
+ */
+function adoptModuleState(rootDir, moduleName) {
+  const moduleDir = join(rootDir, 'packages', 'modules', moduleName);
+  const manifestPath = join(moduleDir, 'module.manifest.json');
+  // Genuinely never generated: there is nothing to evolve from, and the caller
+  // treats this as a first generation.
+  if (!existsSync(manifestPath)) return null;
+
+  let manifest;
+  try {
+    manifest = validateModuleManifest(JSON.parse(readFileSync(manifestPath, 'utf8')));
+  } catch (error) {
+    throw new ValidationError(
+      `Module "${moduleName}" has no module.state.json, and its module.manifest.json cannot be read as the previous `
+        + `definition: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (manifest.name !== moduleName) {
+    throw new ValidationError(
+      `Module "${moduleName}": module.manifest.json describes "${String(manifest.name).slice(0, 64)}"`,
+    );
+  }
+  const revision = manifestRevision(manifest);
+  if (revision !== 1) {
+    throw new ValidationError(
+      `Module "${moduleName}" is at revision ${revision} but has no module.state.json. Only revision 1 can be `
+        + 'adopted: the migrations of the revisions after the first cannot be reconstructed from the current '
+        + 'manifest. Restore module.state.json from version control.',
+    );
+  }
+
+  const migrationPath = join(moduleDir, 'src', 'migration.js');
+  if (!existsSync(migrationPath)) {
+    throw new ValidationError(
+      `Module "${moduleName}" has a module.manifest.json but no src/migration.js, so what it applied to existing `
+        + 'databases is unknown. Restore the module from version control.',
+    );
+  }
+  const create = generateModuleMigration(manifest);
+  const source = readFileSync(migrationPath, 'utf8');
+  // Every generated migration embeds its name as a quoted literal and each SQL
+  // line as a JSON string — the same in every version of the template — so
+  // containment is an exact check without parsing generated source.
+  const nameFound = source.includes(`'${create.migrationName}'`) || source.includes(`"${create.migrationName}"`);
+  const missing = create.sql.trimEnd().split('\n').filter((line) => !source.includes(JSON.stringify(line)));
+  if (!nameFound || missing.length > 0) {
+    throw new ValidationError(
+      `Module "${moduleName}": module.manifest.json no longer describes the migration in src/migration.js, and there `
+        + 'is no module.state.json to fall back on. The manifest was edited without being applied, so the previous '
+        + 'definition is unknown and no evolution can be computed from it. Restore the manifest, or restore '
+        + `module.state.json, from version control.${nameFound ? ` (${missing.length} SQL line(s) differ)` : ''}`,
+    );
+  }
+
+  return {
+    revision: 1,
+    fingerprint: moduleStateFingerprint(manifest),
+    manifest,
+    // Says how this state was obtained: reconstructed from source, not read
+    // from a checked-in state file. The apply writes the state file, so a
+    // module is adopted at most once.
+    adopted: true,
+    migrations: [{ migrationName: create.migrationName, sql: create.sql }],
   };
 }
 
