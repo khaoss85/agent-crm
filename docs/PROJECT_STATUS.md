@@ -21,7 +21,7 @@ Generated: **2026-08-07**.
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, plus 22 further checks for the M14b2 section as its pre-merge gate, both run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **M15 — Service operations** (`claude/milestone-15-service-operations`): 439 passing on the branch. Open and unmerged, awaiting the adversarial review. |
+| Open PRs | **M15 — Service operations** (`claude/milestone-15-service-operations`): 466 passing on the branch, including the package-scoped Service Admin section and its 24-check real-Chromium run. Open and unmerged. |
 
 ## Completed functional path
 

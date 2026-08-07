@@ -89,3 +89,29 @@ render token prevents stale responses from bleeding between pipelines, and a
 board failure never breaks the core Admin. Managed pipeline fields stay
 read-only everywhere. There is no drag-and-drop — the accessible control is
 the path.
+
+## Package sections (Milestones 12–15)
+
+A domain package's screens live **in the Admin app**, not in the package. The
+framework has no seam for a package to contribute an Admin extension — AX1
+publishes that limitation as `ADMIN_EXTENSIONS_UNSUPPORTED` — so these sections
+are **package-scoped, not package-owned**: each renders only while `/api/schema`
+publishes its domain, and disappears with the package rather than degrading into
+a broken control.
+
+| Section | File | Renders when |
+|---|---|---|
+| Contract activation | `admin-contracts.js` | `domains.contracts` |
+| Delivery handover | `admin-delivery.js` | `domains.delivery` |
+| Delivery change & acceptance | `admin-delivery-change.js` | `domains.delivery.changeAcceptance` |
+| Service operations | `admin-service.js` | `domains.service` |
+
+They share the rules the rest of the Admin follows, and two more that the
+adversarial reviews added: a control appears **only where the server would
+accept it** (a state the transition table forbids offers no control at all), and
+a refusal **re-throws** so the parent's re-render cannot paint over the error
+message and the operator's typed input.
+
+Selection state that must survive a write — such as which support case is open —
+lives outside the render closure, because a successful action re-renders the
+whole quote detail and builds a brand new section.

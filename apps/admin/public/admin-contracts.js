@@ -2,6 +2,7 @@
 
 import { formatMinorUnits } from './admin-core.js';
 import { renderDeliveryHandover } from './admin-delivery.js';
+import { renderServiceOperations } from './admin-service.js';
 
 /**
  * Contract activation Admin (Milestone 12, ADR-018 domain package).
@@ -51,11 +52,15 @@ export async function renderActivation({ order, schema, mount, el, client, fetch
   mount.appendChild(panel);
 
   if (order.contractId) {
-    const contract = await renderEvidence({ order, domain, panel, el, fetchRows, money });
+    const contract = await renderEvidence({ order, schema, domain, panel, el, fetchRows, money });
     // Delivery handover (M13) lives in a second, independent package: it
     // renders only when the server publishes it, as its own section.
     if (contract) {
       await renderDeliveryHandover({ contract, schema, mount, el, client, fetchRows, money, withBusy, busy });
+      // Service operations (M15) is a third, independent package, hanging off
+      // the same contract in its own section. It renders only when the server
+      // publishes it.
+      await renderServiceOperations({ contract, schema, mount, el, client, fetchRows, money, withBusy, busy });
     }
     return;
   }
@@ -333,7 +338,7 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
 }
 
 /** The post-activation half: evidence, and nothing but evidence. */
-async function renderEvidence({ order, domain, panel, el, fetchRows, money }) {
+async function renderEvidence({ order, schema, domain, panel, el, fetchRows, money }) {
   let contracts;
   let versions;
   let lines;
@@ -450,8 +455,17 @@ async function renderEvidence({ order, domain, panel, el, fetchRows, money }) {
   if (deliveries.length + services.length === 0) {
     obligations.appendChild(el('p', 'empty', 'This contract created no delivery or service obligation.'));
   }
+  // What this application can actually do with an obligation depends on which
+  // packages it composed: a sentence that names delivery and service as "not
+  // modeled" becomes a false claim the moment either package is installed.
+  const consumers = [
+    ...(schema?.domains?.delivery ? ['a delivery handover consumes a delivery obligation'] : []),
+    ...(schema?.domains?.service ? ['a service activation consumes a service obligation'] : []),
+  ];
   obligations.appendChild(el('p', 'muted',
-    'These are explicit pending markers created from the signed order. Nothing executes, schedules, staffs or completes them — delivery projects, service contracts and entitlements are not modeled in this milestone.'));
+    consumers.length > 0
+      ? `These are explicit pending markers created from the signed order. Activating this contract executed, scheduled and staffed nothing; in this application ${consumers.join(' and ')}, each in its own section below.`
+      : 'These are explicit pending markers created from the signed order. Nothing executes, schedules, staffs or completes them — no delivery or service package is composed in this application.'));
   panel.appendChild(obligations);
 
   panel.appendChild(el('p', 'muted',
