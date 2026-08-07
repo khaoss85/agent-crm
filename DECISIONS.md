@@ -550,3 +550,42 @@ value is refused — so reference addition needs no rebuild.
 transformation, no default backfill, no arbitrary SQL hook, no field split or
 merge, no table rename and no dependent-table migration. It is a narrow additive
 upgrade path, and it says no to everything else.
+
+### ADR-019 Addendum 1 — Adoption: what happens to modules generated before this ADR
+
+Found while building M14a, on a project built with the M13 merge commit's own
+CLI and then upgraded in place.
+
+Point 4 above put the previous definition in `module.state.json`. Every module
+generated before this ADR has no such file, and the factory read that as "never
+generated": it planned every file as a `create`, and the apply refused with
+"Module files already exist … refusing to overwrite". So the one case module
+evolution exists for — a shipped record that gains a lifecycle — was the one
+case it could not serve. Every pre-ADR-019 module was frozen at revision 1.
+
+Point 2 said a lone `migration` from a project generated before this contract
+still boots. It did, until anything was applied: applying any module regenerates
+the shared registry for **every** installed module, and the regenerated file
+named-imported the `<camel>Migrations` array that older modules do not export,
+so one upgrade stopped the whole application from loading.
+
+**Decision.** A module with a manifest and generated source but no state file is
+**adopted**: its revision 1 is reconstructed from what is on disk, and evolution
+proceeds normally from there. Adoption verifies rather than assumes — the
+manifest is accepted as the previous definition only if regenerating its create
+migration reproduces the migration the module actually generated, name and every
+SQL line, so the checksum recorded in every existing database stays valid. The
+apply writes the state file, so a module is adopted at most once.
+
+It refuses, rather than guessing, three cases: a manifest edited without being
+applied (the next evolution would diff against a schema no database ran), a
+missing `src/migration.js` (what ran is then unknown), and a module already past
+revision 1 whose state file was lost (revisions 2… cannot be reconstructed from
+the current manifest — version control is the answer).
+
+The generated registry now reads a module's migrations through a namespace
+import that accepts either shape, so upgrading the framework never requires
+regenerating modules that did not change.
+
+Adoption is generic. It names no domain, and nothing in it knows that Delivery
+was the milestone that needed it first.

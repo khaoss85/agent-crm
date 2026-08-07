@@ -4,10 +4,12 @@ Turning the pending Delivery Obligations of an activated contract into a
 **planned** delivery project: one work package per obligation, a milestone
 plan, and an optional third-party partner engagement.
 
-**This milestone plans and records a handover. It does not execute delivery.**
-Nothing starts, progresses, completes, schedules, staffs, costs, bills or
-grants anyone access. A Delivery Project here is `pending_kickoff` and stays
-that way until a later milestone gives it a lifecycle.
+**Milestone 13 plans and records a handover. It does not execute delivery**:
+nothing there starts, progresses or completes, and a Delivery Project is
+created `pending_kickoff`. **Milestone 14a** — implemented, on an open PR —
+gives it that lifecycle: eight human-driven transitions over an explicit
+table. Even then, nothing schedules, staffs, costs, bills, accepts or grants
+anyone access, and nothing moves on a clock.
 
 It is also the **second** domain package, and the first one that depends on
 another: `packages/delivery` reaches `packages/contracts` only through the
@@ -132,21 +134,49 @@ including the obligation update, and no delivery record survives while every
 obligation stays `pending_handover`. The retry produces exactly one complete
 handover.
 
+## Running the project (Milestone 14a)
+
+Eight actions move a delivery project through execution. Full description in
+[`packages/delivery/README.md`](../packages/delivery/README.md); the rules that
+matter here:
+
+```text
+delivery-project        pending_kickoff → in_progress → completed
+delivery-work-package   planned → in_progress ⇄ blocked, in_progress → completed
+delivery-milestone      planned → in_progress → completed
+```
+
+Every declared state is reachable by a shipped action and every declared edge
+is walked by one — checked from the shipped action list, not asserted in prose.
+Every transition requires `actor.type === 'user'` (a human-actor boundary, not
+Delivery Manager RBAC), a stale `expectedState` is a `409` rather than a silent
+overwrite, work moves only under a running project, and a project closes only
+once every work package and milestone is completed. Blocking requires a stated
+reason and records who and when; resuming clears those fields and the block
+stays in the audit log. `completed` is terminal — there is no reopen.
+
+The three record manifests reach revision 2 through the generic module
+evolution path (ADR-019 and its addendum 1). No Delivery code entered the
+kernel to make that possible.
+
 ## Not modeled — stated, not implied
 
-Delivery execution, progress, status transitions, time tracking, expenses,
-cost, margin, resource scheduling, capacity, change requests, customer
-acceptance, billing milestones, invoicing, partner access, partner portal,
-revenue share, service contracts, entitlements, SLA and support cases.
+Time tracking, expenses, cost, margin, economics, resource scheduling,
+capacity, change requests, deliverables, customer acceptance, billing
+milestones, invoicing, partner access, partner portal, revenue share, service
+contracts, entitlements, SLA, support cases, reopening completed work, and any
+scheduler.
 
 The Admin says so on the screen, the schema says so in `notModeled`, and the
 plan payload carries its own list.
 
 ## Evidence
 
-`tests/delivery-handover-e2e.test.js`, `tests/admin-delivery.test.js`,
-`tests/package-contract.test.js`, `packages/delivery/README.md`,
+`tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e.test.js`,
+`tests/admin-delivery.test.js`, `tests/package-contract.test.js`,
+`packages/delivery/README.md`,
 `examples/starters/b2b-lead-qualification/install.mjs`,
-`docs/plans/milestone-13-delivery-handover.md`. Agent instructions:
+`docs/plans/milestone-13-delivery-handover.md`,
+`docs/plans/milestone-14-delivery-economics-acceptance.md`. Agent instructions:
 `.claude/skills/build-delivery-handover/SKILL.md` (this file is the
 Codex-readable mirror).

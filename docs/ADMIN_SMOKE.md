@@ -1,6 +1,6 @@
 # Admin manual browser smoke checklist
 
-Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (re-run at each milestone; 28 automated checks at Milestone 13, all passing, including the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation and delivery-handover cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
+Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium (re-run at each milestone; 28 automated checks at Milestone 13, all passing; re-run at M14a, including the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation and delivery-handover cases). Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
 
 ## Setup
 
@@ -36,7 +36,16 @@ Delivery handover (Milestone 13, the delivery domain package — requires the de
 37. An obligation whose delivery mode the policy could not decide is highlighted as blocking, with a mode selector and a required reason; no planning window, no partner input and no handover control appear while anything is undecided. Applying a decision without a reason is refused before any request leaves the browser.
 38. Once nothing is undecided, the planning window asks for target start and end as calendar dates and states that these are **post-sale planning data, not a customer commitment**, that both are supplied together or not at all, and that nothing schedules them. A partner reference and name are requested **only** when some work package is partner-delivered, alongside the statement that a partner engagement **grants no access of any kind**.
 39. Creating the handover once re-renders to evidence: project facts (status `pending_kickoff`, planning window and its source, policy version and fingerprint), work packages with each mode's reason and any human decision next to what the policy said, the milestone plan with the note that it is not a contractual or billing milestone, and the partner engagement with its no-access limitation. The handover control does not accept a second click.
-40. On a handed-over contract the whole section exposes no input, button or selector, and no control exists to start, progress, complete, staff, cost, bill or accept anything.
+40. On a handed-over contract the whole **handover** section exposes no input, button or selector, and no control exists to staff, cost, bill or accept anything.
+
+Delivery execution (Milestone 14a — the same package, at revision 2 of the three record manifests; these run in the generic module views, not in the contract section):
+
+41. Open the generated **delivery-project** collection and its record detail. The managed-field summary shows `status: pending_kickoff` read-only — there is no editable status input anywhere, because every field is workflow-managed.
+42. The actions panel lists the project's transitions. **Start delivery project** succeeds and re-renders with `status: in_progress` and a `startedAt` stamp; the optional note is stored as text. **Complete delivery project** is refused with a `409` naming the work packages and milestones still open. *(Known limitation: the generated Admin lists every action a module declares and does not filter by the record's current state, so both buttons appear from the start. The refusal is the server's, and it names the allowed moves.)*
+43. On a **delivery-work-package** record, **Block work package** reveals a required *reason* input; submitting it empty is refused before any request leaves the browser. With a reason, the record re-renders with `status: blocked`, the reason, who blocked it and when. **Resume work package** clears those three fields and returns it to `in_progress`.
+44. Paste `<img src=x onerror=alert(1)>` into a note or reason: it is stored and rendered as literal text — no image, no script, no bold. A 600-character note is refused with a validation message naming the 500-character limit.
+45. Complete every work package and every milestone, then **Complete delivery project** succeeds and stamps `completedAt`. Afterwards no delivery action on any of that project's records succeeds — each is refused with a `409` — and nowhere in the section is there a control to record time, cost, a change request, a deliverable, an invoice or a customer acceptance.
+46. Restart `npm run dev` → every execution state, stamp and block reason is still exactly as left.
 
 Report any step that fails; do not mark the Admin browser-validated unless all pass.
 

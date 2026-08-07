@@ -1,13 +1,13 @@
 ---
 name: build-delivery-handover
-description: Add or extend delivery handover in an Agent CRM project - turning the pending delivery obligations of an activated contract into a planned delivery project with work packages, milestones and an optional third-party partner engagement, through a versioned delivery handover policy. Use for delivery project/commessa, work package, delivery milestone, partner engagement or handover work. Do not use for contract activation (build-contract-activation), signature/order work (build-signature-order) or a single custom object (create-crm-module).
+description: Add or extend delivery handover and delivery execution in an Agent CRM project - turning the pending delivery obligations of an activated contract into a planned delivery project with work packages, milestones and an optional third-party partner engagement through a versioned handover policy, and running that project through bounded human-driven state transitions. Use for delivery project/commessa, work package, delivery milestone, partner engagement, handover, or starting/blocking/resuming/completing delivery work. Do not use for delivery economics, time, cost, change requests, deliverables or customer acceptance (none of which exist), contract activation (build-contract-activation), signature/order work (build-signature-order) or a single custom object (create-crm-module).
 ---
 
-Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda), `docs/DELIVERY_HANDOVER.md` and `docs/PACKAGE_AUTHORING.md` first.
+Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda, and ADR-019 with addendum 1), `docs/DELIVERY_HANDOVER.md`, `docs/MODULE_EVOLUTION.md` and `docs/PACKAGE_AUTHORING.md` first.
 
-## It plans; it does not deliver
+## It plans and runs; it does not cost, bill or accept
 
-1. Milestone 13 records a handover: a Delivery Project (`pending_kickoff`), one Work Package per delivery obligation, a milestone plan and an optional partner engagement. Nothing starts, progresses, completes, schedules, staffs, costs or bills — and no text may imply otherwise.
+1. Milestone 13 records a handover: a Delivery Project (`pending_kickoff`), one Work Package per delivery obligation, a milestone plan and an optional partner engagement. Milestone 14a runs it. Nothing schedules, staffs, costs, bills or accepts — and no text may imply otherwise.
 2. A planned milestone is not a contractual or billing milestone. Say so wherever one is shown.
 3. Target dates are **post-sale planning data** (`datesSource: "post-sale-delivery-planning"`), not signed terms and not a customer commitment. Nothing fires on them; there is no scheduler.
 
@@ -41,8 +41,25 @@ Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda), `docs/DELIVERY
 2. Identity is a DB-unique source key: `delivery-project:contract:<contractId>`, `delivery-work-package:<projectId>:<obligationId>`, `delivery-milestone:<projectId>:<key>`. Prove it with two concurrent handovers in one app and across two connections.
 3. Every delivery record carries its own snapshot (customer, label, amount, currency) so it reads without the contract, the catalog or a live CRM row.
 
+## Execution: a state is a claim, so make it reachable
+
+1. The allowed moves are an **explicit table as data**, never a rank comparison. `completed > in_progress` is arithmetic; a table is a business rule you can read in a diff.
+2. **Never declare a state nothing can reach.** An enum value with no action behind it is a capability claim without a capability, and the same goes for a table edge no action walks. Derive both checks from the shipped action list in a test — do not assert them in a comment.
+3. Two actions may share a target state (starting a work package and resuming a blocked one both end `in_progress`). The table cannot tell them apart, so each action declares the states **it** applies to, and the package publishes that map so a client can offer only what a record can take.
+4. Every transition requires `actor.type === 'user'`. That is a human-actor boundary, not Delivery Manager RBAC — say so on the wire, not only in a doc.
+5. Accept an optional `expectedState` and refuse a mismatch with a stable `409`. A human decision must never silently overwrite another one.
+6. Respect the hierarchy in both directions: work moves only under a running project, and a project closes only over completed work packages and milestones — counted with exact indexed reads, never a paged list. A blocked work package holds its project open; that is the honest answer.
+7. A block states a **required** reason and records who and when. Clearing those fields on resume keeps the record truthful; the history of blocks belongs in the audit log.
+8. Bound every free-text field yourself. `optionalString`/`requiredString` take no options, so an options object handed to them is silently ignored and the field is unbounded. Reject the C0 controls except tab, newline and carriage return, plus DEL, U+2028 and U+2029 — and write that character class with **escapes**, or the file becomes a binary blob to git and grep.
+9. Nothing transitions on a clock. There is no scheduler in this framework.
+
+## Growing a record that already shipped
+
+1. Adding a state to a shipped record is a **module evolution**: bump `revision` in the manifest and apply it. A module generated before ADR-019 has no `module.state.json` and is adopted automatically on the first evolution.
+2. The upgrade path is not theoretical — prove it. Build a project with the previous milestone's own CLI, upgrade the framework in place, apply the new manifests, and check the original create-migration checksums are unchanged.
+
 ## Do not implement here
 
-Delivery execution, progress or status transitions, time and expense, cost, margin, resource scheduling, capacity, change requests, customer acceptance, billing milestones, invoicing, partner access or portal, revenue share, service contracts, entitlements, SLA, support cases, a scheduler, a durable outbox, auth/tenancy/RBAC.
+Time and expense, cost, margin, economics snapshots, resource scheduling, capacity, change requests, deliverables, customer acceptance, billing milestones, invoicing, partner access or portal, revenue share, service contracts, entitlements, SLA, support cases, reopening completed work, a scheduler, a durable outbox, auth/tenancy/RBAC.
 
 Finish with `npm run verify` and the starter (`node examples/starters/b2b-lead-qualification/install.mjs`).

@@ -8,20 +8,20 @@ this file.
 > **Update this file in the same PR as every milestone merge.** A status file
 > that lags is worse than no status file.
 
-Generated: **2026-08-06**.
+Generated: **2026-08-07**.
 
 ## Snapshot
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **Module Evolution v1** (ADR-019) on top of **M13 — Delivery Handover + Custom Package Authoring v1** (ADR-018 + addenda 1–4) and the Marketing & Growth roadmap (documentation only) |
-| Main SHA at generation | `775713c` (merge of PR #19; full SHA `775713c39689229692dd9c85cd94ed7989390302`) |
-| Tests on clean main | **299 passing, 0 failing** (`npm run verify` from a fresh clone of `775713c`) |
+| Latest merged milestone | **the Objective-Driven Agent Experience** (AX0, documentation and Skill only) on top of **Module Evolution v1** (ADR-019) and **M13 — Delivery Handover + Custom Package Authoring v1** (ADR-018 + addenda 1–4) |
+| Main SHA at generation | `28753ff` (merge of PR #20; full SHA `28753ff9403f9a8c68c5695ff4b670abf253deb9`) |
+| Tests on clean main | **299 passing, 0 failing** (`npm run verify` from a fresh clone of `775713c`; `28753ff` adds no code) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 28/28 in real Chromium, run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | `docs: add the objective-driven agent solution experience` (AX0) — documentation and Agent Skills only. |
+| Open PRs | **PR #21 — M14a Delivery execution** (`claude/milestone-14-delivery-economics-acceptance`): 313 passing on the branch. Reviewed adversarially, hardened in place, left open for a human merge. |
 
 ## Completed functional path
 
@@ -42,7 +42,11 @@ Lead capture
 → plan the delivery handover, decide who delivers what                        M13
 → Delivery Project + work packages + milestones + optional partner,           M13
   with the obligations marked handed over                                     M13
+→ run the project: start, block with a stated reason, resume, complete;       M14a
+  close it only over completed work packages and milestones                   M14a
 ```
+
+M14a is on an open PR, not on main.
 
 Framework underneath: module manifest + generated migrations (M1), module
 factory (M2), one generated resource contract over API/SDK (M3), generated
@@ -72,15 +76,16 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **M14 — Delivery Economics & Acceptance** — unblocked now that Module
-   Evolution v1 (ADR-019) is merged: delivery records can finally gain a
-   lifecycle. Partial work preserved on `claude/m14-wip-add289b-preserved`
-   (`add289b`); resume plan in
-   `docs/plans/milestone-14-resume-after-module-evolution.md`. Bounded execution states
-   on the delivery package, append-only time and expense evidence, a versioned
-   operational economics plan and reproducible snapshot, governed change
-   requests, and customer acceptance evidence. Operational estimates, **not**
-   accounting, billing or a legally binding sign-off.
+1. **M14a — Delivery execution** — implemented on PR #21, awaiting a human
+   merge. Bounded execution states on the delivery package: eight human-driven
+   transitions over explicit tables, block evidence, and a hierarchy gate on
+   closing a project.
+2. **M14b — Delivery Economics, Change Requests, Deliverables & Acceptance** —
+   not started. Append-only time and expense evidence, a versioned operational
+   economics plan and reproducible snapshot, governed change requests,
+   deliverables and customer acceptance evidence. Operational estimates,
+   **not** accounting, billing or a legally binding sign-off. Partial work
+   preserved on `claude/m14b-economics-change-acceptance-preserved`.
 3. Then M15 Service Operations, the **package contract review** and the first
    legacy extraction (one of Intelligence / Commercial / Signature), then M16
    Analytics Studio — `EXECUTION_ROADMAP.md`.
@@ -113,16 +118,20 @@ public use. None of it is started.
 
 ## Implemented versus documentation-only
 
-**Implemented (merged):** module manifest and factory; generated API/SDK/Admin;
-references; actions; core adapters; pipelines; Lead Intelligence; Commercial
-Operations; Signature and Order; Contract activation and subscriptions; the
-public domain-package contract and delivery handover (open PR); MCP server; CLI.
+**Implemented (merged):** module manifest and factory; module evolution and
+adoption; generated API/SDK/Admin; references; actions; core adapters;
+pipelines; Lead Intelligence; Commercial Operations; Signature and Order;
+Contract activation and subscriptions; the public domain-package contract and
+the delivery handover; MCP server; CLI.
+
+**Implemented, open PR (not on main):** delivery execution (M14a).
 
 **Documentation only (no code):** renewal, billing and everything downstream of
-activation; Delivery;
-Service; Analytics Studio; Integration Runtime; Jobs & durable outbox; Data
-Governance; Design-to-CRM; Agent CRM Cloud; create-project CLI; PostgreSQL;
-auth/tenancy/RBAC; benchmark execution.
+activation; delivery economics, change requests, deliverables and acceptance
+(M14b); Service; Analytics Studio; Integration Runtime; Jobs & durable outbox;
+Data Governance; Design-to-CRM; Agent CRM Cloud; create-project CLI;
+PostgreSQL; auth/tenancy/RBAC; Marketing & Growth (MK0–MK7); the Agent
+Experience track beyond AX0; benchmark execution.
 
 ## Keeping this file honest
 

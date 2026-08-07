@@ -164,6 +164,31 @@ that ran it, and an edited applied migration stops the next boot. The registry
 carries the list; a project generated before this contract, exporting a single
 `migration`, still boots unchanged.
 
+## Upgrading a module generated before this existed
+
+A module generated before `module.state.json` existed has a manifest and
+generated source and no state file. It is **adopted** on the first evolution:
+revision 1 is reconstructed from what is on disk, the state file is written by
+the apply, and everything after that is ordinary evolution. You do nothing —
+bump `revision` in the manifest and apply it, exactly as for any other module.
+
+Adoption verifies rather than assumes. The manifest is accepted as the previous
+definition only if regenerating its create migration reproduces the migration
+the module really generated, name and every SQL line, so the checksum every
+existing database recorded stays valid.
+
+Three cases are refused instead of guessed:
+
+| What you see | What it means |
+|---|---|
+| `module.manifest.json no longer describes the migration in src/migration.js` | the manifest was edited and never applied. Restore the manifest, or the state file, from version control |
+| `has a module.manifest.json but no src/migration.js` | what ran against existing databases is unknown. Restore the module from version control |
+| `Only revision 1 can be adopted` | the module is past revision 1 and its state file was lost. The later migrations cannot be reconstructed from the current manifest |
+
+The generated registry reads each module's migrations through a namespace
+import, so applying one module never breaks the ones that did not change,
+whichever shape their `src/migration.js` exports.
+
 ## Package-owned modules
 
 Identical in every respect. The mechanism does not know whether a module belongs
