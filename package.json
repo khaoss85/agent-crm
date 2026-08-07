@@ -27,7 +27,9 @@
     "distribution:check": "node scripts/distribution-check.js",
     "gtm:check": "npm run site:check && npm run distribution:check",
     "site:shots": "npm run site:build && node scripts/site-shots.js",
-    "tour": "node --no-warnings scripts/tour.js"
+    "tour": "node --no-warnings scripts/tour.js",
+    "bench:prompts": "node benchmarks/harness/generate-prompts.js",
+    "bench:score": "node benchmarks/harness/score.js"
   },
   "keywords": [
     "crm",

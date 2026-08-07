@@ -5,7 +5,7 @@
     "date": "2026-08-07",
     "sha": "37606ee",
     "command": "npm run verify",
-    "tests": 411,
+    "tests": 421,
     "failures": 0,
     "note": "Re-measure and update this block before any public launch. A claims file measured against a stale SHA is a claims file that lies."
   },

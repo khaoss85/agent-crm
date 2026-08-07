@@ -1,0 +1,167 @@
+{
+  "promptsContract": 1,
+  "generatedFrom": "docs/strategy/CRM_BUILD_BENCHMARK.md",
+  "counts": {
+    "total": 22,
+    "standard": 13,
+    "complex": 9,
+    "categories": 9
+  },
+  "note": "Generated from the protocol. `expect` is the document's own expected-output highlight, which is prose written for a human reviewer — it is a scoring aid, not a machine-checkable specification, and benchmarks/harness/score.js treats anything it cannot verify as needs-operator rather than as a pass.",
+  "prompts": [
+    {
+      "id": "P01",
+      "difficulty": "S",
+      "category": "B2B sales pipeline",
+      "brief": "We're a 6-person SaaS startup. Track companies, contacts and deals through stages: lead, demo booked, trial, negotiation, won, lost. Deal has amount and expected close date. Dashboard of open deals by stage.",
+      "expect": "3 modules + pipeline stages + Admin board/list view"
+    },
+    {
+      "id": "P02",
+      "difficulty": "S",
+      "category": "B2B sales pipeline",
+      "brief": "Same as a basic sales CRM, but every deal above €25,000 must be approved by the founder before it can be marked won.",
+      "expect": "approval workflow, human-only decision, boundary tests at €24,999/€25,000"
+    },
+    {
+      "id": "P03",
+      "difficulty": "C",
+      "category": "B2B sales pipeline",
+      "brief": "Sales CRM for a company selling in EUR and USD. Weighted pipeline value by stage probability. Deals need a signed-contract file reference before won.",
+      "expect": "multi-currency cents fields, computed weighted values, required-field policy on stage transition"
+    },
+    {
+      "id": "P04",
+      "difficulty": "C",
+      "category": "B2B sales pipeline",
+      "brief": "Import our existing customer list (CSV attached) into a new CRM with companies, contacts, deals; dedupe by email domain.",
+      "expect": "import path through services (not raw SQL), dedupe policy explicit, audit of import actor"
+    },
+    {
+      "id": "P05",
+      "difficulty": "S",
+      "category": "Renewal / subscription",
+      "brief": "Track annual contracts with renewal dates. 90 days before renewal, create a renewal opportunity assigned to the account owner.",
+      "expect": "date-driven workflow, follow-up records, trace of runs"
+    },
+    {
+      "id": "P06",
+      "difficulty": "S",
+      "category": "Renewal / subscription",
+      "brief": "Renewals above €50,000 moving to proposal require manager approval.",
+      "expect": "the Milestone 0 slice reproduced by generation, not by hand"
+    },
+    {
+      "id": "P07",
+      "difficulty": "C",
+      "category": "Renewal / subscription",
+      "brief": "Contracts with seat counts and per-seat pricing; upsell opportunities when usage > seats. Monthly summary of at-risk renewals (no activity in 30 days).",
+      "expect": "derived at-risk policy explicit and tested"
+    },
+    {
+      "id": "P08",
+      "difficulty": "S",
+      "category": "Agency / professional services",
+      "brief": "Agency CRM: clients, projects, proposals. Proposal stages: draft, sent, accepted, rejected. When accepted, create a project.",
+      "expect": "cross-module workflow with compensation if project creation fails"
+    },
+    {
+      "id": "P09",
+      "difficulty": "S",
+      "category": "Agency / professional services",
+      "brief": "Track retainers with monthly hours; flag clients over 90% usage.",
+      "expect": "threshold policy, notification provider hook"
+    },
+    {
+      "id": "P10",
+      "difficulty": "C",
+      "category": "Agency / professional services",
+      "brief": "Proposals need two internal sign-offs (account lead + finance) if over €10k, one otherwise.",
+      "expect": "multi-approver workflow, both identities human, audit shows both"
+    },
+    {
+      "id": "P11",
+      "difficulty": "S",
+      "category": "Real estate",
+      "brief": "Realtor CRM: properties, buyers, viewings. Match buyers to properties by budget range and city.",
+      "expect": "matching as deterministic query service, not AI guessing"
+    },
+    {
+      "id": "P12",
+      "difficulty": "C",
+      "category": "Real estate",
+      "brief": "Offers on properties: multiple buyers can bid; owner must approve accepted offer; other offers auto-decline with notification.",
+      "expect": "transactional multi-record workflow with compensation"
+    },
+    {
+      "id": "P13",
+      "difficulty": "S",
+      "category": "Recruiting",
+      "brief": "Recruiting pipeline: candidates, roles, applications through stages screen → interview → offer → hired/rejected.",
+      "expect": "pipeline modules, stage transition workflow"
+    },
+    {
+      "id": "P14",
+      "difficulty": "C",
+      "category": "Recruiting",
+      "brief": "Offers above band maximum for the role require HR-director approval; store band per role.",
+      "expect": "policy reads reference data; boundary tests"
+    },
+    {
+      "id": "P15",
+      "difficulty": "S",
+      "category": "Event / sponsorship",
+      "brief": "We sell event sponsorships: sponsors, packages (gold/silver/bronze), deals per event edition.",
+      "expect": "enum-typed package field via manifest, per-edition scoping"
+    },
+    {
+      "id": "P16",
+      "difficulty": "C",
+      "category": "Event / sponsorship",
+      "brief": "Sponsorship inventory is limited per package per event; selling out a package blocks new deals at proposal stage with a clear error.",
+      "expect": "inventory constraint in service layer, concurrency-safe"
+    },
+    {
+      "id": "P17",
+      "difficulty": "S",
+      "category": "Nonprofit / donor",
+      "brief": "Donor CRM: donors, campaigns, donations; thank-you task created for donations over €500.",
+      "expect": "threshold workflow, task record"
+    },
+    {
+      "id": "P18",
+      "difficulty": "S",
+      "category": "Nonprofit / donor",
+      "brief": "Recurring donors: monthly pledges, lapsed-pledge detection (missed payment 15 days).",
+      "expect": "date policy explicit and tested"
+    },
+    {
+      "id": "P19",
+      "difficulty": "S",
+      "category": "Partner / channel",
+      "brief": "Partner CRM: partners with tiers silver/gold/platinum, territories, referred deals with revenue share by tier.",
+      "expect": "the partner manifest from the framework examples extended with a workflow; revenue share as deterministic table"
+    },
+    {
+      "id": "P20",
+      "difficulty": "C",
+      "category": "Partner / channel",
+      "brief": "Tier upgrades are automatic on referred-revenue thresholds but downgrades require human approval.",
+      "expect": "asymmetric policy encoded exactly"
+    },
+    {
+      "id": "P21",
+      "difficulty": "S",
+      "category": "Customer success",
+      "brief": "Onboarding CRM: accounts progress through onboarding checklist steps; stalled accounts (7 days no step) escalate to CS lead.",
+      "expect": "checklist as module records, escalation workflow"
+    },
+    {
+      "id": "P22",
+      "difficulty": "C",
+      "category": "Customer success",
+      "brief": "Health scoring from explicit rules (login frequency bands, open tickets, NPS); score changes are audited; red accounts create a save-play workflow with manager approval on discounts.",
+      "expect": "scoring rules as data, not model calls; approval boundary tested"
+    }
+  ]
+}
