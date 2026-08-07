@@ -210,10 +210,26 @@ test('--check fails loudly when the committed file is stale', () => {
     for (const directory of ['scripts', 'docs', 'tests']) {
       cpSync(join(root, directory), join(work, directory), { recursive: true });
     }
+    // Three kinds of drift at once: a job the matrix gained, a job it no longer
+    // has, and a job whose status moved. All three must be named, not just counted.
     const copied = join(work, 'docs', 'benchmarks', 'jobs.json');
     const stale = JSON.parse(readFileSync(copied, 'utf8'));
     stale.jobs[0].status = 'not supported';
     stale.jobs.pop();
+    stale.jobs.push({
+      id: 'JTBD-ZZ-99',
+      title: 'A job the matrix does not have',
+      status: 'not supported',
+      summary: 'invented',
+      tests: [],
+      docs: [],
+      section: 'nowhere',
+    });
+    // Keep the fixture internally consistent, so the drift the check reports is the
+    // drift against the matrix rather than an artefact of hand-edited counts.
+    for (const status of stale.statusVocabulary) stale.counts[status] = 0;
+    for (const job of stale.jobs) stale.counts[job.status] += 1;
+    stale.counts.total = stale.jobs.length;
     writeFileSync(copied, `${JSON.stringify(stale, null, 2)}\n`);
 
     const result = spawnSync(process.execPath, ['--no-warnings', join(work, 'scripts', 'generate-jobs.js'), '--check'], {
@@ -222,9 +238,10 @@ test('--check fails loudly when the committed file is stale', () => {
     });
     assert.equal(result.status, 1, `--check must exit 1 on a stale file\n${result.stderr}`);
     assert.match(result.stderr, /is stale/, '--check must say the file is stale');
-    assert.match(result.stderr, /removed \(1\)/, '--check must name the dropped job');
-    assert.match(result.stderr, /status JTBD-01:/, '--check must name the job whose status moved');
-    assert.match(result.stderr, /count "total": 148 → 149/, '--check must report the count drift');
+    assert.match(result.stderr, /added \(1\): JTBD-PK-07/, '--check must name the job the matrix gained');
+    assert.match(result.stderr, /removed \(1\): JTBD-ZZ-99/, '--check must name the job the matrix no longer has');
+    assert.match(result.stderr, /status JTBD-01: "not supported" → "validated end to end"/, '--check must name the job whose status moved');
+    assert.match(result.stderr, /count "not supported": \d+ → \d+/, '--check must report the count drift');
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
@@ -282,7 +299,12 @@ test('a status outside the vocabulary is a hard error', () => {
       cpSync(join(root, directory), join(work, directory), { recursive: true });
     }
     const matrix = join(work, 'docs', 'benchmarks', 'CRM_JTBD_MATRIX.md');
-    const text = readFileSync(matrix, 'utf8').replace('**not supported**', '**mostly works**');
+    // Target a real row, not the status legend at the top of the document.
+    const text = readFileSync(matrix, 'utf8').replace(
+      '| JTBD-DO-01 | Import records from CSV | **not supported** |',
+      '| JTBD-DO-01 | Import records from CSV | **mostly works** |',
+    );
+    assert.ok(text.includes('**mostly works**'), 'the fixture row moved — update this test');
     writeFileSync(matrix, text);
 
     const result = spawnSync(process.execPath, ['--no-warnings', join(work, 'scripts', 'generate-jobs.js')], {
