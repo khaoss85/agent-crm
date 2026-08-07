@@ -47,6 +47,9 @@ async function covered(t, file) {
   };
 }
 
+/** The occurrence ordinal a transition's source key carries. */
+const ordinal = (sourceKey) => Number(/:system:transition:(\d+):/.exec(sourceKey)?.[1] ?? -1);
+
 const openCase = (client, entitlementId, key, over = {}) =>
   client.module('service-entitlement').action(entitlementId, 'record-service-case', {
     caseKey: key, title: `Case ${key}`, category: 'bug', priority: 'normal', ...over,
@@ -191,7 +194,33 @@ test('two connections racing every decision produce exactly one winner', async (
     'the last slot is taken once — a limit that both connections could pass is not a limit');
   assert.equal(open(), limited.maxOpenCases);
 
-  // 5. Two connections ending the coverage at once.
+  // 5. Two connections making the SAME move at once. Racing two *different*
+  // targets is decided by the state machine; racing the same one is decided by
+  // whether the record the second connection is judging is the committed one.
+  const sameMove = app.modules.get('support-case').service
+    .listWhere({ serviceEntitlementId: entitlement.id }).find((row) => row.status === 'new');
+  const identical = await Promise.allSettled([
+    app.runAction({ module: 'support-case', action: 'transition-case', recordId: sameMove.id, actor: ACTOR, input: { toStatus: 'in_progress' } }),
+    second.runAction({ module: 'support-case', action: 'transition-case', recordId: sameMove.id, actor: ACTOR, input: { toStatus: 'in_progress' } }),
+  ]);
+  assert.equal(identical.filter((outcome) => outcome.status === 'fulfilled').length, 1,
+    'the same move applied twice at once lands exactly once');
+  const loser = identical.find((outcome) => outcome.status === 'rejected')?.reason;
+  // Two outcomes are legitimate: the loser lost the write lock at
+  // `BEGIN IMMEDIATE` and is told to retry, or it got the lock second, re-read
+  // the committed record and was refused by the state machine. What must NEVER
+  // happen is that it passed both and was stopped only by a unique index —
+  // that is a correctness rule enforced by accident.
+  assert.ok(loser.status === 409, 'the loser gets a typed 409');
+  assert.equal(/sourceKey|already exists/i.test(String(loser.message)), false,
+    `the loser was stopped by a storage key collision: "${loser.message}"`);
+  assert.ok(loser.code === 'SERVICE_TRANSITION_NOT_ALLOWED' || loser.code === 'CONFLICT',
+    `unexpected refusal ${loser.code}`);
+  assert.equal(app.modules.get('support-case-activity').service
+    .listWhere({ supportCaseId: sameMove.id }).filter((row) => row.type === 'transition').length, 1,
+    'one move, one piece of evidence');
+
+  // 6. Two connections ending the coverage at once.
   const ends = await Promise.allSettled([
     app.runAction({ module: 'service-coverage', action: 'end-service-coverage', recordId: coverage.id, actor: ACTOR, input: { reason: 'a' } }),
     second.runAction({ module: 'service-coverage', action: 'end-service-coverage', recordId: coverage.id, actor: ACTOR, input: { reason: 'b' } }),
@@ -483,4 +512,222 @@ test('a capability reads and never writes', async (t) => {
         `capability method "${key}" must not imply a write`);
     }
   }
+});
+
+test('the ordinary support loop can be walked more than once', async (t) => {
+  // Found in review. A transition's evidence was keyed `transition:<from>:<to>`,
+  // which is not unique — `in_progress ↔ waiting_customer` is the loop a support
+  // team walks every day, and its fourth move collided with its own earlier
+  // evidence. The case was then stuck in `in_progress` with no way back, on
+  // append-only records that can never be corrected. No hostile input was
+  // needed: the milestone's own state machine could not be exercised twice.
+  const { context, entitlement } = await covered(t, 'loop.sqlite');
+  const { app, client } = context;
+  const supportCase = (await openCase(client, entitlement.id, 'loop')).result.supportCase;
+  const move = (toStatus, extra = {}) =>
+    client.module('support-case').action(supportCase.id, 'transition-case', { toStatus, ...extra });
+
+  for (const target of ['in_progress', 'waiting_customer', 'in_progress', 'waiting_customer', 'in_progress']) {
+    const moved = await move(target);
+    assert.equal(moved.result.supportCase.status, target, `the case reaches ${target} every time`);
+  }
+  await move('resolved', { resolutionSummary: 'the connector was restarted' });
+  const closed = await move('closed');
+  assert.equal(closed.result.supportCase.status, 'closed');
+
+  // Every move left exactly one piece of evidence, in order, and none was lost
+  // to a key collision.
+  const transitions = app.modules.get('support-case-activity').service
+    .listWhere({ supportCaseId: supportCase.id })
+    .filter((row) => row.type === 'transition')
+    // The ordinal in the source key IS the order the moves happened in; the
+    // clock is injected and fixed, so it cannot order them.
+    .sort((a, b) => ordinal(a.sourceKey) - ordinal(b.sourceKey));
+  assert.equal(transitions.length, 7, 'seven moves, seven activity rows');
+  assert.equal(new Set(transitions.map((row) => row.sourceKey)).size, 7, 'and seven distinct keys');
+  assert.deepEqual(transitions.map((row) => `${row.fromStatus}→${row.toStatus}`), [
+    'new→in_progress', 'in_progress→waiting_customer', 'waiting_customer→in_progress',
+    'in_progress→waiting_customer', 'waiting_customer→in_progress',
+    'in_progress→resolved', 'resolved→closed',
+  ]);
+});
+
+test('a caller cannot seize a key the framework writes itself', async (t) => {
+  // Found in review. The caller's `activityKey` and the framework's own keys
+  // shared one namespace on a `unique` source key, so recording a note under
+  // "first-response" or "transition:resolved:closed" permanently blocked the
+  // action that owns it — an unrecoverable block on evidence, reachable through
+  // the ordinary API.
+  const { context, entitlement } = await covered(t, 'squat.sqlite');
+  const { app, client } = context;
+  const activities = app.modules.get('support-case-activity').service;
+
+  const squat = async (key, caseKey) => {
+    const supportCase = (await openCase(client, entitlement.id, caseKey)).result.supportCase;
+    await client.module('support-case').action(supportCase.id, 'record-case-activity', {
+      activityKey: key, type: 'note', body: `a note filed under "${key}"`,
+    });
+    return supportCase;
+  };
+
+  // 1 · the first response still records, and still stamps the case.
+  const first = await squat('first-response', 'squat-first');
+  const responded = await client.module('support-case').action(first.id, 'record-first-response', { note: 'we answered' });
+  assert.ok(responded.result.supportCase.firstRespondedAt, 'the first response was recorded anyway');
+  assert.equal(responded.result.supportCase.status, 'in_progress');
+
+  // 2 · the only route to `closed` stays open.
+  const closing = await squat('transition:resolved:closed', 'squat-close');
+  await client.module('support-case').action(closing.id, 'transition-case', {
+    toStatus: 'resolved', resolutionSummary: 'fixed',
+  });
+  const closed = await client.module('support-case').action(closing.id, 'transition-case', { toStatus: 'closed' });
+  assert.equal(closed.result.supportCase.status, 'closed', 'the case is still closable');
+
+  // 3 · an escalation under a seized key still records.
+  const escalating = await squat('escalation:urgent', 'squat-escalate');
+  const escalated = await client.module('support-case').action(escalating.id, 'record-escalation', {
+    escalationKey: 'urgent', level: 'management', reason: 'the customer called their sponsor',
+  });
+  assert.equal(escalated.result.created, true);
+
+  // The two namespaces are visible in the evidence and never overlap.
+  const keys = activities.list({ limit: 500 }).map((row) => row.sourceKey);
+  const caller = keys.filter((key) => key.includes(':user:'));
+  const system = keys.filter((key) => key.includes(':system:'));
+  assert.equal(caller.length, 3, 'three caller-supplied activities');
+  assert.ok(system.length >= 4, 'and the framework wrote its own');
+  assert.equal(caller.some((key) => system.includes(key)), false, 'the namespaces never overlap');
+});
+
+test('a retry that names a different activation policy is refused, not answered from storage', async (t) => {
+  // Found in review. `activate-service` answered any repeat of the coverage key
+  // from storage, so a retry that named a DIFFERENT policy came back
+  // `created: false` carrying the first policy's decision — a divergent retry
+  // reported as if it had been honoured.
+  const { context, contract } = await covered(t, 'divergent-policy.sqlite');
+  const { client } = context;
+  const same = { coverageKey: 'main', customerRef: 'customer:acme', startDate: '2026-09-01' };
+
+  await assert.rejects(
+    () => client.module('commercial-contract').action(contract.id, 'activate-service', {
+      ...same, policy: 'b2b-service-activation-premium-only', policyVersion: 1,
+    }),
+    (error) => {
+      assert.equal(error.code, 'SERVICE_EVIDENCE_CONFLICT');
+      assert.match(error.message, /policyName/);
+      return true;
+    },
+  );
+
+  // A retry that names the policy that was actually used is still idempotent…
+  const honest = await client.module('commercial-contract').action(contract.id, 'activate-service', {
+    ...same, policy: 'b2b-service-activation', policyVersion: 1,
+  });
+  assert.equal(honest.result.created, false);
+  // …and so is one that names none at all: it asked for whatever was recorded.
+  const silent = await client.module('commercial-contract').action(contract.id, 'activate-service', same);
+  assert.equal(silent.result.created, false);
+  assert.equal(silent.result.serviceCoverage.policyName, 'b2b-service-activation');
+});
+
+test('every one of the ten actions has its whole write graph fault-injected', async (t) => {
+  // Found in review: the fault-injection battery covered eight of the ten
+  // actions' writes. `end-service-coverage`, `transition-case`,
+  // `record-case-activity` and the activity write inside `record-escalation`
+  // were never injected, so "a failure after any write rolls back completely"
+  // was an argument for four of them rather than a proof.
+  //
+  // The table below IS the write graph, and it is checked against the actions
+  // the package actually registers — so a future action cannot be added
+  // without appearing here.
+  const { context, coverage, entitlement } = await covered(t, 'graph.sqlite');
+  const { app, client } = context;
+
+  const supportCase = (await openCase(client, entitlement.id, 'graph')).result.supportCase;
+
+  /** action → the modules and methods it writes through, in order. */
+  const WRITE_GRAPH = {
+    'commercial-contract.plan-service-activation': [],
+    'commercial-contract.activate-service': [
+      ['service-coverage', 'createManaged'], ['service-entitlement', 'createManaged'],
+      ['service-obligation', 'applyManaged'], ['service-activation-run', 'createManaged'],
+    ],
+    'service-coverage.end-service-coverage': [['service-coverage', 'applyManaged']],
+    'service-entitlement.record-service-case': [['support-case', 'createManaged']],
+    'support-case.record-first-response': [['support-case', 'applyManaged'], ['support-case-activity', 'createManaged']],
+    'support-case.transition-case': [['support-case', 'applyManaged'], ['support-case-activity', 'createManaged']],
+    'support-case.record-case-activity': [['support-case-activity', 'createManaged']],
+    'support-case.preview-sla': [],
+    'support-case.record-sla-evaluation': [['service-sla-evaluation', 'createManaged']],
+    'support-case.record-escalation': [['service-escalation', 'createManaged'], ['support-case-activity', 'createManaged']],
+  };
+
+  // The graph is complete by construction, not by hope.
+  const registered = ['commercial-contract', 'service-coverage', 'service-entitlement', 'support-case']
+    .flatMap((module) => app.actions.listForModule(module).map((entry) => `${module}.${entry.name}`))
+    .sort();
+  assert.deepEqual(registered, Object.keys(WRITE_GRAPH).sort(),
+    'every registered Service action appears in the write graph, and nothing else does');
+
+  // The four graphs the battery did not reach, injected at every write in turn.
+  const REQUESTS = {
+    'service-coverage.end-service-coverage': {
+      module: 'service-coverage', action: 'end-service-coverage', recordId: coverage.id, actor: ACTOR,
+      input: { reason: 'the customer moved to another provider' },
+    },
+    'support-case.transition-case': {
+      module: 'support-case', action: 'transition-case', recordId: supportCase.id, actor: ACTOR,
+      input: { toStatus: 'in_progress' },
+    },
+    'support-case.record-case-activity': {
+      module: 'support-case', action: 'record-case-activity', recordId: supportCase.id, actor: ACTOR,
+      input: { activityKey: 'g1', type: 'note', body: 'a note' },
+    },
+    'support-case.record-escalation': {
+      module: 'support-case', action: 'record-escalation', recordId: supportCase.id, actor: ACTOR,
+      input: { escalationKey: 'g1', level: 'internal', reason: 'nobody has looked at it' },
+    },
+  };
+
+  for (const [action, request] of Object.entries(REQUESTS)) {
+    for (const [moduleName, method] of WRITE_GRAPH[action]) {
+      const service = app.modules.get(moduleName).service;
+      const real = service[method].bind(service);
+      const before = {
+        coverage: app.modules.get('service-coverage').service.get(coverage.id).status,
+        status: app.modules.get('support-case').service.get(supportCase.id).status,
+        activities: app.modules.get('support-case-activity').service.countWhere({ supportCaseId: supportCase.id }),
+        escalations: app.modules.get('service-escalation').service.countWhere({ supportCaseId: supportCase.id }),
+        audit: app.audit.list({ entityType: moduleName }).length,
+      };
+      service[method] = async (...args) => { await real(...args); throw new Error('injected failure'); };
+      await assert.rejects(() => app.runAction(request), /injected failure/, `${action} @ ${moduleName}.${method}`);
+      service[method] = real;
+
+      const after = {
+        coverage: app.modules.get('service-coverage').service.get(coverage.id).status,
+        status: app.modules.get('support-case').service.get(supportCase.id).status,
+        activities: app.modules.get('support-case-activity').service.countWhere({ supportCaseId: supportCase.id }),
+        escalations: app.modules.get('service-escalation').service.countWhere({ supportCaseId: supportCase.id }),
+        audit: app.audit.list({ entityType: moduleName }).length,
+      };
+      assert.deepEqual(after, before, `${action} @ ${moduleName}.${method}: nothing survived, and no audit row claims a success`);
+    }
+    // …and the retry, after the injection is removed, succeeds exactly once.
+    const recovered = await app.runAction(request);
+    assert.ok(recovered.result, `${action}: the retry succeeded`);
+    // A second identical call never duplicates. Which way it declines depends
+    // on the action: a keyed record answers from storage with `created: false`,
+    // a state transition is refused by the state machine.
+    let repeated = null;
+    try { repeated = await app.runAction(request); } catch (error) { repeated = error; }
+    const declined = repeated?.status === 409
+      || repeated?.result?.created === false
+      || repeated?.result?.serviceCoverage?.status === 'ended';
+    assert.ok(declined, `${action}: a second identical call neither duplicates nor pretends to be new`);
+  }
+
+  assert.equal(app.modules.get('service-escalation').service.countWhere({ supportCaseId: supportCase.id }), 1);
+  assert.equal(app.modules.get('service-coverage').service.get(coverage.id).status, 'ended');
 });

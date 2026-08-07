@@ -148,3 +148,39 @@ truth.
 10. **Hostile input stays inert** across every field, in evidence, in errors and on screen.
 11. **AX1 and AX2 see it** — the package, its capability edge, its resources, actions and policy fingerprint appear in `app inspect`, and a Solution Plan can cite them without AX2 executing anything.
 12. **Absence is honest** — detaching the package removes its whole surface and nothing else; a missing `service-obligations@1` fails closed at startup with a named problem.
+
+## The Admin section
+
+Added after the first review pass, which correctly identified the missing Admin
+as the milestone's one real gap.
+
+`apps/admin/public/admin-service.js` is **package-scoped, not package-owned**.
+AX1 publishes `ADMIN_EXTENSIONS_UNSUPPORTED` — the framework has no seam for a
+package to contribute an Admin extension — so the file lives in the Admin app and
+renders only while `/api/schema` publishes `domains.service`, exactly as the M13
+and M14b2 sections do. Nothing in the generic Admin action filtering was
+refactored to make room for it.
+
+What it must keep true, and what proves each one:
+
+| Claim | Where it is proved |
+|---|---|
+| the section disappears with the package | `tests/admin-service.test.js`, real Chromium check 1 |
+| the coverage limitation is stated verbatim | check 2, DOM test on the exact sentence |
+| planning is read-only, and wrote nothing | checks 3–4 |
+| an undecided obligation blocks: no coverage form, no activation control | check 5 |
+| a decision without a reason never reaches the network | check 6 |
+| a refusal is visible and the typed input survives | checks 8–9, and the "every refusal reaches the parent" DOM test |
+| only the transitions the server declares are offered | check 15 |
+| current SLA and recorded SLA are separate, and previewing writes nothing | check 17 |
+| no contractual-breach wording anywhere | check 19 |
+| escalation states that nothing was notified, verbatim | check 20 |
+| hostile record text stays text | check 21 |
+| no amend, invoice, bill, renew or authenticate control exists | check 22 |
+
+The Chromium run found one defect the fake-DOM tests could not: the Admin's
+`withBusy` re-renders the whole quote detail on every successful write, so the
+open case — held in the section's render closure — was destroyed by every
+successful action. Selection now lives outside the closure, keyed by contract,
+and the DOM suite reproduces the parent's rebuild so the same class of mistake
+fails in CI.

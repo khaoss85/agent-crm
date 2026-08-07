@@ -4,9 +4,10 @@ import { AppError, ValidationError, requiredString } from '../../core/index.js';
 import {
   ACTIVITY_TYPES, CASE_PRIORITIES, CASE_STATES, CASE_TRANSITIONS, COVERAGE_STATES,
   ESCALATION_LEVELS, OPENING_COVERAGE_STATES, SLA_STATES, VISIBILITY,
-  actorId, activationPolicy, addMinutes, boundedText, bySourceKey, calendarDate,
-  computeActivation, coverageIn, evaluateSla, obligationsCapability, oneOf, readOverrides,
-  recordActivity, requireHuman, requireSameRecord, serviceNames, trusted,
+  actorId, activationPolicy, activitySequence, addMinutes, boundedText, bySourceKey,
+  calendarDate, callerActivityKey, computeActivation, coverageIn, evaluateSla,
+  obligationsCapability, oneOf, readOverrides, recordActivity, requireHuman,
+  requireSameRecord, serviceNames, trusted,
   MAX_KEY, MAX_LABEL, MAX_REF,
 } from './service-actions.js';
 
@@ -87,7 +88,22 @@ export function buildServiceActions(options = {}) {
         }
 
         if (existing) {
-          requireSameRecord(existing, { customerRef, startDate, endDate }, 'service coverage');
+          // The policy a caller *stated* is part of what they asked for. A
+          // retry that names a different policy is a different request, and
+          // answering it from storage would report a policy decision that was
+          // never applied. A retry that names none asked for whatever was
+          // recorded, and is answered.
+          const stated = {};
+          if (input.policy !== undefined && input.policy !== null && input.policy !== '') {
+            stated.policyName = requiredString(input.policy, 'policy');
+          }
+          if (input.policyVersion !== undefined && input.policyVersion !== null) {
+            if (!Number.isSafeInteger(input.policyVersion)) {
+              throw new ValidationError('policyVersion must be a whole number', { field: 'policyVersion' });
+            }
+            stated.policyVersion = Number(input.policyVersion);
+          }
+          requireSameRecord(existing, { customerRef, startDate, endDate, ...stated }, 'service coverage');
           step('service.coverage.already-activated', { id: existing.id });
           return { serviceCoverage: existing, entitlements: [], created: false };
         }
@@ -410,11 +426,16 @@ export function buildServiceActions(options = {}) {
         }
         if (toStatus === 'closed') patch.closedAt = at;
         const moved = await cases.applyManaged(record.id, patch, { actor });
+        // The ordinal is what makes this evidence unique per *occurrence*. A
+        // case legitimately loops in_progress ↔ waiting_customer, and keying the
+        // evidence on the pair alone made the second identical move collide with
+        // the first and leave the case stuck.
+        const sequence = activitySequence(activities, record.id);
         await recordActivity(activities, {
           supportCaseId: record.id, serviceCoverageId: record.serviceCoverageId,
           type: 'transition', body: note,
           fromStatus: record.status, toStatus,
-          actor, now, key: `transition:${record.status}:${toStatus}`,
+          actor, now, key: `transition:${sequence}:${record.status}:${toStatus}`,
         });
         step(`service.case.${toStatus === 'in_progress' ? 'started' : toStatus === 'waiting_customer' ? 'waiting-customer' : toStatus}`,
           { id: record.id, from: record.status, to: toStatus });
@@ -444,7 +465,12 @@ export function buildServiceActions(options = {}) {
         requireHuman(actor, 'Recording case activity');
         const activities = trusted(modules, names.caseActivity);
         const activityKey = boundedText(input.activityKey, 'activityKey', { required: true, max: MAX_KEY, singleLine: true });
-        const sourceKey = `support-case-activity:${record.id}:${activityKey}`;
+        // A caller's key lives in its own namespace. It used to share one with
+        // the keys the framework writes itself, so a note recorded under
+        // "first-response" or "transition:resolved:closed" permanently blocked
+        // the action that owns that key — on append-only records with no
+        // correction path.
+        const sourceKey = callerActivityKey(record.id, activityKey);
         const existing = bySourceKey(activities, sourceKey);
         // `transition` and `escalation` are written by the actions that cause
         // them: letting a caller assert one would let it fabricate history.

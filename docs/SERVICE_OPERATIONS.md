@@ -84,6 +84,34 @@ paused clock** — `waiting_customer` does not stop it, because a
 half-implemented pause understates a breach. A recorded evaluation stores the
 instant and the input values it used, so it is never mistaken for current truth.
 
+## In the Admin
+
+`apps/admin/public/admin-service.js` renders a **Service operations** section
+under an activated contract, on the quote detail route. It is **package-scoped,
+not package-owned**: the framework has no seam for a package to contribute an
+Admin extension — AX1 publishes that as `ADMIN_EXTENSIONS_UNSUPPORTED` — so the
+file lives in the Admin app and renders only while `/api/schema` publishes
+`domains.service`. Remove the package and the section disappears rather than
+degrading into a broken control.
+
+It is state-aware in both directions. Before activation it offers planning and
+nothing else, and while any obligation is undecided there is **no coverage form
+and no activation control at all** — the screen never offers what the server
+would refuse. After activation there is no second activation path. A case shows
+exactly the transitions the declared table allows for its current state, a first
+response is offered until it is stamped and never again, and a closed case shows
+no transition control and says why.
+
+The section carries the claims a reader would otherwise make on the framework's
+behalf: that a ServiceCoverage is operational evidence and amends no commercial
+record, that a listed channel does not mean a provider is connected, that no
+notification was sent, and that an SLA state is elapsed wall-clock time rather
+than a contractual or legal determination. Current SLA and recorded SLA are two
+separate blocks, and previewing writes nothing.
+
+`docs/ADMIN_SMOKE.md` carries the 24-check real-Chromium checklist for this
+section — Service-specific, manual, and outside CI.
+
 ## What it does not do
 
 Billing, invoicing, payment or billing eligibility · a second legal contract or
@@ -115,6 +143,8 @@ about it says what it is not.
 two-connection races, exact reads past 500 rows, exact audit/event/trace counts,
 the SLA boundaries, hostile input),
 `tests/service-operations-integration.test.js` (AX1, AX2, detach),
+`tests/admin-service.test.js` (the Admin section's claims and the controls it
+must not offer), `docs/ADMIN_SMOKE.md` (24 real-Chromium checks),
 `examples/starters/b2b-lead-qualification/install.mjs` (the full journey, from a
 pending obligation to a closed case, with the commercial rows fingerprinted
 before and after),

@@ -381,10 +381,44 @@ function coverageIn(coverage, allowed, operation) {
   return coverage;
 }
 
+/**
+ * The two key namespaces on `support-case-activity`.
+ *
+ * They exist because the caller's `activityKey` and the keys the framework
+ * writes itself used to share one namespace, and `sourceKey` is unique. A
+ * caller who recorded a note under the key `first-response` — or
+ * `transition:resolved:closed` — permanently blocked the action that owns it,
+ * on records that are append-only and can never be corrected.
+ *
+ * The prefixes make that collision structurally impossible in both directions.
+ */
+const CALLER_ACTIVITY = 'user';
+const SYSTEM_ACTIVITY = 'system';
+
+/** The source key for an activity a caller asked for, by their own key. */
+function callerActivityKey(supportCaseId, activityKey) {
+  return `support-case-activity:${supportCaseId}:${CALLER_ACTIVITY}:${activityKey}`;
+}
+
+/**
+ * The ordinal of the next activity on a case.
+ *
+ * A transition's evidence used to be keyed `transition:<from>:<to>`, which is
+ * not unique: `in_progress → waiting_customer → in_progress → waiting_customer`
+ * is the ordinary support loop, and its fourth move collided with its own
+ * earlier evidence and left the case stuck. Every activity write increments
+ * this, so the ordinal is strictly increasing per case and unique per
+ * occurrence — and a second connection racing the same move is serialized by
+ * the outer transaction and refused by the state machine before it gets here.
+ */
+function activitySequence(activities, supportCaseId) {
+  return activities.listWhere({ supportCaseId }).length;
+}
+
 /** Append-only activity, written by every action that changes a case. */
 async function recordActivity(activities, { supportCaseId, serviceCoverageId, type, body, evidenceRef, visibility, fromStatus, toStatus, actor, now, key }) {
   return activities.createManaged({
-    sourceKey: `support-case-activity:${supportCaseId}:${key}`,
+    sourceKey: `support-case-activity:${supportCaseId}:${SYSTEM_ACTIVITY}:${key}`,
     supportCaseId,
     serviceCoverageId,
     type,
@@ -398,4 +432,4 @@ async function recordActivity(activities, { supportCaseId, serviceCoverageId, ty
   }, { actor });
 }
 
-export { computeActivation, readOverrides, activationPolicy, obligationsCapability, trusted, boundedText, calendarDate, oneOf, actorId, requireHuman, requireSameRecord, bySourceKey, coverageIn, recordActivity, MAX_TEXT, MAX_LABEL, MAX_KEY, MAX_REF };
+export { computeActivation, readOverrides, activationPolicy, obligationsCapability, trusted, boundedText, calendarDate, oneOf, actorId, requireHuman, requireSameRecord, bySourceKey, coverageIn, recordActivity, activitySequence, callerActivityKey, MAX_TEXT, MAX_LABEL, MAX_KEY, MAX_REF };
