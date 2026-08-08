@@ -209,7 +209,7 @@ been a different kind of wrong location.
 The evidence is the LA0 baseline. Regenerating it after the move changed exactly
 one observation, `architecture.intelligence-internal-importers`, which is
 `pre_extraction_evidence` and asserted by nobody: the list of files reaching
-into an Intelligence internal went from nine to four. Every asserted
+into an Intelligence internal went from ten to four. Every asserted
 observation — all 822 values across 142 observations — is byte-identical, which
 was confirmed by running the *pre-move* observations against the post-move tree
 through the harness's own comparison rather than through a diff script. The two
@@ -451,7 +451,7 @@ a change scoped to two defect candidates:
 | DX1 project doctor merged | **yes** — `845cd3d` |
 | LA0 characterization harness | **yes** — `360b0f6` |
 | LA0 defect candidates resolved | **yes** — `1e40d1e`. `record-signal`'s `value` is now bounded to the domain's own `MAX_TEXT` (500) and refused when it contains control characters or line breaks. Reviewed regeneration moved exactly five observations, all `hostile-input.record-signal.*` |
-| Neutral helpers moved out of Intelligence files | **done, open for review** — moved to `definition-fingerprint.js` and `timeout.js`; the LA0 importer list went from nine files to four with every asserted value byte-identical |
+| Neutral helpers moved out of Intelligence files | **done, open for review** — moved to `definition-fingerprint.js` and `timeout.js`; the LA0 importer list went from ten files to four with every asserted value byte-identical |
 | `app.intelligence` decision taken | **no** — Option B recommended, cost now measured (one schema-publication change; zero external action consumers). Human decision |
 | Definition-registry decision taken | **no** — Option C recommended, dependants now measured. Human decision |
 | Package-contributed HTTP route seam needed | **not for Intelligence.** DX4 established that route contribution is not required for generic conformance. It remains a precondition for **Commercial** and **Signature** specifically, each of which owns a route in `apps/server` |
