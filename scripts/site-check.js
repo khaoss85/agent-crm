@@ -126,6 +126,24 @@ for (const claim of ledger.claims) {
   }
 }
 
+// The test count is quoted in four places and measured in one. Nothing bound them, so the README
+// went on advertising 373 tests across two merged milestones. Every surface that states a count
+// has to state the measured one, or the ledger's own freshness discipline is decoration.
+const measuredTests = ledger.measuredAgainst?.tests;
+if (typeof measuredTests === 'number') {
+  for (const [label, source] of [['README.md', readme]]) {
+    for (const match of source.matchAll(/(\d[\d,]*)\s+tests\b/g)) {
+      const quoted = Number(match[1].replace(/,/g, ''));
+      if (quoted !== measuredTests) {
+        fail(
+          `${label} says "${match[0]}" but claims.json was measured at ${measuredTests}. `
+          + 'Re-measure and update both, or the number a reader sees is not the number anyone ran.',
+        );
+      }
+    }
+  }
+}
+
 for (const limitation of ledger.limitations) {
   if (!limitation.surfaces?.includes('readme')) continue;
   if (!readme.includes(limitation.headline)) {

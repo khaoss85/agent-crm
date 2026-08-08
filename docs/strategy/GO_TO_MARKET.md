@@ -159,6 +159,7 @@ Sourcing, caveats and the places the alternative genuinely wins are maintained i
 | Benchmark protocol amendment — Edition L (G1–G4) and Edition D (G5–G6, blocked), points out of 75, SABR and TTFW ruled out | `CRM_BUILD_BENCHMARK.md`, ADR-022 | ✅ (0.3) |
 | Edition L harness — prepare, record, score, all three refusing rather than guessing | `benchmarks/harness/`, `npm run bench:*` | ✅ (0.4, harness only) |
 | Pilot runbook and publication gate — how a run is driven, and which sentences a result licenses | `docs/benchmarks/PILOT_PROTOCOL.md`, `docs/marketing/BENCHMARK_PUBLICATION.md` | ✅ |
+| Falsification kit — six mutations, three outcomes, refuses to run over uncommitted files, prints what it skipped | `scripts/falsify.js`, `docs/FALSIFY.md`, `npm run falsify` | ✅ (0.2) |
 | **A pilot run** | `docs/benchmarks/PILOT_RESULTS.md` | ❌ needs a human operator and a clean agent session — see §8 |
 
 ---

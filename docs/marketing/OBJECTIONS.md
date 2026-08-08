@@ -49,6 +49,13 @@ fail-closed, replay and reconciliation, exact queries beyond page bounds, immuta
 mutating the source, and hostile input across every provider, payload, field and route. Judge
 the tests by that list, not by the count.
 
+Better still, do not take either on trust: `npm run falsify` removes five of the rules those
+tests defend — the human-actor guard on approvals, the approval threshold's boundary, webhook
+signature verification, policy-version immutability, and the rule that a fully managed module
+generates no public write — and reports which named test caught each one, in about two seconds
+(`docs/FALSIFY.md`, `C-23`). Anything that survives is printed as a gap rather than omitted.
+One already did, on the first run, and the missing test is in the same diff as the tool.
+
 ### 5. "Is this just a wrapper around an LLM?"
 
 There is no model in the runtime. Nothing calls a model at request time. The framework is

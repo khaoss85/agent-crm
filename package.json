@@ -22,6 +22,7 @@
     "test": "node --no-warnings --test --test-reporter=spec",
     "verify": "npm run check && npm test",
     "smoke": "node --no-warnings scripts/smoke.js",
+    "falsify": "node scripts/falsify.js",
     "site:build": "node scripts/site-build.js",
     "site:check": "npm run site:build && node scripts/site-check.js",
     "distribution:check": "node scripts/distribution-check.js",

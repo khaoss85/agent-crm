@@ -63,7 +63,7 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 | `crm solution check` — a Solution Plan is a checked-in contract with a canonical fingerprint | a document contract, not a planner and not a runtime; nothing executes a plan | `tests/solution-plan.test.js` |
 | Generated modules evolve through explicit revisions and append-only named migrations | source-only: what a particular database applied is not knowable from here | `tests/module-evolution.test.js` |
 
-**373 tests, 0 failing**, run on every push together with the smoke test.
+**489 tests, 0 failing**, run on every push together with the smoke test.
 
 ## Run it
 
@@ -71,7 +71,8 @@ Node.js 22.16 or newer. There are no third-party runtime dependencies and no bui
 
 ```bash
 npm run tour     # compose the whole application and inspect it
-npm run verify   # 373 tests
+npm run verify   # 489 tests
+npm run falsify  # break five rules on purpose and watch the suite catch them
 npm run demo     # the approval slice, end to end
 npm run dev      # http://localhost:4000
 ```
@@ -82,8 +83,8 @@ composition is deliberately empty — a project writes the composition it wants 
 same one CI runs on every push) into a directory it keeps, then inspects the result:
 
 ```text
-  modules       55        resources     19        policies       5
-  packages       3        actions       35        providers     10
+  modules       61        resources     25        policies       5
+  packages       3        actions       42        providers     10
 
   production posture — local development only: no authentication, tenancy or RBAC
                        exists, and actor headers are not identity
@@ -92,6 +93,15 @@ same one CI runs on every push) into a directory it keeps, then inspects the res
 It ends on the eleven things the inspector says it cannot see, because a tour that shows only
 the good half is not worth running. `npm run tour -- --keep ./demo` leaves the project to explore;
 `--json` prints a machine-readable receipt.
+
+`npm run falsify` is the other direction. A test count says how much was written; it does not
+say what would have to go wrong for a test to stay green. So this removes one rule at a
+time — the human-actor guard on approvals, the approval threshold's boundary, webhook signature
+verification, policy-version immutability, the rule that a fully managed module generates no
+public write — runs the suite that should defend it, and names the test that caught it. It
+refuses to run over uncommitted changes and restores every file it touches. Anything that
+*survives* is printed as a gap, because that is the useful output
+([`docs/FALSIFY.md`](docs/FALSIFY.md), `tests/falsify.test.js`).
 
 `npm run demo` creates two renewals and is asserted by `scripts/smoke.js` on every push:
 

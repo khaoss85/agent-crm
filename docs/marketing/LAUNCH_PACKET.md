@@ -83,9 +83,15 @@ before a commenter gets to say them.
 > - **It is a framework, not a product.** There is nothing to sign up for. [L-07]
 >
 > If you want to judge it in a minute rather than read about it: clone and run `npm run tour`.
-> There is nothing to install. It composes the whole application from manifests — 61 modules, 25
-> resources, 42 actions, 5 policies, 10 providers — drives it end to end, and then prints the
-> eleven things its own inspector says it cannot see. [C-22]
+> There is nothing to install. It composes the whole application from manifests —
+> 61 modules, 25 resources, 42 actions, 5 policies, 10 providers — drives it end to
+> end, and then prints the eleven things its own inspector says it cannot see. [C-22]
+>
+> If you would rather try to break it than read about it: `npm run falsify` removes five
+> guarantees on purpose — the human-actor guard on approvals, the approval boundary, webhook
+> signature verification, policy-version immutability, the no-public-write rule on managed
+> modules — and reports which test caught each one, in about two seconds. Anything that
+> survives is printed as a gap. It already found one, and the fix is in the diff. [C-23]
 >
 > What does work, and what I would like broken: every mutation goes through a module service or
 > a named workflow and leaves an audit event and a step-level trace [C-16]; there are no

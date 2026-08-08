@@ -15,243 +15,473 @@
       "text": "Write a module manifest; the agent turns it into a migration, a service, a REST resource, an SDK method and Admin screens — with no page code.",
       "evidence": {
         "jtbd": "JTBD-01",
-        "tests": ["tests/module-factory-e2e.test.js", "tests/generated-api-e2e.test.js", "tests/admin-modules.test.js", "tests/admin-core.test.js"],
-        "docs": ["docs/MODULE_FACTORY.md", "docs/ADMIN.md"]
+        "tests": [
+          "tests/module-factory-e2e.test.js",
+          "tests/generated-api-e2e.test.js",
+          "tests/admin-modules.test.js",
+          "tests/admin-core.test.js"
+        ],
+        "docs": [
+          "docs/MODULE_FACTORY.md",
+          "docs/ADMIN.md"
+        ]
       },
       "limitation": "Generated CRUD only. The factory does not generate workflows or approvals for a custom object — that is still handwritten (JTBD-06, partially supported).",
-      "surfaces": ["site", "readme", "launch"]
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "C-02",
       "text": "Generated objects reference each other: a foreign key, runtime target validation, schema metadata and an Admin selector, all from one field declaration.",
       "evidence": {
         "jtbd": "JTBD-01b",
-        "tests": ["tests/reference-fields-e2e.test.js", "tests/reference-resolver.test.js", "tests/module-factory.test.js"],
-        "docs": ["docs/MODULE_FACTORY.md"]
+        "tests": [
+          "tests/reference-fields-e2e.test.js",
+          "tests/reference-resolver.test.js",
+          "tests/module-factory.test.js"
+        ],
+        "docs": [
+          "docs/MODULE_FACTORY.md"
+        ]
       },
       "limitation": "Generated-to-generated many-to-one only. Many-to-many, inverse collections, cascade delete and generated-to-core references do not exist.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "C-03",
       "text": "Commercial policy is deterministic code, not a model's judgement: a renewal at or above the threshold stops and waits for a named human.",
       "evidence": {
         "jtbd": "JTBD-02",
-        "tests": ["tests/workflow.test.js", "tests/api.test.js"],
-        "docs": ["ARCHITECTURE.md", "DECISIONS.md"]
+        "tests": [
+          "tests/workflow.test.js",
+          "tests/api.test.js"
+        ],
+        "docs": [
+          "ARCHITECTURE.md",
+          "DECISIONS.md"
+        ]
       },
       "limitation": "Proven for the built-in renewal object and its single value threshold. A general policy engine over arbitrary custom objects does not exist.",
-      "surfaces": ["site", "readme", "launch"]
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "C-04",
       "text": "The agent cannot approve on the human's behalf. A test asserts the refusal, so the boundary is a property of the system rather than a promise in a README.",
       "evidence": {
         "jtbd": "JTBD-02",
-        "tests": ["tests/workflow.test.js"],
-        "docs": ["ARCHITECTURE.md"],
+        "tests": [
+          "tests/workflow.test.js"
+        ],
+        "docs": [
+          "ARCHITECTURE.md"
+        ],
         "testName": "approval workflow rejects an agent pretending to make the human decision"
       },
       "limitation": "The actor is asserted, not authenticated: there is no auth, tenancy or RBAC, and an actor header is not identity. This holds a boundary against an honest agent, not against an attacker with network access.",
-      "surfaces": ["site", "readme", "launch"]
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "C-05",
       "text": "Opportunities move through code-first pipeline stages under a server-authoritative action — the client asks, the server decides.",
       "evidence": {
         "jtbd": "JTBD-03",
-        "tests": ["tests/opportunity-pipeline-e2e.test.js", "tests/pipeline-contract.test.js", "tests/admin-pipeline.test.js"],
-        "docs": ["docs/ACTIONS.md"]
+        "tests": [
+          "tests/opportunity-pipeline-e2e.test.js",
+          "tests/pipeline-contract.test.js",
+          "tests/admin-pipeline.test.js"
+        ],
+        "docs": [
+          "docs/ACTIONS.md"
+        ]
       },
       "limitation": "Pipelines are proven on the built-in Opportunity module. Configurable pipelines for generated custom objects are not claimed.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "C-06",
       "text": "A lead is captured, scored, routed, qualified and converted into Company, Contact and Opportunity through explicit actions, each one atomic and audited.",
       "evidence": {
         "jtbd": "JTBD-04, JTBD-05, JTBD-05b, JTBD-LI-01, JTBD-LI-02, JTBD-LI-04",
-        "tests": ["tests/lead-qualification-e2e.test.js", "tests/lead-conversion-e2e.test.js", "tests/lead-intelligence-e2e.test.js"],
-        "docs": ["docs/LEAD_INTELLIGENCE.md"]
+        "tests": [
+          "tests/lead-qualification-e2e.test.js",
+          "tests/lead-conversion-e2e.test.js",
+          "tests/lead-intelligence-e2e.test.js"
+        ],
+        "docs": [
+          "docs/LEAD_INTELLIGENCE.md"
+        ]
       },
       "limitation": "Enrichment runs against a fixture provider — no real external data source is wired. The Lead model is the starter's, not a built-in core module.",
-      "surfaces": ["site", "readme", "launch"]
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "C-07",
       "text": "Scoring is explainable and versioned: every score carries the fingerprint of the model version that produced it, so a number from last quarter can still be accounted for.",
       "evidence": {
         "jtbd": "JTBD-LI-02, JTBD-LI-07",
-        "tests": ["tests/lead-intelligence-e2e.test.js", "tests/intelligence-contract.test.js"],
-        "docs": ["docs/LEAD_INTELLIGENCE.md"]
+        "tests": [
+          "tests/lead-intelligence-e2e.test.js",
+          "tests/intelligence-contract.test.js"
+        ],
+        "docs": [
+          "docs/LEAD_INTELLIGENCE.md"
+        ]
       },
       "limitation": "Deterministic weighted rules, not a machine-learning model. Nothing trains, fits or backtests.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "C-08",
       "text": "Quotes price on the server from a catalog — one-time and recurring, flat, per-unit, volume and graduated tiers — and freeze into an immutable version when a discount goes for approval.",
       "evidence": {
         "jtbd": "JTBD-CO-01, JTBD-CO-03",
-        "tests": ["tests/commercial-e2e.test.js", "tests/commercial-contract.test.js", "tests/admin-quotes.test.js"],
-        "docs": ["docs/COMMERCIAL_OPERATIONS.md"]
+        "tests": [
+          "tests/commercial-e2e.test.js",
+          "tests/commercial-contract.test.js",
+          "tests/admin-quotes.test.js"
+        ],
+        "docs": [
+          "docs/COMMERCIAL_OPERATIONS.md"
+        ]
       },
       "limitation": "Catalog sync runs against a fixture provider; no real external catalog (Stripe, Zuora, ERP) is connected. Money is integer cents with no FX — currencies are never summed.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "C-09",
       "text": "A signature envelope produces verified events and a hashed signed artifact, and exactly one immutable Order is built from the approved quote version.",
       "evidence": {
         "jtbd": "JTBD-CO-07",
-        "tests": ["tests/signature-order-e2e.test.js", "tests/signature-contract.test.js", "tests/admin-signature.test.js"],
-        "docs": ["docs/SIGNATURE_ORDER.md"]
+        "tests": [
+          "tests/signature-order-e2e.test.js",
+          "tests/signature-contract.test.js",
+          "tests/admin-signature.test.js"
+        ],
+        "docs": [
+          "docs/SIGNATURE_ORDER.md"
+        ]
       },
       "limitation": "A fixture signature provider with a test-only webhook key. No DocuSign, Adobe Sign or Dropbox Sign adapter exists, and the artifact hash is provider-reported rather than independently recomputed.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "C-10",
       "text": "A signed Order activates into a Commercial Contract, an immutable contract version, a Subscription and explicitly pending delivery and service obligations — every component classified, never guessed.",
       "evidence": {
         "jtbd": "JTBD-CS-01, JTBD-CS-02",
-        "tests": ["tests/contracts-activation-e2e.test.js", "tests/contracts-contract.test.js", "tests/admin-contracts.test.js"],
-        "docs": ["docs/CONTRACT_ACTIVATION.md"]
+        "tests": [
+          "tests/contracts-activation-e2e.test.js",
+          "tests/contracts-contract.test.js",
+          "tests/admin-contracts.test.js"
+        ],
+        "docs": [
+          "docs/CONTRACT_ACTIVATION.md"
+        ]
       },
       "limitation": "The term is post-signature operational metadata, not a signed contractual term. Nothing bills, renews, amends or cancels: there is no scheduler, so auto-renew and notice periods are recorded and never fire.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "C-11",
       "text": "Pending obligations hand over into a Delivery Project with work packages, milestones and an optional partner — atomically, idempotently, and across a package boundary the kernel never learns about.",
       "evidence": {
         "jtbd": "JTBD-DS-01",
-        "tests": ["tests/delivery-handover-e2e.test.js", "tests/delivery-execution-e2e.test.js", "tests/admin-delivery.test.js"],
-        "docs": ["docs/DELIVERY_HANDOVER.md"]
+        "tests": [
+          "tests/delivery-handover-e2e.test.js",
+          "tests/delivery-execution-e2e.test.js",
+          "tests/admin-delivery.test.js"
+        ],
+        "docs": [
+          "docs/DELIVERY_HANDOVER.md"
+        ]
       },
       "limitation": "It hands work over and runs it through human-driven transitions. Nothing schedules, staffs, computes percent complete, accepts or bills. Deliverables and customer acceptance do not exist as objects.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "C-12",
       "text": "Delivery records what it consumed: append-only time and expense evidence, costed server-side by a versioned fingerprinted policy, with a reproducible contribution estimate grouped by currency.",
       "evidence": {
         "jtbd": "JTBD-DS-06, JTBD-DS-07",
-        "tests": ["tests/delivery-economics-e2e.test.js"],
-        "docs": ["docs/DELIVERY_ECONOMICS.md"]
+        "tests": [
+          "tests/delivery-economics-e2e.test.js"
+        ],
+        "docs": [
+          "docs/DELIVERY_ECONOMICS.md"
+        ]
       },
       "limitation": "Deliberately not a margin: no revenue recognition, no cost of goods sold, no ARR/MRR/TCV, no annualization, no FX. A project carrying a recurring obligation returns no estimate at all and says why.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "C-13",
       "text": "A customer-authored domain package attaches and detaches with the kernel's fingerprint unchanged, and reaches another package only through a capability it declares.",
       "evidence": {
         "jtbd": "JTBD-PK-01, JTBD-PK-02",
-        "tests": ["tests/package-contract.test.js", "tests/custom-package-e2e.test.js", "tests/contracts-registry-review.test.js"],
-        "docs": ["docs/PACKAGE_AUTHORING.md"]
+        "tests": [
+          "tests/package-contract.test.js",
+          "tests/custom-package-e2e.test.js",
+          "tests/contracts-registry-review.test.js"
+        ],
+        "docs": [
+          "docs/PACKAGE_AUTHORING.md"
+        ]
       },
       "limitation": "No scaffold, no registry, no marketplace, and no sandboxing — package code runs with the host process's authority. Detaching leaves its data behind; there is no uninstall.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "C-14",
       "text": "One command tells an agent what an application actually is — packages, capabilities, resources, actions, policies, providers — read from checked-in source, in a single deterministic JSON report.",
       "evidence": {
         "jtbd": "JTBD-AX-01, JTBD-AX-02",
-        "tests": ["tests/app-inspect.test.js"],
-        "docs": ["docs/APPLICATION_INSPECTION.md", "docs/AGENT_HARNESS_COMPATIBILITY.md"]
+        "tests": [
+          "tests/app-inspect.test.js"
+        ],
+        "docs": [
+          "docs/APPLICATION_INSPECTION.md",
+          "docs/AGENT_HARNESS_COMPATIBILITY.md"
+        ]
       },
       "limitation": "Source-only and read-only. It never opens the database, contacts a provider, reads a secret, or reports runtime, CI or authorization state — and it lists those blind spots as machine-readable limitations in its own output.",
-      "surfaces": ["site", "readme", "launch"]
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "C-22",
       "text": "One command composes the whole thing and then inspects it: 61 modules, 3 packages, 25 resources, 42 actions, 5 policies and 10 providers, applied from manifests and driven end to end — then it prints the eleven things the inspector says it cannot see.",
       "evidence": {
-        "tests": ["tests/app-inspect.test.js", "tests/contracts-activation-e2e.test.js", "tests/delivery-economics-e2e.test.js"],
-        "docs": ["docs/APPLICATION_INSPECTION.md"],
-        "repoFacts": ["npm run tour runs examples/starters/b2b-lead-qualification/install.mjs, which CI runs on every push, into a directory it keeps", "the counts are the app inspect report of that composed project", "scripts/tour.js exits non-zero if the composed application is ever empty"]
+        "tests": [
+          "tests/app-inspect.test.js",
+          "tests/contracts-activation-e2e.test.js",
+          "tests/delivery-economics-e2e.test.js"
+        ],
+        "docs": [
+          "docs/APPLICATION_INSPECTION.md"
+        ],
+        "repoFacts": [
+          "npm run tour runs examples/starters/b2b-lead-qualification/install.mjs, which CI runs on every push, into a directory it keeps",
+          "the counts are the app inspect report of that composed project",
+          "scripts/tour.js exits non-zero if the composed application is ever empty"
+        ]
       },
       "limitation": "It composes the starter's application, not yours, and it runs entirely locally against SQLite with no authentication. The counts describe what that starter applies; a different composition gives different numbers. Wall-clock time varies by machine and is deliberately not claimed.",
-      "surfaces": ["site", "readme", "launch"]
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "C-21",
       "text": "The same refusal holds where the money is: an agent actor asking to approve a discounted quote is refused with a 403, and only a human user actor can decide.",
       "evidence": {
         "jtbd": "JTBD-CO-03",
-        "tests": ["tests/commercial-e2e.test.js"],
-        "docs": ["docs/COMMERCIAL_OPERATIONS.md"],
+        "tests": [
+          "tests/commercial-e2e.test.js"
+        ],
+        "docs": [
+          "docs/COMMERCIAL_OPERATIONS.md"
+        ],
         "testName": "commercial e2e: approval boundary, revise/version-2, concurrency, fault injection, provider failures, drift",
         "assertion": "tests/commercial-e2e.test.js — quote.approve with actor { type: 'agent' } rejects with status 403 and code HUMAN_APPROVAL_REQUIRED"
       },
       "limitation": "The assertion lives inside a composite end-to-end test rather than a test named for it, so the citation is a file and a line rather than a test name. Extracting it into a named test is tracked in docs/strategy/GO_TO_MARKET.md; until then, cite the line.",
-      "surfaces": ["site", "readme", "launch"]
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "C-15",
       "text": "A Solution Plan is a checked-in file with a contract and a canonical fingerprint, validated against a real inspection — so a plan written against a composition that has since moved reports itself stale.",
       "evidence": {
         "jtbd": "JTBD-AX-03",
-        "tests": ["tests/solution-plan.test.js"],
-        "docs": ["docs/SOLUTION_PLAN.md"]
+        "tests": [
+          "tests/solution-plan.test.js"
+        ],
+        "docs": [
+          "docs/SOLUTION_PLAN.md"
+        ]
       },
       "limitation": "A document contract, not a planner and not a runtime. Nothing executes a plan, and the validator refuses a plan that carries a command.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "C-16",
       "text": "Every mutation goes through a module service or a named workflow, and leaves an audit event and a step-level trace behind it.",
       "evidence": {
         "jtbd": "JTBD-02",
-        "tests": ["tests/workflow.test.js", "tests/action-runtime-semantics.test.js", "tests/event-bus-outbox.test.js"],
-        "docs": ["ARCHITECTURE.md", "docs/ACTIONS.md"]
+        "tests": [
+          "tests/workflow.test.js",
+          "tests/action-runtime-semantics.test.js",
+          "tests/event-bus-outbox.test.js"
+        ],
+        "docs": [
+          "ARCHITECTURE.md",
+          "docs/ACTIONS.md"
+        ]
       },
       "limitation": "Audit records what the process did under an asserted actor. It is not a tamper-evident or externally attestable log, and it is not a compliance control.",
-      "surfaces": ["site", "readme", "launch"]
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "C-17",
       "text": "Zero third-party runtime dependencies. Node 22 and a checkout — no build step, no bundler, no framework underneath your framework.",
       "evidence": {
-        "repoFacts": ["package.json has no dependencies field", "SQLite via node:sqlite", "the HTTP server, test runner and database adapter are all Node built-ins"],
-        "tests": ["tests/api.test.js"],
-        "docs": ["ARCHITECTURE.md", "AGENTS.md"]
+        "repoFacts": [
+          "package.json has no dependencies field",
+          "SQLite via node:sqlite",
+          "the HTTP server, test runner and database adapter are all Node built-ins"
+        ],
+        "tests": [
+          "tests/api.test.js"
+        ],
+        "docs": [
+          "ARCHITECTURE.md",
+          "AGENTS.md"
+        ]
       },
       "limitation": "Development dependencies and the eventual PostgreSQL adapter are separate questions. Having no runtime dependencies is a property of the framework, not of whatever you add on top of it.",
-      "surfaces": ["site", "readme", "launch"]
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "C-18",
       "text": "The MCP server exposes project context and narrow write tools to a coding agent; anything that generates code or destroys state is dry-run unless you pass an explicit apply flag.",
       "evidence": {
         "jtbd": "JTBD-AX-02",
-        "tests": ["tests/mcp.test.js", "tests/scaffold.test.js"],
-        "docs": ["docs/MCP.md"]
+        "tests": [
+          "tests/mcp.test.js",
+          "tests/scaffold.test.js"
+        ],
+        "docs": [
+          "docs/MCP.md"
+        ]
       },
       "limitation": "Stdio only, local only. There is no hosted or authenticated MCP endpoint, and the server inherits the local process's authority.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "C-19",
       "text": "Generated modules evolve without rewriting history: explicit revisions, a checked-in state file and append-only named migrations.",
       "evidence": {
-        "tests": ["tests/module-evolution.test.js", "tests/module-evolution-factory.test.js", "tests/module-migrations.test.js"],
-        "docs": ["docs/MODULE_EVOLUTION.md"]
+        "tests": [
+          "tests/module-evolution.test.js",
+          "tests/module-evolution-factory.test.js",
+          "tests/module-migrations.test.js"
+        ],
+        "docs": [
+          "docs/MODULE_EVOLUTION.md"
+        ]
       },
       "limitation": "The view is source-only: what the checked-in revisions and migrations say is knowable; what a particular database has actually applied is not.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "C-20",
       "text": "489 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
       "evidence": {
-        "repoFacts": ["npm run verify at d75930c: 489 passing, 0 failing", ".github/workflows/ci.yml runs verify and smoke on push and pull_request"],
-        "docs": ["docs/QUALITY_GATES.md"]
+        "repoFacts": [
+          "npm run verify at d75930c: 489 passing, 0 failing",
+          ".github/workflows/ci.yml runs verify and smoke on push and pull_request"
+        ],
+        "docs": [
+          "docs/QUALITY_GATES.md"
+        ]
       },
       "limitation": "A test count measures effort, not correctness — read the adversarial-review categories in docs/QUALITY_GATES.md to see what is actually attacked. Real-browser tests are run manually and are not in CI.",
-      "surfaces": ["site", "readme"]
+      "surfaces": [
+        "site",
+        "readme"
+      ]
+    },
+    {
+      "id": "C-23",
+      "text": "Five rules can be removed on purpose in one command, and the suite catches every one in about two seconds — naming the test that caught it. Anything that survives is reported as a gap, not omitted.",
+      "evidence": {
+        "tests": [
+          "tests/falsify.test.js",
+          "tests/module-factory.test.js",
+          "tests/workflow.test.js"
+        ],
+        "docs": [
+          "docs/FALSIFY.md"
+        ],
+        "repoFacts": [
+          "npm run falsify at d75930c: 5 caught, 0 survived, 0 stale, 2.2s",
+          "npm run falsify --only delivery-cost-rounding: caught by 'cost arithmetic is exact at every boundary' in 108.3s",
+          "the run refuses to start over uncommitted target files and verifies every restore byte-for-byte"
+        ]
+      },
+      "limitation": "It falsifies six named rules, not the twenty-two claims in this ledger, and it proves only that a test holds each one — a rule that is wrong but faithfully defended passes every mutation. It is not mutation testing: nothing is generated or sampled, and no score is derived.",
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     }
   ],
   "limitations": [
@@ -259,53 +489,117 @@
       "id": "L-01",
       "headline": "No authentication, tenancy or RBAC.",
       "text": "The server is local-development-only. An actor header is an assertion, not an identity. Do not expose it to a network.",
-      "evidence": { "jtbd": "JTBD-15", "docs": ["docs/PROJECT_STATUS.md", "README.md"], "repoFacts": ["crm app inspect reports productionPosture: local development only"] },
-      "surfaces": ["site", "readme", "launch"]
+      "evidence": {
+        "jtbd": "JTBD-15",
+        "docs": [
+          "docs/PROJECT_STATUS.md",
+          "README.md"
+        ],
+        "repoFacts": [
+          "crm app inspect reports productionPosture: local development only"
+        ]
+      },
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "L-02",
       "headline": "SQLite only.",
       "text": "Persistence is Node's built-in SQLite adapter. PostgreSQL is on the Production Spine track and is not implemented.",
-      "evidence": { "docs": ["docs/PROJECT_STATUS.md", "docs/strategy/PLATFORM_CAPABILITIES.md"] },
-      "surfaces": ["site", "readme"]
+      "evidence": {
+        "docs": [
+          "docs/PROJECT_STATUS.md",
+          "docs/strategy/PLATFORM_CAPABILITIES.md"
+        ]
+      },
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "L-03",
       "headline": "The build benchmark has not been run.",
       "text": "The protocol is designed and published; no Successful Agent Build Rate exists yet. Any number you see quoted for this project is not ours.",
-      "evidence": { "docs": ["docs/strategy/CRM_BUILD_BENCHMARK.md", "docs/PROJECT_STATUS.md"] },
-      "surfaces": ["site", "readme", "launch"]
+      "evidence": {
+        "docs": [
+          "docs/strategy/CRM_BUILD_BENCHMARK.md",
+          "docs/PROJECT_STATUS.md"
+        ]
+      },
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "L-04",
       "headline": "No scheduler, no task engine, no reminders.",
       "text": "One follow-up Task is created inside lead qualification. There is no recurring work, no delayed workflow, no queue — so nothing fires on a renewal notice period either.",
-      "evidence": { "jtbd": "JTBD-07, JTBD-10", "docs": ["docs/strategy/JOBS_AND_OUTBOX.md"] },
-      "surfaces": ["site", "readme"]
+      "evidence": {
+        "jtbd": "JTBD-07, JTBD-10",
+        "docs": [
+          "docs/strategy/JOBS_AND_OUTBOX.md"
+        ]
+      },
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "L-05",
       "headline": "No email, calendar or marketing integrations.",
       "text": "An in-memory notification provider contract exists. No adapter sends anything to anyone.",
-      "evidence": { "jtbd": "JTBD-14", "docs": ["docs/strategy/INTEGRATION_RUNTIME.md"] },
-      "surfaces": ["site", "readme"]
+      "evidence": {
+        "jtbd": "JTBD-14",
+        "docs": [
+          "docs/strategy/INTEGRATION_RUNTIME.md"
+        ]
+      },
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "L-06",
       "headline": "No import, export, dedupe, merge, bulk edit, saved views or global search.",
       "text": "Table stakes in every commercial CRM, and none of them has a milestone yet. This is recorded deliberately rather than left for you to discover.",
-      "evidence": { "docs": ["docs/benchmarks/CRM_JTBD_MATRIX.md"] },
-      "surfaces": ["site", "readme"]
+      "evidence": {
+        "docs": [
+          "docs/benchmarks/CRM_JTBD_MATRIX.md"
+        ]
+      },
+      "surfaces": [
+        "site",
+        "readme"
+      ]
     },
     {
       "id": "L-08",
       "headline": "Ownership today means copying source, not installing a dependency.",
       "text": "There is no create-project CLI and no published package. The one working installer copies packages/, apps/ and examples/ into a new project — you own the result outright, but the ergonomics of `npm create` and a versioned framework dependency do not exist yet. Until they do, upgrading means merging, not bumping.",
       "evidence": {
-        "docs": ["docs/PROJECT_STATUS.md", "examples/starters/b2b-lead-qualification/install.mjs"],
-        "repoFacts": ["examples/starters/b2b-lead-qualification/install.mjs copies packages, apps, examples and package.json into a temporary project", "the create-project CLI is EXECUTION_ROADMAP Phase 5 and is not implemented", "no npm package is published"]
+        "docs": [
+          "docs/PROJECT_STATUS.md",
+          "examples/starters/b2b-lead-qualification/install.mjs"
+        ],
+        "repoFacts": [
+          "examples/starters/b2b-lead-qualification/install.mjs copies packages, apps, examples and package.json into a temporary project",
+          "the create-project CLI is EXECUTION_ROADMAP Phase 5 and is not implemented",
+          "no npm package is published"
+        ]
       },
-      "surfaces": ["site", "readme", "launch"]
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "L-09",
@@ -313,18 +607,40 @@
       "text": "A CRM is a personal-data system by definition, and this one has no authentication, no tenancy, no export and no erasure path — so there is no way to service a data-subject access or deletion request with it. Data governance is designed and unimplemented. The one thing that does hold today: lead scoring is deterministic, versioned and explainable, not a model's judgement about a person.",
       "evidence": {
         "jtbd": "JTBD-15",
-        "tests": ["tests/lead-intelligence-e2e.test.js"],
-        "docs": ["docs/strategy/DATA_GOVERNANCE.md", "docs/benchmarks/CRM_JTBD_MATRIX.md"],
-        "repoFacts": ["DATA_GOVERNANCE.md records the whole track as design only", "no import or export exists (L-06)", "scoring is a deterministic weighted model with a persisted version fingerprint (C-07)"]
+        "tests": [
+          "tests/lead-intelligence-e2e.test.js"
+        ],
+        "docs": [
+          "docs/strategy/DATA_GOVERNANCE.md",
+          "docs/benchmarks/CRM_JTBD_MATRIX.md"
+        ],
+        "repoFacts": [
+          "DATA_GOVERNANCE.md records the whole track as design only",
+          "no import or export exists (L-06)",
+          "scoring is a deterministic weighted model with a persisted version fingerprint (C-07)"
+        ]
       },
-      "surfaces": ["site", "readme", "launch"]
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     },
     {
       "id": "L-07",
       "headline": "This is a framework, not a product you sign up for.",
       "text": "There is no hosted CRM, no free tier and no account. The output is an application in your repository that you run.",
-      "evidence": { "docs": ["PRODUCT.md", "docs/strategy/CATEGORY.md"] },
-      "surfaces": ["site", "readme", "launch"]
+      "evidence": {
+        "docs": [
+          "PRODUCT.md",
+          "docs/strategy/CATEGORY.md"
+        ]
+      },
+      "surfaces": [
+        "site",
+        "readme",
+        "launch"
+      ]
     }
   ]
 }

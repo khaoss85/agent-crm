@@ -23,10 +23,19 @@ import { join } from 'node:path';
 /** The labels the documents spell out, in the words they use. */
 const LABELS = ['modules', 'packages', 'resources', 'actions', 'policies', 'providers'];
 
-/** Documents that quote the tour's counts in the tour's own words. */
-const QUOTING_DOCUMENTS = [
-  'docs/marketing/LAUNCH_PACKET.md',
-  'docs/strategy/GO_TO_MARKET.md',
+/**
+ * Every surface that quotes the tour's counts, and which side of the label the number sits on.
+ * Prose writes "61 modules"; the landing page prints a column-aligned terminal transcript, where
+ * the label comes first and a count-first sweep silently reads the *previous* column.
+ *
+ * The landing page was the one surface the first version of this test did not sweep, and it was
+ * stale — which is the argument for listing every surface rather than the ones that came to mind.
+ */
+const QUOTING_SURFACES = [
+  { path: 'docs/marketing/LAUNCH_PACKET.md', order: 'count-first' },
+  { path: 'docs/strategy/GO_TO_MARKET.md', order: 'count-first' },
+  { path: 'site/templates/index.html', order: 'label-first' },
+  { path: 'README.md', order: 'label-first' },
 ];
 
 const NUMERALS = [
@@ -80,20 +89,31 @@ test('the claims ledger states the counts the tour actually produced', () => {
 test('no document quotes a count the tour did not produce', () => {
   assert.ok(tour, 'the tour test must run first');
 
-  for (const path of QUOTING_DOCUMENTS) {
+  for (const { path, order } of QUOTING_SURFACES) {
     const text = readFileSync(join(process.cwd(), path), 'utf8');
     for (const label of LABELS) {
       // "packages" is an npm word as well as a composition word, so it is checked in the ledger
       // (where the sentence is unambiguous) and not swept for here.
       if (label === 'packages') continue;
-      for (const match of text.matchAll(new RegExp(`(\\d+)\\s+${label}\\b`, 'g'))) {
+      const pattern = order === 'label-first'
+        ? new RegExp(`\\b${label}\\s+(\\d+)`, 'g')
+        : new RegExp(`(\\d+)\\s+${label}\\b`, 'g');
+      let seen = 0;
+      for (const match of text.matchAll(pattern)) {
+        seen += 1;
         assert.equal(
           Number(match[1]),
           tour.counts[label],
-          `${path} says "${match[0]}" and the tour composed ${tour.counts[label]} ${label}. `
+          `${path} says "${match[0].trim()}" and the tour composed ${tour.counts[label]} ${label}. `
           + 'Re-run npm run tour and update the sentence, or say which other composition it describes.',
         );
       }
+      assert.ok(
+        seen > 0,
+        `${path} quotes no count for "${label}". Either it stopped quoting the tour — in which `
+        + 'case drop it from QUOTING_SURFACES — or the sweep is reading it with the wrong orientation '
+        + 'and is now checking nothing.',
+      );
     }
   }
 });
