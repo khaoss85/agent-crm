@@ -128,12 +128,17 @@ export async function runHelperCases(record) {
  */
 export async function runArchitectureEvidence(record, rootDir = repoRoot) {
   const { observation } = await import('./characterization-contract.mjs');
+  // Documentation is excluded by being documentation, not by living under
+  // `docs/`. The first version filtered the directory, so `DECISIONS.md` — an
+  // ADR that names the field it is deciding about — was counted as a consumer
+  // of it. An evidence list that moves when somebody writes a design document
+  // is measuring prose, and this observation claims to measure code.
   const grep = (pattern) => {
     try {
       return execFileSync('git', ['grep', '-n', '--', pattern], { cwd: rootDir, encoding: 'utf8' })
         .split('\n').filter(Boolean)
         .map((line) => line.split(':').slice(0, 1)[0])
-        .filter((file) => !file.startsWith('tests/') && !file.startsWith('docs/'));
+        .filter((file) => !file.startsWith('tests/') && !file.endsWith('.md'));
     } catch {
       return [];
     }

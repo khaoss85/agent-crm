@@ -213,8 +213,6 @@
       "id": "architecture.definition-registry-slot",
       "note": "Blocker 3 evidence: who depends on the fixed project-owned definition slot.",
       "observed": [
-        ".claude/skills/build-lead-intelligence/SKILL.md",
-        "DECISIONS.md",
         "packages/app/src/create-app.js",
         "packages/cli/src/app-inspect.js"
       ],
@@ -266,7 +264,6 @@
       "id": "architecture.intelligence-internal-importers",
       "note": "Blocker 1 evidence: every file importing an Intelligence internal, which is what disproves \"no code reads Intelligence internals\".",
       "observed": [
-        "DECISIONS.md",
         "examples/starters/b2b-lead-qualification/install.mjs",
         "packages/app/src/create-app.js",
         "packages/core/index.js",

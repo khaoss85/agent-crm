@@ -249,6 +249,10 @@ property Option B buys is not actually bought.
 
 ### Recommendation — **Option B, with a staged migration** (unchanged, confidence raised)
 
+> Written up as **ADR-021** (proposed) in `DECISIONS.md`, with the target shape
+> in `docs/architecture/INTELLIGENCE_PACKAGE_TARGET.md`. Still not implemented,
+> and still a human's decision.
+
 The evidence above does not disprove the working hypothesis; it makes it
 cheaper. Confidence moves from *recommended* to *recommended with a measured
 cost*: one schema-publication change and four actions that move anyway.
@@ -286,10 +290,12 @@ Intelligence becomes a package, the file is a *project* file describing a
 
 ### Measured: who depends on the fixed slot
 
-LA0 records it (`architecture.definition-registry-slot`): four files, and only
-two of them are runtime — `packages/app/src/create-app.js`, which constructs the
-registries, and `packages/cli/src/app-inspect.js`, where `intelligence` is one
-of AX1's fixed composition slots. The other two are documentation.
+LA0 records it (`architecture.definition-registry-slot`): **two** runtime files —
+`packages/app/src/create-app.js`, which constructs the registries, and
+`packages/cli/src/app-inspect.js`, where `intelligence` is one of AX1's fixed
+composition slots. It read four when the measurement still counted
+documentation as a dependant; it counts code now, and two documents mentioning
+the slot were never dependants of it.
 
 And the four definition kinds, measured from `/api/schema`: enrichment
 providers, scoring models, routing policies, routing targets. Three of the four
@@ -337,6 +343,10 @@ they stay project configuration rather than becoming a package definition kind �
 which is a smaller decision than a new seam.
 
 ### Recommendation — **Option C, reuse existing contracts** (unchanged, now evidenced)
+
+> Written up as **ADR-022** (proposed) in `DECISIONS.md`, with the target shape
+> in `docs/architecture/INTELLIGENCE_PACKAGE_TARGET.md`. Still not implemented,
+> and still a human's decision.
 
 The measurement supports it: two runtime dependants, three of four kinds already
 expressible, one open question about a single kind. That is not the shape of a
@@ -402,8 +412,8 @@ a change scoped to two defect candidates:
 | LA0 characterization harness | **built, open for review** — not merged |
 | LA0 defect candidates resolved | **open in a PR** — `record-signal`'s `value` is now bounded to the domain's own `MAX_TEXT` (500) and refused when it contains control characters or line breaks. Reviewed regeneration moved exactly five observations, all `hostile-input.record-signal.*` |
 | Neutral helpers moved out of Intelligence files | **no** — assessed domain-neutral, now behaviour-pinned by LA0, recommended as its own PR |
-| `app.intelligence` decision taken | **no** — Option B recommended, cost now measured (one schema-publication change; zero external action consumers). Human decision |
-| Definition-registry decision taken | **no** — Option C recommended, dependants now measured. Human decision |
+| `app.intelligence` decision taken | **no** — proposed as ADR-021 (declared capability, staged migration), cost measured: one schema-publication change, zero external action consumers. Human decision |
+| Definition-registry decision taken | **no** — proposed as ADR-022 (reuse `policies` and providers; no new seam), dependants measured. Routing targets remain open. Human decision |
 | Package-contributed HTTP route seam needed | **not for Intelligence.** DX4 established that route contribution is not required for generic conformance. It remains a precondition for **Commercial** and **Signature** specifically, each of which owns a route in `apps/server` |
 
 **Lead Intelligence is still not extractable today** — but the remaining

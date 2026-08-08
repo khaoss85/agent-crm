@@ -708,3 +708,129 @@ rung 3 or above must record every lower rung as inspected, with a reason per
 rung and the capability gap; the first draft accepted a `create-package`
 decision from an author who never looked at rung 1, which is precisely how a
 domain that already exists gets duplicated.
+
+## ADR-021 — An extracted domain reaches its consumers through a declared capability, never an ambient field
+
+**Status:** proposed. Analysis and measurement:
+`docs/architecture/EXTRACTION_PREPARATION.md` (Blocker 2); target shape:
+`docs/architecture/INTELLIGENCE_PACKAGE_TARGET.md`. **Nothing is implemented and
+this ADR does not authorize an extraction.**
+
+Lead Intelligence publishes its registries as `app.intelligence`, a field on the
+application object that the action runtime injects into every action's context.
+It predates the domain package seam (ADR-018) by four milestones and it works.
+It is also the single reason Intelligence cannot become a package without
+deciding something first: ADR-018's whole claim is that a dependency you cannot
+see is a dependency you cannot reason about, and an ambient field is a
+dependency nobody declares.
+
+Three shapes were considered, and the evidence that decides between them was
+measured rather than recalled. LA0 records it as
+`architecture.app-intelligence-consumers`.
+
+**Ambient (status quo).** Keep the field after the move. Zero migration, and a
+permanent exception to ADR-018: the package's interface stays reachable without
+declaring it, so `requires` stops being the whole truth. A custom package could
+never obtain the same privilege, which contradicts the equality
+`docs/PACKAGE_AUTHORING.md` §14 promises between first-party and
+customer packages.
+
+**A generic named-service registry.** Packages register services; the runtime
+resolves them into the context by name. It is a new generic seam with one
+consumer — the thing this repository's own rule refuses — and it does not even
+buy the property it costs: an action would still reach a package it never
+declared, ambient access under a new name.
+
+**A declared capability.** Intelligence offers `intelligence@1`; a consumer
+declares it in `requires` and opens it with `domains.capability(...)`.
+
+**Decision (proposed).** The declared capability.
+
+1. **The seam already exists.** Contract Activation provides
+   `delivery-obligations@1` and Delivery requires it. Nothing new is designed,
+   versioned, validated or represented in AX1 — the dependency becomes an edge
+   `crm app inspect` reports, a Solution Plan can bind, and `crm package test`
+   enforces.
+2. **The measured cost is one deliberate change, not a sweep.** Exactly one file
+   outside the application reads `app.intelligence`: `apps/server/src/http-server.js`,
+   which publishes the `intelligence` block on `/api/schema`. The ambient
+   *context key* is handed to every action and read by **none** outside Lead
+   Intelligence's own four — which move into the package anyway, where they
+   would open the capability they receive ambiently today. The estimate that
+   this was "a real behaviour change for every action that touches scoring or
+   routing" was wrong; that set is empty.
+3. **The migration is staged, and only the last two steps break anything.**
+   Offer `intelligence@1` while `app.intelligence` still exists (additive,
+   independently safe) · convert consumers one at a time, each reviewable in
+   isolation · when no consumer reads the ambient field, remove it from the
+   action context and publish the schema block as the package's own contribution
+   · AX1 then shows the edge and DX4 enforces it. Steps 3 and 4 must not begin
+   until the extraction is otherwise ready.
+4. **The schema change is provable, not hoped for.** LA0 freezes the published
+   block (`architecture.schema-intelligence-block-present`,
+   `architecture.definition-kinds-published`), so a migration that changes what
+   `/api/schema` says fails the characterization rather than being noticed later.
+5. **A project without the package composed has no consumer declaring it**, and
+   the registry says so at startup rather than at runtime.
+
+**Consequences.** The framework gains no mechanism. What it gains is that the
+last invisible dependency in the oldest domain becomes visible, and the rule
+that first-party packages get no privilege a customer package cannot have stops
+having an exception. What it costs is a migration whose every step is visible in
+a diff — which is the point, not a drawback.
+
+**This is a contract decision and it belongs to a human.** It is written down so
+the decision is taken deliberately rather than settled by whoever writes the
+extraction PR.
+
+## ADR-022 — Extracted definition kinds reuse existing contracts; a project-owned registry seam waits for a second consumer
+
+**Status:** proposed. Analysis and measurement:
+`docs/architecture/EXTRACTION_PREPARATION.md` (Blocker 3); target shape:
+`docs/architecture/INTELLIGENCE_PACKAGE_TARGET.md`. **Nothing is implemented.**
+
+`packages/intelligence/generated/index.js` is a checked-in, project-owned file
+where a project declares enrichment providers, scoring models, routing policies
+and routing targets. AX1 reads it as one of a fixed set of composition slots. If
+Intelligence becomes a package, that file is a *project* file describing a
+*package's* definition kinds, and no generic seam covers it.
+
+The temptation is to build one. The measurement argues against it. LA0 records
+the dependants as `architecture.definition-registry-slot`: four files, of which
+**two are runtime** — `packages/app/src/create-app.js`, which constructs the
+registries, and `packages/cli/src/app-inspect.js`, where `intelligence` is a
+fixed composition slot. The other two are documentation. And of the four
+definition kinds published on `/api/schema`, three already have a contract that
+fits: enrichment providers are providers, and scoring models and routing
+policies are versioned fingerprinted `policies` — the shape Commercial
+Operations already ships for discount policies.
+
+**Decision (proposed).** Express the extracted definitions with the contracts
+that already exist. Do **not** add a generic package-contributed
+definition-registry seam.
+
+1. **Providers stay providers, policies stay policies.** Enrichment providers
+   use the provider contract. Scoring models and routing policies use
+   `policies`, which is already versioned, already fingerprinted (ADR-015),
+   already inspected by AX1 and already enforced by DX4.
+2. **Routing targets are the open question, and they are named as one.** They
+   look more like project configuration than like a declared definition: they
+   carry no version, no fingerprint and no handler — they are a list of who can
+   receive work. The honest answer may be that they stay project configuration
+   and never become a package definition kind. That is a decision about one
+   kind, not a reason to build a mechanism.
+3. **The second consumer is the trigger, not the first.** If after Intelligence
+   is extracted a *second* package needs a project-owned registry the existing
+   contracts cannot express, that is the evidence a generic seam requires — and
+   it will be a better seam for having two real cases instead of one imagined
+   one.
+4. **The fixed AX1 slot is a consequence, not a cause.** `intelligence` being a
+   named slot in `app inspect` reflects today's topology. Whatever replaces it
+   follows from decisions 1–3; nothing here changes AX1.
+
+**Consequences.** No new seam, no new versioning story, no new answer needed for
+"what if two packages claim one definition kind", and no new AX1 representation
+to design. The cost is that routing targets remain unresolved — stated plainly
+rather than closed by inventing a home for them.
+
+**Also a contract decision, and also a human's.**
