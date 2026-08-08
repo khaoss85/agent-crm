@@ -1,7 +1,7 @@
 // @ts-check
 
 import { ValidationError } from './errors.js';
-import { computeDefinitionFingerprint } from './intelligence-registry.js';
+import { computeDefinitionFingerprint } from './definition-fingerprint.js';
 import { validatePackageDefinition } from './package-registry.js';
 
 /**

@@ -35,7 +35,7 @@ export { AppError, ValidationError, NotFoundError, ConflictError, ForbiddenError
 // ---- declared-definition fingerprints (ADR-015) ----
 // A package that publishes versioned policies uses the same mechanism every
 // first-party definition uses: declared JSON-safe config, canonical source.
-export { computeDefinitionFingerprint, validateDeclaredConfig } from './src/intelligence-registry.js';
+export { computeDefinitionFingerprint, validateDeclaredConfig } from './src/definition-fingerprint.js';
 
 // ---- money (ADR-014/016) ----
 // Integer minor units, never floats, with the framework's shared bounds. A
