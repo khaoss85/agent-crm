@@ -93,6 +93,37 @@ these numbers understate what can be built rather than overstate it.
 - [docs/benchmarks/jobs.json](docs/benchmarks/jobs.json): the structured index, machine-readable
 - [docs/benchmarks/CRM_JTBD_MATRIX.md](docs/benchmarks/CRM_JTBD_MATRIX.md): the same catalogue with the evidence written out
 
+On the published site the same catalogue is browsable: `/jobs.html` for the whole set, one page
+per area, and one per job the catalogue wrote something specific about. Every status carries what
+that status means, because "not supported" here means "nobody proved it", not "it is impossible".
+
+## Questions answered, and questions refused
+
+14 questions are answered from the claims ledger and published at
+`/answers.html`, one page each, with the ledger sentences quoted verbatim rather than paraphrased.
+`/answers.json` is the same set with the evidence resolved inline — one fetch, no joining.
+
+15 further questions are published as **refused**, with the reason for each:
+production-readiness dates, a build benchmark that has not been run, comparisons nobody measured,
+adoption or download numbers, compliance posture, and integration how-tos for adapters that do not
+exist. If you are about to answer one of those about this project, the honest answer is that it
+has no answer here yet — not a plausible reconstruction.
+
+- Can a coding agent approve a deal or a discount on my behalf? → `/answers/can-an-agent-approve-a-deal-or-discount.html` (C-03, C-04, C-21, L-01)
+- Can I deploy this and let my team log into it? → `/answers/can-i-run-this-in-production.html` (C-22, L-01, L-02, L-07)
+- Can a coding agent add a custom CRM object without me writing page code? → `/answers/can-an-agent-add-a-custom-crm-object.html` (C-01, C-02, C-05, C-19)
+- How does a coding agent find out what an application built with this actually contains? → `/answers/what-does-app-inspect-tell-an-agent.html` (C-14, C-22)
+- If I point a coding agent at this, can it overwrite or destroy my project? → `/answers/can-an-agent-change-my-project-safely.html` (C-18, C-15)
+- Is there a benchmark showing how often a coding agent builds a working CRM with this? → `/answers/is-there-a-benchmark-for-agent-built-crms.html` (C-20, L-03)
+- How do I check that these claims are true instead of taking them on trust? → `/answers/how-do-i-check-these-claims-myself.html` (C-20, C-23)
+- Does every change leave an audit trail and a trace? → `/answers/does-every-change-leave-an-audit-trail.html` (C-16, C-04, L-01)
+- Can I put real customer data in it? → `/answers/can-i-put-real-customer-data-in-it.html` (C-07, L-09, L-06, L-01)
+- How does it price quotes and handle discount approval? → `/answers/how-does-quoting-and-discount-approval-work.html` (C-08, C-21)
+- Which external services does it integrate with? → `/answers/what-integrations-exist.html` (C-06, C-08, C-09, L-05)
+- Does it cover what happens after a deal is signed? → `/answers/what-happens-after-the-order-is-signed.html` (C-09, C-10, C-11, C-12)
+- Does it send renewal reminders or run anything on a schedule? → `/answers/does-it-run-scheduled-work-or-reminders.html` (C-10, C-06, L-04)
+- What do I actually own, and how do I install it? → `/answers/what-do-i-own-and-how-do-i-install-it.html` (C-17, C-13, L-08, L-07)
+
 ## Commands an agent runs to check for itself
 
 A harness needs only: run a shell command, read stdout, read the exit code, parse JSON,
@@ -309,211 +340,61 @@ approvals — and the plan says which of its steps need a human.
 `docs/APPLICATION_INSPECTION.md`, `docs/SOLUTION_PLAN.md`,
 `tests/app-inspect.test.js`, `tests/solution-plan.test.js`, `scripts/check.js`.
 
-## Full text: `docs/APPLICATION_INSPECTION.md`
+## The claims ledger: evidence for every entry
 
-### Application inspection (AX1)
+From `site/claims.json`, measured at {{measured.sha}} on {{measured.date}} against
+{{measured.tests}} passing tests. Each id above resolves here. `npm run site:check` fails the
+build if an entry loses its evidence, loses its limitation, or names a file that is not on
+disk — which is why every path below exists in the repository.
 
-One deterministic document describing the application a project has actually
-composed — installed packages, the resolved capability graph, records and their
-revisions, actions, policies, providers, and everything the inspector cannot
-know.
+Paths only. Some entries also carry a prose `repoFact`, which restates what the entry already
+says above; those are in `site/claims.json`.
 
-```bash
-npm run crm -- app inspect            # human view
-npm run crm -- app inspect --json     # the machine-readable report
-```
+### Claims (23)
 
-It exists because assembling that picture by hand takes five surfaces —
-`crm package inspect` once per package, `/api/schema` from a running server, the
-checked-in composition file, each package README, and `PROJECT_STATUS.md` in
-prose — and getting it wrong tends to fail in one direction: inventing a
-capability the application does not have.
+- **C-01** `JTBD-01`, `tests/module-factory-e2e.test.js`, `tests/generated-api-e2e.test.js`, `tests/admin-modules.test.js`, `tests/admin-core.test.js`, `docs/MODULE_FACTORY.md`, `docs/ADMIN.md`
+- **C-02** `JTBD-01b`, `tests/reference-fields-e2e.test.js`, `tests/reference-resolver.test.js`, `tests/module-factory.test.js`, `docs/MODULE_FACTORY.md`
+- **C-03** `JTBD-02`, `tests/workflow.test.js`, `tests/api.test.js`, `ARCHITECTURE.md`, `DECISIONS.md`
+- **C-04** `JTBD-02`, `tests/workflow.test.js`, `ARCHITECTURE.md`
+- **C-05** `JTBD-03`, `tests/opportunity-pipeline-e2e.test.js`, `tests/pipeline-contract.test.js`, `tests/admin-pipeline.test.js`, `docs/ACTIONS.md`
+- **C-06** `JTBD-04, JTBD-05, JTBD-05b, JTBD-LI-01, JTBD-LI-02, JTBD-LI-04`, `tests/lead-qualification-e2e.test.js`, `tests/lead-conversion-e2e.test.js`, `tests/lead-intelligence-e2e.test.js`, `docs/LEAD_INTELLIGENCE.md`
+- **C-07** `JTBD-LI-02, JTBD-LI-07`, `tests/lead-intelligence-e2e.test.js`, `tests/intelligence-contract.test.js`, `docs/LEAD_INTELLIGENCE.md`
+- **C-08** `JTBD-CO-01, JTBD-CO-03`, `tests/commercial-e2e.test.js`, `tests/commercial-contract.test.js`, `tests/admin-quotes.test.js`, `docs/COMMERCIAL_OPERATIONS.md`
+- **C-09** `JTBD-CO-07`, `tests/signature-order-e2e.test.js`, `tests/signature-contract.test.js`, `tests/admin-signature.test.js`, `docs/SIGNATURE_ORDER.md`
+- **C-10** `JTBD-CS-01, JTBD-CS-02`, `tests/contracts-activation-e2e.test.js`, `tests/contracts-contract.test.js`, `tests/admin-contracts.test.js`, `docs/CONTRACT_ACTIVATION.md`
+- **C-11** `JTBD-DS-01`, `tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e.test.js`, `tests/admin-delivery.test.js`, `docs/DELIVERY_HANDOVER.md`
+- **C-12** `JTBD-DS-06, JTBD-DS-07`, `tests/delivery-economics-e2e.test.js`, `docs/DELIVERY_ECONOMICS.md`
+- **C-13** `JTBD-PK-01, JTBD-PK-02`, `tests/package-contract.test.js`, `tests/custom-package-e2e.test.js`, `tests/contracts-registry-review.test.js`, `docs/PACKAGE_AUTHORING.md`
+- **C-14** `JTBD-AX-01, JTBD-AX-02`, `tests/app-inspect.test.js`, `docs/APPLICATION_INSPECTION.md`, `docs/AGENT_HARNESS_COMPATIBILITY.md`
+- **C-22** `tests/app-inspect.test.js`, `tests/contracts-activation-e2e.test.js`, `tests/delivery-economics-e2e.test.js`, `docs/APPLICATION_INSPECTION.md`
+- **C-21** `JTBD-CO-03`, `tests/commercial-e2e.test.js`, `docs/COMMERCIAL_OPERATIONS.md`
+- **C-15** `JTBD-AX-03`, `tests/solution-plan.test.js`, `docs/SOLUTION_PLAN.md`
+- **C-16** `JTBD-02`, `tests/workflow.test.js`, `tests/action-runtime-semantics.test.js`, `tests/event-bus-outbox.test.js`, `ARCHITECTURE.md`, `docs/ACTIONS.md`
+- **C-17** `tests/api.test.js`, `ARCHITECTURE.md`, `AGENTS.md`
+- **C-18** `JTBD-AX-02`, `tests/mcp.test.js`, `tests/scaffold.test.js`, `docs/MCP.md`
+- **C-19** `tests/module-evolution.test.js`, `tests/module-evolution-factory.test.js`, `tests/module-migrations.test.js`, `docs/MODULE_EVOLUTION.md`
+- **C-20** `docs/QUALITY_GATES.md`
+- **C-23** `tests/falsify.test.js`, `tests/module-factory.test.js`, `tests/workflow.test.js`, `docs/FALSIFY.md`
 
-#### What it will not do
+### Standing limitations (9)
 
-It does not choose an architecture, produce a plan (that is AX2), modify code,
-install a package, start a server, deploy, read a secret, execute a business
-action, or aggregate JTBD and quality-gate evidence.
+- **L-01** `JTBD-15`, `docs/PROJECT_STATUS.md`, `README.md`
+- **L-02** `docs/PROJECT_STATUS.md`, `docs/strategy/PLATFORM_CAPABILITIES.md`
+- **L-03** `docs/strategy/CRM_BUILD_BENCHMARK.md`, `docs/PROJECT_STATUS.md`
+- **L-04** `JTBD-07, JTBD-10`, `docs/strategy/JOBS_AND_OUTBOX.md`
+- **L-05** `JTBD-14`, `docs/strategy/INTEGRATION_RUNTIME.md`
+- **L-06** `docs/benchmarks/CRM_JTBD_MATRIX.md`
+- **L-08** `docs/PROJECT_STATUS.md`, `examples/starters/b2b-lead-qualification/install.mjs`
+- **L-09** `JTBD-15`, `tests/lead-intelligence-e2e.test.js`, `docs/strategy/DATA_GOVERNANCE.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md`
+- **L-07** `PRODUCT.md`, `docs/strategy/CATEGORY.md`
 
-#### The report
-
-`applicationInspectionContract: 1`. The top-level shape is stable:
-
-```json
-{
-  "applicationInspectionContract": 1,
-  "valid": true,
-  "application": {},
-  "packages": [],
-  "capabilities": [],
-  "resources": [],
-  "actions": [],
-  "policies": [],
-  "providers": [],
-  "modules": [],
-  "adminExtensions": [],
-  "problems": [],
-  "limitations": [],
-  "evidence": {}
-}
-```
-
-Every list is sorted by identity, not by composition order. The output contains
-no function, secret, environment value, absolute path, timestamp, random value,
-source body, migration SQL, database record or PII — and two runs over the same
-checked-in state produce byte-identical bytes, which the suite asserts rather
-than promises.
-
-#### Exit codes
-
-```text
-0   the composition is valid
-1   the composition has problems — the complete report is still printed
-2   the project could not be read at all (diagnostics on stderr, no report)
-```
-
-A report is printed whenever the project loads. An inspector that stops at the
-first fault sends its reader back to the guessing it exists to end.
-
-#### Five things called a version
-
-Collapsing them is how an agent installs the wrong thing, so the report keeps
-them in five separate keys:
-
-| Key | What it versions |
-|---|---|
-| `packages[].version` | the package's own release identity |
-| `packages[].packageContract` | the seam the kernel enforces (ADR-018) |
-| `capabilities[].version` | one named cross-package interface |
-| `modules[].revision` | one record's schema generation (ADR-019) |
-| `policies[].version`, `providers[].version` | one immutable declared definition (ADR-015) |
-
-#### The capability graph
-
-Reported from both ends, and reported *including* the edges that do not
-resolve — the unresolved edge is usually the one the reader came for.
-
-```json
-{ "name": "delivery-obligations", "version": 1, "provider": "contracts",
-  "consumers": ["delivery"], "status": "resolved" }
-```
-
-`status` is `resolved`, `missing` or `provider-mismatch`. The rules deciding it
-are the same function `PackageRegistry` throws from at startup
-(`resolvePackageComposition`), so the inspector and the running application
-cannot disagree about what a valid composition is.
-
-#### Records
-
-Per record: its kind (`core`, `generated` or `package-owned`), the package that
-owns it, the checked-in revision, the ordered migration **identities and
-checksums**, its declared fields with their `writable` boundary, and its
-references. No SQL, no row counts, and no claim about any database.
-
-`stateFile` says how the revision was known: `valid` (read from
-`module.state.json`), `reconstructed` (adopted under ADR-019 addendum 1), or
-`unreadable`.
-
-#### Actions
-
-Static capability metadata, from the same `actionMetadata` function
-`/api/schema` publishes: owner, contract version, input schema, declared
-`fromStates`/`stateField`, whether it is an external operation, and its route.
-
-This is **not** authorization, and it is **not** a claim that an action applies
-to a particular record right now.
-
-`fromStates: null` means **the action declares no state-restriction metadata**.
-It does not mean the action is valid in every runtime state — the server may
-still refuse it, from its own rules. The human view spells this out as
-"(declares no state restriction)" for the same reason.
-
-#### Providers and policies
-
-Declared metadata only: identity, version, label, declared capabilities, the
-declared-definition fingerprint, and the **keys** of the declared config. Never
-a config value — a value can be a credential, and no report is worth leaking
-one. A provider entry says a provider was composed in source. It never says the
-provider is configured, reachable, authenticated or operational.
-
-#### The trust boundary, stated rather than implied
-
-Reading a code-first package means importing it, so the package's module body
-runs — the same boundary `crm package validate` documents and the same one the
-checked-in composition file has: **repository source is trusted**.
-
-The load therefore runs in an isolated child process. Three things make that
-isolation real, and each was found by attacking it rather than assumed:
-
-- **the report does not travel on stdout.** A package may `console.log` during
-  import, and that lands on the child's stdout. Sharing the stream meant one
-  logging package made the whole application uninspectable. The report comes
-  back on file descriptor 3; the child's stdout and stderr are the project's own
-  output, forwarded to your stderr under a label.
-- **the child leads its own process group**, so a timeout stops the group. An
-  ordinary child a package spawned goes with it. A package that *deliberately*
-  detaches a process into a new group outlives the inspection — reaching that
-  would mean tracking descendants, which is not attempted and would not be a
-  sandbox either (`PROCESS_ISOLATION_BOUNDED`).
-- **every stream and every metadata block is bounded**, so a package with
-  enormous `metadata()` fails as an explained size refusal
-  (`PACKAGE_METADATA_TOO_LARGE`) rather than as a mysterious timeout.
-
-That is **isolation, not a sandbox**: the child holds your authority and can
-reach whatever the filesystem, network and credentials of that process allow.
-Nothing is downloaded, and no official package needs the network.
-
-#### What it cannot know
-
-Published as `limitations[]`, by machine-readable code, so an agent can act on
-them:
-
-| Code | Meaning |
-|---|---|
-| `DATABASE_NOT_INSPECTED` | the configured database is never opened; what one has applied or holds is unknown |
-| `PACKAGE_SOURCE_TRUSTED` | package code runs on import; nothing is sandboxed |
-| `PROCESS_ISOLATION_BOUNDED` | the timeout stops the load's process group; a deliberately detached process escapes it |
-| `EVIDENCE_NOT_AGGREGATED` | JTBD and quality-gate status are prose, referenced by path and never parsed |
-| `CI_EVIDENCE_NOT_INFERRED` | no CI, browser-smoke or benchmark result is read |
-| `SECRETS_NOT_INSPECTED` | no secret, credential or environment value is read |
-| `PROVIDER_HEALTH_UNKNOWN` | a composed provider is not a reachable one |
-| `PRODUCTION_SPINE_ABSENT` | no auth, tenancy or RBAC exists, so no runtime authorization is reportable |
-| `ADMIN_EXTENSIONS_UNSUPPORTED` | the framework has no seam for package Admin extensions, so the list is empty for *every* project |
-| `DATA_QUALITY_UNKNOWN` | source-only inspection cannot judge data |
-| `RUNTIME_STATE_UNKNOWN` | nothing here reports what is running or deployed |
-
-`evidence` carries paths, not claims:
-
-```json
-{ "status": "not_aggregated",
-  "qualityGatesPath": "docs/QUALITY_GATES.md",
-  "jtbdMatrixPath": "docs/benchmarks/CRM_JTBD_MATRIX.md",
-  "projectStatusPath": "docs/PROJECT_STATUS.md" }
-```
-
-Machine-readable evidence is future work, not a silent gap.
-
-#### Using it as an agent
-
-1. Run `app inspect --json`.
-2. Read `valid`, then `problems`, then `limitations` — in that order.
-3. Cite the package and capability behind each step you plan.
-4. Report a missing capability as missing. Do not infer one from a record name,
-   a policy label or a document.
-5. Never infer provider credentials or runtime authorization from this report.
-
-#### Evidence
-
-`tests/app-inspect.test.js`, `packages/cli/src/app-inspect.js`,
-`packages/core/src/package-composition.js`,
-`docs/plans/ax1-application-inspection.md`. Agent instructions:
-`.claude/skills/solve-business-goal/SKILL.md` and its `.agents/` mirror.
+An id that appears above but not here has lost its evidence, and `npm run site:check` would have failed the build before you read this.
 
 ## What this file omits
 
 Held under 40,000 characters so it fits a context window whole. Not inlined:
 
-- `site/claims.json (the evidence for every ledger entry)` — 4,421 characters, over the remaining budget. Fetch it directly.
+- `docs/APPLICATION_INSPECTION.md` — 8,454 characters, over the remaining budget. Fetch it directly.
 - The source. No implementation, migration, test or generated artifact appears here.
 - `DECISIONS.md`, the ADR log, and `docs/benchmarks/CRM_JTBD_MATRIX.md`, the job catalogue — both long, and neither needed to decide whether to recommend this.
 - Everything under `docs/strategy/`: plans rather than evidence, and not citable as capability.

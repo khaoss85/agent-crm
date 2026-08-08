@@ -4,6 +4,7 @@
 {{include:head.html}}
   <title>{{brand.name}} — the framework coding agents build CRMs with</title>
   <meta name="description" content="{{brand.promise}} An open-source framework Claude Code and Codex use to generate a CRM as code you own: deterministic workflows, human approvals, audit and trace." />
+{{page.seo}}
 </head>
 <body>
 {{include:nav.html}}
@@ -117,7 +118,7 @@ npm run tour
       <p class="section-lede">
         These are not roadmap items. Each card is generated from a ledger that names the tests
         proving it, and the build fails if a claim loses its evidence — or its limitation.
-        The full list of twenty is on the <a href="evidence.html">evidence page</a>.
+        The full list of twenty is on the <a href="{{page.root}}evidence.html">evidence page</a>.
       </p>
 
       <div class="cards">
@@ -306,7 +307,7 @@ npm run crm -- solution check my-plan.json
         <article class="card">
           <h3>Read the machine summary</h3>
           <p>A single plain-text file describing the framework, its boundaries and where each document lives.</p>
-          <div class="evidence"><a href="llms.txt"><code>llms.txt</code></a></div>
+          <div class="evidence"><a href="{{page.root}}llms.txt"><code>llms.txt</code></a></div>
         </article>
         <article class="card">
           <h3>Narrow write tools</h3>

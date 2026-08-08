@@ -9,7 +9,7 @@
 
   <div class="shell">
     <nav class="nav" aria-label="Primary">
-      <a class="wordmark" href="index.html">
+      <a class="wordmark" href="{{page.root}}index.html">
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <rect x="1.5" y="1.5" width="21" height="21" rx="6.5" stroke="currentColor" stroke-width="1.6" />
           <path d="M6 15.5 L10.2 15.5 L12 8.5 L13.8 15.5 L18 15.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
@@ -18,10 +18,12 @@
         <span>{{brand.name}}</span>
       </a>
       <div class="nav-links">
-        <a href="index.html#proven">Proven</a>
-        <a href="index.html#compare" class="hide-sm">Compare</a>
-        <a href="index.html#limits">Limits</a>
-        <a href="evidence.html">Evidence</a>
+        <a href="{{page.root}}index.html#proven">Proven</a>
+        <a href="{{page.root}}index.html#compare" class="hide-sm">Compare</a>
+        <a href="{{page.root}}index.html#limits">Limits</a>
+        <a href="{{page.root}}jobs.html">CRM jobs</a>
+        <a href="{{page.root}}answers.html" class="hide-sm">Answers</a>
+        <a href="{{page.root}}evidence.html">Evidence</a>
         <a href="{{brand.repository}}">Source</a>
       </div>
     </nav>

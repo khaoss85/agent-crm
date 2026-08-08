@@ -12,3 +12,6 @@ coverage/
 
 # Built site output — regenerate with `npm run site:build`
 site/dist/
+
+# Build receipt written by scripts/site-build.js — not published, not read by anything else.
+site/.used-claims.json

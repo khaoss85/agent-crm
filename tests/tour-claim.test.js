@@ -36,6 +36,9 @@ const QUOTING_SURFACES = [
   { path: 'docs/strategy/GO_TO_MARKET.md', order: 'count-first' },
   { path: 'site/templates/index.html', order: 'label-first' },
   { path: 'README.md', order: 'label-first' },
+  // The answer pages quote the composition in prose, and they are the pages an answer engine
+  // is most likely to lift a number out of.
+  { path: 'site/answers.json', order: 'count-first' },
 ];
 
 const NUMERALS = [

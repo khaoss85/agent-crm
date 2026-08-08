@@ -108,6 +108,24 @@ Hard rules — a piece that fails any gate is not published:
 ## 12. What we deliberately do not do
 
 - SEO-spam programmatic pages ("best CRM for dentists" ×200).
+
+  **Amended 2026-08-08.** Generated pages are permitted when, and only when, all four of these
+  hold. They are a mechanical test on purpose — a rhetorical distinction between "good" and "spam"
+  programmatic pages is one anybody can argue their way past later.
+
+  1. **The page renders an artifact this project already maintains for engineering reasons** — the
+     JTBD matrix, the claims ledger — not prose written to match a query. Delete the SEO motive and
+     the artifact still exists and is still maintained.
+  2. **Every sentence resolves to a ledger entry or a matrix row**, and the page goes through
+     `scripts/site-check.js` like any other. Nothing is written twice.
+  3. **The page set is bounded by the data, not by a keyword list.** A page cannot be added by
+     thinking of a phrase; only by the matrix gaining a row. There is no template with a slot for a
+     vertical, a city or a competitor.
+  4. **Thin rows are denied a URL.** A job the catalogue said little about appears in full on its
+     section page and gets no page of its own (`scripts/site-pages.js`, `OWN_PAGE_MIN_SUMMARY`).
+
+  The dentist pages fail all four. `/jobs/*` and `/answers/*` pass all four. If a future page set
+  cannot pass them, it is the ban that applies, not this paragraph.
 - Fake community activity, stars-begging, follow-loops.
 - Claims about model recommendation rates we cannot measure (URR is measured, published with protocol, never promised).
 - Content about features that don't exist yet ("roadmap-ware") except clearly-labeled roadmap posts.

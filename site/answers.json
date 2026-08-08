@@ -1,0 +1,232 @@
+{
+  "answersContract": 1,
+  "$comment": "The questions this project will answer in public, and the ones it will not. Every accepted entry names the claim and limitation ids that carry it; scripts/site-build.js renders each page from those ids VERBATIM, so the prose here is a lede and a stance, never the evidence. The refused list is published for the same reason the claims ledger publishes limitations: the questions a project declines to answer are the most informative thing about it. Generated answer pages and /answers.json are built from this file; tests/site-pages.test.js refuses an id that is not in site/claims.json.",
+  "questions": [
+    {
+      "slug": "can-an-agent-approve-a-deal-or-discount",
+      "question": "Can a coding agent approve a deal or a discount on my behalf?",
+      "answer": "No. Commercial policy is deterministic code rather than a model's judgement — a renewal at or above the threshold stops and waits for a named human (C-03) — and a test asserts the refusal, so the boundary is a property of the system rather than a promise in a README (C-04). The same refusal holds where the money is: an agent actor calling quote.approve is rejected with status 403 and code HUMAN_APPROVAL_REQUIRED, and only a human user actor can decide (C-21). The scope is exactly this: the actor is asserted, not authenticated — there is no auth, tenancy or RBAC, and an actor header is not identity (L-01) — so it holds a boundary against an honest agent, not against an attacker with network access, and the threshold policy is proven on the built-in renewal object with a single value threshold.",
+      "claims": [
+        "C-03",
+        "C-04",
+        "C-21"
+      ],
+      "limitations": [
+        "L-01"
+      ]
+    },
+    {
+      "slug": "can-i-run-this-in-production",
+      "question": "Can I deploy this and let my team log into it?",
+      "answer": "No. There is no authentication, tenancy or RBAC; the HTTP server is local-development-only and an actor header is an assertion rather than an identity, so it must not be exposed to a network (L-01). Persistence is Node's built-in SQLite adapter — PostgreSQL is on the Production Spine track and is not implemented (L-02). Even the fully composed starter application runs entirely locally against SQLite with no authentication (C-22), and there is no hosted CRM, free tier or account to sign up to (L-07).",
+      "claims": [
+        "C-22"
+      ],
+      "limitations": [
+        "L-01",
+        "L-02",
+        "L-07"
+      ]
+    },
+    {
+      "slug": "can-an-agent-add-a-custom-crm-object",
+      "question": "Can a coding agent add a custom CRM object without me writing page code?",
+      "answer": "For CRUD, yes: a module manifest becomes a migration, a service, a REST resource, an SDK method and Admin screens with no page code (C-01), and one field declaration gives a generated object a foreign key, runtime target validation, schema metadata and an Admin selector (C-02). References are generated-to-generated many-to-one only — many-to-many, inverse collections, cascade delete and generated-to-core references do not exist. What is not generated is the interesting half: workflows and approvals for a custom object are still handwritten, and pipeline stages are proven on the built-in Opportunity module, with configurable pipelines for generated custom objects not claimed (C-05). Changing an object later goes through explicit revisions, a checked-in state file and append-only named migrations, but that view is source-only — what a particular database has actually applied is not knowable from it (C-19).",
+      "claims": [
+        "C-01",
+        "C-02",
+        "C-05",
+        "C-19"
+      ],
+      "limitations": []
+    },
+    {
+      "slug": "what-does-app-inspect-tell-an-agent",
+      "question": "How does a coding agent find out what an application built with this actually contains?",
+      "answer": "One command returns packages, capabilities, resources, actions, policies and providers as a single deterministic JSON report, read from checked-in source (C-14). It is source-only and read-only: it never opens the database, contacts a provider, reads a secret, or reports runtime, CI or authorization state — and it lists those blind spots as machine-readable limitations in its own output. Composing the starter and inspecting it gives 61 modules, 3 packages, 25 resources, 42 actions, 5 policies and 10 providers, then prints the eleven things the inspector says it cannot see (C-22). Those counts describe that starter's composition, not yours, it runs locally against SQLite with no authentication, and wall-clock time is deliberately not claimed.",
+      "claims": [
+        "C-14",
+        "C-22"
+      ],
+      "limitations": []
+    },
+    {
+      "slug": "can-an-agent-change-my-project-safely",
+      "question": "If I point a coding agent at this, can it overwrite or destroy my project?",
+      "answer": "The MCP server exposes project context and narrow write tools to a coding agent, and anything that generates code or destroys state is dry-run unless you pass an explicit apply flag (C-18) — so you can read the generated output before anything is written. It is stdio only and local only: there is no hosted or authenticated MCP endpoint, and the server inherits the authority of the process that starts it. Planning is separate from execution: a Solution Plan is a checked-in file with a contract and a canonical fingerprint, validated against a real inspection, so a plan written against a composition that has since moved reports itself stale (C-15). That is a document contract, not a planner and not a runtime — nothing executes a plan, and the validator refuses a plan that carries a command.",
+      "claims": [
+        "C-18",
+        "C-15"
+      ],
+      "limitations": []
+    },
+    {
+      "slug": "is-there-a-benchmark-for-agent-built-crms",
+      "question": "Is there a benchmark showing how often a coding agent builds a working CRM with this?",
+      "answer": "No. The build benchmark protocol is designed and published, but it has not been run, so no Successful Agent Build Rate exists and any number quoted for this project is not ours (L-03). What exists instead is a test suite: 497 tests run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them (C-20). That count measures effort, not correctness, and real-browser tests are run manually and are not in CI.",
+      "claims": [
+        "C-20"
+      ],
+      "limitations": [
+        "L-03"
+      ]
+    },
+    {
+      "slug": "how-do-i-check-these-claims-myself",
+      "question": "How do I check that these claims are true instead of taking them on trust?",
+      "answer": "Every claim in site/claims.json names the test files that hold it and the limitation that travels with it, so each sentence resolves to something you can run. Run the suite — 497 tests on every push — and read docs/QUALITY_GATES.md for the adversarial-review categories, because the count itself measures effort rather than correctness (C-20). Then run falsify: five rules are removed on purpose in one command and the suite catches every one in about two seconds, naming the test that caught it, and anything that survives is reported as a gap rather than omitted (C-23). Its scope is narrow on purpose — it falsifies six named rules, not the claims in this ledger, it proves only that a test holds each rule, and a rule that is wrong but faithfully defended survives every mutation.",
+      "claims": [
+        "C-20",
+        "C-23"
+      ],
+      "limitations": []
+    },
+    {
+      "slug": "does-every-change-leave-an-audit-trail",
+      "question": "Does every change leave an audit trail and a trace?",
+      "answer": "Yes. Every mutation goes through a module service or a named workflow, and leaves an audit event and a step-level trace behind it (C-16). That routing is also what makes the approval refusal enforceable rather than advisory: a test asserts that an agent cannot make the human's decision (C-04). What the audit is not: it records what the process did under an asserted actor, so it is not a tamper-evident or externally attestable log and it is not a compliance control — there is no authentication, tenancy or RBAC behind the actor it records (L-01).",
+      "claims": [
+        "C-16",
+        "C-04"
+      ],
+      "limitations": [
+        "L-01"
+      ]
+    },
+    {
+      "slug": "can-i-put-real-customer-data-in-it",
+      "question": "Can I put real customer data in it?",
+      "answer": "No. A CRM is a personal-data system by definition, and this one has no authentication, no tenancy, no export and no erasure path, so a data-subject access or deletion request cannot be serviced with it; the data-governance track is designed and unimplemented (L-09). There is also no import, export, dedupe, merge, bulk edit, saved views or global search (L-06), and the server is local-development-only with an actor header that is an assertion rather than an identity (L-01). The one thing that does hold today: lead scoring is deterministic and versioned, every score carrying the fingerprint of the model version that produced it, rather than a model's judgement about a person (C-07).",
+      "claims": [
+        "C-07"
+      ],
+      "limitations": [
+        "L-09",
+        "L-06",
+        "L-01"
+      ]
+    },
+    {
+      "slug": "how-does-quoting-and-discount-approval-work",
+      "question": "How does it price quotes and handle discount approval?",
+      "answer": "Quotes price on the server from a catalog — one-time and recurring, flat, per-unit, volume and graduated tiers — and freeze into an immutable version when a discount goes for approval (C-08). The approval is human by policy: an agent actor asking to approve a discounted quote is refused with status 403 and code HUMAN_APPROVAL_REQUIRED, and only a human user actor can decide (C-21). Two boundaries travel with it: catalog sync runs against a fixture provider with no real external catalog (Stripe, Zuora, ERP) connected, and money is integer cents with no FX — currencies are never summed. The refusal assertion also lives inside a composite end-to-end test rather than a test named for it, so it is cited by file and line rather than by test name.",
+      "claims": [
+        "C-08",
+        "C-21"
+      ],
+      "limitations": []
+    },
+    {
+      "slug": "what-integrations-exist",
+      "question": "Which external services does it integrate with?",
+      "answer": "None. Every provider is an offline fixture: enrichment runs against a fixture provider with no real external data source wired (C-06), catalog sync against a fixture provider with no Stripe, Zuora or ERP connected (C-08), and signature against a fixture provider with a test-only webhook key, where the artifact hash is provider-reported rather than independently recomputed (C-09). No DocuSign, Adobe Sign or Dropbox Sign adapter exists. There is no email, calendar or marketing integration either — an in-memory notification provider contract exists, and no adapter sends anything to anyone (L-05).",
+      "claims": [
+        "C-06",
+        "C-08",
+        "C-09"
+      ],
+      "limitations": [
+        "L-05"
+      ]
+    },
+    {
+      "slug": "what-happens-after-the-order-is-signed",
+      "question": "Does it cover what happens after a deal is signed?",
+      "answer": "Partly, and each step names where it stops. A signature envelope produces verified events and a hashed signed artifact, and exactly one immutable Order is built from the approved quote version (C-09); that Order activates into a Commercial Contract, an immutable contract version, a Subscription and explicitly pending delivery and service obligations (C-10); those obligations hand over into a Delivery Project with work packages, milestones and an optional partner, atomically and idempotently (C-11), which records append-only time and expense evidence costed server-side by a versioned fingerprinted policy (C-12). Nothing bills, renews, amends or cancels — there is no scheduler, so auto-renew and notice periods are recorded and never fire — and nothing schedules, staffs, computes percent complete or accepts, with deliverables and customer acceptance absent as objects. The contribution estimate is deliberately not a margin: no revenue recognition, no cost of goods sold, no ARR/MRR/TCV, no annualization, no FX, and a project carrying a recurring obligation returns no estimate at all and says why.",
+      "claims": [
+        "C-09",
+        "C-10",
+        "C-11",
+        "C-12"
+      ],
+      "limitations": []
+    },
+    {
+      "slug": "does-it-run-scheduled-work-or-reminders",
+      "question": "Does it send renewal reminders or run anything on a schedule?",
+      "answer": "No. There is no scheduler, no task engine and no reminders: one follow-up Task is created inside lead qualification, and there is no recurring work, no delayed workflow and no queue (L-04). This reaches into the contract lifecycle — auto-renew dates and notice periods are recorded on an activated contract and never fire (C-10). Lead capture, scoring, routing, qualification and conversion happen through explicit actions that something calls, each one atomic and audited (C-06), not on a timer.",
+      "claims": [
+        "C-10",
+        "C-06"
+      ],
+      "limitations": [
+        "L-04"
+      ]
+    },
+    {
+      "slug": "what-do-i-own-and-how-do-i-install-it",
+      "question": "What do I actually own, and how do I install it?",
+      "answer": "You own the source, and today that means copying it: there is no create-project CLI and no published package, and the one working installer copies packages/, apps/ and examples/ into a new project — so upgrading means merging, not bumping a version (L-08). What you are left with is a Node application with zero third-party runtime dependencies — Node 22 and a checkout, no build step, no bundler (C-17) — though that property belongs to the framework, not to whatever you add on top of it. A domain package you author attaches and detaches with the kernel's fingerprint unchanged and reaches another package only through a declared capability (C-13), but there is no scaffold, registry, marketplace or sandboxing, package code runs with the host process's authority, and detaching leaves its data behind. There is nothing to sign up for: no hosted CRM, no free tier, no account (L-07).",
+      "claims": [
+        "C-17",
+        "C-13"
+      ],
+      "limitations": [
+        "L-08",
+        "L-07"
+      ]
+    }
+  ],
+  "refused": [
+    {
+      "question": "Is it production-ready yet, and when will authentication, tenancy or PostgreSQL land?",
+      "why": "L-01 and L-02 record the absences, but no claim or limitation carries a date, a milestone order or a commitment. 'Production Spine' is named as a track in L-02's text, not as a schedule, so any answer to the 'when' half would be invented."
+    },
+    {
+      "question": "What is the Successful Agent Build Rate — how often does a coding agent finish a working CRM with this?",
+      "why": "L-03 states the benchmark has not been run and that any number quoted is not ours. A page shaped around the number would exist only to host a figure that does not exist. The accepted page 'is-there-a-benchmark-for-agent-built-crms' answers the meta-question honestly; this one cannot be answered at all."
+    },
+    {
+      "question": "How does this compare to Salesforce, HubSpot, Twenty, Odoo or a low-code CRM platform?",
+      "why": "No claim or limitation makes any statement about another product. A comparison needs verified, dated competitor facts, and I have no internet access to establish them; docs/strategy/COMPETITOR_MAP.md exists but is strategy, not ledger evidence, so nothing in claims.json licenses a comparison sentence."
+    },
+    {
+      "question": "How long does it take an agent to build a CRM with this, and how fast is the framework?",
+      "why": "C-22 states outright that wall-clock time varies by machine and is deliberately not claimed. The only timing in the ledger is C-23's 'about two seconds' for the fast falsify set, which is scoped to that command and cannot be generalised into a time-to-first-CRM."
+    },
+    {
+      "question": "How well does it scale — how many records, what throughput, what response times?",
+      "why": "No claim or limitation measures performance or volume, and no load test exists on disk that I could cite. L-02 (SQLite only) constrains the answer but does not supply one."
+    },
+    {
+      "question": "Is it secure? Has it had a security review or penetration test?",
+      "why": "The ledger records the absence of authentication (L-01) and states that audit is not tamper-evident and not a compliance control (C-16), but it makes no positive security claim and cites no review. A page titled 'is it secure' would invite an affirmative sentence that no C-xx supports."
+    },
+    {
+      "question": "Is it SOC 2 / GDPR / HIPAA compliant, and how do I service a DSAR?",
+      "why": "L-09 says data governance is designed and unimplemented and that a data-subject access or deletion request cannot be serviced. There is no compliance programme, certification or control mapping in the ledger, so a compliance-shaped page would imply a process that does not exist. The honest fragment already lives in 'can-i-put-real-customer-data-in-it'."
+    },
+    {
+      "question": "How do I connect it to DocuSign, Stripe, HubSpot or my email provider?",
+      "why": "A how-to page requires steps. C-09 and C-08 state those adapters do not exist and L-05 states no adapter sends anything to anyone, so every step would be fabricated. The negative version — 'what-integrations-exist' — is accepted instead."
+    },
+    {
+      "question": "How do I import or migrate my existing CRM data into it?",
+      "why": "L-06 records that import, export, dedupe, merge and bulk edit do not exist. There is no path to document, and a migration guide is the single most damaging thing to invent for a system that has no export either."
+    },
+    {
+      "question": "Does it have reporting, dashboards, forecasting or pipeline analytics?",
+      "why": "No claim or limitation covers reporting or aggregation. The sentence 'reporting or aggregation over generated modules' is absent appears in site/assets/llms.txt prose, not in claims.json, so under the rule that a public sentence comes only from the ledger there is nothing to answer with. Worth adding as an L-xx if this question recurs."
+    },
+    {
+      "question": "Which coding agent works best with it — Claude Code or Codex? Which model should I use?",
+      "why": "Nothing in the ledger compares harnesses or models, and the benchmark that would measure it has not been run (L-03). Any preference stated would be a guess presented as a measurement."
+    },
+    {
+      "question": "What does it cost, what licence does it ship under, and is there a free tier?",
+      "why": "L-07 establishes there is nothing to sign up for, but licence status is not a ledger entry — README.md says 'MIT today' with a final confirmation gated on an explicit human decision, which is precisely the kind of sentence that must not be frozen into a retrievable page ahead of that decision."
+    },
+    {
+      "question": "Who uses this in production, how many teams have adopted it, how many stars or downloads?",
+      "why": "No adoption, usage or popularity fact exists anywhere in claims.json, and L-08 records that nothing is published, so there are no download numbers to have."
+    },
+    {
+      "question": "Can I give a coding agent a business goal and have it build the whole CRM unattended?",
+      "why": "C-01 is scoped to generated CRUD with workflows and approvals still handwritten, and C-15 states explicitly that nothing executes a plan. An unattended end-to-end build is the exact capability the unrun benchmark (L-03) was designed to measure, so claiming it would be claiming the benchmark result."
+    },
+    {
+      "question": "Does an LLM decide anything at runtime — is this an 'AI CRM'?",
+      "why": "Tempting, and half-answerable: C-03 says commercial policy is deterministic code rather than a model's judgement and C-07 says scoring is deterministic weighted rules rather than machine learning. But no claim or limitation states that nothing calls a model at request time anywhere in the runtime — that sentence lives in PRODUCT.md, llms.txt and OBJECTIONS.md, not in the ledger — so a page under this question would answer wider than its evidence. It becomes proposable the moment a C-xx covers the runtime as a whole."
+    }
+  ]
+}

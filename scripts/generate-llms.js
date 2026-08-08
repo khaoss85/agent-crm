@@ -107,6 +107,9 @@ const INLINE_DOCUMENTS = [
 // ---------------------------------------------------------------- compose
 
 const jobs = readJobIndex(join(root, 'docs', 'benchmarks', 'jobs.json'));
+const answersIndex = existsSync(join(siteDir, 'answers.json'))
+  ? readJson(join(siteDir, 'answers.json'))
+  : null;
 
 const shortText = compose({ full: false });
 const fullText = compose({ full: true });
@@ -183,6 +186,7 @@ function compose({ full }) {
     doesNotExistSection(),
     provenSection(full),
     jobCoverageSection(),
+    answersSection(answersIndex),
     commandsSection(),
     readingOrderSection(),
     citationSection(),
@@ -361,6 +365,35 @@ function jobCoverageSection() {
     '',
     '- [docs/benchmarks/jobs.json](docs/benchmarks/jobs.json): the structured index, machine-readable',
     '- [docs/benchmarks/CRM_JTBD_MATRIX.md](docs/benchmarks/CRM_JTBD_MATRIX.md): the same catalogue with the evidence written out',
+    '',
+    'On the published site the same catalogue is browsable: `/jobs.html` for the whole set, one page',
+    'per area, and one per job the catalogue wrote something specific about. Every status carries what',
+    'that status means, because "not supported" here means "nobody proved it", not "it is impossible".',
+  ].join('\n');
+}
+
+/**
+ * The answers surface. An agent answering a question about this project should not have to infer
+ * one from a claims ledger: the questions are enumerated, each resolved against the ledger entries
+ * that carry it — and so are the questions this project refuses to answer, which is the half that
+ * stops a retrieval step filling a gap with something plausible.
+ */
+function answersSection(answers) {
+  if (!answers) return '';
+  return [
+    '## Questions answered, and questions refused',
+    '',
+    `${answers.questions.length} questions are answered from the claims ledger and published at`,
+    '`/answers.html`, one page each, with the ledger sentences quoted verbatim rather than paraphrased.',
+    '`/answers.json` is the same set with the evidence resolved inline — one fetch, no joining.',
+    '',
+    `${answers.refused.length} further questions are published as **refused**, with the reason for each:`,
+    'production-readiness dates, a build benchmark that has not been run, comparisons nobody measured,',
+    'adoption or download numbers, compliance posture, and integration how-tos for adapters that do not',
+    'exist. If you are about to answer one of those about this project, the honest answer is that it',
+    'has no answer here yet — not a plausible reconstruction.',
+    '',
+    ...answers.questions.map((entry) => `- ${entry.question} → \`/answers/${entry.slug}.html\` (${[...entry.claims, ...entry.limitations].join(', ')})`),
   ].join('\n');
 }
 

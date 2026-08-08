@@ -31,6 +31,8 @@ const failures = [];
 const notes = [];
 
 const ledger = JSON.parse(readFileSync(join(siteDir, 'claims.json'), 'utf8'));
+const answersPath = join(root, 'site', 'answers.json');
+const answers = existsSync(answersPath) ? JSON.parse(readFileSync(answersPath, 'utf8')) : null;
 const brand = JSON.parse(readFileSync(join(siteDir, 'brand.json'), 'utf8'));
 
 // ---------------------------------------------------------------- 1 & 2. ledger integrity
@@ -131,7 +133,8 @@ for (const claim of ledger.claims) {
 // has to state the measured one, or the ledger's own freshness discipline is decoration.
 const measuredTests = ledger.measuredAgainst?.tests;
 if (typeof measuredTests === 'number') {
-  for (const [label, source] of [['README.md', readme]]) {
+  const answersSource = existsSync(answersPath) ? readFileSync(answersPath, 'utf8') : '';
+  for (const [label, source] of [['README.md', readme], ['site/answers.json', answersSource]]) {
     for (const match of source.matchAll(/(\d[\d,]*)\s+tests\b/g)) {
       const quoted = Number(match[1].replace(/,/g, ''));
       if (quoted !== measuredTests) {
@@ -217,8 +220,26 @@ const overclaims = [
 ];
 const built = collect(outDir, '.html').concat(collect(outDir, '.txt'));
 if (built.length === 0) fail('site/dist is empty — run npm run site:build first');
+
+// The page that publishes the questions this project refuses to answer quotes them verbatim, and
+// several contain the exact phrases these patterns exist to catch. The quotation is scrubbed before
+// the scan — and the scrubbing is itself constrained: every quoted question must appear verbatim in
+// site/answers.json's refused list, so the only thing this exemption can ever hide is a sentence
+// already published as one we will not make.
+const refusedQuestions = new Set((answers?.refused ?? []).map((/** @type {any} */ entry) => entry.question));
+const QUOTED_QUESTION = /<h3 class="refused-question">([\s\S]*?)<\/h3>/g;
+
 for (const path of built) {
-  const text = readFileSync(path, 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  const raw = readFileSync(path, 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+
+  for (const match of raw.matchAll(QUOTED_QUESTION)) {
+    const quoted = unescapeHtml(match[1].trim());
+    if (!refusedQuestions.has(quoted)) {
+      fail(`${relative(root, path)}: a refused-question block quotes "${quoted}", which is not in site/answers.json. That markup exempts its text from the overclaim scan, so it may only hold a published refusal.`);
+    }
+  }
+
+  const text = raw.replace(QUOTED_QUESTION, '');
   for (const claim of overclaims) {
     const match = text.match(claim.pattern);
     if (match) fail(`${relative(root, path)}: overclaim "${match[0]}" — ${claim.why}`);
@@ -231,6 +252,46 @@ for (const path of collect(outDir, '.html')) {
   if (!text.includes('id="limits"') && !text.includes('data-limits')) {
     notes.push(`${relative(root, path)} carries no limitations block — confirm that is deliberate.`);
   }
+}
+
+// ---------------------------------------------- the indexing gate, end to end
+//
+// This runs on Vercel now, so it is the last thing between a wrong indexing directive and a live
+// page. The meta tag alone cannot cover llms.txt, llms-full.txt, jobs.json or sitemap.xml — plain
+// text and JSON carry no meta tags — so the visibility decision has to be enforced in two places
+// that must never disagree: brand.json, and the X-Robots-Tag header in vercel.json.
+
+const shouldIndex = brand.repository.status === 'public';
+const expectedRobots = shouldIndex ? 'index, follow' : 'noindex, nofollow';
+
+for (const path of collect(outDir, '.html')) {
+  const text = readFileSync(path, 'utf8');
+  const label = relative(root, path);
+  const robots = /<meta\s+name="robots"\s+content="([^"]*)"/.exec(text)?.[1];
+  if (robots !== expectedRobots) {
+    fail(`${label}: robots is "${robots ?? 'absent'}" but brand.json says the repository is ${brand.repository.status}, which means "${expectedRobots}".`);
+  }
+  if (!/<link rel="canonical" href="https:\/\//.test(text)) {
+    fail(`${label}: no absolute rel=canonical. Two URLs serve this page and neither is declared primary.`);
+  }
+}
+
+const vercelPath = join(root, 'vercel.json');
+if (existsSync(vercelPath)) {
+  const vercel = JSON.parse(readFileSync(vercelPath, 'utf8'));
+  const catchAll = (vercel.headers ?? []).find((/** @type {any} */ entry) => entry.source === '/(.*)');
+  const header = (catchAll?.headers ?? []).find((/** @type {any} */ item) => item.key === 'X-Robots-Tag');
+  if (shouldIndex && header) {
+    fail('vercel.json still sends X-Robots-Tag while brand.json says the repository is public. The header outranks the meta tag, so the site would stay unindexed.');
+  }
+  if (!shouldIndex && !header) {
+    fail('vercel.json sends no X-Robots-Tag while brand.json says the repository is private. llms.txt, jobs.json and sitemap.xml would be indexable while every HTML page asks not to be.');
+  }
+  if (!/site:check/.test(String(vercel.buildCommand ?? ''))) {
+    fail('vercel.json buildCommand does not run the claims gate, so a claim that loses its evidence would reach a visitor even though CI caught it.');
+  }
+} else {
+  notes.push('vercel.json is absent, so the deployment half of the indexing gate is unchecked.');
 }
 
 // ---------------------------------------------------------------- report
@@ -272,4 +333,9 @@ function collect(directory, extension) {
     else if (path.endsWith(extension)) results.push(path);
   }
   return results;
+}
+
+/** @param {string} value */
+function unescapeHtml(value) {
+  return value.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }

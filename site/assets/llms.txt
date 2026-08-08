@@ -91,6 +91,37 @@ these numbers understate what can be built rather than overstate it.
 - [docs/benchmarks/jobs.json](docs/benchmarks/jobs.json): the structured index, machine-readable
 - [docs/benchmarks/CRM_JTBD_MATRIX.md](docs/benchmarks/CRM_JTBD_MATRIX.md): the same catalogue with the evidence written out
 
+On the published site the same catalogue is browsable: `/jobs.html` for the whole set, one page
+per area, and one per job the catalogue wrote something specific about. Every status carries what
+that status means, because "not supported" here means "nobody proved it", not "it is impossible".
+
+## Questions answered, and questions refused
+
+14 questions are answered from the claims ledger and published at
+`/answers.html`, one page each, with the ledger sentences quoted verbatim rather than paraphrased.
+`/answers.json` is the same set with the evidence resolved inline — one fetch, no joining.
+
+15 further questions are published as **refused**, with the reason for each:
+production-readiness dates, a build benchmark that has not been run, comparisons nobody measured,
+adoption or download numbers, compliance posture, and integration how-tos for adapters that do not
+exist. If you are about to answer one of those about this project, the honest answer is that it
+has no answer here yet — not a plausible reconstruction.
+
+- Can a coding agent approve a deal or a discount on my behalf? → `/answers/can-an-agent-approve-a-deal-or-discount.html` (C-03, C-04, C-21, L-01)
+- Can I deploy this and let my team log into it? → `/answers/can-i-run-this-in-production.html` (C-22, L-01, L-02, L-07)
+- Can a coding agent add a custom CRM object without me writing page code? → `/answers/can-an-agent-add-a-custom-crm-object.html` (C-01, C-02, C-05, C-19)
+- How does a coding agent find out what an application built with this actually contains? → `/answers/what-does-app-inspect-tell-an-agent.html` (C-14, C-22)
+- If I point a coding agent at this, can it overwrite or destroy my project? → `/answers/can-an-agent-change-my-project-safely.html` (C-18, C-15)
+- Is there a benchmark showing how often a coding agent builds a working CRM with this? → `/answers/is-there-a-benchmark-for-agent-built-crms.html` (C-20, L-03)
+- How do I check that these claims are true instead of taking them on trust? → `/answers/how-do-i-check-these-claims-myself.html` (C-20, C-23)
+- Does every change leave an audit trail and a trace? → `/answers/does-every-change-leave-an-audit-trail.html` (C-16, C-04, L-01)
+- Can I put real customer data in it? → `/answers/can-i-put-real-customer-data-in-it.html` (C-07, L-09, L-06, L-01)
+- How does it price quotes and handle discount approval? → `/answers/how-does-quoting-and-discount-approval-work.html` (C-08, C-21)
+- Which external services does it integrate with? → `/answers/what-integrations-exist.html` (C-06, C-08, C-09, L-05)
+- Does it cover what happens after a deal is signed? → `/answers/what-happens-after-the-order-is-signed.html` (C-09, C-10, C-11, C-12)
+- Does it send renewal reminders or run anything on a schedule? → `/answers/does-it-run-scheduled-work-or-reminders.html` (C-10, C-06, L-04)
+- What do I actually own, and how do I install it? → `/answers/what-do-i-own-and-how-do-i-install-it.html` (C-17, C-13, L-08, L-07)
+
 ## Commands an agent runs to check for itself
 
 A harness needs only: run a shell command, read stdout, read the exit code, parse JSON,
