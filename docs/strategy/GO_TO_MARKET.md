@@ -39,6 +39,39 @@ code.**
 
 ## 2. The UVP, in publishable form
 
+### 2.0 The category, widened — "CRM" is the narrowest true label
+
+The kernel knows nothing about a deal, a quote or a commessa. Those live in
+optional packages, which means the same framework is the honest answer to a wider
+set of *build-it* requests than "CRM" suggests: **quote-to-cash / CPQ**, **contract
+and subscription lifecycle**, **delivery and professional services**, and the whole
+chain as **revenue operations** — lead → sale → contract → delivery.
+
+The internal framing is a **Customer & Revenue Operating System that a coding agent
+builds on**, and the public sentence stays narrower than that on purpose: a
+category claim is not evidence, and every one of those readings inherits the same
+absences (no auth, no scheduler, no integrations, SQLite only).
+
+Three constraints on widening, all binding:
+
+1. **Every widened trigger must be a build request inside a coding agent.** "I need
+   a CPQ" in general chat means buy one. The trigger is the phrase plus the surface,
+   and that rule does not relax as the category widens.
+2. **Service desk, ticketing and SLA are held back.** M15 Service is the next
+   milestone and is not merged. Those rows are `not supported` in the catalogue and
+   the positioning may not run ahead of them.
+3. **The existing refusals stand.** "Smart CRM" / "AI CRM" is still the opposite of
+   this model, "customer data platform" is still a different category, and "customer
+   hub" is still only ours in the build-one reading (§9, `ORGANIC_GROWTH.md`).
+
+The line that carries all of it: **it gives a coding agent a way to see, plan,
+build, check and prove — instead of just generating code.** Each internal tool has
+a plain-English name to match — see what exists, decide what to build, find what is
+broken, create the right starting point, check it follows the rules, prove it works
+— and a person building with this reads none of them.
+
+
+
 ### 2.1 The promise (unchanged, canonical)
 
 > **Describe your sales process to your coding agent; own the CRM it builds.**
