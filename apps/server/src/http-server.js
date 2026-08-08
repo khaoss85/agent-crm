@@ -127,7 +127,6 @@ function buildRouter(app) {
     // Lead Intelligence registries (ADR-015): safe, function-free metadata —
     // provider/model/policy identities, fingerprints and target data, never
     // executable rules. Additive: an older client ignores it.
-    ...(app.intelligence ? { intelligence: app.intelligence.metadata() } : {}),
     // Commercial Operations registries (ADR-016): catalog providers, discount
     // policies, money/discount contract. Additive; function-free.
     ...(app.commercial ? { commercial: app.commercial.metadata() } : {}),

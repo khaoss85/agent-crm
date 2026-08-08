@@ -60,7 +60,6 @@ const COMPOSITION = Object.freeze([
   { key: 'modules', path: 'packages/modules/generated/index.js', exportName: 'generatedModules' },
   { key: 'actions', path: 'packages/actions/generated/index.js', exportName: 'generatedActions' },
   { key: 'pipelines', path: 'packages/pipelines/generated/index.js', exportName: 'generatedPipelines' },
-  { key: 'intelligence', path: 'packages/intelligence/generated/index.js', exportName: null },
   { key: 'commercial', path: 'packages/commercial/generated/index.js', exportName: null },
   { key: 'signature', path: 'packages/signature/generated/index.js', exportName: null },
 ]);
@@ -505,9 +504,6 @@ function collectProviders(loaded, problems, rootDir) {
       });
     }
   };
-  push('intelligence', 'enrichment-provider', loaded.intelligence?.generatedEnrichmentProviders);
-  push('intelligence', 'scoring-model', loaded.intelligence?.generatedScoringModels);
-  push('intelligence', 'routing-policy', loaded.intelligence?.generatedRoutingPolicies);
   push('commercial', 'catalog-provider', loaded.commercial?.generatedCatalogProviders);
   push('commercial', 'discount-policy', loaded.commercial?.generatedDiscountPolicies);
   push('signature', 'signature-provider', loaded.signature?.generatedSignatureProviders);

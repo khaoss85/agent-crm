@@ -513,7 +513,10 @@ test('the canonical Lead→Won objective is answered with what exists and what i
     'behavioral-signal.module.json', 'score-run.module.json', 'score-contribution.module.json',
     'routing-run.module.json', 'route-evaluation.module.json', 'assignment.module.json',
   ]) {
-    const applied = spawnSync(process.execPath, ['--no-warnings', join(root, CLI), 'module', 'create', join(starter, manifest), '--apply', '--root', root], { encoding: 'utf8', cwd: root });
+    // Intelligence record manifests live with the package that owns them.
+    const from = ['lead.module.json', 'task.module.json'].includes(manifest)
+      ? starter : join(root, 'packages/intelligence/modules');
+    const applied = spawnSync(process.execPath, ['--no-warnings', join(root, CLI), 'module', 'create', join(from, manifest), '--apply', '--root', root], { encoding: 'utf8', cwd: root });
     assert.equal(applied.status, 0, `${manifest}: ${applied.stderr}`);
   }
   const { report, valid } = await inspectApplication({ rootDir: root });

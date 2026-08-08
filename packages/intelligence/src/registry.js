@@ -1,9 +1,9 @@
 // @ts-check
 
 import { randomUUID } from 'node:crypto';
-import { ValidationError, NotFoundError } from './errors.js';
-import { computeDefinitionFingerprint, validateDeclaredConfig } from './definition-fingerprint.js';
-import { nowIso } from './time.js';
+import {
+  ValidationError, NotFoundError, computeDefinitionFingerprint, validateDeclaredConfig, nowIso,
+} from '../../core/index.js';
 
 /**
  * Lead Intelligence registries (ADR-015): bounded code-first contracts for

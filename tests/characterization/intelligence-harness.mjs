@@ -47,15 +47,15 @@ export const FIXED_NOW = '2026-01-01T00:00:00.000Z';
 /**
  * How Lead Intelligence is attached to a project **today**.
  *
- * Today: four actions built by `intelligence-actions.js` into the project's
- * action registry, and four definition kinds written into the project-owned
- * `packages/intelligence/generated/index.js` slot.
+ * Today: one composition entry in `packages/domains/generated/index.js`, which
+ * is how every optional domain package is attached.
  *
- * After extraction this function writes one composition import instead. That is
- * the whole diff, and `ATTACHMENT` records which shape produced a baseline so a
- * comparison across the move is never silently comparing two different things.
+ * Before the extraction this wrote four action-registry imports and a fixed
+ * project-owned definition slot. That was the whole diff, and `ATTACHMENT`
+ * records which shape produced a baseline so a comparison across the move is
+ * never silently comparing two different things.
  */
-export const ATTACHMENT = 'kernel-actions-and-fixed-definition-slot';
+export const ATTACHMENT = 'composed-domain-package';
 
 /**
  * **Every path that knows where Lead Intelligence lives today, in one place.**
@@ -71,10 +71,11 @@ export const ATTACHMENT = 'kernel-actions-and-fixed-definition-slot';
  * import, and nothing else in `tests/characterization/` changes.
  */
 export const INTELLIGENCE_SOURCE = Object.freeze({
-  registry: '../../packages/core/src/intelligence-registry.js',
-  actions: '../../packages/core/src/intelligence-actions.js',
-  /** Grep patterns for the architecture-evidence cases. */
-  greps: Object.freeze(['app.intelligence', 'intelligence-registry.js', 'intelligence-actions.js', 'intelligence/generated']),
+  registry: '../../packages/intelligence/src/registry.js',
+  actions: '../../packages/intelligence/src/actions.js',
+  entry: '../../packages/intelligence/src/index.js',
+  /** Patterns for the architecture-evidence cases, kept in the seam. */
+  greps: Object.freeze(['app.intelligence', 'intelligence/src/registry.js', 'intelligence/src/actions.js', 'domains/generated']),
 });
 
 /**
@@ -91,6 +92,41 @@ export const NEUTRAL_HELPER_SOURCE = Object.freeze({
   fingerprint: '../../packages/core/src/definition-fingerprint.js',
   timeout: '../../packages/core/src/timeout.js',
 });
+
+/**
+ * **Where the published schema block lives.**
+ *
+ * The cases read this through the seam rather than by path, and that is not
+ * tidiness. `architecture.definition-kinds-published` and every
+ * `architecture.fingerprint.*` observation is `contractual`, and each of them
+ * used to reach `schema.intelligence` directly — a hard-coded location inside
+ * an asserted observation.
+ *
+ * ADR-021 sanctions publishing the block as the package's own contribution,
+ * which moves it under `domains`. With the path hard-coded, that move would
+ * have read `undefined`, reported empty arrays, and failed as though the
+ * definitions had changed. Worse, an extraction that genuinely **lost** the
+ * definitions would have produced the identical empty arrays — so the harness
+ * could not have told a move from a loss, which is the one distinction it
+ * exists to make.
+ *
+ * Now the location is the seam's business and the contents are the contract.
+ * A block that is nowhere returns `undefined`, the contractual observations go
+ * red, and losing the definitions stays loud.
+ *
+ * @param {any} schema the `/api/schema` document
+ */
+export function intelligenceSchemaBlock(schema) {
+  return schema?.intelligence ?? schema?.domains?.intelligence?.metadata ?? schema?.domains?.intelligence;
+}
+
+/** Where the block was actually found, recorded as evidence rather than asserted. */
+export function intelligenceSchemaLocation(schema) {
+  if (schema?.intelligence) return 'schema.intelligence';
+  if (schema?.domains?.intelligence?.metadata) return 'schema.domains.intelligence.metadata';
+  if (schema?.domains?.intelligence) return 'schema.domains.intelligence';
+  return null;
+}
 
 /** The two neutral helpers, loaded from wherever they currently live. */
 export async function loadNeutralHelpers() {
@@ -111,8 +147,10 @@ export async function loadNeutralHelpers() {
  * which is the one failure a freshness mechanism cannot have.
  */
 export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
-  'packages/core/src/intelligence-actions.js',
-  'packages/core/src/intelligence-registry.js',
+  'packages/intelligence/src/index.js',
+  'packages/intelligence/src/actions.js',
+  'packages/intelligence/src/registry.js',
+  'packages/intelligence/src/capability.js',
   'packages/core/src/definition-fingerprint.js',
   'packages/core/src/timeout.js',
   'packages/core/src/action-runtime.js',
@@ -122,13 +160,13 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'examples/starters/b2b-lead-qualification/intelligence.js',
   'examples/starters/b2b-lead-qualification/actions/qualify.js',
   'examples/starters/b2b-lead-qualification/actions/disqualify.js',
-  'examples/starters/b2b-lead-qualification/enrichment-snapshot.module.json',
-  'examples/starters/b2b-lead-qualification/behavioral-signal.module.json',
-  'examples/starters/b2b-lead-qualification/score-run.module.json',
-  'examples/starters/b2b-lead-qualification/score-contribution.module.json',
-  'examples/starters/b2b-lead-qualification/routing-run.module.json',
-  'examples/starters/b2b-lead-qualification/route-evaluation.module.json',
-  'examples/starters/b2b-lead-qualification/assignment.module.json',
+  'packages/intelligence/modules/enrichment-snapshot.module.json',
+  'packages/intelligence/modules/behavioral-signal.module.json',
+  'packages/intelligence/modules/score-run.module.json',
+  'packages/intelligence/modules/score-contribution.module.json',
+  'packages/intelligence/modules/routing-run.module.json',
+  'packages/intelligence/modules/route-evaluation.module.json',
+  'packages/intelligence/modules/assignment.module.json',
   'examples/starters/b2b-lead-qualification/lead.module.json',
   'examples/starters/b2b-lead-qualification/task.module.json',
 ]);
@@ -147,14 +185,17 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
 export function unownedIntelligenceSource(rootDir) {
   const owned = new Set(BEHAVIOUR_BEARING_SOURCE);
   const found = [];
+  // The kernel must contain nothing Intelligence any more; if a file reappears
+  // there, that is the extraction leaking back and the guard says so.
   const kernel = join(rootDir, 'packages/core/src');
   for (const name of readdirSync(kernel)) {
     if (/intelligence/i.test(name)) found.push(`packages/core/src/${name}`);
   }
-  const starter = join(rootDir, 'examples/starters/b2b-lead-qualification');
-  for (const name of readdirSync(starter)) {
-    if (!name.endsWith('.module.json')) continue;
-    if (INTELLIGENCE_MODULES.includes(name)) found.push(`examples/starters/b2b-lead-qualification/${name}`);
+  for (const name of readdirSync(join(rootDir, 'packages/intelligence/src'))) {
+    if (/\.(mjs|js)$/.test(name)) found.push(`packages/intelligence/src/${name}`);
+  }
+  for (const name of readdirSync(join(rootDir, 'packages/intelligence/modules'))) {
+    if (name.endsWith('.module.json')) found.push(`packages/intelligence/modules/${name}`);
   }
   return found.filter((path) => !owned.has(path)).sort();
 }
@@ -162,26 +203,29 @@ export function unownedIntelligenceSource(rootDir) {
 /** @param {string} root @param {{enrichTimeoutMs?: number}} options */
 export function wireIntelligence(root, { enrichTimeoutMs } = {}) {
   const starter = '../../../examples/starters/b2b-lead-qualification';
-  const builderOptions = enrichTimeoutMs ? `{ timeoutMs: ${enrichTimeoutMs} }` : '';
+  const config = enrichTimeoutMs ? `, config: { timeoutMs: ${enrichTimeoutMs} }` : '';
   writeFileSync(join(root, 'packages/actions/generated/index.js'), [
     '// @ts-check',
     `import { qualifyLead } from '${starter}/actions/qualify.js';`,
     `import { disqualifyLead } from '${starter}/actions/disqualify.js';`,
-    "import { buildEnrichAction, buildRecordSignalAction, buildScoreAction, buildRouteAction }",
-    "  from '../../core/src/intelligence-actions.js';",
-    `export const generatedActions = [qualifyLead, disqualifyLead, buildEnrichAction(${builderOptions}),`,
-    '  buildRecordSignalAction(), buildScoreAction(), buildRouteAction()];',
+    'export const generatedActions = [qualifyLead, disqualifyLead];',
     '',
   ].join('\n'));
 
-  writeFileSync(join(root, 'packages/intelligence/generated/index.js'), [
+  // One composition entry — the whole attachment. The four actions arrive with
+  // the package rather than being registered by the project, which is the
+  // difference between a domain the project wires and a domain it composes.
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
     '// @ts-check',
+    "import { createIntelligenceDomain } from '../../intelligence/src/index.js';",
     'import { fixtureFirmographicsProvider, b2bSaasScoreV1, b2bSaasScoreV2, b2bRoutingV1, b2bRoutingV2, routingTargets }',
     `  from '${starter}/intelligence.js';`,
-    'export const generatedEnrichmentProviders = [fixtureFirmographicsProvider];',
-    'export const generatedScoringModels = [b2bSaasScoreV1, b2bSaasScoreV2];',
-    'export const generatedRoutingPolicies = [b2bRoutingV1, b2bRoutingV2];',
-    'export const generatedRoutingTargets = routingTargets;',
+    'export const generatedDomains = [createIntelligenceDomain({',
+    '  enrichmentProviders: [fixtureFirmographicsProvider],',
+    '  scoringModels: [b2bSaasScoreV1, b2bSaasScoreV2],',
+    '  routingPolicies: [b2bRoutingV1, b2bRoutingV2],',
+    `  routingTargets${config},`,
+    '})];',
     '',
   ].join('\n'));
 }
@@ -207,8 +251,10 @@ export function characterizationProject(t, { enrichTimeoutMs, name = 'agent-crm-
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
   const starter = join(root, 'examples/starters/b2b-lead-qualification');
+  const packaged = join(root, 'packages/intelligence/modules');
   for (const manifest of INTELLIGENCE_MODULES) {
-    const applied = cli(root, ['module', 'create', join(starter, manifest), '--apply']);
+    const from = ['lead.module.json', 'task.module.json'].includes(manifest) ? starter : packaged;
+    const applied = cli(root, ['module', 'create', join(from, manifest), '--apply']);
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
   }
   wireIntelligence(root, { enrichTimeoutMs });
