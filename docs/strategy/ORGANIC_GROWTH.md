@@ -109,23 +109,38 @@ Hard rules — a piece that fails any gate is not published:
 
 - SEO-spam programmatic pages ("best CRM for dentists" ×200).
 
-  **Amended 2026-08-08.** Generated pages are permitted when, and only when, all four of these
-  hold. They are a mechanical test on purpose — a rhetorical distinction between "good" and "spam"
-  programmatic pages is one anybody can argue their way past later.
+  **Amended 2026-08-08, then corrected the same day.** The first draft of this carve-out claimed
+  more than the pages delivered — an adversarial review found three of its four tests failing on
+  the very pages it declared compliant. What follows is the corrected version, and the correction
+  is left visible because a rule that was quietly relaxed to fit its first user is not a rule.
+
+  Generated pages are permitted when all four hold. The tests are mechanical on purpose: a
+  rhetorical distinction between "good" and "spam" programmatic pages is one anybody can argue past.
 
   1. **The page renders an artifact this project already maintains for engineering reasons** — the
-     JTBD matrix, the claims ledger — not prose written to match a query. Delete the SEO motive and
-     the artifact still exists and is still maintained.
-  2. **Every sentence resolves to a ledger entry or a matrix row**, and the page goes through
-     `scripts/site-check.js` like any other. Nothing is written twice.
-  3. **The page set is bounded by the data, not by a keyword list.** A page cannot be added by
-     thinking of a phrase; only by the matrix gaining a row. There is no template with a slot for a
-     vertical, a city or a competitor.
-  4. **Thin rows are denied a URL.** A job the catalogue said little about appears in full on its
-     section page and gets no page of its own (`scripts/site-pages.js`, `OWN_PAGE_MIN_SUMMARY`).
+     JTBD matrix, the claims ledger. Delete the SEO motive and the artifact still exists and is
+     still maintained.
+  2. **Every sentence that makes a claim about the product resolves to a ledger entry or a matrix
+     row, quoted rather than paraphrased.** The framing around it — what a status means, where the
+     boundary sits, how to read the page — is written once in the generator and rendered on many
+     pages. That is not a claim, and it passes through `scripts/site-check.js` like every other
+     byte. The earlier wording, "every sentence", was false the moment it was written.
+  3. **The set is bounded by something other than a keyword list.** For `/jobs/*` that bound is the
+     data: a page cannot be added by thinking of a phrase, only by the matrix gaining a row.
+     `/answers/*` is bounded **more weakly and by hand** — a person adds a question to
+     `site/answers.json` — so it carries a second constraint instead: a question is admissible only
+     if the ledger already answers it, and every question judged inadmissible is published, with
+     its reason, on the same page. Fifteen are. Claiming `/answers/*` met the `/jobs/*` bound was
+     the second thing this amendment got wrong.
+  4. **Thin leaf pages are denied a URL.** A job earns its own page when the catalogue wrote 150+
+     characters about it *or* a merged test proves it (`scripts/site-pages.js`, `hasOwnPage`) —
+     length alone had inverted this project's own hierarchy, giving a URL to a long note about
+     something unsupported while a job proved by four tests got none. Section pages are exempt and
+     always exist: they are how a job denied its own URL stays readable, and a threshold that hid a
+     row would be a filter on the truth rather than on the URL count.
 
-  The dentist pages fail all four. `/jobs/*` and `/answers/*` pass all four. If a future page set
-  cannot pass them, it is the ban that applies, not this paragraph.
+  "Best CRM for dentists" ×200 fails all four. `/jobs/*` passes all four. `/answers/*` passes 1, 2
+  and 4, and meets 3 only in the weaker form stated there — which is why it is written down.
 - Fake community activity, stars-begging, follow-loops.
 - Claims about model recommendation rates we cannot measure (URR is measured, published with protocol, never promised).
 - Content about features that don't exist yet ("roadmap-ware") except clearly-labeled roadmap posts.

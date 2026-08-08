@@ -406,6 +406,15 @@ function resolve(token) {
     'cta.secondaryHref': repositoryIsPublic ? 'evidence.html' : '#limits',
     // Deliberately not conditional: the second call to action says the same thing either way.
     'cta.secondaryLabel': 'See what it can’t do yet',
+    // The footer used to assert, on every page, that the licence was pending and the name a
+    // working title. brand.json calls itself the single source of brand truth and recorded both
+    // decisions as made; the prose had simply not been told. Both sentences are derived now.
+    'status.license': brand.license.status === 'confirmed'
+      ? `${brand.license.value}-licensed (ADR-021).`
+      : `${brand.license.value} today, pending a final human confirmation before launch.`,
+    'status.name': brand.name.status === 'chosen'
+      ? `\u201c${brand.name.value}\u201d is the chosen name; the trademark screen has not been run.`
+      : `\u201c${brand.name.value}\u201d is a working title, not the public name.`,
     'status.headline': repositoryIsPublic ? 'Pre-launch.' : 'Pre-launch, source not yet public.',
     'status.text': repositoryIsPublic
       ? 'Not deployable to production. This page states what the tests prove and what is missing — nothing else.'

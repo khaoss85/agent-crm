@@ -55,10 +55,19 @@ test('every catalogued job is reachable and readable, whether or not it has its 
     for (const job of entries) {
       assert.ok(html.includes(escape(job.title)), `${path} does not list ${job.id} (${job.title})`);
       assert.ok(html.includes(escape(job.status)), `${path} does not carry the status of ${job.id}`);
-      if (job.summary) {
+      // A job with no page of its own must be readable in full here, because there is nowhere
+      // else. A job that has one gets a lead-in, so the paragraph is the substance of exactly one
+      // indexable URL rather than two.
+      if (job.summary && !hasOwnPage(job)) {
         assert.ok(
           html.includes(escape(stripMarkdown(job.summary))),
           `${path} truncates or omits what the catalogue says about ${job.id} — the section page is where a job with no URL of its own has to be readable in full`,
+        );
+      }
+      if (job.summary && hasOwnPage(job)) {
+        assert.ok(
+          !html.includes(escape(stripMarkdown(job.summary))) || job.summary.length <= 180,
+          `${path} repeats ${job.id}'s whole summary, which is also the substance of its own page — two URLs carrying the same paragraph`,
         );
       }
     }

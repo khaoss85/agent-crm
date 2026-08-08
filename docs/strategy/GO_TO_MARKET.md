@@ -376,11 +376,11 @@ a week the compounding channels do not start compounding.
     MK0–MK7, Data Governance, Integration Runtime, Jobs and Outbox, renewals firing, scheduling,
     the create-CLI — except as clearly labelled architecture or roadmap posts.
 13. **Do not chase stars or announce dates** for the production spine, the create-CLI or the
-    benchmark. **Generated pages** were banned outright here and are now allowed under a
-    four-part mechanical test — the page renders an artifact the project maintains anyway, every
-    sentence resolves to the ledger or the matrix, the set is bounded by the data rather than by a
-    keyword list, and thin rows are denied a URL (`ORGANIC_GROWTH.md` §12). `/jobs/*` and
-    `/answers/*` pass it; "best CRM for dentists" ×200 fails all four parts.
+    benchmark. **Generated pages** were banned outright here and are now allowed under the
+    four-part mechanical test in `ORGANIC_GROWTH.md` §12 — which `/jobs/*` passes in full and
+    `/answers/*` passes on three parts, meeting the fourth only in a weaker, stated form. Read the
+    test there rather than the summary here; it was already corrected once after a review found it
+    overclaiming.
 14. **Do not attack a competitor's licensing rhetorically.** Structural differentiation survives
     scrutiny; disparagement invites it.
 15. **Do not publish anything without a named human editor of record.**

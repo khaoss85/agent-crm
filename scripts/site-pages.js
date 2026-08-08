@@ -34,7 +34,7 @@ const LIMITS_BLOCK = `      <h2 id="limits">What a status here does not mean</h2
       local-development-only whatever any row says. Every claim and every limitation is on
       <a href="{{page.root}}evidence.html">one page</a>.</p>`;
 
-/** A job earns its own URL when the catalogue wrote at least this much specifically about it. */
+/** How much the catalogue has to have written about a job before length alone earns it a URL. */
 export const OWN_PAGE_MIN_SUMMARY = 150;
 
 /**
@@ -71,9 +71,24 @@ export function sectionNote(section) {
   return match ? match[1].trim() : '';
 }
 
-/** @param {any} job */
+/**
+ * Whether a job earns its own URL.
+ *
+ * Length alone was the first rule, and it inverted this project's own hierarchy of value: a terse
+ * row proved by four merged tests got no page, while a long paragraph explaining why something is
+ * *not supported* got one. `STATUS_MEANING` says validated end to end "is the only status that
+ * counts as evidence" — so a job something actually proves earns a page however briefly the matrix
+ * described it. That moved twenty of the twenty-one validated jobs onto their own URLs.
+ *
+ * A cited **test** counts; a cited **document** does not. A design document for an unimplemented
+ * track proves nothing, and counting it would have minted eight pages for `not supported` rows
+ * whose entire summary is twenty-odd characters — precisely the thin content the threshold exists
+ * to refuse.
+ *
+ * @param {any} job
+ */
 export function hasOwnPage(job) {
-  return String(job.summary ?? '').length >= OWN_PAGE_MIN_SUMMARY;
+  return String(job.summary ?? '').length >= OWN_PAGE_MIN_SUMMARY || (job.tests ?? []).length > 0;
 }
 
 /**
@@ -100,7 +115,7 @@ export function buildJobPages({ jobs, brand, origin }) {
     path: 'jobs.html',
     title: `Every CRM job, and whether ${brand.name.value} does it`,
     description:
-      `All ${all.length} catalogued CRM jobs with their status and their evidence: `
+      `All ${all.length} catalogued CRM jobs with their status and, where the matrix names one, the test that proves it: `
       + `${count(all, 'validated end to end')} validated end to end, ${count(all, 'partially supported')} partially supported, `
       + `${count(all, 'not supported')} not supported. Conservative by policy — a job moves only when a test proves it.`,
     jsonLd: [breadcrumbs(origin, [['Home', '/'], ['CRM jobs', '/jobs.html']])],
@@ -150,7 +165,7 @@ export function buildJobPages({ jobs, brand, origin }) {
         `${entry.jobs.length} catalogued CRM jobs under ${name}: `
         + `${count(entry.jobs, 'validated end to end')} validated end to end, `
         + `${count(entry.jobs, 'partially supported')} partially supported, `
-        + `${count(entry.jobs, 'not supported')} not supported, each with its evidence.`,
+        + `${count(entry.jobs, 'not supported')} not supported, each with the evidence the matrix names for it, where it names one.`,
         300,
       ),
       jsonLd: [
@@ -198,7 +213,7 @@ export function buildJobPages({ jobs, brand, origin }) {
       pages.push({
         path: `jobs/${job.id.toLowerCase()}.html`,
         title: truncate(job.title, 70),
-        description: truncate(`${job.title}: ${job.status} in ${name}. ${stripMarkdown(job.summary)}`, 300),
+        description: truncate(boundaryFirst(job, name), 300),
         jsonLd: [
           breadcrumbs(origin, [
             ['Home', '/'], ['CRM jobs', '/jobs.html'], [name, `/jobs/${entry.slug}.html`],
@@ -290,7 +305,12 @@ function jobCard(job, hasPage) {
     `      <div class="limit-card" id="${escapeHtml(job.id)}">`,
     `        <h3><span class="mono muted">${escapeHtml(job.id)}</span> · ${heading}</h3>`,
     `        <p><span class="pill ${statusClass(job.status)}">${escapeHtml(job.status)}</span></p>`,
-    job.summary ? `        <p>${escapeHtml(stripMarkdown(job.summary))}</p>` : '',
+    // A job with its own URL gets a lead-in here and the full paragraph there, so the same text is
+    // not the substance of two indexable pages. A job with no page of its own is printed in full,
+    // because this is the only place it is readable.
+    job.summary
+      ? `        <p>${escapeHtml(hasPage ? truncate(stripMarkdown(job.summary), 180) : stripMarkdown(job.summary))}</p>`
+      : '',
     `        <div class="evidence">${chips(job)}</div>`,
     '      </div>',
   ].filter(Boolean).join('\n');
@@ -301,9 +321,17 @@ function evidenceBlock(job) {
   const tests = job.tests ?? [];
   const docs = job.docs ?? [];
   if (tests.length === 0 && docs.length === 0) {
+    // Two very different situations share this branch, and conflating them produced pages that
+    // contradicted themselves inside one screen.
+    const proved = job.status === 'validated end to end' || job.status === 'partially supported';
     return `      <h2>Evidence</h2>
-      <p>This row names no test and no document of its own. That is the honest reading of a job the
-      catalogue has assessed but nothing proves — treat it as unbuilt rather than undocumented.</p>`;
+      <p>${proved
+        ? 'This row carries no test path of its own in the structured index. The matrix records the '
+          + 'evidence for it in a block shared with neighbouring rows, which <span class="mono">jobs.json</span> '
+          + 'does not split per row — so read <span class="mono">docs/benchmarks/CRM_JTBD_MATRIX.md</span> '
+          + 'for it. The status above was set from that evidence, not from its absence.'
+        : 'This row names no test and no document of its own, and its status does not claim one. '
+          + 'Treat it as unbuilt: nothing here proves it, and nothing here says otherwise.'}</p>`;
   }
   return [
     '      <h2>Evidence</h2>',
@@ -400,7 +428,7 @@ export function buildAnswerPages({ answers, ledger, brand, origin }) {
     path: 'answers.html',
     title: truncate(`Straight answers about ${brand.name.value}`, 70),
     description: truncate(
-      `${answers.questions.length} questions answered from the claims ledger, each naming the tests that hold it — `
+      `${answers.questions.length} questions answered from the claims ledger, each naming the evidence that holds it — `
       + `and ${answers.refused.length} this project will not answer yet, with the reason for each.`,
       300,
     ),
@@ -410,8 +438,8 @@ export function buildAnswerPages({ answers, ledger, brand, origin }) {
         'Answers',
         'Straight answers, and the questions we refuse.',
         `<p class="lede">Every answer below is assembled from <a href="{{page.root}}evidence.html">the claims ledger</a>:
-         the sentences are the ledger's own, and each one carries the limitation that travels with it. Nothing here is
-         written twice. Below them are ${answers.refused.length} questions this project
+         the sentences are the ledger's own, and each one carries the limitation that travels with it. The lede on each
+         page summarises; the claim below it is quoted. Below them are ${answers.refused.length} questions this project
          <strong>will not answer yet</strong> — a benchmark that has not been run, comparisons nobody measured,
          adoption numbers that do not exist — with the reason in each case.</p>`,
       ),
@@ -468,7 +496,8 @@ export function buildAnswerPages({ answers, ledger, brand, origin }) {
         '    <section>',
         '      <h2>What the ledger says, word for word</h2>',
         `      <p class="section-lede">Each entry below is copied from <span class="mono">site/claims.json</span>,
-        where it is bound to the tests that hold it. The answer above is a summary of these; these are the claim.</p>`,
+        where it is bound to the evidence that holds it — a test file, a document, or a named repository fact — and to
+        the limitation that travels with it. The answer above summarises these; these are the claim.</p>`,
         ...cited.map((item) => [
           '      <div class="limit-card">',
           `        <h3><span class="mono muted">${escapeHtml(item.id)}</span>${item.headline ? ` · ${escapeHtml(item.headline)}` : ''}</h3>`,
@@ -498,4 +527,22 @@ function evidenceChipsOf(item) {
   const chipList = [...(evidence.tests ?? []), ...(evidence.docs ?? []), ...(evidence.repoFacts ?? [])];
   if (evidence.jtbd) chipList.unshift(evidence.jtbd);
   return chipList.map((chip) => `<code>${escapeHtml(chip)}</code>`).join('');
+}
+
+/**
+ * The meta description for a job page, boundary first.
+ *
+ * A description is the one surface always read alone — in a result list, in a social card, in a
+ * retrieval snippet — and truncating a capability-first sentence at 300 characters reliably cut the
+ * limitation off, publishing the half of the sentence this project exists not to publish. So the
+ * status leads, and where the matrix wrote an explicit exclusion, that leads the rest.
+ *
+ * @param {any} job @param {string} sectionName
+ */
+export function boundaryFirst(job, sectionName) {
+  const summary = stripMarkdown(job.summary ?? '');
+  const excluded = /\bNOT included:\s*(.+)$/i.exec(summary) ?? /\bNOT\b[^.]*:\s*(.+)$/.exec(summary);
+  const head = `${job.title} — ${job.status} in ${sectionName}.`;
+  if (excluded) return `${head} Not included: ${excluded[1]}`;
+  return `${head} ${summary}`;
 }

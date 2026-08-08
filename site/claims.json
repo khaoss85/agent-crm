@@ -228,7 +228,7 @@
           "docs/DELIVERY_HANDOVER.md"
         ]
       },
-      "limitation": "It hands work over and runs it through human-driven transitions. Nothing schedules, staffs, computes percent complete, accepts or bills. Deliverables and customer acceptance do not exist as objects.",
+      "limitation": "It hands work over and runs it through human-driven transitions. Nothing schedules, staffs, computes percent complete or bills. Deliverables and recorded customer acceptance exist as of M14b2, and acceptance there is evidence a user actor recorded \u2014 never an authenticated customer, a legal signature or authorization to bill.",
       "surfaces": [
         "site",
         "readme"
@@ -476,7 +476,7 @@
           "the run refuses to start over uncommitted target files and verifies every restore byte-for-byte"
         ]
       },
-      "limitation": "It falsifies six named rules, not the twenty-two claims in this ledger, and it proves only that a test holds each one — a rule that is wrong but faithfully defended passes every mutation. It is not mutation testing: nothing is generated or sampled, and no score is derived.",
+      "limitation": "It falsifies six named rules, not the claims in this ledger, and it proves only that a test holds each one — a rule that is wrong but faithfully defended passes every mutation. It is not mutation testing: nothing is generated or sampled, and no score is derived.",
       "surfaces": [
         "site",
         "readme",
