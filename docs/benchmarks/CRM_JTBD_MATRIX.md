@@ -105,8 +105,8 @@ Every row: actor · trigger · desired outcome · required CRM primitives · req
 - **Manual interventions**: anything beyond that first Task is handwritten.
 
 ## JTBD-08 — Hand off a won deal
-- **Status**: **partially supported** — cross-module workflows with compensation exist as a primitive, and activating a contract (M12) records explicit **pending** delivery and service obligations from the signed order. Nothing executes, schedules, staffs or completes them: there is no handover process, no delivery project and no acceptance.
-- **Evidence**: workflow engine (`tests/workflow.test.js`); `tests/contracts-activation-e2e.test.js` (obligations created `pending_handover` / `pending_activation`).
+- **Status**: **validated end to end** — **superseded by JTBD-DS-01**, which is the current row for this job and carries its evidence. This row is kept because "hand off a won deal" is the phrasing a reader or an agent searches for; it said "there is no handover process, no delivery project and no acceptance" long after M13, M14a and M14b2 shipped all three, so the same file answered the same question two opposite ways. Activating a contract (M12) records explicit pending obligations from the signed order; M13 turns them into a Delivery Project with work packages and milestones, M14a runs it, M14b2 records deliverables and acceptance.
+- **Evidence**: see **JTBD-DS-01** — `tests/delivery-handover-e2e.test.js`, `tests/contracts-activation-e2e.test.js`, `tests/delivery-execution-e2e.test.js`.
 
 ## JTBD-09 — Onboard a customer
 - **Status**: **not supported** — no checklist/onboarding primitives.

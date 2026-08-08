@@ -515,7 +515,7 @@ export function buildAnswerPages({ answers, ledger, brand, origin }) {
     pages.push({
       path: `answers/${entry.slug}.html`,
       title: truncate(entry.question, 70),
-      description: truncate(stripMarkdown(entry.answer), 300),
+      description: entry.snippet ?? truncate(stripMarkdown(entry.answer), 300),
       jsonLd: [
         breadcrumbs(origin, [['Home', '/'], ['Answers', '/answers.html'], [entry.question, `/answers/${entry.slug}.html`]]),
         {

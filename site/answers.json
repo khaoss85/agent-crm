@@ -1,6 +1,6 @@
 {
   "answersContract": 1,
-  "$comment": "The questions this project will answer in public, and the ones it will not. Every accepted entry names the claim and limitation ids that carry it; scripts/site-build.js renders each page from those ids VERBATIM, so the prose here is a lede and a stance, never the evidence. The refused list is published for the same reason the claims ledger publishes limitations: the questions a project declines to answer are the most informative thing about it. Generated answer pages and /answers.json are built from this file; tests/site-pages.test.js refuses an id that is not in site/claims.json.",
+  "$comment": "The questions this project will answer in public, and the ones it will not. Every accepted entry names the claim and limitation ids that carry it; scripts/site-build.js renders each page from those ids VERBATIM, so the prose here is a lede and a stance, never the evidence. The refused list is published for the same reason the claims ledger publishes limitations: the questions a project declines to answer are the most informative thing about it. Generated answer pages and /answers.json are built from this file; tests/site-pages.test.js refuses an id that is not in site/claims.json. Each question also carries a `snippet`: the meta, Open Graph and Twitter description, written to state the boundary rather than truncated out of the answer. A 300-character cut of a capability-first sentence dropped the limit on four of these, and a social unfurler ignores the noindex the rest of the gate relies on — so that surface is read alone, today.",
   "questions": [
     {
       "slug": "can-an-agent-approve-a-deal-or-discount",
@@ -13,7 +13,8 @@
       ],
       "limitations": [
         "L-01"
-      ]
+      ],
+      "snippet": "No. A renewal at or above the threshold stops and waits for a named human, and a test asserts an agent cannot make that decision. Scope: the actor is asserted, not authenticated — no auth, tenancy or RBAC — so it holds against an honest agent, not an attacker."
     },
     {
       "slug": "can-i-run-this-in-production",
@@ -26,7 +27,8 @@
         "L-01",
         "L-02",
         "L-07"
-      ]
+      ],
+      "snippet": "No. No authentication, tenancy or RBAC; the server is local-development-only and an actor header is not an identity. SQLite only. There is no hosted product and nothing to sign up to."
     },
     {
       "slug": "can-an-agent-add-a-custom-crm-object",
@@ -38,7 +40,8 @@
         "C-05",
         "C-19"
       ],
-      "limitations": []
+      "limitations": [],
+      "snippet": "For CRUD, yes: a manifest becomes a migration, service, REST resource, SDK method and Admin screens with no page code. Not generated: workflows and approvals for a custom object are still handwritten, and references are generated-to-generated many-to-one only."
     },
     {
       "slug": "what-does-app-inspect-tell-an-agent",
@@ -48,7 +51,8 @@
         "C-14",
         "C-22"
       ],
-      "limitations": []
+      "limitations": [],
+      "snippet": "One command returns packages, capabilities, resources, actions, policies and providers as deterministic JSON, read from checked-in source. It never opens the database, contacts a provider or reads a secret, and it lists those blind spots as machine-readable limitations."
     },
     {
       "slug": "can-an-agent-change-my-project-safely",
@@ -58,28 +62,31 @@
         "C-18",
         "C-15"
       ],
-      "limitations": []
+      "limitations": [],
+      "snippet": "Anything that generates code or destroys state is dry-run unless you pass an explicit apply flag, so you read the output before anything is written. The MCP server is stdio and local only, and inherits the authority of whatever starts it. Nothing executes a plan."
     },
     {
       "slug": "is-there-a-benchmark-for-agent-built-crms",
       "question": "Is there a benchmark showing how often a coding agent builds a working CRM with this?",
-      "answer": "No. The build benchmark protocol is designed and published, but it has not been run, so no Successful Agent Build Rate exists and any number quoted for this project is not ours (L-03). What exists instead is a test suite: 517 tests run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them (C-20). That count measures effort, not correctness, and real-browser tests are run manually and are not in CI.",
+      "answer": "No. The build benchmark protocol is designed and published, but it has not been run, so no Successful Agent Build Rate exists and any number quoted for this project is not ours (L-03). What exists instead is a test suite: 518 tests run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them (C-20). That count measures effort, not correctness, and real-browser tests are run manually and are not in CI.",
       "claims": [
         "C-20"
       ],
       "limitations": [
         "L-03"
-      ]
+      ],
+      "snippet": "No. The protocol is published and has not been run, so no success rate exists and any number quoted for this project came from somewhere else. What exists is a test suite — and a test count measures effort, not correctness."
     },
     {
       "slug": "how-do-i-check-these-claims-myself",
       "question": "How do I check that these claims are true instead of taking them on trust?",
-      "answer": "Every claim in site/claims.json names the evidence that holds it — a test file, a document, or a named repository fact — and the limitation that travels with it, so each sentence resolves to something you can check. Run the suite — 517 tests on every push — and read docs/QUALITY_GATES.md for the adversarial-review categories, because the count itself measures effort rather than correctness (C-20). Then run falsify: five rules are removed on purpose in one command and the suite catches every one in about two seconds, naming the test that caught it, and anything that survives is reported as a gap rather than omitted (C-23). Its scope is narrow on purpose — it falsifies six named rules, not the claims in this ledger, it proves only that a test holds each rule, and a rule that is wrong but faithfully defended survives every mutation.",
+      "answer": "Every claim in site/claims.json names the evidence that holds it — a test file, a document, or a named repository fact — and the limitation that travels with it, so each sentence resolves to something you can check. Run the suite — 518 tests on every push — and read docs/QUALITY_GATES.md for the adversarial-review categories, because the count itself measures effort rather than correctness (C-20). Then run falsify: five rules are removed on purpose in one command and the suite catches every one in about two seconds, naming the test that caught it, and anything that survives is reported as a gap rather than omitted (C-23). Its scope is narrow on purpose — it falsifies six named rules, not the claims in this ledger, it proves only that a test holds each rule, and a rule that is wrong but faithfully defended survives every mutation.",
       "claims": [
         "C-20",
         "C-23"
       ],
-      "limitations": []
+      "limitations": [],
+      "snippet": "Every claim names the evidence that holds it and the limitation that travels with it. Run the suite, then run falsify: five rules removed on purpose, each caught by a named test. It falsifies six rules, not the ledger, and a wrong rule faithfully defended survives it."
     },
     {
       "slug": "does-every-change-leave-an-audit-trail",
@@ -91,7 +98,8 @@
       ],
       "limitations": [
         "L-01"
-      ]
+      ],
+      "snippet": "Yes — every mutation goes through a module service or a named workflow and leaves an audit event and a step-level trace. What it is not: a tamper-evident or externally attestable log, and not a compliance control. There is no authentication behind the actor it records."
     },
     {
       "slug": "can-i-put-real-customer-data-in-it",
@@ -104,7 +112,8 @@
         "L-09",
         "L-06",
         "L-01"
-      ]
+      ],
+      "snippet": "No. No authentication, no tenancy, no export and no erasure path, so a data-subject access or deletion request cannot be serviced. No import, dedupe, merge, bulk edit or search either. The data-governance track is designed and unimplemented."
     },
     {
       "slug": "how-does-quoting-and-discount-approval-work",
@@ -114,7 +123,8 @@
         "C-08",
         "C-21"
       ],
-      "limitations": []
+      "limitations": [],
+      "snippet": "Quotes price on the server from a catalog and freeze into an immutable version when a discount goes for approval, which only a human user actor can give. Two boundaries: the catalog is a fixture provider with nothing real connected, and money is integer cents with no FX."
     },
     {
       "slug": "what-integrations-exist",
@@ -127,7 +137,8 @@
       ],
       "limitations": [
         "L-05"
-      ]
+      ],
+      "snippet": "None. Every provider — enrichment, catalog, signature, notification — is an offline fixture. No DocuSign, Stripe, Zuora or ERP adapter exists, no email or calendar integration, and no adapter sends anything to anyone."
     },
     {
       "slug": "what-happens-after-the-order-is-signed",
@@ -139,7 +150,8 @@
         "C-11",
         "C-12"
       ],
-      "limitations": []
+      "limitations": [],
+      "snippet": "Partly, and each step names where it stops: signature → immutable Order → contract, subscription and pending obligations → delivery project → time and expense evidence → change and acceptance. Nothing bills, renews, amends or cancels, and there is no scheduler."
     },
     {
       "slug": "does-it-run-scheduled-work-or-reminders",
@@ -151,7 +163,8 @@
       ],
       "limitations": [
         "L-04"
-      ]
+      ],
+      "snippet": "No. There is no scheduler, no task engine and no reminders. Auto-renew dates and notice periods are recorded on an activated contract and never fire. Everything happens through explicit actions that something calls, not on a timer."
     },
     {
       "slug": "what-do-i-own-and-how-do-i-install-it",
@@ -164,7 +177,8 @@
       "limitations": [
         "L-08",
         "L-07"
-      ]
+      ],
+      "snippet": "You own the source, and today that means copying it: no create-project CLI and no published package, so upgrading means merging rather than bumping a version. Zero third-party runtime dependencies. There is nothing to sign up to."
     }
   ],
   "refused": [

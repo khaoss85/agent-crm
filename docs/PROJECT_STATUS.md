@@ -16,12 +16,12 @@ Generated: **2026-08-07**.
 |---|---|
 | Latest merged milestone | **M14b2 — Delivery change, deliverables and acceptance**, on top of **AX2 — Machine-readable Solution Plans** (ADR-020), **M14b1 — Delivery economics**, **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
 | Main SHA at generation | `de448d4` (merge of PR #26; full SHA `de448d44c6256c4e6309aea4f06dc5120451293c`) |
-| Tests on clean main | **421 passing, 0 failing** at `de448d4`; **517** on the go-to-market branch, which adds the skill-parity, benchmark-scorer, benchmark-harness and tour-claim suites |
+| Tests on clean main | **421 passing, 0 failing** at `de448d4`; **518** on the go-to-market branch, which adds the skill-parity, benchmark-scorer, benchmark-harness and tour-claim suites |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, plus 22 further checks for the M14b2 section as its pre-merge gate, both run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green, plus a `public-claims` job running `npm run gtm:check` on the go-to-market branch |
-| Open PRs | **Go-to-market** (`claude/go-to-market-strategy-gkr4bz`): the claims ledger and its gate, the public site, every distribution manifest prepared and unpublished, the launch packet, the Edition L benchmark harness (prepare/record/score) with its protocol amendment (ADR-022), and `docs/strategy/GO_TO_MARKET.md`. 517 passing on the branch, merged up to `de448d4`. |
+| Open PRs | **Go-to-market** (`claude/go-to-market-strategy-gkr4bz`): the claims ledger and its gate, the public site, every distribution manifest prepared and unpublished, the launch packet, the Edition L benchmark harness (prepare/record/score) with its protocol amendment (ADR-022), and `docs/strategy/GO_TO_MARKET.md`. 518 passing on the branch, merged up to `de448d4`. |
 
 ## Completed functional path
 

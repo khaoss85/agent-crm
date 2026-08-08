@@ -1,10 +1,10 @@
 {
   "counts": {
     "not supported": 100,
-    "partially supported": 28,
+    "partially supported": 27,
     "technically supported": 0,
     "total": 149,
-    "validated end to end": 21
+    "validated end to end": 22
   },
   "generatedFrom": "docs/benchmarks/CRM_JTBD_MATRIX.md",
   "jobs": [
@@ -137,11 +137,12 @@
       "docs": [],
       "id": "JTBD-08",
       "section": "CRM JTBD validation matrix",
-      "status": "partially supported",
-      "summary": "cross-module workflows with compensation exist as a primitive, and activating a contract (M12) records explicit pending delivery and service obligations from the signed order. Nothing executes, schedules, staffs or completes them: there is no handover process, no delivery project and no acceptance.",
+      "status": "validated end to end",
+      "summary": "superseded by JTBD-DS-01, which is the current row for this job and carries its evidence. This row is kept because \"hand off a won deal\" is the phrasing a reader or an agent searches for; it said \"there is no handover process, no delivery project and no acceptance\" long after M13, M14a and M14b2 shipped all three, so the same file answered the same question two opposite ways. Activating a contract (M12) records explicit pending obligations from the signed order; M13 turns them into a Delivery Project with work packages and milestones, M14a runs it, M14b2 records deliverables and acceptance.",
       "tests": [
         "tests/contracts-activation-e2e.test.js",
-        "tests/workflow.test.js"
+        "tests/delivery-execution-e2e.test.js",
+        "tests/delivery-handover-e2e.test.js"
       ],
       "title": "Hand off a won deal"
     },

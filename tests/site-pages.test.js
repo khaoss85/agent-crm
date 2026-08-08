@@ -155,6 +155,28 @@ test('an answer page renders its evidence verbatim from the ledger', () => {
   }
 });
 
+test('every answer page states its boundary in the one surface read alone', () => {
+  // A description is what a search result and a social card show, and an unfurler ignores the
+  // noindex the rest of the site relies on. Truncating the answer to 300 characters dropped the
+  // limit on four of these and published the capability half by itself.
+  const NEGATIONS = /\b(no|not|none|never|nothing|only|cannot|does not|is not)\b/i;
+  for (const entry of answers.questions) {
+    assert.ok(entry.snippet, `${entry.slug} has no snippet, so its description is a truncation of the answer`);
+    assert.ok(entry.snippet.length <= 300, `${entry.slug}'s snippet is ${entry.snippet.length} characters and would be cut`);
+    assert.ok(NEGATIONS.test(entry.snippet), `${entry.slug}'s snippet states a capability with no boundary`);
+    assert.doesNotMatch(entry.snippet, /…$/, `${entry.slug}'s snippet ends mid-sentence`);
+
+    const html = read(`answers/${entry.slug}.html`);
+    for (const tag of ['description', 'og:description', 'twitter:description']) {
+      const value = new RegExp(`(?:name|property)="${tag}" content="([^"]*)"`).exec(html)?.[1];
+      assert.equal(value, escape(entry.snippet), `${path_of(entry)} ${tag} is not the snippet`);
+    }
+  }
+});
+
+/** @param {any} entry */
+function path_of(entry) { return `answers/${entry.slug}.html`; }
+
 test('the refused questions are published, and only the published ones are exempt from the overclaim scan', () => {
   const html = read('answers.html');
   assert.ok(answers.refused.length >= 10, 'the list of questions this project will not answer is the informative half');
