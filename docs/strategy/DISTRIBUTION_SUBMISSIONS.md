@@ -31,6 +31,7 @@ approved short descriptions at the end of this file already do.
 | Gemini CLI extension manifest + `GEMINI.md` | `gemini-extension.json` at repository root |
 | Codex plugin manifest | `.codex-plugin/plugin.json` |
 | Skill mirror completed — all 12 skills in both `.claude/skills/` and `.agents/skills/` | `npm run crm -- project doctor --json` → 0 warnings |
+| skills.sh distribution — **verified working, not merely available** | `npx skills add khaoss85/agent-crm` in an empty directory installs 12 skills |
 | `llms.txt` | `site/llms.txt` |
 | GitHub Discussions enabled | repository Discussions tab |
 

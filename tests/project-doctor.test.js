@@ -411,9 +411,16 @@ test('skill mirrors that disagree are drift; a one-sided skill is only a warning
 
   const clean = skillChecks({ rootDir: root });
   assert.equal(clean.find((entry) => entry.id === 'skills.mirror-drift').status, 'passed');
-  // Six domain build skills live under .claude/ only. Real, documented, and
-  // owned by DX2 — a warning, not a failure.
-  assert.equal(clean.find((entry) => entry.id === 'skills.mirror-coverage').status, 'warning');
+  assert.equal(clean.find((entry) => entry.id === 'skills.mirror-coverage').status, 'passed');
+
+  // A one-sided skill is real, documented and owned by DX2 — a warning, not a
+  // failure. Provoke it here rather than asserting on whichever skills happen
+  // to be un-mirrored in the repository today.
+  rmSync(join(root, '.agents/skills/debug-crm-run'), { recursive: true, force: true });
+  const oneSided = skillChecks({ rootDir: root }).find((entry) => entry.id === 'skills.mirror-coverage');
+  assert.equal(oneSided.status, 'warning');
+  assert.deepEqual(oneSided.evidence.missing, ['.agents/skills/debug-crm-run/SKILL.md']);
+  assert.deepEqual(oneSided.evidence.onlyInSecondary, []);
 
   const skill = join(root, '.agents/skills/create-crm-module/SKILL.md');
   writeFileSync(skill, `${readFileSync(skill, 'utf8')}\nAn edit that exists in one mirror only.\n`);
