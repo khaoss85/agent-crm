@@ -15,13 +15,13 @@ Generated: **2026-08-08**.
 | Fact | Value |
 |---|---|
 | Latest merged milestone | **DX4 — Package Conformance Kit** (`crm package test`), on top of **M15 — Service operations** and its package-scoped Service Admin, on top of **M14b2 — Delivery change, deliverables and acceptance** and the Agent Tool Surface / Legacy Alignment strategy docs, on top of **AX2 — Machine-readable Solution Plans**, **M14b1 — Delivery economics**, **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
-| Main SHA at generation | `5da5205` (merge of PR #28 / DX4; PR #27 / M15 merged as `b9526e0`) |
-| Tests on clean main | **487 passing, 0 failing** (`npm run verify` from a fresh clone of `5da5205`) |
+| Main SHA at generation | `05fafbd` (merge of PR #29 / DX3; PR #28 / DX4 merged as `5da5205`) |
+| Tests on clean main | **522 passing, 0 failing** (`npm run verify` from a fresh clone of `05fafbd`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, plus 22 further checks for the M14b2 section as its pre-merge gate, both run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **DX3 — Package Scaffold** (`claude/dx3-package-scaffold`): 508 passing on the branch. `crm package scaffold` writes a two-file, empty-but-conforming package; dry-run by default. Open and unmerged. |
+| Open PRs | **DX1 — Project Doctor** (`claude/dx1-project-doctor`): `crm project doctor --json` answers "what is structurally inconsistent or stale in this project" in ~155 ms against ~156 s for `npm run verify`. Read-only, no `--fix`. Open and unmerged. |
 
 ## Completed functional path
 
@@ -83,19 +83,24 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 | M14b2 | Delivery change, deliverables and acceptance | ADR-014, ADR-019 |
 | M15 | Service operations: coverage, entitlements, a five-state support case, elapsed-time SLA evidence, escalation | ADR-018 |
 | DX4 | Package Conformance Kit: `crm package test`, generic, composed and booted, never special-cased by name | ADR-018 |
+| DX3 | Package Scaffold: `crm package scaffold`, a two-file empty-but-conforming package, dry-run by default | ADR-018 |
 
 ## Next planned development
 
-1. **DX3 — Package Scaffold** — implemented on an open PR, unmerged: a
-   deterministic `crm package scaffold <name>` whose two-file output passes
-   `crm package test` with no manual edit, dry-run by default, generating no
-   domain semantics and composing nothing (`docs/plans/dx3-package-scaffold.md`).
-   **No legacy domain extraction has begun**, and the Accordo public-brand and
-   GTM work is a separate track that is neither merged nor approved here.
-2. Then, in the order `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` recommends:
-   **DX1** (`crm doctor` deepening), the four measured **extraction-pilot
-   blockers** — none of which is itself an extraction — **DX2** (Skill mirror
-   sync), and last **M16 Analytics Studio** — `EXECUTION_ROADMAP.md`.
+1. **DX1 — Project Doctor** — implemented on an open PR, unmerged:
+   `crm project doctor --json` reports composition, package-boundary,
+   module-state, Solution Plan, Skill mirror, documentation-link and tracked
+   artifact health, each finding naming the authority that refuses it and the
+   existing command that fixes it. Read-only, no `--fix`
+   (`docs/plans/dx1-project-doctor.md`). **No legacy domain extraction has
+   begun**, and the Accordo public-brand and GTM work is a separate track that is
+   neither merged nor approved here.
+2. Then, in the order `docs/architecture/EXTRACTION_PREPARATION.md` recommends:
+   **LA0** (the Legacy Characterization Harness — the extraction gate, not
+   built), the small **neutral-helper move**, the two **contract decisions**
+   (`app.intelligence` and the definition registry, both a human's), then the
+   **Lead Intelligence extraction**, then **DX2** (Skill mirror sync) and last
+   **M16 Analytics Studio** — `EXECUTION_ROADMAP.md`.
 
 Two parallel tracks run alongside and are not gated by domain progress: the
 **platform track** (domain package boundary, create-project CLI, PostgreSQL,

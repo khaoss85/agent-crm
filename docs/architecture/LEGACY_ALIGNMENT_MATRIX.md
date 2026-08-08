@@ -337,6 +337,44 @@ domains that are not packages yet.
 - **No HTTP-route contribution.** Still the open seam DX4 identified, still a
   precondition for Commercial and Signature specifically, and still untouched.
 
+## The DX1 backfill answer, as the rule requires
+
+DX1 (`crm project doctor`) is a **horizontal capability**: it applies to every
+project built on this framework, and to every domain in one.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None at runtime.** DX1 adds one CLI command, two CLI modules and a test file. It changes no kernel behaviour, refactors no domain, mutates nothing and executes no project source in its own process |
+| Which are already aligned? | All of them, in the only sense the command measures: it reports composition, package-boundary, module-state, plan, Skill, docs-link and hygiene health for whatever the project contains, and the three `needs_extraction` domains are ordinary kernel source to it. Its first run on this repository is **0 failures** with three real warnings — two stale Solution Plans and six one-sided Skill mirrors |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None.** The doctor asks existing authorities; it introduces no rule any domain must now satisfy |
+| What changed for extraction? | It becomes a precondition of the *process* rather than of the seam: an extraction should start from a project whose coherence is machine-checked, and should be re-checked after. It does not remove any of the four open blockers |
+| Matrix updated? | Yes — this section, and the extraction gate now maintained in `EXTRACTION_PREPARATION.md` |
+
+### What DX1 measured that this matrix had only asserted
+
+Two rows of this document were prose until now and are now mechanical:
+
+- **the Skill mirrors.** This matrix records `partial` because six domain build
+  skills exist under `.claude/` only. `crm project doctor` reports that as
+  `skills.mirror-coverage: warning` with the six named, and would report a
+  **failure** if two mirrors of one skill ever disagreed in content. DX2 still
+  owns the fix; the gap is now observed on every run rather than remembered.
+- **Solution Plan currency.** Two of the three checked-in plans no longer bind to
+  the current composition. That was true before this PR — verified identical on
+  `main@5da5205` — and nothing reported it. It is now `plans.*: warning`.
+
+### What DX1 deliberately did not close
+
+- **No mutation, no `--fix`.** Every finding names the existing command that
+  would fix it.
+- **No domain behaviour, no database, no provider health, no production
+  readiness.** All named limitations in the report itself.
+- **No package conformance run.** `PACKAGE_CONFORMANCE_NOT_RUN` points at
+  `crm package test`.
+- **No generated-source drift beyond what a generator contract proves.** A
+  fuzzy comparison that cries wolf is a check people silence.
+
 ## Sequencing, which this document does not change
 
 ```text
@@ -514,6 +552,14 @@ record-level coupling. Neither is needed to start the pilot.
 **non-conforming** as a result: `delivery` offers no capability that expresses
 rating a partner engagement. That is a real seam gap, recorded rather than
 patched.
+
+### The extraction gate now lives in its own document
+
+The measured blockers, the LA0 characterization-harness design, and the decision
+analyses for `app.intelligence` and the definition registry are maintained in
+**`docs/architecture/EXTRACTION_PREPARATION.md`**, produced alongside DX1. The
+summary below is the state as of DX3 and remains accurate; the newer document
+adds the recommendations and the ordering.
 
 ### Re-evaluated after DX3 was built — extraction readiness, measured
 
