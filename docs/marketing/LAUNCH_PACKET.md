@@ -83,8 +83,8 @@ before a commenter gets to say them.
 > - **It is a framework, not a product.** There is nothing to sign up for. [L-07]
 >
 > If you want to judge it in a minute rather than read about it: clone and run `npm run tour`.
-> There is nothing to install. It composes the whole application from manifests — 55 modules, 19
-> resources, 35 actions, 5 policies, 10 providers — drives it end to end, and then prints the
+> There is nothing to install. It composes the whole application from manifests — 61 modules, 25
+> resources, 42 actions, 5 policies, 10 providers — drives it end to end, and then prints the
 > eleven things its own inspector says it cannot see. [C-22]
 >
 > What does work, and what I would like broken: every mutation goes through a module service or

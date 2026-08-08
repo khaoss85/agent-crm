@@ -736,3 +736,80 @@ licence is load-bearing for the strategy, which is exactly why it could not be l
 **What this does not decide.** Nothing about a future managed offering, and nothing about the
 licence of anything a customer generates — generated code belongs to the customer under whatever
 terms they choose, which is the point of generating it.
+
+## ADR-022 — The build benchmark splits into a runnable Edition L and a blocked Edition D, scored in points
+
+**Status:** accepted.
+
+**Context.** `docs/strategy/CRM_BUILD_BENCHMARK.md` defines six gates, of which
+two — G5 (deployed smoke check) and G6 (trace/audit inspectable on a deployed
+instance) — require a public deployment. This framework has no authentication,
+tenancy or RBAC, and `crm app inspect` reports `productionPosture: "local
+development only"`. Running G5 and G6 honestly would mean exposing an
+unauthenticated CRM on the public internet in order to earn 25 points, which is
+not a benchmark result — it is a security incident with a score attached.
+
+So the benchmark as written could not be run, and the pressure was to run four of
+the six gates and publish the number. That is the decision this ADR exists to
+refuse.
+
+**Decision.**
+
+1. **Two named editions, and the names are published together.** Edition L is
+   G1–G4, scored locally today by `benchmarks/harness/score.js`. Edition D is
+   G5–G6, **blocked on the Production Spine**. Every scored run carries
+   `editionD: { outcome: "BLOCKED_NO_PRODUCTION_SPINE" }` with the reason in
+   full. G5 and G6 are not run, not estimated, and never quietly dropped — a
+   report that omitted them would read exactly like a report that passed them.
+2. **Points out of 75, never a percentage, and never renormalised.** The four
+   local gates keep their protocol weights (25 / 15 / 25 / 10). Renormalising to
+   100 yields 33.3 / 20 / 33.3 / 13.3 — a rounding convention nobody remembers
+   attached to a figure that reads like a success rate. A point total out of a
+   stated maximum cannot be mistaken for one. It also means the result never has
+   to slip past the published-percentage guard in `scripts/site-check.js`;
+   routing around that guard would weaken it in spirit even where the regex would
+   not have noticed.
+3. **Three outcomes per gate, and only one of them earns.** `pass`, `fail` or
+   `needs-operator`. A gate the instrument cannot judge is never a pass, and a run
+   with any `needs-operator` gate is `scoreable: false` and enters no aggregate.
+   The alternative — treating an unjudgeable gate as a pass to keep runs
+   scoreable — manufactures exactly the number nobody can defend.
+4. **The per-prompt verdict is binary and stays separate from the point total.**
+   All four gates must pass. A run scoring 65 of 75 that misses G3 is a **failed
+   prompt**, and the two figures are never substituted for one another.
+5. **G1 is read from an append-only operator record, not measured.** Whether a
+   human edited a file is witnessed only by the operator, so `benchmarks/harness/record.js`
+   writes interventions and approvals as they happen — an intervention costs G1's
+   25 points and the tool says so at the moment of recording, not at scoring time.
+   Zero interventions passes, one or more fails, and **no record at all is
+   `needs-operator`**, not a free 25 points. Making G1 permanently unjudgeable
+   would reproduce, one layer down, the exact structural zero that Edition L
+   exists to remove — and it would do it quietly.
+6. **SABR and TTFW are Edition D metrics and may not be computed from Edition L.**
+   SABR counts *fully successful* prompts against six gates; with two unrunnable,
+   an Edition-L SABR is not a smaller SABR but a different metric wearing the same
+   name. TTFW is measured to a deployed smoke check that does not exist. Edition L
+   publishes a **prompt-pass count over a stated denominator** and nothing else.
+
+**Provenance is enforced at preparation, not asked for at publication.**
+`benchmarks/harness/prepare.js` refuses a run with no `--agent` and `--model`
+(a default would silently pool results from different models), refuses a dirty
+tree unless `--allow-dirty` stamps `treeDirty: true` into the record, refuses a
+run directory inside the framework checkout (which would dirty the very tree the
+run's SHA claims to describe), and refuses to write into a directory that already
+holds a run. The run id is derived — `<promptId>-<sha>-<attempt>` — so two
+operators on two machines name the same run the same thing.
+
+**What would retire this ADR.** Edition D becomes runnable when the Production
+Spine lands: authentication, tenancy and RBAC, at which point `app inspect` stops
+reporting `local development only`. At that point G5 and G6 are run, the six-gate
+protocol is whole again, SABR and TTFW recover their definitions, and the edition
+split is retired rather than reinterpreted. Nothing about Edition L's scoring is
+changed retroactively; old runs keep saying what they said.
+
+**What this does not decide.** Nothing about the comparison arms (Twenty, Frappe,
+from-scratch), which need the same instrument pointed at a different subject and
+have their own reinterpretation problem for G1–G4 over a configured product. And
+nothing about publication: which sentences an Edition L result licenses is
+`docs/marketing/BENCHMARK_PUBLICATION.md`, deliberately a separate document with
+a separate gate.

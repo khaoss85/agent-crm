@@ -136,7 +136,7 @@ Sourcing, caveats and the places the alternative genuinely wins are maintained i
 
 | Asset | Where | State |
 |---|---|---|
-| Claims ledger — 21 capabilities, 9 limitations, each bound to tests and paired with its boundary | `site/claims.json` | ✅ |
+| Claims ledger — 22 capabilities, 9 limitations, each bound to tests and paired with its boundary | `site/claims.json` | ✅ |
 | Brand tokens — name, domain, npm scope, licence, palette | `site/brand.json` | ✅ |
 | Landing page and evidence page, built from the ledger, `noindex` | `site/templates/`, `npm run site:build` | ✅ |
 | Claims gate — evidence exists, limitation present, three surfaces enforced, brand leaks, eleven overclaim patterns, ledger freshness | `scripts/site-check.js` | ✅ |
@@ -152,6 +152,14 @@ Sourcing, caveats and the places the alternative genuinely wins are maintained i
 | Corrections log, seeded before the first public correction | `docs/marketing/CORRECTIONS.md` | ✅ |
 | Content pillars and editorial calendar | `docs/marketing/CONTENT_PILLARS.md` | ✅ |
 | CI job holding public claims to the same standard as the code | `.github/workflows/ci.yml` → `public-claims` | ✅ |
+| The tour — one command composing 61 modules, 3 packages, 25 resources, 42 actions, 5 policies and 10 providers, then printing every limitation code | `scripts/tour.js`, `npm run tour` | ✅ (0.1) |
+| Skill portability contract — a `requires` block per skill (`tier`, surfaces, `degradesTo`) and a published subset that holds no repository-only skill, both gated | `docs/SKILL_PACKAGING.md`, `skills/`, `scripts/distribution-check.js` | ✅ (1.3) |
+| `llms.txt` and `llms-full.txt` generated from the ledger, the docs and the job index, with a drift check | `scripts/generate-llms.js` | ✅ (1.10) |
+| Rename inventory and executor — five casings, four blast-radius groups, held-back set, dry-run by default | `scripts/brand-set.js`, `docs/RENAME_SURFACE.md` | ✅ |
+| Benchmark protocol amendment — Edition L (G1–G4) and Edition D (G5–G6, blocked), points out of 75, SABR and TTFW ruled out | `CRM_BUILD_BENCHMARK.md`, ADR-022 | ✅ (0.3) |
+| Edition L harness — prepare, record, score, all three refusing rather than guessing | `benchmarks/harness/`, `npm run bench:*` | ✅ (0.4, harness only) |
+| Pilot runbook and publication gate — how a run is driven, and which sentences a result licenses | `docs/benchmarks/PILOT_PROTOCOL.md`, `docs/marketing/BENCHMARK_PUBLICATION.md` | ✅ |
+| **A pilot run** | `docs/benchmarks/PILOT_RESULTS.md` | ❌ needs a human operator and a clean agent session — see §8 |
 
 ---
 

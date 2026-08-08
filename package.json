@@ -29,6 +29,8 @@
     "site:shots": "npm run site:build && node scripts/site-shots.js",
     "tour": "node --no-warnings scripts/tour.js",
     "bench:prompts": "node benchmarks/harness/generate-prompts.js",
+    "bench:prepare": "node benchmarks/harness/prepare.js",
+    "bench:record": "node benchmarks/harness/record.js",
     "bench:score": "node benchmarks/harness/score.js"
   },
   "keywords": [

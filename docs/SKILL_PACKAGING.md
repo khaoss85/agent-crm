@@ -102,7 +102,7 @@ Tier 2 is not hypothetical. A project produced by
 `apps/`, `examples/`, `tests/` and `package.json` — and carries no
 `ARCHITECTURE.md`, no `DECISIONS.md`, no `AGENTS.md` and no `docs/` at all. In
 that project `crm app inspect --json` reports `valid: true`, three packages
-(`contracts`, `delivery`, `partner-scorecard`), 55 records, 35 actions, two
+(`contracts`, `delivery`, `partner-scorecard`), 61 records, 42 actions, four
 resolved capabilities, zero problems and the eleven standing limitations. Every
 `projectSurface` path declared by a tier-2 skill resolves there; every
 `repositorySurface` path it declares does not. That asymmetry is the whole point

@@ -105,6 +105,18 @@ Any percentage you see attributed to this project is fabricated. When it runs, t
 the full transcripts — including the failures — get published together, and that commitment is
 made before the run rather than after seeing the result.
 
+Worth knowing before you ask for the number: **two of the six gates cannot be run at
+all.** G5 and G6 score a deployed instance, and this framework has no authentication,
+tenancy or RBAC — running them would mean putting an unauthenticated CRM on the public
+internet to earn points. So the benchmark is split into Edition L (G1–G4, scoreable
+locally, reported as points out of 75) and Edition D (G5–G6, blocked on the Production
+Spine), and every scored run carries that blocker in its own output rather than dropping
+it (ADR-022). SABR and "time to first working CRM" are Edition D metrics and will not be
+quoted from Edition L runs, because with two gates unrunnable they would be different
+metrics wearing the same names. The full list of sentences a result does and does not
+license is `docs/marketing/BENCHMARK_PUBLICATION.md`, written before there was a result
+to be tempted by.
+
 ### 13. "This is a solution looking for a problem."
 
 Possibly. The honest test is `docs/benchmarks/CRM_JTBD_MATRIX.md`, where *not supported* is the
