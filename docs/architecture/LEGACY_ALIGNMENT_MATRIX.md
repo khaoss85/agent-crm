@@ -279,6 +279,35 @@ The honest note: M15 is *not* evidence that the seam is finished. It is the
 third package and the second consumer, and what it showed the seam still cannot
 express is the input to step 3 of the sequencing below.
 
+## The DX4 backfill answer, as the rule requires
+
+DX4 (`crm package test`) is a **horizontal capability**: it applies to every
+package, including the three domains that are not packages yet.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None at runtime.** DX4 adds a CLI command and moves three pieces of shared CLI logic into their own modules. No kernel behaviour changes, no domain is refactored |
+| Which are already aligned? | The three packages — Contracts, Delivery, Service — and the custom-package fixture. All four now pass `crm package test` mechanically, which is stronger than the prose "aligned" that preceded it |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None today.** The three `needs_extraction` domains cannot be run through DX4 at all: they are not packages, so there is nothing for it to compose. That is not a new gap — it is the same gap, now measurable |
+| What changed for extraction? | DX4 is the gate the extraction pilot was waiting for. An extracted domain is a package, and a package that cannot pass `crm package test` has not been extracted, only moved |
+| Matrix updated? | Yes — this section, the conformance row below and the revised extraction gate |
+
+One row of the matrix changes meaning rather than status: **"JTBD rows with
+linked evidence"** and the package-seam rows were previously argued from prose
+and per-package suites. For the four packages they are now argued from a
+mechanical run whose output is a stable document. The three legacy domains stay
+exactly where they were.
+
+### `service` had no conformance coverage until now
+
+`assertPackageConforms` was called three times — for `contracts`, `delivery` and
+`partner-scorecard`. The newest package, the one M15 built and the one this
+matrix cites as validating the seam, had **none**. Anything this document said
+about "every package conforms" was untrue of `service` at the moment it was
+written. DX4's official matrix covers all four, and its suite fails if a package
+is added without being listed.
+
 ## Sequencing, which this document does not change
 
 ```text
@@ -403,6 +432,48 @@ recommendation to a human, not a plan of record:
 The one ordering claim worth arguing with: DX2 sits fifth despite being the
 cheapest, because cheap and urgent are different, and the gap is already
 documented in this matrix.
+
+### Re-evaluated after DX4 was built
+
+DX4 is now item 1 done. Three things it established change the ordering below
+it, and one thing it did **not** establish leaves a recommendation where it was.
+
+**Lead Intelligence is still the recommended pilot, and the confidence rises
+from moderate to moderate-high.** DX4 removes the largest unknown: "how would we
+know the extracted domain still conforms" now has a mechanical answer, and that
+answer is a stable document rather than a reviewer's judgement. The remaining
+preconditions are unchanged and still unproved — nothing yet establishes that
+no code reads Intelligence internals, and behaviour preservation across the move
+is still the whole acceptance criterion.
+
+**But DX4 also measured what an extraction would have to produce.** A package
+passes `crm package test` only if it declares its records, its actions target
+records somebody owns, its dependencies are declared capabilities, its manifests
+apply and the application boots without it. Intelligence today has none of that
+shape: its actions live in `packages/core/src/intelligence-actions.js` and its
+registries in the kernel. The extraction is therefore not a move — it is an
+authoring exercise with a conformance target, which is a better-defined job than
+it was a week ago and not a smaller one.
+
+**The HTTP-route seam is confirmed as an extraction precondition, and DX4 did
+not need it.** DX4 composes and boots packages without any package contributing
+a route, so the answer to "is route contribution required for generic package
+conformance" is **no**. It stays exactly what the previous section called it: a
+precondition for Commercial and Signature specifically, because each owns a
+route in `apps/server` that would have to go somewhere. Neither is extractable
+at any confidence until that seam exists, and building it was correctly out of
+DX4's scope.
+
+**One new precondition DX4 surfaced.** `UNDECLARED_RECORD_COUPLING` — a package
+acting on a record another package owns — is not expressible in the contract.
+Every legacy domain does this pervasively (Commercial acts on `quote` and
+`order`; Signature on `quote` and `order`; Intelligence on `lead`). Those records
+belong to a *project*, not to a package, so DX4 composes them from the project's
+own manifests and the arrangement works — but it works by convention, not by
+declaration. Before an extraction is called complete, this deserves a decision:
+either the contract learns to express record-level coupling, or it is written
+down that packages may act on project-owned records and the seam stops pretending
+`requires` covers it.
 
 ## What this document is not
 

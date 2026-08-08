@@ -30,10 +30,23 @@ Read `docs/PACKAGE_AUTHORING.md` first, then `DECISIONS.md` (ADR-018 and its add
 ## Register, validate, prove
 
 1. Registration is one static import in `packages/domains/generated/index.js`. No dynamic import, no `eval`, no remote install, no marketplace, no hot loading.
-2. Run `npm run crm -- package validate <dir>` and `package inspect <dir>` — read-only, same validator as startup, non-zero exit on any problem.
-3. Prove optionality: the same project without your package boots and behaves identically, and removing the import leaves the data alone.
-4. Reuse `tests/helpers/package-conformance.js`, then add an end-to-end test that drives your action over the real HTTP/SDK path in a clean project.
-5. Ship a README: what it owns, what it needs, how to enable it, what it deliberately does not do.
+2. Walk the three commands in order; they answer three different questions and none of them substitutes for another:
+
+```text
+crm package inspect <dir>    what does it declare, own, offer and need?
+crm package validate <dir>   is that declaration structurally valid?
+crm package test <dir>       does it hold up when a real application composes it?
+npm test -- <your suite>     does it do the right thing?   ← only your tests answer this
+npm run verify               does the whole project still hold?
+```
+
+3. `crm package test` (DX4) composes your package into a throwaway copy of the project and boots it twice — with it and without it. It proves the declaration, the boundaries, every composition refusal, module manifests and migration identity, attach and detach, and that `app inspect` describes the same package you declared. **Generic conformance is not domain correctness**: no action is executed, no policy is evaluated and no state transition is driven. Every such gap is a named limitation in the report, starting with `DOMAIN_CORRECTNESS_NOT_PROVEN`. Your business JTBDs still need package-specific tests.
+4. All three commands **import** your package, and `test` also boots it, so your code runs with the CLI's authority. It is isolation in a child process — bounded, timed, its own process group, report on fd 3 — **not** a filesystem, network or OS sandbox. Never describe it as one.
+5. **Do not patch the kernel to make a check pass.** A conformance failure is a statement about your package. If you are certain it is a statement about the framework instead, say so in the PR with the exact check id and evidence — and if it is a horizontal gap, it goes through the Compatibility Backfill Rule in `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, not through a local fix.
+6. A check reported `not_applicable` with `UNDECLARED_RECORD_COUPLING` means your action targets a record another package owns, and `requires` cannot express that. It is a gap in the seam, not a defect you can close — the report names the package it had to compose for you.
+7. Prove optionality: the same project without your package boots and behaves identically, and removing the import leaves the data alone.
+8. Reuse `tests/helpers/package-conformance.js`, then add an end-to-end test that drives your action over the real HTTP/SDK path in a clean project.
+9. Ship a README: what it owns, what it needs, how to enable it, what it deliberately does not do.
 
 ## Claims discipline
 
@@ -41,7 +54,7 @@ Update `docs/benchmarks/CRM_JTBD_MATRIX.md` conservatively — a row moves only 
 
 ## Do not implement here
 
-A package registry, npm publication, remote install, auto-update, cryptographic signing, a marketplace, hot loading, a scaffold generator (deferred until Delivery and Service settle the file shape), or any kernel patch.
+A package registry, npm publication, remote install, auto-update, cryptographic signing, a marketplace, hot loading, a scaffold generator (DX3 — see `docs/plans/dx4-package-conformance-kit.md` for what DX4 established about the minimum skeleton), or any kernel patch.
 
 Finish with `npm run verify`, the starter (`node examples/starters/b2b-lead-qualification/install.mjs`) and `docs/QUALITY_GATES.md`; leave the PR open for adversarial review.
 
