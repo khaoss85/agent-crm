@@ -252,7 +252,7 @@ surface rather than a list of commands:
 | `package_scaffold` | T0 / **T2** | DX3 `crm package scaffold` — shipped as a CLI today. **T0 as a plan, T2 with `--apply`** |
 | `package_test` | **T1** | DX4 `crm package test` — shipped as a CLI today |
 | `explain` | T0 | DX8, not built |
-| `doctor` | T0 | DX1, not built |
+| `project_doctor` | T0 | DX1 `crm project doctor` — shipped as a CLI today |
 | `change_inspect` | T0 | DX7, not built |
 | `context_pack` | T0 | DX9, not built — advisory only, never authorization |
 | `verify` | T1 | DX5, not built |
@@ -267,6 +267,18 @@ real time and real disk, and it runs the package's own code. A blanket allow on
 something that executes checked-in source is a different decision from a blanket
 allow on something that reads it, so the tiers differ even though neither
 mutates the project.
+
+`project_doctor` is T0 without qualification, and it is the clearest case in the
+table: it mutates nothing, opens no database, reaches no network, and the one
+place it causes code to run is the `app inspect` load it already reuses. It is
+also the entry most worth exposing, because "what is wrong with this project"
+is the question an agent has at the start of every session, and its `problems`
+array is deliberately compact enough to carry.
+
+Note the name. `crm doctor` already exists and boots the application against a
+database; `project.doctor` and `app.doctor` are different tools answering
+different questions, and the namespace keeps them apart rather than overloading
+one name with two trust profiles.
 
 `package_scaffold` is the one entry whose tier **depends on its arguments**, and
 that is the argument for keeping the two modes one tool rather than splitting

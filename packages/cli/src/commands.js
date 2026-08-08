@@ -8,6 +8,7 @@ import { validatePackageCommand, inspectPackageCommand } from './package-command
 import { packageTestCommand } from './package-test-command.js';
 import { packageScaffoldCommand } from './package-scaffold.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
+import { projectDoctorCommand } from './project-doctor-command.js';
 import { solutionCommand } from './solution-command.js';
 
 /** @param {string[]} argv */
@@ -28,6 +29,14 @@ export async function runCli(argv) {
   // no migration, no database.
   if (command === 'package' && ['validate', 'inspect', 'test', 'scaffold'].includes(positional[0])) {
     command = `package:${positional[0]}`;
+    positional = positional.slice(1);
+  }
+  // "project doctor" answers "what is inconsistent or stale in this source
+  // tree". It is deliberately NOT the existing `crm doctor`, which boots the
+  // application and opens the database: this one reads source, opens nothing,
+  // and works on a project that will not boot — which is when you need it.
+  if (command === 'project' && positional[0] === 'doctor') {
+    command = 'project:doctor';
     positional = positional.slice(1);
   }
   // "app inspect" reads the checked-in composition and answers "what is this
@@ -69,6 +78,15 @@ export async function runCli(argv) {
       mode: /** @type {'inspect'|'validate'|'check'} */ (command.slice('solution:'.length)),
       json: flags.json === true,
       rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+    });
+    process.exitCode = result.exitCode;
+    return;
+  }
+
+  if (command === 'project:doctor') {
+    const result = await projectDoctorCommand({
+      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+      json: flags.json === true,
     });
     process.exitCode = result.exitCode;
     return;
@@ -291,6 +309,7 @@ Usage:
   agent-crm doctor [--db path]
   agent-crm db:migrate [--db path]
   agent-crm app inspect [--json] [--root dir]
+  agent-crm project doctor [--json] [--root dir]
   agent-crm solution inspect <plan.json> [--json]
   agent-crm solution validate <plan.json> [--json]
   agent-crm solution check <plan.json> [--json] [--root dir]
@@ -354,6 +373,23 @@ proves NOTHING about whether the domain logic is correct — that is what the
 package's own tests are for, and the report lists every such limitation by code.
 Exit codes: 0 conforms, 1 conformance failures, 2 package or project unreadable.
 Manifest schema: docs/MODULE_MANIFEST.md — module factory: docs/MODULE_FACTORY.md
+"project doctor" answers "what is structurally inconsistent or stale in this
+project, before I edit it or pay for a full verification run?" Run it first, when
+you arrive at an unfamiliar checkout, after a merge, or before opening a PR.
+
+It reports composition health (from app inspect), the package source boundary,
+module state and migration-history drift, Solution Plan staleness, Skill mirror
+drift, broken repository-relative documentation links, and forbidden tracked
+artifacts. Every finding names the authority that refuses it and the existing
+command that fixes it. It changes nothing and there is no --fix.
+
+It is NOT "crm doctor", which boots the application and opens the database; this
+one reads source, opens nothing and works on a project that will not boot. It is
+also not a substitute for npm run verify: it runs no test and proves nothing
+about behaviour, domain correctness, database migration state, provider health
+or production readiness. Every such gap is a named limitation in the report.
+Exit codes: 0 no failures, 1 inconsistencies, 2 not a readable project.
+
 "solution inspect|validate|check" read a machine-readable Solution Plan (AX2).
 validate reads no project at all; check binds the plan to this project's app
 inspect report and reports PLAN_STALE when the composition has moved. None of

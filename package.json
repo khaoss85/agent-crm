@@ -31,5 +31,12 @@
     "claude-code",
     "workflow"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "agentCrm": {
+    "solutionPlans": {
+      "current": [
+        "examples/solution-plans/lead-to-won.plan.json"
+      ]
+    }
+  }
 }

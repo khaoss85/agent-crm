@@ -28,7 +28,7 @@ re-describing it.
 
 | | Tool | What it answers |
 |---|---|---|
-| **DX1** | `crm doctor --json` | is this *project* internally consistent — composition, module-state and migration drift, generated-source drift, package dependencies, Skills, docs and hygiene? Distinct from `app inspect`, which describes a valid composition rather than diagnosing a broken checkout. It makes **no runtime or provider-health claim** unless a future explicit mode adds one |
+| **DX1** | `crm project doctor --json` — **built** (`docs/plans/dx1-project-doctor.md`) | is this *project* internally consistent — composition, module-state and migration drift, generated-source drift, package dependencies, Skills, docs and hygiene? Distinct from `app inspect`, which describes a valid composition rather than diagnosing a broken checkout. It makes **no runtime or provider-health claim** unless a future explicit mode adds one |
 | **DX2** | Skill portability: `crm agent skills sync\|check` | one canonical semantic source per skill plus deterministic adapters for Claude Code, Codex, Gemini and generic AGENTS-compatible agents, with a drift check in `verify`. Today the `.claude/` and `.agents/` copies are byte-identical by hand, and no Gemini file exists — its conventions must be verified before one is written |
 
 ### After M15 Service package learnings
@@ -37,6 +37,7 @@ re-describing it.
 |---|---|---|
 | **DX3** | `crm package scaffold <name>` — **built** (`docs/plans/dx3-package-scaffold.md`) | a deterministic, conforming skeleton: two files, an identity and five empty declarations, whose output passes DX4 with no manual edit. Dry-run by default, `--apply` to write, never an overwrite, never a silent rename. It generates **no** domain semantics, composes nothing, opens no database and installs nothing. Waiting for Service was right: the shape it bakes in is the empty one, which is the only shape four packages agreed on |
 | **DX4** | `crm package test <path> --json` — **built** (`docs/plans/dx4-package-conformance-kit.md`) | conformance: declaration, boundaries, composition refusals, module manifests and migration identity, attach and detach against a real boot, and agreement with `app inspect`. It makes ADR-018's seam self-enforcing. Action execution, policy behaviour, state transitions and data-bearing upgrade stay out by design and are reported as named limitations, not as passes |
+| **LA0** | Legacy Characterization Harness | **the extraction gate, not built.** Freeze a domain's externally observable behaviour before the move, replay it after, and require every captured value to be identical: routes, SDK, `/api/schema`, Admin-visible behaviour, actions and workflows, audit/events/trace, migrations and data, restart, >500 exact reads, hostile input, AX1 and AX2. For Lead Intelligence it must additionally reproduce enrichment snapshots, signals, the score *and its model version and declared-definition fingerprint*, routing and capacity, assignments, lifecycle gating, provider fingerprints and target-set evidence. `crm package test` cannot answer this — it says so itself under `DOMAIN_CORRECTNESS_NOT_PROVEN` — and without LA0 the only proof available is "the existing tests still pass", which is exactly the proof that misses a boundary violation. Design: `docs/architecture/EXTRACTION_PREPARATION.md` |
 | **—** | first existing-domain extraction pilot | one of Intelligence / Commercial / Signature moved out of core, once DX4 can prove the result still conforms. The per-domain status that decides the candidate is `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, which records **Lead Intelligence** as the working hypothesis and the evidence that must exist before it is chosen |
 
 ### Before an AX3 public benchmark
@@ -93,6 +94,8 @@ Then:
 After Service learning:
   DX4 Package Conformance                                    built
   DX3 Package Scaffold                                       built
+  DX1 Project Doctor                                         built
+  LA0 Legacy Characterization Harness                        NOT built — the gate
   the controlled Legacy Domain Alignment Pass — one domain, one PR
 
 Before AX3:

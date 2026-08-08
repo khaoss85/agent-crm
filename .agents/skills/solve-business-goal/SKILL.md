@@ -20,6 +20,11 @@ Read, do not assume: `AGENTS.md` · `docs/PROJECT_STATUS.md` · `docs/QUALITY_GA
 **Start here — one command answers most of it:**
 
 ```bash
+npm run crm -- project doctor --json # FIRST: is this project even coherent? (composition,
+                                     # module state, stale plans, skill drift, broken links,
+                                     # tracked artifacts). ~150 ms. Read `problems` and stop
+                                     # if the composition is invalid — everything after it is
+                                     # guesswork against a project that does not load.
 npm run crm -- app inspect --json    # installed packages, the resolved capability
                                      # graph, records and their revisions, actions,
                                      # policies, providers, problems, limitations
