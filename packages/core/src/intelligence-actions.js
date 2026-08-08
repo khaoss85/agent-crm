@@ -155,14 +155,33 @@ function optionalBoundedText(value, field, shape = null) {
  * domain instead of adding a third opinion. The larger prose bounds elsewhere
  * in this repository govern prose, and a short qualifier is not prose.
  *
- * **Why single-line.** A label is one line. Refusing control characters here is
- * not an escaping strategy — escaping is the renderer's job, and accepted values
- * are still stored byte-identical — it keeps a NUL or a terminal escape
- * sequence out of stored evidence somebody will later read in a log, a CSV or a
- * terminal.
+ * **Why single-line.** The rule protects the record's *structural* integrity,
+ * not its appearance. A NUL, a C0/C1 control or a line break changes what the
+ * stored value **is** to anything that reads it line by line; that is a
+ * storage-level concern and belongs here.
+ *
+ * It is deliberately **not** a rendering rule. Bidirectional overrides
+ * (U+202E), zero-width characters and homoglyphs are display hazards, and they
+ * are accepted today, unchanged — escaping and display safety are the
+ * renderer's job, which is also why every accepted value is still stored
+ * byte-identical. Drawing the line anywhere else would mean this function
+ * quietly becoming a sanitizer, and a sanitizer that runs on write is how
+ * evidence stops being evidence.
+ *
+ * **A known asymmetry, recorded rather than widened.** The provider-supplied
+ * snapshot fields above share this `MAX_TEXT` bound but carry no control
+ * character rule. They are a different trust boundary — provider output, a 502
+ * — and holding them to this rule would be a second behaviour migration beyond
+ * the two defects this change exists to close. Tracked in
+ * `docs/architecture/EXTRACTION_PREPARATION.md`, not smuggled in here.
  *
  * A refusal is a `ValidationError` (400): this is caller input. Provider output
  * is a different failure with a different meaning and stays a 502.
+ *
+ * **Trimming and empty-to-null are pre-existing**, not introduced here: the
+ * generated module service already trimmed and nullified. Verified against the
+ * pre-fix tree, input by input, so this change adds no normalization of its
+ * own — only a length bound and a control-character refusal.
  *
  * @param {unknown} value
  */

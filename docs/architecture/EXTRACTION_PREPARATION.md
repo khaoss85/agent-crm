@@ -375,6 +375,23 @@ A later comment-only edit to the same file proved the other half: the source
 digest moved, the baseline went stale, and **zero** observations changed. Source
 staleness and behaviour change are genuinely distinct signals.
 
+### Two follow-ups the signal fix deliberately did not take
+
+Recorded so neither is rediscovered as a surprise, and neither was smuggled into
+a change scoped to two defect candidates:
+
+- **Provider snapshot fields carry no control-character rule.** `companyName`,
+  `industry`, `country`, `employeeRange`, `revenueRange`, `companyDomain`,
+  `language` and `sourceRef` share the same `MAX_TEXT` bound as `value` but are
+  only length- and shape-checked. They are a different trust boundary — provider
+  output, refused as a 502 rather than a 400 — and holding them to the caller
+  rule would be a second behaviour migration with its own LA0 diff.
+- **Bidirectional overrides and zero-width characters are accepted.** U+202E,
+  zero-width joiners and homoglyphs pass. That is consistent with where the line
+  was drawn: the rule protects the record's *structural* integrity, and display
+  safety is the renderer's job. If a rendering surface ever displays signal
+  values, the fix belongs in that renderer, not in a write-time sanitizer.
+
 ## Updated extraction gate
 
 | Precondition | State |
