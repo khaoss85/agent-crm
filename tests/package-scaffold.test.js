@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  PACKAGE_SCAFFOLD_CONTRACT, applyPackageScaffold, checkPackageName, planPackageScaffold,
-  scaffoldFiles, scaffoldPaths,
+  PACKAGE_SCAFFOLD_CONTRACT, applyPackageScaffold, checkPackageName, commitScaffold,
+  planPackageScaffold, scaffoldFiles, scaffoldPaths, stagingName,
 } from '../packages/cli/src/package-scaffold.js';
 import { packageTestCommand } from '../packages/cli/src/package-test-command.js';
 import { validatePackageCommand, inspectPackageCommand } from '../packages/cli/src/package-commands.js';
@@ -302,19 +303,201 @@ test('a hostile name cannot smuggle content into the generated source', (t) => {
   assert.deepEqual(readdirSync(join(root, 'packages')).filter((entry) => entry.startsWith('.')), []);
 });
 
-test('a staging directory left behind by a failed run stops the next one', (t) => {
+test('staging left behind by a killed run never blocks the next attempt', (t) => {
   const root = fixtureProject(t);
-  mkdirSync(join(root, 'packages/.scaffold-field-service'), { recursive: true });
-  writeFileSync(join(root, 'packages/.scaffold-field-service/src.js'), 'partial\n');
+  const corpse = join(root, 'packages/.scaffold-field-service-deadbeef');
+  mkdirSync(corpse, { recursive: true });
+  writeFileSync(join(corpse, 'README.md'), 'half written\n');
 
+  // A fixed staging directory would be a lock, and a lock a dead process holds
+  // is a lock somebody has to break with `rm -rf`. Staging is unique per run,
+  // so the retry simply succeeds.
   const result = applyPackageScaffold({ name: 'field-service', rootDir: root });
-  assert.equal(result.ok, false);
-  assert.deepEqual(result.problems.map((p) => p.code), ['SCAFFOLD_IN_PROGRESS']);
-  // The half-written state is reported, not deleted: it may be an author's
-  // concurrent run, and a scaffold that removes other people's files to make
-  // room for its own is exactly the behaviour this refuses.
-  assert.equal(readFileSync(join(root, 'packages/.scaffold-field-service/src.js'), 'utf8'), 'partial\n');
+  assert.equal(result.ok, true, JSON.stringify(result.problems));
+  assert.equal(result.mode, 'applied');
+  assert.equal(existsSync(join(root, 'packages/field-service/src/index.js')), true);
+
+  // Reported, and left alone: this command cannot tell a corpse from a live
+  // writer, and an age heuristic that guesses wrong deletes somebody's work.
+  assert.deepEqual(result.staleStaging, ['packages/.scaffold-field-service-deadbeef']);
+  assert.equal(readFileSync(join(corpse, 'README.md'), 'utf8'), 'half written\n');
+  assert.ok(result.nextSteps.some((step) => step.includes('.scaffold-field-service-deadbeef')));
+});
+
+test('staging is unique per run, so no run can be blocked by or write into another', () => {
+  const first = stagingName('field-service');
+  const second = stagingName('field-service');
+  assert.notEqual(first, second, 'a fixed staging name is a lock a crashed process holds forever');
+  for (const value of [first, second]) {
+    assert.match(value, /^\.scaffold-field-service-[0-9a-f]{8}$/);
+  }
+});
+
+test('the commit point refuses every occupied target, including an empty directory', (t) => {
+  const root = fixtureProject(t);
+  const staged = () => {
+    const dir = join(root, stagingName('probe'));
+    mkdirSync(dir); writeFileSync(join(dir, 'index.js'), 'x');
+    return dir;
+  };
+
+  // The rename alone would REPLACE an empty directory on POSIX. The check in
+  // front of it is what turns that into a refusal.
+  const empty = join(root, 'target-empty');
+  mkdirSync(empty);
+  assert.deepEqual(commitScaffold(staged(), empty), { ok: false, code: 'TARGET_CLAIMED', error: null });
+  assert.deepEqual(readdirSync(empty), [], 'the empty directory must survive untouched');
+
+  const nonEmpty = join(root, 'target-full');
+  mkdirSync(nonEmpty); writeFileSync(join(nonEmpty, 'keep.txt'), 'mine\n');
+  assert.equal(commitScaffold(staged(), nonEmpty).code, 'TARGET_CLAIMED');
+  assert.equal(readFileSync(join(nonEmpty, 'keep.txt'), 'utf8'), 'mine\n');
+
+  const file = join(root, 'target-file');
+  writeFileSync(file, 'mine\n');
+  assert.equal(commitScaffold(staged(), file).code, 'TARGET_CLAIMED');
+  assert.equal(readFileSync(file, 'utf8'), 'mine\n');
+
+  const dangling = join(root, 'target-dangling');
+  symlinkSync(join(root, 'nowhere'), dangling);
+  assert.equal(commitScaffold(staged(), dangling).code, 'TARGET_CLAIMED');
+  assert.equal(existsSync(join(root, 'nowhere')), false);
+
+  // And a free target commits.
+  const free = join(root, 'target-free');
+  assert.deepEqual(commitScaffold(staged(), free), { ok: true, code: null, error: null });
+  assert.deepEqual(readdirSync(free), ['index.js']);
+});
+
+test('a successful run leaves no staging behind', (t) => {
+  const root = fixtureProject(t);
+  const result = applyPackageScaffold({ name: 'field-service', rootDir: root });
+  assert.equal(result.ok, true);
+  assert.deepEqual(readdirSync(join(root, 'packages')).filter((entry) => entry.startsWith('.scaffold')), []);
+  assert.deepEqual(result.staleStaging, []);
+});
+
+test('concurrent applies for one target produce exactly one winner and stable losers', async (t) => {
+  const root = fixtureProject(t);
+  const runs = await Promise.all(Array.from({ length: 8 }, () => new Promise((done) => {
+    execFile(process.execPath, [cli, 'package', 'scaffold', 'field-service', '--root', root, '--apply', '--json'],
+      (error, stdout) => done({ code: error?.code ?? 0, doc: JSON.parse(String(stdout)) }));
+  })));
+
+  assert.equal(runs.filter((run) => run.doc.mode === 'applied').length, 1, 'exactly one process may win');
+  for (const run of runs) {
+    if (run.doc.mode === 'applied') { assert.equal(run.code, 0); continue; }
+    assert.equal(run.code, 1);
+    // A loser must be told it lost a race, not that the filesystem broke.
+    assert.ok(['TARGET_UNAVAILABLE', 'TARGET_CLAIMED'].includes(run.doc.problems[0].code), run.doc.problems[0].code);
+  }
+  // The winner's package is whole, and nobody left staging behind.
+  assert.deepEqual(readdirSync(join(root, 'packages/field-service'), { recursive: true }).sort(),
+    ['README.md', 'src', join('src', 'index.js')].sort());
+  assert.deepEqual(readdirSync(join(root, 'packages')).filter((entry) => entry.startsWith('.scaffold')), []);
+});
+
+test('concurrent applies for different names in one parent all succeed', async (t) => {
+  const root = fixtureProject(t);
+  const names = ['alpha-domain', 'beta-domain', 'gamma-domain', 'delta-domain'];
+  const modes = await Promise.all(names.map((name) => new Promise((done) => {
+    execFile(process.execPath, [cli, 'package', 'scaffold', name, '--root', root, '--apply', '--json'],
+      (error, stdout) => done(JSON.parse(String(stdout)).mode));
+  })));
+  assert.deepEqual(modes, ['applied', 'applied', 'applied', 'applied']);
+  assert.deepEqual(readdirSync(join(root, 'packages')).filter((entry) => entry.startsWith('.scaffold')), []);
+});
+
+test('a target claimed mid-write is refused as a lost race, not as a broken filesystem', (t) => {
+  const root = fixtureProject(t);
+  applyPackageScaffold({ name: 'field-service', rootDir: root });
+  const second = applyPackageScaffold({ name: 'field-service', rootDir: root });
+  assert.equal(second.ok, false);
+  assert.ok(['TARGET_UNAVAILABLE', 'TARGET_CLAIMED'].includes(second.problems[0].code));
+  assert.deepEqual(readdirSync(join(root, 'packages')).filter((entry) => entry.startsWith('.scaffold')), []);
+});
+
+test('--apply --dry-run says which flag won, in both views', (t) => {
+  const root = fixtureProject(t);
+  const json = runCli(['package', 'scaffold', 'field-service', '--root', root, '--apply', '--dry-run', '--json']);
+  const doc = JSON.parse(json.stdout);
+  // Exit 0 and a plan look identical to exit 0 and an apply if you read only
+  // the code, which is exactly how an agent concludes it wrote a package it
+  // did not write.
+  assert.equal(json.exitCode, 0);
+  assert.equal(doc.mode, 'plan');
+  assert.match(doc.modeReason, /--dry-run overrode --apply/);
   assert.equal(existsSync(join(root, 'packages/field-service')), false);
+
+  const human = runCli(['package', 'scaffold', 'field-service', '--root', root, '--apply', '--dry-run']);
+  assert.match(human.stdout, /NOTHING WAS WRITTEN/);
+
+  // And the plain plan says its own reason rather than borrowing that one.
+  const plain = JSON.parse(runCli(['package', 'scaffold', 'field-service', '--root', root, '--json']).stdout);
+  assert.match(plain.modeReason, /no --apply was given/);
+  assert.match(JSON.parse(runCli(['package', 'scaffold', 'field-service', '--root', root, '--apply', '--json']).stdout).modeReason,
+    /--apply was given, and the package was written/);
+});
+
+test('the plan names the directories it would create, not only the files', (t) => {
+  const root = fixtureProject(t);
+  assert.deepEqual(planPackageScaffold({ name: 'field-service', rootDir: root, into: 'a/b/c' }).plan.parentDirectory,
+    { path: 'a/b/c', operation: 'create' });
+  assert.deepEqual(planPackageScaffold({ name: 'field-service', rootDir: root }).plan.parentDirectory,
+    { path: 'packages', operation: 'exists' });
+});
+
+test('the fingerprint identifies content, not transient filesystem state', (t) => {
+  const root = fixtureProject(t);
+  const before = planPackageScaffold({ name: 'field-service', rootDir: root }).plan;
+  mkdirSync(join(root, 'packages/.scaffold-field-service-cafebabe'), { recursive: true });
+  const after = planPackageScaffold({ name: 'field-service', rootDir: root }).plan;
+  assert.equal(before.fingerprint, after.fingerprint, 'a leftover directory is not part of the question asked');
+  assert.deepEqual(after.staleStaging, ['packages/.scaffold-field-service-cafebabe']);
+});
+
+test('the same request is byte-identical under a different locale, timezone and cwd', (t) => {
+  const root = fixtureProject(t);
+  const args = ['package', 'scaffold', 'field-service', '--root', root, '--json'];
+  const under = (env, cwd) => execFileSync(process.execPath, [cli, ...args],
+    { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+
+  assert.equal(
+    under({ LANG: 'C', LC_ALL: 'C', TZ: 'UTC' }, repoRoot),
+    under({ LANG: 'tr_TR.UTF-8', LC_ALL: 'tr_TR.UTF-8', TZ: 'Pacific/Kiritimati' }, tmpdir()),
+    'a locale-sensitive case fold or a clock would show up here and nowhere else',
+  );
+});
+
+test('the name rule is the framework validator, and invents nothing of its own', (t) => {
+  const root = fixtureProject(t);
+  // Whatever `validatePackageDefinition` accepts, the scaffold accepts — a
+  // scaffold that refused more than the registry would be inventing a
+  // restriction no authority backs, which is how a tool starts disagreeing
+  // with the runtime it is supposed to serve.
+  for (const name of ['constructor', 'prototype', 'src', 'a-b-c', 'a1']) {
+    assert.equal(checkPackageName(name).ok, true, `${name}: the registry accepts this`);
+  }
+  for (const name of ['__proto__', 'Field', 'a_b', '9lives', '-a', 'a/b', 'a.b', '']) {
+    assert.equal(checkPackageName(name).ok, false, `${name}: the registry refuses this`);
+  }
+  // And a name the registry accepts really does survive the whole chain.
+  const result = applyPackageScaffold({ name: 'constructor', rootDir: root });
+  assert.equal(result.ok, true);
+  assert.match(readFileSync(join(root, 'packages/constructor/src/index.js'), 'utf8'), /name: 'constructor'/);
+});
+
+test('the generated package says plainly that it is an empty shell', (t) => {
+  const root = fixtureProject(t);
+  applyPackageScaffold({ name: 'field-service', rootDir: root });
+  const dir = join(root, 'packages/field-service');
+  for (const file of ['src/index.js', 'README.md']) {
+    const text = readFileSync(join(dir, file), 'utf8');
+    assert.match(text, /empty package shell/i, `${file} must not let a reader assume it does something`);
+    assert.match(text, /zero business capabilities/i, file);
+  }
+  // And it points at the one command that can answer what the scaffold cannot.
+  assert.match(readFileSync(join(dir, 'README.md'), 'utf8'), /app inspect/);
 });
 
 test('the CLI is a dry-run unless --apply, and --dry-run beats --apply', (t) => {
@@ -350,8 +533,9 @@ test('every refusal states the limitations, so a reader never has to infer them'
   const root = fixtureProject(t);
   const codes = (result) => result.limitations.map((entry) => entry.code).sort();
   const expected = [
-    'CONFORMANCE_IS_NOT_CORRECTNESS', 'IDENTITY_UNIQUENESS_NOT_CHECKED', 'NO_COMPOSITION',
-    'NO_DATABASE_OR_MIGRATION', 'NO_DOMAIN_SEMANTICS', 'NO_INSTALL_OR_PUBLISH',
+    'CONFORMANCE_IS_NOT_CORRECTNESS', 'FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY',
+    'IDENTITY_UNIQUENESS_NOT_CHECKED', 'NO_COMPOSITION', 'NO_DATABASE_OR_MIGRATION',
+    'NO_DOMAIN_SEMANTICS', 'NO_INSTALL_OR_PUBLISH', 'PLAN_IS_NOT_A_RESERVATION',
   ];
   assert.deepEqual(codes(planPackageScaffold({ name: 'field-service', rootDir: root }).plan), expected);
   assert.deepEqual(codes(applyPackageScaffold({ name: 'field-service', rootDir: root })), expected);

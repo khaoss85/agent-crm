@@ -1,6 +1,6 @@
 // @ts-check
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { SUPPORTED_PACKAGE_CONTRACT, canonicalJson, validatePackageDefinition } from '../../core/index.js';
@@ -44,7 +44,9 @@ const LIMITATIONS = Object.freeze([
   ['NO_DATABASE_OR_MIGRATION', 'no database is opened and no migration runs. A package owns records only once you add a module manifest and apply it with `crm module create`'],
   ['NO_INSTALL_OR_PUBLISH', 'nothing is downloaded, installed, signed, published or registered anywhere. A package is source in your own repository'],
   ['CONFORMANCE_IS_NOT_CORRECTNESS', 'freshly scaffolded output passes `crm package test`, which proves it satisfies the framework contract. It proves nothing about a domain it does not yet model'],
-  ['IDENTITY_UNIQUENESS_NOT_CHECKED', 'the target directory is checked; the composed application is not. Reading which package names are already registered means importing the composition, which runs code, and this command runs none. A duplicate identity is refused by the registry at startup, naming the collision'],
+  ['IDENTITY_UNIQUENESS_NOT_CHECKED', 'the target directory is checked; the composed application is not. Reading which package names are already registered means importing the composition, which runs code, and this command runs none. A duplicate identity is refused by the registry at startup, naming the collision. After you compose the package, `crm app inspect --json` is what shows the whole application and its collisions'],
+  ['PLAN_IS_NOT_A_RESERVATION', 'a plan reserves nothing and authorizes nothing. `--apply` re-derives the target from the filesystem as it is at that moment and refuses a collision that appeared in between; the fingerprint identifies the generated content, it is not a claim on a directory'],
+  ['FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY', 'the package is committed by one `rename` onto the target, which POSIX refuses for a file, a symlink and a non-empty directory but allows onto an *empty* one. A target checked as free microseconds earlier and created empty in between would therefore be replaced. Nothing is lost — an empty directory has no content — and Windows refuses every existing destination'],
 ]);
 
 /** @param {string} value */
@@ -114,7 +116,36 @@ export function resolveTarget({ rootDir, name, into = PACKAGES_DIR }) {
   if (lstatSafe(dir)) {
     throw new Error(`${posix(relative(rootDir, dir))} already exists — scaffolding never overwrites, and a package identity is not reusable`);
   }
-  return { parent, dir, relativeDir: posix(relative(rootDir, dir)) };
+  return {
+    parent,
+    dir,
+    relativeDir: posix(relative(rootDir, dir)),
+    parentExists: existsSync(parent),
+    // Staging left behind by an interrupted run. It blocks nothing — each run
+    // stages under its own unique name — but an author is entitled to know it
+    // is there, and to be told the exact directory rather than a shell verb.
+    staleStaging: staleStaging(rootDir, parent, name),
+  };
+}
+
+/**
+ * Interrupted runs, listed. Never deleted: this command cannot distinguish a
+ * corpse from a live writer, and an age heuristic that guesses wrong deletes a
+ * concurrent author's work. So it reports, and the report is advisory.
+ *
+ * @param {string} rootDir @param {string} parent @param {string} name
+ */
+function staleStaging(rootDir, parent, name) {
+  if (!existsSync(parent)) return [];
+  const prefix = `${STAGING_PREFIX}${name}-`;
+  try {
+    return readdirSync(parent)
+      .filter((entry) => entry.startsWith(prefix))
+      .map((entry) => posix(relative(rootDir, join(parent, entry))))
+      .sort();
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -163,6 +194,11 @@ import { definePackage } from '${coreImport}';
 
 /**
  * The **${name}** domain package.
+ *
+ * **This is an empty package shell. It provides zero business capabilities.**
+ * It owns no record, runs no action, evaluates no policy, offers no capability
+ * and reaches no provider. Until you add those, composing it changes nothing
+ * about what this application can do.
  *
  * Scaffolded empty on purpose: it declares an identity and owns nothing yet.
  * That is already a conforming package — \`crm package test ${packagePath}\`
@@ -223,13 +259,14 @@ export function ${identifier}(options = {}) {
 
   const readme = `# ${name}
 
-A domain package for this repository. Scaffolded with \`crm package scaffold\`,
-which writes an identity and nothing else — every business decision below is
-still yours to make.
+**An empty package shell. It provides zero business capabilities.** Scaffolded
+with \`crm package scaffold\`, which writes an identity and nothing else — every
+business decision below is still yours to make. Composing it as it stands
+changes nothing about what this application can do.
 
 ## What it owns
 
-Nothing yet. Add a record by writing \`modules/<record>.module.json\`, applying it
+Nothing yet. No record, no action, no policy, no capability, no provider. Add a record by writing \`modules/<record>.module.json\`, applying it
 with the module factory, and listing its name in \`resources\`.
 
 ## What it needs
@@ -268,6 +305,7 @@ never drops your tables behind you.
 npm run crm -- package inspect ${packagePath}
 npm run crm -- package validate ${packagePath}
 npm run crm -- package test ${packagePath} --json
+npm run crm -- app inspect --json    # after you compose it: the whole application
 npm run verify
 \`\`\`
 
@@ -325,6 +363,11 @@ export function planPackageScaffold({ name, rootDir = process.cwd(), into = PACK
     command: 'package:scaffold',
     ok: problems.length === 0,
     mode: 'plan',
+    // Why this run is in this mode, always present. `mode` alone is not enough
+    // for an agent that reads `ok` and the exit code: a plan and a successful
+    // apply both answer 0, and a caller who passed `--apply` and got a plan is
+    // entitled to be told which flag won rather than left to infer it.
+    modeReason: 'no --apply was given, so nothing was written',
     name,
     // Repository-relative, never absolute: this JSON is written for agents and
     // pasted into issues.
@@ -353,6 +396,13 @@ export function planPackageScaffold({ name, rootDir = process.cwd(), into = PACK
       notApplicableReasons: ['NO_RESOURCES_DECLARED', 'NO_ACTIONS_DECLARED', 'NO_DEPENDENCIES_DECLARED', 'NO_CAPABILITIES_OFFERED', 'NO_POLICIES_DECLARED'],
       proves: 'framework conformance only; it models no domain yet',
     },
+    // Directories that would come into existence beside the package itself.
+    // `--into a/b/c` creates the whole chain, and a plan that showed only the
+    // two files would understate what applying it does.
+    parentDirectory: target ? { path: posix(relative(root, target.parent)), operation: target.parentExists ? 'exists' : 'create' } : null,
+    // Advisory, never blocking, never deleted: leftovers from an interrupted
+    // run. Staging is unique per run, so these hold no lock.
+    staleStaging: target?.staleStaging ?? [],
     problems,
     limitations: LIMITATIONS.map(([code, message]) => ({ code, message })),
   };
@@ -363,48 +413,110 @@ export function planPackageScaffold({ name, rootDir = process.cwd(), into = PACK
     files: plan.files,
     package: plan.package,
     problems: problems.map((entry) => entry.code).sort(),
+    // Deliberately NOT included: the parent-directory state, stale staging and
+    // the mode. The fingerprint identifies the content this scaffold produces,
+    // so that two checkouts asking the same question agree; a directory that
+    // happens to exist in one of them is not part of that question.
   })).digest('hex');
   return { plan, files, root, target };
 }
 
 /**
- * Write the scaffold, atomically.
+ * A staging directory name unique to this run.
  *
- * Every file is staged in a sibling directory and the package appears through a
- * single rename, so a failure at any point leaves no partial package behind and
- * two concurrent applies resolve to one winner and one stable conflict.
+ * Unique, not fixed, and that is the whole design: a fixed `.scaffold-<name>`
+ * is a lock, and a lock a crashed process holds forever has to be broken by
+ * hand. Two calls never agree, so no run can ever be blocked by — or write
+ * into — another run's directory.
+ *
+ * @param {string} name
+ */
+export function stagingName(name) {
+  return `${STAGING_PREFIX}${name}-${randomUUID().slice(0, 8)}`;
+}
+
+/**
+ * The commit point: the single step that makes the package visible.
+ *
+ * Before it, nothing of this run exists under the package's name; after it,
+ * everything does. There is no intermediate state in which a partial package is
+ * importable, and it is where two concurrent runs are decided.
+ *
+ * The `lstat` is not redundant with the rename. POSIX `rename(2)` refuses a
+ * file, a symlink and a non-empty directory — but *replaces* an empty one. The
+ * check turns that into a refusal for every target that exists when we look,
+ * leaving only a target created in the gap between these two lines, which is
+ * recorded as `FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY`. Windows refuses every
+ * existing destination and never reaches the rename's success path.
+ *
+ * @param {string} staging @param {string} target
+ */
+export function commitScaffold(staging, target) {
+  if (lstatSafe(target)) return { ok: false, code: 'TARGET_CLAIMED', error: null };
+  try {
+    renameSync(staging, target);
+    return { ok: true, code: null, error: null };
+  } catch (error) {
+    // A concurrent winner is a different answer from a broken filesystem, and
+    // an agent deciding what to do next needs them apart.
+    const claimed = ['ENOTEMPTY', 'EEXIST', 'ENOTDIR', 'EPERM'].includes(error.code);
+    return { ok: false, code: claimed ? 'TARGET_CLAIMED' : 'SCAFFOLD_NOT_WRITTEN', error };
+  }
+}
+
+/**
+ * Write the scaffold.
+ *
+ * **Where the commit point is.** Files are written into a staging directory
+ * whose name is unique to this run, and the package becomes visible through one
+ * `rename` of that directory onto the target. That rename is the commit point
+ * and the only race: before it, nothing of this run is visible under the
+ * package's name; after it, everything is. There is no window in which a
+ * partial package is importable.
+ *
+ * **Why staging is unique rather than a fixed lock.** A fixed
+ * `.scaffold-<name>` directory is a lock, and a lock a crashed process holds
+ * forever is a lock that has to be broken by hand. The first version of this
+ * command did exactly that: one `SIGKILL` and every later run answered
+ * `SCAFFOLD_IN_PROGRESS`, with `rm -rf` as the only way out. Deleting it
+ * automatically is not the fix either — this command cannot tell a corpse from
+ * a live writer, and an age heuristic that guesses wrong deletes somebody's
+ * work. So each run stages under its own name, nothing is ever blocked, and
+ * leftovers are *reported* as `staleStaging` for a human to remove.
+ *
+ * **Platform boundary.** POSIX `rename(2)` refuses a non-empty directory, a
+ * file and a symlink, but *replaces* an empty directory; Windows refuses any
+ * existing destination. So on POSIX an empty directory created in the
+ * microseconds between the check below and the rename would be replaced.
+ * Nothing is lost — an empty directory has no content — and it is recorded as
+ * `FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY` rather than left for a reader to
+ * discover.
  *
  * @param {{name: string, rootDir?: string, into?: string}} params
  */
 export function applyPackageScaffold({ name, rootDir = process.cwd(), into = PACKAGES_DIR }) {
-  // Re-planned here rather than trusting a plan the caller is holding: the
-  // filesystem may have moved since they asked.
+  // Re-planned here rather than trusting a plan the caller is holding: a plan
+  // reserves nothing, and the filesystem may have moved since they asked.
   const { plan, files, root, target } = planPackageScaffold({ name, rootDir, into });
   if (!plan.ok || !target) return { ...plan, mode: 'refused' };
 
-  const staging = join(target.parent, `${STAGING_PREFIX}${name}`);
-  const cleanup = () => { rmSync(staging, { recursive: true, force: true }); };
+  const refuse = (code, message) => ({
+    ...plan, mode: 'refused', ok: false, problems: [...plan.problems, { code, message }],
+  });
+
+  let staging = null;
+  const cleanup = () => { if (staging) rmSync(staging, { recursive: true, force: true }); };
 
   try {
     mkdirSync(target.parent, { recursive: true });
-    // Non-recursive on purpose: `mkdir` without `recursive` fails on an
-    // existing directory, which makes claiming the staging slot atomic. A
-    // `exists ? refuse : create` pair would leave a window in which two
-    // concurrent applies both believe they own it.
+    // Unique per run, and created with a non-recursive `mkdir` so that even the
+    // astronomically unlikely name collision is an error rather than two runs
+    // sharing a directory.
+    staging = join(target.parent, stagingName(name));
     mkdirSync(staging);
   } catch (error) {
-    return {
-      ...plan,
-      mode: 'refused',
-      ok: false,
-      problems: [...plan.problems, error.code === 'EEXIST' ? {
-        code: 'SCAFFOLD_IN_PROGRESS',
-        message: `${posix(relative(root, staging))} exists: another scaffold of this package is running, or one failed and left staging behind`,
-      } : {
-        code: 'SCAFFOLD_NOT_WRITTEN',
-        message: `nothing was written: ${safeMessage(error, root)}`,
-      }],
-    };
+    staging = null;
+    return refuse('SCAFFOLD_NOT_WRITTEN', `nothing was written: ${safeMessage(error, root)}`);
   }
 
   try {
@@ -413,20 +525,20 @@ export function applyPackageScaffold({ name, rootDir = process.cwd(), into = PAC
       mkdirSync(dirname(destination), { recursive: true });
       writeFileSync(destination, file.content);
     }
-    // The package appears in one step. Rename onto an existing directory fails,
-    // which is exactly the outcome a second concurrent apply should get.
-    renameSync(staging, target.dir);
+    const claim = commitScaffold(staging, target.dir);
+    if (!claim.ok) {
+      cleanup();
+      if (claim.code === 'TARGET_CLAIMED') {
+        return refuse(
+          'TARGET_CLAIMED',
+          `${target.relativeDir} appeared while this scaffold was being written — another process created it, and nothing was overwritten`,
+        );
+      }
+      return refuse('SCAFFOLD_NOT_WRITTEN', `nothing was written: ${safeMessage(claim.error, root)}`);
+    }
   } catch (error) {
     cleanup();
-    return {
-      ...plan,
-      mode: 'refused',
-      ok: false,
-      problems: [...plan.problems, {
-        code: 'SCAFFOLD_NOT_WRITTEN',
-        message: `nothing was written: ${safeMessage(error, root)}`,
-      }],
-    };
+    return refuse('SCAFFOLD_NOT_WRITTEN', `nothing was written: ${safeMessage(error, root)}`);
   }
 
   // Verify what landed, rather than reporting what was intended.
@@ -450,11 +562,16 @@ export function applyPackageScaffold({ name, rootDir = process.cwd(), into = PAC
   return {
     ...plan,
     mode: 'applied',
+    modeReason: '--apply was given, and the package was written',
     created: expected.map((relativePath) => posix(join(target.relativeDir, relativePath))),
     nextSteps: [
       `npm run crm -- package test ${target.relativeDir} --json`,
       'Add records, actions, capabilities and policies — the scaffold declares none.',
       `Compose it by adding one import to ${posix(join(PACKAGES_DIR, 'domains/generated/index.js'))}; the scaffold deliberately does not.`,
+      'Then `npm run crm -- app inspect --json`: that is what proves the identity is unique in this application, which the scaffold cannot.',
+      ...(target.staleStaging.length > 0
+        ? [`Interrupted earlier runs left ${target.staleStaging.join(', ')}. They block nothing; remove them when you are sure no scaffold is running.`]
+        : []),
     ],
   };
 }
@@ -465,7 +582,11 @@ export function renderScaffold(result) {
   lines.push(`Agent CRM package scaffold (contract ${result.packageScaffoldContract})`);
   lines.push(`Package: ${result.name}`);
   lines.push(`Target:  ${result.target}`);
-  lines.push(`Mode:    ${result.mode}`);
+  lines.push(`Mode:    ${result.mode} — ${result.modeReason}`);
+  if (result.staleStaging?.length > 0) {
+    lines.push('', 'Interrupted earlier runs left staging behind. They block nothing.');
+    for (const entry of result.staleStaging) lines.push(`  ${entry}`);
+  }
   if (result.problems.length > 0) {
     lines.push('', 'Problems');
     for (const problem of result.problems) lines.push(`  [${problem.code}] ${problem.message}`);
@@ -476,8 +597,9 @@ export function renderScaffold(result) {
     for (const step of result.nextSteps) lines.push(`  ${step}`);
   } else {
     lines.push('', 'Would create');
+    if (result.parentDirectory?.operation === 'create') lines.push(`  ${result.parentDirectory.path}/ (directory)`);
     for (const file of result.files) lines.push(`  ${file.relativePath} (${file.bytes} bytes)`);
-    lines.push('', 'Nothing was written. Re-run with --apply.');
+    lines.push('', `NOTHING WAS WRITTEN — ${result.modeReason}.`);
   }
   lines.push('', 'Limitations');
   for (const limitation of result.limitations) lines.push(`  [${limitation.code}] ${limitation.message}`);
@@ -494,11 +616,16 @@ export function renderScaffold(result) {
  * "unreadable" case to distinguish.
  *
  * `--apply` is the only thing that writes, and an explicit `--dry-run` beats it,
- * matching `module:create` and `module:migration`.
+ * matching `module:create` and `module:migration`. That precedence is a trap for
+ * a caller that reads only the exit code — both a plan and an apply answer 0 —
+ * so **every** document carries `modeReason` saying which flag won, and the
+ * human view prints `NOTHING WAS WRITTEN` rather than a polite suggestion.
  *
- * @param {{name?: string, rootDir?: string, into?: string, apply?: boolean, json?: boolean}} params
+ * @param {{name?: string, rootDir?: string, into?: string, apply?: boolean, dryRun?: boolean, json?: boolean}} params
  */
-export function packageScaffoldCommand({ name, rootDir = process.cwd(), into = PACKAGES_DIR, apply = false, json = false } = {}) {
+export function packageScaffoldCommand({
+  name, rootDir = process.cwd(), into = PACKAGES_DIR, apply = false, dryRun = false, json = false,
+} = {}) {
   if (typeof name !== 'string' || name === '') {
     const refusal = {
       packageScaffoldContract: PACKAGE_SCAFFOLD_CONTRACT,
@@ -508,6 +635,8 @@ export function packageScaffoldCommand({ name, rootDir = process.cwd(), into = P
       name: name ?? null,
       target: null,
       files: [],
+      modeReason: 'no package name was given, so nothing was planned or written',
+      staleStaging: [],
       problems: [{ code: 'PACKAGE_NAME_MISSING', message: 'Usage: agent-crm package scaffold <package-name> [--into dir] [--apply] [--json]' }],
       limitations: LIMITATIONS.map(([code, message]) => ({ code, message })),
     };
@@ -515,9 +644,15 @@ export function packageScaffoldCommand({ name, rootDir = process.cwd(), into = P
     return { exitCode: 1, result: refusal };
   }
 
-  const result = apply
+  const writing = apply && !dryRun;
+  const result = writing
     ? applyPackageScaffold({ name, rootDir, into })
-    : planPackageScaffold({ name, rootDir, into }).plan;
+    : {
+      ...planPackageScaffold({ name, rootDir, into }).plan,
+      modeReason: apply
+        ? 'an explicit --dry-run overrode --apply, so nothing was written'
+        : 'no --apply was given, so nothing was written',
+    };
   console.log(json ? JSON.stringify(result, null, 2) : renderScaffold(result));
   return { exitCode: result.ok ? 0 : 1, result };
 }

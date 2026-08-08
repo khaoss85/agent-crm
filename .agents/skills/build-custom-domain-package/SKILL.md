@@ -16,7 +16,9 @@ Read `docs/PACKAGE_AUTHORING.md` first, then `DECISIONS.md` (ADR-018 and its add
 1. `npm run crm -- package scaffold <name>` prints a plan and writes nothing; `--apply` writes exactly two files, `src/index.js` and `README.md`, with an identity and five **empty** declarations. That output already passes `package validate`, `package inspect` and `package test` — start from it rather than from a copy of somebody else's domain.
 2. It generates **no** record, action, policy, capability, provider, Admin section, Solution Plan or MCP tool, and that is deliberate. Do not treat the empty lists as something to be filled by pattern-matching another package: every entry you add is a decision about this business.
 3. It composes nothing, opens no database and runs no migration. An occupied directory is refused, never overwritten; an invalid name is refused **with a suggestion**, never silently renamed — if you get `PACKAGE_NAME_INVALID`, ask for the canonical name explicitly rather than assuming the suggestion.
-4. `--into <dir>` places the package outside `packages/`; `--json` gives you the plan, its per-file hashes and a `fingerprint`. Exit 0 planned or applied, exit 1 refused.
+4. `--into <dir>` places the package outside `packages/`; `--json` gives you the plan, its per-file hashes and a `fingerprint`. Exit 0 planned or applied, exit 1 refused — so **read `modeReason`, not the exit code**, to know whether anything was written; an explicit `--dry-run` beats `--apply` and still exits 0.
+5. A plan reserves nothing. `--apply` re-checks the target and answers `TARGET_CLAIMED` if another process got there first. An interrupted earlier run blocks nothing: its staging is reported as `staleStaging` for you to remove, never deleted automatically and never treated as a lock.
+6. The scaffold cannot tell you the identity is unique in the application — it checks the target directory only. Compose the package, then run `crm app inspect --json`.
 
 ## Author it against the public contract
 

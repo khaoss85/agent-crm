@@ -101,10 +101,59 @@ declaration it would have needed.* Measured, not asserted — 16 passed, 0 faile
 | target already exists | `TARGET_UNAVAILABLE` — `lstat`, so a dangling symlink counts |
 | `--into ../..` or `--into /etc` | `TARGET_UNAVAILABLE` before any write |
 | `--into <symlink out of the project>` | `TARGET_UNAVAILABLE`, resolved through `realpath` |
+| the same, where the leaf does not exist yet | also refused — the check climbs to the nearest existing ancestor, because `mkdir -p` would otherwise follow the link on the way in |
 | invalid, reserved or hostile name | `PACKAGE_NAME_INVALID`, from `validatePackageDefinition` itself |
-| a previous run died mid-write | `SCAFFOLD_IN_PROGRESS`; the staging directory is reported, not deleted |
-| two concurrent applies | one `rename` wins, the other gets a stable refusal |
-| a write fails halfway | staging is removed; no partial package is ever visible |
+| a previous run died mid-write | **nothing is blocked.** The corpse is reported as `staleStaging` and left alone |
+| two concurrent applies | one `rename` wins; every loser gets `TARGET_CLAIMED` and nothing is overwritten |
+| target appears between the plan and the commit | `TARGET_CLAIMED` — the plan reserves nothing, so `--apply` re-derives and re-checks |
+| a write fails halfway | this run's staging is removed; no partial package is ever visible |
+
+### The commit point, and why staging is unique
+
+Files are written into a staging directory named uniquely per run, and the
+package becomes visible through **one `rename`** of that directory onto the
+target. That rename is the commit point and the only race: before it nothing of
+this run exists under the package's name, after it everything does. There is no
+window in which a partial package is importable.
+
+The first version of this command staged in a *fixed* `.scaffold-<name>`
+directory and refused with `SCAFFOLD_IN_PROGRESS` when it was occupied. That is
+a lock, and a lock a crashed process holds forever is a lock somebody has to
+break with `rm -rf`. One `SIGKILL` and every later run in that project was
+refused. Deleting the corpse automatically is not the fix either: this command
+cannot tell a corpse from a live writer, and an age heuristic that guesses wrong
+deletes a concurrent author's work. So each run stages under its own name,
+nothing is ever blocked, and leftovers are **reported** — `staleStaging` in the
+JSON, a named directory in the human view, and a line in `nextSteps`.
+
+Measured: eight independent processes racing one target produce exactly one
+`applied`, seven `TARGET_CLAIMED`, a complete package and zero leftover staging.
+
+### Platform boundary
+
+POSIX `rename(2)` refuses a file, a symlink and a non-empty directory — but
+**replaces an empty one**. Windows refuses every existing destination. So the
+commit point checks the target with `lstat` immediately before renaming, which
+turns every target that exists when we look into a refusal and leaves only one
+residual: a directory created empty in the gap between those two lines would be
+replaced. Nothing is lost, because an empty directory has no content, and it is
+recorded as `FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY` rather than left for a
+reader to discover.
+
+### A plan reserves nothing
+
+`--apply` does not trust a plan the caller is holding: it re-derives the target
+from the filesystem as it is at that moment, and refuses a collision that
+appeared in between. The `fingerprint` identifies the generated content so two
+checkouts asking the same question agree — it is not a claim on a directory, and
+it deliberately excludes transient filesystem state such as leftover staging or
+whether the parent already exists. Recorded as `PLAN_IS_NOT_A_RESERVATION`.
+
+Because `--apply` and a plan both exit 0, and an explicit `--dry-run` beats
+`--apply` (matching `module:create`), every document carries a **`modeReason`**
+saying which flag won, and the human view prints `NOTHING WAS WRITTEN` rather
+than a polite suggestion. An agent that reads only the exit code would otherwise
+conclude it wrote a package it did not write.
 
 One thing it deliberately does **not** check is whether the *identity* is
 already taken. The target directory is checked; the composed application is not,

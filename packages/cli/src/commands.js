@@ -80,7 +80,10 @@ export async function runCli(argv) {
       rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
       into: typeof flags.into === 'string' ? flags.into : undefined,
       // An explicit --dry-run always wins over --apply, matching module:create.
-      apply: flags.apply === true && flags['dry-run'] !== true,
+      // Both flags are passed through so the report can say which one won,
+      // rather than answering 0 with a plan and leaving the caller to guess.
+      apply: flags.apply === true,
+      dryRun: flags['dry-run'] === true,
       json: flags.json === true,
     });
     process.exitCode = result.exitCode;
@@ -298,7 +301,7 @@ Usage:
   agent-crm module:create <name> [--apply] [--root path]
   agent-crm module:validate <manifest.json>
   agent-crm module:migration <manifest.json> [--dry-run] [--out file.sql] [--force]
-  agent-crm package:scaffold <package-name> [--into dir] [--apply] [--json] [--root dir]
+  agent-crm package:scaffold <package-name> [--into dir] [--apply|--dry-run] [--json] [--root dir]
   agent-crm package:validate <package-directory>
   agent-crm package:inspect <package-directory>
   agent-crm package:test <package-directory> [--json] [--root dir]
@@ -318,12 +321,20 @@ accepted aliases, and they answer four different questions:
   test      does it hold up when a real application composes it?
 
 scaffold takes a package NAME, not a directory, and is the only one that can write.
-It is a plan unless --apply is explicit, it never overwrites, and it writes exactly
-two files: an empty-but-valid package definition and a README. It invents no record,
-action, policy, capability, provider, Admin section or MCP tool; it does not compose
-the package, run a migration, open a database, or install or publish anything.
+Reach for it only after "app inspect" and a Solution Plan have shown that what you
+need is a new bounded domain rather than a module, an action or a policy.
+
+It is a plan unless --apply is explicit, and an explicit --dry-run beats --apply;
+because both answer exit 0, every report carries "modeReason" saying which flag won.
+It never overwrites, and it writes exactly two files: an empty-but-valid package
+definition and a README. It invents no record, action, policy, capability, provider,
+Admin section or MCP tool; it does not compose the package, run a migration, open a
+database, or install or publish anything.
+
 Its output passes validate, inspect and test with no manual edit — which proves
-framework conformance and nothing at all about a domain it does not yet model.
+framework conformance and nothing at all about a domain it does not yet model. It
+also cannot prove the identity is unique in your application: it checks the target
+directory only. Compose the package, then run "app inspect --json" for that.
 
 validate and inspect are read-only: they run the same domain-package validator the
 application runs at startup, write nothing, open no database and reach no network.

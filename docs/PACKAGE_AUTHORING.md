@@ -66,9 +66,19 @@ the package, run a migration, open a database or install anything — see §12.
 An occupied directory is refused rather than overwritten, and a name the
 registry would reject is refused **with a suggestion** rather than quietly
 renamed. It checks the target directory, not the composed application: a name
-already registered by another package is refused at startup by the registry, not
-here. `--into <dir>` puts the package somewhere other than `packages/`;
-`--json` gives an agent the plan, its file hashes and a `fingerprint`.
+already registered by another package is refused at startup by the registry, and
+`crm app inspect --json` is what shows you that once the package is composed.
+
+Two things worth knowing before you automate it. A plan **reserves nothing** —
+`--apply` re-checks the target and answers `TARGET_CLAIMED` if something got
+there first. And because a plan and an apply both exit 0, read **`modeReason`**
+rather than the exit code to learn whether anything was written; an explicit
+`--dry-run` beats `--apply`. An interrupted earlier run blocks nothing: its
+staging directory is reported as `staleStaging` for you to remove, never
+deleted automatically.
+
+`--into <dir>` puts the package somewhere other than `packages/`; `--json`
+gives an agent the plan, its file hashes and a `fingerprint`.
 ExecPlan: `docs/plans/dx3-package-scaffold.md`.
 
 ## 2. Pick a canonical identity
