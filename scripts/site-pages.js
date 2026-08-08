@@ -209,7 +209,9 @@ export function buildJobPages({ jobs, brand, origin }) {
           itemListElement: entry.jobs.map((job, index) => ({
             '@type': 'ListItem',
             position: index + 1,
-            name: job.title,
+            // The status is the whole point of the list, and a parser that reads only the markup
+            // has to get it. Without this the block said "CRM job status" and carried none.
+            name: `${job.title} — ${job.status}`,
             ...(owned.has(job.id) ? { url: `${origin}/jobs/${job.id.toLowerCase()}.html` } : {}),
           })),
         },
@@ -518,12 +520,12 @@ export function buildAnswerPages({ answers, ledger, brand, origin }) {
         breadcrumbs(origin, [['Home', '/'], ['Answers', '/answers.html'], [entry.question, `/answers/${entry.slug}.html`]]),
         {
           '@context': 'https://schema.org',
-          '@type': 'QAPage',
-          mainEntity: {
+          '@type': 'FAQPage',
+          mainEntity: [{
             '@type': 'Question',
             name: entry.question,
             acceptedAnswer: { '@type': 'Answer', text: stripMarkdown(entry.answer) },
-          },
+          }],
         },
       ],
       body: [

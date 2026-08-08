@@ -90,7 +90,10 @@ Of 149 catalogued CRM jobs: 21 validated end to end, 28 partially supported, 100
 a job counts as validated end to end only when a test or a checked-in example proves it, so
 these numbers understate what can be built rather than overstate it.
 
-- [docs/benchmarks/jobs.json](docs/benchmarks/jobs.json): the structured index, machine-readable
+- `/jobs.json` on the published site: the structured index, machine-readable, served as
+  application/json with CORS, and carrying a URL for every job that has a page plus what each
+  status means. Fetch this one — the repository path below is a citation, not a link.
+- [docs/benchmarks/jobs.json](docs/benchmarks/jobs.json): the same index inside the repository
 - [docs/benchmarks/CRM_JTBD_MATRIX.md](docs/benchmarks/CRM_JTBD_MATRIX.md): the same catalogue with the evidence written out
 
 On the published site the same catalogue is browsable: `/jobs.html` for the whole set, one page

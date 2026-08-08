@@ -146,10 +146,12 @@ test('an answer page renders its evidence verbatim from the ledger', () => {
 
     const qa = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
       .map((match) => JSON.parse(match[1]))
-      .find((block) => block['@type'] === 'QAPage');
-    assert.ok(qa, `${path} publishes no QAPage structured data`);
-    assert.equal(qa.mainEntity.name, entry.question);
-    assert.ok(qa.mainEntity.acceptedAnswer.text.length > 80, `${path}'s structured answer is too short to be an answer`);
+      .find((block) => block['@type'] === 'FAQPage');
+    assert.ok(qa, `${path} publishes no FAQPage structured data`);
+    // FAQPage, not QAPage: QAPage is for pages where readers submit answers. These are
+    // site-authored, one question and one fixed answer each.
+    assert.equal(qa.mainEntity[0].name, entry.question);
+    assert.ok(qa.mainEntity[0].acceptedAnswer.text.length > 80, `${path}'s structured answer is too short to be an answer`);
   }
 });
 
