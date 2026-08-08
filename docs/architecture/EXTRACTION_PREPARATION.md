@@ -16,20 +16,20 @@ suspected.
 ```text
 crm app inspect        the composition before                     AX1   shipped
 crm solution check     a plan bound to that composition           AX2   shipped
-crm project doctor     is the source coherent before I start?     DX1   this PR
+crm project doctor     is the source coherent before I start?     DX1   shipped
 crm package scaffold   an empty conforming target to move into    DX3   shipped
   move code            registries, actions, records               by hand
 crm package test       does the result conform?                   DX4   shipped
-  characterization     does it still DECIDE identically?          LA0   DOES NOT EXIST
+  characterization     does it still DECIDE identically?          LA0   shipped
 ```
 
-Six of seven rungs exist. The missing one is the only one that can answer the
-acceptance criterion, which has been the same since ADR-018: **behaviour
-preservation, proved from the outside.**
+All seven rungs now exist. The last one to arrive, LA0, is the only one that
+can answer the acceptance criterion, which has been the same since ADR-018:
+**behaviour preservation, proved from the outside.**
 
 ---
 
-## LA0 — Legacy Characterization Harness (BUILT, open for review)
+## LA0 — Legacy Characterization Harness (merged, `360b0f6`)
 
 ### Why it is a gate and not a nice-to-have
 
@@ -98,7 +98,7 @@ characterization harness written after the move characterizes the move.
 ### Status: built and measured
 
 Implemented in `tests/characterization/` with `legacyCharacterizationContract: 1`
-and a checked-in baseline of **149 observations / 779 asserted values**. Design
+and a checked-in baseline of **151 observations / 822 asserted values**. Design
 and rationale: `docs/plans/la0-legacy-characterization.md`.
 
 Two things it established that this document previously only assumed:
@@ -112,10 +112,21 @@ Two things it established that this document previously only assumed:
   characters verbatim (`partner-scorecard`, the teaching example, refuses them).
   Reproduced and documented, deliberately **not** frozen as contract. Each is a
   recommendation for a separate pre-extraction fix.
+  **Both were fixed in `1e40d1e`**, which bounded `value` to the module's own
+  `MAX_TEXT` of 500 and refused control characters and line breaks. The finding
+  above is the record of what LA0 measured at the time, not a live defect.
 
 ---
 
-## Blocker 1 — the neutral helpers (assessed)
+## Blocker 1 — the neutral helpers (**done**)
+
+> **Status: moved.** `computeDefinitionFingerprint`, its canonicalizer and
+> `validateDeclaredConfig` are now in `packages/core/src/definition-fingerprint.js`;
+> `withTimeout` is in `packages/core/src/timeout.js`. No module outside Lead
+> Intelligence imports an Intelligence file to reach a neutral helper any more.
+> The assessment below is left as written — it is the reasoning the move was
+> made on, and the recommendation it ends with is what was carried out. The
+> outcome is recorded at the end of the section.
 
 `computeDefinitionFingerprint` lives in `packages/core/src/intelligence-registry.js`
 and `withTimeout` in `packages/core/src/intelligence-actions.js`. Both are read
@@ -170,6 +181,45 @@ definition machinery, `withTimeout` into a general async utility module — with
 It is small, independently useful, and unblocks the discussion rather than
 prejudging it. **Not done in DX1**: the Project Doctor does not need it, and a
 diagnostic PR is the wrong place to move kernel exports.
+
+### Outcome
+
+Carried out as recommended, with three things worth recording because they were
+decided during the move rather than before it.
+
+**`validateDeclaredConfig` moved too.** The recommendation named two helpers.
+`validateDeclaredConfig` is the same canonicalizer seen from the other side —
+one hashes what canonicalizes, the other refuses what does not — and they share
+a single private `canonicalize`. Moving the fingerprint alone would have left
+the canonical form defined in the neutral module and enforced from an
+Intelligence file, or duplicated it. Two of the three modules that import
+`validateDeclaredConfig` (`package-registry.js`, `signature-registry.js`) had no
+other reason to touch Intelligence at all.
+
+**No compatibility re-exports.** Every in-repo importer was updated in the same
+change, so the old paths export nothing and there is no second way to reach the
+helpers. The re-export from `packages/core/index.js` is unchanged in name and
+behaviour — packages see no difference — but it now points at the neutral
+module.
+
+**Module names, not a `utils.js`.** `definition-fingerprint.js` and
+`timeout.js`. A neutral module still has to say what it is; `utils` would have
+been a different kind of wrong location.
+
+The evidence is the LA0 baseline. Regenerating it after the move changed exactly
+one observation, `architecture.intelligence-internal-importers`, which is
+`pre_extraction_evidence` and asserted by nobody: the list of files reaching
+into an Intelligence internal went from ten to four. Every asserted
+observation — all 822 values across 142 observations — is byte-identical, which
+was confirmed by running the *pre-move* observations against the post-move tree
+through the harness's own comparison rather than through a diff script. The two
+new modules were added to `BEHAVIOUR_BEARING_SOURCE`, so a future edit to either
+stales the baseline, and both were mutation-checked in place: unsorting the
+canonicalizer's keys moves every declared fingerprint, and altering the timeout
+message moves `helpers.withTimeout.outcomes`.
+
+What remains open is unchanged: the `app.intelligence` field (Blocker 2) and the
+fixed definition-registry slot (Blocker 3).
 
 ---
 
@@ -409,11 +459,11 @@ a change scoped to two defect candidates:
 | DX3 package scaffold merged | **yes** — `05fafbd` |
 | DX4 package conformance merged | **yes** — `5da5205` |
 | DX1 project doctor merged | **yes** — `845cd3d` |
-| LA0 characterization harness | **built, open for review** — not merged |
-| LA0 defect candidates resolved | **open in a PR** — `record-signal`'s `value` is now bounded to the domain's own `MAX_TEXT` (500) and refused when it contains control characters or line breaks. Reviewed regeneration moved exactly five observations, all `hostile-input.record-signal.*` |
-| Neutral helpers moved out of Intelligence files | **no** — assessed domain-neutral, now behaviour-pinned by LA0, recommended as its own PR |
-| `app.intelligence` decision taken | **no** — proposed as ADR-021 (declared capability, staged migration), cost measured: one schema-publication change, zero external action consumers. Human decision |
-| Definition-registry decision taken | **no** — proposed as ADR-022 (reuse `policies` and providers; no new seam), dependants measured. Routing targets remain open. Human decision |
+| LA0 characterization harness | **yes** — `360b0f6` |
+| LA0 defect candidates resolved | **yes** — `1e40d1e`. `record-signal`'s `value` is now bounded to the domain's own `MAX_TEXT` (500) and refused when it contains control characters or line breaks. Reviewed regeneration moved exactly five observations, all `hostile-input.record-signal.*` |
+| Neutral helpers moved out of Intelligence files | **yes** — `728d7bc`. Moved to `definition-fingerprint.js` and `timeout.js`; runtime imports reaching into an Intelligence module for a neutral helper went from eight to zero, with every asserted value byte-identical |
+| `app.intelligence` decision taken | **ADR-021, accepted** — declared capability with a staged migration. Not implemented |
+| Definition-registry decision taken | **ADR-022, accepted** — reuse `policies`, providers and capabilities; no new definition-registry seam. Not implemented |
 | Package-contributed HTTP route seam needed | **not for Intelligence.** DX4 established that route contribution is not required for generic conformance. It remains a precondition for **Commercial** and **Signature** specifically, each of which owns a route in `apps/server` |
 
 **Lead Intelligence is still not extractable today** — but the remaining
