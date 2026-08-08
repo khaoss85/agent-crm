@@ -30,6 +30,17 @@ const KEY_RE = /^[a-z][a-z0-9-]*$/;
 const COUNTRY_RE = /^[A-Z]{2}$/;
 const LANGUAGE_RE = /^[a-z]{2}$/;
 const MAX_TEXT = 500;
+/**
+ * Characters a single-line label may not contain: the C0 range including tab,
+ * newline and carriage return, DEL, the C1 range, and the Unicode line and
+ * paragraph separators.
+ *
+ * Deliberately stricter than this repository's prose rule elsewhere, which
+ * permits tab and newline because a human-written *reason* is prose. A signal
+ * `value` is not prose — see `optionalSignalValue` — so it is one line by
+ * contract.
+ */
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 /**
@@ -123,6 +134,51 @@ function optionalBoundedText(value, field, shape = null) {
       status: 502,
       details: { field },
     });
+  }
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * A caller-supplied signal `value`: optional, bounded, single-line.
+ *
+ * **What `value` is.** An optional scalar qualifier on an immutable observed
+ * signal — which pricing page, which plan tier, which campaign. Measured before
+ * choosing a rule: nothing in this repository *reads* it. Scoring counts
+ * `signalType`, routing never sees it, no Admin section renders it. It is
+ * stored evidence, and the thing stored evidence must be is bounded and
+ * inspectable.
+ *
+ * **Why 500, and why nothing was copied.** `MAX_TEXT` above is this domain's
+ * own existing bound, already governing every other text this file accepts;
+ * `value` was simply never held to it. Reusing it keeps one number for one
+ * domain instead of adding a third opinion. The larger prose bounds elsewhere
+ * in this repository govern prose, and a short qualifier is not prose.
+ *
+ * **Why single-line.** A label is one line. Refusing control characters here is
+ * not an escaping strategy — escaping is the renderer's job, and accepted values
+ * are still stored byte-identical — it keeps a NUL or a terminal escape
+ * sequence out of stored evidence somebody will later read in a log, a CSV or a
+ * terminal.
+ *
+ * A refusal is a `ValidationError` (400): this is caller input. Provider output
+ * is a different failure with a different meaning and stays a 502.
+ *
+ * @param {unknown} value
+ */
+function optionalSignalValue(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') {
+    throw new ValidationError('value must be a string', { field: 'value' });
+  }
+  // Bound the raw input, not the trimmed one: 5,000 spaces is still 5,000
+  // characters somebody sent, and accepting it to then discard it invites the
+  // next caller to send 5,000,000.
+  if (value.length > MAX_TEXT) {
+    throw new ValidationError(`value must be at most ${MAX_TEXT} characters`, { field: 'value' });
+  }
+  if (CONTROL_RE.test(value)) {
+    throw new ValidationError('value must not contain control characters or line breaks', { field: 'value' });
   }
   const trimmed = value.trim();
   return trimmed === '' ? null : trimmed;
@@ -380,7 +436,7 @@ export function buildRecordSignalAction(config) {
       { name: 'signalType', type: 'string', required: true, hint: 'Canonical key, e.g. pricing-page-visited, demo-requested.' },
       { name: 'source', type: 'string', required: false },
       { name: 'observedAt', type: 'timestamp', required: true },
-      { name: 'value', type: 'string', required: false },
+      { name: 'value', type: 'string', required: false, hint: 'Optional single-line qualifier, at most 500 characters; no control characters.' },
       { name: 'sourceKey', type: 'string', required: false, hint: 'Deterministic dedupe key; defaults to signal:<leadId>:<type>:<observedAt>.' },
     ],
     /** @param {any} ctx */
@@ -390,6 +446,9 @@ export function buildRecordSignalAction(config) {
           field: 'signalType',
         });
       }
+      // Validated before anything is written, so an invalid value leaves no
+      // record, no audit entry and no trace step behind.
+      const value = optionalSignalValue(input.value);
       const sourceKey = input.sourceKey ?? `signal:${record.id}:${input.signalType}:${input.observedAt}`;
       const signal = await createRecord(
         modules,
@@ -399,7 +458,7 @@ export function buildRecordSignalAction(config) {
           signalType: input.signalType,
           source: input.source ?? null,
           observedAt: input.observedAt,
-          value: input.value ?? null,
+          value,
           sourceKey,
         },
         actor,

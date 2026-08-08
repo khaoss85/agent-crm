@@ -353,6 +353,28 @@ requires — and it will be a better seam for having a real second case.
 
 ---
 
+## What the signal-hardening PR established about the workflow
+
+The intentional-change loop is no longer theoretical; it ran:
+
+```text
+apply the fix          -> LA0 reports the baseline STALE *and* the behaviour changed,
+                          as two separate failures
+regenerate explicitly  -> npm run characterize:intelligence
+review the diff        -> exactly 5 observations moved, all in one family
+```
+
+Two of the five were the declared `defect_candidate`s. The other three —
+`newline`, `carriage-return` and `unicode-separator` — were classified
+`contractual` by LA0 because it observed them individually and they happened to
+be accepted. The fix treats them as the same class, which is a **deliberate
+widening of public behaviour**, recorded here rather than absorbed silently.
+That is precisely what a reviewed regeneration is for.
+
+A later comment-only edit to the same file proved the other half: the source
+digest moved, the baseline went stale, and **zero** observations changed. Source
+staleness and behaviour change are genuinely distinct signals.
+
 ## Updated extraction gate
 
 | Precondition | State |
@@ -361,7 +383,7 @@ requires — and it will be a better seam for having a real second case.
 | DX4 package conformance merged | **yes** — `5da5205` |
 | DX1 project doctor merged | **yes** — `845cd3d` |
 | LA0 characterization harness | **built, open for review** — not merged |
-| LA0 defect candidates resolved | **no** — two open (`record-signal` unbounded `value`, control characters). Reproduced and documented, deliberately not frozen |
+| LA0 defect candidates resolved | **open in a PR** — `record-signal`'s `value` is now bounded to the domain's own `MAX_TEXT` (500) and refused when it contains control characters or line breaks. Reviewed regeneration moved exactly five observations, all `hostile-input.record-signal.*` |
 | Neutral helpers moved out of Intelligence files | **no** — assessed domain-neutral, now behaviour-pinned by LA0, recommended as its own PR |
 | `app.intelligence` decision taken | **no** — Option B recommended, cost now measured (one schema-publication change; zero external action consumers). Human decision |
 | Definition-registry decision taken | **no** — Option C recommended, dependants now measured. Human decision |
@@ -374,11 +396,13 @@ blockers are now small, measured and mostly decisions rather than unknowns.
 
 1. **LA0 review and merge** — it is open and unmerged; the extraction cannot be
    proved without it.
-2. **Resolve the two defect candidates** — bound `record-signal`'s `value` and
-   refuse control characters, matching this repository's own conventions. Small,
-   independently correct, and it regenerates the baseline *deliberately* with a
-   reviewable diff. Doing it after the extraction would mean changing behaviour
-   in the same PR that claims to change none.
+2. **Resolve the two defect candidates** — done in an open PR. `value` is
+   bounded to this domain's own `MAX_TEXT` (500) and refused when it carries a
+   control character or a line break. The reviewed regeneration moved **exactly
+   five observations**, all `hostile-input.record-signal.*`, and one source
+   digest; nothing in scoring, routing, assignment, lifecycle, schema, helpers
+   or scale moved at all. Doing it after the extraction would have meant
+   changing behaviour in the same PR that claims to change none.
 3. **Neutral-helper move** — mechanical, zero behaviour change, now provable:
    LA0 fails if a single fingerprint or timeout outcome moves.
 4. **Architecture ADR(s)** — `app.intelligence` and the definition registry,

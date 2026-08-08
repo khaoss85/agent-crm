@@ -8,7 +8,7 @@
     "pre_extraction_evidence": 5
   },
   "domain": "lead-intelligence",
-  "fingerprint": "a993b189f657966763e09a6e168dfb1180483415dd3bb9dee78cb1021d37e050",
+  "fingerprint": "f80592be883eac6d634c9020ffcc91bcfc06c902c09f8b05979195a1e831a668",
   "legacyCharacterizationContract": 1,
   "limitations": [
     {
@@ -623,13 +623,9 @@
       "id": "hostile-input.record-signal.carriage-return",
       "note": null,
       "observed": {
-        "accepted": true,
-        "status": null,
-        "stored": {
-          "byteIdentical": true,
-          "length": 3,
-          "present": true
-        }
+        "accepted": false,
+        "status": 400,
+        "stored": null
       },
       "surface": "storage"
     },
@@ -655,13 +651,9 @@
       "id": "hostile-input.record-signal.control",
       "note": "control characters are stored verbatim. partner-scorecard — the teaching example this repository points authors at — refuses them with CONTROL_RE. record-signal has no such check. Recommend the same refusal before the extraction.",
       "observed": {
-        "accepted": true,
-        "status": null,
-        "stored": {
-          "byteIdentical": true,
-          "length": 3,
-          "present": true
-        }
+        "accepted": false,
+        "status": 400,
+        "stored": null
       },
       "surface": "storage"
     },
@@ -687,13 +679,9 @@
       "id": "hostile-input.record-signal.newline",
       "note": null,
       "observed": {
-        "accepted": true,
-        "status": null,
-        "stored": {
-          "byteIdentical": true,
-          "length": 3,
-          "present": true
-        }
+        "accepted": false,
+        "status": 400,
+        "stored": null
       },
       "surface": "storage"
     },
@@ -703,13 +691,9 @@
       "id": "hostile-input.record-signal.oversized",
       "note": "a 5,000-character value is accepted and stored unbounded. Every other text surface here is bounded — MAX_TEXT is 2,000 for a Solution Plan and MAX_REASON is 300 in partner-scorecard — and `value` on behavioral-signal declares no length at all. Any caller can write it. Recommend bounding it before the extraction, not during.",
       "observed": {
-        "accepted": true,
-        "status": null,
-        "stored": {
-          "byteIdentical": true,
-          "length": 5000,
-          "present": true
-        }
+        "accepted": false,
+        "status": 400,
+        "stored": null
       },
       "surface": "storage"
     },
@@ -799,13 +783,9 @@
       "id": "hostile-input.record-signal.unicode-separator",
       "note": null,
       "observed": {
-        "accepted": true,
-        "status": null,
-        "stored": {
-          "byteIdentical": true,
-          "length": 3,
-          "present": true
-        }
+        "accepted": false,
+        "status": 400,
+        "stored": null
       },
       "surface": "storage"
     },
@@ -2584,7 +2564,7 @@
     "examples/starters/b2b-lead-qualification/task.module.json": "581908e08a69cf2618ff3ea53f07468d6b5f4afe6ff561b95827cb993cb447ae",
     "packages/app/src/create-app.js": "f088f4d017dfe6b8f73641abd7e4670507c7f8613f9fc3d9a74648fc765898c6",
     "packages/core/src/action-runtime.js": "1f591f98f175034b038b4fa4cf23b014c4faeda0db93258b1765a62b1c118fde",
-    "packages/core/src/intelligence-actions.js": "5158041e44f57bd4821f322216f58f50031e6b1d52d3124aa74ca3693e43e464",
+    "packages/core/src/intelligence-actions.js": "ca1f87bc8f3dd3dd2c1e1777e1aca6deb8b67c8a228ea3a6ffed64a203882600",
     "packages/core/src/intelligence-registry.js": "054265240c559cfa7e6193ff0d9941563d2f02a63752ce35e24ea607491b09d5",
     "packages/sdk/src/index.js": "e2890b34f885c862f19f470273bf1f2bc14fa7477a623d0bd40cfb87a10ee3fa"
   }
