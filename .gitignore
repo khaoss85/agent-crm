@@ -9,3 +9,8 @@ coverage/
 .DS_Store
 *.log
 .tmp/
+
+# Staging left behind by an interrupted `crm package scaffold`. It holds no
+# lock and blocks nothing; the command reports it so a human can remove it.
+packages/.scaffold-*
+**/.scaffold-*

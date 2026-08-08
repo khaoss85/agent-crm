@@ -8,20 +8,20 @@ this file.
 > **Update this file in the same PR as every milestone merge.** A status file
 > that lags is worse than no status file.
 
-Generated: **2026-08-07**.
+Generated: **2026-08-08**.
 
 ## Snapshot
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **M14b2 — Delivery change, deliverables and acceptance**, and the Agent Tool Surface / Legacy Alignment strategy docs, on top of **AX2 — Machine-readable Solution Plans** on top of **M14b1 — Delivery economics** on top of **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
-| Main SHA at generation | `de448d4` (merge of PR #26; PR #25 merged as `0d2a11d`) |
-| Tests on clean main | **421 passing, 0 failing** (`npm run verify` from a fresh clone of `0d2a11d`) |
+| Latest merged milestone | **DX4 — Package Conformance Kit** (`crm package test`), on top of **M15 — Service operations** and its package-scoped Service Admin, on top of **M14b2 — Delivery change, deliverables and acceptance** and the Agent Tool Surface / Legacy Alignment strategy docs, on top of **AX2 — Machine-readable Solution Plans**, **M14b1 — Delivery economics**, **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
+| Main SHA at generation | `5da5205` (merge of PR #28 / DX4; PR #27 / M15 merged as `b9526e0`) |
+| Tests on clean main | **487 passing, 0 failing** (`npm run verify` from a fresh clone of `5da5205`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, plus 22 further checks for the M14b2 section as its pre-merge gate, both run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **M15 — Service operations** (`claude/milestone-15-service-operations`): 466 passing on the branch, including the package-scoped Service Admin section and its 24-check real-Chromium run. Open and unmerged. |
+| Open PRs | **DX3 — Package Scaffold** (`claude/dx3-package-scaffold`): 508 passing on the branch. `crm package scaffold` writes a two-file, empty-but-conforming package; dry-run by default. Open and unmerged. |
 
 ## Completed functional path
 
@@ -79,20 +79,23 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 | M14a | Delivery execution: eight human-driven transitions, block evidence, a hierarchy gate | ADR-019 addendum 1 |
 | AX1 | Deterministic application inspection: `crm app inspect`, source-only and read-only | — |
 | M14b1 | Delivery economics: cost policy, append-only time and expense evidence, versioned plan, reproducible contribution estimate | ADR-014, ADR-016 |
+| AX2 | Machine-readable Solution Plans: `crm solution inspect\|validate\|check`, bound to an `app inspect` report | ADR-020 |
+| M14b2 | Delivery change, deliverables and acceptance | ADR-014, ADR-019 |
+| M15 | Service operations: coverage, entitlements, a five-state support case, elapsed-time SLA evidence, escalation | ADR-018 |
+| DX4 | Package Conformance Kit: `crm package test`, generic, composed and booted, never special-cased by name | ADR-018 |
 
 ## Next planned development
 
-1. **M15 — Service operations** — implemented on an open PR, unmerged and
-   awaiting the adversarial review: pending Service Obligations activated by a
-   human into an operational Service Coverage with immutable Entitlements, a
-   support case over an explicit transition table, elapsed-time SLA evidence and
-   manually recorded escalation (`docs/SERVICE_OPERATIONS.md`). **No legacy
-   domain extraction has begun**, and the Accordo public-brand and GTM work is a
-   separate track that is neither merged nor approved here.
-2. Then the **package-system learnings review**, DX package scaffold and
-   conformance tooling, and the first
-   legacy extraction (one of Intelligence / Commercial / Signature), then M16
-   Analytics Studio — `EXECUTION_ROADMAP.md`.
+1. **DX3 — Package Scaffold** — implemented on an open PR, unmerged: a
+   deterministic `crm package scaffold <name>` whose two-file output passes
+   `crm package test` with no manual edit, dry-run by default, generating no
+   domain semantics and composing nothing (`docs/plans/dx3-package-scaffold.md`).
+   **No legacy domain extraction has begun**, and the Accordo public-brand and
+   GTM work is a separate track that is neither merged nor approved here.
+2. Then, in the order `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` recommends:
+   **DX1** (`crm doctor` deepening), the four measured **extraction-pilot
+   blockers** — none of which is itself an extraction — **DX2** (Skill mirror
+   sync), and last **M16 Analytics Studio** — `EXECUTION_ROADMAP.md`.
 
 Two parallel tracks run alongside and are not gated by domain progress: the
 **platform track** (domain package boundary, create-project CLI, PostgreSQL,

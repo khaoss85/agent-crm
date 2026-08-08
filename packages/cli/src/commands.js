@@ -6,6 +6,7 @@ import { validateManifestCommand, generateMigrationCommand, readManifestFile } f
 import { planModule, applyModulePlan } from './module-factory.js';
 import { validatePackageCommand, inspectPackageCommand } from './package-commands.js';
 import { packageTestCommand } from './package-test-command.js';
+import { packageScaffoldCommand } from './package-scaffold.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
 import { solutionCommand } from './solution-command.js';
 
@@ -22,7 +23,10 @@ export async function runCli(argv) {
   // "package test <dir>" additionally composes the package into a throwaway
   // copy of this project and boots it; it never touches the caller's own
   // application or database.
-  if (command === 'package' && ['validate', 'inspect', 'test'].includes(positional[0])) {
+  // "package scaffold <name>" is the only one of the four that can write, and
+  // only with an explicit --apply. It writes source and stops: no composition,
+  // no migration, no database.
+  if (command === 'package' && ['validate', 'inspect', 'test', 'scaffold'].includes(positional[0])) {
     command = `package:${positional[0]}`;
     positional = positional.slice(1);
   }
@@ -65,6 +69,22 @@ export async function runCli(argv) {
       mode: /** @type {'inspect'|'validate'|'check'} */ (command.slice('solution:'.length)),
       json: flags.json === true,
       rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+    });
+    process.exitCode = result.exitCode;
+    return;
+  }
+
+  if (command === 'package:scaffold') {
+    const result = packageScaffoldCommand({
+      name: positional[0],
+      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+      into: typeof flags.into === 'string' ? flags.into : undefined,
+      // An explicit --dry-run always wins over --apply, matching module:create.
+      // Both flags are passed through so the report can say which one won,
+      // rather than answering 0 with a plan and leaving the caller to guess.
+      apply: flags.apply === true,
+      dryRun: flags['dry-run'] === true,
+      json: flags.json === true,
     });
     process.exitCode = result.exitCode;
     return;
@@ -281,6 +301,7 @@ Usage:
   agent-crm module:create <name> [--apply] [--root path]
   agent-crm module:validate <manifest.json>
   agent-crm module:migration <manifest.json> [--dry-run] [--out file.sql] [--force]
+  agent-crm package:scaffold <package-name> [--into dir] [--apply|--dry-run] [--json] [--root dir]
   agent-crm package:validate <package-directory>
   agent-crm package:inspect <package-directory>
   agent-crm package:test <package-directory> [--json] [--root dir]
@@ -291,12 +312,29 @@ module:plan is always read-only. module:create with a manifest generates a compl
 runnable module (service, migration, registration, tests) and is a dry-run unless
 --apply is explicit; with a bare name it keeps the legacy template scaffold.
 Migration generation is a dry-run unless --out is provided; --force allows overwriting.
-"package validate", "package inspect" and "package test" are accepted aliases, and
-they answer three different questions:
+"package scaffold", "package validate", "package inspect" and "package test" are
+accepted aliases, and they answer four different questions:
 
+  scaffold  give me an empty package that already conforms
   validate  is this package declaration structurally valid?
   inspect   what does this package declare, own, offer and need?
   test      does it hold up when a real application composes it?
+
+scaffold takes a package NAME, not a directory, and is the only one that can write.
+Reach for it only after "app inspect" and a Solution Plan have shown that what you
+need is a new bounded domain rather than a module, an action or a policy.
+
+It is a plan unless --apply is explicit, and an explicit --dry-run beats --apply;
+because both answer exit 0, every report carries "modeReason" saying which flag won.
+It never overwrites, and it writes exactly two files: an empty-but-valid package
+definition and a README. It invents no record, action, policy, capability, provider,
+Admin section or MCP tool; it does not compose the package, run a migration, open a
+database, or install or publish anything.
+
+Its output passes validate, inspect and test with no manual edit — which proves
+framework conformance and nothing at all about a domain it does not yet model. It
+also cannot prove the identity is unique in your application: it checks the target
+directory only. Compose the package, then run "app inspect --json" for that.
 
 validate and inspect are read-only: they run the same domain-package validator the
 application runs at startup, write nothing, open no database and reach no network.
