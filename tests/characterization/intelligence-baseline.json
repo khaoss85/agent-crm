@@ -170,7 +170,7 @@
       "category": "architecture",
       "classification": "pre_extraction_evidence",
       "id": "architecture.app-intelligence-consumers",
-      "note": "Blocker 2 evidence: every file that reads the ambient field. Measured, not remembered.",
+      "note": "Blocker 2 evidence: every file that really reads the ambient field, in code rather than in prose. Scanner limits: LEXICAL_NOT_SYNTACTIC — comments and literals are stripped, but no AST is built; ALIASING_NOT_TRACKED — a consumer that copies the field to another name first is not followed; DYNAMIC_KEYS_NOT_RESOLVED — a computed property name built at runtime is not evaluated.",
       "observed": [
         "apps/server/src/http-server.js"
       ],
@@ -211,7 +211,7 @@
       "category": "architecture",
       "classification": "pre_extraction_evidence",
       "id": "architecture.definition-registry-slot",
-      "note": "Blocker 3 evidence: who depends on the fixed project-owned definition slot.",
+      "note": "Blocker 3 evidence: who depends on the fixed project-owned definition slot, in code.",
       "observed": [
         "packages/app/src/create-app.js",
         "packages/cli/src/app-inspect.js"
@@ -262,9 +262,8 @@
       "category": "architecture",
       "classification": "pre_extraction_evidence",
       "id": "architecture.intelligence-internal-importers",
-      "note": "Blocker 1 evidence: every file importing an Intelligence internal, which is what disproves \"no code reads Intelligence internals\".",
+      "note": "Blocker 1 evidence: every file with a real import statement naming an Intelligence internal.",
       "observed": [
-        "examples/starters/b2b-lead-qualification/install.mjs",
         "packages/app/src/create-app.js",
         "packages/core/src/intelligence-actions.js"
       ],

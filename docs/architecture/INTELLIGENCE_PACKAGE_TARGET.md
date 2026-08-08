@@ -1,8 +1,8 @@
 # The target shape of an extracted Lead Intelligence
 
-**Status: proposed target, nothing implemented.** This document draws the
-topology ADR-021 and ADR-022 describe, so the two decisions can be read against
-a picture instead of against each other. It authorizes no extraction and no
+**Status: accepted target, nothing implemented.** ADR-021 and ADR-022 are
+accepted; this document draws the topology they describe, so the two decisions
+can be read against a picture instead of against each other. It authorizes no extraction and no
 migration step. `docs/architecture/EXTRACTION_PREPARATION.md` holds the analysis
 and the measurements; this holds the shape they imply and the questions still
 open.
@@ -47,7 +47,7 @@ packages/intelligence/
   offers  intelligence@1                  ADR-021
   uses    policies       for scoring models and routing policies    ADR-022
           providers      for enrichment providers                   ADR-022
-          ?              for routing targets                        OPEN
+          declared config for routing targets (no mutation path)     ADR-022
   needs   no HTTP route contribution                                below
 ```
 
@@ -67,6 +67,8 @@ composition where the requirement does not resolve.
 | Do scoring models and routing policies? | no — versioned fingerprinted `policies`, the shape Commercial already ships | ADR-022; ADR-015; ADR-016 |
 | Does it need to contribute an HTTP route? | **no** | below |
 | Does a generic definition-registry seam have to exist first? | no — two runtime dependants, three of four kinds already expressible | ADR-022; `architecture.definition-registry-slot` |
+| Where do routing targets live? | declared configuration of the routing capability — no runtime mutation path exists | ADR-022, from the runtime inventory |
+| What replaces AX1's fixed slot? | ordinary package discovery | below |
 | Are the neutral helpers still in the way? | no — moved to `definition-fingerprint.js` and `timeout.js` | `EXTRACTION_PREPARATION.md` Blocker 1 |
 
 ## The HTTP route seam: not a precondition here
@@ -93,28 +95,83 @@ that would have to go somewhere. That is a reason to design the seam when one of
 those is extracted, with two real cases in hand — not now, and not for this
 domain.
 
+## AX1 and `/api/schema`: what replaces the special cases
+
+Both ADRs are accepted, so the two mechanisms they lean on need a stated target.
+
+### The fixed AX1 slot goes away
+
+`packages/cli/src/app-inspect.js` holds a table of fixed composition slots, one
+of which is `intelligence` at the hard-coded path
+`packages/intelligence/generated/index.js`. It exists because Intelligence
+predates package discovery.
+
+Once Intelligence is a package, nothing about it needs a named slot. AX1 already
+discovers packages, their version, `requires`/`provides`, resources, actions,
+providers, policies and record revisions — that is how Contract Activation and
+Delivery are reported today, with no entry in that table. The extraction removes
+the `intelligence` row and the domain appears through ordinary discovery,
+including the `intelligence@1` edge from ADR-021.
+
+This is a **consequence** of the two decisions, not a third decision. Nothing in
+ADR-021 or ADR-022 changes AX1's contract; what changes is that one domain stops
+needing an exception to it.
+
+### `/api/schema` stays consumer-visible, and there is a real gap
+
+Today `/api/schema` publishes three legacy blocks at the top level —
+`intelligence`, `commercial`, `signature` — each from an ambient field's
+`metadata()`. Packages contribute through a generic path already:
+`app.domains.metadata()`, published under a `domains` key.
+
+So a mechanism exists, and it is nested. An extracted package's metadata is
+reachable at `domains.intelligence`, not at `intelligence`. That is a change in
+shape for anything reading the top-level key.
+
+What LA0 says about this is precise, and it is the reason the migration is
+tractable:
+
+| Observation | Classification | Meaning |
+|---|---|---|
+| `architecture.definition-kinds-published` | **contractual** | the four kinds and their published contents are asserted and must not move |
+| `architecture.schema-intelligence-block-present` | `pre_extraction_evidence` | the block's *location* is recorded, not asserted |
+
+The harness already drew the line where it belongs: **what is published is
+contract; where its ownership metadata sits is not.** An extraction may move the
+block under `domains` and must not change a single published definition.
+
+**The gap, stated rather than papered over:** there is no way for a package to
+contribute a **top-level** schema key, only a nested one. For Lead Intelligence
+that is acceptable, because LA0 classifies the location as evidence rather than
+contract. It would not be acceptable for a package that needed to preserve a
+top-level key exactly, and no such package exists. This is therefore recorded as
+a **known limitation of the package schema-contribution surface**, not designed
+around now: two real consumers, then a seam.
+
+`GENERIC_SCHEMA_CONTRIBUTION_IS_NESTED_ONLY` — a package publishes metadata
+under `domains.<name>`; the three top-level legacy blocks are pre-package
+special cases and are not a contract a package can join.
+
 ## What is still open
 
-**Routing targets have no home.** Three of the four definition kinds map onto
-contracts that exist. Routing targets carry no version, no fingerprint and no
-handler: they are a declared list of who can receive work, with capacity,
-priority, countries, languages and skills. They look like project configuration.
-ADR-022 declines to invent a definition kind for them and says so; the honest
-outcome may be that they stay project configuration, which is a smaller decision
-than the seam that would otherwise be built to hold them. It is unresolved
-either way.
+**Routing targets: decided.** They were the open question in the proposed
+version. The runtime settles it — no runtime mutation path, no table, no module,
+no CRUD, and `capacity` is a declared ceiling whose mutable half (`currentLoad`)
+is computed from Lead records at decision time. They are static source-defined
+configuration, so ADR-022 keeps them as declared configuration of the routing
+capability rather than inventing a definition kind or a managed resource.
+Operationally mutable targets would be the managed-resource branch; that is a
+different capability with its own evidence, not a reinterpretation of this one.
 
-**AX1's fixed `intelligence` slot.** `packages/cli/src/app-inspect.js` treats
-`intelligence` as one of a fixed set of composition slots. Whatever replaces the
-project-owned registry file has to answer what AX1 reports instead. This follows
-from the decisions above rather than driving them, and nothing in ADR-021 or
-ADR-022 changes AX1.
+**The nested-only schema contribution**, recorded above as
+`GENERIC_SCHEMA_CONTRIBUTION_IS_NESTED_ONLY`. Acceptable for this domain because
+LA0 classifies the location as evidence; a limitation of the surface all the
+same.
 
-**The two contract decisions themselves.** ADR-021 and ADR-022 are marked
-**proposed**. Both are contract decisions, and both belong to a human. This
-document exists so that the decision is taken deliberately rather than settled
-by whoever writes the extraction PR — which is exactly how an ambient field
-became a four-milestone dependency in the first place.
+**Whether the migration is scheduled.** Both ADRs are accepted as contracts and
+neither is implemented. Accepting the contract is what stops the decision being
+settled by whoever writes the extraction PR — which is exactly how an ambient
+field became a four-milestone dependency in the first place.
 
 ## What this document is not
 
