@@ -5,9 +5,10 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { projectDoctorCommand, PROJECT_DOCTOR_CONTRACT } from '../packages/cli/src/project-doctor-command.js';
+import { COMPOSITION_TIMEOUT_MS, projectDoctorCommand, PROJECT_DOCTOR_CONTRACT } from '../packages/cli/src/project-doctor-command.js';
 import {
-  AUTHORITIES, STATUSES, discoverPackages, docsChecks, hygieneChecks, moduleChecks, skillChecks,
+  AUTHORITIES, STATUSES, declaredPlans, discoverCandidatePackages, docsChecks, hygieneChecks,
+  moduleChecks, prose, resolveComposedPackages, skillChecks,
 } from '../packages/cli/src/project-doctor-checks.js';
 import { moduleStateFingerprint } from '../packages/core/src/module-evolution.js';
 
@@ -81,12 +82,16 @@ test('a healthy project reports every category and exits 0', async (t) => {
 
 test('a warning is not a failure', async (t) => {
   const root = project(t);
+  // An uncomposed package with a boundary violation: a real finding about
+  // something the application does not run. A doctor that failed the build for
+  // that — or for a stale historical example, or a Skill mirror DX2 owns — is a
+  // doctor people stop running.
+  writeFileSync(join(root, 'examples/custom-packages/partner-scorecard/src/sneaky.js'),
+    "import { e } from '../../../../packages/core/src/errors.js';\nexport { e };\n");
+
   const { exitCode, report } = await run(root);
-  // This repository really does carry known warnings: two Solution Plans are
-  // stale against the current composition, and six skills exist in one mirror
-  // only. Both are documented gaps somebody else owns. A doctor that failed the
-  // build for them would be a doctor people stop running.
-  assert.ok(report.counts.warning > 0, 'the fixture should still carry its known warnings');
+  assert.ok(report.counts.warning > 0);
+  assert.equal(report.counts.failed, 0);
   assert.equal(report.status, 'warning');
   assert.equal(exitCode, 0, 'warnings must never fail the run');
 });
@@ -171,32 +176,100 @@ generatedDomains.push(duplicateService());
   assert.equal(composed.authority, 'app-inspect', 'the doctor must not re-derive a collision it did not detect');
 });
 
-test('a package that reaches into private kernel source is a failure', async (t) => {
+test('a boundary violation in a COMPOSED package fails; in a candidate it only warns', async (t) => {
   const root = project(t);
-  writeFileSync(join(root, 'packages/service/src/sneaky.js'),
+  // `contracts` offers a capability and requires none, so it composes alone.
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), `// @ts-check
+import { createContractsDomain } from '../../contracts/src/index.js';
+export const generatedDomains = [createContractsDomain()];
+`);
+  writeFileSync(join(root, 'packages/contracts/src/sneaky.js'),
     "import { something } from '../../core/src/errors.js';\nexport { something };\n");
 
-  const { exitCode, report } = await run(root);
-  assert.equal(exitCode, 1);
-  const boundary = byId(report, 'packages.source-boundary');
-  assert.equal(boundary.status, 'failed');
-  assert.equal(boundary.authority, 'authoring-rule');
-  assert.deepEqual(boundary.evidence.violations, ['packages/service/src/sneaky.js']);
+  const composed = await run(root);
+  assert.equal(composed.exitCode, 1);
+  const graded = byId(composed.report, 'packages.source-boundary');
+  assert.equal(graded.status, 'failed');
+  assert.equal(graded.authority, 'authoring-rule');
+  assert.deepEqual(graded.evidence.violations, ['packages/contracts/src/sneaky.js']);
+  assert.deepEqual(graded.evidence.scanned, ['packages/contracts']);
+
+  // The same violation in a package the application does not compose is
+  // advisory: it is a real finding, and it is not a fact about what is running.
+  rmSync(join(root, 'packages/contracts/src/sneaky.js'));
+  writeFileSync(join(root, 'examples/custom-packages/partner-scorecard/src/sneaky.js'),
+    "import { something } from '../../../../packages/core/src/errors.js';\nexport { something };\n");
+  const candidate = await run(root);
+  assert.equal(candidate.exitCode, 0, 'an uncomposed package must not fail the run');
+  const advised = byId(candidate.report, 'packages.candidate-source-boundary');
+  assert.equal(advised.status, 'warning');
+  assert.deepEqual(advised.evidence.violations, ['examples/custom-packages/partner-scorecard/src/sneaky.js']);
 });
 
-test('kernel directories are not mistaken for domain packages', async (t) => {
+test('package location comes from AX1 and the composition file, never from parsing package source', (t) => {
   const root = project(t);
-  const discovered = discoverPackages(root).map((entry) => entry.path);
-  // `packages/app`, `packages/sdk`, `packages/mcp`, `packages/providers` and
-  // `packages/workflows` all have a src/index.js and all import core/src,
-  // because they ARE the core. An earlier draft swept them in and reported
-  // eight boundary violations in a repository that has none.
-  for (const kernel of ['packages/app', 'packages/sdk', 'packages/mcp', 'packages/providers', 'packages/workflows']) {
-    assert.ok(!discovered.includes(kernel), `${kernel} is kernel code, not a domain package`);
-  }
-  assert.ok(discovered.includes('packages/service'));
-  assert.ok(discovered.includes('examples/custom-packages/partner-scorecard'));
-  assert.equal(byId((await run(root)).report, 'packages.source-boundary').status, 'passed');
+  const write = (name, source) => {
+    mkdirSync(join(root, 'packages', name, 'src'), { recursive: true });
+    writeFileSync(join(root, 'packages', name, 'src/index.js'), source);
+  };
+  // Two directories that only *mention* definePackage, and two real packages
+  // that never spell it where a substring search would find it.
+  write('zz-comment', '// a note about definePackage( and nothing else\nexport const x = 1;\n');
+  write('zz-aliased', "import { definePackage as dp } from '../../core/index.js';\nexport const make = () => dp({});\n");
+  write('zz-factory', "import { make } from './factory.js';\nexport const create = make;\n");
+  writeFileSync(join(root, 'packages/zz-factory/src/factory.js'),
+    "import { definePackage } from '../../core/index.js';\nexport const make = () => definePackage({});\n");
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), `
+import { a } from '../../zz-comment/src/index.js';
+import { make } from '../../zz-aliased/src/index.js';
+import { create } from '../../zz-factory/src/index.js';
+export const generatedDomains = [];
+`);
+
+  // AX1 is what says which packages exist. A directory the composition file
+  // imports but AX1 never reported is not graded, and an aliased or
+  // factory-built package is located like any other — because location does not
+  // depend on reading the package at all.
+  const both = resolveComposedPackages({ rootDir: root, composed: ['zz-aliased', 'zz-factory'] });
+  assert.deepEqual(both.resolved.map((entry) => entry.path), ['packages/zz-aliased', 'packages/zz-factory']);
+  assert.deepEqual(both.unresolved, []);
+
+  const none = resolveComposedPackages({ rootDir: root, composed: [] });
+  assert.deepEqual(none.resolved, [], 'a directory AX1 never reported must not be graded');
+
+  // A composed package whose source cannot be located is named, not dropped.
+  const missing = resolveComposedPackages({ rootDir: root, composed: ['somewhere-else'] });
+  assert.deepEqual(missing.unresolved, ['somewhere-else']);
+});
+
+test('an example import inside the composition file\'s own comment is not a composed package', (t) => {
+  const root = project(t);
+  // This repository's composition file really does carry
+  // `import { createContractsDomain } from '../../contracts/src/index.js'`
+  // inside a doc comment. Reading it as a declaration graded a package the
+  // project does not compose — the same "a comment is not a declaration"
+  // defect, one layer in.
+  assert.match(readFileSync(join(root, 'packages/domains/generated/index.js'), 'utf8'), /Example:/);
+  const resolved = resolveComposedPackages({ rootDir: root, composed: [] });
+  assert.deepEqual(resolved.resolved, []);
+
+  const report = { packages: [] };
+  assert.deepEqual(resolveComposedPackages({ rootDir: root, composed: report.packages.map((p) => p.name) }).resolved, []);
+});
+
+test('a project that composes nothing says so rather than grading directories', async (t) => {
+  const root = project(t);
+  const { exitCode, report } = await run(root);
+  assert.equal(exitCode, 0);
+  const boundary = byId(report, 'packages.source-boundary');
+  assert.equal(boundary.status, 'not_applicable');
+  assert.equal(boundary.reason, 'NO_PACKAGES_COMPOSED');
+  // Kernel directories are never classified: telling kernel code from an
+  // unreferenced domain package would mean executing it.
+  assert.deepEqual(report.project.packagesComposed, []);
+  assert.deepEqual(report.project.candidatePackages, ['examples/custom-packages/partner-scorecard']);
+  assert.deepEqual(discoverCandidatePackages(root).map((entry) => entry.path),
+    ['examples/custom-packages/partner-scorecard']);
 });
 
 test('a hand-edited module state file is a failure, and module-evolution is the authority', (t) => {
@@ -260,21 +333,65 @@ test('a module with no state file is not a failure', (t) => {
   assert.equal(checks.find((entry) => entry.id === 'modules.migration-history').status, 'not_applicable');
 });
 
-test('a stale Solution Plan is a warning and a malformed one is a failure', async (t) => {
+test('a malformed plan always fails; staleness is graded only when the project declares the plan', async (t) => {
   const root = project(t);
   writeFileSync(join(root, 'examples/solution-plans/broken.plan.json'), '{ this is not json\n');
 
   const { exitCode, report } = await run(root);
   const rows = report.checks.filter((entry) => entry.category === 'plans');
   const broken = rows.find((entry) => entry.subject === 'examples/solution-plans/broken.plan.json');
+  // Broken source is broken source; nobody has to declare that.
   assert.equal(broken.status, 'failed');
   assert.equal(broken.authority, 'solution-plan');
   assert.match(broken.remediation, /solution validate/);
   assert.equal(exitCode, 1);
 
-  // The stale ones stay warnings: a plan written against a composition that has
-  // since moved is information, not a broken project.
-  assert.ok(rows.some((entry) => entry.status === 'warning'));
+  // Two checked-in plans are historical design examples, written against the
+  // compositions of M14b2 and M15. They are documentation of what a plan looks
+  // like, not claims about the application today, and warning about them on
+  // every run is the fatigue that teaches a reader to skim past warnings.
+  const stale = rows.filter((entry) => entry.evidence?.problems?.includes('PLAN_STALE'));
+  assert.ok(stale.length >= 2);
+  for (const entry of stale) {
+    assert.equal(entry.status, 'not_applicable');
+    assert.equal(entry.evidence.declaration, 'undeclared');
+    // Nothing is hidden: the evidence is still there to read.
+    assert.ok(entry.evidence.problems.includes('PLAN_STALE'));
+  }
+});
+
+test('a declared plan is graded, and a required one fails', async (t) => {
+  const root = project(t);
+  const manifest = join(root, 'package.json');
+  const stalePlan = 'examples/solution-plans/govern-delivery-change.plan.json';
+  const declare = (declaration) => {
+    const parsed = JSON.parse(readFileSync(manifest, 'utf8'));
+    parsed.agentCrm = { solutionPlans: declaration };
+    writeFileSync(manifest, `${JSON.stringify(parsed, null, 2)}\n`);
+  };
+
+  declare({ current: [stalePlan] });
+  const current = await run(root);
+  const asCurrent = current.report.checks.find((entry) => entry.subject === stalePlan);
+  assert.equal(asCurrent.status, 'warning');
+  assert.equal(asCurrent.evidence.declaration, 'current');
+  assert.equal(current.exitCode, 0, 'a declared-current plan going stale is information, not a broken build');
+
+  declare({ required: [stalePlan] });
+  const required = await run(root);
+  const asRequired = required.report.checks.find((entry) => entry.subject === stalePlan);
+  assert.equal(asRequired.status, 'failed');
+  assert.equal(asRequired.evidence.declaration, 'required');
+  assert.equal(required.exitCode, 1, 'a project may declare a plan it insists still binds');
+});
+
+test('the plan declaration is read from package.json and defaults to nothing', (t) => {
+  const root = project(t);
+  const empty = declaredPlans(root);
+  assert.equal(empty.required.size, 0);
+  writeFileSync(join(root, 'package.json'), '{ not json\n');
+  const broken = declaredPlans(root);
+  assert.equal(broken.current.size, 0, 'an unreadable manifest declares nothing rather than throwing');
 });
 
 test('a project with no Solution Plans is not applicable, never a failure', async (t) => {
@@ -333,17 +450,84 @@ test('a broken repository-relative documentation link is a failure; a web URL is
   assert.deepEqual(links.evidence.broken, [{ document: 'docs/BROKEN.md', link: './nowhere-at-all.md' }]);
 });
 
+test('a composition that never returns costs seconds, not a minute', async (t) => {
+  const root = project(t);
+  writeFileSync(join(root, 'packages/domains/generated/index.js'),
+    'setInterval(() => {}, 1000);\nawait new Promise(() => {});\nexport const generatedDomains = [];\n');
+
+  const started = process.hrtime.bigint();
+  const { exitCode, report } = await run(root);
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+
+  assert.equal(exitCode, 1);
+  assert.equal(report.project.composition, 'unreadable');
+  // AX1's own bound is 60 s, which is right for `app inspect` and wrong for a
+  // command whose whole proposition is that it costs ~150 ms. Measured at 60.0 s
+  // before this bound existed.
+  assert.ok(elapsedMs < 30_000, `waited ${Math.round(elapsedMs / 1000)}s`);
+  assert.ok(elapsedMs >= COMPOSITION_TIMEOUT_MS - 2_000, 'it must actually wait its own bound');
+  assert.match(byId(report, 'composition.valid').reason, /never returns|could not be read within/);
+});
+
+test('a link inside a code fence or inline code is documentation, not a link', (t) => {
+  const root = project(t);
+  writeFileSync(join(root, 'docs/FENCES.md'), [
+    '# Fences',
+    '',
+    'Broken for real: [gone](./definitely-gone.md)',
+    'Fine: [ok](./PACKAGE_AUTHORING.md)',
+    '',
+    '```markdown',
+    '[example](./this-is-syntax-not-a-link.md)',
+    '```',
+    '',
+    'Inline: `[another](./also-syntax.md)`',
+  ].join('\n'));
+
+  const links = docsChecks({ rootDir: root, docs: [join(root, 'docs/FENCES.md')] })[0];
+  // The guides in this repository are full of Markdown examples inside fences.
+  // Reporting them taught a reader the check does not understand Markdown.
+  assert.deepEqual(links.evidence.broken.map((entry) => entry.link), ['./definitely-gone.md']);
+  assert.deepEqual(links.evidence.escapingTheProject, []);
+
+  // And blanking preserves line structure, so nothing else shifts.
+  const source = 'a\n```\n[x](./y.md)\n```\nb\n';
+  assert.equal(prose(source).split('\n').length, source.split('\n').length);
+});
+
+test('a documentation link that leaves the project is its own finding', (t) => {
+  const root = project(t);
+  writeFileSync(join(root, 'docs/ESCAPE.md'), '# Escape\n\n[out](../../../../etc/passwd)\n');
+  const links = docsChecks({ rootDir: root, docs: [join(root, 'docs/ESCAPE.md')] })[0];
+  // It resolves on this disk and is broken everywhere else — on the forge, in a
+  // published copy, in a clone laid out differently. Not a missing file.
+  assert.equal(links.status, 'failed');
+  assert.deepEqual(links.evidence.broken, []);
+  assert.deepEqual(links.evidence.escapingTheProject, [{ document: 'docs/ESCAPE.md', link: '../../../../etc/passwd' }]);
+});
+
 test('a tracked .env is a failure and .env.example is not', (t) => {
   const root = project(t);
   const tracked = (paths) => hygieneChecks({ rootDir: root, run: () => paths.join('\0') })[0];
 
-  const clean = tracked(['README.md', '.env.example', 'packages/core/index.js']);
+  // `.env.example`, `.env.template`, `.env.sample` and `.env.dist` document
+  // which variables exist. Flagging them taught a reader that the check does not
+  // know the difference, which is how a hygiene check stops being read.
+  const clean = tracked([
+    'README.md', '.env.example', '.env.template', '.env.sample', 'config/.env.dist',
+    'docs/env.md', 'packages/core/index.js',
+  ]);
   assert.equal(clean.status, 'passed', JSON.stringify(clean.evidence));
 
-  const dirty = tracked(['README.md', '.env', 'apps/.env.production', 'data/agent-crm.sqlite', 'debug.log', 'node_modules/x/index.js']);
+  const dirty = tracked([
+    'README.md', '.env', 'apps/.env.production', 'apps/server/.env.local',
+    'data/agent-crm.sqlite', 'data/app.db', 'x.sqlite3', 'debug.log', 'node_modules/x/index.js',
+  ]);
   assert.equal(dirty.status, 'failed');
-  assert.deepEqual(dirty.evidence.forbidden.map((entry) => entry.code).sort(),
-    ['TRACKED_DATABASE', 'TRACKED_DEPENDENCIES', 'TRACKED_ENV_FILE', 'TRACKED_ENV_FILE', 'TRACKED_LOG']);
+  assert.deepEqual(dirty.evidence.forbidden.map((entry) => entry.code).sort(), [
+    'TRACKED_DATABASE', 'TRACKED_DATABASE', 'TRACKED_DATABASE', 'TRACKED_DEPENDENCIES',
+    'TRACKED_ENV_FILE', 'TRACKED_ENV_FILE', 'TRACKED_ENV_FILE', 'TRACKED_LOG',
+  ]);
   // The path is named; the file is never opened.
   assert.match(dirty.remediation, /rotate/);
 });
@@ -371,7 +555,11 @@ test('the CLI exit codes are the contract', (t) => {
   const root = project(t);
   assert.equal(runCli(['project', 'doctor', '--root', root, '--json']).exitCode, 0);
 
-  writeFileSync(join(root, 'packages/service/src/sneaky.js'), "import x from '../../core/src/errors.js';\nexport default x;\n");
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), `// @ts-check
+import { createContractsDomain } from '../../contracts/src/index.js';
+export const generatedDomains = [createContractsDomain()];
+`);
+  writeFileSync(join(root, 'packages/contracts/src/sneaky.js'), "import x from '../../core/src/errors.js';\nexport default x;\n");
   const failed = runCli(['project', 'doctor', '--root', root, '--json']);
   assert.equal(failed.exitCode, 1);
   assert.equal(JSON.parse(failed.stdout).status, 'failed');
@@ -415,16 +603,17 @@ test('every limitation this command claims is stated in its own output', async (
   assert.deepEqual(codes, [
     'DATABASE_NOT_INSPECTED', 'DISCOVERY_IS_BY_CONVENTION', 'DOMAIN_CORRECTNESS_NOT_PROVEN',
     'GENERATED_SOURCE_DRIFT_LIMITED', 'NOT_A_SUBSTITUTE_FOR_VERIFY', 'NO_MUTATION',
-    'PACKAGE_CONFORMANCE_NOT_RUN', 'PRODUCTION_READINESS_NOT_ASSESSED', 'PROVIDER_HEALTH_UNKNOWN',
-    'SECRETS_NOT_INSPECTED',
+    'PACKAGE_CONFORMANCE_NOT_RUN', 'PLAN_CURRENCY_IS_DECLARED', 'PRODUCTION_READINESS_NOT_ASSESSED',
+    'PROVIDER_HEALTH_UNKNOWN', 'SECRETS_NOT_INSPECTED', 'UNCOMPOSED_PACKAGES_NOT_CLASSIFIED',
   ]);
 });
 
 test('problems is the compact view a context pack could carry', async (t) => {
   const root = project(t);
-  writeFileSync(join(root, 'packages/service/src/sneaky.js'), "import x from '../../core/src/errors.js';\nexport default x;\n");
+  writeFileSync(join(root, 'docs/BROKEN-LINK.md'), '# x\n\n[gone](./nowhere.md)\n');
   const { report } = await run(root);
 
+  assert.ok(report.counts.failed > 0);
   assert.equal(report.problems.length, report.counts.failed);
   for (const problem of report.problems) {
     assert.ok(problem.code && problem.authority && problem.remediation);

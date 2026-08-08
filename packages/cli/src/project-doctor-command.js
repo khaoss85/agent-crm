@@ -6,8 +6,9 @@ import { isAbsolute, resolve } from 'node:path';
 import { bindSolutionPlan, canonicalJson, inspectionFingerprint, parseSolutionPlan } from '../../core/index.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
 import {
-  check, compositionChecks, discoverDocs, discoverPackages, discoverPlans, docsChecks,
-  hygieneChecks, moduleChecks, packageChecks, planChecks, projectKind, skillChecks, sortChecks,
+  check, compositionChecks, declaredPlans, discoverCandidatePackages, discoverDocs, discoverPlans,
+  docsChecks, hygieneChecks, moduleChecks, packageChecks, planChecks, projectKind,
+  resolveComposedPackages, skillChecks, sortChecks,
 } from './project-doctor-checks.js';
 
 /**
@@ -58,6 +59,20 @@ export const PROJECT_DOCTOR_CONTRACT = 1;
 export const CATEGORIES = Object.freeze(['composition', 'packages', 'modules', 'plans', 'skills', 'docs', 'hygiene']);
 
 /**
+ * How long the one composition load may take before this command gives up.
+ *
+ * Deliberately **not** AX1's own 60 s. That bound is right for `app inspect`,
+ * where waiting a minute for a real answer beats no answer. It is wrong here:
+ * the entire proposition of this command is that it costs ~150 ms and you run
+ * it before touching anything, and a composition that hangs would have made it
+ * cost a silent minute. Measured before the fix: 60.0 s.
+ *
+ * Ten seconds is ~65x the observed load on this repository, so a genuinely
+ * large composition still answers, and a hang is reported as a hang.
+ */
+export const COMPOSITION_TIMEOUT_MS = 10_000;
+
+/**
  * What this command cannot prove, stated by code rather than left to a reader's
  * optimism. Each one is a real question somebody will assume was answered.
  */
@@ -69,7 +84,9 @@ const LIMITATIONS = Object.freeze([
   ['SECRETS_NOT_INSPECTED', 'no environment variable or file content is read for secrets. The hygiene check asks git which paths are tracked; it never opens them'],
   ['PRODUCTION_READINESS_NOT_ASSESSED', 'there is no auth, tenancy or RBAC in this framework, so no report from it can be a production-readiness statement'],
   ['PACKAGE_CONFORMANCE_NOT_RUN', 'packages are checked for the source-boundary rule only. Full conformance means composing and booting each package, which is `crm package test <path>` and is deliberately not run here'],
-  ['DISCOVERY_IS_BY_CONVENTION', 'packages, Solution Plans, skills and documentation are found in documented locations only. Something kept elsewhere is not seen, and its absence from this report is not a statement that it is fine'],
+  ['DISCOVERY_IS_BY_CONVENTION', 'Solution Plans, skills and documentation are found in documented locations only. Something kept elsewhere is not seen, and its absence from this report is not a statement that it is fine'],
+  ['UNCOMPOSED_PACKAGES_NOT_CLASSIFIED', 'the packages graded here are the ones the application actually composed, located through the composition file. A directory under packages/ that the composition does not reference is not classified at all: telling kernel code from an unreferenced domain package would mean executing it, and guessing produced a false failure once already. Customer packages under examples/custom-packages are advisory only'],
+  ['PLAN_CURRENCY_IS_DECLARED', 'a Solution Plan is graded against this composition only when package.json declares it under agentCrm.solutionPlans. An undeclared plan that no longer binds is reported with its evidence at not_applicable, because a checked-in historical example is documentation rather than a claim about the application today'],
   ['GENERATED_SOURCE_DRIFT_LIMITED', 'generated-source drift is reported only where a checked-in generator contract proves it — module state files and their recorded migration checksums. A hand-edited generated service is not detected by fuzzy comparison, because a fuzzy comparison that cries wolf is a check people learn to ignore'],
   ['NO_MUTATION', 'this command changes nothing. Every finding carries the existing command that would fix it, and there is no --fix'],
 ]);
@@ -106,23 +123,28 @@ export async function projectDoctorCommand({ rootDir, json = false, capture = fa
   let inspection = null;
   let inspectionFailure = null;
   try {
-    const result = await inspect({ rootDir: root, json: true, capture: true });
+    const result = await inspect({ rootDir: root, json: true, capture: true, timeoutMs: COMPOSITION_TIMEOUT_MS });
     inspection = result.report;
-    if (!inspection) inspectionFailure = 'the project composition could not be read';
+    if (!inspection) {
+      inspectionFailure = `the project composition could not be read within ${COMPOSITION_TIMEOUT_MS / 1000}s `
+        + '(it may import something that never returns) — run `crm app inspect --json`, which waits longer';
+    }
   } catch (error) {
     inspectionFailure = error instanceof Error ? error.message.split('\n')[0].slice(0, 200) : 'the composition could not be read';
   }
 
-  const composed = (inspection?.packages ?? []).map((entry) => entry.name).filter((name) => typeof name === 'string');
-  const packages = discoverPackages(root);
+  const composedNames = (inspection?.packages ?? []).map((entry) => entry.name).filter((name) => typeof name === 'string');
+  const { resolved: composed, unresolved } = resolveComposedPackages({ rootDir: root, composed: composedNames });
+  const candidates = discoverCandidatePackages(root);
   const plans = discoverPlans(root);
+  const declared = declaredPlans(root);
   const docs = discoverDocs(root);
 
   const checks = sortChecks([
     ...compositionChecks({ report: inspection, failure: inspectionFailure }),
-    ...packageChecks({ rootDir: root, packages, composed }),
+    ...packageChecks({ rootDir: root, composed, candidates, unresolved }),
     ...moduleChecks({ rootDir: root }),
-    ...planChecks({ rootDir: root, report: inspection, plans, parse: parseSolutionPlan, bind: bindSolutionPlan }),
+    ...planChecks({ rootDir: root, report: inspection, plans, declared, parse: parseSolutionPlan, bind: bindSolutionPlan }),
     ...skillChecks({ rootDir: root }),
     ...docsChecks({ rootDir: root, docs }),
     ...hygieneChecks({ rootDir: root }),
@@ -161,7 +183,8 @@ export async function projectDoctorCommand({ rootDir, json = false, capture = fa
       // exact misreading a doctor exists to prevent.
       composition: !inspection ? 'unreadable'
         : (inspection.problems ?? []).length === 0 ? 'valid' : 'invalid',
-      packagesDiscovered: packages.map((entry) => entry.path),
+      packagesComposed: composed.map((entry) => entry.path),
+      candidatePackages: candidates.map((entry) => entry.path),
       solutionPlansDiscovered: plans.map((entry) => entry.path),
       documentsScanned: docs.length,
     },

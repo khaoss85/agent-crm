@@ -2,9 +2,9 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { extname, join, posix as posixPath, relative, sep } from 'node:path';
+import { basename, dirname, extname, join, posix as posixPath, relative, resolve, sep } from 'node:path';
 import { readModuleState } from '../../core/src/module-evolution.js';
-import { PRIVATE_IMPORT_RE, packageSources } from './package-sources.js';
+import { PRIVATE_IMPORT_RE, importSpecifiers, packageSources } from './package-sources.js';
 import { repoRelative, safeMessage } from './safe-text.js';
 
 /**
@@ -129,125 +129,188 @@ export function compositionChecks({ report, failure }) {
 // packages — source-only. Importing a package is what `package test` is for.
 // ---------------------------------------------------------------------------
 
-/** Where a package may live by documented convention. */
-const PACKAGE_ROOTS = ['packages', 'examples/custom-packages'];
+/**
+ * The composition file is the project's declaration of what it runs. Reading it
+ * is not a guess: removing a line here removes the domain, which ADR-018 makes
+ * the whole security model.
+ */
+const COMPOSITION = 'packages/domains/generated/index.js';
+
+/** The documented root for customer-authored packages (`docs/PACKAGE_AUTHORING.md`). */
+const CUSTOM_PACKAGE_ROOT = 'examples/custom-packages';
 
 /**
- * A directory whose `src/index.js` calls `definePackage` is a domain package.
+ * Which packages this project actually composes, and where their source is.
  *
- * The discriminator matters more than it looks. An earlier draft took "has a
- * `src/index.js` under `packages/`" as the rule, which swept in `packages/app`,
- * `packages/sdk`, `packages/mcp`, `packages/providers` and `packages/workflows`
- * — kernel code, which imports `core/src` because it *is* the core — and the
- * boundary check then reported eight violations in a repository that has none.
- * A diagnostic whose first output is a false positive is a diagnostic people
- * turn off.
+ * **This used to be a substring search for `definePackage(`, and that was
+ * wrong in both directions.** A comment or a string containing the word counted
+ * as a package — so a non-package that imported `core/src` produced a *failure*
+ * attributed to a package that did not exist. And a package whose import was
+ * aliased (`definePackage as dp`) or whose definition lived behind a factory
+ * was missed entirely. A diagnostic that both invents findings and misses real
+ * ones is worse than no diagnostic.
  *
- * `definePackage` is the package contract's own entry point, so this is the
- * contract's discriminator rather than a naming convention invented here. It is
- * matched as text: reading a package must never mean importing it.
+ * The authoritative answer needs no parsing of package source at all:
+ *
+ * 1. **AX1** says which packages the application composed — it loaded them.
+ * 2. The **composition file's own import specifiers** say where each one's
+ *    source is. Those are read with `importSpecifiers`, the same function
+ *    `package validate` and `package test` use, so there is one implementation
+ *    of "what does this file import" rather than a new one here.
+ *
+ * A directory under `packages/` that the composition does not reference is not
+ * classified at all. There is no way to tell kernel code from an unreferenced
+ * domain package without executing it, and guessing is what produced the false
+ * failure above.
+ *
+ * @param {{rootDir: string, composed: string[]}} input
+ */
+export function resolveComposedPackages({ rootDir, composed }) {
+  const file = join(rootDir, ...COMPOSITION.split('/'));
+  if (!existsSync(file)) return { resolved: [], unresolved: [...composed].sort() };
+
+  let source;
+  try { source = readFileSync(file, 'utf8'); } catch { return { resolved: [], unresolved: [...composed].sort() }; }
+
+  /** @type {Map<string, {name: string, dir: string, path: string}>} */
+  const byDirectory = new Map();
+  for (const specifier of importSpecifiers(source)) {
+    if (!specifier.startsWith('.')) continue;
+    // `../../service/src/index.js` -> the package directory two levels up.
+    const resolved = resolve(dirname(file), specifier);
+    const marker = `${sep}src${sep}`;
+    const cut = resolved.lastIndexOf(marker);
+    const dir = cut === -1 ? dirname(resolved) : resolved.slice(0, cut);
+    if (!existsSync(dir)) continue;
+    byDirectory.set(dir, { name: basename(dir), dir, path: posix(relative(rootDir, dir)) });
+  }
+
+  // **AX1 gates the list.** The composition file is used only to *locate*
+  // source; which packages exist is what the application actually loaded.
+  //
+  // Without this intersection the check reads a specifier out of the file's own
+  // doc comment — this repository's composition file contains
+  // `import { createContractsDomain } from '../../contracts/src/index.js'` as a
+  // worked example — and grades a package the project does not compose. That is
+  // the same "a comment is not a declaration" defect this function was written
+  // to remove, one layer further in.
+  const composedNames = new Set(composed);
+  const resolved = [...byDirectory.values()]
+    .filter((entry) => composedNames.has(entry.name))
+    .sort((a, b) => (a.path < b.path ? -1 : 1));
+  const covered = new Set(resolved.map((entry) => entry.name));
+  // A composed package whose source the composition file does not obviously
+  // point at is named rather than silently dropped: the boundary rule simply
+  // was not applied to it, and a reader is entitled to know which.
+  return { resolved, unresolved: composed.filter((name) => !covered.has(name)).sort() };
+}
+
+/**
+ * Customer-authored packages that are on disk but not composed. Advisory only:
+ * they are discovered by a documented directory convention, so a finding here
+ * is a warning a reader can act on, never a failure that blocks anything.
  *
  * @param {string} rootDir
  */
-export function discoverPackages(rootDir) {
+export function discoverCandidatePackages(rootDir) {
   const found = [];
-  for (const root of PACKAGE_ROOTS) {
-    for (const name of directories(join(rootDir, root))) {
-      const dir = join(rootDir, root, name);
-      const entry = join(dir, 'src', 'index.js');
-      if (!existsSync(entry)) continue;
-      let source;
-      try { source = readFileSync(entry, 'utf8'); } catch { continue; }
-      if (!DEFINE_PACKAGE_RE.test(source)) continue;
-      found.push({ name, dir, path: posixPath.join(root, name) });
+  for (const name of directories(join(rootDir, CUSTOM_PACKAGE_ROOT))) {
+    const dir = join(rootDir, CUSTOM_PACKAGE_ROOT, name);
+    if (existsSync(join(dir, 'src', 'index.js'))) {
+      found.push({ name, dir, path: posixPath.join(CUSTOM_PACKAGE_ROOT, name) });
     }
   }
   return found.sort((a, b) => (a.path < b.path ? -1 : 1));
 }
 
-/** `definePackage(` however it was imported or aliased on the way in. */
-const DEFINE_PACKAGE_RE = /\bdefinePackage\s*\(/;
-
 /**
- * The one package rule that can be proved from text: no package reaches into
+ * The one package rule provable from text: no package reaches into
  * `packages/core/src`. The regex is the same one `package validate` and
  * `package test` use — imported, not copied, because ADR-018 addendum 4 records
  * what happened the last time this rule existed in two places.
  *
- * Everything else about a package needs it to be imported, which this command
- * does not do. That gap is `PACKAGE_CONFORMANCE_NOT_RUN`, and it names the
- * command that closes it.
+ * **Composed packages are graded; candidates are advised.** A composed package
+ * is one the application actually loaded, so a boundary violation there is a
+ * fact about the running system and fails. A candidate is a directory found by
+ * convention — a real finding is worth surfacing, but not worth failing a build
+ * over something the project may not even use.
  *
- * @param {{rootDir: string, packages: {name: string, dir: string, path: string}[], composed: string[]}} input
+ * Everything else about a package needs it to be imported, which this command
+ * does not do. That gap is `PACKAGE_CONFORMANCE_NOT_RUN`.
+ *
+ * @param {{rootDir: string, composed: {name: string, dir: string, path: string}[],
+ *   candidates: {name: string, dir: string, path: string}[], unresolved: string[]}} input
  */
-export function packageChecks({ rootDir, packages, composed }) {
-  if (packages.length === 0) {
-    return [check({
-      id: 'packages.source-boundary',
-      category: 'packages',
-      status: 'not_applicable',
-      authority: 'authoring-rule',
-      reason: 'NO_PACKAGES_DISCOVERED',
-    })];
-  }
-
-  const violations = [];
-  const unreadable = [];
-  for (const pkg of packages) {
-    let sources;
-    try {
-      sources = packageSources(pkg.dir);
-    } catch (error) {
-      unreadable.push({ package: pkg.path, detail: safeMessage(error, rootDir) });
-      continue;
-    }
-    for (const file of sources) {
-      let source;
-      try {
-        source = readFileSync(file, 'utf8');
-      } catch (error) {
+export function packageChecks({ rootDir, composed, candidates, unresolved }) {
+  const scan = (list) => {
+    const violations = [];
+    const unreadable = [];
+    for (const pkg of list) {
+      let sources;
+      try { sources = packageSources(pkg.dir); } catch (error) {
         unreadable.push({ package: pkg.path, detail: safeMessage(error, rootDir) });
         continue;
       }
-      if (PRIVATE_IMPORT_RE.test(source)) violations.push(repoRelative(rootDir, file));
+      for (const file of sources) {
+        let source;
+        try { source = readFileSync(file, 'utf8'); } catch (error) {
+          unreadable.push({ package: pkg.path, detail: safeMessage(error, rootDir) });
+          continue;
+        }
+        if (PRIVATE_IMPORT_RE.test(source)) violations.push(repoRelative(rootDir, file));
+      }
     }
-  }
+    return { violations: violations.sort(), unreadable: unreadable.sort((a, b) => (a.package < b.package ? -1 : 1)) };
+  };
 
-  const checks = [check({
+  const checks = [];
+
+  const graded = scan(composed);
+  checks.push(check({
     id: 'packages.source-boundary',
     category: 'packages',
-    status: violations.length === 0 ? 'passed' : 'failed',
+    status: composed.length === 0 ? 'not_applicable' : graded.violations.length === 0 ? 'passed' : 'failed',
     authority: 'authoring-rule',
-    evidence: { scanned: packages.length, violations: violations.sort() },
-    reason: violations.length === 0 ? null : `${violations.length} file(s) import a private kernel path`,
-    remediation: violations.length === 0 ? null
+    evidence: composed.length === 0 ? null
+      : { scanned: composed.map((entry) => entry.path), violations: graded.violations, unreadable: graded.unreadable },
+    reason: composed.length === 0 ? 'NO_PACKAGES_COMPOSED'
+      : graded.violations.length === 0 ? null : `${graded.violations.length} file(s) import a private kernel path`,
+    remediation: graded.violations.length === 0 ? null
       : 'Import from packages/core/index.js only; if what you need is not exported, raise it as a missing public export.',
-  })];
+  }));
 
-  if (unreadable.length > 0) {
-    checks.push(check({
-      id: 'packages.readable',
-      category: 'packages',
-      status: 'failed',
-      authority: 'authoring-rule',
-      evidence: { unreadable: unreadable.sort((a, b) => (a.package < b.package ? -1 : 1)) },
-      reason: 'a discovered package could not be read',
-      remediation: 'Check file permissions, or remove the directory if it is not a package.',
-    }));
-  }
+  const advised = scan(candidates);
+  checks.push(check({
+    id: 'packages.candidate-source-boundary',
+    category: 'packages',
+    status: candidates.length === 0 ? 'not_applicable' : advised.violations.length === 0 ? 'passed' : 'warning',
+    authority: 'authoring-rule',
+    evidence: candidates.length === 0 ? null
+      : { scanned: candidates.map((entry) => entry.path), violations: advised.violations, unreadable: advised.unreadable },
+    reason: candidates.length === 0 ? 'NO_CANDIDATE_PACKAGES_DISCOVERED'
+      : advised.violations.length === 0 ? null
+        : `${advised.violations.length} file(s) in an uncomposed package import a private kernel path`,
+    remediation: advised.violations.length === 0 ? null
+      : 'Advisory: this package is on disk but not composed. Fix it before composing, or remove it.',
+  }));
 
-  // Discovered but not composed is not a fault — `partner-scorecard` is exactly
-  // that on purpose — but a reader deserves to be told which is which rather
-  // than assuming everything on disk is running.
-  const uncomposed = packages.filter((pkg) => !composed.includes(pkg.name)).map((pkg) => pkg.path).sort();
   checks.push(check({
     id: 'packages.composed',
     category: 'packages',
-    status: 'passed',
+    status: unresolved.length === 0 ? 'passed' : 'warning',
     authority: 'app-inspect',
-    evidence: { composed: [...composed].sort(), discoveredButNotComposed: uncomposed },
-    reason: null,
-    remediation: null,
+    evidence: {
+      composed: composed.map((entry) => entry.path),
+      candidates: candidates.map((entry) => entry.path),
+      // Composed, but the composition file does not obviously point at its
+      // source, so the boundary rule was not applied to it. Named rather than
+      // silently dropped.
+      composedWithoutResolvedSource: unresolved,
+    },
+    reason: unresolved.length === 0 ? null
+      : `${unresolved.length} composed package(s) could not be located from the composition file, so the source boundary was not checked for them`,
+    remediation: unresolved.length === 0 ? null
+      : 'Run npm run crm -- package test <path> for those packages; this command locates source only through the composition file.',
   }));
   return checks;
 }
@@ -356,17 +419,58 @@ export function discoverPlans(rootDir) {
 }
 
 /**
- * Plan staleness. Every discovered plan is parsed, validated and bound to the
- * **one** AX1 report this run already loaded — not to a fresh inspection each,
- * which is what `crm solution check` does per invocation and what would make
- * the doctor slower than the thing it is meant to run before.
+ * Which plans the project says are current, from `package.json`.
  *
- * Plans are optional. A project with none is `not_applicable`, never a failure.
+ * ```jsonc
+ * "agentCrm": { "solutionPlans": { "current": ["docs/solution-plans/x.plan.json"],
+ *                                  "required": ["docs/solution-plans/y.plan.json"] } }
+ * ```
+ *
+ * Without this, every checked-in plan warns forever the moment the composition
+ * moves — and this repository proves why that is wrong: two of its three plans
+ * are *historical design examples*, written against compositions from M14b2 and
+ * M15. They are documentation of what a plan looks like, not claims about the
+ * application today. Warning about them on every run is precisely the fatigue
+ * that teaches a reader to skim past the warnings that matter.
+ *
+ * So staleness is reported for every plan, and only *graded* for a plan the
+ * project declared. Undeclared plans carry the same evidence at
+ * `not_applicable` — nothing is hidden, nothing cries wolf.
+ *
+ * @param {string} rootDir
+ */
+export function declaredPlans(rootDir) {
+  try {
+    const manifest = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'));
+    const declared = manifest?.agentCrm?.solutionPlans ?? {};
+    const list = (value) => (Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : []);
+    return { current: new Set(list(declared.current)), required: new Set(list(declared.required)) };
+  } catch {
+    return { current: new Set(), required: new Set() };
+  }
+}
+
+/**
+ * Plan health, bound to the **one** AX1 report this run already loaded — not to
+ * a fresh inspection each, which is what `crm solution check` does per
+ * invocation and what would make the doctor slower than the thing it runs
+ * before.
+ *
+ * Three gradings, and the difference is who said the plan still matters:
+ *
+ * - **malformed, or not a plan at all** — `failed` for every plan. Broken source
+ *   is broken source, and nobody has to declare that.
+ * - **declared `required`** — `failed` when it no longer binds.
+ * - **declared `current`** — `warning` when it no longer binds.
+ * - **undeclared** — `not_applicable`, carrying the same evidence.
+ *
+ * Plans are optional; a project with none is `not_applicable`, never a failure.
  *
  * @param {{rootDir: string, report: any, plans: {path: string, file: string}[],
+ *   declared: {current: Set<string>, required: Set<string>},
  *   parse: (source: string) => any, bind: (plan: any, report: any) => any}} input
  */
-export function planChecks({ rootDir, report, plans, parse, bind }) {
+export function planChecks({ rootDir, report, plans, declared, parse, bind }) {
   if (plans.length === 0) {
     return [check({
       id: 'plans.current',
@@ -380,16 +484,21 @@ export function planChecks({ rootDir, report, plans, parse, bind }) {
   const checks = [];
   for (const entry of plans) {
     const id = `plans.${entry.path.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
+    const declaration = declared.required.has(entry.path) ? 'required'
+      : declared.current.has(entry.path) ? 'current' : 'undeclared';
+
     let plan;
     try {
       plan = parse(readFileSync(entry.file, 'utf8'));
     } catch (error) {
+      // Always a failure: this is a file that claims to be a plan and is not.
       checks.push(check({
         id,
         category: 'plans',
         status: 'failed',
         authority: 'solution-plan',
         subject: entry.path,
+        evidence: { declaration },
         reason: safeMessage(error, rootDir),
         remediation: `npm run crm -- solution validate ${entry.path}`,
       }));
@@ -402,25 +511,32 @@ export function planChecks({ rootDir, report, plans, parse, bind }) {
         status: 'not_applicable',
         authority: 'solution-plan',
         subject: entry.path,
+        evidence: { declaration },
         reason: 'COMPOSITION_UNREADABLE',
         remediation: 'Fix the composition first; a plan can only be bound to an application that loads.',
       }));
       continue;
     }
+
     const bound = bind(plan, report);
-    const problems = bound.problems ?? [];
-    const stale = problems.some((problem) => problem.code === 'PLAN_STALE');
+    const codes = [...new Set((bound.problems ?? []).map((problem) => problem.code))].sort();
+    const binds = codes.length === 0;
+    const status = binds ? 'passed'
+      : declaration === 'required' ? 'failed'
+        : declaration === 'current' ? 'warning' : 'not_applicable';
+
     checks.push(check({
       id,
       category: 'plans',
-      status: problems.length === 0 ? 'passed' : stale ? 'warning' : 'failed',
+      status,
       authority: 'solution-plan',
       subject: entry.path,
-      evidence: { problems: problems.map((problem) => problem.code).sort() },
-      reason: problems.length === 0 ? null
-        : stale ? 'the plan was written against a composition that has since moved'
-          : `${problems.length} plan problem(s)`,
-      remediation: `npm run crm -- solution check ${entry.path} --json`,
+      evidence: { declaration, problems: codes },
+      reason: binds ? null
+        : declaration === 'undeclared'
+          ? 'PLAN_NOT_DECLARED_CURRENT — it no longer binds to this composition, which for an undeclared plan is a fact rather than a fault'
+          : 'the plan no longer binds to this composition',
+      remediation: binds ? null : `npm run crm -- solution check ${entry.path} --json`,
     }));
   }
   return checks;
@@ -508,8 +624,12 @@ export function skillChecks({ rootDir }) {
 // docs links — repository-relative only, bounded, no web and no anchors
 // ---------------------------------------------------------------------------
 
-/** Markdown link targets, ignoring images is unnecessary: a broken image is a broken link. */
+/** Markdown link targets. A broken image is a broken link, so images count. */
 const LINK_RE = /\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+
+/** Fenced blocks and inline spans: documentation *about* a link is not a link. */
+const FENCE_RE = /^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?^[ \t]*\1[^\n]*$/gm;
+const INLINE_CODE_RE = /(`+)(?:[^`]|(?!\1)`)*\1/g;
 
 /** Documented roots. A bounded scan, not a filesystem crawl. */
 const DOC_ROOTS = ['docs', '.claude/skills', '.agents/skills'];
@@ -540,7 +660,22 @@ export function discoverDocs(rootDir) {
 }
 
 /**
- * Repository-relative Markdown links that do not resolve.
+ * Prose only. Fenced blocks and inline code are blanked — preserving newlines so
+ * nothing else shifts — because a guide that *shows* a Markdown link inside a
+ * code fence is documenting syntax, not linking anywhere. Reporting those was a
+ * real false positive: `docs/PACKAGE_AUTHORING.md` and the Skills are full of
+ * examples exactly like that.
+ *
+ * @param {string} source
+ */
+export function prose(source) {
+  const blank = (match) => match.replace(/[^\n]/g, ' ');
+  return source.replace(FENCE_RE, blank).replace(INLINE_CODE_RE, blank);
+}
+
+/**
+ * Repository-relative Markdown links that do not resolve, or that leave the
+ * project.
  *
  * Deliberately narrow. No web URL is fetched — link health on the internet is
  * not a property of this project and would make the command non-deterministic
@@ -562,29 +697,40 @@ export function docsChecks({ rootDir, docs }) {
   }
 
   const broken = [];
+  const escaping = [];
   for (const file of docs) {
     let source;
-    try { source = readFileSync(file, 'utf8'); } catch { continue; }
+    try { source = prose(readFileSync(file, 'utf8')); } catch { continue; }
     for (const match of source.matchAll(LINK_RE)) {
       const target = match[1];
       if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('#') || target.startsWith('//')) continue;
       const [path] = target.split('#');
       if (path === '') continue;
-      const resolved = join(file, '..', decodeURIComponent(path));
-      if (!existsSync(resolved)) {
-        broken.push({ document: repoRelative(rootDir, file), link: target.slice(0, 200) });
+      let resolved;
+      try { resolved = join(file, '..', decodeURIComponent(path)); } catch { resolved = join(file, '..', path); }
+      const document = repoRelative(rootDir, file);
+      // A link that resolves outside the project is not broken on this disk and
+      // is broken everywhere else — on the forge, in a published copy, in a
+      // clone laid out differently. It is its own finding, not a missing file.
+      if (relative(rootDir, resolved).split(sep)[0] === '..') {
+        escaping.push({ document, link: target.slice(0, 200) });
+        continue;
       }
+      if (!existsSync(resolved)) broken.push({ document, link: target.slice(0, 200) });
     }
   }
 
+  const order = (a, b) => (`${a.document}${a.link}` < `${b.document}${b.link}` ? -1 : 1);
   return [check({
     id: 'docs.links',
     category: 'docs',
-    status: broken.length === 0 ? 'passed' : 'failed',
+    status: broken.length === 0 && escaping.length === 0 ? 'passed' : 'failed',
     authority: 'docs-link',
-    evidence: { documents: docs.length, broken: broken.sort((a, b) => (`${a.document}${a.link}` < `${b.document}${b.link}` ? -1 : 1)) },
-    reason: broken.length === 0 ? null : `${broken.length} repository-relative link(s) do not resolve`,
-    remediation: broken.length === 0 ? null : 'Fix the path, or remove the link. Only repository-relative links are checked.',
+    evidence: { documents: docs.length, broken: broken.sort(order), escapingTheProject: escaping.sort(order) },
+    reason: broken.length === 0 && escaping.length === 0 ? null
+      : `${broken.length} link(s) do not resolve and ${escaping.length} leave the project`,
+    remediation: broken.length === 0 && escaping.length === 0 ? null
+      : 'Fix the path or remove the link. Only repository-relative links are checked; web URLs and anchors are not.',
   })];
 }
 
@@ -598,8 +744,12 @@ export function docsChecks({ rootDir, docs }) {
  * and a pattern that guesses would make the check something people silence.
  */
 const FORBIDDEN = Object.freeze([
-  { code: 'TRACKED_ENV_FILE', test: (path) => /(^|\/)\.env($|\.)/.test(path) && !/\.env\.example$/.test(path), label: 'an environment file' },
-  { code: 'TRACKED_DATABASE', test: (path) => /\.sqlite(-shm|-wal)?$/.test(path), label: 'a database' },
+  // `.env.example`, `.env.template`, `.env.sample` and `.env.dist` are the
+  // conventional *documentation* of which variables exist. Flagging them taught
+  // a reader that the check does not know the difference, which is how a
+  // hygiene check stops being read.
+  { code: 'TRACKED_ENV_FILE', test: (path) => /(^|\/)\.env($|\.)/.test(path) && !/\.env\.(example|template|sample|dist)$/.test(path), label: 'an environment file' },
+  { code: 'TRACKED_DATABASE', test: (path) => /\.(sqlite\d?|db)(-shm|-wal|-journal)?$/.test(path), label: 'a database' },
   { code: 'TRACKED_LOG', test: (path) => /\.log$/.test(path), label: 'a log' },
   { code: 'TRACKED_DEPENDENCIES', test: (path) => /(^|\/)node_modules\//.test(path), label: 'an installed dependency tree' },
   { code: 'TRACKED_BROWSER_PROFILE', test: (path) => /(^|\/)(\.playwright|playwright-report|browser-profile|\.chromium)(\/|$)/.test(path), label: 'a browser profile or report' },

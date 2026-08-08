@@ -71,8 +71,9 @@ Every check delegates to an authority that already exists, and says which one:
 | Check | Authority | What it proves |
 |---|---|---|
 | `composition.valid`, `composition.problem.*` | `app-inspect` | AX1's own problems, verbatim, each as its own row |
-| `packages.source-boundary` | `authoring-rule` | no package imports `packages/core/src` |
-| `packages.composed` | `app-inspect` | which discovered packages are actually composed |
+| `packages.source-boundary` | `authoring-rule` | no **composed** package imports `packages/core/src` |
+| `packages.candidate-source-boundary` | `authoring-rule` | the same rule over uncomposed customer packages — advisory, warns only |
+| `packages.composed` | `app-inspect` | what is composed, what is a candidate, and what could not be located |
 | `modules.state` | `module-evolution` | `readModuleState` refuses a hand-edited state file, a fingerprint that disagrees with its own manifest, a revision mismatch, a tampered migration checksum |
 | `modules.migration-history` | `module-evolution` | inventory only — what the authority above already verified |
 | `plans.*` | `solution-plan` | `bindSolutionPlan` against this project's one AX1 report |
@@ -122,7 +123,7 @@ filesystem, network or OS sandbox.
   "command": "project:doctor",
   "ok": true,
   "status": "passed" | "warning" | "failed",
-  "project": { "kind", "composition", "packagesDiscovered", "solutionPlansDiscovered", "documentsScanned" },
+  "project": { "kind", "composition", "packagesComposed", "candidatePackages", "solutionPlansDiscovered", "documentsScanned" },
   "inspectionFingerprint": "…",     // which application this was computed against
   "categories": [...],
   "counts": { "passed", "warning", "failed", "not_applicable" },
@@ -133,6 +134,28 @@ filesystem, network or OS sandbox.
   "fingerprint": "…"
 }
 ```
+
+**The composition load has its own bound.** AX1 waits 60 s, which is right for
+`app inspect` — waiting a minute for a real answer beats no answer — and wrong
+here, where the entire proposition is that the command costs ~150 ms and you run
+it before touching anything. A composition that never returns made it cost a
+silent minute; measured at 60.0 s. `COMPOSITION_TIMEOUT_MS` is 10 s, about 65×
+the observed load on this repository, and a timeout is reported as a timeout
+with `app inspect` named as the thing that waits longer.
+
+**Documentation links are read as prose.** Fenced blocks and inline code are
+blanked first — preserving newlines so nothing shifts — because a guide that
+*shows* a Markdown link inside a fence is documenting syntax, not linking
+anywhere, and this repository's guides are full of exactly that. A link that
+resolves *outside* the project is its own finding rather than a missing file: it
+works on this disk and is broken on the forge, in a published copy, and in any
+clone laid out differently.
+
+**Hygiene knows the example files.** `.env.example`, `.env.template`,
+`.env.sample` and `.env.dist` document which variables exist and are allowed;
+`.db`, `.sqlite`, `.sqlite3` and their journals are all databases. Flagging a
+`.env.template` taught a reader the check does not know the difference, which is
+how a hygiene check stops being read.
 
 `project.composition` has **three** states, not two. An earlier draft said
 `readable` whenever AX1 answered at all — which it does even for a composition
@@ -151,16 +174,59 @@ a secret or a timestamp.
 
 ## Discovery is by convention, and says so
 
-Packages: a directory under `packages/` or `examples/custom-packages/` whose
-`src/index.js` calls `definePackage` — matched as text, because reading a
-package must never mean importing it. That discriminator matters: an earlier
-draft used "has a `src/index.js`", which swept in `packages/app`, `packages/sdk`,
-`packages/mcp`, `packages/providers` and `packages/workflows` — kernel code,
-which imports `core/src` because it *is* the core — and reported **eight
-boundary violations in a repository that has none**. A diagnostic whose first
-output is a false positive is a diagnostic people turn off.
+### Packages: located, never guessed
+
+This took three attempts, and the failures are worth recording because they are
+the same failure each time — **treating something that mentions a thing as a
+declaration of that thing.**
+
+1. "has a `src/index.js` under `packages/`" swept in `packages/app`, `sdk`,
+   `mcp`, `providers` and `workflows` — kernel code, which imports `core/src`
+   because it *is* the core — and reported **eight boundary violations in a
+   repository that has none**.
+2. "…whose `src/index.js` contains `definePackage(`" was worse, because it was
+   wrong in *both* directions: a comment or a string containing the word counted
+   as a package (so a non-package that imported `core/src` produced a **failure
+   attributed to a package that did not exist**), while a package whose import
+   was aliased (`definePackage as dp`) or whose definition sat behind a factory
+   was missed entirely.
+3. The version that holds parses no package source at all:
+   - **AX1 says which packages exist.** It composed them; it loaded them.
+   - **The composition file's own import specifiers say where each one is**, read
+     with `importSpecifiers` — the same function `package validate` and
+     `package test` use, so there is one implementation of "what does this file
+     import" rather than a new one here.
+   - **AX1 gates the result.** Without that intersection the resolver read a
+     specifier out of the composition file's own doc comment — this repository's
+     file carries `import { createContractsDomain } from '../../contracts/src/index.js'`
+     as a worked example — and graded a package the project does not compose.
+     The same defect, one layer in.
+
+A directory under `packages/` that the composition does not reference is **not
+classified at all**. Telling kernel code from an unreferenced domain package
+would mean executing it, and guessing is what produced the false failure twice.
+Customer packages under `examples/custom-packages/` are scanned as **candidates**
+and can only ever warn: a real finding about something the application does not
+run is worth surfacing and is not worth failing a build over.
+
+A composed package whose source the composition file does not obviously point at
+is **named** in `composedWithoutResolvedSource` rather than silently dropped.
 
 Plans: `*.plan.json` under `examples/solution-plans/` or `docs/solution-plans/`.
+Staleness is **graded only for a plan the project declares** in `package.json`:
+
+```jsonc
+"agentCrm": { "solutionPlans": { "current": [...], "required": [...] } }
+```
+
+A malformed plan fails for everyone — broken source is broken source. A declared
+`required` plan that no longer binds fails; a declared `current` one warns; an
+**undeclared** one is `not_applicable` and still carries its evidence. This
+repository is the argument for the rule: two of its three checked-in plans are
+historical design examples written against the compositions of M14b2 and M15.
+They are documentation of what a plan looks like, not claims about the
+application today, and warning about them on every run is exactly the fatigue
+that teaches a reader to skim past the warnings that matter.
 Skills: `.claude/skills/` and `.agents/skills/`, and only when **both** exist —
 a project with one harness owes nothing to another.
 Documentation: `docs/`, the skill roots, and the canonical root-level Markdown.
@@ -198,7 +264,8 @@ be added inside that budget, it belongs in DX5, not here.
 `DOMAIN_CORRECTNESS_NOT_PROVEN` · `NOT_A_SUBSTITUTE_FOR_VERIFY` ·
 `DATABASE_NOT_INSPECTED` · `PROVIDER_HEALTH_UNKNOWN` · `SECRETS_NOT_INSPECTED` ·
 `PRODUCTION_READINESS_NOT_ASSESSED` · `PACKAGE_CONFORMANCE_NOT_RUN` ·
-`DISCOVERY_IS_BY_CONVENTION` · `GENERATED_SOURCE_DRIFT_LIMITED` · `NO_MUTATION`
+`DISCOVERY_IS_BY_CONVENTION` · `UNCOMPOSED_PACKAGES_NOT_CLASSIFIED` ·
+`PLAN_CURRENCY_IS_DECLARED` · `GENERATED_SOURCE_DRIFT_LIMITED` · `NO_MUTATION`
 
 Each is in the report itself, not only here.
 
