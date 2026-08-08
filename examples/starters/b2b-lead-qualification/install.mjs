@@ -97,6 +97,15 @@ try {
   ]) {
     applyModule(root, join(root, 'packages', 'contracts', 'modules', manifest));
   }
+  // Milestone 15 records live in the OPTIONAL service domain package.
+  for (const manifest of [
+    'service-coverage.module.json', 'service-entitlement.module.json',
+    'service-activation-run.module.json', 'support-case.module.json',
+    'support-case-activity.module.json', 'service-sla-evaluation.module.json',
+    'service-escalation.module.json',
+  ]) {
+    applyModule(root, join(root, 'packages', 'service', 'modules', manifest));
+  }
   // Milestone 13 records live in the OPTIONAL delivery domain package, which
   // depends on the contracts package through a declared capability.
   for (const manifest of [
@@ -180,6 +189,8 @@ try {
       '// @ts-check',
       "import { createContractsDomain } from '../../contracts/src/index.js';",
       "import { createDeliveryPackage } from '../../delivery/src/index.js';",
+      "import { createServicePackage } from '../../service/src/index.js';",
+      "import { b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1 } from '../../../examples/starters/b2b-lead-qualification/service.js';",
       "import { createPartnerScorecardPackage } from '../../../examples/custom-packages/partner-scorecard/src/index.js';",
       "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
       "import { b2bDeliveryHandoverV1 } from '../../../examples/starters/b2b-lead-qualification/delivery.js';",
@@ -190,6 +201,7 @@ try {
       'export const generatedDomains = [',
       '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
       '  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1], costPolicies: [b2bDeliveryCostV1] }),',
+      '  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1] }),',
       '  createPartnerScorecardPackage(),',
       '];',
       '',
@@ -1250,6 +1262,151 @@ try {
       'pending_activation',
       'a service obligation is untouched by Delivery',
     );
+
+    // ---- Milestone 15: the service obligation becomes operational support ----
+    const runService = (module, id, action, input, actor = { type: 'user', id: 'starter' }) =>
+      app.runAction({ module, action, recordId: id, actor, input });
+
+    const serviceCommercialBefore = commercialRows();
+    // Coverage starts today. The starter runs on the real clock, and an
+    // entitlement dated in the future is correctly refused until it begins —
+    // which is a rule worth having and a bad thing to trip over in a demo.
+    const coverageStart = new Date().toISOString().slice(0, 10);
+
+    // Planning is read-only: an agent may call it, and it writes nothing.
+    const servicePlan = await runService('commercial-contract', contract.id, 'plan-service-activation', {},
+      { type: 'agent', id: 'bot' });
+    assert.equal(servicePlan.result.plan.decidable, true);
+    assert.equal(servicePlan.result.plan.entitlements.length, 1);
+    assert.equal(app.modules.get('service-coverage').service.list().length, 0,
+      'planning records nothing at all');
+
+    // The stricter policy cannot decide the same obligation, and refuses rather
+    // than defaulting. A defaulted support tier is a promise nobody made.
+    await assert.rejects(
+      () => runService('commercial-contract', contract.id, 'activate-service', {
+        coverageKey: 'support', customerRef: 'customer:acme', startDate: coverageStart,
+        policy: 'b2b-service-activation-premium-only',
+      }),
+      (error) => error.code === 'SERVICE_ACTIVATION_AMBIGUOUS',
+      'an obligation the policy cannot classify is never silently defaulted',
+    );
+
+    // Activating is a human decision.
+    await assert.rejects(
+      () => runService('commercial-contract', contract.id, 'activate-service', {
+        coverageKey: 'support', customerRef: 'customer:acme', startDate: coverageStart,
+      }, { type: 'agent', id: 'bot' }),
+      (error) => error.status === 403 && error.code === 'HUMAN_APPROVAL_REQUIRED',
+      'an agent may not activate service',
+    );
+
+    const serviceActivated = await runService('commercial-contract', contract.id, 'activate-service', {
+      coverageKey: 'support', customerRef: 'customer:acme', startDate: coverageStart,
+    });
+    const coverage = serviceActivated.result.serviceCoverage;
+    const entitlement = serviceActivated.result.entitlements[0];
+    assert.equal(coverage.status, 'active');
+    assert.equal(serviceActivated.result.amendedCommercialRecord, false);
+    assert.match(coverage.policyFingerprint, /^[0-9a-f]{64}$/);
+    assert.equal(
+      app.modules.get('service-obligation').service.listWhere({ contractId: contract.id })[0].status,
+      'activated',
+      'the obligation is consumed through the declared capability',
+    );
+    assert.equal(commercialRows(), serviceCommercialBefore,
+      'activating support amended no Quote, Order, Contract or Subscription');
+
+    // A case is refused unless the entitlement genuinely covers it.
+    for (const [what, input, code] of [
+      ['an uncovered category', { caseKey: 'x1', title: 't', category: 'billing', priority: 'normal' }, 'SERVICE_CATEGORY_NOT_COVERED'],
+      ['an uncovered priority', { caseKey: 'x2', title: 't', category: 'bug', priority: 'urgent' }, 'SERVICE_PRIORITY_NOT_COVERED'],
+    ]) {
+      await assert.rejects(
+        () => runService('service-entitlement', entitlement.id, 'record-service-case', input),
+        (error) => error.code === code,
+        `${what} is refused server-side`,
+      );
+    }
+
+    const supportCase = (await runService('service-entitlement', entitlement.id, 'record-service-case', {
+      caseKey: 'sync-fails', title: 'Sync fails after the upgrade',
+      description: 'It stopped overnight; the log shows a migration error.',
+      category: 'bug', priority: 'high', customerContactRef: 'contact:jane',
+    })).result.supportCase;
+    assert.equal(supportCase.status, 'new');
+    assert.equal(
+      Date.parse(supportCase.firstResponseDueAt) - Date.parse(supportCase.openedAt),
+      entitlement.firstResponseTargetMinutes * 60_000,
+      'the first-response target is exact elapsed time from openedAt',
+    );
+
+    const responded = await runService('support-case', supportCase.id, 'record-first-response', {
+      note: 'Acknowledged; reproducing now.',
+    });
+    assert.equal(responded.result.supportCase.status, 'in_progress');
+    assert.equal(responded.result.sent, false, 'nothing was emailed, called or messaged');
+    await assert.rejects(
+      () => runService('support-case', supportCase.id, 'record-first-response', {}),
+      (error) => error.status === 409,
+      'a first response has exactly one moment',
+    );
+
+    await runService('support-case', supportCase.id, 'record-case-activity', {
+      activityKey: 'reply-1', type: 'customer_reply', body: 'They sent the full log.',
+    });
+    await runService('support-case', supportCase.id, 'transition-case', {
+      toStatus: 'waiting_customer', note: 'Asked for the full log.',
+    });
+    await runService('support-case', supportCase.id, 'transition-case', { toStatus: 'in_progress' });
+
+    const slaEvidence = await runService('support-case', supportCase.id, 'record-sla-evaluation', {
+      evaluationKey: 'eval-1',
+    });
+    assert.equal(slaEvidence.result.contractualBreach, false);
+    assert.match(slaEvidence.result.slaEvaluation.basis, /no business hours/,
+      'the SLA basis states what it is not');
+
+    const escalation = await runService('support-case', supportCase.id, 'record-escalation', {
+      escalationKey: 'esc-1', level: 'management', reason: 'the customer asked for a call',
+      targetRef: 'team:support-leads', slaEvaluationId: slaEvidence.result.slaEvaluation.id,
+    });
+    assert.equal(escalation.result.routed, false);
+    assert.equal(escalation.result.notified, false);
+
+    await assert.rejects(
+      () => runService('support-case', supportCase.id, 'transition-case', { toStatus: 'closed' }),
+      (error) => error.code === 'SERVICE_TRANSITION_NOT_ALLOWED',
+      'a case closes from resolved, never straight from in_progress',
+    );
+    const caseResolved = await runService('support-case', supportCase.id, 'transition-case', {
+      toStatus: 'resolved', resolutionSummary: 'A schema migration was missing; applied and verified.',
+    });
+    assert.equal(caseResolved.result.customerAccepted, false, 'resolved is not customer acceptance');
+    assert.equal(caseResolved.result.billed, false);
+    await runService('support-case', supportCase.id, 'transition-case', { toStatus: 'closed' });
+
+    // Every write above was a human decision, and an agent is refused each one.
+    for (const [module, id, action, input] of [
+      ['service-entitlement', entitlement.id, 'record-service-case', { caseKey: 'bot', title: 't', category: 'bug', priority: 'normal' }],
+      ['support-case', supportCase.id, 'record-case-activity', { activityKey: 'bot', type: 'note', body: 'b' }],
+      ['support-case', supportCase.id, 'record-escalation', { escalationKey: 'bot', level: 'internal', reason: 'r' }],
+      ['service-coverage', coverage.id, 'end-service-coverage', { reason: 'r' }],
+    ]) {
+      await assert.rejects(
+        () => runService(module, id, action, input, { type: 'agent', id: 'bot' }),
+        (error) => error.status === 403 && error.code === 'HUMAN_APPROVAL_REQUIRED',
+        `an agent may not ${action}`,
+      );
+    }
+
+    // …and after all of it, still nothing commercial moved and nothing bills.
+    assert.equal(commercialRows(), serviceCommercialBefore,
+      'the commercial record is exactly as the sale left it');
+    for (const absent of ['invoice', 'payment', 'billing-eligibility', 'service-contract', 'renewal']) {
+      assert.throws(() => app.modules.get(absent), /Module not found/,
+        `"${absent}" must not exist`);
+    }
 
     // A second handover is a stable refusal, not a second project.
     await assert.rejects(

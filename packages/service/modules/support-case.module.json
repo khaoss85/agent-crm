@@ -1,0 +1,139 @@
+{
+  "manifestVersion": 1,
+  "name": "support-case",
+  "description": "One recorded support case against an entitlement of a service coverage. It is operational evidence a user actor recorded: no customer is authenticated, nothing is emailed, called or messaged, and no channel integration exists. SLA fields are elapsed-time targets computed from the injected UTC clock, never a business-hours or contractual interpretation.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "writable": "managed",
+      "unique": true
+    },
+    {
+      "name": "caseNumber",
+      "type": "string",
+      "writable": "managed",
+      "unique": true
+    },
+    {
+      "name": "serviceCoverageId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "serviceEntitlementId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "contractId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "customerRef",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "customerContactRef",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "source",
+      "type": "enum",
+      "writable": "managed",
+      "values": [
+        "manual",
+        "api"
+      ]
+    },
+    {
+      "name": "category",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "priority",
+      "type": "enum",
+      "writable": "managed",
+      "values": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ]
+    },
+    {
+      "name": "title",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "description",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "writable": "managed",
+      "values": [
+        "new",
+        "in_progress",
+        "waiting_customer",
+        "resolved",
+        "closed"
+      ]
+    },
+    {
+      "name": "ownerRef",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "firstResponseDueAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "resolutionDueAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "firstRespondedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "resolvedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "resolutionSummary",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "closedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "openedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "openedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

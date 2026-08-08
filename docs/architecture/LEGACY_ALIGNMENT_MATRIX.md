@@ -91,7 +91,7 @@ horizontal capability the way the contract intends?*
 |---|---|
 | **Core CRM (Sales)** — company, contact, opportunity, lead, task, approval | `not_applicable` on every package-seam row: these are a *project's* generated records, not a domain package, and a customer's own CRM objects must never require one. `aligned` on the kernel rows (module evolution, migration checksums, managed fields where declared, events, audit and trace, exact reads, JTBD evidence). Its Skills are `create-crm-module` and `create-crm-workflow` |
 | **Custom-package fixture** (`examples/custom-packages/partner-scorecard/`) | `aligned` on the package seam by construction — it exists to prove a customer-authored package attaches, works and detaches with no kernel change. It deliberately exercises only a slice: one resource, one action, no capability of its own, so the capability rows read `not_applicable` |
-| **Service** | not built. M15 is the next runtime milestone and must arrive package-native on every seam row from its first commit; the Compatibility Backfill Rule applies to it as an author, not as a legacy |
+| **Service** | **built, on an open PR (M15).** Package-native from its first commit: `aligned` on the package seam, declared capabilities (requires `contracts/service-obligations@1`, provides three), `packageContract: 1` conformance, package version discipline, managed records, the human-actor boundary, fingerprinted declared definitions, transaction-scoped events, audit and trace, exact reads, AX1 visibility, AX2 citability, detach proof, fault-injection and two-connection evidence, and JTBD rows with linked evidence. `not_applicable` on the money contract and the external-operation contract: it prices nothing and calls no provider. `partial` on the Skill mirror — `build-service-operations` exists under `.claude/skills/` only, the same DX2 gap every domain has. `deferred` on a tool namespace: §C.2b of `AGENT_TOOL_SURFACE.md` now works one through on Service, and it stays a proposal until DX13 |
 | **Marketing & Growth** | documentation only. No row can be assessed, and none is claimed |
 
 ¹ **Pipeline is not a domain.** `buildMoveStageAction` is a generic factory that
@@ -165,12 +165,13 @@ conformance, and the detach proof.
 ### `partial` — the Skill mirrors
 
 - **Gap.** `build-lead-intelligence`, `build-commercial-operations`,
-  `build-signature-order`, `build-contract-activation` and
-  `build-delivery-handover` exist under `.claude/skills/` only. `.agents/skills/`
-  carries six skills, none of them a domain build skill.
+  `build-signature-order`, `build-contract-activation`,
+  `build-delivery-handover` and `build-service-operations` exist under
+  `.claude/skills/` only. `.agents/skills/` carries six skills, none of them a
+  domain build skill.
 - **Evidence.** `ls .agents/skills/` versus `ls .claude/skills/`.
 - **Pass.** **DX2** (`crm agent skills sync|check`), which is where a drift check
-  belongs — hand-copying five more files just moves the problem.
+  belongs — hand-copying six more files just moves the problem.
 - **Compatibility risk.** **None.** Additive files; no runtime reads them.
 
 ### `partial` — Commercial Operations against the external-operation contract
@@ -259,6 +260,25 @@ Three practical consequences:
 3. A reviewer may reject a PR for a missing row the same way they reject a
    missing test — and `docs/QUALITY_GATES.md` §1 now says so.
 
+## The M15 backfill answer, as the rule requires
+
+M15 introduced one horizontal change: a **second capability on an existing
+package**, `contracts/service-obligations@1`, and with it the first evolution of
+a shipped M12 record (`service-obligation` → revision 2, gaining `coverageRef`
+and `activatedAt` and an `activated` status).
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **Contracts only.** It gains a capability and a record revision; nothing else in the repository changed shape |
+| Which are already aligned? | Contracts is `aligned` on every seam row and stays so: the capability is additive, `delivery-obligations@1` is byte-identical, and `packageContract: 1` did not move |
+| Which need metadata only? | **None.** No other domain gained a concept it must now declare |
+| Which need a code backfill? | **None.** Service is a new package and owns its own surface; the three `needs_extraction` domains are untouched and no closer to extraction than before |
+| Was the matrix updated? | Yes — the Service row above, and this section |
+
+The honest note: M15 is *not* evidence that the seam is finished. It is the
+third package and the second consumer, and what it showed the seam still cannot
+express is the input to step 3 of the sequencing below.
+
 ## Sequencing, which this document does not change
 
 ```text
@@ -309,6 +329,80 @@ What must be true before it is chosen — none of which is established today:
 
 If any of those fails, another domain is the pilot, or none is. **Nothing in this
 document authorizes starting an extraction.**
+
+### The three candidates, measured (M15 review)
+
+The hypothesis above was written before M15 shipped. The M15 review measured the
+three candidates rather than reasoning about them, so the eventual decision is
+argued against numbers. **Still planning only: nothing here starts an
+extraction, and no extraction work is in PR #27.**
+
+| | Lead Intelligence | Commercial Operations | Signature & Order |
+|---|---|---|---|
+| kernel source to move | 1,313 lines, 2 files | 1,393 lines, 3 files | 1,488 lines, 2 files |
+| files outside the domain that name it | 11 | 16 | 10 |
+| dedicated HTTP routes in the kernel server | none | `POST /api/catalog/sync` | `POST /api/signature/providers/:provider/events`, `POST /api/signature/envelopes/:id/reconcile` |
+| dedicated method on the app object | none | `syncCatalog` | `ingestSignatureEvent`, `reconcileSignature` |
+| `/api/schema` block | `intelligence` | `commercial` | `signature` |
+| Admin files that read its schema block | 0 | 6 | 3 |
+| carries money | no | **yes** (`commercial-money.js`, 416 lines) | yes, by reference |
+| calls an external provider | yes, in a `prepare` phase the kernel already isolates | yes, outside the write transaction | **yes, and it receives inbound webhooks** |
+| depended on by another domain | no | **yes** — Contracts activates an Order; Delivery and Service reach obligations raised from it | yes — Contracts reads the signed Order |
+| what a regression looks like | a reproduction test disagrees | a stored amount disagrees | an envelope or artifact is lost, or a webhook is accepted twice |
+
+Three things the table says that prose did not:
+
+1. **Intelligence is the only candidate with no kernel HTTP surface, no app
+   method and no Admin coupling.** Its extraction is a package boundary and
+   nothing else. Commercial and Signature each require moving a route out of
+   `apps/server`, which is a second, unrelated piece of work — and one the
+   package seam does not currently support at all: **no package can contribute
+   an HTTP route today.** That is a seam gap, not a scheduling problem.
+2. **Commercial is the most depended-upon.** Contracts, Delivery and Service all
+   sit downstream of the Order it produces. Moving it first means designing
+   three capability edges at once, on the domain that carries money.
+3. **Signature is the riskiest for a reason unrelated to size.** It is the only
+   domain that accepts bytes from outside. An extraction that changes where the
+   verification code lives is an extraction that has to re-prove replay,
+   out-of-order and wrong-tenant handling — the evidence hardest to be confident
+   about after a move.
+
+**Recommendation: Lead Intelligence, at moderate confidence.** Moderate rather
+than high because two of its four preconditions are still unproved — DX4 does
+not exist, and "nothing reads Intelligence internals" is read off the file
+layout rather than established by a tool. The measurement strengthens the
+hypothesis; it does not convert it into a decision.
+
+**A precondition the table added:** before Commercial or Signature could ever be
+a candidate, the package seam needs a way for a package to own an HTTP route.
+Neither is extractable today at any confidence, and that is a finding about the
+*seam*, not about them.
+
+### Recommended next ordering
+
+Ordering, with the reason each item sits where it does. This is a
+recommendation to a human, not a plan of record:
+
+1. **DX4 — `crm package test` (conformance harness).** Everything else that
+   touches the seam is safer after it, and it is the stated gate for any
+   extraction. Without it an extraction's only proof is that the old tests still
+   pass, which is exactly the proof that misses a boundary violation.
+2. **DX3 — package scaffold.** Cheap next to DX4, and it makes DX4's contract
+   the default shape rather than something to remember.
+3. **DX1 — `crm doctor` deepening.** Independent of the seam, useful to every
+   other item, and the smallest of the four.
+4. **The extraction pilot — Lead Intelligence.** Only after 1 and 2, and only if
+   its four preconditions are established rather than assumed.
+5. **DX2 — Skill mirror sync.** Real (six domain build skills now live under
+   `.claude/` only) but nothing depends on it, and it stays a documentation
+   correctness gap rather than a runtime one.
+6. **M16 — Analytics Studio.** Last, because it is the item most likely to
+   *consume* whatever the extraction learns about reading across packages. Doing
+   it before the pilot risks writing the cross-package read pattern twice.
+
+The one ordering claim worth arguing with: DX2 sits fifth despite being the
+cheapest, because cheap and urgent are different, and the gap is already
+documented in this matrix.
 
 ## What this document is not
 

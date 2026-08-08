@@ -1,6 +1,6 @@
 # Admin manual browser smoke checklist
 
-Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium, and re-run at each milestone: 37 automated checks at Milestone 14a, all passing, covering the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation, delivery-handover and delivery-execution cases; and 22 **further** checks for the Milestone 14b2 Delivery Change & Acceptance section, all passing. The 22 are additive and scoped to the new section — they do not re-run or replace the 37, which were last exercised on the Milestone 14a branch. Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
+Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium, and re-run at each milestone: 37 automated checks at Milestone 14a, all passing, covering the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation, delivery-handover and delivery-execution cases; 22 **further** checks for the Milestone 14b2 Delivery Change & Acceptance section, all passing; and 24 **further** checks for the Milestone 15 Service operations section, all passing. Each block is additive and scoped to its own section — the 24 do not re-run or replace the 22, and neither re-runs the 37, which were last exercised on the Milestone 14a branch. Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
 
 ## Setup
 
@@ -48,6 +48,58 @@ Delivery execution (Milestone 14a — the same package, at revision 2 of the thr
 46. Restart `npm run dev` → every execution state, stamp and block reason is still exactly as left.
 
 Report any step that fails; do not mark the Admin browser-validated unless all pass.
+
+## Service operations (Milestone 15)
+
+**Service-specific, manual, and outside CI.** These 24 checks cover the
+Milestone 15 Service operations section only. They were driven in real Chromium
+against a seeded project and are reproducible from the steps below; nothing here
+runs in CI, and nothing here re-runs or replaces the 37 Milestone 14a checks or
+the 22 Milestone 14b2 checks above. **24 checks, all passing.**
+
+The section is **package-scoped, not package-owned**: the framework has no seam
+for a package to contribute an Admin extension — AX1 publishes that limitation as
+`ADMIN_EXTENSIONS_UNSUPPORTED` — so `apps/admin/public/admin-service.js` lives in
+the Admin app and renders only while `/api/schema` publishes `domains.service`.
+
+**The run found one defect the fake-DOM tests could not.** The Admin's `withBusy`
+re-renders the *whole* quote detail whenever a write succeeds, which builds a
+brand new section. The open case was held in that section's closure, so every
+successful action destroyed it: recording a case, or a note on the case being
+read, threw the operator back to a queue with nothing open. Selection now lives
+outside the render closure, keyed by contract, and
+`tests/admin-service.test.js` reproduces the parent's rebuild so the same class
+of mistake fails in CI rather than in a browser.
+
+Setup: compose a project with the contracts **and** service packages, apply the
+seven service manifests, drive a quote through signature to an activated contract
+carrying a pending service obligation, then open `#/quotes/<quoteId>` where the
+service section renders under the contract.
+
+1. The **Service operations** section renders on the contract's quote route.
+2. It states, verbatim: *"ServiceCoverage is operational evidence. It is not a signed contract and does not amend the Commercial Contract."*
+3. Planning is offered and says it records nothing.
+4. Planning wrote nothing — zero coverage, entitlement and activation-run rows.
+5. A policy that cannot decide the obligation **blocks**: no activation control and no coverage form exist while anything is undecided.
+6. A decision without a reason is refused **before any request leaves the browser**.
+7. A decidable plan lists every entitlement, its reason, and the policy fingerprint.
+8. An activation refused for a missing field is **visible**, and the typed input survives it.
+9. That refusal wrote nothing.
+10. Activating once re-renders to coverage evidence, and offers no second activation path.
+11. Entitlements render read-only, with every bound stated and **no control at all** on the card.
+12. The case queue states, verbatim: *"A listed channel does not mean a provider is connected."*
+13. A case in a category the entitlement does not cover is refused, and the refusal is visible on screen.
+14. A covered case is recorded and appears in the queue.
+15. The case detail offers **exactly** the transitions the server declares for that state — `closed` is not among them from `new`.
+16. The first response is recorded once, and its control then disappears.
+17. The SLA **preview** is a separate block from **recorded** evidence, and previewing records nothing.
+18. A recorded evaluation renders its instant and the inputs it used.
+19. No contractual-breach wording appears anywhere; the elapsed-time-only statement is present.
+20. An escalation is recorded and the section states, verbatim: *"No notification was sent automatically."*
+21. Hostile record text renders as text and creates no element.
+22. No amend / invoice / bill / payment / renew / authenticate control exists anywhere in the section.
+23. A direct route plus refresh restores the section and its state.
+24. No failed resource, no unexpected API response, and no uncaught JavaScript error during the run.
 
 ## Record actions (Milestone 6)
 

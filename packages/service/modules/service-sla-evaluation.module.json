@@ -1,0 +1,94 @@
+{
+  "manifestVersion": 1,
+  "name": "service-sla-evaluation",
+  "description": "An immutable elapsed-time judgement about one support case, stamped with the exact instant and input values it used. It is never current truth: it is what the clock said when somebody asked. No business-hours calendar, no holidays, no paused clocks and no contractual SLA interpretation exist.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "writable": "managed",
+      "unique": true
+    },
+    {
+      "name": "supportCaseId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "serviceCoverageId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "serviceEntitlementId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "firstResponseState",
+      "type": "enum",
+      "writable": "managed",
+      "values": [
+        "met",
+        "on_track",
+        "at_risk",
+        "breached",
+        "not_applicable"
+      ]
+    },
+    {
+      "name": "resolutionState",
+      "type": "enum",
+      "writable": "managed",
+      "values": [
+        "met",
+        "on_track",
+        "at_risk",
+        "breached",
+        "not_applicable"
+      ]
+    },
+    {
+      "name": "evaluatedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "openedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "firstResponseDueAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "resolutionDueAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "firstRespondedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "resolvedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "basis",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "recordedBy",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

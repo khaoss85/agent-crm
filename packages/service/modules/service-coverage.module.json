@@ -1,0 +1,121 @@
+{
+  "manifestVersion": 1,
+  "name": "service-coverage",
+  "description": "An operational support relationship activated from a contract's pending service obligations. It is NOT a signed legal agreement: nobody signed it, it has no envelope, no signer and no artifact, and it neither amends nor replaces the Commercial Contract it was activated from. It records which obligations were consumed, what the customer is covered for and between which dates.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "writable": "managed",
+      "unique": true
+    },
+    {
+      "name": "contractId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "activationId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "orderId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "obligationRefs",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "customerRef",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "customerNameSnapshot",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "companyId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "contactId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "writable": "managed",
+      "values": [
+        "planned",
+        "active",
+        "ended"
+      ]
+    },
+    {
+      "name": "startDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "endDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyName",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "entitlementCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "activatedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "activatedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "endedReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "endedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "endedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

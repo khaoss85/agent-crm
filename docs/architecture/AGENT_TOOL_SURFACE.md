@@ -265,6 +265,47 @@ every entry is a **mirror of a stable CLI contract**, not a second implementatio
 the roadmap says. That is not a scheduling statement: there is no auth, tenancy
 or RBAC, so there is no one to authorize a remote write.
 
+### C.2b A domain namespace, worked through on Service (M15)
+
+Nothing below exists. **No MCP tool is implemented for the Service package, and
+none is proposed for this milestone.** This section exists because M15 is the
+first package whose actions a reader would plausibly want as tools, and the
+useful moment to decide the *shape* of a domain namespace is before anybody
+writes one.
+
+A domain namespace mirrors the package's own action names, one to one, so there
+is nothing to keep true twice:
+
+| Proposed tool | Tier | Mirrors the action |
+|---|---|---|
+| `service.plan_activation` | T0 | `commercial-contract.plan-service-activation` |
+| `service.activate` | T2 | `commercial-contract.activate-service` |
+| `service.create_case` | T2 | `service-entitlement.record-service-case` |
+| `service.transition_case` | T2 | `support-case.transition-case` |
+| `service.evaluate_sla` | T0 read / T2 record | `support-case.preview-sla` / `record-sla-evaluation` |
+| `service.record_escalation` | T2 | `support-case.record-escalation` |
+
+Three rules fall out of the tiering, and they are the point of the table:
+
+- only **`service.plan_activation`** and the read half of
+  **`service.evaluate_sla`** are T0. Both are read-only in the package itself,
+  both already refuse to write, and both are open to an agent actor today.
+- everything else is **T2 — bounded write**, which under §C.1 means explicit
+  per-call approval and never a blanket allow. That is not a policy invented
+  here: the package already refuses an agent actor on all six writes with
+  `403 HUMAN_APPROVAL_REQUIRED`, so a T2 tool that carried an agent identity
+  would simply be refused by the server. The tier records *why* the tool must
+  carry a human's identity, not a bot's.
+- there is deliberately **no `service.end_coverage`, no `service.close_case` and
+  no `service.record_activity`** in the proposed surface. Ending a coverage and
+  closing a case are the two irreversible-looking moves in the domain, and
+  recording activity is the one an agent could use to manufacture history. They
+  stay human, in the Admin or the CLI, until there is somebody to authorize
+  them.
+
+The same shape would apply to Delivery and Contracts. It is written down once,
+here, rather than three times in three packages.
+
 ### C.3 The existing tools
 
 The nine tools in `docs/MCP.md` are not deprecated by this document and nothing

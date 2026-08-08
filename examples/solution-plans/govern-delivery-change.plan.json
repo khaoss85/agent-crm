@@ -14,20 +14,48 @@
   },
   "application": {
     "inspectionContract": 1,
-    "inspectionFingerprint": "60cb855350772aef66c81d655caec65e57f0b1f5476a106cd21061987f21add8",
+    "inspectionFingerprint": "44beabff720e3c2f9aa7bea3c459e5da44c1db2593d383de8b0262f04086268b",
     "packages": [
-      { "name": "contracts", "version": 1 },
-      { "name": "delivery", "version": 4 }
+      {
+        "name": "contracts",
+        "version": 2
+      },
+      {
+        "name": "delivery",
+        "version": 4
+      }
     ],
     "capabilities": [
-      { "name": "delivery-acceptance-evidence", "version": 1, "status": "resolved" },
-      { "name": "delivery-change-management", "version": 1, "status": "resolved" },
-      { "name": "delivery-economics", "version": 1, "status": "resolved" },
-      { "name": "delivery-obligations", "version": 1, "status": "resolved" }
+      {
+        "name": "delivery-acceptance-evidence",
+        "version": 1,
+        "status": "resolved"
+      },
+      {
+        "name": "delivery-change-management",
+        "version": 1,
+        "status": "resolved"
+      },
+      {
+        "name": "delivery-economics",
+        "version": 1,
+        "status": "resolved"
+      },
+      {
+        "name": "delivery-obligations",
+        "version": 1,
+        "status": "resolved"
+      }
     ],
     "modules": [
-      { "name": "delivery-change-request", "revision": 1 },
-      { "name": "delivery-acceptance-request", "revision": 1 }
+      {
+        "name": "delivery-change-request",
+        "revision": 1
+      },
+      {
+        "name": "delivery-acceptance-request",
+        "revision": 1
+      }
     ]
   },
   "evidence": {
@@ -61,7 +89,9 @@
       {
         "id": "metric.governed-change-share",
         "statement": "Share of scope changes carrying a decided change request, computed from the change-request records rather than from any new instrumentation.",
-        "citations": ["fact.change-management-exists"]
+        "citations": [
+          "fact.change-management-exists"
+        ]
       }
     ],
     "assumptions": [
@@ -80,24 +110,35 @@
       {
         "id": "infer.handoff-is-the-control-point",
         "statement": "Because the package can raise a commercial candidate but cannot amend anything, the pending_commercial_followup state is the only place a commercial change can stall — so that is where a reviewer should look, not in the quote history.",
-        "citations": ["fact.commercial-boundary-enforced", "fact.no-amendment-runtime"]
+        "citations": [
+          "fact.commercial-boundary-enforced",
+          "fact.no-amendment-runtime"
+        ]
       },
       {
         "id": "infer.acceptance-defensibility-comes-from-the-freeze",
         "statement": "Because the request freezes its scope and the evidence binds to that fingerprint, the defensibility of an acceptance record comes from the freeze rather than from who clicked it.",
-        "citations": ["fact.acceptance-is-evidence", "assume.one-contact-speaks-for-the-customer"]
+        "citations": [
+          "fact.acceptance-is-evidence",
+          "assume.one-contact-speaks-for-the-customer"
+        ]
       }
     ],
     "recommendations": [
       {
         "id": "rec.use-the-existing-package",
         "statement": "Configure and extend the delivery package rather than modelling change management anywhere else: the domain already has an owner, and a second model would split the evidence.",
-        "citations": ["fact.change-management-exists", "metric.governed-change-share"]
+        "citations": [
+          "fact.change-management-exists",
+          "metric.governed-change-share"
+        ]
       },
       {
         "id": "rec.review-the-handoff-queue",
         "statement": "Give the commercial team a standing view of outstanding change candidates, because nothing in delivery will ever resolve one.",
-        "citations": ["infer.handoff-is-the-control-point"]
+        "citations": [
+          "infer.handoff-is-the-control-point"
+        ]
       }
     ],
     "unavailableEvidence": [
@@ -127,14 +168,19 @@
       "type": "configure",
       "target": "delivery.change-management",
       "rationale": "The delivery package already owns governed change, plan revisions and the commercial handoff. Using it is configuration of what exists, not new modelling.",
-      "rungsTried": [1]
+      "rungsTried": [
+        1
+      ]
     },
     {
       "id": "decision.acceptance-review-view",
       "type": "extend",
       "target": "admin.delivery-change-acceptance",
       "rationale": "The evidence exists; what a reviewer needs is a view that shows the frozen scope and states the acceptance disclaimers on screen rather than in a document nobody opens.",
-      "rungsTried": [1, 2]
+      "rungsTried": [
+        1,
+        2
+      ]
     }
   ],
   "steps": [
@@ -142,15 +188,21 @@
       "id": "step.record-changes",
       "decisionId": "decision.use-change-management",
       "description": "Record every delivery scope change as a change request with a stated reason, and decide it as a human before any replanning happens.",
-      "requiresCapabilities": ["delivery-change-management"],
+      "requiresCapabilities": [
+        "delivery-change-management"
+      ],
       "approvals": [],
-      "verifies": ["metric.governed-change-share"]
+      "verifies": [
+        "metric.governed-change-share"
+      ]
     },
     {
       "id": "step.route-commercial-changes",
       "decisionId": "decision.use-change-management",
       "description": "Route a change with commercial consequence to the commercial team through the candidate the approval raises, and review the outstanding candidates as a standing queue.",
-      "requiresCapabilities": ["delivery-change-management"],
+      "requiresCapabilities": [
+        "delivery-change-management"
+      ],
       "approvals": [],
       "verifies": []
     },
@@ -158,7 +210,9 @@
       "id": "step.acceptance-review",
       "decisionId": "decision.acceptance-review-view",
       "description": "Show the frozen acceptance scope and the recorded outcome together, with the limits of that record stated beside it rather than assumed.",
-      "requiresCapabilities": ["delivery-acceptance-evidence"],
+      "requiresCapabilities": [
+        "delivery-acceptance-evidence"
+      ],
       "approvals": [],
       "verifies": []
     }
@@ -171,7 +225,10 @@
       "an acceptance record names the frozen scope it answers, and the screen states what that record is not",
       "a rejected acceptance leaves completed execution untouched, and a replan produces a new scope fingerprint"
     ],
-    "jtbdRows": ["JTBD-DS-08", "JTBD-DS-09"],
+    "jtbdRows": [
+      "JTBD-DS-08",
+      "JTBD-DS-09"
+    ],
     "artifacts": [
       {
         "kind": "admin-view",
