@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ASSERTED, CLASSIFICATIONS, LEGACY_CHARACTERIZATION_CONTRACT, buildBaseline, canonical,
-  compareToBaseline, observation,
+  compareToBaseline, observation, sortKeysDeep,
 } from './characterization-contract.mjs';
 import { ATTACHMENT } from './intelligence-harness.mjs';
 import { generateBaseline, sourceFingerprints } from './run-intelligence-characterization.mjs';
@@ -242,6 +242,17 @@ test('LA0 fails when an observation is quietly reclassified', () => {
   const comparison = compareToBaseline(BASELINE, mutated);
   assert.equal(comparison.ok, false);
   assert.deepEqual(comparison.reclassified, [{ id: 'scoring.v1.total', from: 'contractual', to: 'incidental' }]);
+});
+
+test('the baseline file is byte-reproducible, so its diff is the change', () => {
+  // `audit.counts-by-action` and `scale.total-distribution` are built by
+  // reduction, so their key order follows runtime iteration order. Two
+  // regenerations of identical behaviour produced two byte-different files
+  // until the writer sorted keys — and a baseline whose diff is noise is a
+  // baseline nobody reads.
+  const serialize = (value) => `${JSON.stringify(sortKeysDeep(value), null, 2)}\n`;
+  assert.equal(serialize(fresh), readFileSync(join(repoRoot, 'tests/characterization/intelligence-baseline.json'), 'utf8'));
+  assert.equal(serialize({ b: 1, a: { d: 2, c: 3 } }), serialize({ a: { c: 3, d: 2 }, b: 1 }));
 });
 
 test('the comparison is order-independent and key-order-independent', () => {

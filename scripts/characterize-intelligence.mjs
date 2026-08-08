@@ -4,6 +4,7 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sortKeysDeep } from '../tests/characterization/characterization-contract.mjs';
 import { generateBaseline } from '../tests/characterization/run-intelligence-characterization.mjs';
 
 /**
@@ -41,7 +42,9 @@ try {
 }
 
 mkdirSync(dirname(output), { recursive: true });
-writeFileSync(output, `${JSON.stringify(baseline, null, 2)}\n`);
+// Sorted keys: two regenerations of identical behaviour must produce an
+// identical file, or every regeneration buries the real change in noise.
+writeFileSync(output, `${JSON.stringify(sortKeysDeep(baseline), null, 2)}\n`);
 
 process.stdout.write([
   '',

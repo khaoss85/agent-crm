@@ -75,6 +75,27 @@ export function canonical(value) {
   return `{${keys.map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
 }
 
+/**
+ * The same value with every object key sorted, recursively.
+ *
+ * The comparison is already key-order-insensitive, so this changes no verdict.
+ * It makes the *file* byte-reproducible, which is a different and equally
+ * important property: `audit.counts-by-action` and `scale.total-distribution`
+ * are built by reduction, so their key order follows runtime iteration order and
+ * two regenerations of identical behaviour produced two different files. A
+ * baseline whose diff is noise is a baseline nobody reads, and the whole
+ * mechanism depends on somebody reading the diff.
+ *
+ * @param {unknown} value
+ */
+export function sortKeysDeep(value) {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (value === null || typeof value !== 'object') return value;
+  const out = {};
+  for (const key of Object.keys(value).sort()) out[key] = sortKeysDeep(value[key]);
+  return out;
+}
+
 /** @param {unknown} value */
 export function digest(value) {
   return createHash('sha256').update(canonical(value)).digest('hex');
