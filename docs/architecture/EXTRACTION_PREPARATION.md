@@ -29,7 +29,7 @@ preservation, proved from the outside.**
 
 ---
 
-## LA0 — Legacy Characterization Harness (proposed roadmap gate, not built)
+## LA0 — Legacy Characterization Harness (BUILT, open for review)
 
 ### Why it is a gate and not a nice-to-have
 
@@ -95,6 +95,24 @@ versioned decision is.
 LA0 is built **before** any extraction and against the *current* code, because a
 characterization harness written after the move characterizes the move.
 
+### Status: built and measured
+
+Implemented in `tests/characterization/` with `legacyCharacterizationContract: 1`
+and a checked-in baseline of **149 observations / 779 asserted values**. Design
+and rationale: `docs/plans/la0-legacy-characterization.md`.
+
+Two things it established that this document previously only assumed:
+
+- **A score is not a number.** The suite fails when a model returns the same
+  total under a different declared-definition fingerprint. That was the stated
+  acceptance criterion and it is now mechanical.
+- **Two defect candidates exist and must not be carried through the move.**
+  `record-signal`'s `value` accepts unbounded text (5,000 characters stored;
+  `MAX_TEXT` is 2,000 and `MAX_REASON` is 300 elsewhere here) and stores control
+  characters verbatim (`partner-scorecard`, the teaching example, refuses them).
+  Reproduced and documented, deliberately **not** frozen as contract. Each is a
+  recommendation for a separate pre-extraction fix.
+
 ---
 
 ## Blocker 1 — the neutral helpers (assessed)
@@ -124,6 +142,18 @@ from outside Lead Intelligence:
 Nothing about either is Lead Intelligence. They are in those files for
 historical reasons only.
 
+### Now pinned by behaviour, not by argument
+
+LA0 freezes `computeDefinitionFingerprint` over thirteen shapes — empty object,
+empty array, null, scalars, key-order-swapped, nested, array-order, unicode,
+deep — plus the two properties every consumer depends on (key order irrelevant,
+array order significant), and `withTimeout`'s three outcomes (resolved,
+rejected, timed out) including the exact message a caller sees.
+
+"Mechanical, zero behaviour change" was a claim. It is now checkable: if the
+move changes a single fingerprint or a single timeout outcome, the baseline goes
+red. That is the evidence that makes the helper-move PR safe to review quickly.
+
 ### Recommendation
 
 **A separate, tiny, mechanical PR before any extraction**, moving both into
@@ -149,6 +179,31 @@ diagnostic PR is the wrong place to move kernel exports.
 `/api/schema` (`apps/server/src/http-server.js`) and injected into **every**
 action's context (`packages/core/src/action-runtime.js`). A package can declare
 a capability; it cannot contribute an ambient key that every action receives.
+
+### Measured: who actually consumes it
+
+LA0 records the consumers rather than remembering them
+(`architecture.app-intelligence-consumers`):
+
+| What | Measured |
+|---|---|
+| files reading `app.intelligence` outside the app itself | **one** — `apps/server/src/http-server.js`, which publishes the `intelligence` block on `/api/schema` |
+| the ambient **context key** | injected by `packages/core/src/action-runtime.js` into every action's context |
+| actions that read that key | only Lead Intelligence's own four |
+
+**This makes the migration much smaller than it looked.** The field's only
+non-Intelligence consumer is the schema publisher, and the context key — while
+handed to every action — is read by nobody outside the domain that would move.
+Option B's cost was estimated as "a real behaviour change for every existing
+action that touches scoring or routing". Measured, that set is empty: the
+actions that read it are the ones moving into the package anyway, where they
+would open the capability they now receive ambiently.
+
+What remains is one deliberate change: `/api/schema` publishing `intelligence`
+as the package's own schema contribution instead of an ambient block. LA0 freezes
+that block's shape (`architecture.schema-intelligence-block-present`,
+`architecture.definition-kinds-published`) so the migration is provable rather
+than hoped for.
 
 ### Option A — keep the ambient field
 
@@ -192,7 +247,11 @@ the same domain-neutral bounded behaviour. It also re-creates ambient access
 under a new name: an action would still reach a package it never declared, so the
 property Option B buys is not actually bought.
 
-### Recommendation — **Option B, with a staged migration**
+### Recommendation — **Option B, with a staged migration** (unchanged, confidence raised)
+
+The evidence above does not disprove the working hypothesis; it makes it
+cheaper. Confidence moves from *recommended* to *recommended with a measured
+cost*: one schema-publication change and four actions that move anyway.
 
 The whole argument for ADR-018 is that a dependency you cannot see is a
 dependency you cannot reason about, and Option A keeps one permanently
@@ -224,6 +283,19 @@ where a project declares enrichment providers, scoring models, routing policies
 and routing targets. AX1 reads it as one of a fixed set of composition slots. If
 Intelligence becomes a package, the file is a *project* file describing a
 *package's* definition kinds, and there is no generic seam for that.
+
+### Measured: who depends on the fixed slot
+
+LA0 records it (`architecture.definition-registry-slot`): four files, and only
+two of them are runtime — `packages/app/src/create-app.js`, which constructs the
+registries, and `packages/cli/src/app-inspect.js`, where `intelligence` is one
+of AX1's fixed composition slots. The other two are documentation.
+
+And the four definition kinds, measured from `/api/schema`: enrichment
+providers, scoring models, routing policies, routing targets. Three of the four
+already have a contract that fits — providers, and `policies` for the two
+versioned fingerprinted kinds. **Routing targets remain the open question**, and
+they are closer to project configuration than to a definition.
 
 ### Option A — keep it as a fixed project-owned registry
 
@@ -264,7 +336,11 @@ discount policies.
 they stay project configuration rather than becoming a package definition kind —
 which is a smaller decision than a new seam.
 
-### Recommendation — **Option C, with routing targets called out explicitly**
+### Recommendation — **Option C, reuse existing contracts** (unchanged, now evidenced)
+
+The measurement supports it: two runtime dependants, three of four kinds already
+expressible, one open question about a single kind. That is not the shape of a
+problem that needs a new generic seam with one consumer.
 
 Do not add a generic definition-registry seam. Three of the four Intelligence
 definition kinds already have a contract that fits, and the fourth is a
@@ -283,35 +359,44 @@ requires — and it will be a better seam for having a real second case.
 |---|---|
 | DX3 package scaffold merged | **yes** — `05fafbd` |
 | DX4 package conformance merged | **yes** — `5da5205` |
-| DX1 project doctor merged | **no** — open for review in this PR |
-| LA0 characterization harness implemented | **no** — not started, not designed beyond this document |
-| Neutral helpers moved out of Intelligence files | **no** — assessed above, recommended as its own PR |
-| `app.intelligence` decision taken | **no** — Option B recommended, human decision |
-| Definition-registry decision taken | **no** — Option C recommended, human decision |
+| DX1 project doctor merged | **yes** — `845cd3d` |
+| LA0 characterization harness | **built, open for review** — not merged |
+| LA0 defect candidates resolved | **no** — two open (`record-signal` unbounded `value`, control characters). Reproduced and documented, deliberately not frozen |
+| Neutral helpers moved out of Intelligence files | **no** — assessed domain-neutral, now behaviour-pinned by LA0, recommended as its own PR |
+| `app.intelligence` decision taken | **no** — Option B recommended, cost now measured (one schema-publication change; zero external action consumers). Human decision |
+| Definition-registry decision taken | **no** — Option C recommended, dependants now measured. Human decision |
 | Package-contributed HTTP route seam needed | **not for Intelligence.** DX4 established that route contribution is not required for generic conformance. It remains a precondition for **Commercial** and **Signature** specifically, each of which owns a route in `apps/server` |
 
-**Lead Intelligence is not extractable today.** Four preconditions are open and
-two of them are decisions nobody has taken.
+**Lead Intelligence is still not extractable today** — but the remaining
+blockers are now small, measured and mostly decisions rather than unknowns.
 
-### Recommended ordering
+### Recommended next PR sequence
 
-1. **DX1 Project Doctor** — review and merge. It is the cheapest of the group and
-   every later step benefits from a project whose coherence is machine-checked.
-2. **LA0 Legacy Characterization Harness** — the long pole, and the only thing
-   that can prove the acceptance criterion. Built against the current code.
-3. **Neutral-helper move** — small, mechanical, zero behaviour change. Can run in
-   parallel with LA0; it blocks nothing else and unblocks the discussion.
-4. **Contract ADR(s)** — `app.intelligence` and the definition registry, decided
-   by a human and written down before code moves.
-5. **Lead Intelligence extraction** — one domain, one PR, gated on 2–4.
-6. **DX2 Skill mirror sync** — real (six skills live under `.claude/` only, and
-   `crm project doctor` now reports it as a warning) but nothing depends on it.
-7. **M16 Analytics Studio** — last, because it is the item most likely to consume
+1. **LA0 review and merge** — it is open and unmerged; the extraction cannot be
+   proved without it.
+2. **Resolve the two defect candidates** — bound `record-signal`'s `value` and
+   refuse control characters, matching this repository's own conventions. Small,
+   independently correct, and it regenerates the baseline *deliberately* with a
+   reviewable diff. Doing it after the extraction would mean changing behaviour
+   in the same PR that claims to change none.
+3. **Neutral-helper move** — mechanical, zero behaviour change, now provable:
+   LA0 fails if a single fingerprint or timeout outcome moves.
+4. **Architecture ADR(s)** — `app.intelligence` and the definition registry,
+   decided by a human and written down before any code moves.
+5. **Lead Intelligence extraction implementation** — one domain, one PR, with
+   `wireIntelligence` as the only characterization file it edits.
+6. **Extraction review** — LA0 green plus `crm package test` plus
+   `crm project doctor`.
+7. **DX2 Skill mirror sync** — real (six skills live under `.claude/` only, and
+   `crm project doctor` reports it as a warning) but nothing depends on it.
+8. **M16 Analytics Studio** — last, because it is the item most likely to consume
    whatever the extraction learns about reading across packages.
 
-The one ordering claim worth arguing with is that LA0 outranks the neutral-helper
-move despite being far larger. It does because it is the long pole: starting it
-late is what would make the extraction wait on it.
+Step 2 is the one worth arguing with, because it delays the extraction for two
+small fixes. It sits there because a characterization baseline regenerated
+*during* an extraction is a baseline nobody can trust: the diff would mix
+"behaviour I meant to change" with "behaviour that moved by accident", which is
+the exact distinction the harness exists to preserve.
 
 ---
 

@@ -375,6 +375,35 @@ Two rows of this document were prose until now and are now mechanical:
 - **No generated-source drift beyond what a generator contract proves.** A
   fuzzy comparison that cries wolf is a check people silence.
 
+## The LA0 backfill answer, as the rule requires
+
+LA0 (the Lead Intelligence characterization harness) is **not** a horizontal
+capability in the sense the rule usually means — it adds no kernel behaviour and
+no contract any domain must satisfy. It is recorded here because it changes what
+this matrix can claim about one domain.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **Lead Intelligence only**, and only by observing it. No code moved, no helper was relocated, no ambient field replaced, no seam added |
+| Which are already aligned? | Not the frame. What changed is coverage: Lead Intelligence now has a frozen, machine-checked record of its externally observable behaviour — 149 observations, 779 asserted values. Commercial Operations and Signature & Order have **none** |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None from LA0.** It did surface two `defect_candidate` findings in `record-signal` that should be fixed before the extraction, as their own change |
+| What changed for extraction? | The acceptance criterion — behaviour preservation proved from the outside — is mechanical for the first time. It was the last unknown; what remains is decisions |
+| Matrix updated? | Yes — this section |
+
+### Characterization coverage, by domain
+
+| Domain | Characterized | Note |
+|---|---|---|
+| Lead Intelligence | **yes** — `tests/characterization/`, `legacyCharacterizationContract: 1` | the extraction candidate |
+| Commercial Operations | no | would need its own suite before any extraction |
+| Signature & Order | no | same, plus the HTTP-route seam it owns |
+| Contracts, Delivery, Service | **not applicable** | package-native from birth; `crm package test` plus their own suites already cover them |
+
+**LA0 is a gate for extracting a legacy domain, not a requirement for building a
+new one.** A package written package-native has no pre-move behaviour to
+preserve, and demanding a characterization baseline from it would be ceremony.
+
 ## Sequencing, which this document does not change
 
 ```text
