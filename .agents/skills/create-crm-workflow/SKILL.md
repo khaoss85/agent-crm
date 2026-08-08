@@ -1,6 +1,6 @@
 ---
 name: create-crm-workflow
-description: Implement a deterministic cross-module CRM process with policy, trace, audit and optional human approval. Use for stage transitions, follow-ups, onboarding, renewals and approval rules.
+description: Implement a deterministic cross-module CRM process with policy, trace, audit and optional human approval. Use for stage transitions, follow-ups, onboarding, renewals and approval rules. Do not use for a stated business objective ("we need to manage renewals") — that is solve-business-goal, which discovers what exists first and may call this skill itself; nor for a single custom object (create-crm-module), a named milestone (the build-* skills) or a failing run (debug-crm-run).
 requires:
   tier: generated-project
   command: "crm app inspect"

@@ -48,6 +48,16 @@ re-describing it.
 | **DX9** | `crm context pack --plan plan.json --json` | the smallest deterministic context an agent needs, derived from AX1, AX2, the relevant package docs and Skills, schema and action contracts and the Quality Gates. Token-budgeted, deterministic, source-path references only — **no secrets, no PII, no data rows, no arbitrary source bodies**, fingerprinted for staleness, and **advisory only, never authorization** |
 | **DX10** | `ImplementationEvidence` + `crm solution verify plan.json --json` | maps each SolutionPlan requirement to the package, module, action, provider, source files, tests, Admin/CLI evidence and JTBD evidence that satisfy it, marked `implemented \| partial \| blocked`. It closes `goal → plan → build → proof`, and stops an agent claiming a plan is complete while work is missing |
 
+**An external review isolated exactly four of these as the gap between the
+architecture's score and the experience's** — DX9 Context Pack, DX10 Implementation
+Evidence, DX5/DX6 Project Verify and Scenario Runner, and the Legacy Alignment
+pass. It also named the risk that comes with building them: every one of these
+commands is justified, and a person building with this framework must not have to
+know any of them exists. `solve-business-goal` decides which rungs a goal needs;
+the user states the goal. That is enforced, not just intended —
+`scripts/surface-check.js` budgets the surface an agent has to understand and
+fails the build when it grows (`docs/strategy/EXTERNAL_REVIEW.md`).
+
 **AX3 depends on DX5, DX6, DX9 and DX10**, not the other way round. A benchmark
 whose evidence is prose is a benchmark nobody can check.
 

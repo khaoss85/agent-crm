@@ -3,9 +3,9 @@
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used.",
   "measuredAgainst": {
     "date": "2026-08-07",
-    "sha": "3a98798",
+    "sha": "cdab0bf",
     "command": "npm run verify",
-    "tests": 511,
+    "tests": 517,
     "failures": 0,
     "note": "Re-measure and update this block before any public launch. A claims file measured against a stale SHA is a claims file that lies."
   },
@@ -442,10 +442,10 @@
     },
     {
       "id": "C-20",
-      "text": "511 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
+      "text": "517 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
       "evidence": {
         "repoFacts": [
-          "npm run verify at 3a98798: 511 passing, 0 failing",
+          "npm run verify at cdab0bf: 517 passing, 0 failing",
           ".github/workflows/ci.yml runs verify and smoke on push and pull_request"
         ],
         "docs": [
@@ -471,7 +471,7 @@
           "docs/FALSIFY.md"
         ],
         "repoFacts": [
-          "npm run falsify at 3a98798: 5 caught, 0 survived, 0 stale, 2.2s",
+          "npm run falsify at cdab0bf: 5 caught, 0 survived, 0 stale, 2.2s",
           "npm run falsify --only delivery-cost-rounding: caught by 'cost arithmetic is exact at every boundary' in 108.3s",
           "the run refuses to start over uncommitted target files and verifies every restore byte-for-byte"
         ]
