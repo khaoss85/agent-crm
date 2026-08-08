@@ -41,6 +41,25 @@ This repository is an agent-native CRM framework. Preserve the separation betwee
 - documentation is sufficient for another coding agent to continue;
 - every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.
 
+## The DX Simplicity Gate
+
+Before adding a new **agent-facing** command, tool, contract or namespace,
+answer these in the PR. Canonical rule and full rationale:
+`docs/strategy/CODING_AGENT_DX_NORTH_STAR.md`.
+
+> **Goal-first outside, rigorous inside.** New internal complexity is justified
+> only if it reduces perceived user or agent complexity, or measurably improves
+> reliability or evidence.
+
+- name the concrete agent **failure mode** it prevents — the failure, not the capability;
+- prove existing primitives are insufficient, having tried to extend one;
+- minimise semantic overlap: two commands answering nearly the same question is worse than one that answers it completely;
+- keep it deferred or on-demand unless every session needs it;
+- preserve portability — behaviour belongs in the CLI, a JSON contract, the Package Contract, canonical Skill semantics or the Quality Gates, never in harness-specific logic;
+- ship machine-readable evidence of its value: an exit code, a contract-versioned document, a fingerprint, a measured number;
+- if the capability is horizontal, update the Compatibility Backfill Rule and the Legacy Alignment Matrix in the same PR;
+- show the end-user goal flow gets **simpler**, not more manual. "The agent now has one more thing to run" fails the first bullet.
+
 ## Code review rules
 
 - Flag any API/MCP handler that executes SQL directly.
@@ -49,3 +68,4 @@ This repository is an agent-native CRM framework. Preserve the separation betwee
 - Flag money represented as floating-point currency amounts.
 - Flag domain-specific business behavior added to `packages/core` without the ADR-018 justification.
 - Flag a JTBD row promoted without linked evidence, or a document claiming a capability the tests do not prove.
+- Flag a new agent-facing command, tool or contract that does not clear the DX Simplicity Gate above.
