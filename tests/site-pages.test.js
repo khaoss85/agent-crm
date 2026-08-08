@@ -47,8 +47,23 @@ test('every catalogued job is reachable and readable, whether or not it has its 
     sections.get(slug).push(job);
   }
 
+  const hub = read('jobs.html');
+
   for (const [slug, entries] of sections) {
+    // A section earns a URL only when one of its jobs did. Where none did, its rows are listed in
+    // full on the hub — the threshold denies a URL, it never hides a row.
+    const earnsPage = entries.some(hasOwnPage);
     const path = `jobs/${slug}.html`;
+    if (!earnsPage) {
+      assert.equal(existsSync(join(dist, path)), false, `${slug} has no job worth a URL and should not have one either`);
+      for (const job of entries) {
+        assert.ok(hub.includes(escape(job.title)), `${job.id} is in a folded section and is not listed on the hub — the threshold has started hiding rows`);
+        if (job.summary) {
+          assert.ok(hub.includes(escape(stripMarkdown(job.summary))), `the hub truncates what the catalogue says about ${job.id}, which has nowhere else to be read`);
+        }
+      }
+      continue;
+    }
     assert.ok(existsSync(join(dist, path)), `no section page for ${slug}`);
     const html = read(path);
 
@@ -73,9 +88,9 @@ test('every catalogued job is reachable and readable, whether or not it has its 
     }
   }
 
-  // And the hub reaches every section.
-  const hub = read('jobs.html');
-  for (const slug of sections.keys()) {
+  // And the hub reaches every section that has a page.
+  for (const [slug, entries] of sections) {
+    if (!entries.some(hasOwnPage)) continue;
     assert.ok(hub.includes(`jobs/${slug}.html`), `the hub does not link the ${slug} section`);
   }
 });

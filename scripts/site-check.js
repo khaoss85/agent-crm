@@ -279,19 +279,49 @@ for (const path of collect(outDir, '.html')) {
 const vercelPath = join(root, 'vercel.json');
 if (existsSync(vercelPath)) {
   const vercel = JSON.parse(readFileSync(vercelPath, 'utf8'));
-  const catchAll = (vercel.headers ?? []).find((/** @type {any} */ entry) => entry.source === '/(.*)');
-  const header = (catchAll?.headers ?? []).find((/** @type {any} */ item) => item.key === 'X-Robots-Tag');
-  if (shouldIndex && header) {
-    fail('vercel.json still sends X-Robots-Tag while brand.json says the repository is public. The header outranks the meta tag, so the site would stay unindexed.');
+  const entries = vercel.headers ?? [];
+
+  // Every entry, not just the catch-all, and the VALUE, not just the key.
+  //
+  // An adversarial review broke the first version of this check twice by mutation: it set the
+  // catch-all's value to `index, follow` (the check only tested that a header named X-Robots-Tag
+  // existed) and it put an affirmative directive on the five entries for llms.txt, jobs.json,
+  // answers.json and sitemap.xml — the exact files that cannot carry a meta tag, and the entire
+  // reason the header exists. Both mutations passed green. Selecting one entry by an exact source
+  // string, and asserting presence rather than content, is how a gate ends up guarding nothing.
+  const directives = entries.flatMap((/** @type {any} */ entry) => (entry.headers ?? [])
+    .filter((/** @type {any} */ item) => String(item.key).toLowerCase() === 'x-robots-tag')
+    .map((/** @type {any} */ item) => ({ source: entry.source, value: String(item.value) })));
+
+  if (shouldIndex) {
+    for (const directive of directives) {
+      fail(`vercel.json sends X-Robots-Tag "${directive.value}" on ${directive.source} while brand.json says the repository is public. The header outranks the meta tag, so the site would stay unindexed.`);
+    }
+  } else {
+    const uncovered = entries.filter((/** @type {any} */ entry) => !(entry.headers ?? [])
+      .some((/** @type {any} */ item) => String(item.key).toLowerCase() === 'x-robots-tag'));
+    for (const entry of uncovered) {
+      fail(`vercel.json headers entry "${entry.source}" carries no X-Robots-Tag. Whether Vercel merges overlapping entries or applies only the first is not verifiable from here, so every entry must carry the directive for the outcome to be the same either way.`);
+    }
+    for (const directive of directives) {
+      if (!/\bnoindex\b/i.test(directive.value)) {
+        fail(`vercel.json sends X-Robots-Tag "${directive.value}" on ${directive.source}, which does not refuse indexing, while brand.json says the repository is private.`);
+      }
+    }
+    if (directives.length === 0) {
+      fail('vercel.json sends no X-Robots-Tag at all while brand.json says the repository is private. llms.txt, jobs.json, answers.json and sitemap.xml would be indexable while every HTML page asks not to be.');
+    }
   }
-  if (!shouldIndex && !header) {
-    fail('vercel.json sends no X-Robots-Tag while brand.json says the repository is private. llms.txt, jobs.json and sitemap.xml would be indexable while every HTML page asks not to be.');
-  }
+
   if (!/site:check/.test(String(vercel.buildCommand ?? ''))) {
     fail('vercel.json buildCommand does not run the claims gate, so a claim that loses its evidence would reach a visitor even though CI caught it.');
   }
-} else {
+} else if (shouldIndex) {
   notes.push('vercel.json is absent, so the deployment half of the indexing gate is unchecked.');
+} else {
+  // Degrading this to a note meant the deployment half of the gate could vanish and the build
+  // would still go green, with five files that carry no meta tag left wholly undefended.
+  fail('vercel.json is absent while brand.json says the repository is private. With no X-Robots-Tag, llms.txt, jobs.json, answers.json and sitemap.xml carry no indexing directive of any kind.');
 }
 
 // ---------------------------------------------------------------- report

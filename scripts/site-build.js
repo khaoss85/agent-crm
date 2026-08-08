@@ -199,9 +199,10 @@ writeFileSync(join(outDir, 'robots.txt'), [
   'Allow: /',
   '',
   ...(repositoryIsPublic ? [`Sitemap: ${ORIGIN}/sitemap.xml`, ''] : [
-    `# ${ORIGIN}/sitemap.xml exists and lists every page, but is deliberately not advertised`,
-    '# here while the source is private: it would invite a crawl of pages this site is',
-    '# simultaneously asking not to index.',
+    '# A sitemap exists and lists every page. It is deliberately not advertised here while the',
+    '# source is private — printing its URL in the one file every crawler fetches would have been',
+    '# advertising it. The mitigation is weak on its own, which is why X-Robots-Tag (vercel.json)',
+    '# refuses indexing for the sitemap and for every other byte regardless.',
     '',
   ]),
   `# A machine-readable summary lives at /llms.txt and /llms-full.txt,`,

@@ -108,6 +108,19 @@ export function buildJobPages({ jobs, brand, origin }) {
   }
 
   const owned = new Map(all.filter(hasOwnPage).map((job) => [job.id, true]));
+
+  /**
+   * A section earns a URL only when at least one of its jobs did.
+   *
+   * The threshold used to apply to leaves alone, so ten sections whose every row it had judged too
+   * thin for a URL got one anyway — the thin content was not denied a URL, it was aggregated into
+   * one. `/jobs/content.html` was the string "MK3" five times. Those sixty-five rows are listed in
+   * full on the hub instead: readable, and not pretending to be nine more destinations.
+   */
+  for (const entry of sections) entry.earnsPage = entry.jobs.some((job) => owned.has(job.id));
+  const hubSections = sections.filter((entry) => entry.earnsPage);
+  const foldedSections = sections.filter((entry) => !entry.earnsPage);
+
   const pages = [];
 
   // ------------------------------------------------------------------ the hub
@@ -138,7 +151,7 @@ export function buildJobPages({ jobs, brand, origin }) {
       '      <table class="ledger">',
       '        <thead><tr><th>Area</th><th>Jobs</th><th>Where it stands</th></tr></thead>',
       '        <tbody>',
-      ...sections.map((entry) => [
+      ...hubSections.map((entry) => [
         '          <tr>',
         `            <td><a href="{{page.root}}jobs/${entry.slug}.html">${escapeHtml(sectionTitle(entry.section))}</a>`,
         sectionNote(entry.section) ? `<p class="limit">${escapeHtml(sectionNote(entry.section))}</p></td>` : '</td>',
@@ -148,6 +161,24 @@ export function buildJobPages({ jobs, brand, origin }) {
       ].join('\n')),
       '        </tbody>',
       '      </table>',
+      ...(foldedSections.length ? [
+        `      <h2 id="unbuilt">The ${foldedSections.reduce((sum, entry) => sum + entry.jobs.length, 0)} jobs with no page of their own</h2>`,
+        `      <p class="section-lede">These areas are catalogued and unbuilt, and the matrix had a line or two to say
+        about each. They are listed here in full rather than spread over ${foldedSections.length} further URLs, because
+        a page whose body is a milestone code repeated five times is a page this project would be publishing against
+        its own rules.</p>`,
+        ...foldedSections.map((entry) => [
+          `      <h3>${escapeHtml(sectionTitle(entry.section))}</h3>`,
+          sectionNote(entry.section) ? `      <p class="limit">${escapeHtml(sectionNote(entry.section))}</p>` : '',
+          '      <ul class="plain">',
+          ...entry.jobs.map((job) => (
+            `        <li id="${escapeHtml(job.id)}"><span class="mono muted">${escapeHtml(job.id)}</span> `
+            + `<strong>${escapeHtml(job.title)}</strong> — <span class="pill ${statusClass(job.status)}">${escapeHtml(job.status)}</span>`
+            + `${job.summary ? ` ${escapeHtml(stripMarkdown(job.summary))}` : ''}</li>`
+          )),
+          '      </ul>',
+        ].filter(Boolean).join('\n')),
+      ] : []),
       LIMITS_BLOCK,
       '    </section>',
       '  </div>',
@@ -155,7 +186,7 @@ export function buildJobPages({ jobs, brand, origin }) {
   });
 
   // ------------------------------------------------------- one page per section
-  for (const entry of sections) {
+  for (const entry of hubSections) {
     const name = sectionTitle(entry.section);
     const note = sectionNote(entry.section);
     pages.push({
@@ -205,7 +236,7 @@ export function buildJobPages({ jobs, brand, origin }) {
   }
 
   // ----------------------------------------------------------- one page per job
-  for (const entry of sections) {
+  for (const entry of hubSections) {
     const name = sectionTitle(entry.section);
     for (const job of entry.jobs) {
       if (!owned.has(job.id)) continue;
@@ -241,7 +272,12 @@ export function buildJobPages({ jobs, brand, origin }) {
           siblings.length ? [
             `      <h2>Other jobs in ${escapeHtml(name)}</h2>`,
             '      <ul class="plain">',
-            ...siblings.map((other) => `        <li><a href="{{page.root}}jobs/${entry.slug}.html#${escapeHtml(other.id)}">${escapeHtml(other.title)}</a> — ${escapeHtml(other.status)}</li>`),
+            ...siblings.map((other) => {
+              const href = owned.has(other.id)
+                ? `{{page.root}}jobs/${other.id.toLowerCase()}.html`
+                : `{{page.root}}jobs/${entry.slug}.html#${escapeHtml(other.id)}`;
+              return `        <li><a href="${href}">${escapeHtml(other.title)}</a> — ${escapeHtml(other.status)}</li>`;
+            }),
             '      </ul>',
           ].join('\n') : '',
           `      <p class="section-lede"><a href="{{page.root}}jobs/${entry.slug}.html">All ${entry.jobs.length} jobs in ${escapeHtml(name)}</a> ·

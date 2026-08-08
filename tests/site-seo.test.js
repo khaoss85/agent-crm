@@ -36,8 +36,15 @@ const ORIGIN = `https://${brand.domain.value}`;
  */
 function build(options = {}) {
   const root = mkdtempSync(join(tmpdir(), 'accordo-site-'));
-  cpSync(join(repo, 'site'), join(root, 'site'), { recursive: true });
-  rmSync(join(root, 'site/dist'), { recursive: true, force: true });
+  // site/dist is build output and is deliberately not copied. Copying it raced with any other
+  // suite that rebuilds the real one — the copy walked a directory the other build had just
+  // deleted — which made this file pass alone and fail beside tests/site-pages.test.js.
+  const source = join(repo, 'site');
+  const distPath = join(source, 'dist');
+  cpSync(source, join(root, 'site'), {
+    recursive: true,
+    filter: (from) => from !== distPath && !from.startsWith(`${distPath}/`),
+  });
   mkdirSync(join(root, 'docs/benchmarks'), { recursive: true });
   if (existsSync(join(repo, 'docs/benchmarks/jobs.json'))) {
     cpSync(join(repo, 'docs/benchmarks/jobs.json'), join(root, 'docs/benchmarks/jobs.json'));
@@ -173,9 +180,12 @@ test('structured data parses, and asserts nothing the page does not', (t) => {
 
   const source = blocks.find((block) => block['@type'] === 'SoftwareSourceCode');
   assert.equal(source.license, 'https://opensource.org/licenses/MIT');
+  // Branching on the actual status rather than hardcoding today's: the flip to public has to be
+  // completable with a green suite, or the cheapest way to go green again is to delete the
+  // behaviour that made it red.
   assert.equal(
     source.codeRepository,
-    undefined,
+    brand.repository.status === 'public' ? brand.repository.value : undefined,
     'while the repository is private its URL 404s, and a broken link in a knowledge graph is expensive to undo',
   );
 });
@@ -239,26 +249,27 @@ test('the indexing gate flips every dependent output together, in both direction
 
 test('the deployment headers agree with the ledger about whether this may be indexed', () => {
   const vercel = JSON.parse(readFileSync(join(repo, 'vercel.json'), 'utf8'));
-  const catchAll = vercel.headers.find((/** @type {any} */ entry) => entry.source === '/(.*)');
-  assert.ok(catchAll, 'vercel.json has no catch-all headers entry');
-
-  const robotsHeader = catchAll.headers.find((/** @type {any} */ header) => header.key === 'X-Robots-Tag');
   const isPublic = brand.repository.status === 'public';
+  // Every entry, not the catch-all alone, and case-insensitively: HTTP header names are
+  // case-insensitive and Vercel accepts either casing, and an affirmative directive on the five
+  // machine-readable entries would defeat the whole gate while a catch-all-only check stayed green.
+  const directives = vercel.headers.flatMap((/** @type {any} */ entry) => (entry.headers ?? [])
+    .filter((/** @type {any} */ header) => String(header.key).toLowerCase() === 'x-robots-tag')
+    .map((/** @type {any} */ header) => ({ source: entry.source, value: String(header.value) })));
 
   if (isPublic) {
-    assert.equal(
-      robotsHeader,
-      undefined,
-      'the repository is public but vercel.json still sends X-Robots-Tag: the header outranks the meta tag, so the site would stay unindexed',
-    );
+    assert.deepEqual(directives, [], 'the repository is public but vercel.json still sends X-Robots-Tag: the header outranks the meta tag, so the site would stay unindexed');
   } else {
-    assert.ok(
-      robotsHeader,
-      'the repository is private and vercel.json sends no X-Robots-Tag. The meta tag cannot reach '
-      + 'llms.txt, llms-full.txt, jobs.json or sitemap.xml — plain text and JSON carry no meta tags '
-      + '— so those would be indexable while every HTML page asks not to be.',
+    assert.equal(
+      directives.length,
+      vercel.headers.length,
+      'every headers entry must carry X-Robots-Tag. Whether Vercel merges overlapping entries or '
+      + 'applies only the first is not verifiable from this repository, so the directive has to be '
+      + 'on all of them for the outcome to be the same under either rule.',
     );
-    assert.match(robotsHeader.value, /noindex/);
+    for (const directive of directives) {
+      assert.match(directive.value, /noindex/, `${directive.source} sends "${directive.value}", which does not refuse indexing`);
+    }
   }
 
   // The honesty gate has to run where the deploy happens, not only in CI: a claim that loses its
