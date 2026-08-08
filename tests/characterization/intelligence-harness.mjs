@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -56,6 +56,91 @@ export const FIXED_NOW = '2026-01-01T00:00:00.000Z';
  * comparison across the move is never silently comparing two different things.
  */
 export const ATTACHMENT = 'kernel-actions-and-fixed-definition-slot';
+
+/**
+ * **Every path that knows where Lead Intelligence lives today, in one place.**
+ *
+ * The claim was "one file changes at extraction". It was not literally true:
+ * the helper cases imported `intelligence-registry.js` and
+ * `intelligence-actions.js` directly, and the architecture-evidence cases
+ * grepped for those paths, so extraction would have edited two files and a
+ * reviewer would have had to find the second one.
+ *
+ * They belong here because that is the seam's whole job. After the move these
+ * specifiers point into the package, `wireIntelligence` writes a composition
+ * import, and nothing else in `tests/characterization/` changes.
+ */
+export const INTELLIGENCE_SOURCE = Object.freeze({
+  registry: '../../packages/core/src/intelligence-registry.js',
+  actions: '../../packages/core/src/intelligence-actions.js',
+  /** Grep patterns for the architecture-evidence cases. */
+  greps: Object.freeze(['app.intelligence', 'intelligence-registry.js', 'intelligence-actions.js', 'intelligence/generated']),
+});
+
+/** The two neutral helpers, loaded from wherever they currently live. */
+export async function loadNeutralHelpers() {
+  const { computeDefinitionFingerprint } = await import(INTELLIGENCE_SOURCE.registry);
+  const { withTimeout } = await import(INTELLIGENCE_SOURCE.actions);
+  return { computeDefinitionFingerprint, withTimeout };
+}
+
+/**
+ * Behaviour-bearing source: every file whose content decides what Lead
+ * Intelligence does, and therefore what this baseline observes.
+ *
+ * The first version listed eleven files and missed six that matter — the action
+ * runtime that builds the context, the starter's `qualify`/`disqualify` actions
+ * whose lifecycle gating LA0 freezes, the HTTP server that publishes the schema
+ * block LA0 freezes, the application factory, and the SDK the cases drive. Any
+ * of them could have changed observed behaviour without staling the baseline,
+ * which is the one failure a freshness mechanism cannot have.
+ */
+export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
+  'packages/core/src/intelligence-actions.js',
+  'packages/core/src/intelligence-registry.js',
+  'packages/core/src/action-runtime.js',
+  'packages/app/src/create-app.js',
+  'apps/server/src/http-server.js',
+  'packages/sdk/src/index.js',
+  'examples/starters/b2b-lead-qualification/intelligence.js',
+  'examples/starters/b2b-lead-qualification/actions/qualify.js',
+  'examples/starters/b2b-lead-qualification/actions/disqualify.js',
+  'examples/starters/b2b-lead-qualification/enrichment-snapshot.module.json',
+  'examples/starters/b2b-lead-qualification/behavioral-signal.module.json',
+  'examples/starters/b2b-lead-qualification/score-run.module.json',
+  'examples/starters/b2b-lead-qualification/score-contribution.module.json',
+  'examples/starters/b2b-lead-qualification/routing-run.module.json',
+  'examples/starters/b2b-lead-qualification/route-evaluation.module.json',
+  'examples/starters/b2b-lead-qualification/assignment.module.json',
+  'examples/starters/b2b-lead-qualification/lead.module.json',
+  'examples/starters/b2b-lead-qualification/task.module.json',
+]);
+
+/**
+ * The guard that stops the list above rotting.
+ *
+ * A hand-maintained set of files is exactly the kind of thing that is correct
+ * on the day it is written and wrong six months later. This enumerates the
+ * files a *future* Intelligence change would plausibly land in, so a new
+ * `intelligence-*.js` in the kernel or a new Intelligence module manifest in
+ * the starter cannot silently fall outside digest ownership.
+ *
+ * @param {string} rootDir
+ */
+export function unownedIntelligenceSource(rootDir) {
+  const owned = new Set(BEHAVIOUR_BEARING_SOURCE);
+  const found = [];
+  const kernel = join(rootDir, 'packages/core/src');
+  for (const name of readdirSync(kernel)) {
+    if (/intelligence/i.test(name)) found.push(`packages/core/src/${name}`);
+  }
+  const starter = join(rootDir, 'examples/starters/b2b-lead-qualification');
+  for (const name of readdirSync(starter)) {
+    if (!name.endsWith('.module.json')) continue;
+    if (INTELLIGENCE_MODULES.includes(name)) found.push(`examples/starters/b2b-lead-qualification/${name}`);
+  }
+  return found.filter((path) => !owned.has(path)).sort();
+}
 
 /** @param {string} root @param {{enrichTimeoutMs?: number}} options */
 export function wireIntelligence(root, { enrichTimeoutMs } = {}) {

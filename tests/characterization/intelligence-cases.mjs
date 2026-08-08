@@ -1,4 +1,4 @@
-import { observation } from './characterization-contract.mjs';
+import { normalizeIds, observation } from './characterization-contract.mjs';
 import { boot, characterizationProject } from './intelligence-harness.mjs';
 
 /**
@@ -46,8 +46,6 @@ const OPAQUE = new Set(['id', 'runId', 'leadId', 'snapshotId', 'scoreRunId', 'ro
  */
 const INPUT_FINGERPRINTS = new Set(['leadFingerprint', 'signalsFingerprint', 'targetSetFingerprint']);
 
-/** Any generated identifier, wherever it appears — including inside a string. */
-const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
 /**
  * A record with generated identifiers normalized, so the **shape** is asserted
@@ -60,7 +58,18 @@ const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
  * replaced. Getting this wrong made three records differ between two runs of
  * the same code, which is a characterization suite failing at its one job.
  */
-function stable(record) {
+/**
+ * A shared mapping keeps identity relationships *between* records: if two rows
+ * point at the same lead, both render `<id:1>`, and if one of them ever points
+ * somewhere else the token changes. Passing `stable` straight to `.map()` would
+ * hand it the array index as the mapping — which it did, loudly.
+ */
+function stableAll(records) {
+  const mapping = new Map();
+  return records.map((record) => stable(record, mapping));
+}
+
+function stable(record, mapping = new Map()) {
   const out = {};
   for (const key of Object.keys(record).sort()) {
     const value = record[key];
@@ -68,13 +77,15 @@ function stable(record) {
       out[key] = value === null || value === undefined ? null : '<present>';
     } else if (INPUT_FINGERPRINTS.has(key)) {
       out[key] = typeof value === 'string' && /^[0-9a-f]{64}$/.test(value) ? '<input-fingerprint>' : value;
-    } else if (typeof value === 'string') {
-      out[key] = value.replace(UUID_RE, '<id>');
     } else {
       out[key] = value;
     }
   }
-  return out;
+  // Positional, not a single token: two *different* ids must produce two
+  // different tokens, or a swapped or cross-wired identifier compares equal to
+  // a correct one. The mapping is shared across the whole record so the
+  // relationships inside it survive.
+  return normalizeIds(out, mapping);
 }
 
 /** @param {(entry: ReturnType<typeof observation>) => void} record */
@@ -92,7 +103,7 @@ export async function runIntelligenceCases(t, record) {
   record(observation({
     id: 'architecture.schema-intelligence-block-present',
     category: 'architecture',
-    classification: 'compatibility_required',
+    classification: 'pre_extraction_evidence',
     surface: 'schema',
     observed: { present: Boolean(schema.intelligence), keys: Object.keys(schema.intelligence ?? {}).sort() },
     note: 'Published today as an ambient `intelligence` block on /api/schema. After extraction it should be the package\'s own schema contribution — a deliberate migration, not a behaviour change to hide.',
@@ -100,7 +111,7 @@ export async function runIntelligenceCases(t, record) {
   record(observation({
     id: 'architecture.app-intelligence-field-present',
     category: 'architecture',
-    classification: 'compatibility_required',
+    classification: 'pre_extraction_evidence',
     surface: 'sdk',
     observed: { present: typeof app.intelligence === 'object' && app.intelligence !== null },
     note: 'The ambient action-context field. Blocker 2 in EXTRACTION_PREPARATION.md; recorded as architecture evidence, deliberately separate from behavioural compatibility.',
@@ -195,7 +206,7 @@ export async function runIntelligenceCases(t, record) {
     observed: duplicate,
   }));
 
-  const storedSignals = (await client.module('behavioral-signal').list()).items.filter((entry) => entry.leadId === lead.id);
+  const storedSignals = (await client.module('behavioral-signal').list({ limit: 500 })).items.filter((entry) => entry.leadId === lead.id);
   record(observation({
     id: 'signals.stored-count-after-duplicate',
     category: 'signals',
@@ -208,7 +219,7 @@ export async function runIntelligenceCases(t, record) {
     category: 'signals',
     classification: 'contractual',
     surface: 'storage',
-    observed: [...storedSignals].sort((a, b) => (a.signalType < b.signalType ? -1 : 1)).map(stable),
+    observed: stableAll([...storedSignals].sort((a, b) => (a.signalType < b.signalType ? -1 : 1))),
   }));
   record(observation({
     id: 'signals.list-order',
@@ -273,7 +284,7 @@ export async function runIntelligenceCases(t, record) {
     surface: 'sdk',
     observed: {
       reused: reEnriched.result.reused,
-      snapshotCount: (await client.module('enrichment-snapshot').list()).items.filter((entry) => entry.leadId === lead.id).length,
+      snapshotCount: (await client.module('enrichment-snapshot').list({ limit: 500 })).items.filter((entry) => entry.leadId === lead.id).length,
     },
   }));
 
@@ -432,7 +443,7 @@ export async function runIntelligenceCases(t, record) {
 
   // The target set that was considered is the evidence a decision is defensible
   // from. A different eligible set with the same winner is a different decision.
-  const evaluations = (await client.module('route-evaluation').list()).items
+  const evaluations = (await client.module('route-evaluation').list({ limit: 500 })).items
     .filter((entry) => entry.runId === routed.result.runId);
   record(observation({
     id: 'routing.v1.target-set-evidence',
@@ -444,13 +455,13 @@ export async function runIntelligenceCases(t, record) {
       .map((entry) => ({ targetKey: entry.targetKey, eligible: entry.eligible, reason: entry.reason })),
   }));
 
-  const assignments = (await client.module('assignment').list()).items.filter((entry) => entry.leadId === lead.id);
+  const assignments = (await client.module('assignment').list({ limit: 500 })).items.filter((entry) => entry.leadId === lead.id);
   record(observation({
     id: 'assignment.created-from-routing',
     category: 'assignment',
     classification: 'contractual',
     surface: 'storage',
-    observed: assignments.map(stable),
+    observed: stableAll(assignments),
   }));
   record(observation({
     id: 'assignment.lead-link',
@@ -486,6 +497,45 @@ export async function runIntelligenceCases(t, record) {
       observed: outcome,
     }));
   }
+
+  // -------------------------------------------------------------------------
+  // page bounds — correctness evidence must never depend on a page
+  // -------------------------------------------------------------------------
+  //
+  // `list()` is paged: it defaults to 100 rows and caps at 500, ordered by
+  // `created_at DESC`. `listWhere()` is the complete query, and the module
+  // factory says so in as many words — "a correctness decision must never
+  // depend on a page bound". Every read above therefore asks for an explicit
+  // 500 rather than trusting a default, and this case pushes one lead past the
+  // default page so a silent truncation would show up as a wrong number rather
+  // than as nothing at all.
+  const busy = await leads.create({ ...LEAD, email: 'busy@ferrari.example' });
+  const SIGNAL_COUNT = 130;
+  for (let index = 0; index < SIGNAL_COUNT; index += 1) {
+    await leads.action(busy.id, 'record-signal', {
+      signalType: 'pricing-page-visited',
+      observedAt: `2026-09-${String((index % 28) + 1).padStart(2, '0')}T10:00:00Z`,
+      sourceKey: `bulk:${index}`,
+    });
+  }
+  const bulk = (await client.module('behavioral-signal').list({ limit: 500 })).items.filter((entry) => entry.leadId === busy.id);
+  record(observation({
+    id: 'signals.beyond-the-default-page',
+    category: 'signals',
+    classification: 'contractual',
+    surface: 'storage',
+    observed: { written: SIGNAL_COUNT, readBack: bulk.length, complete: bulk.length === SIGNAL_COUNT },
+  }));
+  // And the score that depends on them counts every one, not one page of them.
+  const busyScore = await leads.action(busy.id, 'score', { model: 'b2b-saas-score', version: 1 });
+  const busyRun = await client.module('score-run').get(busyScore.result.runId);
+  record(observation({
+    id: 'scoring.signal-count-beyond-the-default-page',
+    category: 'scoring',
+    classification: 'contractual',
+    surface: 'storage',
+    observed: { signalCount: busyRun.signalCount, total: busyScore.result.total },
+  }));
 
   // -------------------------------------------------------------------------
   // audit, events, trace
@@ -559,7 +609,7 @@ export async function runIntelligenceCases(t, record) {
     // against it measured nothing at all. The question is what was persisted.
     let stored = null;
     if (outcome.accepted) {
-      const row = (await client.module('behavioral-signal').list()).items.find((entry) => entry.sourceKey === sourceKey);
+      const row = (await client.module('behavioral-signal').list({ limit: 500 })).items.find((entry) => entry.sourceKey === sourceKey);
       stored = row ? { present: true, byteIdentical: row.value === value, length: String(row.value ?? '').length } : { present: false };
     }
     record(observation({

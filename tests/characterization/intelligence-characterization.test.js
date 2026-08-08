@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ASSERTED, CLASSIFICATIONS, LEGACY_CHARACTERIZATION_CONTRACT, buildBaseline, canonical,
-  compareToBaseline, observation, sortKeysDeep,
+  compareToBaseline, normalizeIds, observation, sortKeysDeep,
 } from './characterization-contract.mjs';
-import { ATTACHMENT } from './intelligence-harness.mjs';
+import {
+  ATTACHMENT, BEHAVIOUR_BEARING_SOURCE, INTELLIGENCE_SOURCE, unownedIntelligenceSource,
+} from './intelligence-harness.mjs';
 import { generateBaseline, sourceFingerprints } from './run-intelligence-characterization.mjs';
 
 /**
@@ -128,6 +130,141 @@ test('more than 500 individual values are asserted, not a summary count', () => 
   const asserted = BASELINE.observations.filter((entry) => ASSERTED.includes(entry.classification));
   const total = asserted.reduce((sum, entry) => sum + leaves(entry.observed), 0);
   assert.ok(total > 500, `only ${total} exact values are asserted`);
+});
+
+test('generated ids are normalized positionally, so a swap is still a difference', () => {
+  // A single `<id>` token made every UUID identical, which made the values
+  // deterministic and destroyed the property worth keeping: a run whose signal
+  // pointed at the wrong lead compared equal to a correct one.
+  const a = '11111111-1111-1111-1111-111111111111';
+  const b = '22222222-2222-2222-2222-222222222222';
+  assert.deepEqual(normalizeIds({ x: a, y: a }), { x: '<id:1>', y: '<id:1>' }, 'same id, same token');
+  assert.deepEqual(normalizeIds({ x: a, y: b }), { x: '<id:1>', y: '<id:2>' }, 'different ids, different tokens');
+
+  // The property that matters is the RELATIONSHIP, not the label. Two rows
+  // pointing at one lead and two rows pointing at different leads must not
+  // compare equal — that is how a signal attached to the wrong lead is caught.
+  assert.notDeepEqual(normalizeIds({ x: a, y: a }), normalizeIds({ x: a, y: b }),
+    'a broken relationship must be visible');
+
+  // And the limitation, stated rather than assumed: a *consistent* global
+  // relabelling IS equivalent, because a generated id is arbitrary. Two runs
+  // that differ only in which UUID the database happened to mint are the same
+  // run, and demanding otherwise would make every regeneration fail.
+  assert.deepEqual(normalizeIds({ x: a, y: b }), normalizeIds({ x: b, y: a }));
+  // Embedded in a string, which is where the sourceKey carries one.
+  assert.equal(normalizeIds(`signal:${a}:x`).endsWith(':x'), true);
+  assert.equal(normalizeIds(`signal:${a}:x`), 'signal:<id:1>:x');
+  // Provider, model and version identities are never generated and never touched.
+  assert.deepEqual(normalizeIds({ model: 'b2b-saas-score', version: 2, fingerprint: 'a'.repeat(64) }),
+    { fingerprint: 'a'.repeat(64), model: 'b2b-saas-score', version: 2 });
+
+  const stored = BASELINE.observations.find((entry) => entry.id === 'signals.stored-shape');
+  assert.match(stored.observed[0].sourceKey, /^signal:<id:\d+>:/);
+});
+
+test('every behaviour-bearing file is owned by the digest, and the set cannot rot', () => {
+  // The first version listed eleven files and missed six that matter, including
+  // the action runtime, the starter's qualify/disqualify actions whose gating
+  // this suite freezes, and the HTTP server that publishes the schema block it
+  // freezes. Any of them could have changed observed behaviour without staling
+  // the baseline — the one failure a freshness mechanism cannot have.
+  for (const file of [
+    'packages/core/src/action-runtime.js',
+    'packages/app/src/create-app.js',
+    'apps/server/src/http-server.js',
+    'packages/sdk/src/index.js',
+    'examples/starters/b2b-lead-qualification/actions/qualify.js',
+    'examples/starters/b2b-lead-qualification/actions/disqualify.js',
+  ]) {
+    assert.ok(BEHAVIOUR_BEARING_SOURCE.includes(file), `${file} is not owned by the source digest`);
+  }
+  // And the guard: a future intelligence-*.js in the kernel, or a new
+  // Intelligence module manifest, cannot silently fall outside ownership.
+  assert.deepEqual(unownedIntelligenceSource(repoRoot), []);
+});
+
+test('the wiring seam owns every path that knows where Intelligence lives', () => {
+  // The "one file changes at extraction" claim was false: the helper cases
+  // imported the internals directly and the evidence cases grepped for those
+  // paths, so extraction would have edited two files.
+  const dir = join(repoRoot, 'tests/characterization');
+  for (const file of readdirSync(dir)) {
+    // The harness owns the paths; this file asserts *about* them, so both are
+    // expected to mention them.
+    if (file === 'intelligence-harness.mjs' || file === 'intelligence-characterization.test.js') continue;
+    if (!/\.(mjs|js)$/.test(file)) continue;
+    const source = readFileSync(join(dir, file), 'utf8');
+    assert.doesNotMatch(source, /['"][^'"]*intelligence-(actions|registry)[^'"]*['"]/,
+      `${file} reaches an Intelligence internal directly; it belongs in the harness`);
+    assert.doesNotMatch(source, /['"][^'"]*intelligence\/generated[^'"]*['"]/, file);
+  }
+  assert.match(INTELLIGENCE_SOURCE.registry, /intelligence-registry/);
+  assert.equal(INTELLIGENCE_SOURCE.greps.length, 4);
+});
+
+test('a case that observes nothing is refused at build time', () => {
+  const valid = { id: 'x', category: 'scoring', classification: 'contractual', surface: 'sdk' };
+  for (const empty of [[], {}, null, undefined, '']) {
+    assert.throws(() => observation({ ...valid, observed: empty }), /observed nothing/,
+      `${JSON.stringify(empty)} must be refused`);
+  }
+  // Unless the emptiness IS the answer and somebody said so.
+  assert.doesNotThrow(() => observation({ ...valid, observed: [], allowEmpty: true, note: 'no targets are configured in this fixture' }));
+  assert.throws(() => observation({ ...valid, observed: [], allowEmpty: true }), /without saying why/);
+  // A non-asserted classification may legitimately observe nothing.
+  assert.doesNotThrow(() => observation({ ...valid, classification: 'incidental', observed: [] }));
+});
+
+test('legacy architecture facts are evidence, not a contract the extraction must preserve', () => {
+  const evidence = BASELINE.observations.filter((entry) => entry.classification === 'pre_extraction_evidence');
+  // The ambient field, the ambient schema block, the internal importers and the
+  // fixed definition slot are exactly what the extraction exists to move.
+  // Asserting them would make LA0 fail a correct extraction.
+  assert.deepEqual(evidence.map((entry) => entry.id).sort(), [
+    'architecture.app-intelligence-consumers',
+    'architecture.app-intelligence-field-present',
+    'architecture.definition-registry-slot',
+    'architecture.intelligence-internal-importers',
+    'architecture.schema-intelligence-block-present',
+  ]);
+  assert.ok(!ASSERTED.includes('pre_extraction_evidence'));
+  const mutated = BASELINE.observations.map((entry) => (entry.classification === 'pre_extraction_evidence'
+    ? { ...entry, observed: { present: false } } : entry));
+  assert.deepEqual(compareToBaseline(BASELINE, mutated).changed, [],
+    'the extraction must be free to change these');
+
+  // But consumer-visible facts about the same area stay contractual.
+  const kinds = BASELINE.observations.find((entry) => entry.id === 'architecture.definition-kinds-published');
+  assert.equal(kinds.classification, 'contractual');
+});
+
+test('correctness evidence does not depend on a page bound', () => {
+  // `list()` defaults to 100 rows and caps at 500; `listWhere()` is the complete
+  // query. Reading evidence through an unbounded list() would truncate silently,
+  // and a truncated observation compared against a truncated baseline still
+  // passes while proving nothing.
+  const page = BASELINE.observations.find((entry) => entry.id === 'signals.beyond-the-default-page');
+  assert.equal(page.observed.written, 130);
+  assert.equal(page.observed.readBack, 130);
+  assert.equal(page.observed.complete, true);
+  assert.ok(page.observed.written > 100, 'the case must actually cross the default page');
+
+  const scored = BASELINE.observations.find((entry) => entry.id === 'scoring.signal-count-beyond-the-default-page');
+  assert.equal(scored.observed.signalCount, 130, 'the score must count every signal, not one page of them');
+
+  // No unbounded read remains in the cases.
+  const cases = readFileSync(join(repoRoot, 'tests/characterization/intelligence-cases.mjs'), 'utf8');
+  assert.doesNotMatch(cases, /\.list\(\)/, 'every read asks for an explicit bound');
+});
+
+test('the 60-lead scenario is a scale scenario, not the >500 claim', () => {
+  const scale = BASELINE.observations.filter((entry) => entry.id.startsWith('scale.lead-'));
+  assert.equal(scale.length, 60);
+  // The ">500 exact reads" bar is met by the total number of individually
+  // asserted VALUES across the whole baseline, which the test above counts.
+  // Sixty leads is a separate thing: breadth of input, not depth of assertion.
+  assert.ok(scale.length < 500, 'sixty is sixty; the >500 claim is about asserted values');
 });
 
 // ---------------------------------------------------------------------------

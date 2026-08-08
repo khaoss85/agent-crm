@@ -29,10 +29,24 @@ export const LEGACY_CHARACTERIZATION_CONTRACT = 1;
  *   encoded as must-stay. A defect frozen as a contract is a defect forever.
  */
 export const CLASSIFICATIONS = Object.freeze([
-  'contractual', 'compatibility_required', 'incidental', 'defect_candidate',
+  'contractual', 'compatibility_required', 'incidental', 'defect_candidate', 'pre_extraction_evidence',
 ]);
 
-/** Only these two are compared against the baseline as must-not-change. */
+/**
+ * `pre_extraction_evidence` — a fact about how the domain is *wired today* that
+ * the extraction is **expected to change**.
+ *
+ * The ambient `app.intelligence` field, the `intelligence` block published on
+ * `/api/schema` as an ambient section, the list of files importing Intelligence
+ * internals, the fixed definition slot: every one of those is the thing the
+ * extraction exists to move. Asserting them as must-not-change would make LA0
+ * fail a correct extraction for doing exactly what it was asked to do — the
+ * harness would become the blocker instead of the proof.
+ *
+ * They are recorded because they are the measured evidence behind the open
+ * architecture decisions, and because a reader after the move needs to see what
+ * the shape *was*. They are never compared.
+ */
 export const ASSERTED = Object.freeze(['contractual', 'compatibility_required']);
 
 /** The observable surfaces a case may exercise. */
@@ -51,14 +65,35 @@ export const CATEGORIES = Object.freeze([
  * @param {{id: string, category: string, classification: string, surface: string,
  *   observed: unknown, note?: string|null}} input
  */
-export function observation({ id, category, classification, surface, observed, note = null }) {
+export function observation({ id, category, classification, surface, observed, note = null, allowEmpty = false }) {
   if (!CATEGORIES.includes(category)) throw new Error(`characterization: unknown category "${category}" for ${id}`);
   if (!CLASSIFICATIONS.includes(classification)) throw new Error(`characterization: unknown classification "${classification}" for ${id}`);
   if (!SURFACES.includes(surface)) throw new Error(`characterization: unknown surface "${surface}" for ${id}`);
   if (classification === 'defect_candidate' && !note) {
     throw new Error(`characterization: ${id} is a defect candidate with no explanation — the note IS the finding`);
   }
+  // A case that observed nothing asserts nothing and passes forever. It has
+  // happened twice while this harness was being built — once reading a field
+  // the action result does not return, once reading `action.inputs` where the
+  // published field is `action.input` — and both times the case sat green while
+  // proving absolutely nothing. An empty value is now an error unless the
+  // emptiness is itself the finding and is declared.
+  if (ASSERTED.includes(classification) && isEmpty(observed) && !allowEmpty) {
+    throw new Error(
+      `characterization: ${id} observed nothing (${JSON.stringify(observed)}). `
+      + 'A case that observes nothing asserts nothing. Fix the read, or pass allowEmpty with a note saying why empty is the answer.',
+    );
+  }
+  if (allowEmpty && !note) throw new Error(`characterization: ${id} allows an empty observation without saying why`);
   return { id, category, classification, surface, observed, note };
+}
+
+/** @param {unknown} value */
+function isEmpty(value) {
+  if (value === null || value === undefined || value === '') return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'object') return Object.keys(value).length === 0;
+  return false;
 }
 
 /**
@@ -73,6 +108,52 @@ export function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   const keys = Object.keys(value).sort();
   return `{${keys.map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+}
+
+/** Any generated identifier, wherever it appears — including inside a string. */
+export const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/**
+ * Replace generated identifiers with **positional** tokens, preserving identity
+ * relationships.
+ *
+ * The first version mapped every UUID to a single `<id>`. That made the values
+ * deterministic and destroyed the one property worth keeping: two *different*
+ * ids became the same token, so a swapped, reused or cross-wired identifier was
+ * undetectable — a run whose signal pointed at the wrong lead would have
+ * compared equal to a correct one.
+ *
+ * A positional mapping keeps both halves of the invariant:
+ *
+ * ```text
+ * same generated id   ->  same token      (deterministic across runs)
+ * different ids       ->  different tokens (a swap is a difference)
+ * ```
+ *
+ * The mapping is per-call, so the token a given id receives depends only on the
+ * order ids first appear in that value — which is itself part of the shape being
+ * frozen. Provider, model, policy and version identities are **never**
+ * normalized: they are not generated, and they are the decision's identity.
+ *
+ * @param {unknown} value @param {Map<string, string>} [mapping]
+ */
+export function normalizeIds(value, mapping = new Map()) {
+  const token = (id) => {
+    const key = id.toLowerCase();
+    if (!mapping.has(key)) mapping.set(key, `<id:${mapping.size + 1}>`);
+    return mapping.get(key);
+  };
+  const walk = (input) => {
+    if (typeof input === 'string') return input.replace(UUID_RE, token);
+    if (Array.isArray(input)) return input.map(walk);
+    if (input && typeof input === 'object') {
+      const out = {};
+      for (const key of Object.keys(input).sort()) out[key] = walk(input[key]);
+      return out;
+    }
+    return input;
+  };
+  return walk(value);
 }
 
 /**

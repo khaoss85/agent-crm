@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sortKeysDeep } from '../tests/characterization/characterization-contract.mjs';
@@ -44,7 +44,15 @@ try {
 mkdirSync(dirname(output), { recursive: true });
 // Sorted keys: two regenerations of identical behaviour must produce an
 // identical file, or every regeneration buries the real change in noise.
-writeFileSync(output, `${JSON.stringify(sortKeysDeep(baseline), null, 2)}\n`);
+//
+// Written through a temporary file and one rename. A generation interrupted
+// part-way must not leave a truncated baseline behind: the next `verify` would
+// compare against half a document and report a behaviour change that never
+// happened, which is the most expensive kind of false alarm this repository can
+// produce.
+const staging = `${output}.writing`;
+writeFileSync(staging, `${JSON.stringify(sortKeysDeep(baseline), null, 2)}\n`);
+renameSync(staging, output);
 
 process.stdout.write([
   '',

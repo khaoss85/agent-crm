@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildBaseline } from './characterization-contract.mjs';
-import { ATTACHMENT } from './intelligence-harness.mjs';
+import { ATTACHMENT, BEHAVIOUR_BEARING_SOURCE, INTELLIGENCE_SOURCE, loadNeutralHelpers } from './intelligence-harness.mjs';
 import { runIntelligenceCases, runRestartCases, runScaleCases } from './intelligence-cases.mjs';
 
 /**
@@ -27,19 +27,7 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
  * regeneration — which is the review moment the whole mechanism exists to
  * create.
  */
-export const SOURCE_FILES = Object.freeze([
-  'packages/core/src/intelligence-actions.js',
-  'packages/core/src/intelligence-registry.js',
-  'examples/starters/b2b-lead-qualification/intelligence.js',
-  'examples/starters/b2b-lead-qualification/enrichment-snapshot.module.json',
-  'examples/starters/b2b-lead-qualification/behavioral-signal.module.json',
-  'examples/starters/b2b-lead-qualification/score-run.module.json',
-  'examples/starters/b2b-lead-qualification/score-contribution.module.json',
-  'examples/starters/b2b-lead-qualification/routing-run.module.json',
-  'examples/starters/b2b-lead-qualification/route-evaluation.module.json',
-  'examples/starters/b2b-lead-qualification/assignment.module.json',
-  'examples/starters/b2b-lead-qualification/lead.module.json',
-]);
+export const SOURCE_FILES = BEHAVIOUR_BEARING_SOURCE;
 
 /** @param {string} [rootDir] */
 export function sourceFingerprints(rootDir = repoRoot) {
@@ -70,8 +58,10 @@ export function sourceFingerprints(rootDir = repoRoot) {
  */
 export async function runHelperCases(record) {
   const { observation } = await import('./characterization-contract.mjs');
-  const { computeDefinitionFingerprint } = await import('../../packages/core/src/intelligence-registry.js');
-  const { withTimeout } = await import('../../packages/core/src/intelligence-actions.js');
+  // Loaded through the harness, which owns every path that knows where
+  // Intelligence lives. Importing them here directly made the "one file changes
+  // at extraction" claim false.
+  const { computeDefinitionFingerprint, withTimeout } = await loadNeutralHelpers();
 
   // Fingerprints over shapes chosen to exercise ordering, nesting, types and
   // the empty cases — a hash function's contract is every input, not one.
@@ -151,25 +141,25 @@ export async function runArchitectureEvidence(record, rootDir = repoRoot) {
   record(observation({
     id: 'architecture.app-intelligence-consumers',
     category: 'architecture',
-    classification: 'compatibility_required',
+    classification: 'pre_extraction_evidence',
     surface: 'sdk',
-    observed: [...new Set(grep('app.intelligence'))].sort(),
+    observed: [...new Set(grep(INTELLIGENCE_SOURCE.greps[0]))].sort(),
     note: 'Blocker 2 evidence: every file that reads the ambient field. Measured, not remembered.',
   }));
   record(observation({
     id: 'architecture.intelligence-internal-importers',
     category: 'architecture',
-    classification: 'compatibility_required',
+    classification: 'pre_extraction_evidence',
     surface: 'sdk',
-    observed: [...new Set([...grep('intelligence-registry.js'), ...grep('intelligence-actions.js')])].sort(),
+    observed: [...new Set([...grep(INTELLIGENCE_SOURCE.greps[1]), ...grep(INTELLIGENCE_SOURCE.greps[2])])].sort(),
     note: 'Blocker 1 evidence: every file importing an Intelligence internal, which is what disproves "no code reads Intelligence internals".',
   }));
   record(observation({
     id: 'architecture.definition-registry-slot',
     category: 'architecture',
-    classification: 'compatibility_required',
+    classification: 'pre_extraction_evidence',
     surface: 'app-inspect',
-    observed: [...new Set(grep('intelligence/generated'))].sort(),
+    observed: [...new Set(grep(INTELLIGENCE_SOURCE.greps[3]))].sort(),
     note: 'Blocker 3 evidence: who depends on the fixed project-owned definition slot.',
   }));
 }

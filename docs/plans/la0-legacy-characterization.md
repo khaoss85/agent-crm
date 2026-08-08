@@ -74,8 +74,20 @@ the extraction then has to preserve the bugs. Every observation carries a
 | `compatibility_required` | undocumented, but a real consumer depends on it today | **yes** |
 | `incidental` | visible by accident — row ordering nobody specified, an id shape | recorded, never asserted |
 | `defect_candidate` | looks wrong or unsafe | reproduced, documented, **never frozen** |
+| `pre_extraction_evidence` | how the domain is wired **today**, and expected to change | recorded, never asserted |
 
-`incidental` is what stops the suite becoming a cement mixer: freezing a list
+`pre_extraction_evidence` was added by the review, and it matters as much as
+`incidental`. The ambient `app.intelligence` field, the ambient `intelligence`
+block on `/api/schema`, the list of files importing Intelligence internals and
+the fixed definition slot are *exactly what the extraction exists to move*.
+Asserting them as must-not-change would have made LA0 fail a correct extraction
+for doing what it was asked — the harness would have become the blocker instead
+of the proof. They are recorded because they are the measured evidence behind
+the open architecture decisions; they are never compared. Consumer-visible facts
+about the same area — the published definition kinds, each action's route,
+inputs and `fromStates` — stay `contractual`.
+
+And `incidental` is what stops the suite becoming a cement mixer: freezing a list
 order nobody specified would forbid the index change the extraction may need.
 `defect_candidate` is what stops it carrying a problem through the move and out
 the other side — each one is a recommendation for a **separate pre-extraction
@@ -102,7 +114,13 @@ parameterized.
 ## The wiring seam
 
 `intelligence-harness.mjs` is the only file that knows where Lead Intelligence
-currently lives. It writes today's attachment — four actions built by
+currently lives — and after the review that is literally true. It was not: the
+helper cases imported `intelligence-registry.js` and `intelligence-actions.js`
+directly and the evidence cases grepped for those paths, so extraction would
+have edited two files and a reviewer would have had to find the second. The
+harness now owns the import specifiers, the grep patterns, the module list and
+the digest set, and a test fails if any other file in `tests/characterization/`
+names an Intelligence path. It writes today's attachment — four actions built by
 `intelligence-actions.js` into the project's action registry, and four
 definition kinds in the fixed `packages/intelligence/generated/index.js` slot.
 After the extraction, `wireIntelligence` writes one composition import instead.
@@ -115,9 +133,21 @@ move can never silently be a comparison of two different applications.
 ## Baseline freshness
 
 The baseline is tied to **content digests of the behaviour-bearing source** —
-`intelligence-actions.js`, `intelligence-registry.js`, the starter's
-definitions and the seven module manifests — not to a git SHA, which moves for a
-typo in a README. An intentional pre-extraction behaviour change stales the
+not to a git SHA, which moves for a typo in a README.
+
+That set is **17 files** and it is guarded. The first version listed eleven and
+missed six that matter: the action runtime that builds the context, the
+starter's `qualify`/`disqualify` actions whose lifecycle gating this suite
+freezes, the HTTP server that publishes the schema block it freezes, the
+application factory, the SDK the cases drive, and the `task` manifest the
+harness applies. Any of them could have changed observed behaviour without
+staling the baseline — the one failure a freshness mechanism cannot have. A
+`unownedIntelligenceSource` guard now fails the suite if a future
+`intelligence-*.js` in the kernel or a new Intelligence module manifest falls
+outside digest ownership, so the hand-maintained list cannot rot silently.
+
+Generation writes through a temporary file and one `rename`, so an interrupted
+run cannot leave a truncated baseline for the next `verify` to compare against. An intentional pre-extraction behaviour change stales the
 baseline and forces a deliberate regeneration, which is the review moment the
 whole mechanism exists to create.
 
@@ -143,9 +173,22 @@ overwrites, and the resulting diff is what a reviewer reads.
 | scale | 60 leads through the whole pipeline, each with its total, fingerprint, matched rules, target and fallback reason |
 | helpers | `computeDefinitionFingerprint` over 13 shapes plus its canonicality properties, and `withTimeout`'s three outcomes |
 
-**779 individual values** are asserted, not a summary count — the ">500 exact
-reads" requirement is met by asserting each value, because a count that matches
-proves nothing about the values behind it.
+**828 individual values** are asserted, not a summary count — the ">500 exact
+reads" requirement is met by asserting each *value*, because a count that
+matches proves nothing about the values behind it. The 60-lead scale scenario is
+a separate thing: breadth of input, not depth of assertion, and it is not the
+>500 proof.
+
+### Correctness never depends on a page
+
+`list()` is paged — 100 by default, 500 maximum, ordered by `created_at DESC` —
+while `listWhere()` is the complete query the module factory documents as the
+one a correctness decision may use. Every read here asks for an explicit bound
+rather than trusting a default, and one case deliberately crosses the default
+page: **130 signals written, 130 read back, and the score run counts all 130**.
+A silent truncation would show up as a wrong number rather than as nothing at
+all — a truncated observation compared against a truncated baseline passes while
+proving nothing.
 
 ### A score is not a number
 
@@ -179,6 +222,22 @@ appear, **including inside strings**: a `sourceKey` like
 `signal:<leadId>:demo-requested:<observedAt>` embeds one, and that format is
 itself contractual, so the format is frozen and the id inside it is replaced.
 Getting that wrong made three records differ between two runs of identical code.
+
+Normalization is **positional** — `<id:1>`, `<id:2>` — not a single `<id>`
+token. The first version collapsed every UUID to one token, which made the
+values deterministic and destroyed the property worth keeping: a row pointing at
+the wrong lead compared equal to a correct one. Positional tokens keep both
+halves of the invariant — same id, same token; different ids, different tokens —
+and the mapping is shared across a list so relationships *between* rows survive.
+
+Stated rather than assumed: a **consistent global relabelling is equivalent by
+design.** Two runs differing only in which UUID the database happened to mint
+are the same run, and demanding otherwise would make every regeneration fail.
+What is caught is a broken *relationship*, which is the thing that would
+actually be wrong.
+
+Provider, model, policy and version identities are never normalized: they are
+not generated, and they are the decision's identity.
 
 Run-input fingerprints (`leadFingerprint`, `signalsFingerprint`) are contractual
 by **presence and stability**, not by value: they digest inputs that include the
