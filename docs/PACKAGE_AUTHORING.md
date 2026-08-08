@@ -44,6 +44,33 @@ limitation, or to "organize" code you already have. If you need a kernel change
 to make your package work, that is a missing runtime capability: raise it as
 one rather than reaching into `packages/core/src`.
 
+### Then start from a scaffold, not from somebody else's domain
+
+```bash
+npm run crm -- package scaffold field-service            # a plan; writes nothing
+npm run crm -- package scaffold field-service --apply    # two files
+```
+
+You get exactly two files — `src/index.js` and `README.md` — with an identity, a
+contract version and five **empty** declarations. That is already a conforming
+package: `crm package test packages/field-service` exits 0 on it before you have
+typed anything, so every edit you make from here starts from a known-good
+baseline instead of from a domain you then have to subtract.
+
+It deliberately generates **no** record, action, policy, capability, provider,
+Admin section, Solution Plan or MCP tool. A generated `status` field is a
+decision about a business nobody described, and a decision you have to notice
+before you can delete it is worse than an empty list. It also does not compose
+the package, run a migration, open a database or install anything — see §12.
+
+An occupied directory is refused rather than overwritten, and a name the
+registry would reject is refused **with a suggestion** rather than quietly
+renamed. It checks the target directory, not the composed application: a name
+already registered by another package is refused at startup by the registry, not
+here. `--into <dir>` puts the package somewhere other than `packages/`;
+`--json` gives an agent the plan, its file hashes and a `fingerprint`.
+ExecPlan: `docs/plans/dx3-package-scaffold.md`.
+
 ## 2. Pick a canonical identity
 
 ```js
@@ -270,9 +297,10 @@ framework's generic package contract and integration invariants?** — by
 composing it into a throwaway copy of your project and booting an application
 twice, once with it and once without.
 
-It is not the same question as the other two:
+It is not the same question as the other three:
 
 ```text
+package scaffold   give me an empty package that already conforms
 package validate   is this declaration structurally valid?
 package inspect    what does this package declare, own, offer and need?
 package test       does it hold up when a real application composes it?
@@ -339,6 +367,21 @@ project could not be read.
 
 ## 13. Submit for review
 
+The whole path, end to end:
+
+```text
+crm app inspect        what does this application already have?      (AX1)
+crm solution check     does my plan still match it?                  (AX2)
+crm package scaffold   an empty package that already conforms        (DX3)
+  edit                 records, actions, capabilities, policies — by hand
+crm module create      each record you own, from its manifest
+crm package validate   is the declaration structurally valid?
+crm package inspect    what does it declare, own, offer and need?
+crm package test       does it hold up when an application composes it? (DX4)
+  your own tests       is the DOMAIN right? nothing above answers this
+  compose              one import, added by hand, deliberately
+```
+
 Run `crm package test` on your package, `npm run verify` from a clean clone, run the starter, then open a PR and
 leave it open for the adversarial review in `docs/QUALITY_GATES.md` §5. The
 review will attack your package's boundary, its atomicity and its claims — the
@@ -381,10 +424,10 @@ rather than a change — "track our funnel by acquisition channel" resolves to
 reused packages plus, sometimes, one new custom package. The rules do not
 change, and two of them matter more in that mode:
 
-- **Discover before you create.** `crm package inspect` and `GET /api/schema`
-  say what is already installed and what it provides. Duplicating an existing
-  domain is the most common failure; there is no application-level inspector
-  yet (`crm app inspect` is planned, not implemented).
+- **Discover before you create.** `crm app inspect --json` (AX1) says what this
+  application already is; `crm package inspect` and `GET /api/schema` say what
+  one package provides. Duplicating an existing domain is the most common
+  failure, and it is the one inspection exists to prevent.
 - **Report what you could not build.** A package that silently omits the part
   of the goal it had no capability for is worse than one that names the gap.
 
@@ -404,11 +447,12 @@ extraction is its own PR, its own review and its own acceptance criterion, and
 it is sequenced:
 
 ```text
-1.  M14b2, reviewed and merged
-2.  M15 — Service, built on this seam
-3.  review the M15 learnings: what the seam still cannot express
-4.  DX4 (`crm package test`) — mechanical conformance
-5.  one controlled extraction, one domain, one PR
+1.  M14b2, reviewed and merged                                   done
+2.  M15 — Service, built on this seam                            done
+3.  review the M15 learnings: what the seam still cannot express done
+4.  DX4 (`crm package test`) — mechanical conformance            done
+5.  DX3 (`crm package scaffold`) — a conforming starting point   done
+6.  one controlled extraction, one domain, one PR                not started
 ```
 
 Steps 3 and 4 are not ceremony. Contracts and Delivery are two data points and
@@ -429,10 +473,11 @@ exist first. It is a hypothesis, and nothing in this guide authorizes starting.
 
 ## What is deliberately not here yet
 
-- **A scaffold command.** `crm package new <name>` will exist once Delivery and
-  Service have taught us the stable file shape. Generating the wrong skeleton
-  into every customer repository is harder to undo than typing four files, so
-  the decision waits for evidence.
+- **A scaffold that generates domain semantics.** `crm package scaffold` ships
+  (§1), and it deliberately stops at an identity. A record still needs a
+  manifest and `crm module create`; an action, a capability and a policy are
+  still yours to write. Generating the wrong skeleton into every customer
+  repository is harder to undo than typing two files.
 - **A registry, npm publication, remote install, auto-update, signing or a
   marketplace.** Packages are checked-in source. Distribution is a separate
   problem with a separate threat model, and none of it is needed to author a

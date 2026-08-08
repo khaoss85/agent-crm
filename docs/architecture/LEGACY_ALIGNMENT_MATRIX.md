@@ -308,6 +308,35 @@ about "every package conforms" was untrue of `service` at the moment it was
 written. DX4's official matrix covers all four, and its suite fails if a package
 is added without being listed.
 
+## The DX3 backfill answer, as the rule requires
+
+DX3 (`crm package scaffold`) is a **horizontal capability** in the same sense
+DX4 is: it applies to every package that could exist, including the three
+domains that are not packages yet.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None, at runtime or on disk.** DX3 adds one CLI command and one test file. It changes no kernel behaviour, refactors no domain, and its own output is written only where a caller points it |
+| Which are already aligned? | Not the right question for this capability. DX3 produces *new* packages; the four existing ones were written before it and none is regenerated. What is aligned is the **shape**: scaffolded output passes the same `crm package test` matrix the four packages are held to, so DX4's contract is now the default starting point rather than something an author has to remember |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None.** The three `needs_extraction` domains cannot be scaffolded any more than they can be conformance-tested — they are not packages. DX3 does not change that, and a scaffold is explicitly *not* an extraction tool: it writes an empty package, never a migration of an existing one |
+| What changed for extraction? | The pilot gains a starting point but no permission. An extraction now begins `crm package scaffold lead-intelligence --apply` and proceeds by moving code into it, with `crm package test` as the gate. Every precondition recorded below is unchanged and still unproved |
+| Matrix updated? | Yes — this section and the re-evaluated ordering below |
+
+### What DX3 deliberately did not close
+
+- **No domain semantics.** The scaffold generates no record, action, policy,
+  capability, provider, Admin section, Solution Plan or MCP tool. That is a
+  decision, not an omission: a generated field is a claim about a business
+  nobody described, and an agent reads generated code as a decision already
+  taken.
+- **No composition.** `packages/domains/generated/index.js` is still edited by
+  hand. Automating it would remove the one deliberate human act in the
+  package-installation path.
+- **No migration, no database, no install, no publish, no registry.**
+- **No HTTP-route contribution.** Still the open seam DX4 identified, still a
+  precondition for Commercial and Signature specifically, and still untouched.
+
 ## Sequencing, which this document does not change
 
 ```text
@@ -485,6 +514,79 @@ record-level coupling. Neither is needed to start the pilot.
 **non-conforming** as a result: `delivery` offers no capability that expresses
 rating a partner engagement. That is a real seam gap, recorded rather than
 patched.
+
+### Re-evaluated after DX3 was built — extraction readiness, measured
+
+The question DX3 makes it fair to ask: **is the path now complete enough to
+extract Lead Intelligence?**
+
+```text
+crm app inspect        the composition before                    exists (AX1)
+crm solution check     a plan bound to that composition          exists (AX2)
+crm package scaffold   an empty conforming lead-intelligence     exists (DX3)
+  move code            registries, actions, records              by hand
+crm package test       does the result conform?                  exists (DX4)
+  characterization     does it still decide identically?         DOES NOT EXIST
+```
+
+Five of six rungs exist. **The recommendation does not change: do not start.**
+Confidence in Lead Intelligence as the right *first* pilot stays moderate-high;
+confidence that it can be started *today* is low, and the reasons are now
+measured rather than assumed.
+
+**The precondition "no code reads Intelligence internals" is disproved.** It was
+recorded as unproved; it is now false, and the evidence is three imports:
+
+| Reader | What it reaches for | Why it blocks |
+|---|---|---|
+| `packages/core/index.js` | re-exports `computeDefinitionFingerprint` from `intelligence-registry.js` | it is **public kernel API** that every package depends on, sitting inside the domain that would move |
+| `packages/core/src/catalog-sync.js` | `withTimeout` from `intelligence-actions.js`, `computeDefinitionFingerprint` from `intelligence-registry.js` | Commercial Operations' provider sync depends on Intelligence's *files*, and Commercial is itself `needs_extraction` |
+| `packages/cli/src/app-inspect.js` | `packages/intelligence/generated/index.js` by path, as one of AX1's fixed composition slots | AX1's report shape names `intelligence` as a first-class definition kind |
+
+The first two are the real blocker and they have the same shape: the
+fingerprint and timeout helpers are **horizontal kernel machinery that happens
+to live in an Intelligence file**. They must move to a neutral kernel module
+*before* any extraction, as a separate, behaviour-preserving PR. That is a
+prerequisite, not part of the pilot.
+
+**Two seams the extracted package would need and cannot declare today.**
+
+- `app.intelligence` is a field on the application object. It is published in
+  `/api/schema` (`apps/server/src/http-server.js`) and injected into every
+  action's context (`packages/core/src/action-runtime.js`). A package can
+  declare a *capability*, which another package opens deliberately; it cannot
+  contribute an ambient context key that every action in the application
+  receives. Either that ambient key becomes a declared capability — a real
+  behaviour change for every existing action — or the contract grows a way to
+  express it. Neither is decided.
+- `packages/intelligence/generated/index.js` is a **project-owned registry
+  file**, on the same pattern as `packages/actions/generated`. A package that
+  owns a definition kind needs somewhere for a project to declare instances of
+  it. There is no generic seam for a package to contribute one, and inventing
+  one for a single consumer would violate this repository's own rule that a new
+  generic seam needs two real consumers.
+
+**And the acceptance criterion has no harness.** The criterion is behaviour
+preservation proved from the outside: every historical decision reproduces
+identically. `crm package test` cannot answer that — it says so itself, under
+`DOMAIN_CORRECTNESS_NOT_PROVEN` — and no characterization-test harness exists.
+An extraction started before that harness has, as its only proof, "the existing
+tests still pass", which is precisely the proof this document has twice said is
+insufficient.
+
+**So the ordered blockers, none of which is an extraction:**
+
+1. Move `computeDefinitionFingerprint` and `withTimeout` out of the Intelligence
+   files into neutral kernel modules. Behaviour-preserving, mechanical, its own PR.
+2. Decide `app.intelligence`: ambient context key, or declared capability.
+3. Decide how a package contributes a project-owned definition registry — or
+   establish that Intelligence keeps its registry in the host application.
+4. Build the characterization harness that can prove behaviour preservation.
+5. *Then* the pilot, one domain, one PR.
+
+Item 1 is small and independently useful; it is the honest next thing anyone
+who wants the pilot should do. Items 2 and 3 are contract decisions and belong
+to a human. Nothing in this section authorizes starting any of them.
 
 ## What this document is not
 

@@ -35,7 +35,7 @@ re-describing it.
 
 | | Tool | Why it waits |
 |---|---|---|
-| **DX3** | `crm package scaffold` | dry-run by default, explicit apply, a deterministic package skeleton, **no remote install**. Scaffolding a shape nobody has built three times bakes in the wrong shape |
+| **DX3** | `crm package scaffold <name>` — **built** (`docs/plans/dx3-package-scaffold.md`) | a deterministic, conforming skeleton: two files, an identity and five empty declarations, whose output passes DX4 with no manual edit. Dry-run by default, `--apply` to write, never an overwrite, never a silent rename. It generates **no** domain semantics, composes nothing, opens no database and installs nothing. Waiting for Service was right: the shape it bakes in is the empty one, which is the only shape four packages agreed on |
 | **DX4** | `crm package test <path> --json` — **built** (`docs/plans/dx4-package-conformance-kit.md`) | conformance: declaration, boundaries, composition refusals, module manifests and migration identity, attach and detach against a real boot, and agreement with `app inspect`. It makes ADR-018's seam self-enforcing. Action execution, policy behaviour, state transitions and data-bearing upgrade stay out by design and are reported as named limitations, not as passes |
 | **—** | first existing-domain extraction pilot | one of Intelligence / Commercial / Signature moved out of core, once DX4 can prove the result still conforms. The per-domain status that decides the candidate is `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, which records **Lead Intelligence** as the working hypothesis and the evidence that must exist before it is chosen |
 
@@ -91,8 +91,8 @@ Then:
   review the M15 learnings against the seam
 
 After Service learning:
-  DX3 Package Scaffold
-  DX4 Package Conformance
+  DX4 Package Conformance                                    built
+  DX3 Package Scaffold                                       built
   the controlled Legacy Domain Alignment Pass — one domain, one PR
 
 Before AX3:

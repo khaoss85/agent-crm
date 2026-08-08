@@ -249,6 +249,7 @@ surface rather than a list of commands:
 | `app_inspect` | T0 | AX1 — shipped as a CLI today |
 | `solution_check` | T0 | AX2 — shipped as a CLI today |
 | `package_inspect` | T0 | `crm package inspect` — shipped as a CLI today |
+| `package_scaffold` | T0 / **T2** | DX3 `crm package scaffold` — shipped as a CLI today. **T0 as a plan, T2 with `--apply`** |
 | `package_test` | **T1** | DX4 `crm package test` — shipped as a CLI today |
 | `explain` | T0 | DX8, not built |
 | `doctor` | T0 | DX1, not built |
@@ -267,8 +268,26 @@ something that executes checked-in source is a different decision from a blanket
 allow on something that reads it, so the tiers differ even though neither
 mutates the project.
 
+`package_scaffold` is the one entry whose tier **depends on its arguments**, and
+that is the argument for keeping the two modes one tool rather than splitting
+them. Without `--apply` it is a pure planner: it writes nothing, opens nothing
+and reads only the target directory, so it is T0 for the same reason
+`package_inspect` is. With `--apply` it creates files in the caller's own
+repository, which is a T2 mutation no matter how small. The mapping that follows
+is: **the tool defaults to the plan**, `apply` is an explicit boolean the caller
+must set, and a host that grants the namespace broadly is granting the planner,
+not the writer. That mirrors `crm_scaffold_module`, the one existing MCP tool
+with the same shape, whose server instructions already say *code scaffolding is
+dry-run unless apply is explicitly true*.
+
+Its refusals are part of the contract an agent depends on: an occupied target,
+an invalid name and a path that leaves the project are all refused with a code
+and exit 1, and the plan carries a `fingerprint` so a caller can tell "the same
+scaffold" from "a different one". Nothing about it is remote — there is no
+registry, install or publish — so it needs no Production-Spine gate.
+
 The `package` namespace stays **deferred and searchable** rather than
-always-loaded: three commands that only matter while somebody is authoring a
+always-loaded: four commands that only matter while somebody is authoring a
 package should not occupy the surface of every session. `app_inspect` remains
 the tool an agent reaches for first.
 
