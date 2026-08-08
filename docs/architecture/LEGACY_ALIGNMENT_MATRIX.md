@@ -387,7 +387,7 @@ this matrix can claim about one domain.
 | Which old domains does this touch? | **Lead Intelligence only**, and only by observing it. No code moved, no helper was relocated, no ambient field replaced, no seam added |
 | Which are already aligned? | Not the frame. What changed is coverage: Lead Intelligence now has a frozen, machine-checked record of its externally observable behaviour — 149 observations, 779 asserted values. Commercial Operations and Signature & Order have **none** |
 | Which need metadata only? | **None** |
-| Which need a code backfill? | **None from LA0.** It did surface two `defect_candidate` findings in `record-signal` that should be fixed before the extraction, as their own change |
+| Which need a code backfill? | **None from LA0 itself.** It surfaced two `defect_candidate` findings in `record-signal` — an unbounded `value` and control characters stored verbatim — which are fixed in their own open PR, before the extraction rather than during it |
 | What changed for extraction? | The acceptance criterion — behaviour preservation proved from the outside — is mechanical for the first time. It was the last unknown; what remains is decisions |
 | Matrix updated? | Yes — this section |
 
@@ -395,7 +395,7 @@ this matrix can claim about one domain.
 
 | Domain | Characterized | Note |
 |---|---|---|
-| Lead Intelligence | **yes** — `tests/characterization/`, `legacyCharacterizationContract: 1` | the extraction candidate |
+| Lead Intelligence | **yes** — `tests/characterization/`, `legacyCharacterizationContract: 1` | the extraction candidate. Still **not** package-aligned: it remains kernel source with an ambient runtime field and a fixed definition slot |
 | Commercial Operations | no | would need its own suite before any extraction |
 | Signature & Order | no | same, plus the HTTP-route seam it owns |
 | Contracts, Delivery, Service | **not applicable** | package-native from birth; `crm package test` plus their own suites already cover them |
