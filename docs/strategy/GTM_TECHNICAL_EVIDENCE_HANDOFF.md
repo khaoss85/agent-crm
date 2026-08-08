@@ -143,6 +143,43 @@ evidence does not belong in this document.
 
 ---
 
+## The agent story, with status
+
+The one shape GTM may use to describe what the framework does, with each stage's
+honest state. **A stage marked partial must be described as partial.**
+
+| Stage | Rail | State | Evidence |
+|---|---|---|---|
+| **SEE** | App Inspect | implemented | `crm app inspect --json` |
+| **PLAN** | Solution Plan | implemented | `crm solution check --json` |
+| **BUILD** | Package Scaffold + the coding agent | implemented | `crm package scaffold` |
+| **CHECK** | Project Doctor + Package Conformance | implemented | `crm project doctor --json`, `crm package test --json` |
+| **PROVE** | Quality Gates today; Project Verify (DX5) and Implementation Evidence (DX10) | **partial** | `docs/QUALITY_GATES.md`; DX5/DX10 **not built** |
+| **PRESERVE** | LA0 Characterization | implemented | `npm run characterize:intelligence` |
+
+Allowed positioning line:
+
+> Accordo gives coding agents a way to see, plan, build, check and prove —
+> instead of just generating code.
+
+**Do not claim** that this is a workflow a user follows, or that PROVE is
+complete. The rails are internal; a user states a goal. A worked example of the
+whole story on one real refactor:
+`docs/evidence/lead-intelligence-extraction.md`.
+
+**Category note.** "CRM" is recorded as too narrow for the long-term
+architecture, and two broader framings are being explored. **No public rename or
+tagline change is authorized here** — see
+`docs/strategy/CUSTOMER_REVENUE_OS_ROADMAP.md`.
+
+**Competitor context.** AI-friendly docs, MCP servers, app scaffolding and
+coding-agent guidance are **table stakes**, not differentiation — confirmed
+against four vendors' official material on 2026-08-08 in the roadmap document.
+Differentiation claims must rest on goal-first orchestration, deterministic
+discovery and planning, architectural constraints that refuse, machine-readable
+evidence, behavioural characterization, package conformance and approval
+boundaries. **No parity or superiority claim against any named vendor.**
+
 ## The allowed thesis
 
 Evidence-based, and the strongest form currently supportable:

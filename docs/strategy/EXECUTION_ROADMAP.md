@@ -4,6 +4,27 @@ Phased path from the current vertical slice to the public, agent-recommended CRM
 
 A recurring rule: **coding agents execute, humans approve identity, money, live data and public actions.** This mirrors the product's own philosophy (deterministic policy, human approval) applied to building the product itself.
 
+## Parallel tracks and elevated pillars
+
+The phase list below is preserved and not renumbered. What sits alongside it is
+recorded in `docs/strategy/CUSTOMER_REVENUE_OS_ROADMAP.md`, which adds five
+pillars that were absent or under-prioritized — **Customer Data Foundation**,
+**Customer Interactions / Communications**, **Package Extension Surface**,
+**Package Distribution & Lifecycle** and the **Agent Proof Loop** — and groups
+the work into three tracks that run in parallel where their dependencies allow:
+
+```text
+A  Agent-native moat        Intelligence extraction → DX2 → DX5 → DX6 → DX9 → DX10 → AX3
+B  Customer & Revenue OS    M16 → Customer Data Foundation → Analytics → Marketing
+                                                           → Interactions
+C  Production & Ecosystem   Extension Surface → Integration Runtime → Jobs/Outbox
+                            → Production Spine → Cloud → Package Distribution
+```
+
+Two dependency rules that document says out loud, because they are the ones
+easiest to violate: **Customer Data Foundation gates any closed-loop attribution
+claim** (MK5–MK7), and **Production Spine gates Cloud** (unchanged).
+
 ## Phase overview
 
 | # | Phase | Theme |
