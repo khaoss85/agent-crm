@@ -4,23 +4,23 @@
     "status": "chosen",
     "value": "Accordo",
     "slug": "accordo",
-    "note": "Chosen by the founder on 2026-08-07 over Pactar (more distinctive, but a live PACT word-mark in class 9) and Pactio (a live UK legal-tech namesake in adjacent software). Research and the eliminated candidates are in docs/marketing/NAME_VERIFICATION.md. The trademark screen has NOT been run \u2014 if it comes back badly, scripts/brand-set.js runs again with a different name."
+    "note": "Chosen by the founder on 2026-08-07 over Pactar (more distinctive, but a live PACT word-mark in class 9) and Pactio (a live UK legal-tech namesake in adjacent software). Research and the eliminated candidates are in docs/marketing/NAME_VERIFICATION.md. The trademark screen has NOT been run — if it comes back badly, scripts/brand-set.js runs again with a different name."
   },
   "domain": {
     "status": "registered",
     "value": "accordo.dev",
-    "note": "Registered by the founder on 2026-08-07. The registrar showed it as unavailable in a check run minutes earlier, which is consistent with that purchase \u2014 a DNS lookup the same morning had shown no A record, and this field warned that DNS silence is not proof either way. Ownership is the founder's statement; this environment can confirm the domain is registered, not to whom."
+    "note": "Registered by the founder on 2026-08-07. The registrar showed it as unavailable in a check run minutes earlier, which is consistent with that purchase — a DNS lookup the same morning had shown no A record, and this field warned that DNS silence is not proof either way. Ownership is the founder's statement; this environment can confirm the domain is registered, not to whom."
   },
   "repository": {
-    "status": "private",
+    "status": "public",
     "value": "https://github.com/khaoss85/agent-crm",
-    "note": "Public visibility is a human decision. Links resolve only once the repository is public."
+    "note": "Public since 2026-08-08, confirmed against the GitHub API rather than assumed. Flipping this one field is what turns indexing on: meta robots, robots.txt, the sitemap reference, both calls to action, the status banner and the codeRepository property in the structured data all follow it. vercel.json drops X-Robots-Tag in the same commit, and scripts/site-check.js refuses to let the two disagree."
   },
   "npm": {
     "status": "unpublished",
     "scope": "@accordo",
     "createCommand": "npm create accordo",
-    "note": "Unpublished and unclaimed. accordo, create-accordo and @accordo/core were all free on the npm registry on 2026-08-07 \u2014 verified, not assumed. Registering them is a human action and is urgent: namespaces are unrenameable."
+    "note": "Unpublished and unclaimed. accordo, create-accordo and @accordo/core were all free on the npm registry on 2026-08-07 — verified, not assumed. Registering them is a human action and is urgent: namespaces are unrenameable."
   },
   "license": {
     "status": "confirmed",

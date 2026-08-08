@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "$comment": "Deployment configuration for the public site, read by Vercel at the repository root. The build runs `npm run site:check`, which renders site/dist from the claims ledger and then runs the honesty gate over the result — so a claim that loses its evidence fails the deployment, not just CI. Running only site:build here would have left that sentence true of the pull request and false of the deploy. X-Robots-Tag is repeated on every headers entry on purpose: whether Vercel merges headers from all matching entries or applies only the first match is the load-bearing assumption of the indexing gate, and it cannot be verified from this repository. Repeating it makes the outcome identical under either rule. scripts/site-check.js requires every entry to carry it, and to carry the same value.",
+  "$comment": "Deployment configuration for the public site, read by Vercel at the repository root. The build runs `npm run site:check`, which renders site/dist from the claims ledger and then runs the honesty gate over the result — so a claim that loses its evidence fails the deployment, not just CI. Running only site:build here would have left that sentence true of the pull request and false of the deploy. The repository is public, so no X-Robots-Tag is sent: the header outranks the meta tag, and leaving it in place would keep every page unindexed however the ledger is configured. scripts/site-check.js fails the build if it comes back while brand.json says public.",
   "framework": null,
   "installCommand": "npm install",
   "buildCommand": "npm run site:check",
@@ -17,10 +17,6 @@
     {
       "source": "/llms.txt",
       "headers": [
-        {
-          "key": "X-Robots-Tag",
-          "value": "noindex, nofollow"
-        },
         {
           "key": "Content-Type",
           "value": "text/plain; charset=utf-8"
@@ -39,10 +35,6 @@
       "source": "/llms-full.txt",
       "headers": [
         {
-          "key": "X-Robots-Tag",
-          "value": "noindex, nofollow"
-        },
-        {
           "key": "Content-Type",
           "value": "text/plain; charset=utf-8"
         },
@@ -59,10 +51,6 @@
     {
       "source": "/jobs.json",
       "headers": [
-        {
-          "key": "X-Robots-Tag",
-          "value": "noindex, nofollow"
-        },
         {
           "key": "Content-Type",
           "value": "application/json; charset=utf-8"
@@ -81,10 +69,6 @@
       "source": "/answers.json",
       "headers": [
         {
-          "key": "X-Robots-Tag",
-          "value": "noindex, nofollow"
-        },
-        {
           "key": "Content-Type",
           "value": "application/json; charset=utf-8"
         },
@@ -102,10 +86,6 @@
       "source": "/(.*).html",
       "headers": [
         {
-          "key": "X-Robots-Tag",
-          "value": "noindex, nofollow"
-        },
-        {
           "key": "Cache-Control",
           "value": "public, max-age=0, must-revalidate"
         }
@@ -115,10 +95,6 @@
       "source": "/",
       "headers": [
         {
-          "key": "X-Robots-Tag",
-          "value": "noindex, nofollow"
-        },
-        {
           "key": "Cache-Control",
           "value": "public, max-age=0, must-revalidate"
         }
@@ -127,10 +103,6 @@
     {
       "source": "/sitemap.xml",
       "headers": [
-        {
-          "key": "X-Robots-Tag",
-          "value": "noindex, nofollow"
-        },
         {
           "key": "Content-Type",
           "value": "application/xml; charset=utf-8"
@@ -145,10 +117,6 @@
       "source": "/robots.txt",
       "headers": [
         {
-          "key": "X-Robots-Tag",
-          "value": "noindex, nofollow"
-        },
-        {
           "key": "Content-Type",
           "value": "text/plain; charset=utf-8"
         },
@@ -161,10 +129,6 @@
     {
       "source": "/(.*)",
       "headers": [
-        {
-          "key": "X-Robots-Tag",
-          "value": "noindex, nofollow"
-        },
         {
           "key": "X-Content-Type-Options",
           "value": "nosniff"
