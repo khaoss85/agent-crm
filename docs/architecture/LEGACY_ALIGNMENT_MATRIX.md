@@ -624,6 +624,17 @@ to live in an Intelligence file**. They must move to a neutral kernel module
 *before* any extraction, as a separate, behaviour-preserving PR. That is a
 prerequisite, not part of the pilot.
 
+> **Resolved** by the neutral-helper move. `computeDefinitionFingerprint`,
+> its canonicalizer and `validateDeclaredConfig` now live in
+> `packages/core/src/definition-fingerprint.js`, and `withTimeout` in
+> `packages/core/src/timeout.js`. The finding above is left standing as the
+> record of what was measured; what changed is where the code lives, not
+> whether the reading was true. The importer list LA0 measures shrank from
+> nine files to four, and the four that remain — `create-app.js`, the
+> starter's `install.mjs`, `DECISIONS.md` and Intelligence's own actions
+> module — are genuine Intelligence dependencies rather than helper reach-ins.
+> The third row, AX1's fixed composition slot, is untouched and still open.
+
 **Two seams the extracted package would need and cannot declare today.**
 
 - `app.intelligence` is a field on the application object. It is published in

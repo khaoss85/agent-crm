@@ -1,7 +1,7 @@
 // @ts-check
 
 import { ValidationError, NotFoundError } from './errors.js';
-import { computeDefinitionFingerprint, validateDeclaredConfig } from './intelligence-registry.js';
+import { computeDefinitionFingerprint, validateDeclaredConfig } from './definition-fingerprint.js';
 import {
   requireCurrency,
   CHARGE_TYPES,

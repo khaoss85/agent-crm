@@ -77,10 +77,25 @@ export const INTELLIGENCE_SOURCE = Object.freeze({
   greps: Object.freeze(['app.intelligence', 'intelligence-registry.js', 'intelligence-actions.js', 'intelligence/generated']),
 });
 
+/**
+ * The two neutral helpers, loaded from wherever they currently live.
+ *
+ * They no longer live in an Intelligence file: they were assessed
+ * domain-neutral and moved to `definition-fingerprint.js` and `timeout.js`,
+ * which is exactly the move the helper cases exist to police. The specifiers
+ * are separate from `INTELLIGENCE_SOURCE` because the helpers and the domain
+ * now move independently — folding them back together would re-create the
+ * coupling the move removed.
+ */
+export const NEUTRAL_HELPER_SOURCE = Object.freeze({
+  fingerprint: '../../packages/core/src/definition-fingerprint.js',
+  timeout: '../../packages/core/src/timeout.js',
+});
+
 /** The two neutral helpers, loaded from wherever they currently live. */
 export async function loadNeutralHelpers() {
-  const { computeDefinitionFingerprint } = await import(INTELLIGENCE_SOURCE.registry);
-  const { withTimeout } = await import(INTELLIGENCE_SOURCE.actions);
+  const { computeDefinitionFingerprint } = await import(NEUTRAL_HELPER_SOURCE.fingerprint);
+  const { withTimeout } = await import(NEUTRAL_HELPER_SOURCE.timeout);
   return { computeDefinitionFingerprint, withTimeout };
 }
 
@@ -98,6 +113,8 @@ export async function loadNeutralHelpers() {
 export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/core/src/intelligence-actions.js',
   'packages/core/src/intelligence-registry.js',
+  'packages/core/src/definition-fingerprint.js',
+  'packages/core/src/timeout.js',
   'packages/core/src/action-runtime.js',
   'packages/app/src/create-app.js',
   'apps/server/src/http-server.js',

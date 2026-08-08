@@ -1,7 +1,9 @@
 // @ts-check
 
 import { AppError, ConflictError, ValidationError } from './errors.js';
-import { computeDefinitionFingerprint, rankRoutingTargets } from './intelligence-registry.js';
+import { computeDefinitionFingerprint } from './definition-fingerprint.js';
+import { rankRoutingTargets } from './intelligence-registry.js';
+import { withTimeout } from './timeout.js';
 
 /**
  * Framework-provided Lead Intelligence actions (ADR-015), starter-registered
@@ -98,31 +100,6 @@ async function createRecord(modules, moduleName, patch, actor) {
     );
   }
   return service.createManaged(patch, { actor });
-}
-
-/**
- * Bounded provider-call timeout. The losing promise is explicitly observed so
- * a late rejection can never become an unhandled rejection; a late RESOLUTION
- * is simply discarded (best-effort abandonment — the framework does not claim
- * cancellation, and nothing a provider settles late can be persisted because
- * persistence happens only in execute from the already-returned prepared
- * value).
- * @param {Promise<any>} promise @param {number} ms @param {string} label
- */
-export function withTimeout(promise, ms, label) {
-  /** @type {any} */
-  let timer;
-  const guarded = Promise.resolve(promise);
-  guarded.catch(() => {}); // observe late rejections; never unhandled
-  return Promise.race([
-    guarded,
-    new Promise((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new AppError(`${label} timed out after ${ms}ms`, { code: 'PROVIDER_TIMEOUT', status: 504 })),
-        ms,
-      );
-    }),
-  ]).finally(() => clearTimeout(timer));
 }
 
 /** @param {unknown} value @param {string} field @param {RegExp | null} [shape] */
