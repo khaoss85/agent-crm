@@ -121,47 +121,62 @@ export async function runHelperCases(record) {
 
 /**
  * Every consumer of `app.intelligence`, measured from source rather than
- * remembered. Evidence for the decision recorded in
- * `docs/architecture/EXTRACTION_PREPARATION.md`; nothing here implements it.
+ * remembered — and measured in *code*, which is a different claim from
+ * measured in *text*. Evidence for the decisions recorded in ADR-021 and
+ * ADR-022; nothing here implements them.
  *
  * @param {(entry: any) => void} record
  */
 export async function runArchitectureEvidence(record, rootDir = repoRoot) {
   const { observation } = await import('./characterization-contract.mjs');
-  const grep = (pattern) => {
-    try {
-      return execFileSync('git', ['grep', '-n', '--', pattern], { cwd: rootDir, encoding: 'utf8' })
-        .split('\n').filter(Boolean)
-        .map((line) => line.split(':').slice(0, 1)[0])
-        .filter((file) => !file.startsWith('tests/') && !file.startsWith('docs/'));
-    } catch {
-      return [];
-    }
-  };
+  const { readsProperty, importsFrom, SCANNER_LIMITS } = await import('./source-scan.mjs');
+
+  // Every checked-in source file, minus the harness's own tests. Reading the
+  // files is what makes the difference: the previous version asked `git grep`
+  // for a substring, which counted a comment as a consumer and missed
+  // `app['intelligence']` entirely. Both were demonstrated, not suspected.
+  const sourceFiles = execFileSync('git', ['ls-files', '--', '*.js', '*.mjs'], { cwd: rootDir, encoding: 'utf8' })
+    .split('\n').filter(Boolean)
+    .filter((file) => !file.startsWith('tests/'));
+  const read = (file) => readFileSync(join(rootDir, file), 'utf8');
+
+  const consumers = sourceFiles.filter((file) => readsProperty(read(file), 'app', 'intelligence')).sort();
   record(observation({
     id: 'architecture.app-intelligence-consumers',
     category: 'architecture',
     classification: 'pre_extraction_evidence',
     surface: 'sdk',
-    observed: [...new Set(grep(INTELLIGENCE_SOURCE.greps[0]))].sort(),
-    note: 'Blocker 2 evidence: every file that reads the ambient field. Measured, not remembered.',
+    observed: consumers,
+    note: 'Blocker 2 evidence: every file that really reads the ambient field, in code rather than in prose. '
+      + `Scanner limits: ${SCANNER_LIMITS.join('; ')}.`,
   }));
+
+  const internalImporters = sourceFiles
+    .filter((file) => importsFrom(read(file), /intelligence-(registry|actions)\.js$/).length > 0).sort();
   record(observation({
     id: 'architecture.intelligence-internal-importers',
     category: 'architecture',
     classification: 'pre_extraction_evidence',
     surface: 'sdk',
-    observed: [...new Set([...grep(INTELLIGENCE_SOURCE.greps[1]), ...grep(INTELLIGENCE_SOURCE.greps[2])])].sort(),
-    note: 'Blocker 1 evidence: every file importing an Intelligence internal, which is what disproves "no code reads Intelligence internals".',
+    observed: internalImporters,
+    note: 'Blocker 1 evidence: every file with a real import statement naming an Intelligence internal.',
   }));
+
+  const slotDependants = sourceFiles
+    .filter((file) => /intelligence\/generated/.test(stripCode(read(file)))).sort();
   record(observation({
     id: 'architecture.definition-registry-slot',
     category: 'architecture',
     classification: 'pre_extraction_evidence',
     surface: 'app-inspect',
-    observed: [...new Set(grep(INTELLIGENCE_SOURCE.greps[3]))].sort(),
-    note: 'Blocker 3 evidence: who depends on the fixed project-owned definition slot.',
+    observed: slotDependants,
+    note: 'Blocker 3 evidence: who depends on the fixed project-owned definition slot, in code.',
   }));
+}
+
+/** The slot is referenced as a path string, so only comments are stripped. */
+function stripCode(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 }
 
 /** Run everything and assemble the document. */

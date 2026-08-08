@@ -299,6 +299,10 @@ property Option B buys is not actually bought.
 
 ### Recommendation — **Option B, with a staged migration** (unchanged, confidence raised)
 
+> Written up as **ADR-021** (proposed) in `DECISIONS.md`, with the target shape
+> in `docs/architecture/INTELLIGENCE_PACKAGE_TARGET.md`. Still not implemented,
+> and still a human's decision.
+
 The evidence above does not disprove the working hypothesis; it makes it
 cheaper. Confidence moves from *recommended* to *recommended with a measured
 cost*: one schema-publication change and four actions that move anyway.
@@ -336,10 +340,12 @@ Intelligence becomes a package, the file is a *project* file describing a
 
 ### Measured: who depends on the fixed slot
 
-LA0 records it (`architecture.definition-registry-slot`): four files, and only
-two of them are runtime — `packages/app/src/create-app.js`, which constructs the
-registries, and `packages/cli/src/app-inspect.js`, where `intelligence` is one
-of AX1's fixed composition slots. The other two are documentation.
+LA0 records it (`architecture.definition-registry-slot`): **two** runtime files —
+`packages/app/src/create-app.js`, which constructs the registries, and
+`packages/cli/src/app-inspect.js`, where `intelligence` is one of AX1's fixed
+composition slots. It read four when the measurement still counted
+documentation as a dependant; it counts code now, and two documents mentioning
+the slot were never dependants of it.
 
 And the four definition kinds, measured from `/api/schema`: enrichment
 providers, scoring models, routing policies, routing targets. Three of the four
@@ -387,6 +393,10 @@ they stay project configuration rather than becoming a package definition kind �
 which is a smaller decision than a new seam.
 
 ### Recommendation — **Option C, reuse existing contracts** (unchanged, now evidenced)
+
+> Written up as **ADR-022** (proposed) in `DECISIONS.md`, with the target shape
+> in `docs/architecture/INTELLIGENCE_PACKAGE_TARGET.md`. Still not implemented,
+> and still a human's decision.
 
 The measurement supports it: two runtime dependants, three of four kinds already
 expressible, one open question about a single kind. That is not the shape of a
@@ -451,9 +461,9 @@ a change scoped to two defect candidates:
 | DX1 project doctor merged | **yes** — `845cd3d` |
 | LA0 characterization harness | **yes** — `360b0f6` |
 | LA0 defect candidates resolved | **yes** — `1e40d1e`. `record-signal`'s `value` is now bounded to the domain's own `MAX_TEXT` (500) and refused when it contains control characters or line breaks. Reviewed regeneration moved exactly five observations, all `hostile-input.record-signal.*` |
-| Neutral helpers moved out of Intelligence files | **done, open for review** — moved to `definition-fingerprint.js` and `timeout.js`; the LA0 importer list went from ten files to four with every asserted value byte-identical |
-| `app.intelligence` decision taken | **no** — Option B recommended, cost now measured (one schema-publication change; zero external action consumers). Human decision |
-| Definition-registry decision taken | **no** — Option C recommended, dependants now measured. Human decision |
+| Neutral helpers moved out of Intelligence files | **yes** — `728d7bc`. Moved to `definition-fingerprint.js` and `timeout.js`; runtime imports reaching into an Intelligence module for a neutral helper went from eight to zero, with every asserted value byte-identical |
+| `app.intelligence` decision taken | **ADR-021, accepted** — declared capability with a staged migration. Not implemented |
+| Definition-registry decision taken | **ADR-022, accepted** — reuse `policies`, providers and capabilities; no new definition-registry seam. Not implemented |
 | Package-contributed HTTP route seam needed | **not for Intelligence.** DX4 established that route contribution is not required for generic conformance. It remains a precondition for **Commercial** and **Signature** specifically, each of which owns a route in `apps/server` |
 
 **Lead Intelligence is still not extractable today** — but the remaining
