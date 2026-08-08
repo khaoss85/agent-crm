@@ -10,8 +10,8 @@ import { inspectApplicationCommand } from './app-inspect-command.js';
 import { runReportingChild } from './child-report.js';
 import { sortChecks, check } from './package-test-checks.js';
 import {
-  buildProbeProject, packageManifests, resolvePackageLocation, writeComposition,
-  writeCompositionWithout,
+  applyManifests, buildProbeProject, packageManifests, resolvePackageLocation,
+  writeComposition, writeCompositionWithout,
 } from './package-test-project.js';
 import { safeMessage } from './safe-text.js';
 
@@ -55,9 +55,10 @@ const PLAN_PROBE = join(BIN, 'agent-crm-package-plan.js');
 /** Everything this command cannot answer, stated once, by code. */
 const LIMITATIONS = Object.freeze([
   ['DOMAIN_CORRECTNESS_NOT_PROVEN', 'this command proves framework conformance only. Whether the package computes, decides or promises the right thing is what its own tests are for, and nothing here is evidence about it'],
-  ['PACKAGE_SOURCE_TRUSTED', 'reading a code-first package means importing it, and this command also boots an application carrying it, so package code runs with this process’s authority. Nothing here is sandboxed'],
-  ['PROCESS_ISOLATION_BOUNDED', 'every boot runs in its own process group against a throwaway copy of the project, and a timeout stops that group. A package that deliberately detaches a process into a new group outlives the run; tracking descendants is not attempted and would not be a sandbox either'],
-  ['SCRATCH_PROJECT_ONLY', 'the package is composed into a temporary copy of the project. The caller’s own application, database and generated modules are never read for state and never written to'],
+  ['PACKAGE_SOURCE_TRUSTED', 'the harness does not intentionally mutate the caller project. Package source is trusted and executes with the operator’s authority. Process isolation protects the invoking process from crashes, global-state changes and hangs; it is not a filesystem, network or OS sandbox'],
+  ['PROCESS_ISOLATION_BOUNDED', 'every import and every boot runs in its own process group and a timeout stops that group, so an ordinary child a package spawns is stopped with it. A package that deliberately detaches a process into a new group outlives the run; tracking descendants is not attempted and would not be a sandbox either'],
+  ['SCRATCH_PROJECT_ONLY', 'the harness writes only inside a temporary copy of the project and removes it afterwards. It never opens the caller’s database. It cannot prevent package code from writing wherever the operator can write — including the caller’s project — because that code runs with the operator’s authority'],
+  ['UNDECLARED_OWNER_COMPOSED_LOCALLY', 'when an action targets a record another package owns, that owner is located in THIS project and composed so the rest of the report can be produced. A consumer whose project lacks that package would not get the same result, which is why an undeclared owner is reported as a failure rather than rescued'],
   ['ACTION_EXECUTION_NOT_ATTEMPTED', 'no declared action is executed. Driving one needs records only the domain knows how to create, so audit, trace, event and transaction behaviour are the package’s own tests to prove'],
   ['STATE_TRANSITIONS_NOT_DRIVEN', 'declared fromStates are published, never exercised: a generic probe has no record in any of those states'],
   ['POLICY_BEHAVIOUR_NOT_EVALUATED', 'a declared policy is checked for identity, declared config and a fingerprint. What it decides is domain behaviour and is not evaluated'],
@@ -68,7 +69,7 @@ const LIMITATIONS = Object.freeze([
 ]);
 
 /** Which categories a caller may rely on being present, in report order. */
-const CATEGORIES = Object.freeze(['declaration', 'boundary', 'composition', 'refusal', 'modules', 'lifecycle', 'inspection']);
+const CATEGORIES = Object.freeze(['declaration', 'boundary', 'composition', 'modules', 'lifecycle', 'inspection']);
 
 /**
  * @param {{packagePath: string, rootDir?: string, json?: boolean, timeoutMs?: number, capture?: boolean}} options
@@ -100,12 +101,22 @@ export async function packageTestCommand({
 async function run({ packagePath, root, timeoutMs, hold }) {
   const location = resolvePackageLocation({ packagePath, rootDir: root });
 
+  // The scratch copy is built FIRST, from filesystem facts alone, so that the
+  // package is imported from the copy rather than from the caller's own tree.
+  // Package code runs at import; a package that writes next to its own source
+  // would otherwise write into the caller's repository. That is not a sandbox —
+  // an absolute path still reaches anywhere the operator can — but it removes
+  // the one place the harness itself was pointing the package at.
+  const built = buildProbeProject({ rootDir: root, location });
+  hold(built);
+  const scratchPackageDir = join(built.scratchRoot, ...location.relativeDir.split('/'));
+
   // Everything that imports the package happens in a child process. The parent
   // never loads package code: a module body that calls `process.exit`, hangs or
   // floods a stream must not be able to take the process the operator invoked.
   const planned = await runReportingChild({
     loader: PLAN_PROBE,
-    args: ['--root', root, '--package', location.dir],
+    args: ['--root', built.scratchRoot, '--package', scratchPackageDir],
     ...(timeoutMs ? { timeoutMs } : {}),
     hints: {
       timeout: 'reading the package definition, and stopped its process group. A package whose module body does not return on import will do this.',
@@ -152,18 +163,19 @@ async function run({ packagePath, root, timeoutMs, hold }) {
       ['inspection.valid', 'inspection'], ['inspection.package-row', 'inspection'],
       ['inspection.capabilities', 'inspection'],
     ]) {
-      checks.push(check(id, category, 'skipped', 'the declared provider package is absent from this project', 'DEPENDENCY_PROVIDER_ABSENT'));
+      checks.push(check(id, category, 'skipped', 'the declared provider package is absent from this project', 'DEPENDENCY_PROVIDER_ABSENT', 'composition'));
     }
     return envelope({ root, location, name, definition: plan.package, declaration, checks, problems, scratch: null });
   }
 
   // ---- the scratch project ----
-  const built = buildProbeProject({
-    rootDir: root, location, providers: prerequisites,
+  const applied = applyManifests({
+    scratchRoot: built.scratchRoot,
+    rootDir: built.scratchRoot,
+    order: [...prerequisites.map((entry) => entry.relativeDir), location.relativeDir],
     projectManifests: projectRecords.manifests,
-    exportName: plan.package.exportName, isFactory: plan.package.isFactory, name,
   });
-  hold(built);
+  built.applied = applied;
   const composed = [
     ...prerequisites.map((provider) => ({
       name: provider.name, relativeDir: provider.relativeDir,
@@ -180,7 +192,11 @@ async function run({ packagePath, root, timeoutMs, hold }) {
     manifests.length === 0
       ? 'the package ships no module manifest'
       : `${mine.filter((entry) => entry.ok).length}/${mine.length} of this package's manifests applied${failedApplies.length ? `; refused: ${failedApplies.map((entry) => entry.manifest).sort().join(', ')}` : ''}`,
-    manifests.length === 0 ? 'NO_MANIFESTS_DECLARED' : undefined));
+    manifests.length === 0 ? 'NO_MANIFESTS_DECLARED' : undefined, 'module-factory'));
+
+  // The composition file is the only file this command authors, and it is
+  // written after the manifests are applied so the boot sees both.
+  writeComposition(built.scratchRoot, composed);
 
   // ---- attach: a real application boots carrying this package ----
   const attach = await bootProbe(built.scratchRoot, name, timeoutMs, root);
@@ -188,7 +204,8 @@ async function run({ packagePath, root, timeoutMs, hold }) {
   checks.push(check('lifecycle.attach', 'lifecycle', booted ? 'passed' : 'failed',
     booted
       ? `an application composing ${[...(attach.report.composedPackages ?? [])].join(', ')} started`
-      : `the application refused to start: ${safeMessage(attach.report?.error ?? attach.diagnostic ?? 'no report', [built.scratchRoot, root])}`));
+      : `the application refused to start: ${safeMessage(attach.report?.error ?? attach.diagnostic ?? 'no report', [built.scratchRoot, root])}`,
+    undefined, 'application-boot'));
 
   if (booted) {
     const registered = new Set(attach.report.registeredActions ?? []);
@@ -201,7 +218,7 @@ async function run({ packagePath, root, timeoutMs, hold }) {
         : unregistered.length === 0
           ? `all ${declaredActions.length} declared action(s) are registered on a real generated module`
           : `declared but not registered: ${unregistered.join(', ')}`,
-      declaredActions.length === 0 ? 'NO_ACTIONS_DECLARED' : undefined));
+      declaredActions.length === 0 ? 'NO_ACTIONS_DECLARED' : undefined, 'application-boot'));
 
     const capabilityRows = attach.report.capabilities ?? [];
     const failedCapabilities = capabilityRows.filter((row) => row.status !== 'resolved');
@@ -212,10 +229,10 @@ async function run({ packagePath, root, timeoutMs, hold }) {
         : failedCapabilities.length === 0
           ? `all ${capabilityRows.length} declared dependency(ies) opened at runtime`
           : failedCapabilities.map((row) => `${row.requirement}: ${safeMessage(row.detail ?? row.status, [built.scratchRoot, root])}`).sort().join('; '),
-      capabilityRows.length === 0 ? 'NO_DEPENDENCIES_DECLARED' : undefined));
+      capabilityRows.length === 0 ? 'NO_DEPENDENCIES_DECLARED' : undefined, 'application-boot'));
   } else {
     for (const id of ['lifecycle.actions-registered', 'lifecycle.capabilities-resolve']) {
-      checks.push(check(id, 'lifecycle', 'skipped', 'the application did not start', 'ATTACH_FAILED'));
+      checks.push(check(id, 'lifecycle', 'skipped', 'the application did not start', 'ATTACH_FAILED', 'application-boot'));
     }
   }
 
@@ -223,7 +240,8 @@ async function run({ packagePath, root, timeoutMs, hold }) {
   const inspected = await inspectApplicationCommand({ rootDir: built.scratchRoot, capture: true, ...(timeoutMs ? { timeoutMs } : {}) });
   const ax1 = inspected.report;
   checks.push(check('inspection.valid', 'inspection', ax1?.valid === true ? 'passed' : 'failed',
-    ax1 ? `crm app inspect reports ${ax1.problems.length} problem(s)` : 'the project could not be inspected'));
+    ax1 ? `crm app inspect reports ${ax1.problems.length} problem(s)` : 'the project could not be inspected',
+    undefined, 'app-inspect'));
 
   const row = (ax1?.packages ?? []).find((entry) => entry.name === name) ?? null;
   const agrees = row
@@ -238,7 +256,8 @@ async function run({ packagePath, root, timeoutMs, hold }) {
       ? (agrees
         ? 'the inspection report and the declaration describe the same package'
         : 'the inspection report and the declaration disagree about resources, actions, requires or provides')
-      : 'the package does not appear in the inspection report'));
+      : 'the package does not appear in the inspection report',
+    undefined, 'app-inspect'));
 
   const offered = declaration.published.provides;
   const capabilityStatus = (ax1?.capabilities ?? [])
@@ -252,7 +271,7 @@ async function run({ packagePath, root, timeoutMs, hold }) {
       : unresolved.length === 0
         ? `${capabilityStatus.length} capability edge(s) resolved`
         : unresolved.map((entry) => `${entry.name}@${entry.version}: ${entry.status}`).sort().join(', '),
-    capabilityStatus.length === 0 ? 'NO_CAPABILITY_EDGES' : undefined));
+    capabilityStatus.length === 0 ? 'NO_CAPABILITY_EDGES' : undefined, 'app-inspect'));
 
   // ---- the records the package owns, as the applied project holds them ----
   const owned = (ax1?.modules ?? []).filter((entry) => entry.owner === name);
@@ -265,7 +284,7 @@ async function run({ packagePath, root, timeoutMs, hold }) {
       : missingModules.length === 0
         ? `all ${declaredResources.length} declared record(s) exist and are owned by this package`
         : `declared but not owned by an applied module: ${missingModules.join(', ')}`,
-    declaredResources.length === 0 ? 'NO_RESOURCES_DECLARED' : undefined));
+    declaredResources.length === 0 ? 'NO_RESOURCES_DECLARED' : undefined, 'app-inspect'));
 
   const withMigrations = owned.filter((entry) => Array.isArray(entry.migrations) && entry.migrations.length > 0);
   const badState = owned.filter((entry) => entry.stateFile !== 'valid' && entry.stateFile !== 'reconstructed');
@@ -282,7 +301,7 @@ async function run({ packagePath, root, timeoutMs, hold }) {
         : duplicateMigrations.length > 0
           ? `duplicate migration name(s): ${[...new Set(duplicateMigrations)].sort().join(', ')}`
           : `${migrationNames.length} migration(s) across ${owned.length} record(s), each with a checksum and a valid state file`,
-    owned.length === 0 ? 'NO_RESOURCES_DECLARED' : undefined));
+    owned.length === 0 ? 'NO_RESOURCES_DECLARED' : undefined, 'module-factory'));
 
   // ---- detach: the surface leaves with the package, in a fresh process ----
   writeCompositionWithout(built.scratchRoot, composed, name);
@@ -296,14 +315,15 @@ async function run({ packagePath, root, timeoutMs, hold }) {
       ? (surfaceGone
         ? 'an application composed without the package starts, and none of its actions remain registered'
         : 'the package was removed from the composition but part of its surface is still registered')
-      : `an application without the package refused to start: ${safeMessage(detached.report?.error ?? detached.diagnostic ?? 'no report', [built.scratchRoot, root])}`));
+      : `an application without the package refused to start: ${safeMessage(detached.report?.error ?? detached.diagnostic ?? 'no report', [built.scratchRoot, root])}`,
+    undefined, 'application-boot'));
   // Restore the composition so a caller inspecting the scratch during a
   // debugging session sees what was actually tested.
   writeComposition(built.scratchRoot, composed);
 
   checks.push(check('lifecycle.detach-rows', 'lifecycle', 'not_applicable',
     'whether a detached package leaves its rows behind is a data question; this command creates an empty scratch database and destroys it',
-    'DETACH_ROW_PRESERVATION_NOT_GENERIC'));
+    'DETACH_ROW_PRESERVATION_NOT_GENERIC', 'application-boot'));
 
   return envelope({
     root, location, name, definition: plan.package, declaration, checks, problems,
@@ -311,6 +331,7 @@ async function run({ packagePath, root, timeoutMs, hold }) {
       applied: built.applied.length,
       packages: composed.map((entry) => entry.name).sort(),
       impliedPrerequisites,
+      undeclaredRecordOwners: plan.undeclaredRecordOwners ?? [],
       projectRecords: projectRecords.manifests.map((entry) => entry.name),
     },
     inspectionFingerprint: ax1?.applicationInspectionContract ? fingerprintOf(ax1) : null,
@@ -381,13 +402,17 @@ function envelope({ root, location, name, definition, declaration, checks, probl
         // Packages the contract gave this one no way to declare, discovered
         // from the records its actions target and composed so it could boot.
         impliedPrerequisites: scratch.impliedPrerequisites ?? [],
+        // Owners this project happened to contain and the package never
+        // declared. A consumer without them would not get this result.
+        undeclaredRecordOwners: scratch.undeclaredRecordOwners ?? [],
         // Records the composition needed that no package owns — a project's own
         // manifests, applied so a package action had something to target.
         projectRecords: scratch.projectRecords ?? [],
         database: 'created empty in a temporary copy and destroyed with it',
       }
       : {
-        composed: [], manifestsApplied: 0, impliedPrerequisites: [], projectRecords: [],
+        composed: [], manifestsApplied: 0, impliedPrerequisites: [],
+        undeclaredRecordOwners: [], projectRecords: [],
         database: 'never created: the package could not be composed',
       },
     inspectionFingerprint,

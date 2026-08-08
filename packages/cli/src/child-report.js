@@ -34,6 +34,8 @@ export const MAX_REPORT_BYTES = 16 * 1024 * 1024;
 export const MAX_NOISE_BYTES = 64 * 1024;
 /** Between asking the process group to stop and insisting. */
 export const KILL_GRACE_MS = 2_000;
+/** After the reporting process exits, how long to collect what it wrote. */
+export const DRAIN_MS = 250;
 
 /**
  * @param {{
@@ -111,6 +113,7 @@ export function runReportingChild({
       settled = true;
       clearTimeout(timer);
       if (insist) clearTimeout(insist);
+      if (drain) clearTimeout(drain);
       const noise = streams.noise.chunks.join('')
         + (streams.noise.exceeded ? `\n… truncated at ${maxNoiseBytes} bytes\n` : '');
 
@@ -145,8 +148,23 @@ export function runReportingChild({
       }
     };
 
+    // Settle on the child's **exit**, not on its streams closing.
+    //
+    // A grandchild the package spawned inherits these pipes and holds them open
+    // for as long as it lives, so `close` can be minutes after the process we
+    // started has already finished and written its report. Waiting for it made
+    // every package that spawns anything at import time take the full timeout.
+    // `exit` says the reporting process is done; a short drain window collects
+    // whatever it wrote, and an inherited pipe that never closes is then simply
+    // not our problem — which is also what PROCESS_ISOLATION_BOUNDED says.
+    let drain = null;
     child.once('error', (error) => finish(error));
     child.once('close', () => finish(null));
+    child.once('exit', () => {
+      if (settled || drain) return;
+      drain = setTimeout(() => finish(null), DRAIN_MS);
+      if (typeof drain.unref === 'function') drain.unref();
+    });
   });
 }
 

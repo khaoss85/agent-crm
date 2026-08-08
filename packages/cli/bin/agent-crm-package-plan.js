@@ -62,7 +62,6 @@ try {
   const name = typeof definition?.name === 'string' ? definition.name : '(unnamed)';
 
   const declaration = checks.runDeclarationChecks({ definition, dir: packageDir, rootDir });
-  const refusal = checks.runRefusalChecks({ definition });
 
   // ---- everything that has to be composed for this package to boot ----
   const prerequisites = [];
@@ -122,14 +121,24 @@ try {
     definition, providers: prerequisites.map((entry) => entry.definition),
   });
 
-  // An action targeting a record another package owns is not a contract
-  // violation — `requires` is a capability edge and cannot express record-level
-  // coupling — so the verdict turns on whether the owner is visible in the
-  // graph at all:
+  // Where an action's target record comes from decides whether the package is
+  // honestly declared, and the three cases are genuinely different:
   //
-  //   owned by this package            → passed
-  //   owned by a DECLARED dependency   → passed, and the coupling is named
-  //   owned by nobody this declares    → the seam gap, reported as such
+  //   owned by this package             → nothing to declare
+  //   owned by NO package               → a record of the HOST APPLICATION. Every
+  //                                       package here acts on `order`; a project
+  //                                       supplies it from its own manifest, and
+  //                                       depending on it is ordinary
+  //   owned by a DECLARED dependency    → the coupling is record-level, which
+  //                                       `requires` cannot express, but the
+  //                                       relationship is visible in the graph
+  //   owned by an UNDECLARED package    → a FAILURE. The package cannot be given
+  //                                       to anyone whose project lacks that
+  //                                       package, and nothing in its declaration
+  //                                       says so. This command must not rescue
+  //                                       it by composing an owner it happened to
+  //                                       find in this repository and then call
+  //                                       the package conforming
   const declaredPackages = new Set((definition?.requires ?? []).map((entry) => String(entry?.package)));
   const ownedHere = new Set(declaration.published.resources);
   const foreign = [...new Set((definition?.actions ?? [])
@@ -139,19 +148,43 @@ try {
   for (const entry of prerequisites) {
     for (const resource of entry.definition?.resources ?? []) ownerOf.set(resource, entry.name);
   }
-  const undeclared = foreign.filter((record) => !declaredPackages.has(ownerOf.get(record) ?? ''));
-  const targetCheck = foreign.length === 0
-    ? checks.check('declaration.action-targets', 'declaration', 'passed',
-      'every declared action targets a record this package owns')
-    : undeclared.length === 0
-      ? checks.check('declaration.action-targets', 'declaration', 'passed',
-        `acts on record(s) owned by declared dependency(ies): ${foreign.map((record) => `${record} (${ownerOf.get(record)})`).join(', ')}. `
-        + 'The coupling is record-level, which `requires` cannot express, but the owning package is declared.')
-      : checks.check('declaration.action-targets', 'declaration', 'not_applicable',
-        `acts on record(s) no declared dependency owns: ${undeclared.map((record) => `${record} (${ownerOf.get(record) ?? 'owner unknown'})`).join(', ')}. `
-        + 'The package contract cannot express record-level coupling, so this is a gap in the seam rather than a defect in the package. '
-        + 'The owning package is composed as an implied prerequisite.',
-        'UNDECLARED_RECORD_COUPLING');
+  const hostRecords = foreign.filter((record) => !ownerOf.has(record));
+  const declaredForeign = foreign.filter((record) => declaredPackages.has(ownerOf.get(record) ?? ''));
+  const undeclared = foreign.filter((record) => ownerOf.has(record) && !declaredPackages.has(ownerOf.get(record)));
+
+  const describeSet = (records) => records.map((record) => `${record}${ownerOf.has(record) ? ` (${ownerOf.get(record)})` : ''}`).join(', ');
+  let targetCheck;
+  if (undeclared.length > 0) {
+    // Name the capabilities the owner does offer, so the author can see whether
+    // a correct dependency exists to declare or whether this is a seam gap.
+    const offers = [...new Set(undeclared.map((record) => ownerOf.get(record)))].sort().map((owner) => {
+      const entry = prerequisites.find((candidate) => candidate.name === owner);
+      const capabilities = (entry?.definition?.capabilities ?? [])
+        .map((capability) => `${capability.name}@${capability.version}`).sort();
+      return `${owner} offers ${capabilities.length > 0 ? capabilities.join(', ') : 'no capability at all'}`;
+    });
+    targetCheck = checks.check('declaration.action-targets', 'declaration', 'failed',
+      `acts on record(s) owned by a package it does not declare: ${describeSet(undeclared)}. `
+      + 'This package cannot be composed into a project that lacks that package, and nothing in its declaration says so. '
+      + `Declare a capability of the owning package in \`requires\` — ${offers.join('; ')}. `
+      + 'If no capability of the owner expresses this relationship, the package contract cannot currently declare it, '
+      + 'and the package is partial rather than conforming.',
+      'UNDECLARED_PACKAGE_RECORD_DEPENDENCY', 'composition');
+  } else if (declaredForeign.length > 0) {
+    targetCheck = checks.check('declaration.action-targets', 'declaration', 'passed',
+      `acts on record(s) owned by declared dependency(ies): ${describeSet(declaredForeign)}`
+      + (hostRecords.length > 0 ? `; and on host-application record(s): ${hostRecords.join(', ')}` : '')
+      + '. The coupling is record-level, which `requires` cannot express, but every owning package is declared.',
+      undefined, 'composition');
+  } else if (hostRecords.length > 0) {
+    targetCheck = checks.check('declaration.action-targets', 'declaration', 'passed',
+      `acts on host-application record(s) no package owns: ${hostRecords.join(', ')}. `
+      + 'A project supplies these from its own manifests; depending on them is ordinary and needs no declaration.',
+      undefined, 'composition');
+  } else {
+    targetCheck = checks.check('declaration.action-targets', 'declaration', 'passed',
+      'every declared action targets a record this package owns', undefined, 'composition');
+  }
 
   // Records the composition needs that no package owns: a project's own
   // manifests, plus everything their foreign keys reference.
@@ -178,7 +211,7 @@ try {
       isFactory,
       ...declaration.published,
     },
-    checks: [...declaration.checks, targetCheck, ...refusal, ...composition.checks],
+    checks: [...declaration.checks, targetCheck, ...composition.checks],
     problems: [...declaration.problems, ...composition.problems],
     prerequisites: prerequisites.map((entry) => ({
       name: entry.name, relativeDir: entry.relativeDir, topSegment: entry.topSegment,
@@ -186,6 +219,7 @@ try {
     })),
     missingProviders: missingProviders.sort(),
     impliedPrerequisites,
+    undeclaredRecordOwners: [...new Set(undeclared.map((record) => ownerOf.get(record)))].sort(),
     projectRecords: {
       manifests: projectRecords.manifests.map((entry) => ({ name: entry.name, path: entry.path })),
       missing: projectRecords.missing,

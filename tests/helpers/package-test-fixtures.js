@@ -179,3 +179,94 @@ export function createFixturePackage() {
 }
 await new Promise(() => {});
 `;
+
+/** A package that owns a record and offers a capability — the provider in a graph. */
+export const provider = (name, { capability = 'thing', version = 1, resources = [`${name}-record`] } = {}) => `// @ts-check
+import { definePackage } from ${KERNEL};
+export function createFixturePackage() {
+  return definePackage({
+    packageContract: 1, name: '${name}', label: '${name}', version: 1,
+    resources: ${JSON.stringify(resources)},
+    capabilities: [{ name: '${capability}', version: ${version}, create: () => ({ read: () => [] }) }],
+  });
+}
+`;
+
+/** A consumer with an arbitrary declared dependency list and action targets. */
+export const consumer = (name, { requires = [], targets = [], resources = [] } = {}) => `// @ts-check
+import { definePackage } from ${KERNEL};
+export function createFixturePackage() {
+  return definePackage({
+    packageContract: 1, name: '${name}', label: '${name}', version: 1,
+    resources: ${JSON.stringify(resources)},
+    requires: ${JSON.stringify(requires)},
+    actions: ${JSON.stringify(targets)}.map((module) => ({
+      module, name: 'touch', label: 'Touch', actionContract: 1, input: [],
+      execute: async () => ({ ok: true }),
+    })),
+  });
+}
+`;
+
+/** A minimal module manifest for a record a fixture package owns. */
+export const manifestFor = (record) => ({
+  manifestVersion: 1,
+  name: record,
+  fields: [{ name: 'label', type: 'string', required: true }],
+});
+
+/** Packages that probe what the harness can and cannot promise about isolation. */
+export const SCRATCH_PROBES = Object.freeze([
+  ['fixture-reads-env', `// @ts-check
+import { definePackage } from ${KERNEL};
+const marker = process.env.AGENT_CRM_SCRATCH_MARKER ?? 'absent';
+export function createFixturePackage() {
+  return definePackage({
+    packageContract: 1, name: 'fixture-reads-env', label: 'Fixture', version: 1, resources: [],
+    metadata() { return { sawMarker: marker }; },
+  });
+}
+`, 'a package that reads the environment while importing'],
+
+  ['fixture-writes-beside-source', `// @ts-check
+import { writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { definePackage } from ${KERNEL};
+writeFileSync(join(dirname(fileURLToPath(import.meta.url)), 'wrote-beside-source.txt'), 'here');
+export function createFixturePackage() {
+  return definePackage({
+    packageContract: 1, name: 'fixture-writes-beside-source', label: 'Fixture', version: 1, resources: [],
+  });
+}
+`, 'a package that writes next to its own source while importing'],
+
+  ['fixture-spawns-child', `// @ts-check
+import { spawn } from 'node:child_process';
+import { definePackage } from ${KERNEL};
+spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' });
+export function createFixturePackage() {
+  return definePackage({
+    packageContract: 1, name: 'fixture-spawns-child', label: 'Fixture', version: 1, resources: [],
+  });
+}
+`, 'a package that spawns an ordinary short-lived child while importing'],
+]);
+
+/**
+ * A package that spawns a child which outlives the import.
+ *
+ * This is the timeout path, and it is the honest one: the reporting process
+ * cannot exit while it holds a live child handle, so the run is stopped by the
+ * timeout and the whole process group — grandchild included — goes with it.
+ */
+export const SPAWNS_LONG_LIVED_CHILD = `// @ts-check
+import { spawn } from 'node:child_process';
+import { definePackage } from ${KERNEL};
+spawn(process.execPath, ['-e', 'setTimeout(() => {}, 600000)'], { stdio: 'ignore' });
+export function createFixturePackage() {
+  return definePackage({
+    packageContract: 1, name: 'fixture-long-child', label: 'Fixture', version: 1, resources: [],
+  });
+}
+`;

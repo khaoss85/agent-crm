@@ -21,11 +21,36 @@ import { PRIVATE_IMPORT_RE, importSpecifiers, packageSources } from './package-s
 /** @type {'passed'|'failed'|'skipped'|'not_applicable'} */
 const PASSED = 'passed';
 
-/** A check row. `evidence` is what was observed; `reason` is why it did not run. */
-function check(id, category, status, evidence, reason) {
-  return reason === undefined
-    ? { id, category, status, evidence }
-    : { id, category, status, evidence, reason };
+/**
+ * The authority a check speaks for. A conformance kit that invents rules is a
+ * second, undocumented package contract, so every row names where its rule
+ * comes from and a reader can go and re-read that rule.
+ *
+ *   package-contract  `validatePackageDefinition` — ADR-018's contract itself
+ *   composition       `resolvePackageComposition` / `PackageRegistry`
+ *   authoring-rule    `docs/PACKAGE_AUTHORING.md` + `tests/helpers/package-conformance.js`,
+ *                     the rules every package in this repository already follows
+ *   module-factory    the manifest, state-file and migration machinery
+ *   application-boot  `createAgentCrmApp` — what actually happens at startup
+ *   app-inspect       AX1's report of the composed project
+ *
+ * There is deliberately no `dx4` authority. A rule this command would have had
+ * to invent is either advisory or absent.
+ */
+export const AUTHORITIES = Object.freeze([
+  'package-contract', 'composition', 'authoring-rule', 'module-factory',
+  'application-boot', 'app-inspect',
+]);
+
+/**
+ * A check row. `evidence` is what was observed; `reason` is why it did not run;
+ * `authority` is the rule it speaks for.
+ */
+function check(id, category, status, evidence, reason, authority) {
+  const row = { id, category, status, evidence };
+  if (reason !== undefined) row.reason = reason;
+  if (authority !== undefined) row.authority = authority;
+  return row;
 }
 
 /** Sorted, so two runs of the same package produce the same document. */
@@ -51,16 +76,21 @@ export function runDeclarationChecks({ definition, dir }) {
     problems.push({ code: 'PACKAGE_INVALID', message: error instanceof Error ? error.message : String(error) });
   }
   checks.push(check('declaration.valid', 'declaration', valid ? PASSED : 'failed',
-    valid ? 'validatePackageDefinition accepted the definition' : 'validatePackageDefinition refused the definition'));
+    valid ? 'validatePackageDefinition accepted the definition' : 'validatePackageDefinition refused the definition',
+    undefined, 'package-contract'));
 
   const declared = definition?.packageContract;
   checks.push(check('declaration.contract', 'declaration',
     declared === SUPPORTED_PACKAGE_CONTRACT ? PASSED : 'failed',
-    `declares packageContract ${JSON.stringify(declared)}; this framework supports ${SUPPORTED_PACKAGE_CONTRACT}`));
+    `declares packageContract ${JSON.stringify(declared)}; this framework supports ${SUPPORTED_PACKAGE_CONTRACT}`,
+    undefined, 'package-contract'));
 
   const hasLabel = typeof definition?.label === 'string' && definition.label.length > 0;
   checks.push(check('declaration.label', 'declaration', hasLabel ? PASSED : 'failed',
-    hasLabel ? 'has a human label' : 'a package without a label is unreadable in every report that lists it'));
+    hasLabel
+      ? 'has a human label'
+      : 'a package without a label is unreadable in every report that lists it. `validatePackageDefinition` allows one to be absent; every package in this repository has one',
+    undefined, 'authoring-rule'));
 
   // Resources, actions, requires and provides as the registry publishes them.
   const resources = [...(definition?.resources ?? [])].sort();
@@ -69,7 +99,8 @@ export function runDeclarationChecks({ definition, dir }) {
     .map((entry) => `${entry?.package}/${entry?.capability}@${entry?.version}`).sort();
   const provides = (definition?.capabilities ?? []).map((entry) => `${entry?.name}@${entry?.version}`).sort();
   checks.push(check('declaration.surface', 'declaration', PASSED,
-    `${resources.length} resource(s), ${actions.length} action(s), ${requires.length} declared dependency(ies), ${provides.length} capability(ies) offered`));
+    `${resources.length} resource(s), ${actions.length} action(s), ${requires.length} declared dependency(ies), ${provides.length} capability(ies) offered`,
+    undefined, 'package-contract'));
 
   if (!valid) {
     return { checks, problems, published: { resources, actions, requires, provides } };
@@ -95,20 +126,22 @@ export function runDeclarationChecks({ definition, dir }) {
     metadataEvidence = error instanceof Error ? error.message : String(error);
     problems.push({ code: 'PACKAGE_METADATA_INVALID', message: metadataEvidence });
   }
-  checks.push(check('declaration.metadata', 'declaration', metadataStatus, metadataEvidence));
+  checks.push(check('declaration.metadata', 'declaration', metadataStatus, metadataEvidence,
+    undefined, 'authoring-rule'));
 
   // Every declared policy carries a fingerprint, so a changed rule is visible.
   const policies = (definition?.policies ?? []);
   if (policies.length === 0) {
     checks.push(check('declaration.policy-fingerprints', 'declaration', 'not_applicable',
-      'the package declares no policy', 'NO_POLICIES_DECLARED'));
+      'the package declares no policy', 'NO_POLICIES_DECLARED', 'package-contract'));
   } else {
     const composed = resolvePackageComposition([{ ...definition, requires: [] }]);
     const fingerprinted = [...composed.policies.values()]
       .filter((entry) => /^[0-9a-f]{64}$/.test(String(entry.fingerprint ?? '')));
     checks.push(check('declaration.policy-fingerprints', 'declaration',
       fingerprinted.length === policies.length ? PASSED : 'failed',
-      `${fingerprinted.length}/${policies.length} declared policy(ies) carry a 64-hex declared-definition fingerprint`));
+      `${fingerprinted.length}/${policies.length} declared policy(ies) carry a 64-hex declared-definition fingerprint`,
+      undefined, 'composition'));
   }
 
   // Public imports only, and no dynamic composition.
@@ -124,15 +157,17 @@ export function runDeclarationChecks({ definition, dir }) {
     if (/\bawait import\s*\(/.test(source)) dynamic.push(`${shortName}: dynamic import`);
   }
   checks.push(check('boundary.sources', 'boundary', sources.length > 0 ? PASSED : 'failed',
-    `${sources.length} JavaScript source file(s)`));
+    `${sources.length} JavaScript source file(s)`, undefined, 'authoring-rule'));
   checks.push(check('boundary.private-import', 'boundary', privateImports.length === 0 ? PASSED : 'failed',
     privateImports.length === 0
       ? 'no source reaches into packages/core/src'
-      : `reaches a private kernel path: ${privateImports.join(', ')}`));
+      : `reaches a private kernel path: ${privateImports.join(', ')}`,
+    undefined, 'authoring-rule'));
   checks.push(check('boundary.static-source', 'boundary', dynamic.length === 0 ? PASSED : 'failed',
     dynamic.length === 0
       ? 'no eval, no Function constructor and no dynamic import'
-      : `builds behaviour at runtime: ${dynamic.join(', ')}`));
+      : `builds behaviour at runtime: ${dynamic.join(', ')}`,
+    undefined, 'authoring-rule'));
 
   // Reaching into another package's private source. Resolved, not substring
   // matched: `packages/contracts/src/service-capability.js` contains the text
@@ -156,7 +191,8 @@ export function runDeclarationChecks({ definition, dir }) {
   checks.push(check('boundary.cross-package-import', 'boundary', crossPackage.length === 0 ? PASSED : 'failed',
     crossPackage.length === 0
       ? 'no source imports another package\'s private src/'
-      : crossPackage.sort().join('; ')));
+      : crossPackage.sort().join('; '),
+    undefined, 'authoring-rule'));
 
   return { checks, problems, published: { resources, actions, requires, provides }, metadata };
 }
@@ -186,7 +222,8 @@ export function runCompositionChecks({ definition, providers }) {
   checks.push(check('compose.clean', 'composition', clean ? PASSED : 'failed',
     clean
       ? `composes with ${providers.length} declared provider package(s) and no problem`
-      : composed.problems.map((problem) => problem.code).sort().join(', ')));
+      : composed.problems.map((problem) => problem.code).sort().join(', '),
+    undefined, 'composition'));
 
   // Registering the same package twice is refused.
   let duplicateRefused = false;
@@ -196,13 +233,14 @@ export function runCompositionChecks({ definition, providers }) {
     duplicateRefused = /Duplicate domain package name/.test(String(error?.message ?? ''));
   }
   checks.push(check('compose.duplicate-refused', 'composition', duplicateRefused ? PASSED : 'failed',
-    duplicateRefused ? 'the same package cannot be registered twice' : 'a duplicate registration was not refused'));
+    duplicateRefused ? 'the same package cannot be registered twice' : 'a duplicate registration was not refused',
+    undefined, 'composition'));
 
   // Two packages cannot own one record.
   const resources = [...(definition?.resources ?? [])];
   if (resources.length === 0) {
     checks.push(check('compose.resource-collision-refused', 'composition', 'not_applicable',
-      'the package owns no record', 'NO_RESOURCES_DECLARED'));
+      'the package owns no record', 'NO_RESOURCES_DECLARED', 'composition'));
   } else {
     let collisionRefused = false;
     try {
@@ -216,14 +254,15 @@ export function runCompositionChecks({ definition, providers }) {
       collisionRefused = /Resource collision/.test(String(error?.message ?? ''));
     }
     checks.push(check('compose.resource-collision-refused', 'composition', collisionRefused ? PASSED : 'failed',
-      collisionRefused ? `a second package claiming "${resources[0]}" is refused` : 'a resource collision was not refused'));
+      collisionRefused ? `a second package claiming "${resources[0]}" is refused` : 'a resource collision was not refused',
+      undefined, 'composition'));
   }
 
   // Two packages cannot offer one capability at one version.
   const offered = definition?.capabilities ?? [];
   if (offered.length === 0) {
     checks.push(check('compose.capability-collision-refused', 'composition', 'not_applicable',
-      'the package offers no capability', 'NO_CAPABILITIES_OFFERED'));
+      'the package offers no capability', 'NO_CAPABILITIES_OFFERED', 'composition'));
   } else {
     let collisionRefused = false;
     try {
@@ -242,7 +281,8 @@ export function runCompositionChecks({ definition, providers }) {
     checks.push(check('compose.capability-collision-refused', 'composition', collisionRefused ? PASSED : 'failed',
       collisionRefused
         ? `a second provider of "${offered[0].name}@${offered[0].version}" is refused`
-        : 'a duplicate capability provider was not refused'));
+        : 'a duplicate capability provider was not refused',
+      undefined, 'composition'));
   }
 
   // EVERY declared dependency, not just the first: a package with two
@@ -250,7 +290,7 @@ export function runCompositionChecks({ definition, providers }) {
   const requires = definition?.requires ?? [];
   if (requires.length === 0) {
     checks.push(check('compose.unmet-dependency-refused', 'composition', 'not_applicable',
-      'the package declares no dependency', 'NO_DEPENDENCIES_DECLARED'));
+      'the package declares no dependency', 'NO_DEPENDENCIES_DECLARED', 'composition'));
   } else {
     const unproven = [];
     for (const entry of requires) {
@@ -265,13 +305,14 @@ export function runCompositionChecks({ definition, providers }) {
     checks.push(check('compose.unmet-dependency-refused', 'composition', unproven.length === 0 ? PASSED : 'failed',
       unproven.length === 0
         ? `all ${requires.length} declared dependency(ies) stop registration when unmet`
-        : `unmet dependency not refused for: ${unproven.join(', ')}`));
+        : `unmet dependency not refused for: ${unproven.join(', ')}`,
+      undefined, 'composition'));
   }
 
   // An undeclared reach is refused even when the capability exists.
   if (offered.length === 0) {
     checks.push(check('compose.undeclared-reach-refused', 'composition', 'not_applicable',
-      'the package offers no capability to reach for', 'NO_CAPABILITIES_OFFERED'));
+      'the package offers no capability to reach for', 'NO_CAPABILITIES_OFFERED', 'composition'));
   } else {
     let refused = false;
     let detail = '';
@@ -290,55 +331,11 @@ export function runCompositionChecks({ definition, providers }) {
     checks.push(check('compose.undeclared-reach-refused', 'composition', refused ? PASSED : 'failed',
       refused
         ? `a package that did not declare "${offered[0].name}@${offered[0].version}" is refused (${detail})`
-        : 'an undeclared consumer was allowed to open a capability'));
+        : 'an undeclared consumer was allowed to open a capability',
+      undefined, 'composition'));
   }
 
   return { checks, problems };
-}
-
-/**
- * Hostile and malformed declarations, run against clones so the loaded
- * definition is never mutated (`validatePackageDefinition` returns the object
- * it was given, uncopied and unfrozen).
- *
- * @param {{definition: any}} params
- */
-export function runRefusalChecks({ definition }) {
-  const clone = () => JSON.parse(JSON.stringify({
-    packageContract: definition?.packageContract,
-    name: definition?.name,
-    version: definition?.version,
-    label: definition?.label,
-    resources: definition?.resources ?? [],
-  }));
-  const refuses = (mutate) => {
-    const candidate = clone();
-    mutate(candidate);
-    try {
-      validatePackageDefinition(candidate);
-      return false;
-    } catch {
-      return true;
-    }
-  };
-
-  const cases = [
-    ['refusal.name-empty', (p) => { p.name = ''; }],
-    ['refusal.name-uppercase', (p) => { p.name = 'Package'; }],
-    ['refusal.name-leading-digit', (p) => { p.name = '1package'; }],
-    ['refusal.name-space', (p) => { p.name = 'two words'; }],
-    ['refusal.name-not-a-string', (p) => { p.name = 42; }],
-    ['refusal.contract-unsupported', (p) => { p.packageContract = SUPPORTED_PACKAGE_CONTRACT + 1; }],
-    ['refusal.contract-string', (p) => { p.packageContract = String(SUPPORTED_PACKAGE_CONTRACT); }],
-    ['refusal.version-zero', (p) => { p.version = 0; }],
-    ['refusal.version-fractional', (p) => { p.version = 1.5; }],
-    ['refusal.resources-not-an-array', (p) => { p.resources = 'company'; }],
-  ];
-  return cases.map(([id, mutate]) => {
-    const refused = refuses(mutate);
-    return check(id, 'refusal', refused ? PASSED : 'failed',
-      refused ? 'refused, as the contract requires' : 'accepted a declaration the contract forbids');
-  });
 }
 
 export { check };

@@ -291,6 +291,21 @@ real generated module and opens every declared capability · `crm app inspect`
 describes the same package the declaration does · and the whole surface
 disappears when the package is removed from the composition.
 
+Every check row names the **authority** it speaks for — `package-contract`,
+`composition`, `authoring-rule`, `module-factory`, `application-boot` or
+`app-inspect`. There is deliberately no `dx4` authority: a rule this command
+would have had to invent is either advisory or absent, because a conformance kit
+that invents rules is a second, undocumented package contract.
+
+**One rule is worth reading before you write an action.** If your action targets
+a record another *package* owns, declare a capability of that package in
+`requires`. Without it your package cannot be composed into any project that
+lacks the owner, and nothing in your declaration says so — `package test` fails
+it with `UNDECLARED_PACKAGE_RECORD_DEPENDENCY` and names the capabilities the
+owner does offer. Records that **no** package owns are different: those belong to
+the host application, every package here acts on `order`, and depending on them
+needs no declaration.
+
 What it deliberately does **not** prove is listed by code in every report:
 `DOMAIN_CORRECTNESS_NOT_PROVEN` first among them. No action is executed, no
 policy is evaluated, no state transition is driven and no provider is contacted.

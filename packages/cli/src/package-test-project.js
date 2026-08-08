@@ -226,62 +226,68 @@ export function packageManifests(dir) {
  *   projectManifests?: Array<{name: string, path: string}>,
  *   exportName: string, isFactory: boolean, name: string}} params
  */
-export function buildProbeProject({ rootDir, location, providers = [], projectManifests = [], exportName, isFactory, name }) {
+export function buildProbeProject({ rootDir, location, projectManifests = [] }) {
   const scratchRoot = mkdtempSync(join(tmpdir(), SCRATCH_PREFIX));
   const cleanup = () => { rmSync(scratchRoot, { recursive: true, force: true }); };
   try {
-    const segments = new Set([
-      ...ALWAYS_COPY,
-      location.topSegment,
-      ...providers.map((entry) => entry.topSegment),
-      // Whatever directory a needed project manifest lives in — a starter, an
-      // examples tree, or the project root itself.
-      ...projectManifests.map((entry) => relative(rootDir, entry.path).split(sep)[0]),
-    ]);
+    // Copy decisions are filesystem-only, made before any package code runs:
+    // the framework, its apps, the manifest, whatever directory the package
+    // lives in, and every top-level directory that holds a module manifest.
+    const segments = new Set([...ALWAYS_COPY, location.topSegment, ...topSegmentsWithManifests(rootDir)]);
     for (const segment of [...segments].sort()) {
       const from = join(rootDir, segment);
       if (!existsSync(from)) continue;
       cpSync(from, join(scratchRoot, segment), { recursive: true });
     }
-
-    /** @type {Array<{manifest: string, ok: boolean, output: string}>} */
-    const applied = [];
-    const apply = (manifestPath) => {
-      const result = spawnSync(
-        process.execPath,
-        [
-          '--no-warnings',
-          join(scratchRoot, 'packages', 'cli', 'bin', 'agent-crm.js'),
-          'module', 'create', manifestPath, '--apply', '--root', scratchRoot,
-        ],
-        { encoding: 'utf8', cwd: scratchRoot },
-      );
-      applied.push({
-        manifest: posix(relative(scratchRoot, manifestPath)),
-        ok: result.status === 0,
-        output: `${result.stdout ?? ''}${result.stderr ?? ''}`,
-      });
-      return result.status === 0;
-    };
-
-    // Project-owned records first: a package action may target one, and the
-    // module factory refuses a manifest whose references are not installed.
-    for (const manifest of projectManifests) {
-      apply(join(scratchRoot, relative(rootDir, manifest.path)));
-    }
-    // Providers next: a consumer's action may target a provider's record.
-    for (const provider of providers) {
-      for (const manifest of packageManifests(join(scratchRoot, provider.relativeDir))) apply(manifest);
-    }
-    for (const manifest of packageManifests(join(scratchRoot, location.relativeDir))) apply(manifest);
-
-    writeComposition(scratchRoot, [...providers, { name, relativeDir: location.relativeDir, exportName, isFactory }]);
-
-    return { scratchRoot, applied, cleanup };
+    return { scratchRoot, cleanup };
   } catch (error) {
     cleanup();
     throw error;
   }
+}
+
+/** Top-level directories of the project that contain at least one module manifest. */
+export function topSegmentsWithManifests(rootDir) {
+  const found = new Set();
+  for (const entry of indexModuleManifests(rootDir).values()) {
+    const segment = relative(rootDir, entry.path).split(sep)[0];
+    if (segment && segment !== '..') found.add(segment);
+  }
+  return [...found].sort();
+}
+
+/**
+ * Apply module manifests into the scratch project, project-owned records first
+ * so a package action that targets one has something to target, then each
+ * package's own.
+ *
+ * @param {{scratchRoot: string, rootDir: string, order: string[],
+ *   projectManifests?: Array<{name: string, path: string}>}} params
+ */
+export function applyManifests({ scratchRoot, rootDir, order, projectManifests = [] }) {
+  /** @type {Array<{manifest: string, ok: boolean, output: string}>} */
+  const applied = [];
+  const apply = (manifestPath) => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--no-warnings',
+        join(scratchRoot, 'packages', 'cli', 'bin', 'agent-crm.js'),
+        'module', 'create', manifestPath, '--apply', '--root', scratchRoot,
+      ],
+      { encoding: 'utf8', cwd: scratchRoot },
+    );
+    applied.push({
+      manifest: posix(relative(scratchRoot, manifestPath)),
+      ok: result.status === 0,
+      output: `${result.stdout ?? ''}${result.stderr ?? ''}`,
+    });
+  };
+  for (const manifest of projectManifests) apply(join(scratchRoot, relative(rootDir, manifest.path)));
+  for (const relativeDir of order) {
+    for (const manifest of packageManifests(join(scratchRoot, relativeDir))) apply(manifest);
+  }
+  return applied;
 }
 
 /**
@@ -296,14 +302,20 @@ export function buildProbeProject({ rootDir, location, providers = [], projectMa
 export function writeComposition(scratchRoot, entries) {
   const from = join(scratchRoot, dirname(DOMAINS_COMPOSITION));
   const lines = ['// @ts-check'];
-  for (const entry of entries) {
+  // Every import is aliased. Two packages may perfectly well export a factory
+  // with the same identifier — `createPackage` is the obvious collision, and a
+  // scaffold would produce it every time — and an unaliased composition then
+  // fails to parse with "Identifier … has already been declared", which reads
+  // like a broken application rather than a name clash.
+  const aliasOf = (entry, index) => `package${index}`;
+  entries.forEach((entry, index) => {
     const target = join(scratchRoot, entry.relativeDir, 'src', 'index.js');
     let specifier = posix(relative(from, target));
     if (!specifier.startsWith('.')) specifier = `./${specifier}`;
-    lines.push(`import { ${entry.exportName} } from '${specifier}';`);
-  }
+    lines.push(`import { ${entry.exportName} as ${aliasOf(entry, index)} } from '${specifier}';`);
+  });
   lines.push('export const generatedDomains = [');
-  for (const entry of entries) lines.push(`  ${entry.exportName}${entry.isFactory ? '()' : ''},`);
+  entries.forEach((entry, index) => lines.push(`  ${aliasOf(entry, index)}${entry.isFactory ? '()' : ''},`));
   lines.push('];', '');
   writeFileSync(join(scratchRoot, DOMAINS_COMPOSITION), lines.join('\n'));
   return lines.join('\n');

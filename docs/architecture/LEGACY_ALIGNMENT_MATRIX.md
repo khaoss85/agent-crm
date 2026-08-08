@@ -287,7 +287,7 @@ package, including the three domains that are not packages yet.
 | Question | Answer |
 |---|---|
 | Which old domains does this touch? | **None at runtime.** DX4 adds a CLI command and moves three pieces of shared CLI logic into their own modules. No kernel behaviour changes, no domain is refactored |
-| Which are already aligned? | The three packages — Contracts, Delivery, Service — and the custom-package fixture. All four now pass `crm package test` mechanically, which is stronger than the prose "aligned" that preceded it |
+| Which are already aligned? | The three first-party packages — Contracts, Delivery, Service — pass `crm package test` mechanically, which is stronger than the prose "aligned" that preceded it. The custom-package fixture **does not**: it acts on a record `delivery` owns without declaring `delivery`, and no capability of `delivery` expresses that. A real seam gap, reported rather than rescued |
 | Which need metadata only? | **None** |
 | Which need a code backfill? | **None today.** The three `needs_extraction` domains cannot be run through DX4 at all: they are not packages, so there is nothing for it to compose. That is not a new gap — it is the same gap, now measurable |
 | What changed for extraction? | DX4 is the gate the extraction pilot was waiting for. An extracted domain is a package, and a package that cannot pass `crm package test` has not been extracted, only moved |
@@ -464,16 +464,27 @@ route in `apps/server` that would have to go somewhere. Neither is extractable
 at any confidence until that seam exists, and building it was correctly out of
 DX4's scope.
 
-**One new precondition DX4 surfaced.** `UNDECLARED_RECORD_COUPLING` — a package
-acting on a record another package owns — is not expressible in the contract.
-Every legacy domain does this pervasively (Commercial acts on `quote` and
-`order`; Signature on `quote` and `order`; Intelligence on `lead`). Those records
-belong to a *project*, not to a package, so DX4 composes them from the project's
-own manifests and the arrangement works — but it works by convention, not by
-declaration. Before an extraction is called complete, this deserves a decision:
-either the contract learns to express record-level coupling, or it is written
-down that packages may act on project-owned records and the seam stops pretending
-`requires` covers it.
+**One new precondition DX4 surfaced, and its review sharpened it.** There are
+two different situations that look alike:
+
+- acting on a record **no package owns** — a *host-application* record. Every
+  legacy domain does this (Commercial and Signature on `quote` and `order`,
+  Intelligence on `lead`), every package here does it on `order`, and it is
+  ordinary: the project supplies the manifest. `crm package test` passes it.
+- acting on a record **another package owns**, without declaring that package.
+  `crm package test` **fails** it, because the package cannot be composed into
+  any project that lacks the owner and nothing in its declaration says so.
+
+For extraction this is good news: the legacy domains' record dependencies are
+almost all of the first kind. The one that would need a decision is any
+extracted domain acting on another *extracted* domain's record — and the answer
+is either a capability on the owner, or an explicit contract extension for
+record-level coupling. Neither is needed to start the pilot.
+
+`partner-scorecard` is the worked example of the second kind, and it is
+**non-conforming** as a result: `delivery` offers no capability that expresses
+rating a partner engagement. That is a real seam gap, recorded rather than
+patched.
 
 ## What this document is not
 
