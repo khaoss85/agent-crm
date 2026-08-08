@@ -87,7 +87,7 @@ Every entry below is either **implemented** and verifiable by a command, or
 | **DX4 — Package Conformance** | does this package satisfy the framework contract? | **implemented** — `crm package test --json` |
 | **Quality Gates** | what must a change prove before it merges? | **implemented** — `docs/QUALITY_GATES.md` |
 | **LA0 — legacy characterization** | does a refactor preserve behaviour? | **implemented** — `tests/characterization/`, `npm run characterize:intelligence` |
-| DX2 — Skill mirror sync | do the harness mirrors agree? | **future** — the gap is real and reported today by Project Doctor as a warning |
+| DX2 — Skill mirror sync | do the harness mirrors agree? | **future** — Project Doctor detects both halves today (`skills.mirror-drift` fails, `skills.mirror-coverage` warns) but never writes; the reconciliation is not built |
 | DX5 — Project Verify | does everything actually work? | **future** |
 | DX6 — Scenario Runner | does it work for this business scenario? | **future** |
 | DX9 — Context Pack | what does an agent need to know, compactly? | **future** |
@@ -134,8 +134,12 @@ the Quality Gates       what a change must prove
 
 Harness adapters stay **thin**. A `.claude/` file and its `.agents/` mirror carry
 the same semantics; if one of them starts carrying behaviour the other cannot,
-the behaviour is in the wrong place. `crm project doctor` reports mirror drift
-as a failure for exactly this reason.
+the behaviour is in the wrong place. `crm project doctor` grades the two ways
+mirrors can disagree differently, for exactly this reason: two copies of one
+skill whose *contents* diverge is `skills.mirror-drift`, a **failure**, because
+each harness is now being told something different; a skill that exists under
+one mirror only is `skills.mirror-coverage`, a **warning**, because one harness
+is merely uninformed. Neither check edits source — reconciliation is DX2.
 
 The practical test: *could a different agent, given only the CLI and the JSON,
 do this correctly?* If not, it is not portable, whatever the docs say.

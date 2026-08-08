@@ -41,9 +41,9 @@ evidence does not belong in this document.
 
 | | |
 |---|---|
-| **Technical fact** | Composition health, package source boundaries, module state and migration drift, Solution Plan currency, Skill mirror drift, repository-relative documentation links and forbidden tracked artifacts are reported in ~155 ms, read-only, each finding naming the existing authority that refuses it. |
+| **Technical fact** | Composition health, package source boundaries, module state and migration drift, Solution Plan currency, Skill mirror agreement, repository-relative documentation links and forbidden tracked artifacts are reported read-only in well under a second on this repository, each finding naming the existing authority that refuses it. |
 | **Evidence** | `npm run crm -- project doctor --json`; `projectDoctorContract: 1`; `tests/project-doctor.test.js` |
-| **User value** | An agent arriving at an unfamiliar checkout learns what is already broken before it edits anything, without paying for a full verification run (~156 s). |
+| **User value** | An agent arriving at an unfamiliar checkout learns what is already broken before it edits anything, without paying for a full verification run — sub-second against minutes. |
 | **Allowed positioning** | "A fast, read-only structural health check an agent can afford to run before every change." |
 | **Do not claim** | that it replaces tests, checks a database, checks provider health, or assesses production readiness. It states all four limits in its own output. |
 | **Status** | implemented |
@@ -74,7 +74,7 @@ evidence does not belong in this document.
 
 | | |
 |---|---|
-| **Technical fact** | One legacy domain's externally observable behaviour is frozen as 151 classified observations / 828 individually asserted values, with 16 mutation probes proving the comparison can fail — including one that catches a score keeping its number under a different definition fingerprint. |
+| **Technical fact** | One legacy domain's externally observable behaviour is frozen as 151 classified observations / 822 individually asserted values, with 16 mutation probes proving the comparison can fail — including one that catches a score keeping its number under a different definition fingerprint. |
 | **Evidence** | `npm run characterize:intelligence`; `legacyCharacterizationContract: 1`; `tests/characterization/` |
 | **User value** | A risky refactor can be proved to change no observable behaviour, instead of argued about. |
 | **Allowed positioning** | "Behaviour-preserving refactors can be proved from the outside, before they start." |
@@ -135,7 +135,7 @@ evidence does not belong in this document.
 | Implementation Evidence (DX10) | planned | not built |
 | Project Verify (DX5) | planned | not built |
 | Scenario Runner (DX6) | planned | not built |
-| Skill mirror sync (DX2) | planned | the gap is real and reported as a warning today; the fix is not built |
+| Skill mirror sync (DX2) | planned | detection exists (diverging copies fail, one-sided skills warn); automatic reconciliation is not built |
 | Full legacy alignment | planned | one domain characterized, **zero** extracted |
 | Cloud | planned | no auth, tenancy, RBAC or production spine exists |
 | MCP tool parity (DX13) | planned | policy written, tools not built |
