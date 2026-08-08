@@ -248,6 +248,8 @@ surface rather than a list of commands:
 |---|---|---|
 | `app_inspect` | T0 | AX1 — shipped as a CLI today |
 | `solution_check` | T0 | AX2 — shipped as a CLI today |
+| `package_inspect` | T0 | `crm package inspect` — shipped as a CLI today |
+| `package_test` | **T1** | DX4 `crm package test` — shipped as a CLI today |
 | `explain` | T0 | DX8, not built |
 | `doctor` | T0 | DX1, not built |
 | `change_inspect` | T0 | DX7, not built |
@@ -255,6 +257,20 @@ surface rather than a list of commands:
 | `verify` | T1 | DX5, not built |
 | `scenario` | T1 | DX6, not built |
 | `trace_query` | T1 | DX16 — **Production-Spine gated** |
+
+`package_test` is the one **T1** entry that is already built, and the tier is the
+point: it is read-only about the caller's project — it writes nothing there and
+opens no database — but it copies the project, applies module manifests into
+that copy and **boots an application twice**. Unlike every T0 entry it consumes
+real time and real disk, and it runs the package's own code. A blanket allow on
+something that executes checked-in source is a different decision from a blanket
+allow on something that reads it, so the tiers differ even though neither
+mutates the project.
+
+The `package` namespace stays **deferred and searchable** rather than
+always-loaded: three commands that only matter while somebody is authoring a
+package should not occupy the surface of every session. `app_inspect` remains
+the tool an agent reaches for first.
 
 Two properties this table is designed to have. Most of the surface is **T0**,
 which is what makes it safe to expose broadly and cheap to keep correct. And

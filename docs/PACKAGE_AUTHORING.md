@@ -259,11 +259,74 @@ public export or a missing runtime capability, never a deep import.
 Within your own package, import freely — but never reach into another
 *package's* private source either. That is what capabilities are for.
 
-## 11. Tests, example and evidence
+## 11. Prove conformance mechanically
+
+```bash
+npm run crm -- package test packages/<your-package> --json
+```
+
+`crm package test` (DX4) answers one question — **does this package satisfy the
+framework's generic package contract and integration invariants?** — by
+composing it into a throwaway copy of your project and booting an application
+twice, once with it and once without.
+
+It is not the same question as the other two:
+
+```text
+package validate   is this declaration structurally valid?
+package inspect    what does this package declare, own, offer and need?
+package test       does it hold up when a real application composes it?
+```
+
+What it proves, from the framework's own machinery rather than a second
+implementation of it: the declaration validates and the contract version is
+supported · metadata is data, function-free, bounded and identical twice · every
+policy carries a fingerprint · no source reaches into `packages/core/src` or
+another package's private `src/` · no `eval`, `new Function` or dynamic import ·
+a duplicate registration, a resource collision, a capability collision, **every**
+unmet dependency and an undeclared reach are all refused · every module manifest
+applies with a valid state file and unique migration identities · the
+application boots with the package, registers every declared action against a
+real generated module and opens every declared capability · `crm app inspect`
+describes the same package the declaration does · and the whole surface
+disappears when the package is removed from the composition.
+
+Every check row names the **authority** it speaks for — `package-contract`,
+`composition`, `authoring-rule`, `module-factory`, `application-boot` or
+`app-inspect`. There is deliberately no `dx4` authority: a rule this command
+would have had to invent is either advisory or absent, because a conformance kit
+that invents rules is a second, undocumented package contract.
+
+**One rule is worth reading before you write an action.** If your action targets
+a record another *package* owns, declare a capability of that package in
+`requires`. Without it your package cannot be composed into any project that
+lacks the owner, and nothing in your declaration says so — `package test` fails
+it with `UNDECLARED_PACKAGE_RECORD_DEPENDENCY` and names the capabilities the
+owner does offer. Records that **no** package owns are different: those belong to
+the host application, every package here acts on `order`, and depending on them
+needs no declaration.
+
+What it deliberately does **not** prove is listed by code in every report:
+`DOMAIN_CORRECTNESS_NOT_PROVEN` first among them. No action is executed, no
+policy is evaluated, no state transition is driven and no provider is contacted.
+Those are your package's own tests.
+
+**Trusted source, isolated execution, not a sandbox.** Every import and every
+boot happens in a child process, in its own process group, under a timeout, with
+the report on file descriptor 3 so a package that prints cannot corrupt it. Your
+project is never written to and your database is never opened. The child still
+holds your authority.
+
+Exit codes: `0` conforms · `1` conformance failures · `2` the package or the
+project could not be read.
+
+## 12. Tests, example and evidence
 
 - Reuse `tests/helpers/package-conformance.js` for the checks every package
   shares: contract metadata, public imports only, dependency resolution,
-  deterministic function-free schema, collision handling.
+  deterministic function-free schema, collision handling. It and
+  `crm package test` share one private-import rule and one source walk
+  (`packages/cli/src/package-sources.js`), so they cannot drift apart.
 - Add an end-to-end test that boots a real project with your package applied
   and drives your action over the real HTTP/SDK path.
 - Prove optionality: the same project without your package must boot and
@@ -274,15 +337,15 @@ Within your own package, import freely — but never reach into another
 - Ship a README next to your package: what it owns, what it needs, how to
   enable it, and what it deliberately does not do.
 
-## 12. Submit for review
+## 13. Submit for review
 
-Run `npm run verify` from a clean clone, run the starter, then open a PR and
+Run `crm package test` on your package, `npm run verify` from a clean clone, run the starter, then open a PR and
 leave it open for the adversarial review in `docs/QUALITY_GATES.md` §5. The
 review will attack your package's boundary, its atomicity and its claims — the
 same way it attacks first-party ones.
 
 
-## 13. Official packages are reference implementations, not a framework tax
+## 14. Official packages are reference implementations, not a framework tax
 
 The first-party packages (`contracts`, `delivery`, and the planned Marketing
 packages in `docs/strategy/MARKETING_GROWTH_OPERATIONS.md`) attach through the
@@ -311,7 +374,7 @@ it.
 identities, not shipped code, and a future Marketing authoring Skill is planned
 rather than implemented.)*
 
-## 14. When an agent is working from a business goal
+## 15. When an agent is working from a business goal
 
 A package is often the answer an agent reaches when a user states an *objective*
 rather than a change — "track our funnel by acquisition channel" resolves to

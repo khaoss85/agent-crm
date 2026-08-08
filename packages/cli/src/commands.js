@@ -5,6 +5,7 @@ import { scaffoldModule } from './scaffold-module.js';
 import { validateManifestCommand, generateMigrationCommand, readManifestFile } from './manifest-commands.js';
 import { planModule, applyModulePlan } from './module-factory.js';
 import { validatePackageCommand, inspectPackageCommand } from './package-commands.js';
+import { packageTestCommand } from './package-test-command.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
 import { solutionCommand } from './solution-command.js';
 
@@ -18,7 +19,10 @@ export async function runCli(argv) {
   }
   // "package validate|inspect <dir>" reads the domain-package contract with the
   // same validator the application runs at startup. Both are read-only.
-  if (command === 'package' && ['validate', 'inspect'].includes(positional[0])) {
+  // "package test <dir>" additionally composes the package into a throwaway
+  // copy of this project and boots it; it never touches the caller's own
+  // application or database.
+  if (command === 'package' && ['validate', 'inspect', 'test'].includes(positional[0])) {
     command = `package:${positional[0]}`;
     positional = positional.slice(1);
   }
@@ -61,6 +65,16 @@ export async function runCli(argv) {
       mode: /** @type {'inspect'|'validate'|'check'} */ (command.slice('solution:'.length)),
       json: flags.json === true,
       rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+    });
+    process.exitCode = result.exitCode;
+    return;
+  }
+
+  if (command === 'package:test') {
+    const result = await packageTestCommand({
+      packagePath: positional[0],
+      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+      json: flags.json === true,
     });
     process.exitCode = result.exitCode;
     return;
@@ -269,6 +283,7 @@ Usage:
   agent-crm module:migration <manifest.json> [--dry-run] [--out file.sql] [--force]
   agent-crm package:validate <package-directory>
   agent-crm package:inspect <package-directory>
+  agent-crm package:test <package-directory> [--json] [--root dir]
   agent-crm mcp [--db path]
 
 "module plan", "module create", "module validate" and "module migration" are accepted aliases.
@@ -276,9 +291,30 @@ module:plan is always read-only. module:create with a manifest generates a compl
 runnable module (service, migration, registration, tests) and is a dry-run unless
 --apply is explicit; with a bare name it keeps the legacy template scaffold.
 Migration generation is a dry-run unless --out is provided; --force allows overwriting.
-"package validate" and "package inspect" are accepted aliases. Both are read-only:
-they run the same domain-package validator the application runs at startup, write
-nothing, open no database and reach no network, and exit non-zero on any problem.
+"package validate", "package inspect" and "package test" are accepted aliases, and
+they answer three different questions:
+
+  validate  is this package declaration structurally valid?
+  inspect   what does this package declare, own, offer and need?
+  test      does it hold up when a real application composes it?
+
+validate and inspect are read-only: they run the same domain-package validator the
+application runs at startup, write nothing, open no database and reach no network.
+test additionally copies this project to a temporary directory, composes the package
+into that copy, applies its module manifests and boots an application twice — once
+with the package and once without it. It never writes to your project and never
+opens your database; the scratch copy is destroyed on success, failure and timeout.
+
+All three IMPORT the package, and test also boots it, so the package's own code runs
+with this process's authority. That is the framework's normal trust boundary —
+repository source is trusted — but it is isolation in a child process, NOT a
+filesystem, network or OS sandbox. Point them only at a package you would boot.
+
+test proves framework conformance: declaration, boundaries, composition, refusals,
+records and migrations, attach and detach, and agreement with app inspect. It
+proves NOTHING about whether the domain logic is correct — that is what the
+package's own tests are for, and the report lists every such limitation by code.
+Exit codes: 0 conforms, 1 conformance failures, 2 package or project unreadable.
 Manifest schema: docs/MODULE_MANIFEST.md — module factory: docs/MODULE_FACTORY.md
 "solution inspect|validate|check" read a machine-readable Solution Plan (AX2).
 validate reads no project at all; check binds the plan to this project's app

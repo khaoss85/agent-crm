@@ -36,7 +36,7 @@ re-describing it.
 | | Tool | Why it waits |
 |---|---|---|
 | **DX3** | `crm package scaffold` | dry-run by default, explicit apply, a deterministic package skeleton, **no remote install**. Scaffolding a shape nobody has built three times bakes in the wrong shape |
-| **DX4** | `crm package test <path> --json` | conformance: attach/detach, dependency and capability resolution, migrations and evolution, boundaries, audit and trace, exact reads, hostile input. It makes ADR-018's seam self-enforcing — and needs M15 to know which invariants are actually general |
+| **DX4** | `crm package test <path> --json` — **built** (`docs/plans/dx4-package-conformance-kit.md`) | conformance: declaration, boundaries, composition refusals, module manifests and migration identity, attach and detach against a real boot, and agreement with `app inspect`. It makes ADR-018's seam self-enforcing. Action execution, policy behaviour, state transitions and data-bearing upgrade stay out by design and are reported as named limitations, not as passes |
 | **—** | first existing-domain extraction pilot | one of Intelligence / Commercial / Signature moved out of core, once DX4 can prove the result still conforms. The per-domain status that decides the candidate is `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, which records **Lead Intelligence** as the working hypothesis and the evidence that must exist before it is chosen |
 
 ### Before an AX3 public benchmark

@@ -1,9 +1,9 @@
 // @ts-check
 
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, statSync } from 'node:fs';
 import { PackageRegistry, validatePackageDefinition } from '../../packages/core/index.js';
+import { PRIVATE_IMPORT_RE, packageSources } from '../../packages/cli/src/package-sources.js';
 
 /**
  * The reusable **package conformance** checks.
@@ -18,27 +18,11 @@ import { PackageRegistry, validatePackageDefinition } from '../../packages/core/
  * domain concept, it belongs in that package's own tests.
  */
 
-// A package may not reach into `packages/core/src`. The rule has to see the
-// import however it is written: single or double quotes, a backtick, a static
-// `from` clause or a dynamic `import()` — a quote style is not a boundary.
-const PRIVATE_IMPORT_RE = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)(['"`])[^'"`]*core\/src\/[^'"`]*\1/;
-const SOURCE_RE = /\.m?js$/;
-
-/** Every JavaScript file under a package directory. */
-export function packageSources(dir) {
-  /** @type {string[]} */
-  const out = [];
-  const walk = (current) => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
-      const full = join(current, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (SOURCE_RE.test(entry.name)) out.push(full);
-    }
-  };
-  walk(dir);
-  return out.sort();
-}
+// The private-import rule and the source walk now live in shipped code
+// (`packages/cli/src/package-sources.js`) so the test helper, the CLI and
+// `crm package test` cannot drift apart. They used to be three copies waiting
+// to happen; a quote-sensitivity defect once had to be fixed in two of them.
+export { packageSources };
 
 /**
  * @param {{
@@ -122,13 +106,14 @@ export function assertPackageConforms({ definition, dir, expected, forbiddenImpo
       'two packages cannot claim one resource',
     );
   }
+  // EVERY declared dependency, not just the first: a `break` here meant a
+  // package with two dependencies proved nothing about the second.
   for (const entry of definition.requires ?? []) {
     assert.throws(
-      () => new PackageRegistry({ packages: [definition] }),
+      () => new PackageRegistry({ packages: [{ ...definition, requires: [entry] }] }),
       new RegExp(`requires package "${entry.package}"`),
-      'an unmet dependency stops registration',
+      `an unmet dependency on ${entry.package}/${entry.capability}@${entry.version} stops registration`,
     );
-    break;
   }
   return { metadata, sources };
 }
