@@ -25,13 +25,14 @@ discovery surface loses one of the three intent signals or the CDP boundary.
   the current manifest copy.
 - [x] (2026-08-09) Confirm the gap: live channels and every manifest use only
   generic CRM copy; the three site routes are prepared but not deployed.
-- [ ] Update repository copy and distribution manifests without expanding the
+- [x] (2026-08-09) Update repository copy and distribution manifests without expanding the
   product claim.
-- [ ] Extend the existing distribution gate and add a regression test.
-- [ ] Update strategy/status documentation and remeasure the checked surface.
-- [ ] Run focused checks, `npm run verify`, `npm run gtm:check`, and the required
+- [x] (2026-08-09) Extend the existing distribution gate and add regression tests,
+  including both defects confirmed during review.
+- [x] (2026-08-09) Update strategy/status documentation and remeasure the checked surface.
+- [x] (2026-08-09) Run focused checks, `npm run verify`, `npm run gtm:check`, and the required
   adversarial review from a clean clone.
-- [ ] Publish a review-ready stacked PR without merging it.
+- [x] (2026-08-09) Publish review-ready stacked PR #55 without merging it.
 
 ## Surprises & Discoveries
 
@@ -44,6 +45,15 @@ discovery surface loses one of the three intent signals or the CDP boundary.
 - Observation: skills.sh already returns a repository page and installs the
   skills, but generic search does not surface Accordo. This change can improve
   source vocabulary; it cannot promise ranking or recommendation.
+- Finding (medium): serializing a complete manifest let an ignored field carry
+  all intent phrases while the actual description and keywords had regressed.
+  A disposable root-package mutation passed the first gate. Fixed by selecting
+  only documented discovery fields and covered with ignored plus prototype-shaped
+  fields in `tests/distribution-intent.test.js` (`3ab2c0d`).
+- Finding (medium): the first CDP boundary regex accepted “not ingestion” even
+  when the same sentence claimed Accordo owned identity resolution and
+  segmentation. A runnable contradictory sentence returned zero failures. Fixed
+  by requiring the complete canonical ownership boundary (`b0035d7`).
 
 ## Decision Log
 
@@ -61,6 +71,11 @@ discovery surface loses one of the three intent signals or the CDP boundary.
   merge/deploy or named human-submission step.
   Rationale: the referenced intent pages and their claim evidence live in that
   stack; metadata must not precede the explanation it points to.
+- Decision: validate only fields a real discovery surface reads.
+  Rationale: unknown JSON can be syntactically valid while invisible to an
+  installer or registry. `scripts/distribution-intent.js` now owns the explicit
+  field selection; arbitrary metadata and prototype-shaped properties cannot
+  count as public copy.
 
 ## Context and Orientation
 
@@ -89,8 +104,8 @@ reads the checked JSON and proves the vocabulary and boundary remain present.
 Finally update the listing pack, recommendation map, GTM status, TASKS, and this
 plan. Validate JSON, run the focused distribution and GTM gates, full verification,
 application inspection, project doctor, and the repository's adversarial-review
-procedure. Re-run from a clean clone of the exact reviewed commit before opening
-the PR.
+procedure. Re-run from a clean clone of the exact reviewed commit before marking
+the draft PR ready.
 
 ## Concrete Steps
 
@@ -145,6 +160,19 @@ Live receipts at plan start:
     accordo.dev/: 200
     three new concept routes: 404 pending merge/deploy
 
+Review receipts:
+
+    functional SHA: b0035d7
+    npm run verify: 785 passing, 0 failing
+    npm run gtm:check: 112 pages; all four gates green
+    claude plugin validate .: passed
+    negative missing-signal mutation: exit 1, Gemini extension named
+    hidden-field mutation before fix: exit 0; regression now refuses it
+    contradictory CDP sentence before fix: zero failures; regression now refuses it
+    app inspect: valid, zero problems, 11 limitations read
+    project doctor: passed, zero warnings/failures, 149 documents
+    clean clone: install, 785-test verify, smoke, starter, four Chromium shots all green
+
 ## Interfaces and Dependencies
 
 No production dependency and no new public command are introduced. The only
@@ -155,4 +183,13 @@ built-ins, consistent with repository conventions.
 
 ## Outcomes & Retrospective
 
-Pending implementation and review.
+The existing distribution gate now binds eight first-contact surfaces to four
+truthful retrieval intents using only the fields those surfaces actually read.
+The implementation added no product capability and no extra step for an agent.
+Two review findings were reproduced and fixed rather than documented away: hidden
+metadata cannot satisfy public copy, and a partial CDP disclaimer cannot coexist
+with an identity or segmentation claim. The remaining work is release sequencing,
+not source work: human regular merges #44 → #53 → #54 → #55, deploy, then apply
+the prepared GitHub metadata and publish the real npm package through its own
+release gate. Generic indexing and unaided recommendation remain measured outcomes,
+not promises.
