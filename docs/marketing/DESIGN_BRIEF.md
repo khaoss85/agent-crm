@@ -109,7 +109,7 @@ be a visual element — chips, a grid, a marquee of honesty:
 
 **Nobody else publishes their own blind spots.** That is the brand.
 
-## 5. Page inventory — 112 pages, six clusters
+## 5. Page inventory — 113 pages, six clusters
 
 Hub-and-spoke: each pillar page links down to its spokes, each spoke links back up.
 
@@ -124,10 +124,10 @@ Hub-and-spoke: each pillar page links down to its spokes, each spoke links back 
 
 Plus: `index.html`, `evidence.html` (the full claims ledger as a table), `blog.html`
 (the first evidence-backed post now ships; the honest zero-post state remains a renderer requirement),
-`404.html`.
+`privacy.html` (the hosted Docs MCP data boundary), and `404.html`.
 
-**Only four templates are needed:** homepage · pillar · spoke · table-page
-(evidence/jobs). Everything else is generated.
+**Only five content templates are needed:** homepage · pillar · spoke ·
+table-page (evidence/jobs) · privacy/data-boundary. Everything else is generated.
 
 ### The eight tools, with their plain-English names
 
@@ -203,7 +203,7 @@ the identity here** — it is the voice of the machine reporting on itself.
 
 ## 9. Existing class names — keep these working
 
-The generator emits these; renaming one breaks 112 pages.
+The generator emits these; renaming one breaks 113 pages.
 
 `breadcrumbs` · `cluster-hero` · `cluster-grid` · `cluster-card` · `card-plain` ·
 `spoke-hero` · `plain-name` · `boundary-block` · `boundary-list` · `evidence-rail` ·
@@ -247,10 +247,11 @@ In priority order:
 1. **Homepage** — hero, the five-step loop, the 403, falsify output, the blind-spot
    chips, the six-cluster grid, the limits section.
 2. **Spoke template** — breadcrumbs, h1 + plain name, boundary block, body
-   sections, evidence rail, related rail. This is 102 of the 112 pages.
+   sections, evidence rail, related rail. This is 102 of the 113 pages.
 3. **Pillar template** — hero plus a card grid.
 4. **Table template** — evidence ledger and jobs catalogue, dense and scannable.
 5. **Blog index and article page**, retaining the tested empty state for a build with no posts.
-6. **Nav and footer** at desktop and 360px.
+6. **Privacy/data-boundary page**, using the same above-the-fold boundary block.
+7. **Nav and footer** at desktop and 360px.
 
 Light and dark for each.
