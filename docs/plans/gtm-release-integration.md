@@ -77,6 +77,21 @@ Expected behavior:
   orders in disposable worktrees. Every order conflicted across public truth and
   generated retrieval surfaces; intent → #52 → #51 is selected because #52 has
   the smaller first conflict set and #51 then supplies the newest npm status.
+- 2026-08-10: merged the reviewed #52 ancestry at `2d90326`, then #51 at
+  `3c388bd`. Their independent `ADR-025` assignments collided; the integrated
+  sequence keeps Docs MCP as ADR-025 and renumbers npm packaging to ADR-026.
+- 2026-08-10: focused Docs MCP tests passed 32/32, packaging/bootstrap passed
+  36/36, and `gtm:check`, smoke, source inspection and project doctor passed.
+  The first full integration run caught the stale 112-page design inventory
+  after the privacy page made the built total 113. The corrected functional tree
+  at `93c5bd5` passed 804/804 and was recorded in the public ledger.
+- 2026-08-10: opened draft PR #58 on the exact reviewed #57 head. Live review
+  found zero threads or tracked artifacts and confirmed the merge-base, but
+  identified two medium documentation failures: `PROJECT_STATUS.md` still
+  described `845cd3d`/555 tests/obsolete PRs, and three release instructions
+  still required separate #51/#52 merges even though #58 incorporates them.
+  The fixes add an integration regression for ADR uniqueness, release sequencing
+  and the volatile snapshot.
 
 ## 6. Decision log
 
@@ -86,6 +101,7 @@ Expected behavior:
 | Flatten or cherry-pick #51/#52? | No | Merge commits preserve reviewed ancestry and make the integration provenance inspectable |
 | Integration base? | Reviewed #57 head | It contains the complete ordered intent stack and the strict URR measurement contract |
 | Merge #51 or #52 first? | #52, then #51 | Hosted discovery truth lands first; the newer npm candidate truth lands last |
+| Both source branches use ADR-025? | Keep Docs MCP at ADR-025; npm becomes ADR-026 | A merged decision sequence cannot contain two authorities with one identifier |
 | Promote or publish as part of this plan? | No | Those are separate human public/infrastructure commitments |
 
 ## 7. Outcome and follow-up

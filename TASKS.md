@@ -58,6 +58,14 @@ The first unchecked item is the default next task for Codex.
   150-session denominator. A valid URR still needs dedicated clean provider profiles,
   all 10 × 5 × 3 raw transcripts and identity-correct recommendations.
 
+- [x] **Integrate the GTM release candidates without claim drift.** The intent
+  stack, hosted read-only Docs MCP and staged `create-accordo` candidate now
+  share one reviewed ancestry. The integration resolves their ADR-number
+  collision, preserves npm/MCP public boundaries, reconciles the 113-page site
+  inventory and remeasures the combined functional tree. Nothing is thereby
+  merged to `main`, promoted on Vercel, published to npm or submitted to a
+  directory; those receipts remain separate human actions.
+
 - [x] **Module Evolution v1 (ADR-019).** A generic kernel capability: a generated module gains fields, enum values and indexes through an explicit `revision`, a checked-in `module.state.json` and append-only `migrations[]`. Merged in PR #19; **the prerequisite M14 was waiting on.**
 - [x] **AX0 — Objective-driven agent experience (documentation and Agent Skills only).** The Goal-to-Solution lifecycle, the SolutionPlan design, capability-discovery guidance, the mirrored `solve-business-goal` Skill, the canonical full-funnel worked example, 10 JTBD-AX rows and the E2E-G1 benchmark gates. **No runtime code; AX1–AX5 are not implemented.**
 - [x] **M14a — Delivery execution.** The three M13 delivery records evolve to revision 2 and gain a lifecycle: eight human-driven transitions over explicit tables, block evidence with a required reason, and a hierarchy gate that closes a project only over completed work (`docs/plans/milestone-14-delivery-economics-acceptance.md`, ADR-019 addendum 1).

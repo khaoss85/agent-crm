@@ -57,8 +57,8 @@ which is exactly why these two were published by hand.
 
 ### 2.2 Stage the real `create-accordo@0.1.0`
 
-PR #51 prepares a manually triggered, token-free release path. After its regular
-merge to `main`:
+The reviewed GTM release integration carries the manually triggered, token-free
+release path. After that integration reaches `main` through regular merges:
 
 1. In npm package settings, configure trusted publishing for repository
    `khaoss85/agent-crm` and the exact workflow `stage-create-accordo.yml`, with

@@ -243,8 +243,9 @@ The gap list, ordered by *effect on being recommended*, not by effort:
    own, and GEO's measured lever (22–41% visibility gain from
    citations/statistics — [KDD 2024](https://arxiv.org/abs/2311.09735)). It is
    also the honest basis for every comparative claim we currently cannot make.
-5. **Host the Docs MCP prepared in PR #52** — source alone unlocks no directory;
-   it still needs merge, a public endpoint, privacy policy and human submissions.
+5. **Promote the integrated Docs MCP** — source alone unlocks no directory; it
+   still needs the reviewed integration on `main`, a public endpoint, a live
+   privacy-policy receipt and human submissions.
 6. **Intent-aligned first-contact metadata** — prepared in checked source; it
    improves task-time matching but cannot guarantee generic search ranking or URR.
 7. **Provenance-signed npm publishes** — one CI flag, permanent trust signal.
