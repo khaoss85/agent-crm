@@ -1,0 +1,254 @@
+{
+  "compareContract": 1,
+  "$comment": "The COMPARE cluster. One rule governs this file: a sentence about another product either traces to docs/strategy/COMPETITOR_MAP.md, or it is not written. There is no network access here, so nothing in that file can be re-verified and nothing outside it can be established — where a comparison would need a fact the map does not carry, the claim is dropped rather than softened. Every entry carries verifiedOn, which is the map's own research date (August 4, 2026), not the date this file was written; when the map is re-researched, these entries must be re-read against it. Every entry opens by naming where the alternative wins, because a comparison page that finds no case for the alternative is an advertisement and is discounted as one. Claims about this framework carry claims.json ids on the same discipline as every other public surface; site/answers.json refuses the generic 'how does this compare to X' question precisely because claims.json licenses no competitor sentence, and this cluster does not overturn that — it moves the burden onto a dated, single-sourced research file and says so on every page.",
+  "entries": [
+    {
+      "id": "cmp-build-from-scratch",
+      "slug": "vs-building-a-crm-from-scratch",
+      "title": "Should you build a CRM from scratch, or start from a framework?",
+      "metaTitle": "Build a CRM from scratch, or start from a framework?",
+      "plainName": "Building a CRM yourself",
+      "intent": "build a custom crm from scratch vs using a crm framework",
+      "verifiedOn": "2026-08-04",
+      "summary": "The comparison with no competitor in it: your own empty repository against this framework. What you get is CRM machinery — module manifests that generate their own migrations, deterministic workflows, a human-approval boundary, audit and trace. What you still write is most of what a business calls a CRM: authentication, tenancy, import, export, search, email, and the database it should have been on. This is a framework, not an application, so the honest form of this page is a subtraction rather than a pitch.",
+      "metaDescription": "Your own empty repository against this framework: what the machinery gives you, and the authentication, tenancy, import, export and search you still write.",
+      "sections": [
+        {
+          "heading": "Where building from scratch wins",
+          "body": [
+            "Total control is the real advantage, not a slogan: nothing in your schema is shaped by someone else's idea of what a Company is, and no upgrade ever asks you to reconcile your domain with a framework's opinion of it. That advantage is larger here than usual, because ownership in this project currently means copying source rather than installing a dependency — there is no create-project CLI and no published package, so upgrading means merging, not bumping (L-08). If the end state was going to be a fork you maintain, starting from your own repository means every convention in it is one you chose.",
+            "The second win is everything this framework does not have. There is no authentication, tenancy or RBAC, and an actor header is an assertion rather than an identity (L-01). Persistence is Node's built-in SQLite; PostgreSQL is not implemented (L-02). Import, export, dedupe, merge, bulk edit, saved views and global search do not exist, and none of them has a milestone (L-06). No email, calendar or marketing adapter sends anything to anyone (L-05). Nothing is scheduled, delayed or recurring, because there is no scheduler and no queue (L-04). If those are the hard parts of what you are building — and for plenty of CRMs they are the entire thing — starting here has not reduced your work; you write them once on either path.",
+            "The third win is the first week. A form, a table and a list against a database you already run is a day of work, with no manifest, no policy version and no migration convention standing between you and a working screen. This framework starts paying on the second commercial rule, not on the first screen, and if there is never a second commercial rule it does not start paying at all."
+          ]
+        },
+        {
+          "heading": "Where this is different",
+          "body": [
+            "What you stop writing is the machinery around the record rather than the record itself. A module manifest becomes a migration, a service, a REST resource, an SDK method and Admin screens with no page code (C-01), and generated modules then evolve through explicit revisions, a checked-in state file and append-only named migrations, so history is added to rather than rewritten (C-19). The fifth object costs roughly what the first one did, which is the opposite of how a hand-rolled CRM ages.",
+            "The parts a bespoke CRM reaches last are here first. Commercial policy is deterministic code rather than a model's judgement: a renewal at or above the threshold stops and waits for a named human (C-03), and a test asserts that an agent cannot make that decision on the human's behalf, so the boundary is a property of the system rather than a promise in a README (C-04). Every mutation goes through a module service or a named workflow and leaves an audit event and a step-level trace behind it (C-16). None of that is hard to write once. It is hard to write consistently, in every path, under deadline — which is the failure mode the from-scratch CRM actually has, and it shows up as archaeology eighteen months later when someone asks who approved a discount and under which rule.",
+            "The dependency surface is deliberately close to nothing: Node 22 and a checkout, no build step, no bundler, no framework underneath your framework (C-17). And one command composes the starter's whole application from manifests, drives it end to end, and then prints the things its own inspector says it cannot see (C-22). That last part is the tell — the machinery is built to be interrogated by a coding agent and reviewed by a human, which is a different design goal from the one a hand-rolled CRM is usually optimising for."
+          ]
+        },
+        {
+          "heading": "How to choose",
+          "body": [
+            "Build it yourself if the CRM is a form, a list and a few statuses; if the hard part is authentication, tenancy or billing; if you need PostgreSQL on day one; if import, export and search are the feature list rather than an afterthought; or if real customer data goes in immediately, because it cannot go in here yet (L-09).",
+            "Start from this framework if the process is the product — stages, approvals, discount policy, obligations, handovers — and someone will ask in six months why a number was what it was. It fits when a coding agent is doing most of the typing and you want the output as reviewable source with conventions the agent can read back, and when you would otherwise be deriving approvals, audit and trace by hand for the third time. You keep the repository either way; the question is only whether the first thousand lines in it are yours or the framework's."
+          ]
+        },
+        {
+          "heading": "What this comparison does not cover",
+          "body": [
+            "No time or cost estimate, and no build-rate figure. The agent build benchmark is designed and published but has not been run, so no Successful Agent Build Rate exists and any number quoted for this project is not ours (L-03). Nothing on this page says an agent finishes faster here, because that has not been measured.",
+            "No comparison to any specific starter, template or boilerplate. This page compares against the empty repository, not against a named project — the dated competitor research the rest of this cluster reads carries facts about other software, and this entry needs none of them, so it uses none.",
+            "Nothing about production posture or hosting. There is no hosted CRM, no free tier and no account; the output is an application in your repository that you run (L-07). The comparison assumes you are the one deploying it, and says nothing about how."
+          ]
+        }
+      ],
+      "boundaries": [
+        "This is a framework, not an application you sign up for. There is no hosted CRM, no free tier and no account (L-07).",
+        "Ownership today means copying source, not installing a dependency: no create-project CLI, no published package, and upgrading means merging rather than bumping (L-08).",
+        "No authentication, tenancy or RBAC. An actor header is an assertion, not an identity, and this must not be exposed to a network (L-01).",
+        "SQLite only. PostgreSQL is on a track, not in the code (L-02).",
+        "No import, export, dedupe, merge, bulk edit, saved views or global search — table stakes in every commercial CRM, recorded here rather than left for you to discover (L-06).",
+        "No scheduler, task engine, queue or reminders: one follow-up Task is created inside lead qualification, and nothing recurring or delayed fires anywhere (L-04).",
+        "No email, calendar or marketing integration. A notification provider contract exists; no adapter sends anything to anyone (L-05).",
+        "No claim about how quickly an agent finishes a CRM with this, because the benchmark has not been run (L-03).",
+        "Real customer data does not go in yet: no export and no erasure path, so a subject access or deletion request cannot be serviced (L-09)."
+      ],
+      "claims": ["C-01", "C-03", "C-04", "C-16", "C-17", "C-19", "C-22"],
+      "limitations": ["L-01", "L-02", "L-03", "L-04", "L-05", "L-06", "L-07", "L-08", "L-09"],
+      "jobs": ["JTBD-01", "JTBD-02", "JTBD-03", "JTBD-06", "JTBD-07", "JTBD-15", "JTBD-DO-01", "JTBD-DO-04", "JTBD-DO-07"],
+      "docs": ["ARCHITECTURE.md", "docs/MODULE_FACTORY.md", "docs/MODULE_EVOLUTION.md", "docs/PROJECT_STATUS.md"],
+      "tests": ["tests/module-factory-e2e.test.js", "tests/workflow.test.js", "tests/module-evolution.test.js"],
+      "related": ["vs-twenty", "vs-odoo", "vs-a-customer-data-platform"]
+    },
+    {
+      "id": "cmp-twenty",
+      "slug": "vs-twenty",
+      "title": "Twenty, or a CRM your coding agent writes as code you own?",
+      "plainName": "Twenty, the open-source CRM platform",
+      "intent": "twenty crm alternative for building a custom crm with a coding agent",
+      "verifiedOn": "2026-08-04",
+      "summary": "Twenty is an open-source CRM platform with an apps SDK; this is a framework that generates a CRM into your repository. The comparison is about where the extension code lives and what runtime it runs inside — not about which has more features, because Twenty is a working product with a hosted option and this has no authentication, no tenancy and no PostgreSQL. Every fact here about Twenty traces to one dated internal research file, nothing was installed or run, and anything that file does not carry is absent from this page rather than inferred.",
+      "metaDescription": "Twenty is a working CRM platform with an apps SDK; this generates a CRM into your repository. One dated research file, and nothing was installed or run.",
+      "sections": [
+        {
+          "heading": "Where Twenty wins",
+          "body": [
+            "As of the research date this page carries, August 4, 2026, Twenty is the largest project in the researched set by GitHub stars — 54.3k — with YC S23 backing, roughly $5.5M raised, and weekly releases. It runs as a NestJS/React/PostgreSQL platform you can self-host with Docker, or as a cloud product; the per-seat cloud pricing in the research file came from third-party teardowns rather than a primary page, so treat the figures there as indicative and do not budget from this page. The headline fact is simpler than any of that: it is a CRM a technical team can run and use, and this framework is not.",
+            "Its coding-agent story is real rather than a slide. The research file records an MIT-licensed SDK, a create-twenty-app command, a CLAUDE.md checked into the repository, AI agents inside the product, and native MCP confirmed for cloud workspaces — with self-host parity explicitly unverified. Measured on getting an agent productive against a running CRM this afternoon, that is ahead of where this project stands: there is no create-project CLI here and no published package, so ownership means copying source and upgrading means merging (L-08), and the MCP server here is stdio and local only, with no hosted or authenticated endpoint (C-18).",
+            "And the plain asymmetry. Twenty 2.0 added an apps platform, in-product AI agents and git-backed workspace config, and its customization surface spans a settings UI, APIs and an Apps SDK covering entities, serverless logic functions and UI widgets. This framework has no authentication, tenancy or RBAC at all (L-01), stores everything in SQLite (L-02), and is not a product you sign up for (L-07). If what you want is a CRM, that comparison is not close, and pretending otherwise here would forfeit your trust in everything else on this site."
+          ]
+        },
+        {
+          "heading": "Where this is different",
+          "body": [
+            "There is one axis, and it is where the extension lives. In the research file's own characterisation, Twenty's customization is deployed into their runtime: the agent writes extensions against their abstractions. Here the agent writes the application. A customer-authored domain package attaches and detaches with the kernel's fingerprint unchanged, and reaches another package only through a capability it declares (C-13). A module manifest becomes a migration, a service, a REST resource, an SDK method and Admin screens with no page code (C-01). One command reads checked-in source and reports what an application actually is — packages, capabilities, resources, actions, policies, providers — as deterministic JSON, then lists its own blind spots (C-14).",
+            "Licensing shape, with the counterweight stated in the same breath. The file records Twenty as an AGPL core plus @license Enterprise files covering SSO and advanced RBAC, alongside an MIT SDK, and describes the resulting lock-in as the platform runtime plus AGPL share-alike for derivatives plus those gated files. This repository is MIT with one edition and nothing gated (ADR-023). The counterweight matters more than the contrast: their advanced RBAC sits behind an enterprise licence, and here it does not exist in any edition at all (L-01). Not gated is not the same as included. The file also states that its licence descriptions are factual summaries rather than legal advice, and share-alike questions belong with counsel, not with a comparison page.",
+            "The agent surface differs in kind rather than degree. Code generation and destructive operations are dry-run unless an explicit apply flag is passed (C-18), and the first thing a coding agent reads is a deterministic report of checked-in source rather than the state of a running workspace (C-14). That distinction only matters if your review process is a human reading a diff — which is the assumption this whole framework is built on, and is a preference rather than a proof of superiority."
+          ]
+        },
+        {
+          "heading": "How to choose",
+          "body": [
+            "Choose Twenty if you want a CRM to use and extend rather than a substrate to build one from; if a hosted option, a community and weekly releases matter; if a platform runtime is a feature rather than a constraint; and if AGPL share-alike on derivatives plus enterprise-gated SSO and RBAC are acceptable for what you are shipping.",
+            "Choose this framework in a narrow case: the deliverable is one bespoke commercial process — approvals, discount policy, obligations, handovers — that must exist as source in your repository, reviewed as a diff, with the approval boundary asserted by a test rather than configured in a UI. That case also requires you to supply authentication, hosting, PostgreSQL, import and export yourself, because none of them is here.",
+            "If your actual requirement is SSO or role-based access control, the honest answer is that neither column is this one: the research file puts Twenty's behind an enterprise licence, and this project does not have it in any form.",
+            "The research file names Twenty as the strongest competitive threat to this project and says the convergence is in narrative more than in product. Read that as a reason to check its current state yourself before deciding, not as a verdict either way."
+          ]
+        },
+        {
+          "heading": "What this comparison does not cover",
+          "body": [
+            "No hands-on evaluation. Nothing from Twenty was installed, configured, benchmarked or run in producing this page. Every fact traces to docs/strategy/COMPETITOR_MAP.md, researched on August 4, 2026, and this environment has no network access to re-verify any of it.",
+            "No feature matrix. There is no statement here about Twenty's CRM features, data model, UI, performance, support or roadmap, because that file does not carry them and inventing them would cost more credibility than the comparison is worth.",
+            "The hedges the source carries are repeated rather than dropped: cloud pricing is third-party sourced, self-host MCP parity is unverified, and self-host upgrade fragility is recorded there as a documented issue in their tracker (#14705) rather than something reproduced here.",
+            "No build-rate or speed comparison in either direction. The benchmark has not been run, and any number quoted for this project is not ours (L-03).",
+            "The source's own standing caveat, which is the most important sentence on this page: Twenty could extend its MIT SDK layer downward into genuine code ownership, and that would move this comparison. A dated page is only as good as its date — when that research is refreshed, this entry must be re-read against it."
+          ]
+        }
+      ],
+      "boundaries": [
+        "No hands-on evaluation: nothing from the other project was installed, configured or run to produce this page.",
+        "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04; the hedges that file carries (secondary-sourced pricing, unverified self-host MCP parity) are carried here too.",
+        "No feature-by-feature comparison exists here, and none should be inferred from what this page omits.",
+        "Licence descriptions are factual summaries of published texts, not legal advice.",
+        "This framework has no authentication, tenancy or RBAC in any edition — there is nothing gated because there is nothing to gate (L-01).",
+        "No create-project CLI and no published package: ownership is copying source, and upgrading is merging (L-08).",
+        "The MCP server is stdio and local only, with no hosted or authenticated endpoint, and it inherits the local process's authority.",
+        "No claim that a coding agent builds faster or more reliably here than anywhere else — the benchmark has not been run (L-03)."
+      ],
+      "claims": ["C-01", "C-13", "C-14", "C-17", "C-18"],
+      "limitations": ["L-01", "L-02", "L-03", "L-07", "L-08"],
+      "jobs": ["JTBD-AX-01", "JTBD-AX-02", "JTBD-AX-04", "JTBD-PK-01", "JTBD-PK-02", "JTBD-PK-05", "JTBD-PK-06", "JTBD-15"],
+      "docs": ["docs/strategy/COMPETITOR_MAP.md", "docs/PACKAGE_AUTHORING.md", "docs/APPLICATION_INSPECTION.md", "docs/MCP.md", "DECISIONS.md"],
+      "tests": ["tests/custom-package-e2e.test.js", "tests/app-inspect.test.js", "tests/mcp.test.js"],
+      "related": ["vs-odoo", "vs-building-a-crm-from-scratch", "vs-a-customer-data-platform"]
+    },
+    {
+      "id": "cmp-odoo",
+      "slug": "vs-odoo",
+      "title": "Odoo's CRM app, or one custom process as code you own?",
+      "plainName": "Odoo, the open-core business suite",
+      "intent": "odoo crm alternative when the sales process is too custom for the suite",
+      "verifiedOn": "2026-08-04",
+      "summary": "Odoo's CRM is one app inside a business suite that a company buys and runs; this is a framework that generates one commercial process as code. The research this page reads says outright that Odoo owns the self-host SMB buyer and that this project does not compete for that buyer directly — so most people weighing these two should take Odoo. The narrow case for the framework is a process specific enough that no suite app fits it, plus a requirement that every approval stay explainable long afterwards.",
+      "metaDescription": "Odoo's CRM is one app in a suite you buy and run; this generates one process as code. The research says most self-host SMB buyers should take Odoo, not this.",
+      "sections": [
+        {
+          "heading": "Where Odoo wins",
+          "body": [
+            "It is a suite, and CRM is one app inside it: the CRM arrives attached to the rest of the business system rather than as something you integrate later. The research file records a community edition under LGPL, deployment on Odoo.sh or self-hosted, a monorepo at roughly 53.5k GitHub stars as of August 4, 2026, and a target buyer running from SMB to mid-market — a buyer with a purchase order, not a repository. Its summary of the position is blunt and worth repeating rather than softening: Odoo owns the self-host SMB buyer, not the developer builder, and this project does not compete for that buyer directly.",
+            "Against this framework's own ledger the asymmetry is not subtle. No authentication, tenancy or RBAC (L-01). No email, calendar or marketing integration — a notification provider contract exists and no adapter sends anything to anyone (L-05). No import, export, dedupe, merge, bulk edit, saved views or global search (L-06). No hosted product to sign up for; the output is an application in your repository (L-07). And you cannot put real customer data in this yet: with no export and no erasure path, a data-subject access or deletion request cannot be serviced at all (L-09). If a sales team is meant to log in on Monday, that list is the whole answer.",
+            "Pipeline reporting is the same story in miniature. Reporting pipeline is recorded here as partially supported, not as a feature: there are no saved views, no dashboards and no report builder to hand to a sales manager."
+          ]
+        },
+        {
+          "heading": "Where this is different",
+          "body": [
+            "Licensing shape. The research file records Odoo as the canonical open-core case — LGPL community alongside a proprietary Enterprise edition, with Studio, mobile and AI gated, and it notes from a secondary source that all AI features are Enterprise-only as of v19. That hedge travels with the claim: it is secondary-sourced there and it stays secondary-sourced here. This repository is MIT, one edition, nothing gated (ADR-023). The counterweight is the same one as everywhere else on this site: nothing is gated partly because there is not very much to gate, and none of the absences above carries a delivery date.",
+            "Customization model. The file describes Odoo customization as Python modules written in their framework idiom, and calls it upgrade-fragile, with no agent substrate for building — AI there is an Enterprise UI feature rather than a way to author the system. Here customization is the deliverable rather than a tolerated extension: a customer-authored package attaches and detaches with the kernel's fingerprint unchanged and reaches other packages only through declared capabilities (C-13), and generated modules evolve through explicit revisions and append-only named migrations rather than rewritten history (C-19).",
+            "What the process holds while it runs. Commercial policy is deterministic code rather than a model's judgement, and a renewal at or above the threshold stops and waits for a named human (C-03). The same refusal holds where the money is: an agent actor asking to approve a discounted quote is rejected with a 403 and code HUMAN_APPROVAL_REQUIRED, and only a human user actor can decide (C-21). That refusal is asserted by a test rather than promised in a README (C-04), and every mutation leaves an audit event and a step-level trace behind it (C-16). This is not a longer feature list than a suite's. It is a much shorter one that can be accounted for line by line."
+          ]
+        },
+        {
+          "heading": "How to choose",
+          "body": [
+            "Choose Odoo if you are buying a CRM rather than building one — especially if you also need the rest of the suite around it, if it has to be running this quarter, if configuration by an admin or an implementation partner is how customization is meant to happen at your company, and if the Enterprise gating fits your budget.",
+            "Choose this framework in the narrow case: one commercial process specific enough that no suite app fits it, which must live as reviewable code in your repository, where a coding agent does most of the writing, and where you can supply authentication, hosting and data governance yourself — because this supplies none of them.",
+            "If both are true — you already run a suite and one process does not fit it — these are not mutually exclusive and this page does not argue that they are. It does have to say that no integration exists in this direction: there is no integration runtime, no adapter and no import, so connecting the two is engineering work you would own (L-05, L-06)."
+          ]
+        },
+        {
+          "heading": "What this comparison does not cover",
+          "body": [
+            "Nothing was installed or run. Every Odoo fact traces to docs/strategy/COMPETITOR_MAP.md, researched on August 4, 2026, and this environment has no network access to check any of it.",
+            "No feature comparison. That file does not enumerate Odoo's CRM features, so this page cannot and does not — no statement is made about its pipeline, its reporting, its mobile app or its AI features beyond the licensing note above.",
+            "No pricing. The file carries no Odoo price, so this page carries none either, and the Enterprise-only-AI point is repeated with the same secondary-source hedge it was recorded under.",
+            "Licence descriptions are factual summaries of published texts and third-party commentary, not legal advice. Open-core, LGPL and share-alike questions belong with counsel before anyone relies on them.",
+            "No migration path and no upgrade analysis. There is no import of any kind here (L-06), and nothing is claimed about Odoo's upgrade behaviour beyond the file's own word for it, upgrade-fragile. When that research is refreshed, this entry must be re-read against it."
+          ]
+        }
+      ],
+      "boundaries": [
+        "No hands-on evaluation: nothing from the other product was installed, configured or run to produce this page.",
+        "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04; the Enterprise-only-AI point is flagged there as secondary-sourced and is flagged here the same way.",
+        "No feature comparison, no pricing comparison and no migration path — the source carries none of the three.",
+        "Licence descriptions are factual summaries, not legal advice.",
+        "This framework is not a product a business buys: no hosted CRM, no free tier, no account (L-07).",
+        "No authentication, tenancy or RBAC, so nothing here is ready for a sales team to log into (L-01).",
+        "No email, calendar or marketing integration, and no import or export, so this does not connect to a suite you already run (L-05, L-06).",
+        "Real customer data cannot go in yet: no export and no erasure path means a subject request cannot be serviced (L-09)."
+      ],
+      "claims": ["C-03", "C-04", "C-13", "C-16", "C-19", "C-21"],
+      "limitations": ["L-01", "L-05", "L-06", "L-07", "L-09"],
+      "jobs": ["JTBD-01", "JTBD-02", "JTBD-13", "JTBD-14", "JTBD-15", "JTBD-AN-02", "JTBD-AN-03", "JTBD-CO-01", "JTBD-CO-03", "JTBD-DO-01", "JTBD-DO-04"],
+      "docs": ["docs/strategy/COMPETITOR_MAP.md", "docs/COMMERCIAL_OPERATIONS.md", "docs/benchmarks/CRM_JTBD_MATRIX.md", "docs/PROJECT_STATUS.md", "DECISIONS.md"],
+      "tests": ["tests/commercial-e2e.test.js", "tests/workflow.test.js"],
+      "related": ["vs-twenty", "vs-building-a-crm-from-scratch", "vs-a-customer-data-platform"]
+    },
+    {
+      "id": "cmp-customer-data-platform",
+      "slug": "vs-a-customer-data-platform",
+      "title": "Is this a customer data platform? No — no ingestion, no identity resolution, no segments",
+      "metaTitle": "Is this a customer data platform? No",
+      "plainName": "Not a customer data platform",
+      "intent": "open source customer data platform with identity resolution and segmentation",
+      "verifiedOn": "2026-08-04",
+      "summary": "This is a CRM framework, not a customer data platform. Nothing ingests events or records from other systems, nothing resolves identities into a single profile, and nothing builds, freezes or syncs a segment. If you arrived looking for a CDP, the accurate answer is that you are in the wrong place, and this page exists to say so quickly rather than to keep you reading. It also names no CDP product: the competitor research this site is allowed to cite covers CRM and CRM-adjacent projects and carries no CDP research at all.",
+      "metaDescription": "Not a customer data platform: nothing ingests events, resolves identities or syncs a segment. This page exists to send you elsewhere quickly, and names no CDP.",
+      "sections": [
+        {
+          "heading": "Where a customer data platform wins",
+          "body": [
+            "A CDP exists to do three things this framework does not do in any form: ingest records and events continuously from many source systems; resolve them into one profile per person or account; and build segments over those profiles that can be frozen, suppressed, and synced to downstream destinations. If any one of those sentences describes your problem, the comparison is already finished and the answer is not this. That is a description of the category by the jobs it is bought to do — not an evaluation of any product, for the reason given in the last section.",
+            "On ingestion, the absences are total. There is no CSV import (JTBD-DO-01), no email or calendar sync (JTBD-CM-01, JTBD-CM-02), and no integration adapter of any kind — a notification provider contract exists and nothing sends (L-05). There is also no scheduler, task engine or queue, so even if an adapter existed there is nothing to run it on a cadence (L-04). A pipeline needs both halves and this has neither.",
+            "On identity resolution, the same. No duplicate detection on import or entry (JTBD-DO-02), no merge of two Companies or Contacts (JTBD-DO-03), no search across modules (JTBD-DO-07), no unified activity timeline for a record (JTBD-DO-08). Every record here is what a person or a workflow wrote, and two records for the same human stay two records forever.",
+            "On segmentation, the same again. No dynamic audience from CRM data (JTBD-MK-01), no frozen audience snapshot for a send (JTBD-MK-02), no exclusions or suppression sets (JTBD-MK-03), no audience sync to a provider (JTBD-MK-06). And on the governance a CDP buyer usually asks about first: no consent or lawful-basis record (JTBD-DG-01), no export of everything held about a subject (JTBD-DG-03), no view of what was shared with which provider (JTBD-DG-06), no restriction of sensitive fields by role (JTBD-DG-07) — because there are no roles (L-01). The framework states the conclusion itself: you cannot put real customer data in this yet (L-09)."
+          ]
+        },
+        {
+          "heading": "Where this is different",
+          "body": [
+            "What does exist is the opposite shape — per-record decision history rather than a population view. A lead is captured, enriched, scored, routed, qualified and converted through explicit actions, each one atomic and audited (C-06); a score carries the fingerprint of the model version that produced it, with one contribution row per rule, so a number from last quarter can still be accounted for (C-07); every mutation leaves an audit event and a step-level trace (C-16). The question that answers is why this one record got this outcome and under which policy version, a year later. The question it cannot answer is how many people match a rule across your systems — which is the question a CDP is bought for.",
+            "The one thing here that superficially resembles ingestion is not ingestion. Lead enrichment calls a provider outside the write transaction and stores an immutable snapshot with its provenance — and that provider is a checked-in fixture. No external data source is wired and no credential ships (C-06). One provider call inside one action is not a pipeline, and describing it as one would be the kind of sentence this site exists to avoid."
+          ]
+        },
+        {
+          "heading": "How to choose",
+          "body": [
+            "If the sentence you would write is unify our customer data across systems, stop here. Nothing in this framework does that, and building it on top would not be an extension but a different product: there is no ingestion path and no scheduler to run one (L-04, L-05).",
+            "If the sentence is our commercial process needs stages, quotes, approvals and an audit trail, and one record's outcome has to be explainable afterwards, that is the narrow case this exists for — with the standing caveats that there is no authentication, no tenancy and no place for real customer data yet (L-01, L-09).",
+            "If both sentences are true, they are different layers rather than competing options: the CDP owns the profile and this owns a process. They do not connect today, because there is no integration runtime and no import (L-05, L-06), so any bridge between them is engineering work you would own outright.",
+            "If what you actually need is marketing execution — audiences, campaigns, journeys, attribution — the answer is the same and is recorded rather than implied: every one of those jobs is marked not supported in the job matrix, so you can confirm the refusal instead of taking it on trust."
+          ]
+        },
+        {
+          "heading": "What this comparison does not cover",
+          "body": [
+            "No CDP product is named, ranked, priced or evaluated on this page. docs/strategy/COMPETITOR_MAP.md — the only source this cluster may use for facts about other software, researched on August 4, 2026 — covers CRM and CRM-adjacent projects and carries no CDP research whatsoever. A specific claim about a specific vendor would therefore have been invented, and inventing one would undo the credibility every other page here is built on.",
+            "The category description in the first section is definitional: the three jobs a CDP is bought to do. It is not a statement about how any particular implementation does them, how well, or at what price.",
+            "Nothing about data warehouses, reverse ETL, event streaming, identity graphs or consent management platforms, for the same reason: no researched source here carries them.",
+            "No roadmap. The absences listed above are current state, and recording them is not a commitment that any of them will be filled. This entry carries the research file's date rather than the date it was written, and must be re-read when that file is refreshed."
+          ]
+        }
+      ],
+      "boundaries": [
+        "No ingestion: no import, no email or calendar sync, no integration adapter, and no scheduler or queue to run one on a cadence (L-04, L-05).",
+        "No identity resolution: no duplicate detection, no merge, no cross-module search, no unified activity timeline (L-06).",
+        "No segmentation engine: no dynamic audiences, no frozen snapshots, no suppression sets, no sync to a destination.",
+        "No consent, lawful-basis, retention or subject-export machinery, and no role restriction on sensitive fields because there are no roles (L-01).",
+        "Real customer data does not belong in this yet — there is no export and no erasure path, so a subject request cannot be serviced (L-09).",
+        "The one provider call that exists runs against a checked-in fixture. No external data source is wired and no credential ships.",
+        "This page names no CDP product, because the only permitted competitor source carries no CDP research."
+      ],
+      "claims": ["C-06", "C-07", "C-16"],
+      "limitations": ["L-01", "L-04", "L-05", "L-06", "L-09"],
+      "jobs": ["JTBD-LI-01", "JTBD-LI-02", "JTBD-LI-04", "JTBD-DO-01", "JTBD-DO-02", "JTBD-DO-03", "JTBD-DO-07", "JTBD-DO-08", "JTBD-CM-01", "JTBD-CM-02", "JTBD-MK-01", "JTBD-MK-02", "JTBD-MK-03", "JTBD-MK-06", "JTBD-DG-01", "JTBD-DG-03", "JTBD-DG-06", "JTBD-DG-07"],
+      "docs": ["docs/strategy/DATA_GOVERNANCE.md", "docs/benchmarks/CRM_JTBD_MATRIX.md", "docs/LEAD_INTELLIGENCE.md", "docs/strategy/MARKETING_GROWTH_OPERATIONS.md"],
+      "tests": ["tests/lead-intelligence-e2e.test.js"],
+      "related": ["vs-building-a-crm-from-scratch", "vs-twenty", "vs-odoo"]
+    }
+  ]
+}

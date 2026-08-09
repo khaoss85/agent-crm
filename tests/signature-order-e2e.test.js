@@ -35,7 +35,7 @@ const SIGNATURE_MODULES = [
 ];
 
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'agent-crm-signature-'));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-signature-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -44,7 +44,7 @@ function project(t) {
   for (const manifest of MANIFESTS) {
     const result = spawnSync(
       process.execPath,
-      ['--no-warnings', join(root, 'packages/cli/bin/agent-crm.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', root],
+      ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', root],
       { encoding: 'utf8', cwd: root },
     );
     assert.equal(result.status, 0, `apply ${manifest}: ${result.stderr}`);
@@ -82,10 +82,10 @@ function project(t) {
 }
 
 async function boot(root, dbPath, options = {}) {
-  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
   const { createHttpServer } = await import(pathToFileURL(join(root, 'apps/server/src/index.js')).href);
-  const { AgentCrmClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
-  const app = createAgentCrmApp({ dbPath, ...options });
+  const { AccordoClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
+  const app = createAccordoApp({ dbPath, ...options });
   const server = createHttpServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -93,8 +93,8 @@ async function boot(root, dbPath, options = {}) {
     app,
     server,
     baseUrl,
-    client: new AgentCrmClient({ baseUrl, actor: { type: 'user', id: 'e2e' } }),
-    agentClient: new AgentCrmClient({ baseUrl, actor: { type: 'agent', id: 'bot' } }),
+    client: new AccordoClient({ baseUrl, actor: { type: 'user', id: 'e2e' } }),
+    agentClient: new AccordoClient({ baseUrl, actor: { type: 'agent', id: 'bot' } }),
     async close() {
       await new Promise((resolve) => server.close(resolve));
       app.close();
@@ -174,7 +174,7 @@ test('approved quote → verified signature → signed artifact → one immutabl
   assert.equal(envelope.idempotencyKey, `env:quote-version:${versionId}`);
   assert.match(envelope.providerEnvelopeId, /^env_[0-9a-f]{24}$/);
   assert.match(envelope.documentHash, /^[0-9a-f]{64}$/);
-  assert.equal(envelope.documentFormat, 'application/vnd.agent-crm.quote-package+json');
+  assert.equal(envelope.documentFormat, 'application/vnd.accordo.quote-package+json');
   assert.equal(app.modules.get('signature-signer').service.countWhere({ envelopeId: envelope.id }), 1);
   assert.equal(app.modules.get('quote').service.get(quote.id).signatureEnvelopeId, envelope.id);
 
@@ -220,7 +220,7 @@ test('approved quote → verified signature → signed artifact → one immutabl
   const artifact = app.modules.get('signed-artifact').service.listWhere({ envelopeId: envelope.id })[0];
   assert.equal(artifact.documentHash, envelope.documentHash);
   assert.match(artifact.artifactHash, /^[0-9a-f]{64}$/);
-  assert.equal(artifact.mimeType, 'application/vnd.agent-crm.quote-package+json');
+  assert.equal(artifact.mimeType, 'application/vnd.accordo.quote-package+json');
   assert.equal(artifact.completionEventId, app.modules.get('signature-event').service.listWhere({ providerEventId: 'evt_completed' })[0].id);
   // The signed canonical package travels with the evidence, and it still
   // hashes to what was signed — evidence that needs no other record to verify.
@@ -586,8 +586,8 @@ test('crash recovery, evidence independence and completion fault injection', asy
   const dbPath = join(root, 'data', 'recovery.sqlite');
   // The fixture provider keeps its envelopes in a file for this test, so it
   // survives the CRM process the way a real provider would.
-  process.env.AGENT_CRM_FIXTURE_SIGNATURE_STORE = join(root, 'fixture-provider.json');
-  t.after(() => { delete process.env.AGENT_CRM_FIXTURE_SIGNATURE_STORE; });
+  process.env.ACCORDO_FIXTURE_SIGNATURE_STORE = join(root, 'fixture-provider.json');
+  t.after(() => { delete process.env.ACCORDO_FIXTURE_SIGNATURE_STORE; });
   const { signatureFixture } = await fixture(root);
   signatureFixture.reset();
   let context = await boot(root, dbPath);
@@ -664,8 +664,8 @@ test('crash recovery, evidence independence and completion fault injection', asy
     "import { pathToFileURL } from 'node:url';",
     "import { join } from 'node:path';",
     `const root = ${JSON.stringify(root)};`,
-    "const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);",
-    `const app = createAgentCrmApp({ dbPath: ${JSON.stringify(dbPath)} });`,
+    "const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);",
+    `const app = createAccordoApp({ dbPath: ${JSON.stringify(dbPath)} });`,
     "const envelopes = app.modules.get('signature-envelope').service;",
     'const realApply = envelopes.applyManaged.bind(envelopes);',
     'let calls = 0;',
@@ -683,7 +683,7 @@ test('crash recovery, evidence independence and completion fault injection', asy
   ].join('\n'));
   const crash = spawnSync(process.execPath, ['--no-warnings', join(root, 'crash.mjs')], {
     encoding: 'utf8', cwd: root,
-    env: { ...process.env, AGENT_CRM_FIXTURE_SIGNATURE_STORE: join(root, 'fixture-provider.json') },
+    env: { ...process.env, ACCORDO_FIXTURE_SIGNATURE_STORE: join(root, 'fixture-provider.json') },
   });
   assert.equal(crash.status, 9, `the child must die during finalization (${crash.stderr})`);
 

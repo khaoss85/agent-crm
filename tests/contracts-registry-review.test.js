@@ -21,8 +21,8 @@ const policy = (over = {}) => ({
 /** Boot the project in a child process: a restart, not a re-import. */
 function bootInChild(root, dbPath) {
   return spawnSync(process.execPath, ['--no-warnings', '-e', `
-    const { createAgentCrmApp } = await import(${JSON.stringify(pathToFileURL(join(root, 'packages/app/src/index.js')).href)});
-    createAgentCrmApp({ dbPath: ${JSON.stringify(dbPath)} }).close();
+    const { createAccordoApp } = await import(${JSON.stringify(pathToFileURL(join(root, 'packages/app/src/index.js')).href)});
+    createAccordoApp({ dbPath: ${JSON.stringify(dbPath)} }).close();
   `], { encoding: 'utf8', cwd: root });
 }
 
@@ -199,8 +199,8 @@ test('the dependency direction is one-way, and the package is genuinely removabl
   writeFileSync(join(root, 'packages/domains/generated/index.js'), 'export const generatedDomains = [];\n');
   // A fresh process is the only honest way to prove a module graph changed.
   const probe = spawnSync(process.execPath, ['--no-warnings', '-e', `
-    const { createAgentCrmApp } = await import(${JSON.stringify(pathToFileURL(join(root, 'packages/app/src/index.js')).href)});
-    const app = createAgentCrmApp({ dbPath: ${JSON.stringify(dbPath)} });
+    const { createAccordoApp } = await import(${JSON.stringify(pathToFileURL(join(root, 'packages/app/src/index.js')).href)});
+    const app = createAccordoApp({ dbPath: ${JSON.stringify(dbPath)} });
     const out = {
       domains: app.domains.size,
       hasPlan: app.actions.listForModule('order').some((a) => a.name === 'plan-activation'),

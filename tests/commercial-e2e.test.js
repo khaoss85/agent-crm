@@ -38,7 +38,7 @@ const COMMERCIAL_MODULES = [
 ];
 
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'agent-crm-commercial-'));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-commercial-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -74,21 +74,21 @@ function writeCommercialIndex(root) {
 }
 
 function cli(root, args) {
-  return spawnSync(process.execPath, ['--no-warnings', join(root, 'packages/cli/bin/agent-crm.js'), ...args, '--root', root], {
+  return spawnSync(process.execPath, ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), ...args, '--root', root], {
     encoding: 'utf8',
     cwd: root,
   });
 }
 
 async function boot(root, dbPath, options = {}) {
-  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
   const { createHttpServer } = await import(pathToFileURL(join(root, 'apps/server/src/index.js')).href);
-  const { AgentCrmClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
-  const app = createAgentCrmApp({ dbPath, ...options });
+  const { AccordoClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
+  const app = createAccordoApp({ dbPath, ...options });
   const server = createHttpServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  const client = new AgentCrmClient({ baseUrl, actor: { type: 'user', id: 'commercial-e2e' } });
+  const client = new AccordoClient({ baseUrl, actor: { type: 'user', id: 'commercial-e2e' } });
   return { app, client, close: () => new Promise((resolve) => server.close(resolve)).then(() => app.close()) };
 }
 
@@ -371,9 +371,9 @@ test('commercial e2e: approval boundary, revise/version-2, concurrency, fault in
   for (const loser of submits.filter((result) => result.status === 'rejected')) assert.equal(loser.reason.status, 409);
 
   // Two connections editing the same draft: writers serialize, no lost update.
-  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
   const quoteD = await newQuote('Two connections');
-  const secondApp = createAgentCrmApp({ dbPath, busyTimeoutMs: 400 });
+  const secondApp = createAccordoApp({ dbPath, busyTimeoutMs: 400 });
   t.after(() => secondApp.close());
   const edits = await Promise.allSettled([
     app.runAction({ module: 'quote', action: 'add-line', recordId: quoteD, input: { offerId: enterprise.id, quantity: 2 }, actor: userActor }),
@@ -447,8 +447,8 @@ test('commercial e2e: approval boundary, revise/version-2, concurrency, fault in
   writeFileSync(
     join(root, 'boot-check.mjs'),
     [
-      "import { createAgentCrmApp } from './packages/app/src/index.js';",
-      `const app = createAgentCrmApp({ dbPath: ${JSON.stringify(dbPath)} });`,
+      "import { createAccordoApp } from './packages/app/src/index.js';",
+      `const app = createAccordoApp({ dbPath: ${JSON.stringify(dbPath)} });`,
       'app.close();',
       "console.log('booted');",
       '',

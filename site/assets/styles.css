@@ -1,0 +1,592 @@
+/*
+ * Built from site/brand.json. The palette is inherited verbatim from
+ * apps/admin/public/styles.css so the site and the product it ships look like the
+ * same thing — a landing page in a different visual language than the software is
+ * a small lie told before the first paragraph.
+ *
+ * Dark values are derived here rather than in brand.json: they are a rendering
+ * concern, not a brand decision.
+ */
+
+:root {
+  --ink: {{color.ink}};
+  --muted: {{color.muted}};
+  --line: {{color.line}};
+  --surface: {{color.surface}};
+  --paper: {{color.paper}};
+  --accent: {{color.accent}};
+  --accent-soft: {{color.accentSoft}};
+  --warning: {{color.warning}};
+  --warning-soft: {{color.warningSoft}};
+  --danger: {{color.danger}};
+  --danger-soft: {{color.dangerSoft}};
+  --shadow: 0 18px 50px rgba(27, 44, 34, 0.08);
+  --sans: {{font.sans}};
+  --mono: {{font.mono}};
+}
+
+:root:not([data-theme='light']) {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --ink: #e8ede9;
+    --muted: #97a49b;
+    --line: #2a332d;
+    --surface: #161b18;
+    --paper: #0f1311;
+    --accent: #6cc79b;
+    --accent-soft: #1a2f26;
+    --warning: #e0a856;
+    --warning-soft: #33270f;
+    --danger: #e08585;
+    --danger-soft: #331c1c;
+    --shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --ink: #e8ede9;
+  --muted: #97a49b;
+  --line: #2a332d;
+  --surface: #161b18;
+  --paper: #0f1311;
+  --accent: #6cc79b;
+  --accent-soft: #1a2f26;
+  --warning: #e0a856;
+  --warning-soft: #33270f;
+  --danger: #e08585;
+  --danger-soft: #331c1c;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.55;
+}
+
+a { color: inherit; }
+a:focus-visible, button:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.shell { width: min(1140px, calc(100% - 44px)); margin: 0 auto; }
+.narrow { width: min(820px, calc(100% - 44px)); margin: 0 auto; }
+
+/* ---------------------------------------------------------------- skip link */
+
+.skip {
+  position: absolute; left: -9999px; top: 0; z-index: 20;
+  background: var(--ink); color: var(--paper); padding: 12px 18px; border-radius: 0 0 12px 0;
+}
+.skip:focus { left: 0; }
+
+/* ---------------------------------------------------------------- nav */
+
+.nav {
+  position: relative;
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  padding: 22px 0; border-bottom: 1px solid var(--line);
+}
+.wordmark { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: -.02em; text-decoration: none; font-size: 16px; }
+.wordmark svg { width: 24px; height: 24px; flex-shrink: 0; }
+.nav-links { display: flex; gap: 18px; align-items: center; font-size: 13.5px; flex-wrap: wrap; justify-content: flex-end; }
+.nav-links a { color: var(--muted); text-decoration: none; white-space: nowrap; }
+.nav-links a:hover { color: var(--ink); }
+.nav-links a[aria-current] { color: var(--ink); font-weight: 700; }
+/* Retained: pages other than this partial still mark optional links with it. */
+@media (max-width: 720px) { .nav-links .hide-sm { display: none; } }
+
+/* The phone half of the navigation. No script runs on this site, so the disclosure is the
+   element itself rather than a menu a button opens. Above the breakpoint it is removed
+   outright, which is also what takes it out of the accessibility tree — the bar and the
+   disclosure hold the same eight links and only one of them is ever present. */
+
+.nav-menu { display: none; position: relative; border: 0; background: none; border-radius: 0; margin: 0; overflow: visible; }
+.nav-menu > summary {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 9px 14px; font-size: 13.5px; font-weight: 650; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  cursor: pointer; list-style: none;
+}
+.nav-menu > summary::after { content: none; }
+.nav-menu[open] > summary::after { content: none; }
+.nav-menu[open] > summary { border-color: var(--accent); color: var(--accent); }
+.nav-menu-bars {
+  width: 15px; height: 9px; flex-shrink: 0;
+  border-top: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
+  position: relative;
+}
+.nav-menu-bars::after {
+  content: ''; position: absolute; left: 0; top: 50%; width: 100%;
+  border-top: 1.6px solid currentColor; transform: translateY(-50%);
+}
+.nav-menu-panel {
+  position: absolute; right: 0; top: calc(100% + 9px); z-index: 30;
+  display: grid; width: max(190px, min(260px, calc(100vw - 44px)));
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 6px; box-shadow: var(--shadow);
+}
+.nav-menu-panel a {
+  padding: 10px 12px; border-radius: 8px;
+  font-size: 14.5px; color: var(--ink); text-decoration: none;
+}
+.nav-menu-panel a:hover { background: var(--paper); }
+.nav-menu-panel a + a { border-top: 1px solid var(--line); }
+
+@media (max-width: 860px) {
+  .nav { gap: 14px; }
+  .nav-links { display: none; }
+  .nav-menu { display: block; }
+}
+
+/* ---------------------------------------------------------------- status banner */
+
+.status-banner {
+  background: var(--warning-soft); color: var(--warning);
+  border-bottom: 1px solid color-mix(in srgb, var(--warning) 25%, transparent);
+  font-size: 13px; padding: 10px 0; font-weight: 650;
+}
+.status-banner .shell { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.status-banner strong { font-weight: 850; }
+
+/* ---------------------------------------------------------------- hero */
+
+.hero { padding: 56px 0 12px; }
+.eyebrow, .kicker {
+  margin: 0 0 14px; font-size: 11px; font-weight: 850;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
+}
+h1 {
+  margin: 0; max-width: 19ch;
+  font-size: clamp(36px, 5.4vw, 64px); line-height: 1.0; letter-spacing: -.04em; font-weight: 800;
+}
+.lede { max-width: 62ch; margin: 22px 0 0; color: var(--muted); font-size: clamp(17px, 2.2vw, 20px); }
+.lede strong { color: var(--ink); font-weight: 650; }
+
+.cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; align-items: center; }
+.button {
+  display: inline-flex; align-items: center; gap: 9px;
+  border-radius: 12px; padding: 13px 20px; font-weight: 750; font-size: 15px;
+  text-decoration: none; border: 1px solid transparent; transition: transform .15s ease;
+}
+.button:hover { transform: translateY(-1px); }
+@media (prefers-reduced-motion: reduce) { .button:hover { transform: none; } }
+.button.primary { background: var(--ink); color: var(--paper); }
+.button.secondary { background: var(--surface); color: var(--ink); border-color: var(--line); }
+.cta-note { font-size: 13px; color: var(--muted); }
+
+/* ---------------------------------------------------------------- code */
+
+.code {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  padding: 18px 20px; overflow-x: auto; box-shadow: var(--shadow);
+  font-family: var(--mono); font-size: 13.5px; line-height: 1.75;
+}
+.code pre { margin: 0; }
+.code .c { color: var(--muted); }
+.code .k { color: var(--accent); font-weight: 700; }
+.code .s { color: var(--warning); }
+
+/* ---------------------------------------------------------------- sections */
+
+section { padding: 76px 0; border-top: 1px solid var(--line); }
+section:first-of-type { border-top: 0; }
+h2 { margin: 0 0 16px; font-size: clamp(27px, 4vw, 40px); letter-spacing: -.035em; line-height: 1.08; font-weight: 800; max-width: 20ch; }
+h3 { margin: 0 0 8px; font-size: 17px; letter-spacing: -.015em; font-weight: 750; }
+.section-lede { max-width: 60ch; color: var(--muted); margin: 0 0 40px; font-size: 17px; }
+
+/* ---------------------------------------------------------------- cards */
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 20px;
+  padding: 26px; box-shadow: var(--shadow);
+}
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.card .limit {
+  margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line);
+  font-size: 13.5px; color: var(--muted);
+}
+.card .limit b { color: var(--warning); font-weight: 800; letter-spacing: .04em; font-size: 11px; text-transform: uppercase; display: block; margin-bottom: 5px; }
+.evidence { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+.evidence code {
+  font-family: var(--mono); font-size: 11.5px; background: var(--accent-soft); color: var(--accent);
+  border-radius: 7px; padding: 4px 8px; font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- flow */
+
+.flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-top: 8px; }
+.flow > div { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 20px; box-shadow: var(--shadow); }
+.flow span {
+  display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 850; margin-bottom: 14px;
+}
+.flow strong { display: block; font-size: 15px; }
+.flow small { display: block; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+
+/* ---------------------------------------------------------------- comparison table */
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); }
+table { width: 100%; border-collapse: collapse; min-width: 620px; }
+th, td { padding: 15px 18px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 14.5px; }
+thead th { font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); font-weight: 800; }
+tbody tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 700; }
+
+/* ---------------------------------------------------------------- limits */
+
+.limits-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.limit-card {
+  background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--warning);
+  border-radius: 14px; padding: 20px 22px;
+}
+.limit-card h3 { margin: 0 0 6px; font-size: 15.5px; }
+.limit-card p { margin: 0; color: var(--muted); font-size: 14px; }
+
+/* ---------------------------------------------------------------- quote / callout */
+
+.callout {
+  border-left: 3px solid var(--accent); background: var(--accent-soft);
+  border-radius: 0 16px 16px 0; padding: 24px 28px; margin: 0;
+}
+.callout p { margin: 0; font-size: 17px; }
+.callout p + p { margin-top: 12px; }
+
+/* ---------------------------------------------------------------- faq */
+
+details {
+  border: 1px solid var(--line); border-radius: 14px; background: var(--surface);
+  padding: 0; margin-bottom: 10px; overflow: hidden;
+}
+summary { cursor: pointer; padding: 18px 22px; font-weight: 700; font-size: 15.5px; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: '+'; float: right; color: var(--muted); font-weight: 400; font-size: 20px; line-height: 1; }
+details[open] summary::after { content: '−'; }
+details > p { margin: 0; padding: 0 22px 20px; color: var(--muted); font-size: 15px; }
+
+/* ---------------------------------------------------------------- footer */
+
+footer { border-top: 1px solid var(--line); padding: 44px 0 60px; color: var(--muted); font-size: 14px; }
+.footer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 28px; margin-bottom: 32px; }
+.footer-grid h4 { margin: 0 0 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--ink); }
+.footer-grid a { display: block; margin-bottom: 8px; text-decoration: none; }
+.footer-grid a:hover { color: var(--ink); }
+.colophon { padding-top: 26px; border-top: 1px solid var(--line); font-size: 13px; }
+
+/* ---------------------------------------------------------------- utilities */
+
+.stack-lg > * + * { margin-top: 44px; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); }
+
+/* ==================================================================
+ * Hub-and-spoke: the pillar and spoke pages generated by
+ * scripts/site-clusters.js, and the rails they hang evidence from.
+ * docs/marketing/SITE_ARCHITECTURE.md is the contract these render.
+ *
+ * Typography here is quieter and denser than the landing page above:
+ * these are documentation pages read by developers and by machines,
+ * and a spoke page is judged on how fast its boundary can be found.
+ * ================================================================== */
+
+/* ---------------------------------------------------------------- breadcrumbs */
+
+.breadcrumbs {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px;
+  margin: 0 0 16px; padding: 0; list-style: none;
+  font-size: 12.5px; line-height: 1.5; color: var(--muted);
+}
+.breadcrumbs li { display: flex; align-items: baseline; gap: 8px; margin: 0; }
+/* Direct children only, and one rule per plausible markup: a list of <li>, or bare <a>
+   siblings. An explicit separator element between two links stops both from matching, so a
+   generator that writes its own separators does not get a second one from here. */
+.breadcrumbs > li + li::before,
+.breadcrumbs > a + a::before { content: '/'; color: var(--line); margin-right: 8px; }
+.breadcrumbs a { color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; }
+.breadcrumbs a:hover { color: var(--ink); border-bottom-color: var(--line); }
+.breadcrumbs [aria-current='page'], .breadcrumbs strong { color: var(--ink); font-weight: 650; }
+
+/* ---------------------------------------------------------------- pillar page */
+
+.cluster-hero {
+  padding: 40px 0 6px; border-top: 0;
+}
+.cluster-hero h1 {
+  max-width: 22ch; font-size: clamp(30px, 4.2vw, 46px);
+  line-height: 1.05; letter-spacing: -.035em;
+}
+.cluster-hero > p { max-width: 66ch; margin: 18px 0 0; color: var(--muted); font-size: 17px; }
+.cluster-hero > p strong { color: var(--ink); font-weight: 650; }
+
+.cluster-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px; margin: 0; padding: 0; list-style: none;
+}
+
+.cluster-card {
+  display: flex; flex-direction: column; gap: 6px; margin: 0;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 20px 22px; color: inherit; text-decoration: none;
+}
+.cluster-card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.cluster-card h2, .cluster-card h3 {
+  margin: 0; max-width: none;
+  font-size: 16px; line-height: 1.3; letter-spacing: -.015em; font-weight: 750; color: var(--ink);
+}
+.cluster-card a { color: inherit; text-decoration: none; }
+.cluster-card:hover h2, .cluster-card:hover h3, .cluster-card a:hover { color: var(--accent); }
+.cluster-card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.cluster-card .evidence { margin-top: 10px; }
+
+/* The plain-English second name. Inside a card it is a caption under the title; beside an
+   h1 it is a subtitle. Same idea, two weights, because the surrounding type differs. */
+.card-plain,
+.cluster-card .card-plain {
+  margin: 0; font-size: 12.5px; font-weight: 600; letter-spacing: .005em; color: var(--accent);
+}
+.plain-name,
+.cluster-hero .plain-name,
+.spoke-hero .plain-name {
+  margin: 12px 0 0; max-width: 48ch;
+  font-size: clamp(15px, 1.8vw, 17px); font-weight: 600; line-height: 1.4;
+  letter-spacing: -.005em; color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- spoke page */
+
+.spoke-hero { padding: 36px 0 4px; border-top: 0; }
+.spoke-hero h1 {
+  max-width: 24ch; font-size: clamp(27px, 3.6vw, 40px);
+  line-height: 1.08; letter-spacing: -.03em;
+}
+.spoke-hero > p { max-width: 68ch; margin: 16px 0 0; color: var(--muted); font-size: 16.5px; }
+.spoke-hero > p strong { color: var(--ink); font-weight: 650; }
+
+/* "People ask this as:" — the search intent, printed rather than hidden in a meta tag. */
+.intent-line {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 9px;
+  margin: 18px 0 0; font-size: 13px; color: var(--muted);
+}
+.intent-line b, .intent-line strong, .intent-line .intent-label {
+  font-size: 10.5px; font-weight: 850; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--muted);
+}
+.intent-line q, .intent-line em, .intent-line code {
+  font-style: normal; font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+  background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px;
+}
+.intent-line q::before, .intent-line q::after { content: none; }
+
+.section-block {
+  margin-top: 34px; padding: 0; border-top: 0;
+}
+.section-block h2 {
+  margin: 0 0 10px; max-width: 32ch;
+  font-size: clamp(20px, 2.6vw, 26px); line-height: 1.18; letter-spacing: -.022em; font-weight: 750;
+}
+.section-block h3 { margin: 22px 0 6px; font-size: 15.5px; font-weight: 700; }
+.section-block p { margin: 0 0 12px; max-width: 72ch; font-size: 15.5px; line-height: 1.62; color: var(--ink); }
+.section-block p:last-child { margin-bottom: 0; }
+/* Direct children: a .boundary-list or an .evidence-group list nested inside a section must keep
+   its own reset rather than inherit a document indent from here. */
+.section-block > ul, .section-block > ol { margin: 0 0 12px; padding-left: 20px; max-width: 72ch; font-size: 15.5px; }
+.section-block > ul > li + li, .section-block > ol > li + li { margin-top: 6px; }
+.section-block code { font-family: var(--mono); font-size: 13.5px; color: var(--ink); }
+.section-block a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--line); }
+.section-block a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ---------------------------------------------------------------- the boundary block
+ *
+ * The one block on a spoke page that may not read as a footnote. Every page in this site
+ * exists to say what a thing does *and where it stops*, and SITE_ARCHITECTURE.md requires
+ * the boundary list above the fold rather than at the bottom. It gets the warning tokens,
+ * a heavy rule, its own background and body type a step larger than the sections around
+ * it — the visual weight of a callout, not of a caveat. */
+
+.boundary-block {
+  margin: 30px 0; padding: 24px 26px 26px;
+  background: var(--warning-soft); color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--warning) 38%, transparent);
+  border-left: 5px solid var(--warning);
+  border-radius: 4px 16px 16px 4px;
+}
+.boundary-block h2, .boundary-block h3, .boundary-block h4 {
+  margin: 0 0 12px; max-width: 34ch;
+  font-size: clamp(18px, 2.3vw, 22px); line-height: 1.2; letter-spacing: -.022em;
+  font-weight: 800; color: var(--ink);
+}
+.boundary-block > p { margin: 0 0 14px; max-width: 70ch; font-size: 15px; color: var(--ink); }
+.boundary-block > p:last-child { margin-bottom: 0; }
+.boundary-block code { font-family: var(--mono); font-size: 13.5px; }
+.boundary-block a { color: var(--ink); border-bottom: 1px solid color-mix(in srgb, var(--warning) 50%, transparent); text-decoration: none; }
+
+.boundary-list,
+.boundary-block .boundary-list {
+  margin: 0; padding: 0; list-style: none; display: grid; gap: 11px;
+}
+.boundary-list li,
+.boundary-block .boundary-list li {
+  position: relative; margin: 0; padding-left: 26px; max-width: 70ch;
+  font-size: 15.5px; line-height: 1.5; color: var(--ink);
+}
+.boundary-list li::before {
+  content: '\00d7'; position: absolute; left: 4px; top: 0;
+  color: var(--warning); font-weight: 850; font-size: 16px; line-height: 1.45;
+}
+
+/* Dark rendering is not a token swap here. --warning-soft is a deep brown at that end of the
+   palette, and against the near-black page it loses the "stop and read this" contrast the block
+   is for; mixing a little surface back in and strengthening the border restores it. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .boundary-block {
+    background: color-mix(in srgb, var(--warning-soft) 84%, var(--surface));
+    border-color: color-mix(in srgb, var(--warning) 48%, transparent);
+  }
+}
+:root[data-theme='dark'] .boundary-block {
+  background: color-mix(in srgb, var(--warning-soft) 84%, var(--surface));
+  border-color: color-mix(in srgb, var(--warning) 48%, transparent);
+}
+
+/* ---------------------------------------------------------------- evidence rail */
+
+.evidence-rail {
+  margin-top: 44px; padding: 22px 0 0; border-top: 1px solid var(--line);
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 22px 26px;
+}
+.evidence-rail > h2, .evidence-rail > h3, .evidence-rail > p {
+  grid-column: 1 / -1; margin: 0; max-width: 68ch;
+}
+.evidence-rail > h2, .evidence-rail > h3 {
+  font-size: 11px; font-weight: 850; letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+}
+.evidence-rail > p { font-size: 13px; color: var(--muted); }
+
+.evidence-group { min-width: 0; }
+.evidence-group h3, .evidence-group h4, .evidence-group > strong {
+  display: block; margin: 0 0 8px;
+  font-size: 10.5px; font-weight: 850; letter-spacing: .13em; text-transform: uppercase; color: var(--muted);
+}
+.evidence-group ul, .evidence-group ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.evidence-group li { margin: 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.evidence-group code {
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+  overflow-wrap: anywhere; word-break: break-word;
+}
+.evidence-group a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--line); }
+.evidence-group a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.evidence-group a code { color: inherit; }
+
+/* ---------------------------------------------------------------- related rail */
+
+.related-rail {
+  margin-top: 40px; padding: 20px 0 0; border-top: 1px solid var(--line);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px;
+}
+.related-rail > h2, .related-rail > h3, .related-rail > strong {
+  flex-basis: 100%; margin: 0 0 2px; max-width: none;
+  font-size: 11px; font-weight: 850; letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+}
+.related-rail ul { display: contents; margin: 0; padding: 0; list-style: none; }
+.related-rail li { margin: 0; }
+.related-rail a {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  font-size: 13.5px; font-weight: 600; color: var(--ink); text-decoration: none;
+}
+.related-rail a:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---------------------------------------------------------------- narrow screens */
+
+@media (max-width: 520px) {
+  .boundary-block { padding: 20px 18px 22px; border-radius: 3px 12px 12px 3px; }
+  .boundary-list li { padding-left: 22px; font-size: 15px; }
+  .cluster-card { padding: 18px; }
+  .evidence-rail { gap: 18px; }
+}
+
+/* ---------------------------------------------------------------- the loop
+   The five things an agent does here, as the hero's structural element rather
+   than a paragraph. It is an <ol> because the order is the argument: you cannot
+   check what you did not plan, or prove what you did not build. Numbers come
+   from the counter, so the markup stays a plain ordered list for a reader that
+   ignores CSS entirely. */
+.loop {
+  list-style: none;
+  counter-reset: loop;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 1px;
+  margin: 30px 0 0;
+  padding: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.loop li {
+  counter-increment: loop;
+  background: var(--surface);
+  padding: 16px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.loop li::before {
+  content: counter(loop);
+  font: 600 11px/1 var(--mono);
+  color: var(--accent);
+  letter-spacing: .06em;
+}
+.loop-step {
+  font-weight: 620;
+  font-size: 15px;
+  color: var(--ink);
+  letter-spacing: -.01em;
+}
+.loop code {
+  font: 500 12.5px/1.5 var(--mono);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 5px;
+  padding: 2px 6px;
+  align-self: flex-start;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.loop-note {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* The refusal block. The 403 is the single most differentiated thing on the
+   site, so it is typeset as evidence rather than as decoration: no gradient,
+   no glow, just the request, the actor that made it, and the status. */
+.code.refusal { border-color: var(--accent); }
+.code .s { color: var(--warning); }
+.code .bad {
+  color: var(--warning);
+  font-weight: 650;
+  letter-spacing: .01em;
+}
+

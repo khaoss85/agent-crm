@@ -46,11 +46,11 @@ claim** (MK5–MK7), and **Production Spine gates Cloud** (unchanged).
 
 Phases 2–4 and 8 can overlap; 6 gates 9; 10 gates 11–12.
 
-**Agent CRM Cloud track** (specified in `AGENT_CRM_CLOUD.md`; design only, unbuilt): a named product track layered on these phases rather than a renumbering of them —
+**Accordo Cloud track** (specified in `AGENT_CRM_CLOUD.md`; design only, unbuilt): a named product track layered on these phases rather than a renumbering of them —
 
 ```text
 Production Spine (Phase 6)
-    → Agent CRM Cloud Control Plane
+    → Accordo Cloud Control Plane
     → Managed Runtime
     → Agent Operations CLI/MCP
     → Plugin Operations
@@ -89,7 +89,7 @@ M16 Analytics Studio v1
 **Parallelization and hard dependencies — this sequence does NOT gate Cloud.** The workstream milestones and the platform phases run in parallel, exactly as M0–M8 ran alongside strategy work:
 
 - **Hard dependencies inside the track:** M10 → M11 (an Order snapshots a signed Quote) → **M12** (a contract and its subscriptions are activated from an Order) → **M13** (a delivery project is created from the Order/Contract scope) → **M14** → **M15**. M9 is independent of M10–M15. **M16** closes the sequence pragmatically because its value grows with each preceding milestone, but the semantic layer plus pipeline metrics need only M8 and may be pulled earlier. Renewal scheduling inside M12 is additionally gated on `JOBS_AND_OUTBOX.md`: without a scheduler nothing can fire on a future date, so M12 stops at activation.
-- **The Production Spine (Phase 6) is a parallel hard gate, not a sequel:** PostgreSQL, authentication, organizations/tenancy, RBAC, secrets, backups, remote-safe MCP. It can be built at any time alongside M9–M15, and **Agent CRM Cloud work begins when the Spine is done — not when all domains are done.** A Cloud managed runtime serving M8-era CRMs is a legitimate first Cloud release.
+- **The Production Spine (Phase 6) is a parallel hard gate, not a sequel:** PostgreSQL, authentication, organizations/tenancy, RBAC, secrets, backups, remote-safe MCP. It can be built at any time alongside M9–M15, and **Accordo Cloud work begins when the Spine is done — not when all domains are done.** A Cloud managed runtime serving M8-era CRMs is a legitimate first Cloud release.
 - **What the Spine specifically gates within the workstreams:** manual-reassignment permission validation with real users (M9), partner/customer access boundaries and portals (M13–M15), role-aware dashboards (M16), and every remote or multi-user claim. Until then those capabilities are designed and boundary-tested against declared actors on the local-development surface, and the JTBD matrix must not claim them validated.
 
 Each milestone below follows the standard per-phase format.
@@ -287,7 +287,7 @@ as two:
 
 ### AX4 — Objective-driven deploy, observe and fix through Cloud
 
-- **Dependencies:** the Production Spine and Agent CRM Cloud. Hard.
+- **Dependencies:** the Production Spine and Accordo Cloud. Hard.
 
 ### AX5 — Closed-loop optimization
 
@@ -308,7 +308,7 @@ Jobs / durable outbox        JOBS_AND_OUTBOX.md
 Integration Runtime          INTEGRATION_RUNTIME.md
 Data Governance              DATA_GOVERNANCE.md
 Design-to-CRM                DESIGN_TO_CRM.md
-Agent CRM Cloud              AGENT_CRM_CLOUD.md + CLOUD_JTBD.md
+Accordo Cloud              AGENT_CRM_CLOUD.md + CLOUD_JTBD.md
 ```
 
 Dependencies and what can genuinely run in parallel:
@@ -323,7 +323,7 @@ Dependencies and what can genuinely run in parallel:
 | Integration Runtime | Jobs/outbox, then secret management | product milestones | every **real** provider adapter |
 | Data Governance | tenancy for the tenant-boundary parts; the rest is independent | everything | any deployment holding real personal data |
 | Design-to-CRM | the generated Admin (done) | everything | the North Star "design reference → working CRM" claim |
-| Agent CRM Cloud | the Production Spine | product milestones | managed deployment; nothing else |
+| Accordo Cloud | the Production Spine | product milestones | managed deployment; nothing else |
 | Marketing & Growth (MK0–MK7) | Data Governance from MK2; Jobs/outbox for MK4; Analytics Studio for MK7 | the M-lane, end to end | demand creation, closed-loop ROI — none of it gates the M-lane |
 | Agent Experience (AX0–AX5) | AX1 on capability inspection; AX2 on AX1; AX4 on the Production Spine and Cloud; AX5 on Marketing + Analytics | every other track | how a user reaches the platform at all — it gates nothing, and nothing gates AX0 |
 
@@ -416,7 +416,7 @@ Two consequences worth stating plainly: **a Cloud release serving an M11-era CRM
 
 - **Outcome:** the agent can take a project live and observe it.
 - **Deliverables:** deploy recipes + CLI commands for Vercel and Docker/VPS; environment/secret handling conventions (never in repo); production log access and trace/audit querying via CLI + MCP against deployed instances; scripted post-deploy smoke check (the benchmark's G5/G6 as a product feature).
-- **Dependencies:** Phase 6. This phase's self-hosted deploy recipes are also the foundation of the **Agent CRM Cloud** managed runtime (`AGENT_CRM_CLOUD.md`); Cloud's Control Plane/managed-runtime work slots after Phase 6 alongside this phase.
+- **Dependencies:** Phase 6. This phase's self-hosted deploy recipes are also the foundation of the **Accordo Cloud** managed runtime (`AGENT_CRM_CLOUD.md`); Cloud's Control Plane/managed-runtime work slots after Phase 6 alongside this phase.
 - **Acceptance:** benchmark deployment gates pass on both targets; docs let an agent deploy without human keystrokes beyond credentials/approval.
 - **Agent executes:** recipes, automation, smoke tooling.
 - **Human approves:** every real deploy in benchmarks/demos; hosting spend.
@@ -487,7 +487,7 @@ Phase 8 defines the core skills (build-module, build-workflow, build-integration
 native primitive → provider contract → Agent Skill → starter → JTBD evidence → reproducible E2E benchmark
 ```
 
-A domain with primitives but no skill is not agent-native; a domain with a skill but no JTBD evidence or benchmark is a claim without receipts. Providers whose actions send, sign, charge or expose data externally always sit behind explicit human approval — the same boundary Agent CRM Cloud applies to operations (`AGENT_CRM_CLOUD.md` §4.3).
+A domain with primitives but no skill is not agent-native; a domain with a skill but no JTBD evidence or benchmark is a claim without receipts. Providers whose actions send, sign, charge or expose data externally always sit behind explicit human approval — the same boundary Accordo Cloud applies to operations (`AGENT_CRM_CLOUD.md` §4.3).
 
 ---
 

@@ -137,7 +137,7 @@ export class WorkflowEngine {
           });
         } catch (compensationError) {
           const compensation = normalizeError(compensationError);
-          console.error(`[agent-crm] compensation failed in ${item.definition.name}: ${compensation.message}`);
+          console.error(`[accordo] compensation failed in ${item.definition.name}: ${compensation.message}`);
         }
       }
       this.database.raw.prepare(`

@@ -1,5 +1,5 @@
 {
-  "name": "agent-crm",
+  "name": "accordo",
   "version": "0.1.0",
   "private": true,
   "description": "Agent-native CRM framework: CRM modules, deterministic workflows, MCP, CLI, trace and audit.",
@@ -8,20 +8,32 @@
     "node": ">=22.16.0"
   },
   "bin": {
-    "agent-crm": "./packages/cli/bin/agent-crm.js"
+    "accordo": "./packages/cli/bin/accordo.js"
   },
   "scripts": {
-    "dev": "node --no-warnings packages/cli/bin/agent-crm.js serve",
-    "start": "node --no-warnings packages/cli/bin/agent-crm.js serve",
+    "dev": "node --no-warnings packages/cli/bin/accordo.js serve",
+    "start": "node --no-warnings packages/cli/bin/accordo.js serve",
     "mcp": "node --no-warnings packages/mcp/bin/server.js",
-    "crm": "node --no-warnings packages/cli/bin/agent-crm.js",
-    "seed": "node --no-warnings packages/cli/bin/agent-crm.js seed",
-    "demo": "node --no-warnings packages/cli/bin/agent-crm.js demo",
-    "doctor": "node --no-warnings packages/cli/bin/agent-crm.js doctor",
+    "crm": "node --no-warnings packages/cli/bin/accordo.js",
+    "seed": "node --no-warnings packages/cli/bin/accordo.js seed",
+    "demo": "node --no-warnings packages/cli/bin/accordo.js demo",
+    "doctor": "node --no-warnings packages/cli/bin/accordo.js doctor",
     "check": "node scripts/check.js",
+    "surface:check": "node scripts/surface-check.js",
     "test": "node --no-warnings --test --test-reporter=spec",
     "verify": "npm run check && npm test",
     "smoke": "node --no-warnings scripts/smoke.js",
+    "falsify": "node scripts/falsify.js",
+    "site:build": "node scripts/site-build.js",
+    "site:check": "npm run site:build && node scripts/site-check.js",
+    "distribution:check": "node scripts/distribution-check.js",
+    "gtm:check": "npm run site:check && node scripts/generate-llms.js --check && npm run distribution:check && npm run surface:check",
+    "site:shots": "npm run site:build && node scripts/site-shots.js",
+    "tour": "node --no-warnings scripts/tour.js",
+    "bench:prompts": "node benchmarks/harness/generate-prompts.js",
+    "bench:prepare": "node benchmarks/harness/prepare.js",
+    "bench:record": "node benchmarks/harness/record.js",
+    "bench:score": "node benchmarks/harness/score.js",
     "characterize:intelligence": "node scripts/characterize-intelligence.mjs"
   },
   "keywords": [

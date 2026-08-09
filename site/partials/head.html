@@ -1,0 +1,18 @@
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="robots" content="{{meta.robots}}" />
+  <!--
+    Indexing follows the repository's visibility, from site/brand.json — not a
+    hand-edited tag. While the source is private every link into it 404s for a
+    stranger, and teaching an answer engine a page whose primary link is broken
+    is expensive to undo. This flips to index,follow in the same edit that makes
+    the repository public.
+  -->
+  <link rel="stylesheet" href="{{page.root}}styles.css" />
+  <link rel="icon" href="{{page.root}}mark.svg" type="image/svg+xml" />
+  <meta name="theme-color" content="{{color.accent}}" />
+  <link rel="license" href="https://opensource.org/licenses/MIT" />
+  <link rel="alternate" type="text/plain" href="{{page.root}}llms.txt" title="Machine-readable summary" />
+  <link rel="alternate" type="text/plain" href="{{page.root}}llms-full.txt" title="Machine-readable summary, full text" />
+  <link rel="alternate" type="application/json" href="{{page.root}}jobs.json" title="Every catalogued CRM job, its status and its evidence" />

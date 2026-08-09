@@ -36,7 +36,7 @@ import { fixtureProject } from './helpers/package-test-fixtures.js';
  */
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
-const cli = join(repoRoot, 'packages/cli/bin/agent-crm.js');
+const cli = join(repoRoot, 'packages/cli/bin/accordo.js');
 
 /** Run the CLI as a real process: exit codes are part of the contract. */
 function runCli(args, { cwd = repoRoot } = {}) {

@@ -89,7 +89,7 @@ function composition(root, { withService }) {
 }
 
 test('a shipped M12 project adopts M15 without losing a single obligation', async (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'agent-crm-upgrade-'));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-upgrade-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'tests', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -99,7 +99,7 @@ test('a shipped M12 project adopts M15 without losing a single obligation', asyn
 
   const apply = (manifestPath) => {
     const result = spawnSync(process.execPath,
-      ['--no-warnings', join(root, 'packages/cli/bin/agent-crm.js'), 'module', 'create', manifestPath, '--apply', '--root', root],
+      ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create', manifestPath, '--apply', '--root', root],
       { encoding: 'utf8', cwd: root });
     assert.equal(result.status, 0, `apply ${manifestPath}: ${result.stderr}`);
     return result;

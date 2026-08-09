@@ -579,7 +579,7 @@ export function applyPackageScaffold({ name, rootDir = process.cwd(), into = PAC
 /** The human view. `--json` is the contract; this is a convenience. */
 export function renderScaffold(result) {
   const lines = [];
-  lines.push(`Agent CRM package scaffold (contract ${result.packageScaffoldContract})`);
+  lines.push(`Accordo package scaffold (contract ${result.packageScaffoldContract})`);
   lines.push(`Package: ${result.name}`);
   lines.push(`Target:  ${result.target}`);
   lines.push(`Mode:    ${result.mode} — ${result.modeReason}`);
@@ -637,7 +637,7 @@ export function packageScaffoldCommand({
       files: [],
       modeReason: 'no package name was given, so nothing was planned or written',
       staleStaging: [],
-      problems: [{ code: 'PACKAGE_NAME_MISSING', message: 'Usage: agent-crm package scaffold <package-name> [--into dir] [--apply] [--json]' }],
+      problems: [{ code: 'PACKAGE_NAME_MISSING', message: 'Usage: accordo package scaffold <package-name> [--into dir] [--apply] [--json]' }],
       limitations: LIMITATIONS.map(([code, message]) => ({ code, message })),
     };
     console.log(json ? JSON.stringify(refusal, null, 2) : renderScaffold(refusal));

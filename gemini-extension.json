@@ -2,5 +2,12 @@
   "name": "accordo",
   "version": "0.1.0",
   "description": "Accordo — the open-source framework coding agents use to build custom CRMs: domain modules, deterministic workflows, human approvals, audit and trace.",
-  "contextFileName": "GEMINI.md"
+  "contextFileName": "GEMINI.md",
+  "mcpServers": {
+    "accordo": {
+      "command": "node",
+      "args": ["--no-warnings", "${extensionPath}/packages/mcp/bin/server.js"],
+      "cwd": "${extensionPath}"
+    }
+  }
 }

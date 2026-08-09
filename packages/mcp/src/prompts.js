@@ -5,7 +5,7 @@ export function createPromptRegistry({ app }) {
   const prompts = [
     {
       name: 'build-crm-feature',
-      title: 'Build an Agent CRM Feature',
+      title: 'Build an Accordo Feature',
       description: 'Turn a business request into a safe module/workflow implementation plan.',
       arguments: [
         { name: 'business_request', description: 'The commercial outcome to implement.', required: true },
@@ -18,7 +18,7 @@ export function createPromptRegistry({ app }) {
               role: 'user',
               content: {
                 type: 'text',
-                text: `Implement this Agent CRM request: ${args.business_request}\n\nRead AGENTS.md, PRODUCT.md, ARCHITECTURE.md and DECISIONS.md. Use module services for state and a named workflow for cross-module behavior. Preserve validation, audit and trace. Create an ExecPlan for multi-file work and finish with npm run verify.`,
+                text: `Implement this Accordo request: ${args.business_request}\n\nRead AGENTS.md, PRODUCT.md, ARCHITECTURE.md and DECISIONS.md. Use module services for state and a named workflow for cross-module behavior. Preserve validation, audit and trace. Create an ExecPlan for multi-file work and finish with npm run verify.`,
               },
             },
           ],
@@ -41,7 +41,7 @@ export function createPromptRegistry({ app }) {
               role: 'user',
               content: {
                 type: 'text',
-                text: `Diagnose this Agent CRM workflow run. Find the first incorrect step, reproduce it in a test, fix the smallest responsible layer and run npm run verify.\n\n${JSON.stringify(trace, null, 2)}`,
+                text: `Diagnose this Accordo workflow run. Find the first incorrect step, reproduce it in a test, fix the smallest responsible layer and run npm run verify.\n\n${JSON.stringify(trace, null, 2)}`,
               },
             },
           ],

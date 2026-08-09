@@ -1,0 +1,16 @@
+{
+  "$comment": "The plugin's MCP configuration, deliberately different from the repository's own /.mcp.json. When this ships as an installed plugin the server code lives in the plugin's cache directory while the CRM database belongs to the user's project, so the two paths resolve through different variables. /.mcp.json keeps using CLAUDE_PROJECT_DIR for both because there the repository is the project.",
+  "mcpServers": {
+    "accordo": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "--no-warnings",
+        "${CLAUDE_PLUGIN_ROOT}/packages/mcp/bin/server.js"
+      ],
+      "env": {
+        "CRM_DB_PATH": "${CLAUDE_PROJECT_DIR}/data/accordo.sqlite"
+      }
+    }
+  }
+}

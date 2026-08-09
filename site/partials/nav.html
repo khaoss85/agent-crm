@@ -1,0 +1,59 @@
+  <a class="skip" href="#main">Skip to content</a>
+
+  <div class="status-banner">
+    <div class="shell">
+      <strong>{{status.headline}}</strong>
+      <span>{{status.text}}</span>
+    </div>
+  </div>
+
+  <div class="shell">
+    <nav class="nav" aria-label="Primary">
+      <a class="wordmark" href="{{page.root}}index.html">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="1.5" y="1.5" width="21" height="21" rx="6.5" stroke="currentColor" stroke-width="1.6" />
+          <path d="M6 15.5 L10.2 15.5 L12 8.5 L13.8 15.5 L18 15.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+          <circle cx="12" cy="8.5" r="2.4" fill="currentColor" />
+        </svg>
+        <span>{{brand.name}}</span>
+      </a>
+
+      <!--
+        The same eight destinations twice, and deliberately so. This site runs no executable
+        script — its Content-Security-Policy in vercel.json is `default-src 'none'` with no
+        `script-src` at all — so a menu cannot be toggled by script, and a details/summary
+        disclosure is the only mechanism a browser gives us without one. A single
+        list that is a bar on desktop and a disclosure on a phone would require author CSS to
+        override the closed state of `details`, which newer engines hide with `content-visibility`
+        rather than `display`. Two lists, one hidden per breakpoint, work in every engine and
+        leave exactly one of them in the accessibility tree at a time.
+      -->
+      <div class="nav-links">
+        <a href="{{page.root}}capabilities.html">Capabilities</a>
+        <a href="{{page.root}}tools.html">Agent tools</a>
+        <a href="{{page.root}}concepts.html">Concepts</a>
+        <a href="{{page.root}}compare.html">Compare</a>
+        <a href="{{page.root}}jobs.html">Jobs</a>
+        <a href="{{page.root}}answers.html">Answers</a>
+        <a href="{{page.root}}evidence.html">Evidence</a>
+        <a href="{{brand.repository}}">Source</a>
+      </div>
+
+      <details class="nav-menu">
+        <summary>
+          <span class="nav-menu-bars" aria-hidden="true"></span>
+          Sections
+        </summary>
+        <div class="nav-menu-panel">
+          <a href="{{page.root}}capabilities.html">Capabilities</a>
+          <a href="{{page.root}}tools.html">Agent tools</a>
+          <a href="{{page.root}}concepts.html">Concepts</a>
+          <a href="{{page.root}}compare.html">Compare</a>
+          <a href="{{page.root}}jobs.html">Jobs</a>
+          <a href="{{page.root}}answers.html">Answers</a>
+          <a href="{{page.root}}evidence.html">Evidence</a>
+          <a href="{{brand.repository}}">Source</a>
+        </div>
+      </details>
+    </nav>
+  </div>

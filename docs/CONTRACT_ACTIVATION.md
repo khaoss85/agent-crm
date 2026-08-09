@@ -203,7 +203,7 @@ term already ended            → refused, TERM_ALREADY_ENDED
 ```
 
 The business date comes from the application clock, which is injectable
-(`createAgentCrmApp({ clock })`) so a run is reproducible. The activation
+(`createAccordoApp({ clock })`) so a run is reproducible. The activation
 instant is a UTC timestamp; the term stays date-only.
 
 ## The term (operational metadata, not a signed term)

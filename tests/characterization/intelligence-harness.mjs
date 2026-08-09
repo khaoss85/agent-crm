@@ -232,7 +232,7 @@ export function wireIntelligence(root, { enrichTimeoutMs } = {}) {
 
 /** @param {string} root @param {string[]} args */
 function cli(root, args) {
-  return spawnSync(process.execPath, ['--no-warnings', join(root, 'packages/cli/bin/agent-crm.js'), ...args, '--root', root],
+  return spawnSync(process.execPath, ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), ...args, '--root', root],
     { encoding: 'utf8', cwd: root });
 }
 
@@ -244,7 +244,7 @@ function cli(root, args) {
  * @param {import('node:test').TestContext} t
  * @param {{enrichTimeoutMs?: number, name?: string}} [options]
  */
-export function characterizationProject(t, { enrichTimeoutMs, name = 'agent-crm-la0-' } = {}) {
+export function characterizationProject(t, { enrichTimeoutMs, name = 'accordo-la0-' } = {}) {
   const root = mkdtempSync(join(tmpdir(), name));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
@@ -270,14 +270,14 @@ export function characterizationProject(t, { enrichTimeoutMs, name = 'agent-crm-
  * @param {string} root @param {string} dbPath @param {Record<string, unknown>} [options]
  */
 export async function boot(root, dbPath, options = {}) {
-  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
   const { createHttpServer } = await import(pathToFileURL(join(root, 'apps/server/src/index.js')).href);
-  const { AgentCrmClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
-  const app = createAgentCrmApp({ dbPath, clock: () => FIXED_NOW, ...options });
+  const { AccordoClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
+  const app = createAccordoApp({ dbPath, clock: () => FIXED_NOW, ...options });
   const server = createHttpServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  const client = new AgentCrmClient({ baseUrl, actor: { type: 'user', id: 'la0-characterization' } });
+  const client = new AccordoClient({ baseUrl, actor: { type: 'user', id: 'la0-characterization' } });
   return {
     app,
     client,

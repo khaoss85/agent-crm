@@ -15,11 +15,11 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
  */
 
 let projectRoot;
-let createAgentCrmApp;
+let createAccordoApp;
 const actor = { type: 'user', id: 'semantics' };
 
 test.before(async () => {
-  projectRoot = mkdtempSync(join(tmpdir(), 'agent-crm-semantics-'));
+  projectRoot = mkdtempSync(join(tmpdir(), 'accordo-semantics-'));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(projectRoot, entry), { recursive: true });
   }
@@ -27,7 +27,7 @@ test.before(async () => {
   for (const manifest of ['lead.module.json', 'task.module.json']) {
     const result = spawnSync(
       process.execPath,
-      ['--no-warnings', join(projectRoot, 'packages/cli/bin/agent-crm.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', projectRoot],
+      ['--no-warnings', join(projectRoot, 'packages/cli/bin/accordo.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', projectRoot],
       { encoding: 'utf8', cwd: projectRoot },
     );
     assert.equal(result.status, 0, result.stderr);
@@ -55,7 +55,7 @@ test.before(async () => {
       '',
     ].join('\n'),
   );
-  ({ createAgentCrmApp } = await import(pathToFileURL(join(projectRoot, 'packages/app/src/index.js')).href));
+  ({ createAccordoApp } = await import(pathToFileURL(join(projectRoot, 'packages/app/src/index.js')).href));
 });
 
 test.after(() => {
@@ -71,7 +71,7 @@ async function capture(app) {
 }
 
 test('a post-commit subscriber failure is NOT a business failure: success + failed dispatch span', async (t) => {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   t.after(() => app.close());
   const lead = await capture(app);
   const delivered = [];
@@ -109,8 +109,8 @@ test('two independent connections, concurrent qualify: one success, one clean 40
   const dbPath = join(projectRoot, 'data', `race-${process.pid}.sqlite`);
   // Short busy timeout: with synchronous SQLite on one JS thread, the loser
   // holds the thread while waiting, so a small timeout keeps the test fast.
-  const appA = createAgentCrmApp({ dbPath, busyTimeoutMs: 200 });
-  const appB = createAgentCrmApp({ dbPath, busyTimeoutMs: 200 });
+  const appA = createAccordoApp({ dbPath, busyTimeoutMs: 200 });
+  const appB = createAccordoApp({ dbPath, busyTimeoutMs: 200 });
   t.after(() => { appA.close(); appB.close(); });
   const lead = await capture(appA);
 
@@ -145,13 +145,13 @@ test('two independent connections, concurrent qualify: one success, one clean 40
   assert.equal(appA.modules.get('task').service.list().filter((task) => task.leadId === lead.id).length, 1);
 
   // Restart (fresh connection): one task persisted.
-  const appC = createAgentCrmApp({ dbPath });
+  const appC = createAccordoApp({ dbPath });
   t.after(() => appC.close());
   assert.equal(appC.modules.get('task').service.list().filter((task) => task.leadId === lead.id).length, 1);
 });
 
 test('COMMIT failure is a business failure: no partial state, no events, failed trace', async (t) => {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   t.after(() => app.close());
   const lead = await capture(app);
   const events = [];
@@ -182,7 +182,7 @@ test('COMMIT failure is a business failure: no partial state, no events, failed 
 });
 
 test('corrupted historical state fails safely: actions reject, nothing compounds', async (t) => {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   t.after(() => app.close());
   const lead = await capture(app);
   // Corrupt the row behind the service's back (enum CHECK still allows it —
@@ -203,7 +203,7 @@ test('corrupted historical state fails safely: actions reject, nothing compounds
 });
 
 test('an action invoking another action fails closed with a clear error', async (t) => {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   t.after(() => app.close());
   const lead = await capture(app);
   // Force nesting through the runtime itself: an execute that calls runAction.
@@ -228,12 +228,12 @@ test('an action invoking another action fails closed with a clear error', async 
 
 test('the action framework is generic: a non-Lead, no-input action runs through the same path', async (t) => {
   const { createHttpServer } = await import(pathToFileURL(join(projectRoot, 'apps/server/src/index.js')).href);
-  const { AgentCrmClient } = await import(pathToFileURL(join(projectRoot, 'packages/sdk/src/index.js')).href);
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const { AccordoClient } = await import(pathToFileURL(join(projectRoot, 'packages/sdk/src/index.js')).href);
+  const app = createAccordoApp({ dbPath: ':memory:' });
   const server = createHttpServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await new Promise((resolve) => server.close(resolve)); app.close(); });
-  const client = new AgentCrmClient({ baseUrl: `http://127.0.0.1:${server.address().port}`, actor });
+  const client = new AccordoClient({ baseUrl: `http://127.0.0.1:${server.address().port}`, actor });
 
   const lead = await client.module('lead').create({ firstName: 'G', lastName: 'F', email: 'gf@x.example' });
   await client.module('lead').action(lead.id, 'qualify', { dueAt: '2026-08-12T09:00:00Z' });

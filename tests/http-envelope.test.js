@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentCrmApp } from '../packages/app/src/index.js';
+import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
 
 /**
@@ -54,7 +54,7 @@ function statusModule() {
 }
 
 async function startServer(t) {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   app.modules.register(statusModule());
   const server = createHttpServer(app);
   await new Promise((resolve, reject) => {

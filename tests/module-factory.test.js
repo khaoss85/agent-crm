@@ -12,7 +12,7 @@ const partnerManifest = JSON.parse(
 );
 
 function tempRoot(t) {
-  const directory = mkdtempSync(join(tmpdir(), 'agent-crm-factory-'));
+  const directory = mkdtempSync(join(tmpdir(), 'accordo-factory-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }
@@ -282,6 +282,73 @@ test('hostile manifest strings cannot inject code into generated source', (t) =>
     { encoding: 'utf8' },
   );
   assert.equal(probe.status, 0, `injection probe failed (${probe.status}): ${probe.stderr}`);
+});
+
+
+/** The capability list a generated index publishes, read from the generated source. */
+function capabilitiesOf(source) {
+  const match = /capabilities:\s*Object\.freeze\((\[[^\]]*\])\)/.exec(source);
+  assert.ok(match, 'the generated index must publish a capability list');
+  return JSON.parse(match[1]);
+}
+
+/**
+ * A module whose every field is managed publishes no way to write it. `scripts/falsify.js` found
+ * this rule undefended: removing it left this file green, and only the end-to-end suites — which
+ * boot a whole application — noticed. A guarantee about generated output should fail in the test
+ * that reads the generated output.
+ */
+test('a fully managed module generates no public write, and a mixed one does', (t) => {
+  const root = tempRoot(t);
+
+  const managedOnly = {
+    name: 'evidence-note',
+    description: 'Every field managed: records exist only through trusted action code.',
+    fields: [
+      { name: 'sourceKey', type: 'string', required: false, unique: true, writable: 'managed' },
+      { name: 'note', type: 'string', required: false, writable: 'managed' },
+    ],
+  };
+  const plan = planModule({ manifest: managedOnly, rootDir: root });
+  assert.equal(plan.readOnly, true, 'a module with only managed fields is read-only');
+
+  const read = (/** @type {string} */ suffix) => {
+    const file = plan.files.find((/** @type {any} */ entry) => entry.path.endsWith(suffix));
+    assert.ok(file, `the plan must contain ${suffix}`);
+    return file.contents ?? file.content ?? '';
+  };
+
+  const service = read('evidence-note-service.js');
+  assert.match(service, /createManaged\(/, 'trusted action code still has a way in');
+  assert.doesNotMatch(
+    service,
+    /^\s*async create\(/m,
+    'a read-only module must not generate a public create — generic CRUD would then write fields '
+    + 'only a trusted action is allowed to set',
+  );
+  assert.doesNotMatch(service, /^\s*async update\(/m, 'nor a public update');
+
+  // The published capability list is the client-visible half of the same rule, so it is compared
+  // as a list rather than grepped: a substring check would pass on a comment mentioning "create".
+  assert.deepEqual(
+    capabilitiesOf(read('evidence-note/src/index.js')),
+    ['get', 'list'],
+    'a read-only module publishes no write capability to any generic client',
+  );
+
+  // The opposite direction, so the assertion above cannot pass by generating nothing at all.
+  const mixed = {
+    name: 'evidence-mixed',
+    description: 'One public field, so the generic surface keeps its write capability.',
+    fields: [
+      { name: 'title', type: 'string', required: true, writable: 'public' },
+      { name: 'note', type: 'string', required: false, writable: 'managed' },
+    ],
+  };
+  const mixedPlan = planModule({ manifest: mixed, rootDir: root });
+  assert.equal(mixedPlan.readOnly, false);
+  const mixedIndex = mixedPlan.files.find((/** @type {any} */ entry) => entry.path.endsWith('evidence-mixed/src/index.js'));
+  assert.deepEqual(capabilitiesOf(mixedIndex.contents ?? mixedIndex.content ?? ''), ['create', 'get', 'list', 'update']);
 });
 
 test('module names cannot traverse outside the project root', (t) => {

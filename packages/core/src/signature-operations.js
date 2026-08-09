@@ -37,7 +37,7 @@ import {
 
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@.]+(\.[^\s@.]+)+$/;
 const MAX_TEXT = 200;
-export const DOCUMENT_FORMAT = 'application/vnd.agent-crm.quote-package+json';
+export const DOCUMENT_FORMAT = 'application/vnd.accordo.quote-package+json';
 /** The document package a quote version can produce is small; bound it anyway. */
 const MAX_DOCUMENT_BYTES = 200_000;
 

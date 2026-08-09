@@ -13,7 +13,7 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
  * real CLI/factory, and register the starter's qualify/disqualify actions.
  */
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'agent-crm-lead-'));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-lead-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -35,7 +35,7 @@ function project(t) {
 }
 
 function cli(root, args) {
-  return spawnSync(process.execPath, ['--no-warnings', join(root, 'packages/cli/bin/agent-crm.js'), ...args, '--root', root], {
+  return spawnSync(process.execPath, ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), ...args, '--root', root], {
     encoding: 'utf8',
     cwd: root,
   });
@@ -53,16 +53,16 @@ test('lead qualification end to end: qualify, disqualify, atomicity, idempotency
   assert.match(leadService, /is managed by a workflow action and cannot be set directly/);
 
   const dbPath = join(root, 'data', 'lead.sqlite');
-  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
   const { createHttpServer } = await import(pathToFileURL(join(root, 'apps/server/src/index.js')).href);
-  const { AgentCrmClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
+  const { AccordoClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
 
   async function boot() {
-    const app = createAgentCrmApp({ dbPath });
+    const app = createAccordoApp({ dbPath });
     const server = createHttpServer(app);
     await new Promise((r) => server.listen(0, '127.0.0.1', r));
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
-    const client = new AgentCrmClient({ baseUrl, actor: { type: 'user', id: 'e2e' } });
+    const client = new AccordoClient({ baseUrl, actor: { type: 'user', id: 'e2e' } });
     return { app, client, close: () => new Promise((r) => server.close(r)).then(() => app.close()) };
   }
 
@@ -205,16 +205,16 @@ test('lead qualification end to end: qualify, disqualify, atomicity, idempotency
 test('concurrent qualify: exactly one success, one 409, exactly one task', async (t) => {
   const root = project(t);
   const dbPath = join(root, 'data', 'concurrent.sqlite');
-  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
   const { createHttpServer } = await import(pathToFileURL(join(root, 'apps/server/src/index.js')).href);
-  const { AgentCrmClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
+  const { AccordoClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
 
-  const app = createAgentCrmApp({ dbPath });
+  const app = createAccordoApp({ dbPath });
   const server = createHttpServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => new Promise((r) => server.close(r)).then(() => app.close()));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  const client = new AgentCrmClient({ baseUrl, actor: { type: 'user', id: 'race' } });
+  const client = new AccordoClient({ baseUrl, actor: { type: 'user', id: 'race' } });
   const leads = client.module('lead');
 
   const lead = await leads.create({ firstName: 'Race', lastName: 'Condition', email: 'race@acme.example' });

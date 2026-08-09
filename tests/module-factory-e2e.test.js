@@ -21,7 +21,7 @@ const supplierManifest = {
 };
 
 function createProjectCopy(t) {
-  const root = mkdtempSync(join(tmpdir(), 'agent-crm-e2e-'));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-e2e-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -33,7 +33,7 @@ function createProjectCopy(t) {
 function runCli(root, args) {
   return spawnSync(
     process.execPath,
-    ['--no-warnings', join(root, 'packages/cli/bin/agent-crm.js'), ...args, '--root', root],
+    ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), ...args, '--root', root],
     { encoding: 'utf8', cwd: root },
   );
 }
@@ -78,8 +78,8 @@ test('end-to-end: manifests → plan → apply → runnable Partner and Supplier
   assert.match(registry, /name: 'partner'[\s\S]*name: 'supplier'/);
 
   // 5-13. Boot the temp copy's app once: migrations, registration, CRUD.
-  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const app = createAccordoApp({ dbPath: ':memory:' });
   t.after(() => app.close());
 
   const moduleNames = app.modules.list().map((module) => module.name);

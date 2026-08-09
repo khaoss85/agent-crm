@@ -13,7 +13,7 @@ import { AppError, ConflictError } from './errors.js';
  *   close: () => void,
  *   transaction: <T>(fn: () => T) => T,
  *   transactionAsync: <T>(fn: () => Promise<T>) => Promise<T>
- * }} AgentCrmDatabase
+ * }} AccordoDatabase
  */
 
 const MIGRATIONS = [
@@ -182,10 +182,10 @@ function isBusyError(error) {
 
 /**
  * @param {{path?: string, moduleMigrations?: Array<{name: string, sql: string}>, busyTimeoutMs?: number}} [options]
- * @returns {AgentCrmDatabase}
+ * @returns {AccordoDatabase}
  */
 export function createDatabase(options = {}) {
-  const requestedPath = options.path ?? process.env.CRM_DB_PATH ?? './data/agent-crm.sqlite';
+  const requestedPath = options.path ?? process.env.CRM_DB_PATH ?? './data/accordo.sqlite';
   const dbPath = requestedPath === ':memory:' ? requestedPath : resolve(requestedPath);
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
 
@@ -324,7 +324,7 @@ export function createDatabase(options = {}) {
       raw.exec('ROLLBACK;');
     } catch (rollbackError) {
       console.error(
-        `[agent-crm] rollback failed after: ${primaryError instanceof Error ? primaryError.message : String(primaryError)} — rollback error: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+        `[accordo] rollback failed after: ${primaryError instanceof Error ? primaryError.message : String(primaryError)} — rollback error: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
       );
     }
   }

@@ -25,7 +25,7 @@ const DEFAULT_PUBLIC_DIR = resolve(
  * keeps that ambiguity impossible: a generated module is free to have fields
  * literally named `status` or `body` without hijacking the HTTP response.
  */
-const RESPONSE_ENVELOPE = Symbol('agent-crm.responseEnvelope');
+const RESPONSE_ENVELOPE = Symbol('accordo.responseEnvelope');
 
 /** @param {number} status @param {unknown} body */
 function respond(status, body) {

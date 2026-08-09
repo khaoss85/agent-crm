@@ -243,8 +243,8 @@ test('M14b1 data survives the M14b2 upgrade, and nothing historical is rewritten
   // Reopen the same file with a second application: the same source, the same
   // migrations, and the M14b2 tables already present because they were applied
   // with the rest of the project.
-  const { createAgentCrmApp } = await import(`file://${join(root, 'packages/app/src/index.js')}`);
-  const upgraded = createAgentCrmApp({ dbPath, clock: () => '2026-10-01T10:00:00.000Z' });
+  const { createAccordoApp } = await import(`file://${join(root, 'packages/app/src/index.js')}`);
+  const upgraded = createAccordoApp({ dbPath, clock: () => '2026-10-01T10:00:00.000Z' });
   t.after(() => upgraded.close());
 
   assert.deepEqual(upgraded.modules.get('delivery-project').service.get(row.id), before.project,

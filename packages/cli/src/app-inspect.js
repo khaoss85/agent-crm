@@ -208,7 +208,7 @@ export async function inspectApplication({ rootDir: requested }) {
   const rootDir = resolve(requested ?? process.cwd());
   if (!existsSync(join(rootDir, 'packages', 'core', 'index.js'))) {
     const error = new Error(
-      `Not an agent-crm project: ${repoRelative(process.cwd(), rootDir) || '.'} has no packages/core/index.js`,
+      `Not an accordo project: ${repoRelative(process.cwd(), rootDir) || '.'} has no packages/core/index.js`,
     );
     /** @type {any} */ (error).fatal = true;
     throw error;

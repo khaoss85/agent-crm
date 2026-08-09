@@ -273,14 +273,14 @@ test('two connections racing every decision produce exactly one winner', async (
   // open on the same file, the races below use the in-process action runtime on
   // both, which is what "two connections" actually means here.
   await client.module('delivery-work-package').action(workPackages[0].id, 'complete-work-package', {});
-  const { createAgentCrmApp } = await import(`file://${join(root, 'packages/app/src/index.js')}`);
+  const { createAccordoApp } = await import(`file://${join(root, 'packages/app/src/index.js')}`);
   // A short busy timeout on the second connection, because the loser must not
   // be *waited out* to prove the point. The default 5000ms made each contended
   // race sit on the SQLite lock for five seconds — around fifty seconds of CI
   // spent sleeping — and the outcome is identical at 5000ms, 250ms and 0ms: the
   // losing connection is refused with a typed `409 CONFLICT`, never a raw
   // SQLITE error. The races below are unchanged; only the waiting is gone.
-  const second = createAgentCrmApp({
+  const second = createAccordoApp({
     dbPath: app.database.path, busyTimeoutMs: 250, clock: () => '2026-09-15T10:00:00.000Z',
   });
   t.after(() => second.close());

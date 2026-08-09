@@ -10,7 +10,16 @@ coverage/
 *.log
 .tmp/
 
+# Built site output — regenerate with `npm run site:build`
+site/dist/
+
+# Build receipt written by scripts/site-build.js — not published, not read by anything else.
+site/.used-claims.json
+
 # Staging left behind by an interrupted `crm package scaffold`. It holds no
 # lock and blocks nothing; the command reports it so a human can remove it.
 packages/.scaffold-*
 **/.scaffold-*
+
+# Screenshots from the render audit — a local artifact, never published.
+site/.render-check/

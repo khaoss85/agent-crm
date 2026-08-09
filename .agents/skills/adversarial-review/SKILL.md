@@ -1,9 +1,29 @@
 ---
 name: adversarial-review
-description: Adversarially review an Agent CRM milestone PR before it merges - verify live PR state, attack the implementation across the standing review categories, fix defects in-place, re-verify from a clean clone and report by severity. Use for milestone review, pre-merge review or "review PR N" tasks. Do not use for building a feature (see the build-* skills) or for debugging a single failing run (debug-crm-run).
+description: Adversarially review an Accordo milestone PR before it merges - verify live PR state, attack the implementation across the standing review categories, fix defects in-place, re-verify from a clean clone and report by severity. Use for milestone review, pre-merge review or "review PR N" tasks. Do not use for building a feature (see the build-* skills) or for debugging a single failing run (debug-crm-run).
+requires:
+  tier: repository
+  command: "crm app inspect"
+  projectSurface: []
+  repositorySurface: ["AGENTS.md", "docs/QUALITY_GATES.md", "docs/plans/", "DECISIONS.md", "docs/benchmarks/CRM_JTBD_MATRIX.md"]
+  degradesTo: "a clean-clone verification run plus the boundaries in `crm app inspect --json`; the standing review categories and the JTBD evidence rules live in this repository's documents and have no substitute"
 ---
 
-Read `AGENTS.md`, `docs/QUALITY_GATES.md`, the PR's ExecPlan under `docs/plans/`, the ADRs it touches, and the JTBD rows it claims. Those four are the contract you are reviewing *against* — the PR body is a claim, not evidence.
+## Orient yourself first
+
+```bash
+npm run crm -- app inspect --json
+```
+
+Read `valid`, then `problems[]`, then `limitations[]`, in that order. Every problem is fixed or reported before anything is built on top of it, and **every limitation is a hard boundary on what you may claim.** Then read `packages[]`, `capabilities[]`, `resources[]`, `actions[]`, `policies[]` and `providers[]`: that list is what exists. A capability absent from the report does not exist, whatever a record name, a label or a document suggests.
+
+If the repository documents this skill names are absent, you are in a project built from this framework rather than in the framework itself. The inspection report is then the source of truth and those documents are optional background — do not guess at their contents, and do not assume a path exists because this skill names it.
+
+## The contract you review against
+
+This skill reviews a pull request against this repository's own contract, so it needs that repository. Read `AGENTS.md`, `docs/QUALITY_GATES.md`, the PR's ExecPlan under `docs/plans/`, the ADRs it touches, and the JTBD rows it claims. Those four are the contract you are reviewing *against* — the PR body is a claim, not evidence.
+
+Where one of those documents is genuinely absent, review against the inspection report's `problems[]` and `limitations[]` and the project's own tests, and say in the report which contract you could not read. A review that invents the standard it reviewed against is not a review.
 
 ## 1. Verify live state before reading code
 

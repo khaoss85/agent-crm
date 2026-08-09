@@ -30,7 +30,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
  */
 
 /** One scratch root per invocation; concurrent applies share a staging name. */
-const SCRATCH_PREFIX = 'agent-crm-package-test-';
+const SCRATCH_PREFIX = 'accordo-package-test-';
 
 /** Copied unconditionally: the framework, its apps, and the manifest. */
 const ALWAYS_COPY = Object.freeze(['packages', 'apps', 'package.json']);
@@ -272,7 +272,7 @@ export function applyManifests({ scratchRoot, rootDir, order, projectManifests =
       process.execPath,
       [
         '--no-warnings',
-        join(scratchRoot, 'packages', 'cli', 'bin', 'agent-crm.js'),
+        join(scratchRoot, 'packages', 'cli', 'bin', 'accordo.js'),
         'module', 'create', manifestPath, '--apply', '--root', scratchRoot,
       ],
       { encoding: 'utf8', cwd: scratchRoot },

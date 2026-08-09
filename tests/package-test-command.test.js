@@ -213,7 +213,7 @@ test('the report is byte-identical across runs, processes and working directorie
   // carrying the answer.
   const separate = await import('node:child_process').then(({ spawnSync }) => spawnSync(
     process.execPath,
-    ['--no-warnings', join(repoRoot, 'packages/cli/bin/agent-crm.js'), 'package', 'test', 'packages/service', '--json'],
+    ['--no-warnings', join(repoRoot, 'packages/cli/bin/accordo.js'), 'package', 'test', 'packages/service', '--json'],
     { encoding: 'utf8', cwd: repoRoot },
   ));
   assert.equal(separate.status, 0, separate.stderr);
@@ -222,7 +222,7 @@ test('the report is byte-identical across runs, processes and working directorie
 });
 
 test('a project path containing spaces changes nothing', async (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'agent-crm dx4 '));
+  const root = mkdtempSync(join(tmpdir(), 'accordo dx4 '));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'package.json', 'examples']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -258,7 +258,7 @@ throw new Error('failed while reading /home/somebody/private/thing.js');
 
 test('the caller\'s project is never written to, and the scratch is always removed', async (t) => {
   const before = new Set(readdirSync(join(repoRoot, 'packages', 'modules')));
-  const scratchBefore = readdirSync(tmpdir()).filter((entry) => entry.startsWith('agent-crm-package-test-'));
+  const scratchBefore = readdirSync(tmpdir()).filter((entry) => entry.startsWith('accordo-package-test-'));
 
   await run('packages/service');
   const failing = fixtureProject(t);
@@ -267,7 +267,7 @@ test('the caller\'s project is never written to, and the scratch is always remov
 
   assert.deepEqual([...readdirSync(join(repoRoot, 'packages', 'modules'))].sort(), [...before].sort(),
     'no generated module appeared in the real project');
-  const scratchAfter = readdirSync(tmpdir()).filter((entry) => entry.startsWith('agent-crm-package-test-'));
+  const scratchAfter = readdirSync(tmpdir()).filter((entry) => entry.startsWith('accordo-package-test-'));
   assert.deepEqual(scratchAfter, scratchBefore, 'every scratch project was removed, on success and on failure');
   assert.ok(t);
 });
@@ -348,7 +348,7 @@ test('a package whose module body never returns is stopped, not waited for', asy
 });
 
 test('a package outside the project is refused rather than copied in', async (t) => {
-  const outside = mkdtempSync(join(tmpdir(), 'agent-crm-outside-'));
+  const outside = mkdtempSync(join(tmpdir(), 'accordo-outside-'));
   t.after(() => rmSync(outside, { recursive: true, force: true }));
   writeFixturePackage(outside, 'fixture-elsewhere', WELL_FORMED);
   const outcome = await run(join(outside, 'packages/fixture-elsewhere'));
@@ -476,7 +476,7 @@ test('the isolation claim is exactly what the harness can keep, and no more', as
 test('a forged, doubled or truncated child report never becomes a conformance answer', async (t) => {
   const { runReportingChild } = await import('../packages/cli/src/child-report.js');
   const loaderFor = (t2, body) => {
-    const dir = mkdtempSync(join(tmpdir(), 'agent-crm-loader-'));
+    const dir = mkdtempSync(join(tmpdir(), 'accordo-loader-'));
     t2.after(() => rmSync(dir, { recursive: true, force: true }));
     const file = join(dir, 'loader.mjs');
     writeFileSync(file, body);

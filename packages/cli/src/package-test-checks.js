@@ -31,7 +31,7 @@ const PASSED = 'passed';
  *   authoring-rule    `docs/PACKAGE_AUTHORING.md` + `tests/helpers/package-conformance.js`,
  *                     the rules every package in this repository already follows
  *   module-factory    the manifest, state-file and migration machinery
- *   application-boot  `createAgentCrmApp` — what actually happens at startup
+ *   application-boot  `createAccordoApp` — what actually happens at startup
  *   app-inspect       AX1's report of the composed project
  *
  * There is deliberately no `dx4` authority. A rule this command would have had

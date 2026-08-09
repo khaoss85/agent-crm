@@ -1,1 +1,1 @@
-export { createAgentCrmApp } from './create-app.js';
+export { createAccordoApp } from './create-app.js';

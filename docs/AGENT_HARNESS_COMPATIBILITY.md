@@ -1,6 +1,6 @@
 # Agent harness compatibility
 
-Agent CRM is not built for one coding agent. AX1 (`app inspect`) and AX2
+Accordo is not built for one coding agent. AX1 (`app inspect`) and AX2
 (`solution inspect|validate|check`) are the two surfaces an agent needs, and both
 are plain commands over plain JSON. This page states what a harness must provide
 to use them, and — more usefully — what it does **not** need to.

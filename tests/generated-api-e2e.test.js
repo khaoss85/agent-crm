@@ -20,7 +20,7 @@ const supplierManifest = {
 };
 
 test('end-to-end: applied modules are served over HTTP and usable via client.module()', async (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'agent-crm-api-e2e-'));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-api-e2e-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -31,7 +31,7 @@ test('end-to-end: applied modules are served over HTTP and usable via client.mod
   for (const manifest of ['examples/modules/partner.module.json', 'examples/modules/supplier.module.json']) {
     const run = spawnSync(
       process.execPath,
-      ['--no-warnings', join(root, 'packages/cli/bin/agent-crm.js'), 'module', 'create', join(root, manifest), '--apply', '--root', root],
+      ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create', join(root, manifest), '--apply', '--root', root],
       { encoding: 'utf8', cwd: root },
     );
     assert.equal(run.status, 0, run.stderr);
@@ -39,12 +39,12 @@ test('end-to-end: applied modules are served over HTTP and usable via client.mod
 
   // 2. Boot the copy's app on a file-backed database and start a real server.
   const dbPath = join(root, 'data', 'e2e.sqlite');
-  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
   const { createHttpServer } = await import(pathToFileURL(join(root, 'apps/server/src/index.js')).href);
-  const { AgentCrmClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
+  const { AccordoClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
 
   async function startServer() {
-    const app = createAgentCrmApp({ dbPath });
+    const app = createAccordoApp({ dbPath });
     const server = createHttpServer(app);
     await new Promise((resolve, reject) => {
       server.once('error', reject);
@@ -78,7 +78,7 @@ test('end-to-end: applied modules are served over HTTP and usable via client.mod
     assert.ok(!JSON.stringify(schema).includes(root), 'schema leaks machine paths');
 
     // 5. Metadata endpoint.
-    const client = new AgentCrmClient({
+    const client = new AccordoClient({
       baseUrl: instance.baseUrl,
       actor: { type: 'agent', id: 'claude-code' },
     });
@@ -190,7 +190,7 @@ test('end-to-end: applied modules are served over HTTP and usable via client.mod
     // 15-16. Restart: both modules and the data survive from checked-in state + db file.
     await instance.close();
     instance = await startServer();
-    const clientAfter = new AgentCrmClient({ baseUrl: instance.baseUrl, actor: { type: 'agent', id: 'claude-code' } });
+    const clientAfter = new AccordoClient({ baseUrl: instance.baseUrl, actor: { type: 'agent', id: 'claude-code' } });
     const schemaAfter = await clientAfter.schema();
     assert.deepEqual(schemaAfter.generatedModules.map((module) => module.name), ['partner', 'supplier']);
     const survivors = await clientAfter.module('partner').list();

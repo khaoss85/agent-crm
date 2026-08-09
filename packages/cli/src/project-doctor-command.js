@@ -103,7 +103,7 @@ export async function projectDoctorCommand({ rootDir, json = false, capture = fa
     return { exitCode: 2, report: null };
   }
 
-  // A directory that is not an Agent CRM project at all is exit 2, not a
+  // A directory that is not an Accordo project at all is exit 2, not a
   // composition failure. Telling somebody their empty folder has an
   // inconsistent composition is the kind of answer that teaches a reader to
   // distrust every other row in the report.
@@ -111,7 +111,7 @@ export async function projectDoctorCommand({ rootDir, json = false, capture = fa
   if (kind === 'unknown') {
     if (!capture) {
       process.stderr.write(
-        `Not an Agent CRM project: ${rootDir}\n`
+        `Not an Accordo project: ${rootDir}\n`
         + 'Expected a package.json, or the packages/ tree of the framework repository.\n',
       );
     }
@@ -218,7 +218,7 @@ export async function projectDoctorCommand({ rootDir, json = false, capture = fa
 /** The human view. `--json` is the contract; this is a convenience. */
 export function renderDoctor(report) {
   const lines = [];
-  lines.push(`Agent CRM project doctor (contract ${report.projectDoctorContract})`);
+  lines.push(`Accordo project doctor (contract ${report.projectDoctorContract})`);
   lines.push(`Project: ${report.project.kind} — composition ${report.project.composition}`);
   lines.push(`Status:  ${report.status}  (${report.counts.passed} passed, ${report.counts.warning} warning, ${report.counts.failed} failed, ${report.counts.not_applicable} n/a)`);
 

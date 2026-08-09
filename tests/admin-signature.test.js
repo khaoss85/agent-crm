@@ -52,7 +52,7 @@ const ENVELOPE = {
   providerEnvelopeId: 'env_abc123',
   status: 'completed',
   documentHash: 'd'.repeat(64),
-  documentFormat: 'application/vnd.agent-crm.quote-package+json',
+  documentFormat: 'application/vnd.accordo.quote-package+json',
   signerCount: 1,
   failureCode: null,
   failurePhase: null,
@@ -66,7 +66,7 @@ const SIGNER = {
 const ARTIFACT = {
   id: 'a1', envelopeId: 'env1', quoteId: 'q1', quoteVersionId: 'v1',
   providerArtifactId: 'art_1', documentHash: 'd'.repeat(64), artifactHash: 'b'.repeat(64),
-  mimeType: 'application/vnd.agent-crm.quote-package+json', sizeBytes: 2048,
+  mimeType: 'application/vnd.accordo.quote-package+json', sizeBytes: 2048,
   storageRef: 'fixture://artifacts/env_abc123', completedAt: '2026-08-05T12:00:00.000Z',
 };
 

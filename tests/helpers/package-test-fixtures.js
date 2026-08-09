@@ -24,7 +24,7 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
  *
  * @param {import('node:test').TestContext} t
  */
-export function fixtureProject(t, { name = 'agent-crm-package-fixture-' } = {}) {
+export function fixtureProject(t, { name = 'accordo-package-fixture-' } = {}) {
   const root = mkdtempSync(join(tmpdir(), name));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'package.json']) {
@@ -165,7 +165,7 @@ export function createFixturePackage() {
     packageContract: 1, name: 'fixture-exits', label: 'Fixture', version: 1, resources: [],
   });
 }
-if (process.env.AGENT_CRM_FIXTURE_BOOT !== 'no-exit') process.exit(7);
+if (process.env.ACCORDO_FIXTURE_BOOT !== 'no-exit') process.exit(7);
 `, 'a package that calls process.exit while importing'],
 ]);
 
@@ -219,7 +219,7 @@ export const manifestFor = (record) => ({
 export const SCRATCH_PROBES = Object.freeze([
   ['fixture-reads-env', `// @ts-check
 import { definePackage } from ${KERNEL};
-const marker = process.env.AGENT_CRM_SCRATCH_MARKER ?? 'absent';
+const marker = process.env.ACCORDO_SCRATCH_MARKER ?? 'absent';
 export function createFixturePackage() {
   return definePackage({
     packageContract: 1, name: 'fixture-reads-env', label: 'Fixture', version: 1, resources: [],

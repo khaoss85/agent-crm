@@ -15,7 +15,7 @@ const MIGRATION_B = {
 };
 
 function tempDbPath(t) {
-  const directory = mkdtempSync(join(tmpdir(), 'agent-crm-migrations-'));
+  const directory = mkdtempSync(join(tmpdir(), 'accordo-migrations-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return join(directory, 'test.sqlite');
 }

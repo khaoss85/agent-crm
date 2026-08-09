@@ -1,8 +1,9 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "accordo",
   "displayName": "Accordo — agent-native CRM framework",
-  "description": "Skills that teach Claude Code how to build a custom CRM with Accordo: domain modules, deterministic workflows, human approvals, audit and trace, commercial operations, signature and order, contract activation, delivery and service.",
   "version": "0.1.0",
+  "description": "Build a CRM as code you own. Skills that take a coding agent from a business objective to checked-in modules, deterministic workflows, policy-gated approvals, audit and trace — plus the project MCP server, whose code-generating tools are dry-run until you pass --apply.",
   "author": {
     "name": "Daniele Pelleri",
     "url": "https://github.com/khaoss85"
@@ -13,14 +14,20 @@
   "keywords": [
     "crm",
     "framework",
+    "code-generation",
     "workflows",
     "approvals",
     "audit",
+    "mcp",
     "cpq",
     "delivery",
-    "service"
+    "service",
+    "revenue-operations",
+    "deterministic"
   ],
-  "skills": [
-    "./.claude/skills"
-  ]
+  "skills": "./skills/",
+  "mcpServers": "./.claude-plugin/mcp.json",
+  "metadata": {
+    "productionPosture": "The framework has no authentication, tenancy or RBAC; the MCP server is stdio and local, and runs with the authority of the process that starts it."
+  }
 }

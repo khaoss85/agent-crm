@@ -1,6 +1,6 @@
 # Coder tooling roadmap
 
-The surfaces a coding agent uses to understand, plan and change an Agent CRM
+The surfaces a coding agent uses to understand, plan and change an Accordo
 project — what exists, what is next, and what is deliberately refused.
 
 This is a roadmap, not a claim. Everything under **Shipped** has merged tests
@@ -29,8 +29,7 @@ re-describing it.
 | | Tool | What it answers |
 |---|---|---|
 | **DX1** | `crm project doctor --json` — **built** (`docs/plans/dx1-project-doctor.md`) | is this *project* internally consistent — composition, module-state and migration drift, generated-source drift, package dependencies, Skills, docs and hygiene? Distinct from `app inspect`, which describes a valid composition rather than diagnosing a broken checkout. It makes **no runtime or provider-health claim** unless a future explicit mode adds one |
-| **DX2** | Skill portability: `crm agent skills sync\|check` | one canonical semantic source per skill plus deterministic adapters for Claude Code, Codex, Gemini and generic AGENTS-compatible agents, with a drift check in `verify`. Today the `.claude/` and `.agents/` copies are byte-identical by hand, and no Gemini file exists — its conventions must be verified before one is written |
-
+| **DX2** | Skill portability: `crm agent skills sync\|check` | one canonical semantic source per skill plus deterministic adapters for Claude Code, Codex, Gemini and generic AGENTS-compatible agents, with a drift check in `verify`. `GEMINI.md` and `gemini-extension.json` now exist, and the `.claude/` and `.agents/` copies are byte-identical by hand rather than by generation. Each skill declares a `requires` block (`tier: repository \| generated-project \| any-project`, the surfaces it reads and what it `degradesTo`), and `skills/` is the published subset that holds no `tier: repository` skill; `scripts/distribution-check.js` and `tests/skill-parity.test.js` enforce both. That is the input DX2's adapters would consume, not DX2 itself |
 ### After M15 Service package learnings
 
 | | Tool | Why it waits |
@@ -48,6 +47,16 @@ re-describing it.
 | **DX6** | `crm scenario run <scenario> --json` | which JTBD rows a checkout actually earns, from linked evidence rather than prose |
 | **DX9** | `crm context pack --plan plan.json --json` | the smallest deterministic context an agent needs, derived from AX1, AX2, the relevant package docs and Skills, schema and action contracts and the Quality Gates. Token-budgeted, deterministic, source-path references only — **no secrets, no PII, no data rows, no arbitrary source bodies**, fingerprinted for staleness, and **advisory only, never authorization** |
 | **DX10** | `ImplementationEvidence` + `crm solution verify plan.json --json` | maps each SolutionPlan requirement to the package, module, action, provider, source files, tests, Admin/CLI evidence and JTBD evidence that satisfy it, marked `implemented \| partial \| blocked`. It closes `goal → plan → build → proof`, and stops an agent claiming a plan is complete while work is missing |
+
+**An external review isolated exactly four of these as the gap between the
+architecture's score and the experience's** — DX9 Context Pack, DX10 Implementation
+Evidence, DX5/DX6 Project Verify and Scenario Runner, and the Legacy Alignment
+pass. It also named the risk that comes with building them: every one of these
+commands is justified, and a person building with this framework must not have to
+know any of them exists. `solve-business-goal` decides which rungs a goal needs;
+the user states the goal. That is enforced, not just intended —
+`scripts/surface-check.js` budgets the surface an agent has to understand and
+fails the build when it grows (`docs/strategy/EXTERNAL_REVIEW.md`).
 
 **AX3 depends on DX5, DX6, DX9 and DX10**, not the other way round. A benchmark
 whose evidence is prose is a benchmark nobody can check.

@@ -646,7 +646,7 @@ export async function runIntelligenceCases(t, record) {
  * @param {(entry: ReturnType<typeof observation>) => void} record
  */
 export async function runRestartCases(t, record) {
-  const root = characterizationProject(t, { name: 'agent-crm-la0-restart-' });
+  const root = characterizationProject(t, { name: 'accordo-la0-restart-' });
   const dbPath = `${root}/data/la0-restart.sqlite`;
 
   let instance = await boot(root, dbPath);
@@ -700,7 +700,7 @@ export async function runRestartCases(t, record) {
  * @param {(entry: ReturnType<typeof observation>) => void} record
  */
 export async function runScaleCases(t, record, { leads: leadCount = 60 } = {}) {
-  const root = characterizationProject(t, { name: 'agent-crm-la0-scale-' });
+  const root = characterizationProject(t, { name: 'accordo-la0-scale-' });
   const instance = await boot(root, `${root}/data/la0-scale.sqlite`);
   t.after(() => instance.close().catch(() => {}));
   const leads = instance.client.module('lead');

@@ -1,163 +1,200 @@
-# Agent CRM
+# Accordo
 
-A small, working proof of concept for the **“MedusaJS of agent-native CRM development.”**
+> **Describe your sales process to your coding agent; own the CRM it builds.**
 
-You describe a commercial process to Codex or Claude Code. The coding agent understands the project through `AGENTS.md`, repository skills and MCP resources; it changes modules and workflows, runs tests, starts the app, inspects traces and iterates through the CLI.
+An open-source framework that Claude Code and Codex use to generate a CRM application
+as code you own — deterministic workflows, policy-gated human approvals, audit and trace
+built in.
+
+The name is chosen and the domain registered, but the npm package and scope are still
+unclaimed and no trademark screen has been run. The project is **pre-launch**: nothing
+is published, and it is not deployable to production. What that means precisely is in
+[Where it stops](#where-it-stops), which is worth reading before the rest.
 
 ```text
 Business request
+      ↓  "Renewals of €50,000 or more need a manager's sign-off."
+Claude Code / Codex
+      ↓  reads AGENTS.md · 11 skills · MCP · `crm app inspect`
+Modules + deterministic workflows + versioned policy
       ↓
-Codex / Claude Code
-      ↓
-AGENTS.md + Skills + MCP + CLI
-      ↓
-CRM modules + deterministic workflows
-      ↓
-API + Admin + trace + audit
+API + Admin + trace + audit — in your repository, as code you review
 ```
 
-## What is already working
+---
 
-- CRM modules: Company, Contact, Opportunity and Approval.
-- A deterministic renewal workflow.
-- Human approval when a renewal above €50,000 moves to Proposal.
-- REST API and a zero-build Admin UI.
-- SQLite persistence using Node's built-in database adapter.
-- Workflow runs, step-level traces and audit events.
-- CLI for serve, seed, doctor, demo and module scaffolding.
-- Declarative module manifests with validation and deterministic SQLite migration generation (see `docs/MODULE_MANIFEST.md`):
+## Why this exists
 
-  ```bash
-  npm run crm -- module validate examples/modules/partner.module.json
-  npm run crm -- module migration examples/modules/partner.module.json --dry-run
-  ```
-- A module factory that turns a manifest into a runnable module — service, migration, tests and automatic registration, dry-run by default (see `docs/MODULE_FACTORY.md`):
+Every CRM eventually asks you to bend your process to fit its model. The two usual escapes
+both cost something:
 
-  ```bash
-  npm run crm -- module plan examples/modules/partner.module.json
-  npm run crm -- module create examples/modules/partner.module.json --apply
-  ```
-- Applied modules are immediately served over HTTP (`/api/modules/partner/…`), discoverable via `GET /api/schema`, and usable from the SDK with no extra code (see `docs/API.md`):
+- **Configure a platform** — fast to start, and your customization lives as metadata inside
+  someone else's runtime. When the ceiling arrives, you fork a monorepo.
+- **Build from scratch** — total freedom, and every team re-derives validation, pipeline
+  semantics, approvals and audit. Usually late, usually under pressure.
 
-  ```js
-  const partners = new AgentCrmClient({ baseUrl, actor }).module('partner');
-  const created = await partners.create({ name: 'Acme Partners', tier: 'gold' });
-  await partners.update(created.id, { tier: 'platinum' });
-  ```
-- Applied modules also appear automatically in the Admin under "Generated modules" — list, create, detail and edit with no page code (see `docs/ADMIN.md`):
+This framework is the third option: an agent generates the application, and the framework
+supplies the parts teams always get wrong under deadline. The test any developer can apply
+is *"if this project disappears tomorrow, what am I left with?"* Here the answer is: a Node
+application in your repository, with no third-party runtime dependencies and a SQLite file
+any client can open.
 
-  ```text
-  write manifest → module create --apply → npm run dev → module appears in Admin → manage records
-  ```
-- Generated modules can reference each other (many-to-one): a `reference` field generates a foreign key with runtime target validation, API/SDK support and an Admin target selector (see `docs/MODULE_FACTORY.md`, ADR-010):
+## What is proven
 
-  ```json
-  { "name": "partnerId", "type": "reference", "references": "partners", "required": true }
-  ```
-- Code-first **record actions** for lifecycle steps that are more than a field edit: one atomic transaction, domain events released only after commit, an automatic workflow trace, plus a generic HTTP route, SDK method and Admin buttons rendered from metadata (see `docs/ACTIONS.md`, ADR-011/012):
+Each line below is bound to a merged test. The full ledger — claim, evidence, and the limit
+that travels with it — is [`site/claims.json`](site/claims.json), and the review discipline
+behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 
-  ```js
-  await client.module('lead').action(leadId, 'qualify', { dueAt: '2026-08-12T09:00:00Z' });
-  ```
+| Capability | Where it stops | Evidence |
+|---|---|---|
+| A module manifest becomes a migration, service, REST resource, SDK method and Admin screens with no page code | generated CRUD only — workflows and approvals for custom objects are still handwritten | `tests/module-factory-e2e.test.js`, `tests/generated-api-e2e.test.js`, `tests/admin-modules.test.js` |
+| Generated objects reference each other: foreign key, runtime target validation, Admin selector | generated-to-generated many-to-one only; no many-to-many, inverse collections or cascade | `tests/reference-fields-e2e.test.js` |
+| Deterministic approval policy: a renewal at or above the threshold waits for a named human | the built-in renewal object and one value threshold | `tests/workflow.test.js`, `tests/api.test.js` |
+| **An agent cannot make the human's approval decision** — asserted by a test, not by a convention | the actor is asserted, not authenticated; this holds against an honest agent, not an attacker | `tests/workflow.test.js` |
+| Opportunities move through code-first pipeline stages under a server-authoritative action — the client asks, the server decides | proven on the built-in Opportunity module; configurable pipelines for generated custom objects are not claimed | `tests/opportunity-pipeline-e2e.test.js`, `tests/pipeline-contract.test.js` |
+| Lead capture, enrichment, explainable versioned scoring, deterministic routing, qualification, conversion | enrichment runs against a fixture provider; no real data source is wired | `tests/lead-intelligence-e2e.test.js`, `tests/lead-conversion-e2e.test.js` |
+| Server-priced composite quotes, immutable quote versions, versioned discount policy with approval | fixture catalog provider; integer cents with no FX — currencies are never summed | `tests/commercial-e2e.test.js` |
+| Signature envelope → verified events → signed-artifact evidence → exactly one immutable Order | fixture signature provider, test-only webhook key, provider-reported artifact hash | `tests/signature-order-e2e.test.js` |
+| Order activation into Contract, immutable version, Subscription and pending obligations | nothing bills, renews, amends or cancels; there is no scheduler | `tests/contracts-activation-e2e.test.js` |
+| Delivery handover into a project with work packages, milestones and an optional partner; human-driven execution | nothing schedules, staffs, accepts or bills; deliverables do not exist as objects | `tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e.test.js` |
+| Append-only time and expense evidence, costed by a versioned policy, with a reproducible contribution estimate | deliberately not a margin: no revenue recognition, no COGS, no ARR/MRR, no FX | `tests/delivery-economics-e2e.test.js` |
+| A customer-authored domain package attaches and detaches with the kernel fingerprint unchanged | no scaffold, no registry, no sandboxing — package code runs with the host's authority | `tests/package-contract.test.js`, `tests/custom-package-e2e.test.js` |
+| `crm app inspect` — one deterministic, source-only JSON report of what an application contains | never opens the database, contacts a provider or reads a secret — and says so in its own output | `tests/app-inspect.test.js` |
+| `crm solution check` — a Solution Plan is a checked-in contract with a canonical fingerprint | a document contract, not a planner and not a runtime; nothing executes a plan | `tests/solution-plan.test.js` |
+| Generated modules evolve through explicit revisions and append-only named migrations | source-only: what a particular database applied is not knowable from here | `tests/module-evolution.test.js` |
 
-  Fields marked `"writable": "managed"` are refused by generic CRUD, so a lifecycle state is reachable only through its action. The runnable example is `examples/starters/b2b-lead-qualification/`:
-
-  ```bash
-  node examples/starters/b2b-lead-qualification/install.mjs
-  ```
-- MCP server over stdio with tools and project resources.
-- Codex/Claude repository skills and handover documentation.
-- Automated tests with Node's built-in test runner.
+**701 tests, 0 failing**, run on every push together with the smoke test.
 
 ## Run it
 
-Requires Node.js 22.16 or newer. There are no third-party runtime dependencies.
+Node.js 22.16 or newer. There are no third-party runtime dependencies and no build step.
 
 ```bash
-npm run verify
-npm run demo
-npm run dev
+npm run tour     # compose the whole application and inspect it
+npm run verify   # 701 tests
+npm run falsify  # break five rules on purpose and watch the suite catch them
+npm run demo     # the approval slice, end to end
+npm run dev      # http://localhost:4000
 ```
 
-Open `http://localhost:4000`.
+`npm run tour` is the fastest way to see what this actually is. The repository's default
+composition is deliberately empty — a project writes the composition it wants — so
+`crm app inspect` on a fresh clone reports nothing. The tour runs the starter installer (the
+same one CI runs on every push) into a directory it keeps, then inspects the result:
 
-The demo creates two renewals:
+```text
+  modules       68        resources     32        policies       7
+  packages       4        actions       52        providers     10
+
+  production posture — local development only: no authentication, tenancy or RBAC
+                       exists, and actor headers are not identity
+```
+
+It ends on the eleven things the inspector says it cannot see, because a tour that shows only
+the good half is not worth running. `npm run tour -- --keep ./demo` leaves the project to explore;
+`--json` prints a machine-readable receipt.
+
+`npm run falsify` is the other direction. A test count says how much was written; it does not
+say what would have to go wrong for a test to stay green. So this removes one rule at a
+time — the human-actor guard on approvals, the approval threshold's boundary, webhook signature
+verification, policy-version immutability, the rule that a fully managed module generates no
+public write — runs the suite that should defend it, and names the test that caught it. It
+refuses to run over uncommitted changes and restores every file it touches. Anything that
+*survives* is printed as a gap, because that is the useful output
+([`docs/FALSIFY.md`](docs/FALSIFY.md), `tests/falsify.test.js`).
+
+`npm run demo` creates two renewals and is asserted by `scripts/smoke.js` on every push:
 
 - €20,000 → moves directly to Proposal.
-- €80,000 → stops in Approval Pending until a manager approves it.
+- €80,000 → stops in Approval Pending until a manager decides.
 
-## Use it from Codex
+## Use it from a coding agent
 
-Open the repository in Codex and use:
+Claude Code reads `CLAUDE.md`, `.mcp.json` and `.claude/skills/`. Codex reads `AGENTS.md`
+and `.codex/config.toml`. Both are checked in and wired together.
 
 ```text
-Read AGENTS.md, PRODUCT.md, ARCHITECTURE.md and TASKS.md.
-Run npm run verify.
-Then implement the first unchecked task in TASKS.md using an ExecPlan.
-Do not change the deterministic approval policy without recording the decision.
+Read AGENTS.md, PRODUCT.md and docs/PROJECT_STATUS.md.
+Run npm run crm -- app inspect --json.
+Tell me which parts of my commercial process this already supports, and which it does not.
 ```
 
-Codex automatically reads `AGENTS.md` and the checked-in `.codex/config.toml` connects the local MCP server in trusted projects. Claude Code reads `CLAUDE.md`, `.mcp.json` and the mirrored skills under `.claude/skills`.
-
-## Connect the MCP server
-
-The stdio command is:
+A harness needs only: run a command, read stdout, read the exit code, parse JSON, and read
+and write files. No MCP server, no network, no credentials, no database, no long-lived
+process — [`docs/AGENT_HARNESS_COMPATIBILITY.md`](docs/AGENT_HARNESS_COMPATIBILITY.md).
 
 ```bash
-node --no-warnings packages/mcp/bin/server.js
+npm run crm -- app inspect --json          # what this application contains
+npm run crm -- solution check plan.json    # is this plan still valid against it
 ```
 
-Example Codex MCP configuration:
+Exit codes are the contract: `0` valid · `1` problems, report still printed · `2` unreadable.
 
-```toml
-[mcp_servers.agent_crm]
-command = "node"
-args = ["--no-warnings", "/absolute/path/to/agent-crm/packages/mcp/bin/server.js"]
-env = { CRM_DB_PATH = "/absolute/path/to/agent-crm/data/agent-crm.sqlite" }
-```
+The MCP server runs over stdio (`node --no-warnings packages/mcp/bin/server.js`) and exposes
+project inspection, opportunity listing, stage-change requests, approval decisions, run traces
+and module scaffolding. Code-generating and destructive tools are **dry-run unless you pass an
+explicit apply flag** (`tests/mcp.test.js`, `tests/scaffold.test.js` — [`docs/MCP.md`](docs/MCP.md)).
+It is stdio-only and local-only: there is no hosted or authenticated MCP endpoint, and the server
+inherits the authority of the process that starts it.
 
-The MCP server exposes tools to inspect the project, list opportunities, request stage changes, decide approvals, read traces and scaffold a module. Write-oriented scaffolding defaults to dry-run.
+## Where it stops
 
-## The five folders to understand
+Read this before evaluating anything above. `docs/benchmarks/CRM_JTBD_MATRIX.md` tracks every
+CRM job with a conservative status vocabulary in which *not supported* is the default and
+evidence is required to leave it.
+
+- **No authentication, tenancy or RBAC.** The server is local-development-only; an actor
+  header is an assertion, not an identity. Do not expose it to a network.
+- **SQLite only.** PostgreSQL is on the Production Spine track and is not implemented.
+- **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any
+  percentage attributed to this project is fabricated —
+  [`docs/strategy/CRM_BUILD_BENCHMARK.md`](docs/strategy/CRM_BUILD_BENCHMARK.md) is the
+  protocol, not a result.
+- **No scheduler, no task engine, no reminders.** One follow-up Task is created inside lead
+  qualification; nothing recurring exists, so renewal notice periods are recorded and never fire.
+- **No email, calendar or marketing integrations.** A notification provider contract exists;
+  no adapter sends anything to anyone.
+- **No import, export, dedupe, merge, bulk edit, saved views or global search.** Table stakes
+  in every commercial CRM, and none of them has a milestone yet.
+- **You cannot put real customer data in this yet.** No authentication, no tenancy, no export
+  and no erasure path — so a data-subject access or deletion request cannot be serviced with it.
+  `docs/strategy/DATA_GOVERNANCE.md` is design-only. The one thing that does hold: lead scoring is
+  deterministic, versioned and explainable, not a model's judgement about a person.
+- **This is a framework, not a product you sign up for.** There is no hosted CRM, no free
+  tier, no account. The output is an application you run.
+- **Ownership today means copying source, not installing a dependency.** There is no
+  create-project CLI and no published package. `examples/starters/b2b-lead-qualification/install.mjs`
+  copies `packages/`, `apps/` and `examples/` into a new project and applies the manifests. You
+  own the result outright — and upgrading means merging, not bumping a version.
+
+## Architecture in five folders
 
 ```text
+packages/core/        the runtime platform: registry, services, workflow engine, audit
 packages/modules/     CRM domain primitives
-packages/workflows/   deterministic business processes
-packages/mcp/         tools and context exposed to AI coding agents
-packages/cli/         local operations, diagnostics and scaffolding
-apps/                  API server and Admin UI
+packages/domains/     optional domain packages (contracts, delivery) on a public contract
+packages/mcp/         tools and context exposed to coding agents
+apps/                 API server and generated Admin
 ```
 
-Everything else supports those five pieces.
+The agent never writes to a database table. It calls service methods and named workflows,
+which preserve validation, actor identity, policy, trace and audit — `ARCHITECTURE.md`.
 
-## First vertical slice
+## Documents
 
-```text
-Create renewal
-   ↓
-Request “Proposal” stage
-   ↓
-Policy evaluates contract value
-   ├─ below €50k → Proposal
-   └─ €50k or above → Approval Pending
-                           ↓
-                     Manager approves
-                           ↓
-                        Proposal
-```
+| Read this | For |
+|---|---|
+| [`AGENTS.md`](AGENTS.md) | the rules an agent must follow before changing code |
+| [`PRODUCT.md`](PRODUCT.md) | what the product is and is not |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | the technical model and its extension rules |
+| [`DECISIONS.md`](DECISIONS.md) | the decision log, ADR-001 … ADR-020 |
+| [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) | what is true in the repository today |
+| [`docs/benchmarks/CRM_JTBD_MATRIX.md`](docs/benchmarks/CRM_JTBD_MATRIX.md) | every CRM job, its status and its evidence |
+| [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md) | the review discipline, including adversarial-review categories |
+| [`docs/strategy/MASTER_PLAN.md`](docs/strategy/MASTER_PLAN.md) | category, positioning, roadmap, metrics |
+| [`docs/strategy/GO_TO_MARKET.md`](docs/strategy/GO_TO_MARKET.md) | how this reaches people, and what is gated on a human |
 
-The AI agent does not write directly to database tables. It invokes service methods and workflows, which preserve validation, policy, trace and audit.
+## Licence
 
-## Milestone 0 safety boundary
-
-This repository is a local development proof of concept. The HTTP API intentionally has no production authentication or tenant isolation yet. Do not expose it publicly; remote write tools belong after the tenancy and role milestone in `TASKS.md`.
-
-## Project documents
-
-- `docs/strategy/MASTER_PLAN.md`: canonical strategy entry point (category, roadmap, metrics).
-- `PRODUCT.md`: product boundary and target user.
-- `ARCHITECTURE.md`: technical model and extension rules.
-- `docs/JTBD.md`: Medusa-style use cases translated to CRM.
-- `docs/HANDOVER_CODEX.md`: exact Codex handover.
-- `TASKS.md`: next implementation tasks.
-- `DECISIONS.md`: architectural decisions.
+MIT today. A final confirmation before public launch is an explicit, ADR-gated human
+decision — `docs/strategy/MASTER_PLAN.md` §10.

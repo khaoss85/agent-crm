@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
  *
  * AX1 answers "does this composition resolve" without opening a database.
  * That is not the same question as "does an application carrying this package
- * actually start". Three things only happen at `createAgentCrmApp`:
+ * actually start". Three things only happen at `createAccordoApp`:
  *
  * - every module migration runs against a real (throwaway) database;
  * - every declared action is checked against a real generated module, which is
@@ -20,7 +20,7 @@ import { pathToFileURL } from 'node:url';
  * - the package's capabilities are constructed for real consumers.
  *
  * So this probe boots. It writes one JSON document to **file descriptor 3** and
- * exits, for exactly the reasons `agent-crm-inspect.js` does: a package may
+ * exits, for exactly the reasons `accordo-inspect.js` does: a package may
  * print during import, and stdout is its stream, not the report's.
  *
  * **Isolation, not a sandbox.** The child holds this user's authority. The
@@ -69,9 +69,9 @@ function describe(app, name) {
 
 let app = null;
 try {
-  const { createAgentCrmApp } = await import(pathToFileURL(join(rootDir, 'packages/app/src/index.js')).href);
+  const { createAccordoApp } = await import(pathToFileURL(join(rootDir, 'packages/app/src/index.js')).href);
   // A fixed clock so nothing in the report can derive from the wall clock.
-  app = createAgentCrmApp({ dbPath, clock: () => '2026-01-01T00:00:00.000Z' });
+  app = createAccordoApp({ dbPath, clock: () => '2026-01-01T00:00:00.000Z' });
 
   const registry = app.domains;
   const composed = typeof registry?.names === 'function' ? [...registry.names()].sort() : [];

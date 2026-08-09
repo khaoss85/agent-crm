@@ -63,7 +63,7 @@ const QUOTE = {
 const ENVELOPE = {
   id: 'env1', quoteId: 'q1', quoteVersionId: 'v1', provider: 'fixture-signature', providerVersion: 1,
   providerEnvelopeId: 'env_1', status: 'completed', documentHash: 'd'.repeat(64),
-  documentFormat: 'application/vnd.agent-crm.quote-package+json', failureCode: null, failurePhase: null,
+  documentFormat: 'application/vnd.accordo.quote-package+json', failureCode: null, failurePhase: null,
 };
 const ARTIFACT = { id: 'a1', envelopeId: 'env1', quoteId: 'q1', documentHash: 'd'.repeat(64), artifactHash: 'b'.repeat(64) };
 const ORDER = { id: 'ord1', quoteId: 'q1', quoteVersionId: 'v1', envelopeId: 'env1', status: 'accepted', currency: 'EUR', contractId: null, activatedAt: null };

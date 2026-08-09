@@ -6,7 +6,7 @@
 
 ## Medusa-inspired mapping
 
-| Medusa concept | Agent CRM equivalent |
+| Medusa concept | Accordo equivalent |
 |---|---|
 | Commerce module | CRM domain module |
 | Product/customer/order | Offer/company/opportunity or contract |

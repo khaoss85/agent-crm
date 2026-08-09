@@ -1,0 +1,553 @@
+{
+  "toolContract": 1,
+  "$comment": "The eight things a coding agent can actually run in an Accordo checkout, described boundary-first and in the founder's own framing: see what exists, decide what to build, find what's broken, create the right starting point, check it follows the rules, prove it works, try to break it yourself, plug it into your agent. Every entry was written after running the command in this repository and reading its implementing source, and the outputs quoted are what the commands printed on 2026-08-09 at main SHA 845cd3d — not what the documentation says they print. The through-line of the cluster is in the 'What it refuses to claim' section of each entry: five of these eight surfaces publish their own blind spots as machine-readable limitation codes in the report itself, and the three that do not — the quality gates, the falsification kit, and the skills and MCP surfaces — are said so plainly rather than rounded up. Claim and limitation ids resolve against site/claims.json; job ids against docs/benchmarks/jobs.json, including the 'not supported' rows that are the honest neighbours of what is described.",
+  "entries": [
+    {
+      "id": "tool-app-inspect",
+      "slug": "inspect-what-your-project-composed",
+      "title": "How a coding agent finds out what your CRM project actually contains",
+      "metaTitle": "What a coding agent finds in your CRM project",
+      "plainName": "See what exists",
+      "intent": "how does an AI agent understand my existing codebase",
+      "summary": "One command that reads checked-in source and prints a deterministic JSON document describing what an application has composed: packages, the resolved capability graph, records and their revisions, actions, policies, providers. It opens no database, contacts no provider, reads no secret and reports nothing about what is running or deployed. Every one of those blind spots is published in the report itself as a machine-readable limitation code, so an agent can branch on them instead of guessing. In this repository the run takes about 0.27 seconds and writes nothing.",
+      "metaDescription": "One command prints deterministic JSON for what an application composed: packages, capabilities, records, actions, policies, providers. Source-only, read-only.",
+      "sections": [
+        {
+          "heading": "What question it answers",
+          "body": [
+            "\"What is actually in this project?\" — asked by an agent that has just been pointed at a checkout it has never seen, and that will otherwise assemble the answer from source layout, README prose and a hopeful guess. That reconstruction fails in one direction almost every time: it invents a capability the application does not have, and then builds on it.",
+            "The alternative it replaces is five separate surfaces — `crm package inspect` once per package, `/api/schema` from a running server, the checked-in composition file, each package README, and a status document written in prose. `AGENTS.md` rule 13 makes the substitution explicit: to learn what an application has, run the command rather than assembling it from source and prose."
+          ]
+        },
+        {
+          "heading": "What it does",
+          "body": [
+            "`npm run crm -- app inspect --json` prints a document stamped `applicationInspectionContract: 1` with a stable top level: `application`, `packages`, `capabilities`, `resources`, `actions`, `policies`, `providers`, `modules`, `adminExtensions`, `problems`, `limitations`, `evidence`. Every list is sorted by identity rather than composition order, and two runs over the same checked-in state produce byte-identical bytes — the suite asserts that rather than promising it.",
+            "It keeps five things apart that agents routinely collapse into one word: a package's own release `version`, the `packageContract` seam the kernel enforces, a capability's `version`, a record's `revision` (ADR-019) and a policy or provider's declared-definition `version` (ADR-015). Installing the wrong thing usually starts with treating two of those as the same number.",
+            "The capability graph is reported from both ends and — this is the part worth having — including the edges that do not resolve. `status` is `resolved`, `missing` or `provider-mismatch`, decided by the same function `PackageRegistry` throws from at startup, so the inspector and the running application cannot disagree about what a valid composition is.",
+            "Reading a code-first package means importing it, so the load runs in a child process that leads its own process group, under a timeout, with the report travelling on file descriptor 3. The child's stdout and stderr are the project's own noise, forwarded to your stderr under a label — which is why a package that logs during import cannot corrupt the document.",
+            "Run in this repository on 2026-08-09 it printed `\"valid\": true`, four core records (approval, company, contact, opportunity), zero packages, zero capabilities, zero actions, zero policies, zero providers, zero problems and eleven limitations. That emptiness is correct and it is the most instructive thing the command does here: the framework repository composes almost nothing, because its composed application exists only as a test helper. A project installed from the starter reports a completely different picture from the same command. An agent that had inferred capability from the source tree would have been more wrong in this repository than in a customer's."
+          ]
+        },
+        {
+          "heading": "What it refuses to claim",
+          "body": [
+            "Eleven codes, in `limitations[]`, in the report — not only in the guide. Verbatim from the run: `DATABASE_NOT_INSPECTED` (the configured database is never opened, so what any database has applied or holds is unknown), `PACKAGE_SOURCE_TRUSTED` (package code runs with this process's authority; nothing here is sandboxed), `PROCESS_ISOLATION_BOUNDED` (the timeout stops the load's process group, so a package that deliberately detaches a process outlives the inspection), `EVIDENCE_NOT_AGGREGATED` (jobs and quality-gate status are Markdown maintained by people, referenced by path and never parsed), `CI_EVIDENCE_NOT_INFERRED`, `SECRETS_NOT_INSPECTED`, `PROVIDER_HEALTH_UNKNOWN` (a composed provider is not a reachable one), `PRODUCTION_SPINE_ABSENT` (there is no auth, tenancy or RBAC, so no runtime authorization is reportable), `ADMIN_EXTENSIONS_UNSUPPORTED` (the framework has no seam for package Admin extensions, so that list is empty for every project, not merely this one), `DATA_QUALITY_UNKNOWN` and `RUNTIME_STATE_UNKNOWN`.",
+            "Two of those are worth reading twice. `ADMIN_EXTENSIONS_UNSUPPORTED` is a limitation of the framework being reported by the inspector rather than a fact about your project — an empty list that means \"impossible\" is otherwise indistinguishable from one that means \"none yet\". And `EVIDENCE_NOT_AGGREGATED` is why `evidence` carries paths and a `status` of `not_aggregated` instead of a verdict: the report points at `docs/QUALITY_GATES.md`, the jobs matrix and the status file, and refuses to summarise them.",
+            "`fromStates: null` on an action means the action declares no state-restriction metadata. It does not mean the action is valid in every runtime state; the server may still refuse it from its own rules. The human view spells that out in words for the same reason.",
+            "It also does not choose an architecture, produce a plan, modify code, install a package, start a server, deploy, read a secret or execute a business action."
+          ]
+        },
+        {
+          "heading": "What it costs to run",
+          "body": [
+            "Measured here on 2026-08-09: about 0.27 s wall clock for `--json`, exit code 0. It writes no file, creates no database and leaves the working tree untouched — `git status` before and after is identical.",
+            "Exit codes are the contract: `0` the composition is valid, `1` the composition has problems and the complete report is still printed, `2` the project could not be read at all (diagnostics on stderr, no report). A harness that branches only on zero versus non-zero still behaves correctly; one that distinguishes `1` from `2` can tell \"your project is wrong\" from \"I could not read your project\".",
+            "The load waits up to 60 seconds by default, which is the right bound for a command whose entire value is a real answer. Streams and metadata blocks are byte-bounded, so a package with an enormous `metadata()` fails as an explained size refusal (`PACKAGE_METADATA_TOO_LARGE`) rather than as a mysterious hang.",
+            "No absolute path appears in the machine-readable report — not the repository root, not a temporary directory, not the invoking user's home — so two identical projects on different machines produce identical bytes and a diff always means the project changed."
+          ]
+        },
+        {
+          "heading": "Where it fits",
+          "body": [
+            "It is step one of every agent workflow in this repository, and every shipped skill opens with the same byte-identical orientation block telling the agent to run it and read `valid`, then `problems[]`, then `limitations[]`, in that order.",
+            "Downstream, `crm solution check` binds a plan to this report's fingerprint, `crm project doctor` loads it exactly once and reuses it for every check, and `crm package test` asserts that a composed package agrees with what the inspector says about it. Those three are the reason the report is deterministic rather than merely readable."
+          ]
+        }
+      ],
+      "boundaries": [
+        "It never opens the configured database. Nothing in the report says which migrations any database has applied, or what its rows contain (DATABASE_NOT_INSPECTED).",
+        "A providers[] entry means a provider definition was composed in source. It is not evidence of a credential, a network route, an authenticated session or a healthy remote service (PROVIDER_HEALTH_UNKNOWN, SECRETS_NOT_INSPECTED).",
+        "It is isolation, not a sandbox. Reading a code-first package imports it, so package code runs with the invoking user's full authority over the filesystem, network and credentials of that process (PACKAGE_SOURCE_TRUSTED).",
+        "It reports no runtime, deployment or authorization state, because none exists to report: there is no authentication, tenancy or RBAC in this framework (PRODUCTION_SPINE_ABSENT, RUNTIME_STATE_UNKNOWN).",
+        "It does not aggregate evidence. Job status and quality-gate status are prose maintained by people; the report cites their paths and never parses them into claims (EVIDENCE_NOT_AGGREGATED, CI_EVIDENCE_NOT_INFERRED).",
+        "It plans nothing and changes nothing — no architecture choice, no code written, no package installed, no server started, no action executed.",
+        "adminExtensions is empty for every project that exists, because the framework has no seam for one. That is a missing capability, not an empty result (ADMIN_EXTENSIONS_UNSUPPORTED)."
+      ],
+      "claims": ["C-14", "C-22", "C-17"],
+      "limitations": ["L-01", "L-02", "L-06"],
+      "jobs": ["JTBD-AX-01", "JTBD-AX-02", "JTBD-AX-06", "JTBD-AX-09"],
+      "docs": ["docs/APPLICATION_INSPECTION.md", "docs/AGENT_HARNESS_COMPATIBILITY.md", "docs/CODER_TOOLING_ROADMAP.md"],
+      "tests": ["tests/app-inspect.test.js", "tests/package-contract.test.js"],
+      "related": ["write-a-checkable-solution-plan", "diagnose-a-project-before-editing", "install-into-your-agent"]
+    },
+    {
+      "id": "tool-solution-plan",
+      "slug": "write-a-checkable-solution-plan",
+      "title": "Making an AI agent write a plan a second reader can check",
+      "plainName": "Decide what to build",
+      "intent": "make a coding agent plan before it writes code, in a format i can review",
+      "summary": "A file contract, a validator and a binder — not a planner and not a runtime. It defines what a Solution Plan is (six decision rungs, six evidence categories, a closed approval vocabulary, a canonical fingerprint), refuses anything outside that shape, and binds the plan to a real application-inspection report so a plan written against a composition that has since moved reports itself PLAN_STALE. Nothing here writes source, installs a package, configures a provider or executes a step, and a plan cannot carry a command at all: there is no command field in the shape and no code path from a step to an invocation.",
+      "metaDescription": "A file contract, a validator and a binder for a Solution Plan, bound to an inspection report so a stale plan says so. It writes no source and runs no step.",
+      "sections": [
+        {
+          "heading": "What question it answers",
+          "body": [
+            "\"What are you going to do about it, and on what evidence?\" — in a shape a second reader can check rather than interpret. The `solve-business-goal` skill has always asked for a Solution Plan with sixteen named parts, and every agent wrote it differently: different section names, different order, different words for \"we do not know\". A human could not diff two of them, a second agent could not read one, and nothing could check whether the application a plan was written against was still the application in front of you.",
+            "`AGENTS.md` rule 15 states the consequence: a Solution Plan is a checked file with a contract, not prose with headings."
+          ]
+        },
+        {
+          "heading": "What it does",
+          "body": [
+            "Three commands over one document. `crm solution inspect <plan.json>` prints the normalized plan without judging it. `crm solution validate <plan.json>` checks the contract alone and reads no project at all, so it runs in CI or against a repository that is not the one the plan targets. `crm solution check <plan.json>` validates and then binds the plan to this project's live inspection report.",
+            "Six decision types, each mapped to a rung: `configure` (1), `extend` and `evolve` (2), `provider` (3), `create-package` (4), `propose-kernel-capability` (5). Rung 5 exists so a plan can state a kernel gap; the validator refuses it in `steps[]` with `PLAN_DECISION_NOT_A_STEP`, because patching the kernel to make a solution fit is the exact failure the hierarchy was written to prevent. Rungs 3 and above must record every lower rung in `rungsTried`, a reason per rung in `rejectedRungs`, and the capability `gap` no installed package fills — anything missing is `PLAN_RUNGS_NOT_INSPECTED`.",
+            "Evidence comes in six categories and no others: observed facts, derived metrics, assumptions, inferences, recommendations, unavailable evidence. The set is closed in both directions — an invented category is refused and a missing one is a problem — and citations point one way only, forming a DAG over categories so a conclusion cannot be laundered into a premise. Wrong direction is `PLAN_CITATION_DIRECTION`; an unknown id is `PLAN_CITATION_UNRESOLVED`.",
+            "The binding is a 64-character `inspectionFingerprint` derived from the canonical inspection report. Running `crm solution check` against `examples/solution-plans/lead-to-won.plan.json` here exited 0 and printed \"No problems. The plan is valid and current against this project\", followed by this project's composition fingerprint `bbf0f37c…`. Running it against `examples/solution-plans/govern-delivery-change.plan.json` — a historical example written at milestone 14b2 — exited 1 with twelve problems, nine `PLAN_STALE` and three `CAPABILITY_NOT_AVAILABLE`, each naming exactly what moved: \"the plan was written against package \\\"delivery\\\", which this application no longer composes\", and \"the plan was written against composition 44beabff…; this project is bbf0f37c…\". That is the whole mechanism working in public."
+          ]
+        },
+        {
+          "heading": "What it refuses to claim",
+          "body": [
+            "Four codes ride on every plan whether or not its author wrote them, and they were printed on both runs above: `PLAN_NOT_EXECUTED` (a document, not a runtime — nothing here runs, installs, deploys or modifies source), `APPROVAL_NOT_RBAC` (an approval code marks a human-actor boundary; there is no auth, tenancy or RBAC, so no role is enforced anywhere), `EVIDENCE_NOT_VERIFIED` (an observed fact is checked for shape and citation, never for truth — no query is run and no database is read), and `BINDING_IS_SOURCE_ONLY` (the bound report is source-only and says nothing about a database, a provider's health or what is deployed). A `provider` decision adds a fifth, `PROVIDER_STATUS_UNKNOWN`, whatever its author wrote.",
+            "A plan cannot carry executable content, and the guide separates the two levels honestly. By contract there is no command, script or effect field anywhere in the shape, unknown keys are refused rather than ignored (`PLAN_FIELD_UNKNOWN`), and there is no code path from a step to an invocation — that is the actual boundary. Free text is additionally matched against shell commands, substitutions, chaining, remote addresses and script tags (`PLAN_EXECUTABLE_CONTENT`), and that filter is described as defense in depth rather than a sandbox: it is deliberately conservative, refuses some legitimate prose, and will miss a sufficiently encoded payload.",
+            "The fingerprint is a drift detector over the whole composition — package identities and versions, capability resolution, resources, declared action metadata, policy and provider fingerprints, record revisions, migration checksums, and the problems and limitations that bound what may be planned. It is not proof of authorship, authorization or correctness.",
+            "`acceptance.artifacts[]` names a place and never content. An absolute path, a `..` escape, a path claimed twice, or any field carrying file content is refused — an artifact holding source is the executable-content boundary in a different costume."
+          ]
+        },
+        {
+          "heading": "What it costs to run",
+          "body": [
+            "`validate` reads no project and finishes in milliseconds. `check` runs an application inspection internally and captures it, so it costs roughly what that inspection costs — both plan runs above returned in well under a second here, and the plan is the only thing on stdout.",
+            "Exit codes: `0` valid (and, for `check`, current), `1` the plan has problems and the complete list is still printed, `2` the plan or the project could not be read at all. `inspect` reports without judging, so it exits 0 even for a plan with problems — and prints them anyway.",
+            "Nothing is written. A plan is a file you author and commit; these commands only read it. Bounds are refusals rather than truncations: a plan is at most 1 MiB, a text field 2,000 characters, an identifier 120, a list 200 entries, a citation list 50 — because a plan silently cut to 200 decisions reads as a complete plan."
+          ]
+        },
+        {
+          "heading": "Where it fits",
+          "body": [
+            "Between seeing what exists and building anything: inspect the application, write the plan recording that report, run `solution check`, fix every problem before writing code, then run it again before the review. A stale plan is not a plan.",
+            "The three jobs it serves are all recorded as partially supported, not validated — turning an objective into a reviewable plan, building the solution as checked-in source, and verifying it against defined acceptance. The honest reason is that the contract, the validator and the binding are real and the goal-to-acceptance runner is not; the roadmap tracks it as DX10 and it does not exist."
+          ]
+        }
+      ],
+      "boundaries": [
+        "It is not a planner. Nothing here writes a plan for you — there is no built-in model, and who authors the document is outside this contract.",
+        "It is not a runtime. Nothing executes a plan, writes source, installs a package, configures a provider, starts a server or deploys (PLAN_NOT_EXECUTED).",
+        "An approval code marks a human-actor boundary, not a role. No authentication, tenancy or RBAC exists, so nothing is enforced against an identity (APPROVAL_NOT_RBAC).",
+        "An observed fact is checked for shape and for its citations. It is never checked for truth: no query runs and no database is opened (EVIDENCE_NOT_VERIFIED).",
+        "The binding is source-only. A current fingerprint says the composition has not moved; it says nothing about what is deployed, what a database holds or whether a provider works (BINDING_IS_SOURCE_ONLY).",
+        "The executable-content text filter is defense in depth, not a security control. It refuses some legitimate prose and will miss an encoded payload — the real protection is that nothing reads these fields as instructions.",
+        "There is no automated goal-to-acceptance runner. Verifying that a built solution satisfies its plan is roadmap work (DX10), not a command you can run today."
+      ],
+      "claims": ["C-15", "C-14", "C-17"],
+      "limitations": ["L-01", "L-03", "L-04"],
+      "jobs": ["JTBD-AX-03", "JTBD-AX-04", "JTBD-AX-05", "JTBD-AX-08", "JTBD-AX-10"],
+      "docs": ["docs/SOLUTION_PLAN.md", "docs/AGENT_HARNESS_COMPATIBILITY.md", "docs/CODER_TOOLING_ROADMAP.md"],
+      "tests": ["tests/solution-plan.test.js", "tests/app-inspect.test.js"],
+      "related": ["inspect-what-your-project-composed", "diagnose-a-project-before-editing", "quality-gates-before-a-merge"]
+    },
+    {
+      "id": "tool-project-doctor",
+      "slug": "diagnose-a-project-before-editing",
+      "title": "Finding what is stale in a checkout before you pay for a full test run",
+      "metaTitle": "Find what is stale in a checkout before you edit",
+      "plainName": "Find what's broken",
+      "intent": "check if my project is broken before editing anything",
+      "summary": "A read-only source-consistency check that answers what is structurally inconsistent or stale before you edit — a composition that no longer resolves, a plan bound to an application that has moved, a Skill whose two mirrors disagree, a documentation link that lost its file in a rename, a hand-edited module state file, a committed database. It runs no test, opens no database, makes no network call and has no --fix. Every check delegates to an authority that already exists and names it, and twelve limitation codes in the report say what a green result does not mean.",
+      "metaDescription": "A read-only check for what is stale in a checkout before you edit: compositions, plans, Skill mirrors, documentation links. It runs no test and has no --fix.",
+      "sections": [
+        {
+          "heading": "What question it answers",
+          "body": [
+            "\"What is structurally inconsistent or stale in this project, before I edit it or pay for a full verification run?\" An agent arriving at an unfamiliar checkout has one expensive way to find out whether the repository is coherent, and most of what goes wrong before you touch anything is not a failing test at all.",
+            "The command sits in a five-question ladder where each rung has a different cost and a different meaning: `app inspect` asks what is composed, `project doctor` asks what is inconsistent or stale in the source, `package test` asks whether one package satisfies the contract, `solution check` asks whether a plan still fits, and `npm run verify` asks whether everything actually works. Only the last one runs tests, and it is roughly a thousand times slower."
+          ]
+        },
+        {
+          "heading": "What it does",
+          "body": [
+            "`npm run crm -- project doctor --json` emits `projectDoctorContract: 1` across seven categories — composition, packages, modules, plans, skills, docs, hygiene — with per-check `status`, `authority`, `subject`, `evidence`, `reason` and `remediation`, plus a compact `problems[]` view carrying every failure and nothing else.",
+            "Every check names the authority it speaks for, and `AUTHORITIES` is a closed list that `check()` throws on, so a future check cannot be added without naming who refuses it. There is deliberately no `doctor` authority: composition problems come verbatim from the inspector, module-state drift from `readModuleState` (the same ADR-019 authority the module factory evolves from), plan staleness from `bindSolutionPlan`, the package private-import rule from the same function `crm package validate` uses, hygiene from `git ls-files`.",
+            "Run here on 2026-08-09 it printed `\"ok\": true`, status `passed`, project kind `framework-repository`, composition `valid`, 136 documents scanned, three Solution Plans discovered, one candidate package located, and counts of 9 passed, 0 warning, 0 failed, 4 not applicable. The four not-applicable rows are the interesting ones: `packages.source-boundary — NO_PACKAGES_COMPOSED`, `modules.migration-history — NO_MODULE_STATE_FILES`, and two Solution Plans marked `PLAN_NOT_DECLARED_CURRENT — it no longer binds to this composition, which for an undeclared plan is a fact rather than a fault`.",
+            "That last verdict is a design decision with a name. Staleness is graded only for a plan the project declares in `package.json` under `agentCrm.solutionPlans`: a declared `required` plan that no longer binds fails, a declared `current` one warns, an undeclared one is not applicable and still carries its evidence. Two of this repository's three checked-in plans are historical design examples, and warning about them on every run is exactly the fatigue that teaches a reader to skim past the warnings that matter.",
+            "It refuses to invent rules, and the ExecPlan records both refusals in detail. No fuzzy comparison of generated source against a re-render, because the re-render differs for a dozen innocent reasons and a check that cries wolf is one people silence. No anchor parsing in documentation links, because heading-to-slug is a guess. Documentation links are read as prose with fenced blocks and inline code blanked first — a guide that shows a Markdown link inside a fence is documenting syntax, not linking anywhere."
+          ]
+        },
+        {
+          "heading": "What it refuses to claim",
+          "body": [
+            "Twelve codes, printed in the report and in the human view under the heading \"What this does not prove\". Verbatim: `DOMAIN_CORRECTNESS_NOT_PROVEN` (nothing here executes an action, evaluates a policy or drives a state transition — a project can be perfectly consistent and compute the wrong number), `NOT_A_SUBSTITUTE_FOR_VERIFY` (no test is run; a green doctor means the source is self-consistent, not that the software works), `DATABASE_NOT_INSPECTED`, `PROVIDER_HEALTH_UNKNOWN`, `SECRETS_NOT_INSPECTED` (the hygiene check asks git which paths are tracked; it never opens them), `PRODUCTION_READINESS_NOT_ASSESSED`, `PACKAGE_CONFORMANCE_NOT_RUN` (packages are checked for the source-boundary rule only), `DISCOVERY_IS_BY_CONVENTION` (something kept elsewhere is not seen, and its absence from this report is not a statement that it is fine), `UNCOMPOSED_PACKAGES_NOT_CLASSIFIED`, `PLAN_CURRENCY_IS_DECLARED`, `GENERATED_SOURCE_DRIFT_LIMITED` and `NO_MUTATION` (this command changes nothing; every finding carries the existing command that would fix it, and there is no `--fix`).",
+            "`UNCOMPOSED_PACKAGES_NOT_CLASSIFIED` is the one with a scar behind it. Package discovery took three attempts, and two of them produced false failures — first by treating every directory under `packages/` with a `src/index.js` as a package and reporting eight boundary violations in a repository that has none, then by string-matching `definePackage(` and grading a package that did not exist while missing one whose import was aliased. The version that holds parses no package source at all: the inspector says which packages exist, the composition file's own import specifiers say where they are, and a directory the composition does not reference is not classified at all. Telling kernel code from an unreferenced domain package would mean executing it, and guessing is what produced the false failure twice.",
+            "A warning never fails the run. A stale Solution Plan and a one-sided Skill mirror are information owned by somebody else, and a doctor that failed the build for them is a doctor people stop running."
+          ]
+        },
+        {
+          "heading": "What it costs to run",
+          "body": [
+            "Measured here on 2026-08-09: about 0.38 s wall clock for `--json`, exit code 0, nothing written. The ExecPlan's own measurements put it at ~155 ms against ~122 ms for the single inspection it performs and ~156,000 ms for `npm run verify` — roughly 1.3× the load it reuses, and about a thousandth of the cost of the run it is not a substitute for. The stated budget follows from those measurements rather than from an invented target: under a second on a project this size, and within roughly 1.5× the inspection it already performs.",
+            "It loads the composition exactly once and reuses it for the composition checks, every plan binding and the `inspectionFingerprint`; a test asserts the loader is called precisely once. That load gets a 10-second bound rather than the inspector's default 60, because a command whose entire proposition is that it costs 150 ms must not silently cost a minute — and a timeout is reported as a timeout, naming the command that waits longer.",
+            "Exit codes: `0` no failures, `1` inconsistencies, `2` not a readable project. Nothing in the document carries an absolute path, a stack frame, a source body, a secret or a timestamp."
+          ]
+        },
+        {
+          "heading": "Where it fits",
+          "body": [
+            "Before you edit. It is the cheap rung of the ladder — the one you can afford to run on arrival, after a merge, or between edits, which is a different tool from the one you run before a merge.",
+            "It is deliberately not the runtime `crm doctor` that already exists: that one boots the application, opens the database and reports runtime counts, and cannot run on a project that does not boot. This one reads source, opens nothing, and works precisely when the application will not start — which is when a diagnostic is worth having."
+          ]
+        }
+      ],
+      "boundaries": [
+        "It runs no test. A green doctor means the source is self-consistent, not that the software works (NOT_A_SUBSTITUTE_FOR_VERIFY).",
+        "It executes no action, evaluates no policy and drives no state transition. A perfectly consistent project can still compute the wrong number (DOMAIN_CORRECTNESS_NOT_PROVEN).",
+        "It changes nothing and has no --fix. Every finding names the existing command that would fix it (NO_MUTATION).",
+        "It opens no database, makes no network call, and reads no file content for secrets — the hygiene check asks git which paths are tracked, never what is in them (DATABASE_NOT_INSPECTED, PROVIDER_HEALTH_UNKNOWN, SECRETS_NOT_INSPECTED).",
+        "Packages are checked for the source-boundary rule only. Full conformance means composing and booting each one, which is a different command and is deliberately not run here (PACKAGE_CONFORMANCE_NOT_RUN).",
+        "A directory under packages/ that the composition does not reference is not classified at all — not as kernel code, not as a package. Guessing produced a false failure twice (UNCOMPOSED_PACKAGES_NOT_CLASSIFIED).",
+        "Plans, skills and documentation are found in documented locations only. Something kept elsewhere is not seen, and its absence from the report is not a statement that it is fine (DISCOVERY_IS_BY_CONVENTION).",
+        "Generated-source drift is detected only where a checked-in generator contract proves it. A hand-edited generated service is not caught (GENERATED_SOURCE_DRIFT_LIMITED).",
+        "No report from it is a production-readiness statement, because there is no auth, tenancy or RBAC in this framework to assess (PRODUCTION_READINESS_NOT_ASSESSED)."
+      ],
+      "claims": ["C-14", "C-15", "C-19"],
+      "limitations": ["L-01", "L-06"],
+      "jobs": ["JTBD-AX-01", "JTBD-AX-05", "JTBD-AX-06", "JTBD-AX-09"],
+      "docs": ["docs/plans/dx1-project-doctor.md", "docs/CODER_TOOLING_ROADMAP.md", "docs/APPLICATION_INSPECTION.md"],
+      "tests": ["tests/project-doctor.test.js", "tests/module-evolution.test.js", "tests/skill-parity.test.js"],
+      "related": ["inspect-what-your-project-composed", "write-a-checkable-solution-plan", "quality-gates-before-a-merge"]
+    },
+    {
+      "id": "tool-package-scaffold",
+      "slug": "scaffold-a-conforming-package",
+      "title": "Starting a new domain package without inheriting somebody else's domain",
+      "metaTitle": "Scaffold a package that already conforms",
+      "plainName": "Create the right starting point",
+      "intent": "generate a plugin skeleton that already passes the framework's own checks",
+      "summary": "Two files, an identity, five empty declarations and a README — a package that passes validate, inspect and the conformance harness with no manual edit, and that models nothing. It generates no record, action, policy, capability, provider, Admin section or MCP tool, on the explicit reasoning that a generated domain field is a claim about a business nobody described yet, and that an agent reads generated code as a decision already taken. It is dry-run by default, writes only with --apply, never overwrites and never silently renames.",
+      "metaDescription": "Two files and five empty declarations: a package that passes validate, inspect and the conformance harness while modelling nothing. Dry-run unless you --apply.",
+      "sections": [
+        {
+          "heading": "What question it answers",
+          "body": [
+            "\"Give me a new domain package that already conforms, and nothing else.\" Once a machine can tell you whether a package conforms, the expensive step is no longer checking — it is starting, because starting otherwise means opening an existing package, copying two thousand lines of somebody else's domain and deleting the parts that do not apply.",
+            "The command takes a name; its three siblings take a directory. `scaffold` gives you an empty conforming package, `validate` asks whether a declaration is structurally valid, `inspect` asks what a package declares, owns, offers and needs, and `test` asks whether it holds up when a real application composes it. It is the only one of the four that can write."
+          ]
+        },
+        {
+          "heading": "What it does",
+          "body": [
+            "`npm run crm -- package scaffold <name> --json` plans `packages/<name>/src/index.js` and `packages/<name>/README.md`. Run here for a name of `field-service` it reported mode `plan`, `modeReason: \"no --apply was given, so nothing was written\"`, two files at 2,947 and 2,160 bytes with their content hashes, a package declaration of `{name, version: 1, packageContract: 1, resources: [], actions: [], requires: [], provides: [], policies: []}`, empty `problems`, empty `staleStaging`, and a content fingerprint of `fc924591…`. `git status` was unchanged afterwards.",
+            "It also carries a `conformance` block stating its own acceptance criterion in machine-readable form: expectation \"passes `crm package validate`, `crm package inspect` and `crm package test` with no manual edit\", the five not-applicable reasons the conformance run will legitimately produce (`NO_RESOURCES_DECLARED`, `NO_ACTIONS_DECLARED`, `NO_DEPENDENCIES_DECLARED`, `NO_CAPABILITIES_OFFERED`, `NO_POLICIES_DECLARED`), and `proves: \"framework conformance only; it models no domain yet\"`. A scaffold that cannot clear its own conformance bar has not saved anybody time — the plan says which bar, and which skips are honest.",
+            "Every declaration is present and empty: present so an author edits a list they can already see, empty so the framework never puts words in their mouth. The generated source is mostly comment explaining where a record, an action, a capability and a policy go.",
+            "Writing is atomic. Files are staged in a directory named uniquely per run and the package becomes visible through one `rename` — the commit point and the only race. Eight independent processes racing one target were measured producing exactly one `applied`, seven `TARGET_CLAIMED`, a complete package and zero leftover staging. An earlier draft staged in a fixed directory and refused with `SCAFFOLD_IN_PROGRESS` when it was occupied, which is a lock a crashed process holds forever; now each run stages under its own name, nothing is ever blocked, and leftovers are reported as `staleStaging` rather than deleted by a guess that could destroy a concurrent author's work.",
+            "The name rule is the framework's own `validatePackageDefinition`, not a second slugger. That matters because the name is interpolated into generated source: validating it against the real rule is what keeps a quote, a backtick or a newline from ever reaching a template. An author who asked for `Field Service` is refused with a suggestion rather than silently handed `field-service`."
+          ]
+        },
+        {
+          "heading": "What it refuses to claim",
+          "body": [
+            "Eight codes, printed on every run including `--help`: `NO_DOMAIN_SEMANTICS` (the scaffold writes an identity and nothing else, because a guess about a business nobody described is worse than an empty file), `NO_COMPOSITION` (the package is not added to the composition file — composing it is one line a human adds deliberately, which is the framework's security model), `NO_DATABASE_OR_MIGRATION`, `NO_INSTALL_OR_PUBLISH` (nothing is downloaded, installed, signed, published or registered anywhere), `CONFORMANCE_IS_NOT_CORRECTNESS`, `IDENTITY_UNIQUENESS_NOT_CHECKED`, `PLAN_IS_NOT_A_RESERVATION` and `FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY`.",
+            "The last three are the kind of honesty that is easier to omit. `IDENTITY_UNIQUENESS_NOT_CHECKED`: the target directory is checked, the composed application is not, because reading which package names are already registered means importing the composition, and this command runs no project code — a genuine duplicate is refused by the registry at startup, naming the collision. `PLAN_IS_NOT_A_RESERVATION`: a plan reserves nothing and authorizes nothing, and `--apply` re-derives the target from the filesystem as it is at that moment. `FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY`: POSIX `rename` refuses a file, a symlink and a non-empty directory but replaces an empty one, so a directory created empty in the microseconds between the check and the rename would be replaced — nothing is lost, because an empty directory has no content, and Windows refuses every existing destination.",
+            "Because a plan and an apply both exit 0, every document carries a `modeReason` saying which flag won, and the human view prints NOTHING WAS WRITTEN rather than a polite suggestion. An agent reading only the exit code would otherwise conclude it wrote a package it did not write.",
+            "The scaffold does not close domain correctness (its output models nothing), record creation (a resource still needs a manifest and the module factory), composition (still one hand-written import), package-contributed HTTP routes (still open), or distribution (there is no marketplace, registry or remote install)."
+          ]
+        },
+        {
+          "heading": "What it costs to run",
+          "body": [
+            "Sub-second, and by default it writes nothing at all. Exit codes are `0` planned or applied and `1` refused — there is no third code, because unlike the conformance harness the scaffold reads no package and boots no application, so it has no unreadable case to distinguish.",
+            "Same name, byte-identical bytes. No timestamp, no random id, no absolute path and no environment value enters the fingerprint, so a scaffold in a checkout whose path contains a space produces the same bytes as one that does not.",
+            "Every hostile target is a refusal before any write: an occupied target (`TARGET_UNAVAILABLE`, via `lstat`, so a dangling symlink counts), `--into ../..` or an absolute path outside the project, a symlink escape resolved through `realpath` — including one whose leaf does not exist yet, because `mkdir -p` would otherwise follow the link on the way in — an invalid or reserved name (`PACKAGE_NAME_INVALID`), and a target that appears between the plan and the commit (`TARGET_CLAIMED`). A write that fails halfway removes this run's staging; no partial package is ever visible."
+          ]
+        },
+        {
+          "heading": "Where it fits",
+          "body": [
+            "In the authoring flow it is the step after a plan and before an edit: inspect the application, write and check a Solution Plan, scaffold, edit, validate, inspect, run the conformance harness, write your own domain tests, then compose the package by hand.",
+            "The honest neighbour is worth naming. The jobs matrix still records \"Scaffold a new package from a template\" as not supported, and that row is not stale by accident: this command deliberately refuses to be a template. The rich-template option was considered and rejected because a generated `partner`, `score` or `status` field must first be noticed and then removed, and an agent is worse at that than a human. The teaching package in this repository is one resource, one action and one policy, and it still had to be designed — the bytes were never the hard part."
+          ]
+        }
+      ],
+      "boundaries": [
+        "It generates no domain semantics at all: no record, action, policy, provider, capability, Admin section, Solution Plan, MCP tool or test (NO_DOMAIN_SEMANTICS).",
+        "It does not compose the package. Adding the one static import to packages/domains/generated/index.js is a deliberate human act, and that is the framework's security model rather than an oversight to automate (NO_COMPOSITION).",
+        "It opens no database and runs no migration. A package owns a record only once a module manifest is applied through the module factory (NO_DATABASE_OR_MIGRATION).",
+        "Nothing is downloaded, installed, signed, published or registered. There is no marketplace, no registry and no remote install — a package is source in your own repository (NO_INSTALL_OR_PUBLISH).",
+        "Passing the conformance harness proves framework conformance and nothing about a domain the package does not yet model (CONFORMANCE_IS_NOT_CORRECTNESS).",
+        "It checks the target directory, never the composed application, so a duplicate package identity is not caught here — the registry refuses it at startup instead (IDENTITY_UNIQUENESS_NOT_CHECKED).",
+        "A plan reserves nothing and authorizes nothing; --apply re-derives the target and can still be refused (PLAN_IS_NOT_A_RESERVATION).",
+        "The single-rename commit replaces a target directory that is empty at the instant of the rename. Nothing is lost, and it is recorded rather than left to be discovered (FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY)."
+      ],
+      "claims": ["C-13", "C-18", "C-17"],
+      "limitations": ["L-08", "L-07"],
+      "jobs": ["JTBD-PK-01", "JTBD-PK-03", "JTBD-PK-05", "JTBD-PK-06"],
+      "docs": ["docs/plans/dx3-package-scaffold.md", "docs/PACKAGE_AUTHORING.md", "docs/CODER_TOOLING_ROADMAP.md"],
+      "tests": ["tests/package-scaffold.test.js", "tests/package-contract.test.js", "tests/custom-package-e2e.test.js"],
+      "related": ["test-a-package-against-the-contract", "write-a-checkable-solution-plan", "inspect-what-your-project-composed"]
+    },
+    {
+      "id": "tool-package-test",
+      "slug": "test-a-package-against-the-contract",
+      "title": "Proving a package still fits the framework — and what that does not prove",
+      "metaTitle": "Test a package against the framework contract",
+      "plainName": "Check it follows the rules",
+      "intent": "validate a plugin against a framework contract before shipping it",
+      "summary": "A generic conformance harness that composes a package into a throwaway copy of the project, boots the application twice, attaches and detaches it, and reports what the framework's own machinery says — declaration, source boundaries, composition refusals, module manifests and migration identity, lifecycle, and agreement with the inspector. No package is special-cased by name, a check that cannot run is skipped or not-applicable with a reason rather than passed, and twelve limitation codes say what conformance is not: it proves nothing about whether the domain logic is right.",
+      "metaDescription": "A conformance harness that composes a package into a throwaway copy, boots twice, attaches and detaches. It proves nothing about whether the logic is right.",
+      "sections": [
+        {
+          "heading": "What question it answers",
+          "body": [
+            "\"Does this package satisfy the framework's generic package contract and integration invariants?\" One question, one answer, and the boundary stated in the same breath: it proves nothing about whether the domain logic is correct.",
+            "Its two siblings read; this one composes and boots. That distinction is why it could not be a flag on either of them."
+          ]
+        },
+        {
+          "heading": "What it does",
+          "body": [
+            "`npm run crm -- package test <path> --json` emits `packageConformanceContract: 1` with per-check `status` and `authority`, plus `counts`, `problems`, `limitations`, a `scratch` block and both a report fingerprint and the `inspectionFingerprint` of the application it composed against.",
+            "Run here against `packages/service` it exited 0 with 26 passed, 0 failed, 0 skipped, 2 not applicable. The checks span six authorities: `authoring-rule` (private imports, cross-package imports, source shape, label, metadata), `package-contract` (declaration validity, surface, contract version, policy fingerprints), `composition` (a clean compose, its action targets, and five refusals proven by attempting them — duplicate, resource collision, capability collision, undeclared reach, unmet dependency), `module-factory` (the manifests the package applies, and their migration identity), `application-boot` (attach, detach, actions registered, capabilities resolve) and `app-inspect` (the inspector's own row for the package, its capabilities, and resource coverage). Its `scratch` block reported composing `contracts` and `service`, applying 16 manifests, one project record (`order`), and a database \"created empty in a temporary copy and destroyed with it\".",
+            "Run against `examples/custom-packages/partner-scorecard` it exited 1: 21 passed, 1 failed, 6 not applicable, with `declaration.action-targets` failing under authority `composition` for `UNDECLARED_PACKAGE_RECORD_DEPENDENCY`, and `scratch.undeclaredRecordOwners: [\"delivery\"]`. That failure is the harness's most important design decision, kept rather than engineered away. The package acts on a record `delivery` owns and declares no dependency on it; the first draft composed the owner, marked the finding not-applicable and exited 0. That is monorepo magic — the package only works because this repository happens to contain `delivery`, and a third-party consumer would get a different answer. So the teaching example in this repository does not conform, and the report says so.",
+            "Four cases are graded differently and the difference is the point: a record the package owns passes, a record no package owns passes (it is a host-application record — every package here acts on `order`, which a project supplies), a record a declared dependency owns passes (the coupling is record-level, which `requires` cannot express, but the relationship is visible in the graph), and a record an undeclared package owns fails.",
+            "No package name appears in harness code. The official matrix is a test, not a code path — and one of the four packages that runs through it legitimately fails."
+          ]
+        },
+        {
+          "heading": "What it refuses to claim",
+          "body": [
+            "Twelve codes in `limitations[]`. The first is the headline: `DOMAIN_CORRECTNESS_NOT_PROVEN` — this command proves framework conformance only; whether the package computes, decides or promises the right thing is what its own tests are for, and nothing here is evidence about it. Then `PACKAGE_SOURCE_TRUSTED` and `PROCESS_ISOLATION_BOUNDED` state the trust boundary in the exact three clauses the review forced: no intentional mutation of the caller's project, trusted source running with the operator's authority, and isolation that is not a filesystem, network or OS sandbox.",
+            "`SCRATCH_PROJECT_ONLY` is unusually candid: the harness writes only inside a temporary copy and removes it afterwards, and it cannot prevent package code from writing wherever the operator can write — including the caller's project — because that code runs with the operator's authority. An earlier version imported the package from the caller's own tree, so a package writing beside its source wrote into the caller's repository; the scratch copy is now built first from filesystem facts alone, and the package is imported from the copy.",
+            "`UNDECLARED_OWNER_COMPOSED_LOCALLY` explains the failure above: when an action targets a record another package owns, that owner is located in this project and composed so the rest of the report can still be produced — which is exactly why an undeclared owner is reported as a failure rather than rescued.",
+            "The remaining five bound what a conformance pass covers. `ACTION_EXECUTION_NOT_ATTEMPTED` (no declared action is executed; driving one needs records only the domain knows how to create). `STATE_TRANSITIONS_NOT_DRIVEN` (declared `fromStates` are published, never exercised — a generic probe has no record in any of those states). `POLICY_BEHAVIOUR_NOT_EVALUATED` (a policy is checked for identity, declared config and a fingerprint; what it decides is domain behaviour). `UPGRADE_NOT_EXERCISED` (module evolution needs two manifests one revision apart, and a package ships one per record). Plus `PROVIDER_HEALTH_UNKNOWN`, `SECRETS_NOT_INSPECTED` and `DATA_NOT_INSPECTED`.",
+            "A check that cannot run is `skipped` or `not_applicable` with a reason code, never `passed`, and no failure is ever demoted to a limitation to make an official package green. Every row names the authority it speaks for, drawn from a closed list with no entry for the harness itself — a rule this command would have had to invent is either advisory or absent."
+          ]
+        },
+        {
+          "heading": "What it costs to run",
+          "body": [
+            "Measured here on 2026-08-09: about 2.3 s wall clock for `packages/service --json`, which is roughly an order of magnitude more than the source-only checks and three orders less than a full verification run. The ExecPlan records ~1,710 ms for one package on this repository.",
+            "Exit codes: `0` conforms, `1` conformance failures, `2` the package or project could not be read. Both observed runs matched — service 0, partner-scorecard 1.",
+            "It writes nothing to your project. The scratch copy is removed on success, on failure and on timeout, and the scratch database is created empty and destroyed with it; the caller's configured database is never opened. Output is deterministic across runs, processes, working directories and a path containing spaces, and contains no absolute path, scratch location, stack frame, SQL, source body or secret.",
+            "Imports and boots run in their own process group under a timeout and byte bounds, with the report on file descriptor 3, so a package that hangs, floods a stream, spawns a grandchild that holds the pipe open, or calls `process.exit` produces a stable outcome and never hangs the parent."
+          ]
+        },
+        {
+          "heading": "Where it fits",
+          "body": [
+            "It is what makes the package seam self-enforcing rather than a convention: the scaffold exists because there is now a command that can grade its output, and the two were designed against each other.",
+            "The jobs it touches are recorded conservatively. Creating and composing a custom package and depending on another package through a declared capability are validated end to end; validating a package before booting it and removing one without losing its data are only partially supported; running an untrusted package safely is not supported and is not planned at this layer — repository source is trusted, and the consumer name passed when opening a capability is asserted by the caller."
+          ]
+        }
+      ],
+      "boundaries": [
+        "It proves framework conformance only. Whether the package computes, decides or promises the right thing is what its own tests are for (DOMAIN_CORRECTNESS_NOT_PROVEN).",
+        "It executes no declared action, drives no declared state transition and evaluates no policy behaviour — those need records only the domain knows how to create (ACTION_EXECUTION_NOT_ATTEMPTED, STATE_TRANSITIONS_NOT_DRIVEN, POLICY_BEHAVIOUR_NOT_EVALUATED).",
+        "Child-process isolation is not a sandbox. The package runs with the operator's authority and could write anywhere that operator can write, including the caller's project (PACKAGE_SOURCE_TRUSTED, PROCESS_ISOLATION_BOUNDED, SCRATCH_PROJECT_ONLY).",
+        "It never opens the caller's database. The scratch database is created empty and destroyed with the scratch project (DATA_NOT_INSPECTED).",
+        "It contacts, authenticates and health-checks no provider, and reads no secret, credential or environment value (PROVIDER_HEALTH_UNKNOWN, SECRETS_NOT_INSPECTED).",
+        "A data-bearing module upgrade is not exercised: that needs two manifests one revision apart, and a package ships one manifest per record (UPGRADE_NOT_EXERCISED).",
+        "It does not check package-contributed HTTP routes — the framework has no seam for them, and that gap is tracked rather than tested around.",
+        "A conforming result says the package fits this framework. It says nothing about whether the package should be trusted: there is no signing, no provenance and no isolation from a package that means harm."
+      ],
+      "claims": ["C-13", "C-19", "C-17"],
+      "limitations": ["L-08", "L-01"],
+      "jobs": ["JTBD-PK-01", "JTBD-PK-02", "JTBD-PK-03", "JTBD-PK-04", "JTBD-PK-07"],
+      "docs": ["docs/plans/dx4-package-conformance-kit.md", "docs/PACKAGE_AUTHORING.md", "docs/CODER_TOOLING_ROADMAP.md"],
+      "tests": ["tests/package-test-command.test.js", "tests/package-contract.test.js", "tests/custom-package-e2e.test.js"],
+      "related": ["scaffold-a-conforming-package", "diagnose-a-project-before-editing", "quality-gates-before-a-merge"]
+    },
+    {
+      "id": "tool-quality-gates",
+      "slug": "quality-gates-before-a-merge",
+      "title": "The review a change has to survive before anyone calls it done",
+      "metaTitle": "The review a change survives before it merges",
+      "plainName": "Prove it works",
+      "intent": "what should an AI coding agent check before i merge its pull request",
+      "summary": "Repository policy rather than a command: ten requirements for every feature PR, fifteen adversarial review categories a milestone is attacked with before it merges, a four-value job status vocabulary where the burden of proof sits on the higher value, and ten production gates that are explicitly not met today. Unlike the five commands in this cluster that publish limitation codes it emits none, because it is a document a human enforces — its honest machine-readable analogue is the exit code of npm run verify and the standing list of gates nobody has passed.",
+      "metaDescription": "Repository policy rather than a command: ten requirements for every feature PR, fifteen adversarial review categories, and ten production gates nobody has met.",
+      "sections": [
+        {
+          "heading": "What question it answers",
+          "body": [
+            "\"What has to be true before this counts as finished?\" The document exists because the review discipline that produced several milestones was living in the length of a one-off prompt, and a discipline that depends on how much someone typed that day is not a discipline.",
+            "Its definition of complete is a sequence, not a checkbox: implementation, adversarial review, fixes in place with regression tests, compatibility backfill declared, clean-clone verification, CI green, human merge. A milestone that skipped the review is unreviewed, not finished — and the PR body must say so rather than imply otherwise."
+          ]
+        },
+        {
+          "heading": "What it does",
+          "body": [
+            "Section 1 sets ten conditions on every feature PR: an ExecPlan written before the code that compares at least three approaches and says why the chosen one wins; a clean baseline verified at the branch point so an inherited failure is found rather than blamed; one milestone per branch; no hidden changes to a shared contract; documentation and ADR moving in the same PR as the code; a conservative job-status update; clean-clone verification from a fresh clone and install; no secrets, databases, logs or build output in the tree; a declared compatibility row for any horizontal capability; and a human merge, never a squash.",
+            "Section 2 is the part with teeth: fifteen adversarial categories run against every milestone, where a category that does not apply must be stated as not applicable rather than silently skipped. Public-boundary bypass. State-machine algebra with an explicit transition table rather than a rank. Transaction and fault injection after every significant write. Idempotency with deterministic keys, where a semantic mismatch behind the same key fails closed. Two-connection concurrency. Exact queries proven past 500 rows. Immutable boundaries proven by changing the source and re-reading the snapshot. Provider timeout and late settlement. Replay and reconciliation. Hostile input across `__proto__`, markup, backticks, template substitutions, newlines, Unicode separators, null bytes and oversized strings. Schema compatibility. Backward compatibility. Audit, event and trace exactness — asserting counts, not presence. Real-Chromium browser behaviour. And documentation truthfulness: every claim in a doc, an ADR, a PR body or a job row traces to a merged test, with limitations stated in the same breath as capabilities.",
+            "Section 3 is a four-value vocabulary — not supported, partially supported, technically supported, validated end to end — with not supported as the default for anything new, and an explicit ban on inferring a status from an isolated primitive. The vocabulary is enforced mechanically in `docs/benchmarks/jobs.json`, which is why the jobs ledger reads as bluntly as it does: of the rows published there, the overwhelming majority are not supported.",
+            "The executable form of section 2 is the `adversarial-review` skill, which `AGENTS.md` rule 10 makes mandatory for any milestone or pre-merge review task."
+          ]
+        },
+        {
+          "heading": "What it refuses to claim",
+          "body": [
+            "This is the first of the three entries in this cluster where the honest answer is that there are no limitation codes. Quality gates is a Markdown document that people enforce; it emits no JSON, has no contract version, and publishes no `limitations[]` array. The inspector says so about it from the other side, under `EVIDENCE_NOT_AGGREGATED`: job and quality-gate status live in Markdown maintained by people, are referenced by path, and are never parsed into structured claims. Machine-readable evidence for this is roadmap work — DX5 and DX6 — and does not exist.",
+            "Its self-declared blind spots live instead in section 4, a list of ten production gates each described as a hard gate before public multi-user use, and none of which exists today: a PostgreSQL conformance suite running the same tests on both adapters, browser end-to-end in CI (today it is manual, and the document calls it the largest coverage gap), an enforced coverage threshold, mutation tests for versioned policies, property-based tests for pricing arithmetic and state machines, fuzzing for the webhook route and the URL router, dependency and security scanning, backup and restore rehearsal, tenant-escape tests, and permission-matrix tests once role-based access control exists.",
+            "This page also quotes no test count. The claims ledger and the project status file were generated at different commits and carry different numbers, and a figure nobody has re-run is precisely the kind of claim these gates exist to refuse. What was re-run for this page is the cheap half: `npm run check` passed, which is all `check` is — a syntax pass over every JavaScript file in the repository, with `verify` being that plus the test suite."
+          ]
+        },
+        {
+          "heading": "What it costs to run",
+          "body": [
+            "`npm run verify` is `npm run check && npm test`. The project-doctor ExecPlan measured it at about 156,000 ms on this repository — roughly a thousand times the cost of the source-only checks, which is the entire argument for those existing. The syntax half alone returns in about a second.",
+            "It exits non-zero on any failing test and writes nothing to the repository. The rest of the discipline is not a command at all: an adversarial review is a person or an agent working through fifteen categories, and clean-clone verification means a fresh `git clone` and a fresh `npm install` before running anything.",
+            "The document carries a companion budget that does run. `node scripts/surface-check.js` fails the build when the surface an agent must understand exceeds a stated ceiling, and it printed here: 1/1 goal entry points, 12/12 skills, 9/10 always-on tools, 11/11 commands in skills, with the closing line \"Internal complexity may grow. Perceived complexity has not.\" Every ceiling carries the reason it is where it is, so raising one is a deliberate edit with an argument attached."
+          ]
+        },
+        {
+          "heading": "Where it fits",
+          "body": [
+            "It is the last gate, and it is the one the other seven tools are measured against. The cheap commands exist because this one is expensive; the falsification kit exists because passing this one is not the same as being defended by it.",
+            "The jobs it serves are honest about the gap. Verifying a solution against defined acceptance is partially supported — the gates, the validator, the suites, the clean-clone run and the jobs matrix are real and enforced, and there is no automated goal-to-acceptance runner. Reporting unavailable capabilities honestly is also only partially supported: the matrix and package metadata make the honest answer available, and nothing enforces that an agent uses it, which is why the skills state it as a rule."
+          ]
+        }
+      ],
+      "boundaries": [
+        "It is a document, not a command. It emits no JSON, carries no contract version and publishes no machine-readable limitation codes — the inspector reports that gap from the other side as EVIDENCE_NOT_AGGREGATED.",
+        "Nothing parses it. Job status and gate status are prose maintained by people; machine-readable evidence aggregation is roadmap work (DX5, DX6) and does not exist.",
+        "Browser end-to-end coverage is not in CI. It is run manually, and the document names that as the largest coverage gap rather than leaving it to be discovered.",
+        "None of the ten production gates in section 4 is met: no PostgreSQL conformance suite, no coverage threshold, no mutation tests for versioned policies, no property-based tests, no fuzzing, no dependency scanning in CI, no backup-and-restore rehearsal, no tenant-escape tests and no permission-matrix tests.",
+        "Permission and tenant tests cannot exist yet, because there is no authentication, tenancy or role-based access control to test.",
+        "npm run verify proves the tests pass. It does not prove the tests would catch a regression — that is a separate instrument, and it found a real gap the first time it ran.",
+        "No test count is quoted here. Two files in this repository carry different figures from different commits, and neither was re-run for this page."
+      ],
+      "claims": ["C-20", "C-16", "C-04"],
+      "limitations": ["L-01", "L-03", "L-06"],
+      "jobs": ["JTBD-AX-05", "JTBD-AX-06", "JTBD-AX-09", "JTBD-15"],
+      "docs": ["docs/QUALITY_GATES.md", "AGENTS.md", "docs/PROJECT_STATUS.md"],
+      "tests": ["tests/jobs-json.test.js", "tests/action-runtime-semantics.test.js", "tests/event-bus-outbox.test.js", "tests/workflow.test.js"],
+      "related": ["falsify-your-own-tests", "diagnose-a-project-before-editing", "test-a-package-against-the-contract"]
+    },
+    {
+      "id": "tool-falsify",
+      "slug": "falsify-your-own-tests",
+      "title": "Deleting a safety rule on purpose to see whether a test notices",
+      "metaTitle": "Delete a safety rule and see if a test notices",
+      "plainName": "Try to break it yourself",
+      "intent": "how do i know my tests would actually catch a regression",
+      "summary": "A falsification kit, not a mutation-testing tool. It removes exactly one publicly stated rule at a time from real source, runs the suite that is supposed to defend it, reports which named test caught it, and restores every edit with a byte-for-byte verified restore. It refuses to start if any target file has uncommitted changes. Six hand-written mutations, naming four of the ledger's claims between them — not a coverage metric, and no percentage is computed, because a percentage derived from six mutations would mean nothing.",
+      "metaDescription": "Six hand-written mutations remove one stated rule at a time from real source and report which named test caught it. Not coverage — no percentage is computed.",
+      "sections": [
+        {
+          "heading": "What question it answers",
+          "body": [
+            "A test count tells you how much was written. It does not tell you what would have to go wrong for a test to stay green, and that is the question a sceptical reader is actually asking.",
+            "So the kit answers it by breaking things on purpose: each mutation removes one rule this project makes in public, runs the suite that is supposed to defend it, and names the test that went red."
+          ]
+        },
+        {
+          "heading": "What it does",
+          "body": [
+            "`npm run falsify` ran here on 2026-08-09 and printed, verbatim: \"5 caught, 0 survived, 0 stale, in 2.2s\" and \"Every rule tested here fails loudly when removed.\" Each row named the rule and its witness — `approval-actor-guard` caught by \"approval workflow rejects an agent pretending to make the human decision\"; `approval-threshold-boundary` by \"renewal at threshold requires approval and records the human decision\"; `webhook-signature-verification` by \"webhook verification is constant-time, replay-bounded and fail-closed\"; `definition-version-immutability` by \"persisted definition versions: registration is idempotent, drift fails loudly\"; `managed-fields-public-write` by \"a fully managed module generates no public write, and a mixed one does\". A sixth, `delivery-cost-rounding`, printed as \"not run (slow — run with --all)\" rather than being quietly dropped from the set.",
+            "Three outcomes, two of which are failures. `caught` means the suite went red and the report names the test. `survived` means the suite stayed green with the rule removed — a gap in the tests. `stale` means the code the mutation aims at is gone, so it proved nothing, and that is a failure on purpose: a falsification kit that quietly stops aiming at anything is worse than not having one, because it goes on printing reassurance. The run exits non-zero on either.",
+            "Baselines are measured rather than assumed: every target suite runs unmutated first. A suite that is already red would make every mutation look caught, which is the one way this tool could lie in the flattering direction.",
+            "Each mutation carries the claim ids it defends. `--json` emits `falsifyContract: 1` with, per mutation, the file, the exact source string removed, the defending test, the rule, what breaking it would mean, the claim ids, how many occurrences were found against how many were expected, the outcome and the name of the catching test — plus a `skipped[]` array carrying the slow mutation and its reason. The `elapsedMs` field on the JSON runs here read between 2,110 and 2,385 ms, which is the honest precision available for a wall-clock number.",
+            "What it already found is the reason to keep it. `managed-fields-public-write` survived the first time it ran: removing the read-only rule from the module factory left the factory's own test green, and only the end-to-end suites noticed. A rule about generated output should fail in the test that reads the generated output, so a direct assertion was added. The interesting output of a falsification run is not the row of ticks."
+          ]
+        },
+        {
+          "heading": "What it refuses to claim",
+          "body": [
+            "This is the second of the two tools in this cluster that publishes no `limitations[]` array. Its machine-readable self-reporting is different in kind: the `stale` outcome, which is how the kit reports that it has stopped aiming at anything, and the `skipped[]` list, which is how it reports that the default run is narrower than the full set. Both are in the JSON, and both fail or annotate the run rather than being silently absorbed.",
+            "The prose boundaries are three, and they are stated as flatly as anything in this repository. It is not a mutation-testing tool: it does not generate mutations, sample them or compute a mutation score, and six hand-written mutations aimed at six claims is a different instrument from a coverage metric. It does not prove the rules are correct, only that they are held by a test — a wrong rule, faithfully defended, passes every mutation here. And it covers six rules, not the ledger: the claims ledger carries twenty-two claims, each mutation names which ones it defends, and the rest rest on their own evidence and are not falsified by this command.",
+            "It does not tell you which tests are missing. It tells you that these five specific rules currently have a witness, and it will tell you loudly when one of them stops having one."
+          ]
+        },
+        {
+          "heading": "What it costs to run",
+          "body": [
+            "About 2.6 seconds for the default set here, exit code 0. The full set with `--all` includes one mutation whose only witness takes roughly a minute.",
+            "It edits real source files in place, one at a time, and restores them in a `finally` with the restoration verified byte-for-byte. If a restore ever fails it throws immediately, naming the file and the command that fixes it, rather than letting the run scroll it away.",
+            "The safety property is a precondition, not a copy: it refuses to start if any target file has uncommitted changes. So even a killed process leaves damage that a single `git checkout -- <file>` undoes completely. A scratch copy of the tree would avoid the edit entirely and cost a full copy per run; the git precondition buys the same assurance for the price of one `git status`."
+          ]
+        },
+        {
+          "heading": "Where it fits",
+          "body": [
+            "It sits beside the quality gates rather than inside them: the gates say the tests must pass, and this says what the tests would notice. Section 4 of the gates lists mutation tests for versioned policies as a production gate that does not exist — this kit is not that, and does not claim to be.",
+            "The five rules it currently defends are the ones where being wrong costs the most: an agent recording a human's approval decision, a deal exactly at the approval threshold, a forged signature webhook, a policy version edited in place so every historical decision citing it now cites something else, and generic CRUD writing fields only a trusted action may set."
+          ]
+        }
+      ],
+      "boundaries": [
+        "It is not a mutation-testing tool. It generates no mutations, samples nothing, and computes no mutation score — a percentage derived from six hand-written mutations would mean nothing.",
+        "It does not prove the rules are correct, only that a test holds them. A wrong rule, faithfully defended, passes every mutation here.",
+        "It covers six rules, not the twenty-two claims in the ledger. Each mutation names the claims it defends; the rest rest on their own evidence.",
+        "It publishes no limitations[] array. Its machine-readable self-report is the stale outcome and the skipped[] list, and both fail or annotate the run rather than being absorbed silently.",
+        "It edits real source files. It refuses to start on a dirty target file precisely because it does, and a killed run leaves damage that git checkout undoes.",
+        "The default run is narrower than the full set: one mutation is skipped for speed, and printed as skipped rather than omitted.",
+        "It says nothing about which tests are missing — only whether these specific rules currently have a named witness."
+      ],
+      "claims": ["C-23", "C-20", "C-03"],
+      "limitations": ["L-03", "L-01"],
+      "jobs": ["JTBD-AX-05", "JTBD-AX-06"],
+      "docs": ["docs/FALSIFY.md", "docs/QUALITY_GATES.md"],
+      "tests": ["tests/falsify.test.js", "tests/workflow.test.js", "tests/signature-contract.test.js", "tests/intelligence-contract.test.js", "tests/module-factory.test.js"],
+      "related": ["quality-gates-before-a-merge", "test-a-package-against-the-contract", "inspect-what-your-project-composed"]
+    },
+    {
+      "id": "tool-skills-and-mcp",
+      "slug": "install-into-your-agent",
+      "title": "Giving your coding agent the instructions, over MCP or as skills",
+      "metaTitle": "Install the instructions: MCP server or skills",
+      "plainName": "Plug it into your agent",
+      "intent": "how do i give claude code or codex the instructions for this framework",
+      "summary": "Two shipped harnesses with byte-identical skill files, two stdio MCP servers, and a stated contract for what a harness must provide — which is a shell, an exit code, a JSON parser and file access, and nothing else. No MCP server is required to use the framework, no network, no credentials, no database and no long-lived process. Gemini gets no skill file at all, deliberately, and this is the third surface in the cluster that carries its blind spots in prose rather than in a limitation code array.",
+      "metaDescription": "Two harnesses with byte-identical skill files and two stdio MCP servers. No MCP server is required, and no network, credential or long-lived process runs.",
+      "sections": [
+        {
+          "heading": "What question it answers",
+          "body": [
+            "\"How do I get my agent to actually use this?\" — and, more usefully, \"what does my harness have to support before it can?\"",
+            "The failure the packaging discipline prevents is specific. A skill that says \"read ARCHITECTURE.md and the domain guide first\" behaves in exactly two ways: inside this repository it works, and installed into a stranger's project it loads, announces itself, finds no such files, and then produces confident instructions about a codebase it never read. The user sees a skill that triggered and answered — not one that failed — which is strictly worse than shipping nothing."
+          ]
+        },
+        {
+          "heading": "What it does",
+          "body": [
+            "The portability fix is to reach the project through a command rather than a path. Every shipped skill opens with the same byte-identical orientation block: run the application inspection, read `valid`, then `problems[]`, then `limitations[]`, and treat every limitation as a hard boundary on what may be claimed. The block is identical in all of them on purpose — an agent should not have to learn a new preamble per skill.",
+            "Skills declare what they need in frontmatter: a `tier` (`any-project`, `generated-project`, `repository`), the one `command` that makes them portable, the `projectSurface` source paths they need, the `repositorySurface` documents that ship only here, and `degradesTo` — one sentence saying what the skill falls back to when the repository surface is missing. A skill that cannot state its own degraded mode has not thought about being installed. Twelve skills exist under `.claude/skills/`, mirrored byte-for-byte under `.agents/skills/`, with eleven published in the distributable `skills/` subset; the one held back is the repository-tier review skill, which reviews pull requests against documents that ship nowhere else.",
+            "Two MCP servers ship over newline-delimited JSON-RPC on stdio, with diagnostics on stderr only because stdout is reserved for the protocol. The application server exposes nine tools (`crm_project_context`, `crm_list_opportunities`, `crm_create_opportunity`, `crm_request_stage_change`, `crm_list_approvals`, `crm_decide_approval`, `crm_get_trace`, `crm_scaffold_module`, `crm_doctor`), five resources and two prompts. A second documentation server exposes `search_docs`, `get_capability` and `check_job` over the documentation index, the claims ledger and the jobs index. Code-generating and destructive tools are dry-run unless `apply` is explicitly true — `crm_scaffold_module` declares `apply` with a default of `false`, and the server's own instructions state the rule to the client.",
+            "What a harness must provide is four things: run a shell command and read stdout, read the exit code, parse JSON, and read and write files in the repository. That is the whole list — Node 22+ and a checkout. What it does not need is an MCP server, a network, credentials, a database, a long-lived process or any agent-specific format.",
+            "Because output determinism is asserted rather than promised, a harness can cache a report, diff two of them or commit one, and a difference always means the project changed. No absolute path appears in either machine-readable report — not the repository root, not a temporary directory, not the invoking user's home."
+          ]
+        },
+        {
+          "heading": "What it refuses to claim",
+          "body": [
+            "The skills and MCP surfaces are the third place in this cluster where the honest answer is that there are no limitation codes, and the packaging guide is unusually direct about why each gap is a gap rather than a rough edge.",
+            "`requires` is a declaration, not an enforced check. Nothing parses it today; it is honest metadata a future gate or a human reading a diff can act on, and a skill can declare `tier: any-project` and still name a path — only review catches that. The distribution check still classifies ten of eleven skills as repository-bound because its pattern matches document paths anywhere in a skill body and cannot tell a prerequisite from background reading, so that note is accurate about the text and pessimistic about the behaviour.",
+            "Gemini gets nothing, on purpose. Two harnesses have skill files, and a file written for a third by guessing at its conventions — file name, location, front-matter, discovery rules — would look supported and silently never load, which is worse than none. The two supported copies are byte-identical and a checker enforces it, and that is also the honest description of the architecture: there is no canonical semantic source with generated adapters, there are two copies kept in step by a checker. Building the canonical source and a deterministic sync is roadmap work (DX2).",
+            "The tier-2 audience has no first-class producer. The only way to get a project built from this framework today is a starter installer or a copy of the source tree; the create-project CLI that would emit a customer's own repository is roadmap, not code.",
+            "And portability is not authorization. None of this adds authentication, tenancy or roles, and a skill running in a stranger's project runs with that user's full authority — the inspection it performs imports the project's composition, which executes it. Isolation, not a sandbox. The MCP surface inherits the same boundary: mutation over MCP is scoped narrowly and never bypasses services or workflows, and remote mutation stays gated behind production work that has not been done."
+          ]
+        },
+        {
+          "heading": "What it costs to run",
+          "body": [
+            "Nothing recurring. Both agent-facing commands start, answer and exit; there is no daemon to keep alive and no state to maintain between calls. The MCP servers are stdio processes your harness starts and stops.",
+            "Exit codes are identical across the two agent surfaces — `0` valid, `1` problems with the complete report still printed, `2` could not be read at all — so a harness that branches only on zero versus non-zero still behaves correctly.",
+            "The surface an agent must learn is budgeted and the budget is enforced. `node scripts/surface-check.js` printed here: 1/1 goal entry points, 12/12 skills, 9/10 always-on tools, 11/11 distinct commands across the skills. Every ceiling carries a written reason — a dozen skills is where descriptions start competing rather than dividing, and around ten always-on tools is where a namespace starts consuming context before any work begins. The check fails the build when the surface exceeds it, so raising a ceiling is a deliberate edit with an argument attached rather than a quiet drift."
+          ]
+        },
+        {
+          "heading": "Where it fits",
+          "body": [
+            "It is the layer between the seven commands and whatever is driving them. The whole point of the harness contract is that the value lives in the CLI and its JSON contracts, not in any harness-specific integration — a harness adapter may change where a file lives and how it is announced, and must never change what the instructions say, or two harnesses stop being the same product.",
+            "The honest neighbours are two \"not supported\" rows that bound the whole surface. There is no registry, publication, remote install, auto-update, signing or hot loading — packages and skills are checked-in source. And there is no team or tenant permission enforcement anywhere, which is the hard prerequisite before any remote exposure of any of this."
+          ]
+        }
+      ],
+      "boundaries": [
+        "No skill or MCP surface publishes machine-readable limitation codes of its own. The boundaries here are prose and review, and the commands they wrap are what carry the codes.",
+        "The requires block in each skill is a declaration nothing parses. A skill can declare a tier and still name a path it needs; only human review catches that.",
+        "No Gemini skill file ships, and none should be written by guessing at its conventions — a file in the wrong shape looks supported and silently never loads.",
+        "There is no canonical skill source with generated adapters. Two byte-identical copies are kept in step by a checker, which is different from a sync (tracked as DX2).",
+        "No MCP server is required. Both agent-facing surfaces are plain commands over plain JSON, and a harness with no MCP support loses nothing.",
+        "MCP write tools stay narrow, and anything that generates code or destroys state is dry-run unless an explicit apply flag is passed. Remote mutation is gated behind production work that does not exist.",
+        "Portability is not authorization. A skill running in a stranger's project runs with that user's full authority, and the inspection it performs imports and executes the project's composition — isolation, not a sandbox.",
+        "There is no create-project CLI and no published installable package. The audience of projects built from this framework is real and testable, but not yet a supported product surface."
+      ],
+      "claims": ["C-18", "C-17", "C-14"],
+      "limitations": ["L-01", "L-07", "L-08"],
+      "jobs": ["JTBD-AX-01", "JTBD-AX-02", "JTBD-PK-06", "JTBD-15"],
+      "docs": ["docs/MCP.md", "docs/SKILL_PACKAGING.md", "docs/AGENT_HARNESS_COMPATIBILITY.md"],
+      "tests": ["tests/mcp.test.js", "tests/skill-parity.test.js", "tests/docs-mcp.test.js", "tests/app-inspect.test.js"],
+      "related": ["inspect-what-your-project-composed", "write-a-checkable-solution-plan", "quality-gates-before-a-merge"]
+    }
+  ]
+}

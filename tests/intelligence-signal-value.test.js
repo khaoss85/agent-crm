@@ -38,7 +38,7 @@ test.after(async () => {
 });
 
 test.before(async () => {
-  root = characterizationProject({ after: (fn) => cleanups.push(fn) }, { name: 'agent-crm-signal-' });
+  root = characterizationProject({ after: (fn) => cleanups.push(fn) }, { name: 'accordo-signal-' });
   instance = await boot(root, join(root, 'data', 'signal.sqlite'));
   cleanups.push(() => instance.close());
   const lead = await instance.client.module('lead').create({

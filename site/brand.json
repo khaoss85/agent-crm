@@ -1,0 +1,49 @@
+{
+  "$comment": "Single source of brand truth for every public asset. Nothing in site/ or docs/marketing/ may hardcode a name, domain or package scope: they read these tokens. The name was decided on 2026-08-07 (Accordo) and the code surface renamed with scripts/brand-set.js; the tokens remain the single edit point, because a trademark screen could still force a second rename.",
+  "name": {
+    "status": "chosen",
+    "value": "Accordo",
+    "slug": "accordo",
+    "note": "Chosen by the founder on 2026-08-07 over Pactar (more distinctive, but a live PACT word-mark in class 9) and Pactio (a live UK legal-tech namesake in adjacent software). Research and the eliminated candidates are in docs/marketing/NAME_VERIFICATION.md. The trademark screen has NOT been run — if it comes back badly, scripts/brand-set.js runs again with a different name."
+  },
+  "domain": {
+    "status": "registered",
+    "value": "accordo.dev",
+    "note": "Registered by the founder on 2026-08-07. The registrar showed it as unavailable in a check run minutes earlier, which is consistent with that purchase — a DNS lookup the same morning had shown no A record, and this field warned that DNS silence is not proof either way. Ownership is the founder's statement; this environment can confirm the domain is registered, not to whom."
+  },
+  "repository": {
+    "status": "public",
+    "value": "https://github.com/khaoss85/agent-crm",
+    "note": "Public since 2026-08-08, confirmed against the GitHub API rather than assumed. Flipping this one field is what turns indexing on: meta robots, robots.txt, the sitemap reference, both calls to action, the status banner and the codeRepository property in the structured data all follow it. vercel.json drops X-Robots-Tag in the same commit, and scripts/site-check.js refuses to let the two disagree."
+  },
+  "npm": {
+    "status": "names-reserved",
+    "scope": "@accordo",
+    "createCommand": "npm create accordo",
+    "note": "The two unscoped names are held, the scope is not. `accordo@0.0.1` and `create-accordo@0.0.1` were published by the founder on 2026-08-09 as placeholders and confirmed against the registry here (HTTP 200, maintainer aetha-ai) rather than taken on trust; `@accordo/mcp` and `@accordo/core` still return 404, so the scope is unclaimed and server.json's identifier resolves to nothing. Neither placeholder installs a working project — `npm create accordo` is a name reservation, not a scaffold, and no document may present it as one until create-accordo actually scaffolds. Status stays short of `published` for exactly that reason: it is what gates the MCP-registry submission."
+  },
+  "license": {
+    "status": "confirmed",
+    "value": "MIT",
+    "note": "Confirmed by the founder on 2026-08-07 (ADR-023). MIT has been the repository licence since Milestone 0; what changed is that a distribution manifest may now assert it to a marketplace, which scripts/distribution-check.js refuses while the status is provisional."
+  },
+  "promise": "Describe your sales process to your coding agent; own the CRM it builds.",
+  "colors": {
+    "ink": "#18211c",
+    "muted": "#647067",
+    "line": "#dce1da",
+    "surface": "#ffffff",
+    "paper": "#f3f5f1",
+    "accent": "#1f6f50",
+    "accentSoft": "#e4f2eb",
+    "warning": "#9b5c0a",
+    "warningSoft": "#fff0d8",
+    "danger": "#a23636",
+    "dangerSoft": "#fbe7e7"
+  },
+  "colorsNote": "Inherited verbatim from apps/admin/public/styles.css so the site and the product it ships are visibly the same thing.",
+  "typography": {
+    "sans": "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    "mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+  }
+}

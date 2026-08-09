@@ -196,7 +196,7 @@ The review found two defects that could each destroy an Order permanently, and f
 
 **Webhook bytes stay bytes.** The raw body travels as a `Buffer` from the socket to verification: decoding to a UTF-8 string first would replace invalid bytes and verify something the provider never signed. Verification is over `timestamp || rawBody` with a constant-time comparison of equal-length buffers, a ±300 s window whose boundary is inclusive, and a 64 KiB bound.
 
-**`artifactHash` is provider-reported.** agent-crm does not download or hash the artifact bytes and verifies no signature cryptographically. The schema says so, the guide says so, and the Admin says so.
+**`artifactHash` is provider-reported.** Accordo does not download or hash the artifact bytes and verifies no signature cryptographically. The schema says so, the guide says so, and the Admin says so.
 
 **One limitation is retained deliberately and stated everywhere:** there is exactly one signature envelope per Quote Version, **ever**. A quote version whose envelope failed — including one the provider never received (`PROVIDER_ENVELOPE_ABSENT`, distinguished from an unknown outcome) — cannot be re-sent in M11; reconciliation is the only recovery path, and no resend framework exists. The Admin states which of the three cases applies rather than implying the provider's state is known when it is not.
 
@@ -856,3 +856,108 @@ either.
 "what if two packages claim one definition kind", and no new AX1 representation
 to design. Every recorded routing decision keeps the fingerprints that make it
 explainable.
+
+## ADR-023 — MIT is confirmed as the licence, before any distribution manifest asserts it
+
+**Decision.** The framework ships under MIT, confirmed rather than assumed. `site/brand.json`
+moves `license.status` to `confirmed`, which is what `scripts/distribution-check.js` reads before
+it will let a plugin manifest, a marketplace entry or a registry record state a licence to a
+third party.
+
+**Why it needed an ADR at all.** MIT has been the repository's licence since Milestone 0, so
+nothing about the file changes. What changes is the *kind of statement* being made.
+`docs/strategy/MASTER_PLAN.md` §10.2 reserved the final confirmation as an explicit human
+decision, and three distribution manifests already carry a `license` field. A licence in a
+manifest is an assertion to a marketplace and to everyone who installs from it — not a
+description of the working tree — so the check refuses to let an unconfirmed one out. Choosing
+the public name is what made that refusal binding, because it is the point at which publication
+stops being hypothetical.
+
+**Why MIT and not a source-available or copyleft licence.** The positioning depends on it.
+`docs/strategy/CATEGORY.md` differentiates structurally, not rhetorically, on ownership: the
+customer's application must run without us, with no share-alike obligation reaching their
+product and no enterprise-gated files in the tree. A copyleft core would make the central claim —
+*"if the vendor disappears tomorrow you keep an application you own"* — materially weaker than
+the alternative it is drawn against, and a source-available licence would make it false. The
+licence is load-bearing for the strategy, which is exactly why it could not be left implicit.
+
+**What this does not decide.** Nothing about a future managed offering, and nothing about the
+licence of anything a customer generates — generated code belongs to the customer under whatever
+terms they choose, which is the point of generating it.
+
+## ADR-024 — The build benchmark splits into a runnable Edition L and a blocked Edition D, scored in points
+
+**Status:** accepted.
+
+**Context.** `docs/strategy/CRM_BUILD_BENCHMARK.md` defines six gates, of which
+two — G5 (deployed smoke check) and G6 (trace/audit inspectable on a deployed
+instance) — require a public deployment. This framework has no authentication,
+tenancy or RBAC, and `crm app inspect` reports `productionPosture: "local
+development only"`. Running G5 and G6 honestly would mean exposing an
+unauthenticated CRM on the public internet in order to earn 25 points, which is
+not a benchmark result — it is a security incident with a score attached.
+
+So the benchmark as written could not be run, and the pressure was to run four of
+the six gates and publish the number. That is the decision this ADR exists to
+refuse.
+
+**Decision.**
+
+1. **Two named editions, and the names are published together.** Edition L is
+   G1–G4, scored locally today by `benchmarks/harness/score.js`. Edition D is
+   G5–G6, **blocked on the Production Spine**. Every scored run carries
+   `editionD: { outcome: "BLOCKED_NO_PRODUCTION_SPINE" }` with the reason in
+   full. G5 and G6 are not run, not estimated, and never quietly dropped — a
+   report that omitted them would read exactly like a report that passed them.
+2. **Points out of 75, never a percentage, and never renormalised.** The four
+   local gates keep their protocol weights (25 / 15 / 25 / 10). Renormalising to
+   100 yields 33.3 / 20 / 33.3 / 13.3 — a rounding convention nobody remembers
+   attached to a figure that reads like a success rate. A point total out of a
+   stated maximum cannot be mistaken for one. It also means the result never has
+   to slip past the published-percentage guard in `scripts/site-check.js`;
+   routing around that guard would weaken it in spirit even where the regex would
+   not have noticed.
+3. **Three outcomes per gate, and only one of them earns.** `pass`, `fail` or
+   `needs-operator`. A gate the instrument cannot judge is never a pass, and a run
+   with any `needs-operator` gate is `scoreable: false` and enters no aggregate.
+   The alternative — treating an unjudgeable gate as a pass to keep runs
+   scoreable — manufactures exactly the number nobody can defend.
+4. **The per-prompt verdict is binary and stays separate from the point total.**
+   All four gates must pass. A run scoring 65 of 75 that misses G3 is a **failed
+   prompt**, and the two figures are never substituted for one another.
+5. **G1 is read from an append-only operator record, not measured.** Whether a
+   human edited a file is witnessed only by the operator, so `benchmarks/harness/record.js`
+   writes interventions and approvals as they happen — an intervention costs G1's
+   25 points and the tool says so at the moment of recording, not at scoring time.
+   Zero interventions passes, one or more fails, and **no record at all is
+   `needs-operator`**, not a free 25 points. Making G1 permanently unjudgeable
+   would reproduce, one layer down, the exact structural zero that Edition L
+   exists to remove — and it would do it quietly.
+6. **SABR and TTFW are Edition D metrics and may not be computed from Edition L.**
+   SABR counts *fully successful* prompts against six gates; with two unrunnable,
+   an Edition-L SABR is not a smaller SABR but a different metric wearing the same
+   name. TTFW is measured to a deployed smoke check that does not exist. Edition L
+   publishes a **prompt-pass count over a stated denominator** and nothing else.
+
+**Provenance is enforced at preparation, not asked for at publication.**
+`benchmarks/harness/prepare.js` refuses a run with no `--agent` and `--model`
+(a default would silently pool results from different models), refuses a dirty
+tree unless `--allow-dirty` stamps `treeDirty: true` into the record, refuses a
+run directory inside the framework checkout (which would dirty the very tree the
+run's SHA claims to describe), and refuses to write into a directory that already
+holds a run. The run id is derived — `<promptId>-<sha>-<attempt>` — so two
+operators on two machines name the same run the same thing.
+
+**What would retire this ADR.** Edition D becomes runnable when the Production
+Spine lands: authentication, tenancy and RBAC, at which point `app inspect` stops
+reporting `local development only`. At that point G5 and G6 are run, the six-gate
+protocol is whole again, SABR and TTFW recover their definitions, and the edition
+split is retired rather than reinterpreted. Nothing about Edition L's scoring is
+changed retroactively; old runs keep saying what they said.
+
+**What this does not decide.** Nothing about the comparison arms (Twenty, Frappe,
+from-scratch), which need the same instrument pointed at a different subject and
+have their own reinterpretation problem for G1–G4 over a configured product. And
+nothing about publication: which sentences an Edition L result licenses is
+`docs/marketing/BENCHMARK_PUBLICATION.md`, deliberately a separate document with
+a separate gate.

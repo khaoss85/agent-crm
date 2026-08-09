@@ -1,7 +1,7 @@
 {
   "name": "accordo",
   "version": "0.1.0",
-  "description": "The open-source framework coding agents use to build custom CRMs",
+  "description": "The open-source framework coding agents use to build custom CRMs: domain modules, deterministic workflows, human approvals, audit and trace.",
   "author": {
     "name": "Daniele Pelleri",
     "url": "https://github.com/khaoss85"
@@ -12,16 +12,26 @@
   "keywords": [
     "crm",
     "framework",
+    "code-generation",
     "workflows",
     "approvals",
-    "audit"
+    "audit",
+    "mcp",
+    "revenue-operations"
   ],
+  "skills": "./skills/",
+  "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
     "displayName": "Accordo",
     "developerName": "Daniele Pelleri",
     "shortDescription": "Build a custom CRM as code you own",
     "longDescription": "Accordo is the open-source framework coding agents use to build custom CRMs. Describe a commercial process and the agent generates domain modules, deterministic workflows, human approval boundaries, audit and trace — as reviewable code in your own repository. Pre-release: local SQLite, no authentication or tenancy.",
     "category": "Productivity",
-    "websiteURL": "https://accordo.dev"
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://accordo.dev",
+    "defaultPrompt": "Read AGENTS.md, then run `npm run crm -- app inspect --json` and tell me which parts of my commercial process this project already supports and which it does not",
+    "brandColor": "#1f6f50",
+    "composerIcon": "./site/assets/mark.svg",
+    "screenshots": []
   }
 }

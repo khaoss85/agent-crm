@@ -1,15 +1,35 @@
 ---
 name: create-crm-workflow
-description: Implement a deterministic cross-module CRM process with policy, trace, audit and optional human approval. Use for stage transitions, follow-ups, onboarding, renewals and approval rules.
+description: Implement a deterministic cross-module CRM process with policy, trace, audit and optional human approval. Use for stage transitions, follow-ups, onboarding, renewals and approval rules. Do not use for a stated business objective ("we need to manage renewals") — that is solve-business-goal, which discovers what exists first and may call this skill itself; nor for a single custom object (create-crm-module), a named milestone (the build-* skills) or a failing run (debug-crm-run).
+requires:
+  tier: generated-project
+  command: "crm app inspect"
+  projectSurface: ["packages/workflows/src/engine.js"]
+  repositorySurface: ["docs/ACTIONS.md"]
+  degradesTo: "the actions, policies and records reported by `crm app inspect --json`, plus the workflow engine and the existing workflows in the project's own source"
 ---
 
+## Orient yourself first
+
+```bash
+npm run crm -- app inspect --json
+```
+
+Read `valid`, then `problems[]`, then `limitations[]`, in that order. Every problem is fixed or reported before anything is built on top of it, and **every limitation is a hard boundary on what you may claim.** Then read `packages[]`, `capabilities[]`, `resources[]`, `actions[]`, `policies[]` and `providers[]`: that list is what exists. A capability absent from the report does not exist, whatever a record name, a label or a document suggests.
+
+If the repository documents this skill names are absent, you are in a project built from this framework rather than in the framework itself. The inspection report is then the source of truth and those documents are optional background — do not guess at their contents, and do not assume a path exists because this skill names it.
+
+`actions[]` tells you which lifecycle steps already exist and their declared `fromStates`, which is usually the answer to step 0 below.
+
 0. First decide which tool fits. A lifecycle step on **one record** (qualify,
-   close, approve) is a **record action** — see `docs/ACTIONS.md` and the
-   create-crm-module skill; the action runtime already gives you one atomic
-   transaction, events released only after commit, and a trace. Use a workflow
-   for a multi-record or multi-step process, or when a human approval gate is
-   involved.
-1. Read `packages/workflows/src/engine.js` and an existing workflow.
+   close, approve) is a **record action** — see the create-crm-module skill, and
+   `docs/ACTIONS.md` as background where the project carries it; the action
+   runtime already gives you one atomic transaction, events released only after
+   commit, and a trace. Use a workflow for a multi-record or multi-step process,
+   or when a human approval gate is involved.
+1. Read the workflow engine and an existing workflow in this project's own
+   source (`packages/workflows/src/engine.js` here). The engine is the contract;
+   copy an existing workflow's shape rather than inventing one.
 2. Express the business process as small named steps.
 3. Keep policy deterministic and explicit; an LLM may recommend but must not silently decide protected state.
 4. Use module services for all state changes.

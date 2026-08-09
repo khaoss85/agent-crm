@@ -161,8 +161,8 @@ test('the same key records once: repeats, a race and two connections', async (t)
   assert.equal(app.modules.get('delivery-time-entry').service.countWhere({ deliveryWorkPackageId: wp.id }), 1);
 
   // A genuinely separate application instance on the same database file.
-  const { createAgentCrmApp } = await import(`file://${join(root, 'packages/app/src/index.js')}`);
-  const second_ = createAgentCrmApp({ dbPath: app.database.path, clock: () => '2026-09-15T10:00:00.000Z' });
+  const { createAccordoApp } = await import(`file://${join(root, 'packages/app/src/index.js')}`);
+  const second_ = createAccordoApp({ dbPath: app.database.path, clock: () => '2026-09-15T10:00:00.000Z' });
   t.after(() => second_.close());
   await record(second_);
   assert.equal(second_.modules.get('delivery-time-entry').service.countWhere({ deliveryWorkPackageId: wp.id }), 1,

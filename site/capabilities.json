@@ -1,0 +1,565 @@
+{
+  "capabilityContract": 1,
+  "$comment": "The six shipped business domains, described boundary-first. Every entry names the claim and limitation ids from site/claims.json that carry it, the job ids from docs/benchmarks/jobs.json it covers (including the 'not supported' rows that are its honest neighbours), the docs it was written from and the tests that prove it. 'boundaries' is the field this cluster exists for: it states what the domain does not do, in the same breath as what it does. Nothing here may assert a capability the cited tests do not hold.",
+  "entries": [
+    {
+      "id": "cap-lead-intelligence",
+      "slug": "lead-intelligence",
+      "title": "Lead scoring and routing you can explain a year later",
+      "plainName": "Lead scoring, routing and assignment",
+      "intent": "lead scoring rules engine and automatic lead routing, open source",
+      "summary": "Enrichment, scoring and routing over a Lead record — all of it deterministic, none of it wired to a real data vendor. A score is a versioned weighted rule model that persists one contribution row per rule and the fingerprint of the model version that produced it; a routing decision persists one evaluation row per candidate target with the exact reason it was in or out. The enrichment provider is a checked-in fixture, and routing targets are application identifiers rather than authenticated users, so an assignment is a record and not an authorization.",
+      "metaDescription": "Deterministic lead enrichment, scoring and routing: one contribution row per rule, one evaluation row per candidate. The enrichment provider is a fixture.",
+      "sections": [
+        {
+          "heading": "What it models",
+          "body": [
+            "A lead is captured, then moves through five explicit actions: record-signal appends an immutable behavioral signal deduped by source key; enrich calls a provider and stores an immutable snapshot with its provenance; score runs a versioned model and writes a ScoreRun plus one contribution per rule; route runs a versioned policy and writes a RoutingRun, one evaluation row per candidate, and an assignment. Qualification and conversion then turn the lead into a Company, a Contact and an Opportunity.",
+            "Everything the run touched stays readable afterwards. The snapshot, the signals, the score run and its contributions, the routing run and its per-candidate evaluations, and the assignment history are all separate records with get and list only — there is no public create or update on any of them, so no client can write a score or forge an assignment. Traces are queryable by workflow name (lead.enrich, lead.score, lead.route) and every mutation leaves an audit event.",
+            "Eligibility for a routing target is active status, a score band and capacity, where current load is the exact indexed count of active leads assigned to that target. Converting or disqualifying a lead releases its slot. Ties break by priority descending, then load ascending, then key — never by randomness, so the same inputs produce the same assignment every time."
+          ]
+        },
+        {
+          "heading": "How a coding agent builds it",
+          "body": [
+            "Providers, scoring models, routing policies and targets are checked-in JavaScript definitions registered through one generated index file. The repository ships that file empty; the starter writes it. Each {name, version} pair persists a deterministic declared-definition fingerprint at startup, in a single transaction, so concurrent boots serialize.",
+            "Versions are published, never edited. Editing the source of a registered version stops the application on the next boot rather than silently changing what an old score meant. Rollback is publishing a new version derived from an earlier definition — v3 carrying v1's rules — because git history is not runtime policy versioning.",
+            "The fingerprint captures a definition's own source plus its declared config, which is passed frozen to every evaluation. A handler that closes over a mutable outer variable or an out-of-file helper is not captured, so every threshold and tunable belongs in config. Unsupported values there — Date, Map, Set, class instances, BigInt, symbols, NaN, cycles — fail fingerprinting loudly rather than producing a fingerprint that does not describe the definition.",
+            "The agent-facing instructions are in the build-lead-intelligence skill, mirrored for other harnesses as docs/LEAD_INTELLIGENCE.md."
+          ]
+        },
+        {
+          "heading": "What the framework refuses",
+          "body": [
+            "The provider call happens in the action's prepare phase, outside the write transaction. A provider outage, timeout or out-of-contract payload becomes a stable PROVIDER_FAILED, PROVIDER_TIMEOUT or PROVIDER_INVALID with nothing persisted and an honest failed trace — never a partial snapshot and never an invented value.",
+            "Routing refuses an unscored lead with 409 LEAD_NOT_SCORED and an already-assigned one with 409 ALREADY_ASSIGNED. When no target is eligible it falls to the single declared fallback queue with a recorded reason, and if there is no fallback it refuses with 409 NO_ELIGIBLE_TARGET rather than picking someone. Under concurrency across connections exactly one final assignment survives; a race for the last capacity slot never oversubscribes a target.",
+            "Enrich, score and record-signal run only from the new and qualified states; route runs only from new. Converted and disqualified leads sit outside the intelligence lifecycle, enforced server-side by declared from-states and merely mirrored by the Admin."
+          ]
+        },
+        {
+          "heading": "What proves it",
+          "body": [
+            "tests/lead-intelligence-e2e.test.js drives capture through assignment, including the provider failure modes, the concurrency race for a last capacity slot, and the reproduction of a historical routing decision after the target data has changed. tests/intelligence-contract.test.js holds the definition and fingerprint contract, and the qualification and conversion suites cover the lead's own lifecycle.",
+            "The starter application runs three leads end to end and lands them on Enterprise Italy, Spain Sales and the fallback queue respectively — a composed run, not a fixture assertion."
+          ]
+        },
+        {
+          "heading": "Where it stops",
+          "body": [
+            "There is no real data vendor, no ranked work queue, no manual reassignment and no capacity calendar. The parts that would make any of those safe — authentication, tenancy and role enforcement — are Production Spine work that has not been done, and the boundary is stated here rather than left for a reader to discover after they have loaded real people into it."
+          ]
+        }
+      ],
+      "boundaries": [
+        "Enrichment calls a checked-in fixture provider. No Clearbit, Apollo, ZoomInfo or any other data source is wired, no credential ships, and no lead in this repository has ever been enriched from the internet.",
+        "Scoring is a deterministic weighted rule model. Nothing trains, fits, backtests or learns; there is no model artifact, no training set and no accuracy figure to quote.",
+        "Routing targets are trusted application identifiers, not authenticated users. Assigning a lead to one records a decision; it grants nobody access to anything, because there is no access control to grant.",
+        "There is no manual reassignment action. The assignment record already carries source, previousAssignmentId and reason so a future override lands as data, but no override exists and no manager permission may be claimed before authentication does.",
+        "Re-routing an assigned lead is refused, not supported. The only path is assign once; changing your mind is deferred work, not a feature with a rough edge.",
+        "A scored lead carries a score field and nothing sorts it. There is no prioritized list surface, no saved view, no bulk edit and no global search.",
+        "The Lead model belongs to the starter, not to the framework core. Copy the starter and you own it; there is no built-in Lead module to upgrade."
+      ],
+      "claims": [
+        "C-06",
+        "C-07",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-06",
+        "L-09"
+      ],
+      "jobs": [
+        "JTBD-04",
+        "JTBD-05",
+        "JTBD-05b",
+        "JTBD-LI-01",
+        "JTBD-LI-02",
+        "JTBD-LI-04",
+        "JTBD-LI-07",
+        "JTBD-LI-03",
+        "JTBD-LI-06",
+        "JTBD-LI-09"
+      ],
+      "docs": [
+        "docs/LEAD_INTELLIGENCE.md"
+      ],
+      "tests": [
+        "tests/lead-intelligence-e2e.test.js",
+        "tests/intelligence-contract.test.js",
+        "tests/lead-qualification-e2e.test.js",
+        "tests/lead-conversion-e2e.test.js"
+      ],
+      "related": [
+        "quote-to-cash-cpq"
+      ]
+    },
+    {
+      "id": "cap-quote-to-cash-cpq",
+      "slug": "quote-to-cash-cpq",
+      "title": "CPQ quotes, price books and a discount approval that waits for a human",
+      "metaTitle": "CPQ quotes, price books and human discount approval",
+      "plainName": "Quotes, price books, discount approval",
+      "intent": "open source CPQ with a quote approval workflow and discount rules",
+      "summary": "A catalog, price books, composite quotes priced entirely on the server, immutable quote versions, and a versioned discount policy whose only two outcomes at the boundary are auto-approve or stop and wait for a named human. The name stops at the quote: nothing here bills, invoices or takes payment. The catalog provider is a deterministic fixture rather than Stripe or Zuora, money is integer minor units with no conversion, and unlike periods and unlike currencies are never summed into a grand total.",
+      "metaDescription": "Catalog, price books and quotes priced on the server, with a versioned discount policy that auto-approves or waits for a named human. Nothing bills or invoices.",
+      "sections": [
+        {
+          "heading": "What it models",
+          "body": [
+            "The pricing model is Product to ProductVersion to Offer to PriceComponent to Tier. A Product is stable identity, a ProductVersion is an immutable commercial description, and an Offer is the sellable package — versioned as a whole, so its name, eligibility, every component and every tier are fingerprinted together and any pricing change creates a new immutable revision while the prior one is deactivated.",
+            "One Offer may carry several components mixing one-time and recurring charges, each declaring a charge type, a pricing model (flat fee, per unit, volume or graduated), a recurrence interval and, for tiered models, an ordered schedule that must be strictly increasing and end open-ended — gap-free and overlap-free by construction. One quote line is one offer and one quantity, and the quantity semantics are explicit rather than implied: a flat fee is charged once and quantity never multiplies it, a volume tier prices the entire quantity at the tier the total reaches, and a graduated schedule prices each band separately.",
+            "A quote binds one opportunity, one price book and one currency. Submitting freezes an immutable Quote Version carrying everything needed to reproduce the commercial decision after any catalog change: offer identity and revision, product version, every component definition, the complete tier schedule, the calculated band breakdown, quantity, list, discount and net per component, provider provenance, and one grouped total per currency, interval and interval count."
+          ]
+        },
+        {
+          "heading": "How a coding agent builds it",
+          "body": [
+            "Sync the catalog from a provider, create a quote from an opportunity and a price book, add lines with an expected revision for optimistic concurrency, submit against a named policy version, then have a human decide. Every amount on every one of those calls is calculated by the server; the client sends an offer, a quantity and a basis-point discount, and nothing else about money.",
+            "Discount policies are code-first versioned definitions with declared JSON-safe config. Thresholds live in that config, never in closures, because config is part of the declared-definition fingerprint — changing a threshold without publishing a new version stops the boot rather than quietly re-deciding old quotes. Evaluate receives a deep-frozen context and returns synchronously one of auto_approve, approval_required or reject, with bounded reason, approval-key and matched-rule metadata. The decision, the policy name, the version and the fingerprint are stored on the Quote Version, so a quote from last quarter still explains itself after v2 ships.",
+            "Every record in the domain — product, price book, offer, component, tier, quote, quote line, quote version and its lines, components and totals, and the approval — is publicly read-only. They exist solely through catalog sync and the quote actions on a trusted in-process path, so no client can forge a price, a total or a version."
+          ]
+        },
+        {
+          "heading": "What the framework refuses",
+          "body": [
+            "An agent actor calling approve on a discounted quote is refused with 403 HUMAN_APPROVAL_REQUIRED. An agent may build the catalog, the quote, the lines and the submission; only actor.type user may decide, and there is exactly one decision per version (409 ALREADY_DECIDED).",
+            "Pricing shapes the framework cannot compute exactly are never approximated as flat prices. Metered usage, overage, proration, ramp deals, minimum commitments, attribute-based pricing, tax-inclusive computation, FX and custom provider formulas are stored with quoteEligible false and a bounded reason, no component rows are invented for them, and quoting one is a stable 409 OFFER_NOT_QUOTE_ELIGIBLE.",
+            "The arithmetic refuses to be plausibly wrong. Component discounts truncate and never round up, every sum is overflow-checked and an overflow is a refusal rather than a silently wrong number, a superseded offer revision cannot be added to a new draft (409 OFFER_INACTIVE), a stale draft edit is 409 STALE_REVISION, and concurrent submits produce exactly one version because version numbers are database-monotonic.",
+            "Provider failures leave no partial catalog state: PROVIDER_FAILED, PROVIDER_TIMEOUT and PROVIDER_INVALID are stable codes with an honest failed trace, and a sync that changes nothing writes nothing — no fake audit events, no fake revisions."
+          ]
+        },
+        {
+          "heading": "What proves it",
+          "body": [
+            "tests/commercial-e2e.test.js drives the approval boundary, the revise-and-version-2 path, concurrency, fault injection, provider failures and catalog drift; the 403 refusal for an agent actor is asserted there by line rather than by test name, which is stated rather than glossed. tests/commercial-contract.test.js pins the pricing and rounding contract and tests/admin-quotes.test.js covers the Quotes screens.",
+            "The load-bearing proof is drift: a provider changes a tier boundary and a price, new immutable offer revisions appear, every existing Quote Version stays byte-identical, and new drafts price at the new revision."
+          ]
+        },
+        {
+          "heading": "Where it stops",
+          "body": [
+            "This is the quote half of quote-to-cash and there is no other half. An approved quote version continues into signature and an immutable Order; it does not continue into an invoice, a payment or a revenue figure, because none of those exist anywhere in the repository."
+          ]
+        }
+      ],
+      "boundaries": [
+        "Nothing bills. There is no invoice, no payment, no dunning, no tax and no revenue recognition, and the phrase quote-to-cash stops at the quote.",
+        "The catalog provider is a deterministic offline fixture. No Stripe, Zuora, ERP or CPQ adapter ships, no credential ships, and full Stripe or Zuora support is not claimed — the provider mapping table describes what a future adapter would normalize to.",
+        "There is no quote PDF and nothing is sent to a customer. The quote exists as records and Admin screens; no document is rendered, and no notification adapter delivers anything to anyone.",
+        "requiredApprovalKey — sales-manager, finance — is a label printed on the approval, not enforced security. The server checks that the actor is a user, never which user, because there is no authentication to ask.",
+        "ARR, MRR and TCV are deliberately not derived, and there is no grand total. A quote persists one one-time total plus one total per currency, interval and interval count; unlike periods are never summed and there is no currency conversion.",
+        "Metered usage, overage, proration, ramps, minimum commitments and attribute-based pricing are recorded as not quotable rather than approximated. Quoting one is a refusal, which is the point.",
+        "Approval is proven for the quote's discount policy. There is no general policy engine over arbitrary custom objects."
+      ],
+      "claims": [
+        "C-08",
+        "C-21",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-05"
+      ],
+      "jobs": [
+        "JTBD-CO-01",
+        "JTBD-CO-03",
+        "JTBD-CO-04",
+        "JTBD-CO-02",
+        "JTBD-02",
+        "JTBD-03",
+        "JTBD-CS-05"
+      ],
+      "docs": [
+        "docs/COMMERCIAL_OPERATIONS.md"
+      ],
+      "tests": [
+        "tests/commercial-e2e.test.js",
+        "tests/commercial-contract.test.js",
+        "tests/admin-quotes.test.js"
+      ],
+      "related": [
+        "lead-intelligence",
+        "signature-to-order"
+      ]
+    },
+    {
+      "id": "cap-signature-to-order",
+      "slug": "signature-to-order",
+      "title": "From e-signature to exactly one immutable order",
+      "plainName": "E-signature and signed orders",
+      "intent": "e-signature workflow with verified webhooks that creates an order",
+      "summary": "An approved quote version becomes one signature envelope — one, ever — whose provider events are cryptographically verified before any state changes, and whose completion produces one immutable Order in a single transaction. Every signature provider here is an offline fixture: no DocuSign, Adobe Sign or Dropbox Sign adapter exists, no credential ships, and no envelope has ever been sent to a real signer. The signed document is canonical JSON, not a PDF, and the artifact hash is provider-reported rather than independently recomputed.",
+      "metaDescription": "One signature envelope per approved quote version, verified before any state change, then one immutable Order. Every signature provider is an offline fixture.",
+      "sections": [
+        {
+          "heading": "What it models",
+          "body": [
+            "A human requests signature on an approved quote version. A deterministic canonical JSON document package is derived from the immutable snapshot rows — quote and version identity, parties, the offer and product-version snapshot, every component with its tier schedule and band breakdown, grouped totals, the discount-policy decision and the signer list — and SHA-256 is taken over exactly the bytes the provider receives. Object keys sort by code unit, array order is preserved, there is no whitespace and no locale-sensitive comparison anywhere. CRLF and LF, precomposed and decomposed Unicode, 1 and \"1\" are different documents; nothing is silently normalized.",
+            "The envelope moves over a published allowed-transition table, not a rank comparison, because completed, declined and voided are branching outcomes rather than points on a scale. Provider events land in an append-only inbox with a unique provider event id and a fingerprint of the verified bytes; each records whether its effect was applied, ignored or quarantined. A completion performs the envelope transition, the signer evidence, the signed artifact, the Order with its lines, components, tiers and grouped totals, the managed links and the audits in one transaction.",
+            "The Order copies everything from the Quote Version and re-reads nothing from the live catalog. A catalog tier and price change after signing leaves both the Quote Version and the Order byte-identical."
+          ]
+        },
+        {
+          "heading": "Two transactions that never pretend to be one",
+          "body": [
+            "A local database and a remote provider cannot commit atomically. Rather than hide that, an action declares a bounded external-operation shape: intent inside transaction A, external outside every transaction with a bounded timeout, finalize inside transaction B, and compensate in its own transaction only when a later phase failed. The external context carries no database, no modules and no managed writes — it sees the frozen intent value, the validated input, the actor and the provider registry, and nothing else. Action code declares phases; it never gains transaction control.",
+            "One trace run records the intent, external, finalize and compensate spans separately, so local intent, the provider call and local finalization are always distinguishable when something goes wrong. A failed envelope keeps the failure phase and code, so a provider request that failed, a local finalization that failed after a possible provider success, a verification failure and an artifact failure stay four different facts.",
+            "The recovery policy is one sentence: never silently retry, always reconcile. Reconciliation queries the provider outside every transaction, by provider envelope id when known and otherwise by the deterministic idempotency key, applies the same monotonic transition and the same atomic completion, never duplicates an event, artifact or order, and says absent-at-provider when the provider holds nothing. No background scheduler runs it — it is always an explicit, audited call."
+          ]
+        },
+        {
+          "heading": "What the framework refuses",
+          "body": [
+            "Only a user actor may request a signature; an agent is refused 403 HUMAN_APPROVAL_REQUIRED. An agent may prepare the quote, the version and the signer inputs — a human sends.",
+            "There is exactly one envelope per quote version, ever: the source key is database-unique and doubles as the provider idempotency key, so a repeat is 409 ENVELOPE_EXISTS and a second provider envelope is structurally impossible. An idempotency key is treated as a lookup rather than an identity — before a provider envelope is adopted, at creation and at reconciliation, it must agree with the local intent on the document hash and the signer set, and a disagreement is 409 PROVIDER_ENVELOPE_MISMATCH with nothing bound.",
+            "Webhook verification runs before any state mutation, over the raw bytes as they came off the socket, with constant-time HMAC-SHA256 and a replay window. A failure is a stable 401 that never echoes the payload, the signature or the key. The same event id with the same bytes is a duplicate; the same id with different bytes is 409 EVENT_ID_CONFLICT rather than an acknowledged replay. An event for an unknown envelope is quarantined as evidence — not discarded, not an error — and linked once the envelope learns its provider id, so an early completion is never lost.",
+            "A duplicate, late or contradictory event can never regress a completed envelope, and the document package is rebuilt and re-hashed before an Order is created: a snapshot that really moved is 409 DOCUMENT_HASH_MISMATCH rather than a mis-signed order."
+          ]
+        },
+        {
+          "heading": "What proves it",
+          "body": [
+            "tests/signature-order-e2e.test.js walks the crash and recovery matrix — including a really killed child process and two application instances on one database — and asserts that in every row requesting again is refused, reconciliation is idempotent, and no second provider envelope can exist for one quote version. tests/signature-contract.test.js holds the transition table and the verification contract; tests/admin-signature.test.js covers the screens and the caveats they must print.",
+            "The order key is database-unique per quote version, so duplicate webhooks, concurrent webhooks and a webhook racing a reconcile can only ever produce one Order."
+          ]
+        },
+        {
+          "heading": "Where it stops",
+          "body": [
+            "This produces a signed commitment and an immutable commercial snapshot. It does not produce fulfillment, billing, payment, invoicing, tax, revenue recognition, cancellation, amendment or renewal, and a quote version whose envelope failed cannot be sent again — reconciliation is the only recovery path, and the Admin says which of the three failure cases applies instead of implying the provider's state is known when it is not."
+          ]
+        }
+      ],
+      "boundaries": [
+        "Every signature provider is an offline fixture. No DocuSign, Adobe Sign or Dropbox Sign adapter exists, no credential ships, and no envelope has ever been sent to a real signer.",
+        "The webhook verification key is test-only and lives in checked-in source. Rotation, per-tenant keys and a secret store are Production Spine work, so this is a verified webhook contract, not production webhook security.",
+        "The signed document is canonical JSON with the media type application/vnd.accordo.quote-package+json. It is not a PDF and is never called one.",
+        "The artifact hash is provider-reported. The framework never downloads the artifact bytes and verifies no signature cryptographically; what it does verify locally is that the stored canonical document re-hashes to the document hash at completion.",
+        "Signer identity assurance is not claimed. All signers are required, one to five of them, and the declared order is recorded and displayed but not sequentially gated — no reminders, no delegation, no conditional routing.",
+        "A failed envelope cannot be re-sent. There is no resend framework and no scheduler; reconciliation is an explicit call a human, a test or the starter makes.",
+        "An Order carries no fulfillment, billing, payment or invoice state, no ARR, MRR or TCV, and no amendment or cancellation path."
+      ],
+      "claims": [
+        "C-09",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-05"
+      ],
+      "jobs": [
+        "JTBD-CO-05",
+        "JTBD-CO-06",
+        "JTBD-CO-07",
+        "JTBD-CO-04",
+        "JTBD-08",
+        "JTBD-14"
+      ],
+      "docs": [
+        "docs/SIGNATURE_ORDER.md"
+      ],
+      "tests": [
+        "tests/signature-order-e2e.test.js",
+        "tests/signature-contract.test.js",
+        "tests/admin-signature.test.js"
+      ],
+      "related": [
+        "quote-to-cash-cpq",
+        "contract-and-subscription"
+      ]
+    },
+    {
+      "id": "cap-contract-and-subscription",
+      "slug": "contract-and-subscription",
+      "title": "Turning a signed order into a contract and a subscription",
+      "plainName": "Contract and subscription activation",
+      "intent": "activate a subscription and contract from a signed order",
+      "summary": "A signed immutable Order activates, through a versioned policy and one human decision, into a Commercial Contract, an immutable contract version, one contract line per order component, a Subscription with its lines, and explicitly pending delivery and service obligations. Two things must be said first: the term was never signed — the document package carries no dates, so every date here is operational metadata a human enters after signature with a required reason — and nothing bills, renews, amends or cancels, because there is no scheduler and no billing anywhere in this framework.",
+      "metaDescription": "A signed Order activates into a contract, a contract version, a subscription and pending obligations. A human enters the term; nothing bills, renews or amends.",
+      "sections": [
+        {
+          "heading": "What it models",
+          "body": [
+            "plan-activation is read-only and safe for an agent: it reports what activation would create and writes nothing at all — no domain record, no business audit, no event. activate-contract then does everything in one transaction: the activation run, the contract, its immutable version, one line per order component, the subscription and its lines, and one pending delivery or service obligation per component that owes something beyond the money.",
+            "Identity is enforced by the database rather than by a check-then-write, so two concurrent activations — in one application or across two connections — produce exactly one contract. The Order is never modified; activation only sets its managed contract link. And the contract reads independently forever after: deactivate every offer, rewrite live component prices, publish a new catalog revision, rename the customer, and the contract and its lines do not move, because every value was copied from the Order and the customer name came from the Order's own party snapshot."
+          ]
+        },
+        {
+          "heading": "Recurrence is not a classification",
+          "body": [
+            "The tempting rule — recurring becomes a subscription, one-time becomes delivery — is wrong in a way that silently mis-files real money. Annual premium support is recurring money and future service work at the same time; a single exclusive label has to drop one of them, and the first implementation dropped the subscription line, removing real recurring revenue from the Subscription.",
+            "So the policy answers two independent questions per component. The commercial axis returns subscription, non_subscription or ambiguous; the obligations axis returns any combination of delivery and service, an explicit empty list, or ambiguous. Every order component still becomes exactly one contract line whatever the answers are, and no obligation type is ever created twice for one component.",
+            "An empty obligations list is a decision. ambiguous is the absence of one, and it blocks activation until a human resolves that one axis of that one component with a stated reason. The single coherence rule the domain enforces regardless of policy or override: a subscription line must recur, so overriding a one-time charge into a subscription is 409 CLASSIFICATION_INCOHERENT — recording a one-time fee as a recurring right would put a false amount into every future recurring figure."
+          ]
+        },
+        {
+          "heading": "What the framework refuses",
+          "body": [
+            "Only a user actor may activate; an agent is 403 HUMAN_APPROVAL_REQUIRED. A plan is not an authorization token — activation recomputes the whole classification inside the transaction from the Order, so a plan that looked activatable a minute ago does not make an activation succeed unless the same decisions are supplied again.",
+            "The client never supplies an amount, a product, a tier or a source hash. The only client inputs are the policy identity, three calendar dates and their required reason, two recorded renewal flags, and human overrides. Everything commercial is copied from the Order snapshot.",
+            "Activation refuses anything it cannot prove, each with a stable code: an order that is not accepted, an order with no completed signature evidence, an envelope, artifact and order that do not belong together, a disagreement on the signed document hash, a snapshot missing lines, components or totals, an order already activated, and a term that ended before the activation.",
+            "A policy that returns a Promise, an unknown type, an unbounded reason or that throws is a 500 and nothing is activated. Dates are validated by round-trip, so 2026-02-30 and 2026-13-01 are refused rather than normalized into a different day; autoRenew must be a strict boolean and a notice period requires it, because a notice against a renewal that cannot happen is a clause that can never apply."
+          ]
+        },
+        {
+          "heading": "How a coding agent builds it",
+          "body": [
+            "This is the first domain built outside the kernel. Everything lives in an optional package: remove the single static import that registers it and the domain disappears while the kernel, the API, the SDK and every earlier milestone behave identically. The kernel gained one generic registry seam, one generic input type and an injectable clock, and a test scans the core sources and the static import graph to prove no contract, subscription or obligation concept entered it.",
+            "The activation policy is a versioned fingerprinted definition that decides from the component key, the SKU and the offer identity the Order already recorded — never from label text and never from recurrence alone. Its context is a deep-frozen structural clone of the Order snapshot, so a policy cannot mutate what it is classifying and never sees the live catalog. Config is inside the fingerprint, versions are published rather than edited, and v2 is how a decision changes while v1's historical activation still explains itself.",
+            "Both answers survive on the contract line: what the policy said, what applies, whether it was overridden, the override reason and who overrode it, on both axes. An activation is explainable years later without re-running anything."
+          ]
+        },
+        {
+          "heading": "Where it stops",
+          "body": [
+            "Schema metadata publishes an explicit notModeled list, the plan payload carries its own, and the Admin prints it on the screen. The list is long on purpose: billing, invoicing, payment, usage rating, proration, ramps, minimum commitments, tax, FX, revenue recognition, MRR, ARR, TCV, amendments, seat changes, renewal, cancellation, and every downstream execution concept that later packages add."
+          ]
+        }
+      ],
+      "boundaries": [
+        "Nothing bills. There is no invoice, no payment, no usage rating, no proration and no dunning, and the contract package does not pretend otherwise.",
+        "The term was never signed. The signed document package carries priced lines, parties and signers and no dates at all, so effective date, term start and end, auto-renew and notice period are post-signature operational metadata a human types in with a required reason — stamped as such on the contract, its version and the activation run.",
+        "There is no scheduler, so a term starting tomorrow produces a contract and subscription that are scheduled and stay scheduled forever, and a renewal notice period passes without anything firing.",
+        "No amendment exists. Seats and quantities cannot change, nothing can be cancelled or non-renewed with an audited reason, and there is no amendment history to read.",
+        "MRR, ARR and TCV are not calculated from contract data, and no expansion or contraction is classified at the time of change.",
+        "A Subscription here is a commercial activation record — what was sold as a recurring right, per period, copied from the Order. Nothing consumes it, meters it or invoices it.",
+        "A pending delivery or service obligation is a recorded fact, not a queued job. Nothing executes it and nothing activates it until a human, in a later domain, chooses to."
+      ],
+      "claims": [
+        "C-10",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-04"
+      ],
+      "jobs": [
+        "JTBD-CS-01",
+        "JTBD-CS-02",
+        "JTBD-CS-03",
+        "JTBD-CS-05",
+        "JTBD-CS-06",
+        "JTBD-CS-07",
+        "JTBD-CS-09",
+        "JTBD-CS-10",
+        "JTBD-10"
+      ],
+      "docs": [
+        "docs/CONTRACT_ACTIVATION.md"
+      ],
+      "tests": [
+        "tests/contracts-activation-e2e.test.js",
+        "tests/contracts-contract.test.js",
+        "tests/admin-contracts.test.js"
+      ],
+      "related": [
+        "signature-to-order",
+        "delivery-projects"
+      ]
+    },
+    {
+      "id": "cap-delivery-projects",
+      "slug": "delivery-projects",
+      "title": "Delivery projects: hours, costs, change requests and sign-off",
+      "metaTitle": "Delivery projects: hours, costs and sign-off",
+      "plainName": "Delivery projects, costs and sign-off",
+      "intent": "track project profitability, change requests and customer sign-off",
+      "summary": "The pending delivery obligations of an activated contract hand over into a planned project with work packages, milestones and an optional partner, then run through human-driven transitions while time and expenses accumulate as immutable evidence costed by a versioned policy. What comes out is a delivery contribution estimate, grouped by currency and refused outright when any obligation is recurring — not a margin, not revenue, not an invoice. Nothing schedules, staffs, computes percent complete or bills, and customer acceptance is testimony a user actor recorded rather than an authenticated customer's signature.",
+      "metaDescription": "Delivery obligations become a project with work packages, milestones and append-only time and expense evidence. A contribution estimate, not a margin.",
+      "sections": [
+        {
+          "heading": "What it models",
+          "body": [
+            "Handover is a plan-then-create pair: the read-only plan says who delivers what and why, and the create action commits the handover run, the delivery project, one work package per obligation, the ordered milestone plan, an optional partner engagement and the obligations marked handed over — all in one transaction across a package boundary. Who delivers a work package is a policy decision from the identity the obligation already carries, never an inference from a label, and a policy that cannot say returns ambiguous and blocks the handover until a human decides with a reason.",
+            "Execution is eight actions over an explicit transition table: a project moves pending kickoff to in progress to completed, a work package moves planned to in progress and in and out of blocked, a milestone moves planned to in progress to completed. Every declared state is reachable by a shipped action and every declared edge is walked by one, checked from the shipped action list rather than asserted in prose. Blocking requires a stated reason and records who and when; resuming clears those fields and the block stays in the audit log; completed is terminal and there is no reopen.",
+            "Economics adds immutable time and expense entries, a versioned cost policy, an immutable economic plan per publish, and a reproducible grouped snapshot. Change and acceptance adds governed change requests, immutable plan revisions, deliverables gated on server-authoritative execution state, and acceptance requests whose scope is frozen with a SHA-256 fingerprint the evidence binds to."
+          ]
+        },
+        {
+          "heading": "Where the money stops being a margin",
+          "body": [
+            "The server computes cost: a caller supplies minutes, the versioned cost policy supplies the rate, and the action multiplies and rounds in integers throughout, checking the product before the division so an absurd input is refused rather than rounded into something plausible. A client-supplied cost, rate or currency is not authoritative — it is not even an input, and a test proves a forged one is ignored.",
+            "Currencies are never mixed, because there is no FX: every total is grouped by currency and a group is a complete answer for that currency alone. Periods are never mixed either, and this is the sharp edge. A recurring obligation prices one period; recorded cost is a spend to date; there is no term over which the two are comparable. So a contribution estimate exists only where every commercial input in that currency is one-time, and a mixed project returns no estimate at all with a named reason — recurring commercial input, unknown commercial shape or no commercial input — rather than one computed against a one-time subtotal that would understate the number in a way no label can rescue.",
+            "The vocabulary is fixed on purpose. Commercial delivery input, not recognized revenue. Planned and actual delivery cost, not budget or cost of goods sold. Delivery contribution estimate, never gross margin, accounting margin or profit. One-time commercial value, never ARR, MRR, TCV or an annualized figure — and a test asserts none of those strings appears anywhere in the serialized output."
+          ]
+        },
+        {
+          "heading": "The commercial boundary, which is the whole risk",
+          "body": [
+            "A change that costs money must never reach the signed commercial record, so it does not. Approving a change flagged as commercially significant raises an immutable candidate and moves the request to a visible pending-commercial-followup state rather than an implicit hop. The end-to-end suite fingerprints every quote, order, contract and subscription row before and after and asserts the bytes are identical.",
+            "That handoff has an end, which matters more than it sounds: a raised candidate blocks acceptance over the scope it touches, so a candidate nobody could close would block that scope forever. A human records what the commercial follow-up concluded elsewhere — resolved externally, or withdrawn — once, with a stated reason, and recording it amends nothing. The result literally says amended false, the way a completed deliverable says accepted false.",
+            "Requesting acceptance is refused while an unresolved candidate touches the scope being submitted, and a change that names nothing is read as project-wide and counts too: the safe reading of we have not decided what this project includes is that it covers this milestone as well."
+          ]
+        },
+        {
+          "heading": "Acceptance is evidence, not authentication",
+          "body": [
+            "An acceptance request stores the exact scope it submitted — the milestone, every deliverable with its completion evidence, and the customer reference as it read then — plus a fingerprint covering the body of work alone. Rebuilding that scope later from the current deliverable set would silently re-point old testimony at new work, so it is never rebuilt and the Admin says so on screen.",
+            "The fingerprint deliberately excludes the customer label, which is an unverified operator string: folding it in would let a rejected scope be re-asked as Acme instead of ACME over identical work. The label is still frozen and stored because it is part of the testimony; it just cannot buy a second answer. A pending request freezes its milestone, a settled scope cannot be re-asked, and evidence binds to the fingerprint rather than the request id.",
+            "A rejection preserves execution history. Completed work packages and deliverables are never destructively reopened, because rewriting execution evidence would stop an economics snapshot taken on Tuesday reproducing on Wednesday. Replanning goes through a new change request, which changes the deliverables and therefore the fingerprint — which is exactly how a genuinely new question becomes askable and an unchanged one does not."
+          ]
+        },
+        {
+          "heading": "How a coding agent builds it",
+          "body": [
+            "Delivery is the second domain package and the first that depends on another. It reaches the contracts package only through declared capabilities and never imports its source or reads its tables; a package that did not declare the requirement is refused even though the capability exists. The capability methods are created with the caller's runtime handles, so the obligation update commits inside the delivery transaction — inject a failure after any write, including that one, and no delivery record survives while every obligation stays pending.",
+            "Every economics, change and acceptance record is managed storage: no public create, update or delete through the service, HTTP, the SDK, the Admin or MCP. A correction is a new record. An entry key promises that the same call records once — it is not an edit handle, so a retry whose values differ is refused, naming the fields that diverged, rather than answering 200 to an operator correcting 60 minutes to 480 while the money is still derived from 60."
+          ]
+        },
+        {
+          "heading": "Where it stops",
+          "body": [
+            "Recording time, expenses, plans, snapshots, changes, deliverables and acceptance each require a user actor; an agent may call only the read-only preview and plan operations. That is a human-actor boundary rather than a Delivery Manager role, and it is the same boundary everywhere in this framework: the actor is asserted, not authenticated."
+          ]
+        }
+      ],
+      "boundaries": [
+        "Nothing schedules and nobody is staffed. There is no resource calendar, no capacity model, no percent complete and no critical path — every transition is a human calling an action.",
+        "A delivery partner is a business reference and a name snapshot, not an account. It grants no login, portal, invitation, permission or role; there is no fee, revenue share or partner SLA; nothing notifies the partner and nothing can be sent to them from here. One partner per project, deliberately, rather than an unreviewed array.",
+        "A delivery contribution estimate is not a margin. No revenue recognition, no cost of goods sold, no gross or accounting margin, no profit, no payroll and no FX — and a project carrying any recurring obligation returns no estimate at all and names the reason.",
+        "Nothing bills on an accepted milestone. There are no billing-milestone primitives, no invoice, no payment and no billing eligibility.",
+        "Customer acceptance is what a user actor recorded a customer as saying. It is not an authenticated customer action, not a legal signature, not a verified identity and not authorization to bill; there is no customer portal and nothing is sent anywhere.",
+        "An approved commercial change amends nothing. It raises an immutable candidate for a Commercial Amendment milestone that does not exist yet, and the tests assert every quote, order, contract and subscription row is byte-identical before and after.",
+        "No file, receipt, document or binary is stored. A deliverable is a record with a state, not an artifact you can download.",
+        "Planning dates are post-sale planning data. They were not signed, they are not a customer commitment, and nothing fires on them."
+      ],
+      "claims": [
+        "C-11",
+        "C-12",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-04",
+        "L-05"
+      ],
+      "jobs": [
+        "JTBD-DS-01",
+        "JTBD-DS-02",
+        "JTBD-DS-03",
+        "JTBD-DS-05",
+        "JTBD-DS-06",
+        "JTBD-DS-07",
+        "JTBD-DS-08",
+        "JTBD-DS-09",
+        "JTBD-DS-04",
+        "JTBD-DS-10"
+      ],
+      "docs": [
+        "docs/DELIVERY_HANDOVER.md",
+        "docs/DELIVERY_ECONOMICS.md",
+        "docs/DELIVERY_CHANGE_ACCEPTANCE.md"
+      ],
+      "tests": [
+        "tests/delivery-handover-e2e.test.js",
+        "tests/delivery-execution-e2e.test.js",
+        "tests/delivery-economics-e2e.test.js",
+        "tests/delivery-change-acceptance-e2e.test.js",
+        "tests/delivery-change-acceptance-evidence.test.js",
+        "tests/admin-delivery.test.js"
+      ],
+      "related": [
+        "contract-and-subscription",
+        "service-and-sla"
+      ]
+    },
+    {
+      "id": "cap-service-and-sla",
+      "slug": "service-and-sla",
+      "title": "Support entitlements and SLA tracking, activated from a contract",
+      "metaTitle": "Support entitlements and SLA tracking",
+      "plainName": "Support coverage, cases and SLAs",
+      "intent": "support ticket SLA tracking tied to a customer contract",
+      "summary": "The pending service obligations of an activated contract become an operational Service Coverage with immutable entitlements, under a versioned policy that refuses to guess a support tier it cannot classify. Support cases run over an explicit five-state transition table with append-only activity, a first response stamped exactly once, and SLA evaluations that are elapsed wall-clock minutes with the inputs they used recorded alongside. It is not a contact centre and not a second contract: no customer is authenticated, no channel is connected, nothing escalates or notifies by itself, and a coverage amends nothing.",
+      "metaDescription": "Service obligations become a coverage with immutable entitlements, and cases run an explicit five-state table. SLA is elapsed wall-clock; nothing escalates.",
+      "sections": [
+        {
+          "heading": "What it models",
+          "body": [
+            "A coverage moves planned to active to ended. Activating consumes the contract's pending service obligations and writes an immutable activation run naming which obligations were consumed under which policy version, plus one immutable entitlement per obligation saying what that obligation entitles the customer to — categories, priorities, channels, targets and limits.",
+            "A support case is recorded against an entitlement and moves over a declared table: new, in progress, waiting customer, resolved, closed. Case activity is append-only — notes, transitions, recorded replies and escalations. A first response is stamped exactly once. An SLA evaluation is an immutable judgement about an instant, storing the instant and the input values it used so it is never mistaken for current truth, and an escalation is an immutable record that a human escalated something.",
+            "Ten actions cover the path, and only two of them are readable by an agent: planning an activation, which writes nothing at all, and previewing an SLA. Every write requires a user actor."
+          ]
+        },
+        {
+          "heading": "The SLA contract, stated exactly",
+          "body": [
+            "First response is due at the case opening plus the first-response target in minutes; resolution is due at the opening plus the resolution target. That is elapsed wall-clock time against an injected UTC clock, which is what makes a run reproducible.",
+            "There is no business-hours calendar, no holiday table, no timezone interpretation and no paused clock. Waiting on the customer does not stop it — not because pausing is wrong, but because a half-implemented pause understates a breach, and understating a breach is the one failure mode an SLA feature cannot have.",
+            "The Admin renders current SLA and recorded SLA as two separate blocks, and says on the screen that an SLA state here is elapsed wall-clock time rather than a contractual or legal determination. Previewing writes nothing."
+          ]
+        },
+        {
+          "heading": "What the framework refuses",
+          "body": [
+            "An activation policy may answer ambiguous, and that is the interesting case: an obligation it cannot classify refuses activation until a human supplies an override with a stated reason, because a defaulted support tier is a promise nobody in the business made.",
+            "Entitlement is enforced server-side, not in the UI. An uncovered category, an uncovered priority, a coverage that is out of date or a full open-case limit is refused — and exceeding a limit bills nothing, because there is nothing to bill with. The Admin is state-aware in both directions: before activation it offers planning and nothing else, while any obligation is undecided there is no coverage form and no activation control at all, and after activation there is no second activation path. A case shows exactly the transitions the declared table allows for its current state, a first response is offered until it is stamped and never again, and a closed case shows no transition control and says why.",
+            "The screen carries the claims a reader would otherwise make on the framework's behalf: that a coverage is operational evidence and amends no commercial record, that a listed channel does not mean a provider is connected, that no notification was sent."
+          ]
+        },
+        {
+          "heading": "Why it is coverage and not a contract",
+          "body": [
+            "Three shapes were compared before this was built. Hanging support off the Commercial Contract would mix a mutable operational lifecycle into a record whose entire value is that it does not move. A second legal ServiceContract would be a claim the framework cannot support: this repository has exactly one signature path, producing exactly one signed Order and one Commercial Contract, and a second contract nobody signed — with no envelope, no signer and no artifact — would invite the question which one is authoritative, which neither could answer.",
+            "The name is the trap. Anything called Contract here will be read as signed, so the concept is Service Coverage and the first paragraph of every document about it says what it is not."
+          ]
+        },
+        {
+          "heading": "How a coding agent builds it",
+          "body": [
+            "Service is the third domain package and the second that depends on another. It declares one capability against the contracts package and imports nothing from that package's source and nothing from the kernel's. Removing the single static import removes the domain and everything else keeps working — including the capability contracts goes on providing to nobody.",
+            "The Admin section is package-scoped rather than package-owned, and this is published as a limitation rather than smoothed over: the framework has no seam for a package to contribute an Admin extension, so the file lives in the Admin app and renders only while the schema publishes the service domain. Remove the package and the section disappears instead of degrading into a broken control.",
+            "The activation policy is versioned and fingerprinted like every other policy in this framework: config is inside the fingerprint, versions are published rather than edited, and a recorded activation explains itself later without re-running anything."
+          ]
+        },
+        {
+          "heading": "Where it stops",
+          "body": [
+            "An upgrade suite proves a project shipped before this package existed can adopt it over live obligations, and the starter runs the full journey from a pending obligation to a closed case with the commercial rows fingerprinted before and after. What it does not do is a long list, published in the schema and printed on the screen, and it starts with billing and ends with a scheduler."
+          ]
+        }
+      ],
+      "boundaries": [
+        "There is no customer portal and no customer account. Every case is recorded by an internal user actor on the customer's behalf; nobody outside can see, open or reply to anything.",
+        "No channel exists. There is no email, chat, WhatsApp or telephony adapter, no contact centre and no inbox — a channel named on an entitlement is a value in a record, not a connected provider.",
+        "The SLA clock is elapsed wall-clock minutes against an injected UTC clock. No business-hours calendar, no holiday table, no timezone interpretation, and waiting on the customer does not pause it.",
+        "Nothing escalates, routes, assigns or notifies by itself. Escalation is a record a human writes; no rule fires, no page is sent, nobody is woken up.",
+        "A Service Coverage is not a contract. Nobody signed it, it has no envelope, signer or artifact, and it neither amends nor replaces the Commercial Contract it was activated from.",
+        "Exceeding an entitlement limit is a refusal, not an overage charge. Nothing bills, invoices or establishes billing eligibility.",
+        "No attachments, no file storage, no knowledge base, no customer-success health scoring and no analytics over any of it.",
+        "The Admin section for this domain lives in the Admin app, not in the package, because no extension seam exists — the inspector publishes that gap as a machine-readable limitation rather than leaving it to be discovered."
+      ],
+      "claims": [
+        "C-10",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-04",
+        "L-05"
+      ],
+      "jobs": [
+        "JTBD-DS-11",
+        "JTBD-DS-12",
+        "JTBD-09",
+        "JTBD-11",
+        "JTBD-14",
+        "JTBD-15",
+        "JTBD-DO-09"
+      ],
+      "docs": [
+        "docs/SERVICE_OPERATIONS.md"
+      ],
+      "tests": [
+        "tests/service-operations-e2e.test.js",
+        "tests/service-operations-evidence.test.js",
+        "tests/service-operations-integration.test.js",
+        "tests/admin-service.test.js"
+      ],
+      "related": [
+        "delivery-projects"
+      ]
+    }
+  ]
+}

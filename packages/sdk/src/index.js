@@ -1,1 +1,1 @@
-export { AgentCrmClient } from './client.js';
+export { AccordoClient } from './client.js';

@@ -49,8 +49,8 @@ import { safeMessage } from './safe-text.js';
 export const PACKAGE_CONFORMANCE_CONTRACT = 1;
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin');
-const BOOT_PROBE = join(BIN, 'agent-crm-package-boot.js');
-const PLAN_PROBE = join(BIN, 'agent-crm-package-plan.js');
+const BOOT_PROBE = join(BIN, 'accordo-package-boot.js');
+const PLAN_PROBE = join(BIN, 'accordo-package-plan.js');
 
 /** Everything this command cannot answer, stated once, by code. */
 const LIMITATIONS = Object.freeze([
@@ -437,7 +437,7 @@ function countBy(checks) {
 function renderText(report) {
   const lines = [];
   const heading = (text) => lines.push('', text, '─'.repeat(text.length));
-  lines.push(`Agent CRM package conformance (contract ${report.packageConformanceContract})`);
+  lines.push(`Accordo package conformance (contract ${report.packageConformanceContract})`);
   lines.push(`Package: ${report.package.name}@${report.package.version} (packageContract ${report.package.packageContract})`);
   lines.push(`Path: ${report.path}`);
   lines.push(report.ok ? 'Conformance: every check passed' : `Conformance: ${report.counts.failed} check(s) failed`);

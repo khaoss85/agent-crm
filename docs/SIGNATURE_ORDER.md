@@ -134,7 +134,7 @@ snapshot that really moved is `409 DOCUMENT_HASH_MISMATCH`, never a mis-signed
 order — and the stored canonical bytes are re-hashed too, so both the snapshot
 rows and the stored evidence are proven.
 
-Its media type is `application/vnd.agent-crm.quote-package+json`. **It is not a
+Its media type is `application/vnd.accordo.quote-package+json`. **It is not a
 PDF and is never called one.**
 
 ## Event ingestion
@@ -216,7 +216,7 @@ canonical document itself, the provider artifact hash where available, MIME
 type, size, storage reference, the completion event id, completion timestamp
 and signer evidence.
 
-`artifactHash` is **provider-reported**: agent-crm does not download or hash
+`artifactHash` is **provider-reported**: accordo does not download or hash
 the artifact bytes and **verifies no signature cryptographically**. The
 artifact bytes are not stored in the database, and long-term object-storage
 durability is not claimed. What *is* locally verifiable is the document

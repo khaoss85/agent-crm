@@ -1,9 +1,25 @@
 ---
 name: build-commercial-operations
-description: Add or extend Commercial Operations in an Agent CRM project - catalog providers, products and price books, quotes with server-priced lines, immutable quote versions, and versioned discount policies with human approval. Use for catalog/quote/discount/CPQ work. Do not use for CRUD module changes (create-crm-module) or lead scoring/routing (build-lead-intelligence).
+description: Add or extend Commercial Operations in an Accordo project - catalog providers, products and price books, quotes with server-priced lines, immutable quote versions, and versioned discount policies with human approval. Use for catalog/quote/discount/CPQ work. Do not use for CRUD module changes (create-crm-module) or lead scoring/routing (build-lead-intelligence).
+requires:
+  tier: generated-project
+  command: "crm app inspect"
+  projectSurface: ["packages/commercial/generated/index.js", "packages/core/src/commercial-money.js"]
+  repositorySurface: ["ARCHITECTURE.md", "DECISIONS.md", "docs/COMMERCIAL_OPERATIONS.md"]
+  degradesTo: "the composed commercial packages, actions, policies and providers reported by `crm app inspect --json`"
 ---
 
-Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-016) and `docs/COMMERCIAL_OPERATIONS.md` first.
+## Orient yourself first
+
+```bash
+npm run crm -- app inspect --json
+```
+
+Read `valid`, then `problems[]`, then `limitations[]`, in that order. Every problem is fixed or reported before anything is built on top of it, and **every limitation is a hard boundary on what you may claim.** Then read `packages[]`, `capabilities[]`, `resources[]`, `actions[]`, `policies[]` and `providers[]`: that list is what exists. A capability absent from the report does not exist, whatever a record name, a label or a document suggests.
+
+If the repository documents this skill names are absent, you are in a project built from this framework rather than in the framework itself. The inspection report is then the source of truth and those documents are optional background — do not guess at their contents, and do not assume a path exists because this skill names it.
+
+**Background, where they exist:** `ARCHITECTURE.md`, `DECISIONS.md` (ADR-016) and `docs/COMMERCIAL_OPERATIONS.md`. They are the deeper source for the rules below, not a prerequisite for them — the rules stand on their own.
 
 ## Integrate a catalog provider
 

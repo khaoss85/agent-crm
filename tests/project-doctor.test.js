@@ -33,10 +33,10 @@ import { moduleStateFingerprint } from '../packages/core/src/module-evolution.js
  */
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
-const cli = join(repoRoot, 'packages/cli/bin/agent-crm.js');
+const cli = join(repoRoot, 'packages/cli/bin/accordo.js');
 
 /** A throwaway copy of this project: the doctor must never touch the original. */
-function project(t, { name = 'agent-crm-doctor-' } = {}) {
+function project(t, { name = 'accordo-doctor-' } = {}) {
   const root = mkdtempSync(join(tmpdir(), name));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'package.json', 'docs', 'examples']) {
@@ -532,7 +532,7 @@ test('a tracked .env is a failure and .env.example is not', (t) => {
 
   const dirty = tracked([
     'README.md', '.env', 'apps/.env.production', 'apps/server/.env.local',
-    'data/agent-crm.sqlite', 'data/app.db', 'x.sqlite3', 'debug.log', 'node_modules/x/index.js',
+    'data/accordo.sqlite', 'data/app.db', 'x.sqlite3', 'debug.log', 'node_modules/x/index.js',
   ]);
   assert.equal(dirty.status, 'failed');
   assert.deepEqual(dirty.evidence.forbidden.map((entry) => entry.code).sort(), [
@@ -556,7 +556,7 @@ test('a project that is not a git repository says so rather than guessing', (t) 
 
 test('an unreadable project root exits 2 without a report', async () => {
   const { exitCode, report } = await projectDoctorCommand({
-    rootDir: join(tmpdir(), 'agent-crm-doctor-does-not-exist'), capture: true,
+    rootDir: join(tmpdir(), 'accordo-doctor-does-not-exist'), capture: true,
   });
   assert.equal(exitCode, 2);
   assert.equal(report, null);

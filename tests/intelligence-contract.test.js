@@ -228,7 +228,7 @@ test('persisted definition versions: registration is idempotent, drift fails lou
 });
 
 test('concurrent registration across two connections serializes: one insert, the other verifies', (t) => {
-  const dbPath = `/tmp/claude-0/-home-user-agent-crm/dcabf585-5724-5af3-9508-8c01ce9770f6/scratchpad/reg-race-${process.pid}.sqlite`;
+  const dbPath = `/tmp/claude-0/-home-user-accordo/dcabf585-5724-5af3-9508-8c01ce9770f6/scratchpad/reg-race-${process.pid}.sqlite`;
   const a = createDatabase({ path: dbPath, busyTimeoutMs: 500 });
   const b = createDatabase({ path: dbPath, busyTimeoutMs: 500 });
   t.after(() => { a.close(); b.close(); });

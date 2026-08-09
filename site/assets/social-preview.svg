@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="Project social preview">
+  <title>{{brand.name}} — {{brand.promise}}</title>
+  <defs>
+    <style>
+      .h { font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 800; letter-spacing: -2.6px; }
+      .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .s { font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 600; }
+      .k { font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 800; letter-spacing: 3.4px; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="640" fill="{{color.paper}}" />
+  <rect x="0" y="0" width="1280" height="6" fill="{{color.accent}}" />
+
+  <!-- mark -->
+  <g transform="translate(88, 74) scale(2.0)">
+    <rect x="1.5" y="1.5" width="21" height="21" rx="6.5" stroke="{{color.accent}}" stroke-width="1.6" fill="none" />
+    <path d="M6 15.5 L10.2 15.5 L12 8.5 L13.8 15.5 L18 15.5" stroke="{{color.accent}}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+    <circle cx="12" cy="8.5" r="2.4" fill="{{color.accent}}" />
+  </g>
+  <text class="k" x="146" y="103" font-size="15" fill="{{color.accent}}">{{brand.name}}</text>
+
+  <!-- headline -->
+  <text class="h" x="88" y="222" font-size="63" fill="{{color.ink}}">Describe your sales process</text>
+  <text class="h" x="88" y="292" font-size="63" fill="{{color.ink}}">to your coding agent;</text>
+  <text class="h" x="88" y="362" font-size="63" fill="{{color.accent}}">own the CRM it builds.</text>
+
+  <!-- subhead -->
+  <text class="s" x="88" y="424" font-size="23" fill="{{color.muted}}">The open-source framework Claude Code and Codex use to generate a CRM</text>
+  <text class="s" x="88" y="458" font-size="23" fill="{{color.muted}}">as reviewable code you own — not a tenant in someone else's platform.</text>
+
+  <!-- evidence strip -->
+  <g transform="translate(88, 508)">
+    <rect x="0" y="0" width="1104" height="68" rx="16" fill="{{color.surface}}" stroke="{{color.line}}" stroke-width="1.5" />
+    <circle cx="32" cy="34" r="5" fill="{{color.accent}}" />
+    <text class="m" x="52" y="40" font-size="16" fill="{{color.ink}}">{{measured.tests}} tests</text>
+    <circle cx="200" cy="34" r="5" fill="{{color.accent}}" />
+    <text class="m" x="220" y="40" font-size="16" fill="{{color.ink}}">0 dependencies</text>
+    <circle cx="420" cy="34" r="5" fill="{{color.accent}}" />
+    <text class="m" x="440" y="40" font-size="16" fill="{{color.ink}}">deterministic approvals</text>
+    <circle cx="730" cy="34" r="5" fill="{{color.warning}}" />
+    <text class="m" x="750" y="40" font-size="16" fill="{{color.warning}}">no auth yet — see the limits</text>
+  </g>
+</svg>

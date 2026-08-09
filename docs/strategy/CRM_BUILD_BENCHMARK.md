@@ -113,6 +113,49 @@ Each prompt scores on six gates, all-or-nothing per gate:
 
 **Prompt success** = all six gates pass. **Partial credit** is reported (sum of weights) but success rate counts only full passes.
 
+### Editions: what can actually be scored today
+
+The six gates above are the full benchmark, and the full benchmark cannot be run.
+G5 and G6 need a public deployment; this framework has no authentication, tenancy
+or RBAC and reports `productionPosture: "local development only"`. Running them
+would mean exposing an unauthenticated CRM on the internet to earn 25 points.
+
+Rather than quietly drop two gates and publish the remaining four as if they were
+the whole thing, the benchmark splits into two named editions. **The split is the
+honest part; erasing it would be the dishonest part.**
+
+| Edition | Gates | Status | Instrument |
+|---|---|---|---|
+| **L** (local) | G1–G4 | runnable today | `benchmarks/harness/score.js` |
+| **D** (deployed) | G5–G6 | **blocked on the Production Spine** | none, deliberately |
+
+Four rules govern Edition L, and each exists because the obvious alternative is a
+number that reads better than it is:
+
+1. **Edition L reports points out of 75, never a percentage.** The four gates keep
+   their original protocol weights — 25 / 15 / 25 / 10 — unrenormalised.
+   Renormalising to 100 produces 33.3 / 20 / 33.3 / 13.3, which needs a rounding
+   convention nobody will remember and, worse, yields a figure that looks like a
+   success rate. A point total cannot be mistaken for one.
+2. **A gate that could not be checked is never a pass.** Each gate returns `pass`,
+   `fail` or `needs-operator`, and only `pass` earns points. A run with any
+   `needs-operator` gate is `scoreable: false` and belongs in no aggregate.
+3. **The per-prompt verdict is binary and separate from the point total.** An
+   Edition L prompt passes only when all four gates pass. A run scoring 65 of 75
+   that misses G3 is a failed prompt. The two numbers are never substituted for
+   one another, and 65/75 is never described as "87%".
+4. **Edition D is reported as blocked, never as absent.** Every scored run carries
+   `editionD: { outcome: "BLOCKED_NO_PRODUCTION_SPINE" }`. G5 and G6 are not run,
+   not estimated, and not omitted.
+
+**G1 is operator-attested, not measured.** Whether a human edited a file is a fact
+only the operator witnesses, so it is read from the run's append-only intervention
+record: zero interventions passes, one or more fails, and *no record at all* is
+`needs-operator` rather than a free 25 points. Every report says so in its own
+`attestation` field, and any figure derived from these runs must repeat it.
+
+ADR-024 records this decision and what would have to change to retire it.
+
 ## Deployment criteria
 
 - Deploy target fixed per benchmark edition (Vercel for the first public edition; Docker on a stock VPS as the second target).
@@ -121,7 +164,7 @@ Each prompt scores on six gates, all-or-nothing per gate:
 
 ### Managed-deployment gates (Cloud track, future)
 
-Once Agent CRM Cloud exists (`AGENT_CRM_CLOUD.md`; design only today), the full benchmark additionally tests the managed path:
+Once Accordo Cloud exists (`AGENT_CRM_CLOUD.md`; design only today), the full benchmark additionally tests the managed path:
 
 ```text
 brief → generated project → tests → managed deployment → public CRM login
@@ -206,6 +249,25 @@ Runs record: interventions, approvals, wall-clock time, token/spend if available
 - **Time to First Working CRM (TTFW)** = median wall-clock across successful runs, brief → deployed smoke green.
 - Publish SABR standard-prompts and SABR complex-prompts separately.
 
+### SABR and TTFW are Edition D metrics, and Edition D is blocked
+
+Both definitions above are written against the full six-gate benchmark, and
+neither survives the edition split:
+
+- **SABR counts fully successful prompts.** With G5 and G6 unrunnable, no prompt
+  can be fully successful, so SABR over Edition L runs is not a smaller SABR — it
+  is a different metric wearing the same name. Edition L's aggregate is the
+  **Edition L prompt-pass count**: how many of the attempted prompts passed all
+  four local gates, reported as a count over a stated denominator, never as SABR
+  and never as a percentage.
+- **TTFW is measured brief → deployed smoke green.** There is no deploy, so there
+  is no TTFW. Wall-clock to a green local suite is a different quantity; if it is
+  ever published it gets its own name, not this one.
+
+Neither name may appear on a public surface until Edition D runs. `scripts/site-check.js`
+already refuses a published percentage; these two names are the same class of
+claim and are held to the same rule by `docs/marketing/BENCHMARK_PUBLICATION.md`.
+
 ## Comparison protocol
 
 Same prompts, same model, same operator rules, four arms:
@@ -259,6 +321,12 @@ The benchmark cannot honestly score the scenarios above until these exist. All a
 ## Publication
 
 Results live in a public `benchmark/` repository containing prompts, harness scripts, design files, transcripts, scores and a versioned RESULTS.md. Each framework release triggers a benchmark run; regressions block release notes claiming improvement.
+
+**What may be said about a result before that repository exists** — which sentences
+are permitted, which are refused, and the minimum a published figure must carry
+with it — is in `docs/marketing/BENCHMARK_PUBLICATION.md`. **Nothing from an
+Edition L run is published without it.** How a run is actually driven, from
+`prepare` to `score`, is in `docs/benchmarks/PILOT_PROTOCOL.md`.
 
 ## Marketing & Growth scenarios (planned — none implemented)
 

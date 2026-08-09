@@ -52,7 +52,7 @@ export function generateMigrationCommand(input) {
   }
   mkdirSync(dirname(outPath), { recursive: true });
   // Write via a sibling temp file + rename so a failure never leaves a partial file.
-  const tempPath = `${outPath}.tmp-agent-crm`;
+  const tempPath = `${outPath}.tmp-accordo`;
   try {
     writeFileSync(tempPath, migration.sql, 'utf8');
     renameSync(tempPath, outPath);

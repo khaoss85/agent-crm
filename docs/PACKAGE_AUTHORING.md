@@ -1,6 +1,6 @@
 # Authoring a domain package
 
-How Claude Code, Codex — or a person — adds a bounded domain to an Agent CRM
+How Claude Code, Codex — or a person — adds a bounded domain to an Accordo
 repository **without changing the kernel**.
 
 Everything here is the same path the first-party packages use. There is no

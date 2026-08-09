@@ -1,9 +1,25 @@
 ---
 name: solve-business-goal
-description: Turn a business objective into a working Agent CRM solution - discover installed packages, capabilities and providers, analyse the gap, choose or create packages, produce a Solution Plan, build checked-in source, verify it and report evidence. Use when the user states a goal ("track and optimize our funnel", "we need to manage renewals") rather than a technical change. Do not use for a single custom object (create-crm-module), one lifecycle step (create-crm-workflow), a named milestone (the build-* skills) or a pre-merge review (adversarial-review).
+description: Turn a business objective into a working Accordo solution - discover installed packages, capabilities and providers, analyse the gap, choose or create packages, produce a Solution Plan, build checked-in source, verify it and report evidence. Use when the user states a goal ("track and optimize our funnel", "we need to manage renewals") rather than a technical change. Do not use for a single custom object (create-crm-module), one lifecycle step (create-crm-workflow), a named milestone (the build-* skills) or a pre-merge review (adversarial-review).
+requires:
+  tier: generated-project
+  command: "crm app inspect"
+  projectSurface: ["packages/domains/generated/index.js", "examples/solution-plans/lead-to-won.plan.json"]
+  repositorySurface: ["docs/strategy/OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md", "docs/PROJECT_STATUS.md", "docs/benchmarks/CRM_JTBD_MATRIX.md", "docs/PACKAGE_AUTHORING.md", "docs/SOLUTION_PLAN.md", "docs/APPLICATION_INSPECTION.md"]
+  degradesTo: "`crm app inspect --json` for what exists and `crm solution validate|check` for whether the plan is sound against it; both read the project, not a document"
 ---
 
-Read `docs/strategy/OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`, `docs/PROJECT_STATUS.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md` and `docs/PACKAGE_AUTHORING.md` first. The worked example is `docs/strategy/OBJECTIVE_DRIVEN_FUNNEL_EXAMPLE.md`.
+## Orient yourself first
+
+```bash
+npm run crm -- app inspect --json
+```
+
+Read `valid`, then `problems[]`, then `limitations[]`, in that order. Every problem is fixed or reported before anything is built on top of it, and **every limitation is a hard boundary on what you may claim.** Then read `packages[]`, `capabilities[]`, `resources[]`, `actions[]`, `policies[]` and `providers[]`: that list is what exists. A capability absent from the report does not exist, whatever a record name, a label or a document suggests.
+
+If the repository documents this skill names are absent, you are in a project built from this framework rather than in the framework itself. The inspection report is then the source of truth and those documents are optional background — do not guess at their contents, and do not assume a path exists because this skill names it.
+
+**Background, where they exist:** `docs/strategy/OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`, `docs/PROJECT_STATUS.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md` and `docs/PACKAGE_AUTHORING.md`, with the worked example in `docs/strategy/OBJECTIVE_DRIVEN_FUNNEL_EXAMPLE.md`. They are the deeper source for the steps below, not a prerequisite for them — the steps stand on their own.
 
 This workflow is usable **today**, including where capabilities are missing — because reporting a gap honestly is part of the deliverable, not a failure of it.
 
@@ -15,9 +31,9 @@ This workflow is usable **today**, including where capabilities are missing — 
 
 ## 2. Discover what actually exists
 
-Read, do not assume: `AGENTS.md` · `docs/PROJECT_STATUS.md` · `docs/QUALITY_GATES.md` · the JTBD matrix · `docs/PACKAGE_AUTHORING.md` · the composition file `packages/domains/generated/index.js` · each package's README.
+Read, do not assume — and read whichever of these the project actually has: `AGENTS.md` · `docs/PROJECT_STATUS.md` · `docs/QUALITY_GATES.md` · the JTBD matrix · `docs/PACKAGE_AUTHORING.md` · the composition file `packages/domains/generated/index.js` · each package's README. In a project built from this framework most of those are absent; the report below is then the whole of your discovery, and a document you cannot open is never a document you may summarise.
 
-**Start here — one command answers most of it:**
+**Start here — the command from *Orient yourself first*, re-read now with the goal in mind:**
 
 ```bash
 npm run crm -- project doctor --json # FIRST: is this project even coherent? (composition,
@@ -49,7 +65,7 @@ npm run crm -- package inspect <package-dir>    # one package in isolation
 GET /api/schema     # the same picture from a running server
 ```
 
-Guide: `docs/APPLICATION_INSPECTION.md`.
+Guide, where the project carries it: `docs/APPLICATION_INSPECTION.md`. The report's own `limitations[]` state the same boundaries without it.
 
 **What `app inspect` does not tell you, and you must not infer:**
 
@@ -80,7 +96,7 @@ Produce: capability coverage, package reuse, missing capabilities, **data-qualit
 
 ## 5. Produce a Solution Plan before writing code
 
-The plan is a **checked file with a contract**, not prose with headings — `solutionPlanContract: 1`, guide `docs/SOLUTION_PLAN.md`, canonical example `examples/solution-plans/lead-to-won.plan.json`.
+The plan is a **checked file with a contract**, not prose with headings — `solutionPlanContract: 1`. The validator below is the contract; `docs/SOLUTION_PLAN.md` and the canonical example `examples/solution-plans/lead-to-won.plan.json` are background where the project carries them.
 
 ```bash
 npm run crm -- solution validate <plan.json>   # the contract alone; reads no project

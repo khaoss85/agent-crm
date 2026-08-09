@@ -161,7 +161,7 @@ source and retrieval date.
 4. **Names are namespaced by the harness, differently.** `mcp__server__tool`
    versus `mcp_{server}_{tool}`. Underscores in a server name break Gemini's
    parser. A server name must therefore be short, lowercase and **underscore-free**
-   — `agent-crm`, never `agent_crm`.
+   — `accordo`, never an underscored variant of it.
 5. **Approval is the harness's, not ours.** Claude Code gates project-scoped
    servers behind interactive approval and refuses a cloned repository's own
    committed approvals; Gemini has per-server `trust`. A tool that is dangerous

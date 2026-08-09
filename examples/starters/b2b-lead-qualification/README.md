@@ -1,6 +1,6 @@
 # B2B Lead Qualification starter
 
-A minimal, code-first starter that dogfoods agent-crm's **record actions**
+A minimal, code-first starter that dogfoods accordo's **record actions**
 (ADR-011) and **transaction-aware events** (ADR-012). It models the smallest
 useful slice of a B2B sales motion:
 

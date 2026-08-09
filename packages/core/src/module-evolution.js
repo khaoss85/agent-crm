@@ -400,7 +400,7 @@ export function readModuleState(rootDir, moduleName) {
   if (parsed.stateVersion !== MODULE_STATE_VERSION) {
     throw new ValidationError(
       `Module "${moduleName}": module.state.json is stateVersion ${JSON.stringify(parsed.stateVersion)}; `
-        + `this version of agent-crm reads ${MODULE_STATE_VERSION}`,
+        + `this version of accordo reads ${MODULE_STATE_VERSION}`,
     );
   }
   if (parsed.module !== moduleName) {

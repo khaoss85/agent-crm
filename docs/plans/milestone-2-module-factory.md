@@ -10,7 +10,7 @@ npm run crm -- module create examples/modules/partner.module.json          # dry
 npm run crm -- module create examples/modules/partner.module.json --apply  # writes
 ```
 
-After `--apply`, no manual step remains: the module is migrated, registered and served by `createAgentCrmApp` on next start. This is the step from "manifest → SQL" (Milestone 1) to "manifest → working module".
+After `--apply`, no manual step remains: the module is migrated, registered and served by `createAccordoApp` on next start. This is the step from "manifest → SQL" (Milestone 1) to "manifest → working module".
 
 ## Current repository context
 
@@ -41,7 +41,7 @@ Recorded as ADR-007.
 | `packages/modules/<name>/src/migration.js` | `{ name: 'create_<table>', sql }` from Milestone 1 generation |
 | `packages/modules/<name>/src/<name>-service.js` | readable service: create / get / list (safe limit) / update, per-field validation, boolean 0/1 mapping, UNIQUE→ConflictError, audit + domain events on mutations |
 | `packages/modules/<name>/src/index.js` | module definition (name, version, description, entities) + `create<Pascal>Module(deps)` |
-| `tests/<name>-module.test.js` | CRUD + validation + audit happy-path against `createAgentCrmApp({dbPath: ':memory:'})` |
+| `tests/<name>-module.test.js` | CRUD + validation + audit happy-path against `createAccordoApp({dbPath: ':memory:'})` |
 | *(modified)* `packages/modules/generated/index.js` | regenerated registry |
 
 Generated files carry a header stating origin and that they are editable ("this file is yours") — no timestamps, no absolute paths.
@@ -62,7 +62,7 @@ Module migrations run after core `MIGRATIONS`, each in its own transaction, reco
 
 ## Rollback / failure behavior
 
-Apply is staged: all contents built in memory → collision check (any existing target ⇒ `ConflictError`, never silent overwrite; registry is the only `modify` target and its original content is retained) → write every file to a `.tmp-agent-crm` sibling → rename all → on any error, delete temp files and any renamed new files and restore the registry's original bytes. No partial project mutation survives a failure.
+Apply is staged: all contents built in memory → collision check (any existing target ⇒ `ConflictError`, never silent overwrite; registry is the only `modify` target and its original content is retained) → write every file to a `.tmp-accordo` sibling → rename all → on any error, delete temp files and any renamed new files and restore the registry's original bytes. No partial project mutation survives a failure.
 
 ## Safety
 
@@ -75,7 +75,7 @@ Apply is staged: all contents built in memory → collision check (any existing 
 ## Compatibility constraints
 
 - All Milestone 0/1 behavior unchanged (existing 23 tests must pass untouched).
-- `createAgentCrmApp` remains synchronous; empty registry ⇒ identical behavior to today.
+- `createAccordoApp` remains synchronous; empty registry ⇒ identical behavior to today.
 - The repository itself keeps an empty registry (no permanently enabled demo module); the end-to-end proof runs in a temporary copied project.
 
 ## Validation helpers added to core
@@ -84,7 +84,7 @@ Apply is staged: all contents built in memory → collision check (any existing 
 
 ## End-to-end proof (Partner)
 
-A test copies `packages/`, `package.json` and the partner manifest into a temp directory, then via the temp copy's own CLI: validate → plan (twice, byte-identical) → dry-run (no writes) → `--apply` → re-apply refused (conflict) → import the temp copy's `createAgentCrmApp`, assert Partner in `modules.list()`, create/get/list/update a record, assert audit events and domain events, run the generated test file with `node --test`, and assert regeneration in a second copy is byte-identical.
+A test copies `packages/`, `package.json` and the partner manifest into a temp directory, then via the temp copy's own CLI: validate → plan (twice, byte-identical) → dry-run (no writes) → `--apply` → re-apply refused (conflict) → import the temp copy's `createAccordoApp`, assert Partner in `modules.list()`, create/get/list/update a record, assert audit events and domain events, run the generated test file with `node --test`, and assert regeneration in a second copy is byte-identical.
 
 ## Explicitly deferred scope
 
@@ -111,7 +111,7 @@ Generated Admin UI / SDK / HTTP API; manifest MCP tools; reference-field service
 
 ## Decision log
 
-- Registry-file registration chosen over filesystem discovery: keeps `createAgentCrmApp` synchronous and imports static/reviewable; the registry is regenerated from manifest copies, never hand-parsed JS.
+- Registry-file registration chosen over filesystem discovery: keeps `createAccordoApp` synchronous and imports static/reviewable; the registry is regenerated from manifest copies, never hand-parsed JS.
 - Name-keyed module migrations chosen over extending integer versions: alphabetical registration must never renumber applied migrations.
 - Reference fields rejected in `module create` (path 2 of the two allowed): honest error now beats silently weaker integrity; migration generation for references is unchanged.
 - Generated tests import the app factory (not the service directly) so they prove registration, migration and service together.

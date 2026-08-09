@@ -1,9 +1,25 @@
 ---
 name: build-service-operations
-description: Add or extend service operations in an Agent CRM project - activating the pending service obligations of an activated contract into an operational Service Coverage with immutable Entitlements through a versioned activation policy, and recording support cases over an explicit transition table with elapsed-time SLA evidence and manually recorded escalation. Use for service coverage, support entitlement, support case/ticket, first response, SLA target or evaluation, case escalation, ending coverage, or the Service Admin section. Do not use for a second legal contract, billing, invoicing, renewal or an authenticated customer portal (none of which exist), contract activation (build-contract-activation), delivery work (build-delivery-handover) or a single custom object (create-crm-module).
+description: Add or extend service operations in an Accordo project - activating the pending service obligations of an activated contract into an operational Service Coverage with immutable Entitlements through a versioned activation policy, and recording support cases over an explicit transition table with elapsed-time SLA evidence and manually recorded escalation. Use for service coverage, support entitlement, support case/ticket, first response, SLA target or evaluation, case escalation, ending coverage, or the Service Admin section. Do not use for a second legal contract, billing, invoicing, renewal or an authenticated customer portal (none of which exist), contract activation (build-contract-activation), delivery work (build-delivery-handover) or a single custom object (create-crm-module).
+requires:
+  tier: generated-project
+  command: "crm app inspect"
+  projectSurface: ["packages/domains/generated/index.js", "packages/core/index.js"]
+  repositorySurface: ["ARCHITECTURE.md", "DECISIONS.md", "docs/SERVICE_OPERATIONS.md", "docs/MODULE_EVOLUTION.md", "docs/PACKAGE_AUTHORING.md"]
+  degradesTo: "the composed packages, capabilities and policies reported by `crm app inspect --json`, plus `crm package test` for the contract a package must satisfy"
 ---
 
-Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda, ADR-019 with addendum 1), `docs/SERVICE_OPERATIONS.md`, `docs/MODULE_EVOLUTION.md` and `docs/PACKAGE_AUTHORING.md` first.
+## Orient yourself first
+
+```bash
+npm run crm -- app inspect --json
+```
+
+Read `valid`, then `problems[]`, then `limitations[]`, in that order. Every problem is fixed or reported before anything is built on top of it, and **every limitation is a hard boundary on what you may claim.** Then read `packages[]`, `capabilities[]`, `resources[]`, `actions[]`, `policies[]` and `providers[]`: that list is what exists. A capability absent from the report does not exist, whatever a record name, a label or a document suggests.
+
+If the repository documents this skill names are absent, you are in a project built from this framework rather than in the framework itself. The inspection report is then the source of truth and those documents are optional background — do not guess at their contents, and do not assume a path exists because this skill names it.
+
+**Background, where they exist:** `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda, ADR-019 with addendum 1), `docs/SERVICE_OPERATIONS.md`, `docs/MODULE_EVOLUTION.md` and `docs/PACKAGE_AUTHORING.md`. They are the deeper source for the rules below, not a prerequisite for them — the rules stand on their own.
 
 ## It is not a contract, and the name is the guardrail
 

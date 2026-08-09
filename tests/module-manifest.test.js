@@ -171,7 +171,7 @@ test('manifests carry an explicit version and unsupported versions fail usefully
   assert.equal(explicit.manifestVersion, 1);
   assert.throws(
     () => validateModuleManifest({ ...partnerManifest, manifestVersion: 2 }),
-    /Unsupported manifestVersion: 2\. This version of agent-crm supports manifest version 1/,
+    /Unsupported manifestVersion: 2\. This version of accordo supports manifest version 1/,
   );
 });
 

@@ -1,9 +1,27 @@
 ---
 name: build-delivery-handover
-description: Add or extend delivery handover, delivery execution, delivery economics and delivery change, deliverables and acceptance evidence in an Agent CRM project - turning the pending delivery obligations of an activated contract into a planned delivery project with work packages, milestones and an optional third-party partner engagement through a versioned handover policy, running that project through bounded human-driven state transitions, and recording governed change requests, plan revisions, deliverables and customer acceptance evidence. Use for delivery project/commessa, work package, delivery milestone, partner engagement, handover, starting/blocking/resuming/completing delivery work, change requests, deliverables or recorded customer acceptance. Do not use for contract amendment, invoicing or billing (none of which exist), contract activation (build-contract-activation), signature/order work (build-signature-order) or a single custom object (create-crm-module).
+description: Add or extend delivery handover, delivery execution, delivery economics and delivery change, deliverables and acceptance evidence in an Accordo project - turning the pending delivery obligations of an activated contract into a planned delivery project with work packages, milestones and an optional third-party partner engagement through a versioned handover policy, running that project through bounded human-driven state transitions, and recording governed change requests, plan revisions, deliverables and customer acceptance evidence. Use for delivery project/commessa, work package, delivery milestone, partner engagement, handover, starting/blocking/resuming/completing delivery work, change requests, deliverables or recorded customer acceptance. Do not use for contract amendment, invoicing or billing (none of which exist), contract activation (build-contract-activation), signature/order work (build-signature-order) or a single custom object (create-crm-module).
+requires:
+  tier: generated-project
+  command: "crm app inspect"
+  projectSurface: ["packages/domains/generated/index.js", "packages/contracts/", "packages/core/index.js"]
+  repositorySurface: ["ARCHITECTURE.md", "DECISIONS.md", "docs/DELIVERY_HANDOVER.md", "docs/DELIVERY_ECONOMICS.md", "docs/DELIVERY_CHANGE_ACCEPTANCE.md", "docs/MODULE_EVOLUTION.md", "docs/PACKAGE_AUTHORING.md"]
+  degradesTo: "the capability graph in `crm app inspect --json` — which reports whether `contracts/delivery-obligations@1` resolves for this project — plus `crm package validate`"
 ---
 
-Read `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda, and ADR-019 with addendum 1), `docs/DELIVERY_HANDOVER.md`, `docs/DELIVERY_ECONOMICS.md`, `docs/DELIVERY_CHANGE_ACCEPTANCE.md`, `docs/MODULE_EVOLUTION.md` and `docs/PACKAGE_AUTHORING.md` first.
+## Orient yourself first
+
+```bash
+npm run crm -- app inspect --json
+```
+
+Read `valid`, then `problems[]`, then `limitations[]`, in that order. Every problem is fixed or reported before anything is built on top of it, and **every limitation is a hard boundary on what you may claim.** Then read `packages[]`, `capabilities[]`, `resources[]`, `actions[]`, `policies[]` and `providers[]`: that list is what exists. A capability absent from the report does not exist, whatever a record name, a label or a document suggests.
+
+If the repository documents this skill names are absent, you are in a project built from this framework rather than in the framework itself. The inspection report is then the source of truth and those documents are optional background — do not guess at their contents, and do not assume a path exists because this skill names it.
+
+This skill depends on one capability, so check it in the report before anything else: `capabilities[]` must carry `delivery-obligations` with `status: "resolved"`. A `missing` or `provider-mismatch` edge is the answer to why nothing here will work, and it is reported rather than worked around.
+
+**Background, where they exist:** `ARCHITECTURE.md`, `DECISIONS.md` (ADR-018 and its addenda, and ADR-019 with addendum 1), `docs/DELIVERY_HANDOVER.md`, `docs/DELIVERY_ECONOMICS.md`, `docs/DELIVERY_CHANGE_ACCEPTANCE.md`, `docs/MODULE_EVOLUTION.md` and `docs/PACKAGE_AUTHORING.md`. They are the deeper source for the rules below, not a prerequisite for them — the rules stand on their own.
 
 ## It plans and runs; it does not cost, bill or accept
 

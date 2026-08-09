@@ -96,7 +96,7 @@ silently attempted here.
 
 `move-stage` must target the handwritten Opportunity module, but the action
 surface (ADR-011) served only generated modules. Extension, fail-closed:
-`createAgentCrmApp` declares `ACTION_ELIGIBLE_CORE_MODULES = ['opportunity']`;
+`createAccordoApp` declares `ACTION_ELIGIBLE_CORE_MODULES = ['opportunity']`;
 the action registry accepts actions whose module is generated **or** in that
 explicit list; the HTTP action route resolves such a core module **only for
 actions** — core CRUD stays on its dedicated routes and is still never exposed

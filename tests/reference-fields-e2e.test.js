@@ -21,7 +21,7 @@ const partnerContactManifest = {
 };
 
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'agent-crm-ref-'));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-ref-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -31,7 +31,7 @@ function project(t) {
 }
 
 function cli(root, args) {
-  return spawnSync(process.execPath, ['--no-warnings', join(root, 'packages/cli/bin/agent-crm.js'), ...args, '--root', root], {
+  return spawnSync(process.execPath, ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), ...args, '--root', root], {
     encoding: 'utf8',
     cwd: root,
   });
@@ -62,16 +62,16 @@ test('reference fields end to end: migration, FK, runtime validation, restart', 
 
   // 6-17. Boot on a file-backed DB and drive through a real server + SDK.
   const dbPath = join(root, 'data', 'ref.sqlite');
-  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
   const { createHttpServer } = await import(pathToFileURL(join(root, 'apps/server/src/index.js')).href);
-  const { AgentCrmClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
+  const { AccordoClient } = await import(pathToFileURL(join(root, 'packages/sdk/src/index.js')).href);
 
   async function boot() {
-    const app = createAgentCrmApp({ dbPath });
+    const app = createAccordoApp({ dbPath });
     const server = createHttpServer(app);
     await new Promise((r) => server.listen(0, '127.0.0.1', r));
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
-    const client = new AgentCrmClient({ baseUrl, actor: { type: 'user', id: 'e2e' } });
+    const client = new AccordoClient({ baseUrl, actor: { type: 'user', id: 'e2e' } });
     return { app, client, close: () => new Promise((r) => server.close(r)).then(() => app.close()) };
   }
 
@@ -143,7 +143,7 @@ test('reference fields end to end: migration, FK, runtime validation, restart', 
 });
 
 test('optional self-reference: first record null, then can self-point, and persists', async (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'agent-crm-self-'));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-self-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -155,9 +155,9 @@ test('optional self-reference: first record null, then can self-point, and persi
   assert.equal(cli(root, ['module', 'create', join(root, 'examples/modules/treenode.module.json'), '--apply']).status, 0);
 
   const dbPath = join(root, 'data', 'self.sqlite');
-  const { createAgentCrmApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
   const actor = { type: 'user', id: 'self' };
-  let app = createAgentCrmApp({ dbPath });
+  let app = createAccordoApp({ dbPath });
   const nodes = app.modules.get('treenode').service;
   const rootNode = await nodes.create({ label: 'root' }, { actor });
   assert.equal(rootNode.parentId, null);
@@ -172,7 +172,7 @@ test('optional self-reference: first record null, then can self-point, and persi
   app.close();
 
   // Restart: the self-relation persists.
-  app = createAgentCrmApp({ dbPath });
+  app = createAccordoApp({ dbPath });
   t.after(() => app.close());
   assert.equal(app.modules.get('treenode').service.get(rootNode.id).parentId, rootNode.id);
 });

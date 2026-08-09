@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentCrmApp } from '../packages/app/src/index.js';
+import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
 import { createModuleAdmin } from '../apps/admin/public/admin-modules.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -86,7 +86,7 @@ function partnerValidator(field, input, rows, updatingId) {
 }
 
 function startServer(t, configure) {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   configure(app);
   const server = createHttpServer(app);
   return new Promise((resolve, reject) => {

@@ -9,7 +9,7 @@
               ↓
 AGENTS.md + Skills + MCP + CLI
               ↓
-  Agent CRM infrastructure
+  Accordo infrastructure
 ```
 
 ## Medusa-style use cases translated to CRM

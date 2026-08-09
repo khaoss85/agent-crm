@@ -18,7 +18,7 @@ import { readModuleState } from '../packages/core/src/module-evolution.js';
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
 function project(t, { spaces = false } = {}) {
-  const root = mkdtempSync(join(tmpdir(), spaces ? 'agent crm evolve ' : 'agent-crm-evolve-'));
+  const root = mkdtempSync(join(tmpdir(), spaces ? 'agent crm evolve ' : 'accordo-evolve-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -206,7 +206,7 @@ test('evolution works from a path containing spaces, and leaves no temp residue'
   applyModulePlan(planModule({ manifest: r2(), rootDir: root }));
   assert.equal(readModuleState(root, 'widget').revision, 2);
   assert.equal(
-    existsSync(join(root, 'packages/modules/widget/module.state.json.tmp-agent-crm')), false,
+    existsSync(join(root, 'packages/modules/widget/module.state.json.tmp-accordo')), false,
     'no staging file survives a successful apply',
   );
 });

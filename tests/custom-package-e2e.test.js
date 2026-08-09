@@ -113,8 +113,8 @@ test('a customer-authored package attaches, works and detaches with no kernel ch
       .join('\n'),
   );
   const probe = spawnSync(process.execPath, ['--no-warnings', '-e', `
-    const { createAgentCrmApp } = await import(${JSON.stringify(pathToFileURL(join(root, 'packages/app/src/index.js')).href)});
-    const app = createAgentCrmApp({ dbPath: ${JSON.stringify(dbPath)} });
+    const { createAccordoApp } = await import(${JSON.stringify(pathToFileURL(join(root, 'packages/app/src/index.js')).href)});
+    const app = createAccordoApp({ dbPath: ${JSON.stringify(dbPath)} });
     console.log(JSON.stringify({
       packages: [...app.domains.names()],
       actions: app.actions.listForModule('delivery-partner-engagement').map((action) => action.name),

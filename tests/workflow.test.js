@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentCrmApp } from '../packages/app/src/index.js';
+import { createAccordoApp } from '../packages/app/src/index.js';
 
 async function fixture() {
-  const app = createAgentCrmApp({ dbPath: ':memory:', approvalThresholdCents: 5_000_000 });
+  const app = createAccordoApp({ dbPath: ':memory:', approvalThresholdCents: 5_000_000 });
   const actor = { type: 'user', id: 'daniele' };
   const company = await app.services.companies.create({ name: 'Acme' }, { actor });
   const contact = await app.services.contacts.create({
@@ -97,7 +97,7 @@ test('new business does not use the renewal approval policy', async (t) => {
 
 
 test('approval workflow rejects an agent pretending to make the human decision', async (t) => {
-  const app = createAgentCrmApp({ dbPath: ':memory:' });
+  const app = createAccordoApp({ dbPath: ':memory:' });
   t.after(() => app.close());
   const { enterpriseRenewal } = await app.seedDemo();
   await app.workflows.run(

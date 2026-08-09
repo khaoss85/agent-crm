@@ -430,8 +430,8 @@ preserve, and demanding a characterization baseline from it would be ceremony.
 ## Sequencing, which this document does not change
 
 ```text
-1.  finish, independently review and merge M14b2      ← where we are
-2.  M15 — Service package, built on the seam
+1.  finish, independently review and merge M14b2      done (PR #25)
+2.  M15 — Service package, built on the seam          ← where we are
 3.  review the M15 learnings: what the seam still cannot express
 4.  a controlled Legacy Domain Alignment Pass, one domain at a time
 ```

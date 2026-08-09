@@ -139,10 +139,10 @@ test('every business write rolls back completely when it fails', async (t) => {
 test('two connections racing every decision produce exactly one winner', async (t) => {
   const { root, context, coverage, entitlement } = await covered(t, 'race.sqlite');
   const { app, client } = context;
-  const { createAgentCrmApp } = await import(`file://${join(root, 'packages/app/src/index.js')}`);
+  const { createAccordoApp } = await import(`file://${join(root, 'packages/app/src/index.js')}`);
   // A short busy timeout: the loser must not be *waited out* to prove the point,
   // and the outcome is identical at 5000ms and 250ms — a typed 409 either way.
-  const second = createAgentCrmApp({
+  const second = createAccordoApp({
     dbPath: app.database.path, busyTimeoutMs: 250, clock: () => '2026-09-15T10:00:00.000Z',
   });
   t.after(() => second.close());

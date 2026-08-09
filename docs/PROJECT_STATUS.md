@@ -8,7 +8,7 @@ this file.
 > **Update this file in the same PR as every milestone merge.** A status file
 > that lags is worse than no status file.
 
-Generated: **2026-08-08**.
+Generated: **2026-08-09**.
 
 ## Snapshot
 
@@ -21,7 +21,8 @@ Generated: **2026-08-08**.
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, plus 22 further checks for the M14b2 section as its pre-merge gate, both run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **LA0 — Lead Intelligence characterization harness** (`claude/la0-legacy-characterization`): 576 passing on the branch. Freezes 149 classified observations / 779 asserted values so the extraction can be proved to change no externally observable behaviour. Open and unmerged. |
+| Open PRs | **Go-to-market** (`claude/go-to-market-strategy-gkr4bz`): `origin/main` merged in on 2026-08-09. The claims ledger and its gate, the generated public site with SEO/AEO surfaces, every distribution manifest, the launch packet, the Edition L benchmark harness (ADR-024), the falsification kit and the surface budget. Open and unmerged. |
+| npm | `accordo@0.0.1` and `create-accordo@0.0.1` published as **empty name reservations** on 2026-08-09 — confirmed against the registry, not assumed. Neither installs anything. The `@accordo` scope is **unclaimed** (`@accordo/mcp` and `@accordo/core` return 404), which is why `site/brand.json` records `npm.status: names-reserved` and the MCP-registry submission stays blocked. |
 
 ## Completed functional path
 
@@ -46,9 +47,13 @@ Lead capture
   close it only over completed work packages and milestones                   M14a
 → record what it consumed: time and expense evidence, a versioned cost plan,  M14b1
   a reproducible contribution estimate grouped by currency                    M14b1
+→ govern what changed: a change request decided once, an immutable plan       M14b2
+  revision, or a commercial candidate that raises and stops                   M14b2
+→ record what it produced and what a human says a customer accepted, over a   M14b2
+  frozen, fingerprinted scope — evidence, never a billing trigger             M14b2
 ```
 
-M14a, AX1 and M14b1 are merged. AX2 is on an open PR.
+Every step above is merged.
 
 Framework underneath: module manifest + generated migrations (M1), module
 factory (M2), one generated resource contract over API/SDK (M3), generated
@@ -105,9 +110,9 @@ Two parallel tracks run alongside and are not gated by domain progress: the
 auth/tenancy/RBAC, Jobs & durable outbox, Integration Runtime, Data Governance,
 Design-to-CRM, Cloud), the **Marketing & Growth track** (MK0–MK7 — design only;
 `MARKETING_GROWTH_OPERATIONS.md`) and the cross-cutting **Agent Experience
-track** (AX0–AX5 — AX0 is a strategy and a Skill, AX1 is merged, AX2 is a
-machine-readable plan *contract* on an open PR — not a planner and not a
-runtime — and AX3–AX5 are not implemented; `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequencing and dependencies are in
+track** (AX0–AX5 — AX0 is a strategy and a Skill, AX1 and AX2 are merged (AX2
+is a machine-readable plan *contract* — not a planner and not a runtime) and
+AX3–AX5 are not implemented; `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequencing and dependencies are in
 `EXECUTION_ROADMAP.md`.
 
 ## Known platform limitations (not blockers, but not forgotten)
@@ -142,13 +147,12 @@ adoption; generated API/SDK/Admin; references; actions; core adapters;
 pipelines; Lead Intelligence; Commercial Operations; Signature and Order;
 Contract activation and subscriptions; the public domain-package contract, the
 delivery handover and delivery execution; deterministic application inspection
-(AX1); delivery economics (M14b1); machine-readable Solution Plans (AX2); MCP server; CLI.
-
-**Implemented, open PR (not on main):** delivery change, deliverables and acceptance (M14b2).
+(AX1); delivery economics (M14b1); delivery change, deliverables and acceptance
+evidence (M14b2); machine-readable Solution Plans (AX2); MCP server; CLI.
 
 **Documentation only (no code):** renewal, billing and everything downstream of
 activation; Service; Analytics Studio; Integration Runtime; Jobs & durable outbox;
-Data Governance; Design-to-CRM; Agent CRM Cloud; create-project CLI;
+Data Governance; Design-to-CRM; Accordo Cloud; create-project CLI;
 PostgreSQL; auth/tenancy/RBAC; Marketing & Growth (MK0–MK7); the Agent
 Experience track beyond AX0; benchmark execution.
 

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+{{include:head.html}}
+  <title>Not found — {{brand.name}}</title>
+  <meta name="description" content="That page does not exist on this site. The claims ledger, the CRM job catalogue and the answers index are all one link away, and the site is small enough that the list below is most of it." />
+{{page.seo}}
+</head>
+<body>
+{{include:nav.html}}
+
+<main id="main">
+  <div class="shell">
+    <header class="hero">
+      <p class="eyebrow">404</p>
+      <h1>That page does not exist.</h1>
+      <p class="lede">
+        This site is small, so the list below is close to all of it. If you arrived from a link
+        somewhere else, the link is wrong rather than the page being gone — nothing here has been
+        published and then removed.
+      </p>
+    </header>
+  </div>
+
+  <div class="shell">
+    <section aria-labelledby="everything">
+      <h2 id="everything">Everything on this site</h2>
+      <ul class="plain">
+        <li><a href="{{page.root}}index.html">The landing page</a> — what this is, and the limits before the capabilities</li>
+        <li><a href="{{page.root}}evidence.html">The claims ledger</a> — every claim, what proves it, and where it stops</li>
+        <li><a href="{{page.root}}jobs.html">The CRM job catalogue</a> — every catalogued job, its status and its evidence</li>
+        <li><a href="{{page.root}}answers.html">Answers</a> — and the questions this project refuses to answer</li>
+      </ul>
+      <h2 id="limits">For machines</h2>
+      <ul class="plain">
+        <li><a href="{{page.root}}llms.txt"><span class="mono">/llms.txt</span></a> and <a href="{{page.root}}llms-full.txt"><span class="mono">/llms-full.txt</span></a></li>
+        <li><a href="{{page.root}}jobs.json"><span class="mono">/jobs.json</span></a> — the catalogue, structured</li>
+        <li><a href="{{page.root}}answers.json"><span class="mono">/answers.json</span></a> — the answers with their evidence resolved</li>
+      </ul>
+    </section>
+  </div>
+</main>
+
+{{include:footer.html}}
+</body>
+</html>
