@@ -162,9 +162,17 @@ for (const directory of ['.claude/skills', '.agents/skills']) {
  * ARCHITECTURE.md, DECISIONS.md, docs/*.md, packages/*. Inside this repository or
  * a project built by copying it, those paths resolve. Installed into an unrelated
  * project they do not, and the skill degrades into confident instructions about
- * files that are not there. Until the create-project CLI emits those documents
- * into a customer's own repository (EXECUTION_ROADMAP Phase 5, not implemented),
- * every repo-bound skill is a listing we should not publish.
+ * files that are not there.
+ *
+ * The project bootstrap (`packages/create-accordo`) now emits a customer's own
+ * repository, and it ships **this** bundle into it — which is why every entry
+ * here declares a `tier` and a `degradesTo`. What it deliberately does **not**
+ * emit is this repository's Markdown: `docs/SKILL_PACKAGING.md` decides that no
+ * ARCHITECTURE.md, DECISIONS.md or `docs/` file travels into a generated
+ * project, and the bootstrap's own test asserts their absence. So a
+ * `tier: repository` skill is still a listing we should not publish: the
+ * bootstrap did not close that gap, it made the boundary the bundle has to
+ * respect concrete.
  */
 const PUBLISHED = 'skills';
 const publishedSkills = existsSync(join(root, PUBLISHED))
@@ -255,6 +263,87 @@ if (asserted.length) {
     );
   } else {
     notes.push(`${asserted.length} manifest(s) carry license "${brand.license.value}", which brand.json records as ${brand.license.status}. Confirm it before publishing — a manifest's licence field is an assertion to a marketplace, not a description of the working tree.`);
+  }
+}
+
+// ---------------------------------------------------------------- the source/registry wall
+
+/**
+ * The one distinction this repository is most likely to lose by accident.
+ *
+ * `create-accordo` is now real source: `packages/create-accordo` scaffolds a
+ * project that boots, inspects and passes the project doctor, proven by
+ * `tests/project-bootstrap.test.js`. The package **published** under that name
+ * is still the empty `0.0.1` placeholder, so `npm create accordo` reaches the
+ * placeholder rather than this code.
+ *
+ * Two true sentences and one false one, and the false one is the comfortable one:
+ *
+ *   true   create-accordo scaffolds a working project from this repository
+ *   true   npm create accordo installs nothing
+ *   FALSE  npm create accordo creates a project
+ *
+ * So the wall is mechanical rather than remembered. While the registry status is
+ * anything short of `published`, the package manifest must carry `private: true`
+ * — npm refuses to publish a private package, so the repository cannot drift
+ * into a publishable state without somebody editing the brand token in the same
+ * commit and having to think about what they are asserting.
+ */
+const bootstrapManifestPath = 'packages/create-accordo/package.json';
+const bootstrapBinPath = 'packages/create-accordo/bin/create-accordo.js';
+const bootstrapExists = existsSync(join(root, bootstrapBinPath));
+
+if (bootstrapExists !== Boolean(brand.npm.sourceScaffolds)) {
+  fail(
+    `site/brand.json records npm.sourceScaffolds: ${Boolean(brand.npm.sourceScaffolds)}, but `
+    + `${bootstrapBinPath} ${bootstrapExists ? 'exists' : 'does not exist'}. That field is what a `
+    + 'document reads to tell "the source scaffolds" from "the published package scaffolds", and '
+    + 'the two must never be inferred from each other.',
+  );
+}
+
+if (bootstrapExists) {
+  let bootstrapManifest = null;
+  try {
+    bootstrapManifest = JSON.parse(readFileSync(join(root, bootstrapManifestPath), 'utf8'));
+  } catch (error) {
+    fail(`${bootstrapManifestPath}: could not be read — ${error.message}`);
+  }
+  if (bootstrapManifest) {
+    if (bootstrapManifest.name !== 'create-accordo') {
+      fail(`${bootstrapManifestPath}: name is "${bootstrapManifest.name}", but the reserved npm name is "create-accordo"`);
+    }
+    if (bootstrapManifest.type !== 'module') {
+      fail(`${bootstrapManifestPath}: needs "type": "module" — without it every .js file beneath packages/create-accordo is treated as CommonJS`);
+    }
+    if (typeof bootstrapManifest.bin?.['create-accordo'] !== 'string') {
+      fail(`${bootstrapManifestPath}: declares no create-accordo bin, so \`npm create accordo\` would have nothing to run even once published`);
+    }
+    if (brand.npm.status !== 'published' && bootstrapManifest.private !== true) {
+      fail(
+        `${bootstrapManifestPath} is not private, but site/brand.json records npm.status as `
+        + `"${brand.npm.status}". Publishing is a human decision (MASTER_PLAN.md §10.4): while the `
+        + 'registry holds only a name reservation, this manifest stays `private: true` so that no '
+        + 'accidental publish turns the placeholder into something that installs.',
+      );
+    }
+    if (brand.npm.status === 'published' && bootstrapManifest.private === true) {
+      fail(
+        `site/brand.json says npm.status is "published", but ${bootstrapManifestPath} is still `
+        + '`private: true` — npm cannot have published it. One of the two is wrong, and a status '
+        + 'field that outruns the package is how a document starts claiming `npm create accordo` works.',
+      );
+    }
+  }
+
+  if (brand.npm.status !== 'published') {
+    notes.push(
+      'create-accordo scaffolds a working project FROM THIS REPOSITORY (packages/create-accordo, '
+      + `proven by tests/project-bootstrap.test.js). The published \`${brand.npm.createCommand ?? 'npm create accordo'}\` `
+      + 'still reaches an empty 0.0.1 placeholder and installs nothing. Both sentences are true; only '
+      + 'the first may be claimed of this source, and publishing the real package is a human decision '
+      + 'that nothing in this repository performs.',
+    );
   }
 }
 

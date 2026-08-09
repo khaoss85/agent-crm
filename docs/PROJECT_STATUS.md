@@ -22,7 +22,8 @@ Generated: **2026-08-09**.
 | Browser smoke | 37/37 in real Chromium on the M14a branch, plus 22 further checks for the M14b2 section as its pre-merge gate, both run manually — **not in CI** |
 | CI | `verify` ×2 + GitGuardian green |
 | Open PRs | **Go-to-market** (`claude/go-to-market-strategy-gkr4bz`): `origin/main` merged in on 2026-08-09. The claims ledger and its gate, the generated public site with SEO/AEO surfaces, every distribution manifest, the launch packet, the Edition L benchmark harness (ADR-024), the falsification kit and the surface budget. Open and unmerged. |
-| npm | `accordo@0.0.1` and `create-accordo@0.0.1` published as **empty name reservations** on 2026-08-09 — confirmed against the registry, not assumed. Neither installs anything. The `@accordo` scope is **unclaimed** (`@accordo/mcp` and `@accordo/core` return 404), which is why `site/brand.json` records `npm.status: names-reserved` and the MCP-registry submission stays blocked. |
+| npm | `accordo@0.0.1` and `create-accordo@0.0.1` published as **empty name reservations** on 2026-08-09 — confirmed against the registry, not assumed. Neither installs anything. The `@accordo` scope is **unclaimed** (`@accordo/mcp` and `@accordo/core` return 404), which is why `site/brand.json` records `npm.status: names-reserved` and the MCP-registry submission stays blocked. **This row describes the registry and nothing in it has changed.** |
+| Project bootstrap | **`create-accordo` is now real source**: `packages/create-accordo`, `projectBootstrapContract: 1`, dry-run by default. Run from a checkout it writes a standalone project that boots with no install, reports `valid` from `app inspect` and exits 0 from `project doctor` — proven end to end in `tests/project-bootstrap.test.js`, which bootstraps into a temporary directory and then runs the result. **The published placeholder is untouched**, so `npm create accordo` still installs nothing; publishing is a human decision and `packages/create-accordo/package.json` is `private: true` so it cannot happen by accident. `site/brand.json` keeps the two facts in separate fields (`npm.status`, `npm.sourceScaffolds`) and `scripts/distribution-check.js` fails when either drifts. Plan: `docs/plans/project-bootstrap-installability.md`. |
 
 ## Completed functional path
 
@@ -106,7 +107,7 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
    review, then **DX2** and last **M16 Analytics Studio** — `EXECUTION_ROADMAP.md`.
 
 Two parallel tracks run alongside and are not gated by domain progress: the
-**platform track** (domain package boundary, create-project CLI, PostgreSQL,
+**platform track** (domain package boundary, PostgreSQL,
 auth/tenancy/RBAC, Jobs & durable outbox, Integration Runtime, Data Governance,
 Design-to-CRM, Cloud), the **Marketing & Growth track** (MK0–MK7 — design only;
 `MARKETING_GROWTH_OPERATIONS.md`) and the cross-cutting **Agent Experience
@@ -148,11 +149,13 @@ pipelines; Lead Intelligence; Commercial Operations; Signature and Order;
 Contract activation and subscriptions; the public domain-package contract, the
 delivery handover and delivery execution; deterministic application inspection
 (AX1); delivery economics (M14b1); delivery change, deliverables and acceptance
-evidence (M14b2); machine-readable Solution Plans (AX2); MCP server; CLI.
+evidence (M14b2); machine-readable Solution Plans (AX2); the project bootstrap
+(`create-accordo`, source only — nothing is published); MCP server; CLI.
 
 **Documentation only (no code):** renewal, billing and everything downstream of
 activation; Service; Analytics Studio; Integration Runtime; Jobs & durable outbox;
-Data Governance; Design-to-CRM; Accordo Cloud; create-project CLI;
+Data Governance; Design-to-CRM; Accordo Cloud; a **published** npm package
+(the bootstrap exists in source; the registry names are empty reservations);
 PostgreSQL; auth/tenancy/RBAC; Marketing & Growth (MK0–MK7); the Agent
 Experience track beyond AX0; benchmark execution.
 

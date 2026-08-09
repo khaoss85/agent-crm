@@ -1,0 +1,14 @@
+{
+  "name": "create-accordo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Create a new Accordo CRM project from a checkout of the framework: deterministic, offline, and local-development-only.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "bin": {
+    "create-accordo": "./bin/create-accordo.js"
+  },
+  "license": "MIT"
+}

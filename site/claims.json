@@ -583,16 +583,20 @@
     {
       "id": "L-08",
       "headline": "Ownership today means copying source, not installing a dependency.",
-      "text": "There is no create-project CLI and no published package. The one working installer copies packages/, apps/ and examples/ into a new project — you own the result outright, but the ergonomics of `npm create` and a versioned framework dependency do not exist yet. Until they do, upgrading means merging, not bumping.",
+      "text": "There is a project bootstrap and there is no published package, and the two are different facts. The repository's bootstrap command scaffolds a project that boots, reports `valid` from `app inspect` and exits 0 from `project doctor`, offline and with no install — run from a checkout of this repository. The package published under the reserved npm name is still an empty 0.0.1 placeholder, so the `npm create` route installs nothing until a human publishes it. Either way the framework is vendored into the project rather than depended on by version: you own the result outright, and upgrading means merging, not bumping.",
       "evidence": {
+        "tests": [
+          "tests/project-bootstrap.test.js"
+        ],
         "docs": [
           "docs/PROJECT_STATUS.md",
-          "examples/starters/b2b-lead-qualification/install.mjs"
+          "docs/plans/project-bootstrap-installability.md"
         ],
         "repoFacts": [
-          "examples/starters/b2b-lead-qualification/install.mjs copies packages, apps, examples and package.json into a temporary project",
-          "the create-project CLI is EXECUTION_ROADMAP Phase 5 and is not implemented",
-          "no npm package is published"
+          "the project bootstrap writes a project from an empty directory, dry-run unless --apply",
+          "tests/project-bootstrap.test.js bootstraps into a temporary directory and then runs app inspect, project doctor and the generated project's own checks against the result",
+          "site/brand.json records the registry status and the source status as two separate fields, and scripts/distribution-check.js fails if either disagrees with the tree",
+          "the published 0.0.1 tarball is an empty name reservation and this repository publishes nothing"
         ]
       },
       "surfaces": [

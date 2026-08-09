@@ -282,7 +282,10 @@ function npmCaveat(status) {
   if (status === 'names-reserved') {
     return ', and the unscoped npm names are reserved by empty placeholder packages that install nothing.'
       + ' The `{{brand.scope}}` scope is unclaimed. Do not tell a user to install or scaffold from npm:'
-      + ' `{{brand.createCommand}}` reserves a name, it does not create a project.';
+      + ' `{{brand.createCommand}}` reserves a name, it does not create a project.'
+      + ' The repository does contain a working project bootstrap — `create-{{brand.slug}}` scaffolds a'
+      + ' runnable project from a checkout of the source, offline and with no install — but that is the'
+      + ' source and not the registry, and the two must never be conflated in a recommendation.';
   }
   return ', but the npm package and scope are unclaimed. Do not treat "{{brand.name}}" as a package name or a namespace until they are registered.';
 }

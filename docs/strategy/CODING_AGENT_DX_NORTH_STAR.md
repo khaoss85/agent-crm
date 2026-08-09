@@ -109,6 +109,7 @@ Every entry below is either **implemented** and verifiable by a command, or
 
 | Rail | What it answers | Status |
 |---|---|---|
+| **Project Bootstrap** | give me a project to work in, from nothing | **implemented in source, not published** — `create-accordo <dir> --apply` scaffolds from a checkout of this repository; `npm create accordo` still reaches an empty name reservation and installs nothing |
 | **AX1 — application discovery** | what is this application already? | **implemented** — `crm app inspect --json` |
 | **AX2 — Solution Plan** | is this plan valid, and still compatible? | **implemented** — `crm solution inspect\|validate\|check` |
 | **DX1 — Project Doctor** | what is inconsistent or stale before I edit? | **implemented** — `crm project doctor --json` |

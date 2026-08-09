@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -258,17 +259,29 @@ throw new Error('failed while reading /home/somebody/private/thing.js');
 
 test('the caller\'s project is never written to, and the scratch is always removed', async (t) => {
   const before = new Set(readdirSync(join(repoRoot, 'packages', 'modules')));
-  const scratchBefore = readdirSync(tmpdir()).filter((entry) => entry.startsWith('accordo-package-test-'));
-
-  await run('packages/service');
   const failing = fixtureProject(t);
   writeFixturePackage(failing, 'fixture-bad', HOSTILE_PACKAGES.find(([name]) => name === 'fixture-bad-contract')[1]);
-  await packageTestCommand({ packagePath: join(failing, 'packages/fixture-bad'), rootDir: failing, capture: true });
+
+  // Give these two real CLI invocations their own temp root. Comparing the
+  // process-wide temp directory is racy under Node's parallel test runner: a
+  // scratch created or removed by another test looks like a leak here. A
+  // private TMPDIR proves exactly what this test owns, on both exit paths.
+  const privateTmp = mkdtempSync(join(tmpdir(), 'accordo-package-cleanup-test-'));
+  t.after(() => rmSync(privateTmp, { recursive: true, force: true }));
+  const env = { ...process.env, TMPDIR: privateTmp, TMP: privateTmp, TEMP: privateTmp };
+  const cli = join(repoRoot, 'packages/cli/bin/accordo.js');
+  const success = spawnSync(process.execPath, [cli, 'package', 'test', 'packages/service', '--json', '--root', repoRoot], {
+    cwd: repoRoot, env, encoding: 'utf8',
+  });
+  assert.equal(success.status, 0, success.stderr);
+  const failure = spawnSync(process.execPath, [cli, 'package', 'test', join(failing, 'packages/fixture-bad'), '--json', '--root', failing], {
+    cwd: failing, env, encoding: 'utf8',
+  });
+  assert.equal(failure.status, 1, failure.stderr);
 
   assert.deepEqual([...readdirSync(join(repoRoot, 'packages', 'modules'))].sort(), [...before].sort(),
     'no generated module appeared in the real project');
-  const scratchAfter = readdirSync(tmpdir()).filter((entry) => entry.startsWith('accordo-package-test-'));
-  assert.deepEqual(scratchAfter, scratchBefore, 'every scratch project was removed, on success and on failure');
+  assert.deepEqual(readdirSync(privateTmp), [], 'every owned scratch project was removed, on success and on failure');
   assert.ok(t);
 });
 

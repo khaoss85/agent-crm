@@ -169,7 +169,7 @@
     {
       "slug": "what-do-i-own-and-how-do-i-install-it",
       "question": "What do I actually own, and how do I install it?",
-      "answer": "You own the source, and today that means copying it: there is no create-project CLI and no published package, and the one working installer copies packages/, apps/ and examples/ into a new project — so upgrading means merging, not bumping a version (L-08). What you are left with is a Node application with zero third-party runtime dependencies — Node 22 and a checkout, no build step, no bundler (C-17) — though that property belongs to the framework, not to whatever you add on top of it. A domain package you author attaches and detaches with the kernel's fingerprint unchanged and reaches another package only through a declared capability (C-13), but there is no scaffold, registry, marketplace or sandboxing, package code runs with the host process's authority, and detaching leaves its data behind. There is nothing to sign up for: no hosted CRM, no free tier, no account (L-07).",
+      "answer": "You own the source, and today that means copying it: there is a project bootstrap that runs from a checkout of the repository and no published package: the repository's bootstrap command scaffolds a project that boots, inspects and passes the project doctor, while the reserved `npm create` name still reaches an empty placeholder and installs nothing. Either way the framework is vendored into the project, so upgrading means merging, not bumping a version (L-08). What you are left with is a Node application with zero third-party runtime dependencies — Node 22 and a checkout, no build step, no bundler (C-17) — though that property belongs to the framework, not to whatever you add on top of it. A domain package you author attaches and detaches with the kernel's fingerprint unchanged and reaches another package only through a declared capability (C-13), but there is no scaffold, registry, marketplace or sandboxing, package code runs with the host process's authority, and detaching leaves its data behind. There is nothing to sign up for: no hosted CRM, no free tier, no account (L-07).",
       "claims": [
         "C-17",
         "C-13"
@@ -178,7 +178,7 @@
         "L-08",
         "L-07"
       ],
-      "snippet": "You own the source, and today that means copying it: no create-project CLI and no published package, so upgrading means merging rather than bumping a version."
+      "snippet": "You own the source, and today that means copying it: a bootstrap that scaffolds from a checkout, no published package, and upgrading means merging rather than bumping a version."
     }
   ],
   "refused": [

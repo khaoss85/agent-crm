@@ -54,7 +54,7 @@ tempting violations, named so they stay named:
 |---|---|---|
 | Renewals firing, SLA timers, unattended follow-up | There is no scheduler (`L-04`) | *"The renewal policy is finished. Nothing fires it, and here is why we shipped it anyway"* — a good article, labelled an **architecture** post, not a capability post |
 | Cloud, Analytics Studio, Marketing MK0–MK7, Data Governance, Integration Runtime | Design-only | A clearly labelled roadmap post, once, not a series |
-| The create-project CLI and `npm create <name>` | Does not exist, and its name is the brand | Nothing until both are true |
+| `npm create <name>` as a thing a reader can run | The bootstrap exists in source and is tested end to end, but the npm name is an empty reservation, so the published command installs nothing | *"A project bootstrap that refuses rather than guesses"* — an **architecture** post about the source, which may never say or imply that `npm create <name>` works. Nothing about installing until the package is published |
 | Any number from the build benchmark | Not executed (`L-03`) | Nothing. Not a range, not an estimate, not a placeholder in a mockup |
 | Integration guides for named vendors | Every provider is an offline fixture | *"Designing a provider contract you can implement against before the vendor exists"* — P4, and true today |
 

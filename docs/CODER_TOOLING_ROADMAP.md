@@ -11,6 +11,7 @@ if it were.
 
 | | Surface | What it answers |
 |---|---|---|
+| — | `create-accordo <dir> [--apply] [--json]` | give me a project from nothing. It copies the framework into an empty directory and writes a project that boots with no install, reports `valid` from `app inspect` and exits 0 from `project doctor` (`projectBootstrapContract: 1`, `docs/plans/project-bootstrap-installability.md`). It reaches no network, composes no domain package and opens no database, and it is the one command that runs **before** the framework exists on disk — so it imports none of it. **It scaffolds from a checkout of this repository, and it is not published**: `npm create accordo` still reaches an empty name reservation and installs nothing, and nothing in this repository changes that |
 | AX1 | `crm app inspect [--json]` | what has this project actually composed — packages, the resolved capability graph, records and revisions, actions, policies, providers, and eleven machine-readable limitations |
 | AX2 | `crm solution inspect\|validate\|check` | what are you going to do about it, and on what evidence — a bounded plan contract, bound to a real AX1 report |
 | — | `crm package validate\|inspect <dir>` | one package in isolation, through the validator the application runs at startup |
