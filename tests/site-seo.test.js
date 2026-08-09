@@ -27,6 +27,15 @@ const builder = join(repo, 'scripts/site-build.js');
 const brand = JSON.parse(readFileSync(join(repo, 'site/brand.json'), 'utf8'));
 const ORIGIN = `https://${brand.domain.value}`;
 
+test('the Vercel config contains no comment pseudo-field that deployment rejects', () => {
+  const config = JSON.parse(readFileSync(join(repo, 'vercel.json'), 'utf8'));
+  assert.equal(
+    Object.hasOwn(config, '$comment'),
+    false,
+    'Vercel validates vercel.json against a closed schema and rejects the otherwise harmless $comment field',
+  );
+});
+
 /**
  * Build the site into a throwaway root, optionally with brand.json edited first. The builder reads
  * `process.cwd()`, so a copied tree is all it takes — no flag, no injection point, and the real
