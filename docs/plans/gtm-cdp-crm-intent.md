@@ -158,6 +158,9 @@ oversized or unknown `responsibilityMap` fields must fail the build.
   this plan named a `WebPage` JSON-LD block the template never emits, and
   `SITE_ARCHITECTURE.md` still said 68 generated job pages while the build emits
   60. Both were reproduced from the built artifact, corrected and regression-held.
+- 2026-08-09 — the final reviewed functional commit is `a2888ed`. A clean
+  worktree at that exact SHA passed 781/781 and smoke; C-20 is remeasured against
+  that SHA rather than against the later ledger-only commit.
 
 ## Decision log
 
