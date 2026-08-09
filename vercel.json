@@ -1,6 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "$comment": "Deployment configuration for the public site, read by Vercel at the repository root. The build runs `npm run site:check`, which renders site/dist from the claims ledger and then runs the honesty gate over the result — so a claim that loses its evidence fails the deployment, not just CI. Running only site:build here would have left that sentence true of the pull request and false of the deploy. The repository is public, so no X-Robots-Tag is sent: the header outranks the meta tag, and leaving it in place would keep every page unindexed however the ledger is configured. scripts/site-check.js fails the build if it comes back while brand.json says public.",
   "framework": null,
   "installCommand": "npm install",
   "buildCommand": "npm run site:check",
