@@ -176,8 +176,9 @@ Review receipts:
     contradictory CDP sentence before fix: zero failures; regression now refuses it
     app inspect: valid, zero problems, 11 limitations read
     project doctor: passed, zero warnings/failures, 149 documents
-    clean clone before the skills.sh review finding: install, 785-test verify,
-      smoke, starter, four Chromium shots all green
+    clean clone at e4089dd after the skills.sh fix: fresh install, project
+      doctor, 785-test verify, smoke, full B2B starter and four Chromium shots
+      all green
 
 ## Interfaces and Dependencies
 
@@ -189,7 +190,7 @@ built-ins, consistent with repository conventions.
 
 ## Outcomes & Retrospective
 
-The existing distribution gate now binds eight first-contact surfaces to four
+The existing distribution gate now binds nine first-contact surfaces to four
 truthful retrieval intents using only the fields those surfaces actually read.
 The implementation added no product capability and no extra step for an agent.
 Three review findings were reproduced and fixed rather than documented away: hidden
