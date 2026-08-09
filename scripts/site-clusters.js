@@ -127,6 +127,15 @@ const CLUSTERS = [
  */
 const STANDING_LIMITS = ['L-01', 'L-02', 'L-04', 'L-05', 'L-03', 'L-08'];
 
+/** Closed, single-line bounds for the executable refusal receipt. */
+const REFUSAL_PROOF_FIELDS = new Map([
+  ['title', 140],
+  ['caption', 300],
+  ['request', 500],
+  ['actor', 300],
+  ['result', 160],
+]);
+
 /** Front-matter fields a blog post must declare (SITE_ARCHITECTURE.md §5). */
 export const REQUIRED_FRONT_MATTER = ['title', 'date', 'claims', 'transcript', 'editor'];
 
@@ -216,8 +225,16 @@ export function buildClusterPages({ sources, ledger, jobs, brand, origin, blogDi
       if (entry.refusalProof !== undefined) {
         const proof = entry.refusalProof;
         if (!proof || typeof proof !== 'object' || Array.isArray(proof)) throw new Error(`${where}: refusalProof must be an object`);
-        for (const field of ['title', 'caption', 'request', 'actor', 'result']) {
+        for (const field of Object.keys(proof)) {
+          if (!REFUSAL_PROOF_FIELDS.has(field)) throw new Error(`${where}: refusalProof has unknown field ${field}`);
+        }
+        for (const [field, max] of REFUSAL_PROOF_FIELDS) {
           if (!proof[field] || typeof proof[field] !== 'string') throw new Error(`${where}: refusalProof is missing ${field}`);
+          if (!proof[field].trim()) throw new Error(`${where}: refusalProof.${field} must not be blank`);
+          if (proof[field].length > max) throw new Error(`${where}: refusalProof.${field} exceeds ${max} characters`);
+          if (/[\u0000-\u001f\u007f\u2028\u2029]/u.test(proof[field])) {
+            throw new Error(`${where}: refusalProof.${field} must be one line without control characters`);
+          }
         }
       }
 

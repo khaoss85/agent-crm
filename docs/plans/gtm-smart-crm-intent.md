@@ -131,6 +131,16 @@ Do not merge the PR or promote production; those remain human gates.
 - 2026-08-09: inspected 1270px desktop and 390px mobile Chromium renders. The
   first mobile render exposed a horizontally clipped request; the component now
   wraps long receipt lines, and the second render shows the full route and result.
+- 2026-08-09: adversarial review confirmed one low-severity fail-closed defect:
+  the new receipt accepted a whitespace-only result despite calling its shape
+  closed. The same seam also had no bound or one-line rule. The contract now
+  rejects blank, multiline, oversized and unknown fields, and the hostile-input
+  test exercises escaping in all five authored fields.
+- 2026-08-09: documentation-truthfulness review confirmed one medium finding:
+  the receipt printed an HTTP POST while the commercial suite asserted the same
+  actor/status/code through a direct runtime call. The existing end-to-end test
+  now sends the approval through the SDK with an agent actor, exercising the
+  exact generated HTTP route, actor headers and normalized 403 shown on the page.
 
 ## Decision log
 

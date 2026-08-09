@@ -123,8 +123,10 @@ meaning, does not clear this contract.
 tested server refusal. The shape is deliberately closed: request, asserted actor and
 machine-readable result, plus a title and a caption that name the proof's scope. The
 renderer escapes every authored field and places the receipt after the mandatory boundary
-but before the essay. A sample response that no test asserts, or a generic code panel used
-only for visual emphasis, does not clear this contract.
+but before the essay. Every field is non-blank, single-line and bounded (`title` 140,
+`caption` 300, `request` 500, `actor` 300, `result` 160 characters); unknown fields fail
+the build. A sample response that no test asserts, or a generic code panel used only for
+visual emphasis, does not clear this contract.
 
 ## 4. What may not be written
 

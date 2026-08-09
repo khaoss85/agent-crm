@@ -285,33 +285,46 @@ test('the refusal proof content contract rejects an incomplete receipt', () => {
     concepts: readJson('site/concepts.json'),
     compare: readJson('site/compare.json'),
   };
+  const build = (source) => buildClusterPages({
+    sources: source,
+    ledger,
+    jobs,
+    brand: readJson('site/brand.json'),
+    origin: 'https://accordo.dev',
+  });
   const edited = structuredClone(sources);
   const smart = edited.concepts.entries.find((/** @type {any} */ entry) => entry.slug === 'smart-crm');
   delete smart.refusalProof.result;
 
   assert.throws(
-    () => buildClusterPages({
-      sources: edited,
-      ledger,
-      jobs,
-      brand: readJson('site/brand.json'),
-      origin: 'https://accordo.dev',
-    }),
+    () => build(edited),
     /site\/concepts\.json → smart-crm: refusalProof is missing result/,
   );
 
-  const hostile = structuredClone(sources);
-  hostile.concepts.entries.find((/** @type {any} */ entry) => entry.slug === 'smart-crm')
-    .refusalProof.actor = '<agent & user>';
-  const page = buildClusterPages({
-    sources: hostile,
-    ledger,
-    jobs,
-    brand: readJson('site/brand.json'),
-    origin: 'https://accordo.dev',
-  }).find((candidate) => candidate.path === 'concepts/smart-crm.html');
-  assert.match(page.body, /&lt;agent &amp; user&gt;/, 'authored proof fields must be escaped before rendering');
-  assert.doesNotMatch(page.body, /<agent & user>/);
+  for (const [value, expected] of [
+    ['   ', /refusalProof\.result must not be blank/],
+    ['200 OK\n403 HUMAN_APPROVAL_REQUIRED', /refusalProof\.result must be one line/],
+    ['x'.repeat(161), /refusalProof\.result exceeds 160 characters/],
+  ]) {
+    const invalid = structuredClone(sources);
+    invalid.concepts.entries.find((/** @type {any} */ entry) => entry.slug === 'smart-crm')
+      .refusalProof.result = value;
+    assert.throws(() => build(invalid), expected);
+  }
+
+  const unknown = structuredClone(sources);
+  unknown.concepts.entries.find((/** @type {any} */ entry) => entry.slug === 'smart-crm')
+    .refusalProof.reslt = '403 TYPO';
+  assert.throws(() => build(unknown), /refusalProof has unknown field reslt/);
+
+  for (const field of ['title', 'caption', 'request', 'actor', 'result']) {
+    const hostile = structuredClone(sources);
+    hostile.concepts.entries.find((/** @type {any} */ entry) => entry.slug === 'smart-crm')
+      .refusalProof[field] = `<${field} & value>`;
+    const page = build(hostile).find((candidate) => candidate.path === 'concepts/smart-crm.html');
+    assert.match(page.body, new RegExp(`&lt;${field} &amp; value&gt;`), `${field} must be escaped before rendering`);
+    assert.doesNotMatch(page.body, new RegExp(`<${field} & value>`));
+  }
 });
 
 test('every internal link resolves to a page that was built', () => {
