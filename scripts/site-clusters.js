@@ -76,9 +76,9 @@ const CLUSTERS = [
     title: 'Agent tools: what a coding agent can run in this checkout',
     lede:
       `<p>Each page names the command, quotes what it printed in this repository, and states what its report
-      does not prove. <strong>Nothing here is installable.</strong> There is no create-project CLI and no
-      published package: the two names on the registry are empty reservations, so ownership means copying
-      source and upgrading means merging (<span class="mono">site/brand.json</span>, L-08). The MCP server is
+      does not prove. <strong>Nothing here installs from npm.</strong> The project bootstrap scaffolds a working project
+      from a checkout of this repository; the two names on the registry are still empty reservations, so
+      ownership means copying source and upgrading means merging (<span class="mono">site/brand.json</span>, L-08). The MCP server is
       stdio and local only, and it inherits the authority of the process that starts it.</p>`,
     description:
       'Inspect, plan, diagnose, scaffold, conformance-test, quality gates, falsify, install: the commands a coding agent runs here, each with what it does not prove.',

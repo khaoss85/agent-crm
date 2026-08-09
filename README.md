@@ -162,10 +162,15 @@ evidence is required to leave it.
   deterministic, versioned and explainable, not a model's judgement about a person.
 - **This is a framework, not a product you sign up for.** There is no hosted CRM, no free
   tier, no account. The output is an application you run.
-- **Ownership today means copying source, not installing a dependency.** There is no
-  create-project CLI and no published package. `examples/starters/b2b-lead-qualification/install.mjs`
-  copies `packages/`, `apps/` and `examples/` into a new project and applies the manifests. You
-  own the result outright — and upgrading means merging, not bumping a version.
+- **Ownership today means copying source, not installing a dependency.** There is now a project
+  bootstrap: `node packages/create-accordo/bin/create-accordo.js <dir> --apply` copies the
+  framework into an empty directory and writes a project that boots, reports `valid` from
+  `app inspect` and exits 0 from `project doctor` — no install, no network
+  (`tests/project-bootstrap.test.js`). **It runs from a checkout of this repository.** The
+  `create-accordo` package on the npm registry is still the empty `0.0.1` name reservation, so
+  `npm create accordo` installs nothing and will go on installing nothing until a human publishes.
+  Either way the framework is vendored into the project, so you own the result outright — and
+  upgrading means merging, not bumping a version.
 
 ## Architecture in five folders
 

@@ -138,6 +138,17 @@ evidence does not belong in this document.
 | **Do not claim** | that it proves the software works for a business scenario, that a green report means a plan is finished, or that it sandboxes anything. It publishes `BROWSER_EVIDENCE_NOT_AUTOMATED`, `SCENARIO_EVIDENCE_NOT_RUN`, `IMPLEMENTATION_EVIDENCE_NOT_MAPPED` and `PROJECT_COMMANDS_TRUSTED` in its own output. **PROVE remains partial** until DX6 and DX10 exist. |
 | **Status** | implemented |
 
+### 12. Deterministic project bootstrap — **source only, never the registry**
+
+| | |
+|---|---|
+| **Technical fact** | `create-accordo <dir> --apply` copies the framework into an empty directory and writes a standalone project that needs no install, boots on SQLite, reports `valid` from `app inspect --json` and exits 0 from `project doctor --json`. It reaches no network, composes no domain package, opens no database and imports no part of the framework — it is the one command that must run before the framework exists on disk. Dry-run by default; it refuses a non-empty target, a target overlapping the framework source, and an invalid project name, the last with a suggestion it never applies. |
+| **Evidence** | `node packages/create-accordo/bin/create-accordo.js <dir> --apply --json`; `projectBootstrapContract: 1`; `tests/project-bootstrap.test.js`, which bootstraps into a temporary directory and then runs `app inspect`, `project doctor` and the generated project's own checks against the result |
+| **User value** | "Give me a project built on this framework" becomes one deterministic offline step whose output is machine-checked, instead of a copy of a source tree and a guess at a `package.json`. |
+| **Allowed positioning** | "A project can be created from nothing, offline and deterministically, and the result is verified rather than assumed — **from a checkout of the repository**." |
+| **Do not claim** | **that `npm create accordo` works.** The published `create-accordo@0.0.1` is an empty name reservation, this repository publishes nothing, and the registry state is unchanged by this work. "create-accordo scaffolds a working project from this repository" is true; "`npm create accordo` creates a project" is false and stays false until a human publishes. Do not claim the generated project is production-ready, deployable, or upgradeable by a version bump, or that it models any business: the command publishes `NO_AUTHENTICATION`, `NO_TENANCY`, `NO_RBAC`, `SQLITE_ONLY`, `LOCAL_DEVELOPMENT_ONLY`, `SOURCE_IS_A_COPY_NOT_A_DEPENDENCY`, `CONFORMANCE_IS_NOT_CORRECTNESS` and `PUBLISHED_PLACEHOLDER_DOES_NOT_SCAFFOLD` in its own output. |
+| **Status** | implemented in source; **not published** |
+
 ## Planned only — must never be positioned as available
 
 | Capability | Status | Note |
@@ -216,6 +227,10 @@ Every clause maps to a row above: *constraining architecture* → 7 and 8;
   document, not results
 - production-ready or cloud-ready — there is no auth, tenancy or RBAC
 - marketplace availability — no registry, no publication, no remote install
+- **that anything installs from npm** — `accordo@0.0.1` and `create-accordo@0.0.1`
+  are empty name reservations. The project bootstrap is real *source* and is
+  proven by a test; `npm create accordo` still installs nothing, and the two
+  facts must never be merged into one sentence
 
 If one of these becomes true, it becomes a new row in this table with a command
 next to it, and only then may it be said.

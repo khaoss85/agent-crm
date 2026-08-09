@@ -398,6 +398,50 @@ Two rows of this document were prose until now and are now mechanical:
 - **No generated-source drift beyond what a generator contract proves.** A
   fuzzy comparison that cries wolf is a check people silence.
 
+## The Project Bootstrap answer: **not horizontal**, and why that is the finding
+
+`create-accordo` (`packages/create-accordo`, `projectBootstrapContract: 1`) is
+recorded here **because the rule's failure mode is silence.** An unrecorded "not
+horizontal" is indistinguishable from a forgotten one, so the judgement is
+written down where somebody can disagree with it in one place rather than
+reconstruct it from the diff.
+
+**The judgement: it is not a horizontal capability, and no domain row exists for
+it.** The rule's test is *"one every domain could use"*. This sits one level
+**above** domains: it creates the container a domain lives in. It composes none
+of them — the generated `packages/domains/generated/index.js` is the empty one
+this repository ships — and it introduces no contract, check or discipline that
+a domain is measured against. The question a matrix row would have to answer,
+*"is Commercial Operations aligned with project bootstrap?"*, has no meaning in
+the way *"is it aligned with the package seam?"* does.
+
+Contrast the three that **did** declare a horizontal answer, each for a reason
+this one lacks: DX4 introduced a conformance contract every package is held to;
+DX3 made the shape every new package starts from; DX1 introduced findings graded
+against every project. This introduces a way to *obtain* a project, and then gets
+out of the way.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None, at runtime or on disk.** It adds one package, one test file and documentation. It changes no kernel behaviour, refactors no domain, executes no project source, opens no database and mutates nothing outside a caller-chosen empty directory |
+| Which are already aligned? | Not a question this capability asks. Every domain's source is copied into a generated project as inert files; none of them is composed, so none is graded |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None** |
+| What changed for extraction? | **Nothing.** Every precondition in `EXTRACTION_PREPARATION.md` is unchanged and still unproved. A bootstrap produces empty projects; it moves no domain out of `packages/core` and it is not an extraction tool |
+| Matrix updated? | Yes — this section, recording the decision rather than a row |
+
+### What it deliberately did not close
+
+- **No domain composition.** A project that arrived carrying somebody else's
+  Lead model is the DX3 "rich template" mistake at project scale, and it is
+  refused for the same reason: a generated domain is a claim about a business
+  nobody described.
+- **No upgrade path.** The framework is vendored, so a generated project
+  upgrades by merging rather than by bumping a version. Closing that needs a
+  published, versioned framework package — a human decision, not a code gap.
+- **No publication.** The npm names remain empty reservations. The source
+  scaffolds; the registry does not.
+
 ## The LA0 backfill answer, as the rule requires
 
 LA0 (the Lead Intelligence characterization harness) is **not** a horizontal

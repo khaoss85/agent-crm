@@ -198,11 +198,14 @@ only signal deciding whether a skill triggers at the right moment, and
   a skill body and cannot tell "prerequisite" from "background". That note stays
   accurate about the *text* and is now pessimistic about the *behaviour*. Making
   the check `requires`-aware is a change to a file this document does not own.
-- **Tier 2 has no first-class producer.** The only way to get a project built
-  from this framework today is the starter installer or a copy of the source
-  tree; the create-project CLI that would emit a customer's own repository is
-  roadmap, not code. Tier 2 is real and testable, but it is not yet a supported
-  product surface.
+- **Tier 2 has a producer, and it is not published.** `packages/create-accordo`
+  emits a customer's own repository from a checkout of this framework, ships
+  **this** bundle into it, and deliberately ships none of the repository's own
+  Markdown — which is exactly the assumption this document forbids a skill from
+  making, now enforced by the bootstrap's tests rather than only by prose. What
+  is still missing is distribution: the npm name is an empty reservation, so
+  `npm create accordo` installs nothing. Tier 2 is real, testable and produced;
+  it is not yet a supported *product* surface.
 - **Gemini gets nothing.** Two harnesses have skill files — Claude Code and
   Codex — and a file written for a third by guessing at its conventions would
   look supported and silently never load
