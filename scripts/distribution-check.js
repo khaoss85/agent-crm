@@ -18,6 +18,7 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { collectDiscoverySurfaces, validateDiscoverySurfaces } from './distribution-intent.js';
 
 const root = process.cwd();
 const failures = [];
@@ -135,40 +136,17 @@ if (serverJson && !/^[a-z0-9.-]+\/[a-z0-9-]+$/.test(serverJson.name ?? '')) {
  * deterministic process layer beside a CDP; it does not ship ingestion, identity
  * resolution or segmentation. This gate checks copy, not product capability.
  */
-const discoverySurfaces = [
-  ['README.md', readFileSync(join(root, 'README.md'), 'utf8')],
-  ['Claude plugin', claudePlugin],
-  ['Claude marketplace', claudeMarketplace?.plugins?.[0]],
-  ['Codex plugin', loaded.get('.codex-plugin/plugin.json')],
-  ['Gemini extension', loaded.get('gemini-extension.json')],
-  ['root package', loaded.get('package.json')],
-  ['create-accordo package', loaded.get('packages/create-accordo/package.json')],
-  ['MCP Registry server', serverJson],
-];
-
-const intentSignals = [
-  ['custom CRM', /custom[- ]crms?\b/i],
-  ['Customer Hub', /customer[- ]hubs?\b/i],
-  ['Smart CRM', /smart[- ]crm\b/i],
-  ['CDP + CRM', /cdp(?:\s*\+\s*|-plus-)crm\b/i],
-];
-const cdpBoundary = /not ingestion|does not ingest|no cdp|not (?:a |the )?cdp/i;
-
-for (const [surface, value] of discoverySurfaces) {
-  if (!value) {
-    fail(`${surface}: unavailable for intent discovery validation`);
-    continue;
-  }
-  const text = typeof value === 'string' ? value : JSON.stringify(value);
-  for (const [intent, pattern] of intentSignals) {
-    if (!pattern.test(text)) {
-      fail(`${surface}: missing the checked ${intent} discovery signal`);
-    }
-  }
-  if (!cdpBoundary.test(text)) {
-    fail(`${surface}: CDP + CRM appears without the CDP boundary (not ingestion, identity resolution or segmentation)`);
-  }
-}
+const discoverySurfaces = collectDiscoverySurfaces({
+  readme: readFileSync(join(root, 'README.md'), 'utf8'),
+  claudePlugin,
+  claudeMarketplace,
+  codexPlugin: loaded.get('.codex-plugin/plugin.json'),
+  geminiExtension: loaded.get('gemini-extension.json'),
+  rootPackage: loaded.get('package.json'),
+  createPackage: loaded.get('packages/create-accordo/package.json'),
+  serverJson,
+});
+for (const failure of validateDiscoverySurfaces(discoverySurfaces)) fail(failure);
 
 // ---------------------------------------------------------------- skills are loadable
 

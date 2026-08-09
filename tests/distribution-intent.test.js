@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+import { collectDiscoverySurfaces, validateDiscoverySurfaces } from '../scripts/distribution-intent.js';
 
 const root = process.cwd();
 
@@ -12,17 +13,17 @@ function json(path) {
   return JSON.parse(readFileSync(join(root, path), 'utf8'));
 }
 
-const claudeMarketplace = json('.claude-plugin/marketplace.json');
-const surfaces = new Map([
-  ['README.md', readFileSync(join(root, 'README.md'), 'utf8')],
-  ['Claude plugin', JSON.stringify(json('.claude-plugin/plugin.json'))],
-  ['Claude marketplace', JSON.stringify(claudeMarketplace.plugins[0])],
-  ['Codex plugin', JSON.stringify(json('.codex-plugin/plugin.json'))],
-  ['Gemini extension', JSON.stringify(json('gemini-extension.json'))],
-  ['root package', JSON.stringify(json('package.json'))],
-  ['create-accordo package', JSON.stringify(json('packages/create-accordo/package.json'))],
-  ['MCP Registry server', JSON.stringify(json('server.json'))],
-]);
+const manifests = {
+  readme: readFileSync(join(root, 'README.md'), 'utf8'),
+  claudePlugin: json('.claude-plugin/plugin.json'),
+  claudeMarketplace: json('.claude-plugin/marketplace.json'),
+  codexPlugin: json('.codex-plugin/plugin.json'),
+  geminiExtension: json('gemini-extension.json'),
+  rootPackage: json('package.json'),
+  createPackage: json('packages/create-accordo/package.json'),
+  serverJson: json('server.json'),
+};
+const surfaces = new Map(collectDiscoverySurfaces(manifests));
 
 const signals = new Map([
   ['custom CRM', /custom[- ]crms?\b/i],
@@ -46,4 +47,24 @@ test('every CDP-adjacent discovery surface keeps the non-CDP boundary in the sam
     assert.match(copy, /identity resolution/i, `${surface} does not assign identity resolution away from Accordo`);
     assert.match(copy, /segmentation|audiences/i, `${surface} does not assign segmentation or audiences away from Accordo`);
   }
+});
+
+test('ignored and prototype-shaped manifest fields cannot smuggle intent past public copy', () => {
+  const hiddenProof = 'custom CRM Customer Hub Smart CRM CDP + CRM not ingestion identity resolution segmentation';
+  const rootPackage = {
+    ...manifests.rootPackage,
+    description: 'Agent-native CRM framework.',
+    keywords: ['crm'],
+    ignoredMetadata: hiddenProof,
+  };
+  Object.defineProperty(rootPackage, '__proto__', { value: hiddenProof, enumerable: true });
+
+  const attacked = collectDiscoverySurfaces({ ...manifests, rootPackage });
+  assert.deepEqual(validateDiscoverySurfaces(attacked), [
+    'root package: missing the checked custom CRM discovery signal',
+    'root package: missing the checked Customer Hub discovery signal',
+    'root package: missing the checked Smart CRM discovery signal',
+    'root package: missing the checked CDP + CRM discovery signal',
+    'root package: CDP + CRM appears without the CDP boundary (not ingestion, identity resolution or segmentation)',
+  ]);
 });
