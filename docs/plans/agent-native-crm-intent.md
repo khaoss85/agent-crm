@@ -76,7 +76,9 @@ agent advantage.
   28/28, `gtm:check` passes, and the full suite passes 787/787.
 - [x] (2026-08-09) Verify commit `1d8a1b4` from a clean clone: 787/787,
   smoke, the complete B2B starter, `gtm:check` and four Chromium site shots pass.
-- [ ] Publish the stacked PR and wait for its remote checks.
+- [x] (2026-08-09) Publish draft PR #56 stacked on #55; at reviewed head
+  `fa1e6db`, both remote CI runs and public-claims checks pass, the PR is clean
+  and mergeable, and it has zero review threads.
 
 ## Surprises & Discoveries
 
@@ -126,7 +128,8 @@ benchmark limits in the same artifacts. Visual review found no redesign need: th
 page keeps the established editorial system, puts the limitations before the
 essay, and introduces no overflow or duplicate route.
 
-Publication is still pending. The source needs the regular merge order
+Repository publication is complete in draft PR #56. Public deployment is still
+pending: the source needs the regular merge order
 `#44 → #53 → #54 → #55 → this PR` and a successful site deployment before the
 page is public. Search indexing and unaided recommendation are measured outcomes,
 not acceptance criteria a source change can claim.
