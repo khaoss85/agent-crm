@@ -13,19 +13,12 @@ import { generatedModules } from '../../modules/generated/index.js';
 import { generatedActions } from '../../actions/generated/index.js';
 import { generatedPipelines } from '../../pipelines/generated/index.js';
 import {
-  generatedEnrichmentProviders,
-  generatedScoringModels,
-  generatedRoutingPolicies,
-  generatedRoutingTargets,
-} from '../../intelligence/generated/index.js';
-import {
   generatedCatalogProviders,
   generatedDiscountPolicies,
 } from '../../commercial/generated/index.js';
 import { generatedSignatureProviders } from '../../signature/generated/index.js';
 import { generatedDomains } from '../../domains/generated/index.js';
 import { PipelineRegistry } from '../../core/src/pipeline-registry.js';
-import { IntelligenceRegistries } from '../../core/src/intelligence-registry.js';
 import { CommercialRegistries } from '../../core/src/commercial-registry.js';
 import { createCatalogSync } from '../../core/src/catalog-sync.js';
 import { SignatureRegistries } from '../../core/src/signature-registry.js';
@@ -134,21 +127,6 @@ export function createAgentCrmApp(options = {}) {
   const pipelines = new PipelineRegistry({ moduleExists: (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name) });
   for (const definition of generatedPipelines) pipelines.register(definition);
 
-  // Code-first Lead Intelligence registries (ADR-015): enrichment providers,
-  // versioned scoring models, versioned routing policies and routing targets —
-  // validated fail-closed at startup. Each scoring-model/routing-policy
-  // version's deterministic source fingerprint is persisted in
-  // definition_versions: the same registered version with changed source stops
-  // the app (definitions are immutable once registered; publish a new version,
-  // and model rollback = a new version derived from an earlier definition).
-  const intelligence = new IntelligenceRegistries({
-    enrichmentProviders: generatedEnrichmentProviders,
-    scoringModels: generatedScoringModels,
-    routingPolicies: generatedRoutingPolicies,
-    routingTargets: generatedRoutingTargets,
-  });
-  intelligence.persistFingerprints(database);
-
   // Commercial Operations registries (ADR-016): catalog providers + versioned
   // discount policies on the same declared-definition fingerprint mechanism.
   const commercial = new CommercialRegistries({
@@ -170,6 +148,14 @@ export function createAgentCrmApp(options = {}) {
   // below behaves exactly as it did before this seam existed.
   const domains = new PackageRegistry({ packages: generatedDomains });
   domains.persistFingerprints(database);
+  // A package extracted from the kernel may already have `definition_versions`
+  // rows in shipped databases, written under its own type strings before it was
+  // a package. Re-typing them would leave the originals unmatched and silently
+  // retire the drift check that makes a registered version immutable, so such a
+  // package persists its own and says so. Generic: the kernel names no domain.
+  for (const pkg of generatedDomains) {
+    if (typeof pkg.persistFingerprints === 'function') pkg.persistFingerprints(database);
+  }
   // A domain's actions join the same registry, under the same validation and
   // the same eligibility rules as any other action. Registration order is
   // deterministic and a malformed action stops startup.
@@ -224,7 +210,6 @@ export function createAgentCrmApp(options = {}) {
     services,
     actions,
     pipelines,
-    intelligence,
     commercial,
     signature,
     domains,
@@ -291,7 +276,6 @@ export function createAgentCrmApp(options = {}) {
         services,
         core: coreAdapters,
         pipelines,
-        intelligence,
         commercial,
         signature,
         domains,

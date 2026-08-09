@@ -7,7 +7,7 @@ import {
   validateScoringModel,
   validateRoutingPolicy,
   validateRoutingTarget,
-} from '../packages/core/src/intelligence-registry.js';
+} from '../packages/intelligence/src/registry.js';
 import { computeDefinitionFingerprint } from '../packages/core/src/definition-fingerprint.js';
 import { createDatabase } from '../packages/core/src/database.js';
 import { runRecordAction } from '../packages/core/src/action-runtime.js';

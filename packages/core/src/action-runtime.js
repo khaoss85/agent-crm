@@ -131,7 +131,6 @@ export function validateActionInput(schema, body) {
  *   modules: {get: (name: string) => any},
  *   core?: Record<string, Function>,
  *   pipelines?: {forModule: (name: string) => any, get: (name: string) => any, list: () => any[]},
- *   intelligence?: any,
  *   commercial?: any,
  *   module: string, action: string, recordId: string, input: unknown, actor: unknown
  * }} params
@@ -165,13 +164,6 @@ export async function runRecordAction(params) {
   let failure = null;
   /** @type {any} */
   let dispatchFailure = null;
-  const intelligence = params.intelligence ?? Object.freeze({
-    getProvider: () => { throw new NotFoundError('Enrichment provider', 'none registered'); },
-    getScoringModel: () => { throw new NotFoundError('Scoring model', 'none registered'); },
-    getRoutingPolicy: () => { throw new NotFoundError('Routing policy', 'none registered'); },
-    listTargets: () => [],
-    fallbackTarget: () => null,
-  });
   /** @type {any} */
   let prepared;
 
@@ -196,7 +188,6 @@ export async function runRecordAction(params) {
           input: validatedInput,
           actor,
           modules: readOnlyModulesView(modules),
-          intelligence,
           config: params.config ?? {},
           now,
           step: (name, output) => steps.push({ name, status: 'completed', output }),
@@ -224,8 +215,6 @@ export async function runRecordAction(params) {
           core: params.core ?? Object.freeze({}),
           // Pipeline definitions (ADR-014); read-only registry view.
           pipelines: params.pipelines ?? Object.freeze({ forModule: () => null, get: () => null, list: () => [] }),
-          // Intelligence registries (ADR-015); read-only, frozen fallback.
-          intelligence,
           // Commercial registries (ADR-016); read-only, frozen fallback.
           commercial: params.commercial ?? Object.freeze({
             getCatalogProvider: () => { throw new NotFoundError('Catalog provider', 'none registered'); },
@@ -326,7 +315,6 @@ async function runExternalRecordAction(params, definition, validatedInput) {
     database,
     core: params.core ?? Object.freeze({}),
     pipelines: params.pipelines ?? Object.freeze({ forModule: () => null, get: () => null, list: () => [] }),
-    intelligence: params.intelligence ?? Object.freeze({}),
     commercial: params.commercial ?? Object.freeze({}),
     signature: params.signature ?? Object.freeze({
       getSignatureProvider: () => { throw new NotFoundError('Signature provider', 'none registered'); },

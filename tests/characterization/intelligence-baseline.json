@@ -1,5 +1,5 @@
 {
-  "attachment": "kernel-actions-and-fixed-definition-slot",
+  "attachment": "composed-domain-package",
   "counts": {
     "compatibility_required": 15,
     "contractual": 127,
@@ -171,9 +171,7 @@
       "classification": "pre_extraction_evidence",
       "id": "architecture.app-intelligence-consumers",
       "note": "Blocker 2 evidence: every file that really reads the ambient field, in code rather than in prose. Scanner limits: LEXICAL_NOT_SYNTACTIC — comments and literals are stripped, but no AST is built; ALIASING_NOT_TRACKED — a consumer that copies the field to another name first is not followed; DYNAMIC_KEYS_NOT_RESOLVED — a computed property name built at runtime is not evaluated.",
-      "observed": [
-        "apps/server/src/http-server.js"
-      ],
+      "observed": [],
       "surface": "sdk"
     },
     {
@@ -182,7 +180,7 @@
       "id": "architecture.app-intelligence-field-present",
       "note": "The ambient action-context field. Blocker 2 in EXTRACTION_PREPARATION.md; recorded as architecture evidence, deliberately separate from behavioural compatibility.",
       "observed": {
-        "present": true
+        "present": false
       },
       "surface": "sdk"
     },
@@ -212,10 +210,7 @@
       "classification": "pre_extraction_evidence",
       "id": "architecture.definition-registry-slot",
       "note": "Blocker 3 evidence: who depends on the fixed project-owned definition slot, in code.",
-      "observed": [
-        "packages/app/src/create-app.js",
-        "packages/cli/src/app-inspect.js"
-      ],
+      "observed": [],
       "surface": "app-inspect"
     },
     {
@@ -263,10 +258,7 @@
       "classification": "pre_extraction_evidence",
       "id": "architecture.intelligence-internal-importers",
       "note": "Blocker 1 evidence: every file with a real import statement naming an Intelligence internal.",
-      "observed": [
-        "packages/app/src/create-app.js",
-        "packages/core/src/intelligence-actions.js"
-      ],
+      "observed": [],
       "surface": "sdk"
     },
     {
@@ -314,12 +306,22 @@
       "id": "architecture.schema-intelligence-block-present",
       "note": "Published today as an ambient `intelligence` block on /api/schema. After extraction it should be the package's own schema contribution — a deliberate migration, not a behaviour change to hide.",
       "observed": {
+        "foundAt": "schema.domains.intelligence",
         "keys": [
+          "actions",
+          "description",
           "enrichmentProviders",
+          "label",
+          "packageContract",
+          "policies",
+          "provides",
+          "requires",
+          "resources",
           "routingPolicies",
           "routingTargets",
           "routingTargetsFingerprint",
-          "scoringModels"
+          "scoringModels",
+          "version"
         ],
         "present": true
       },
@@ -2539,25 +2541,27 @@
     }
   ],
   "source": {
-    "apps/server/src/http-server.js": "f7e2e1e9dfd4b986deee006626d6f8097b9edc8c777de5bec7b16710295963b3",
+    "apps/server/src/http-server.js": "3c8212d8c5387d5a8710267d559be0dc6932f0f2d76c35eba0d63bc49f1d4665",
     "examples/starters/b2b-lead-qualification/actions/disqualify.js": "8e722cf7073ff4d52c0f332391217fd6b4568f24f64bb1c7a058e989d9b07a69",
     "examples/starters/b2b-lead-qualification/actions/qualify.js": "b6b6a8ae7c0c532fb2e3e3c56d34efa4ad7908361dc3c0a52c488ed6c2ee03b9",
-    "examples/starters/b2b-lead-qualification/assignment.module.json": "ba3724cc4d9cbcab445cb71ff1cf5116c4f8fc6f4df4faf4a772eee214e18121",
-    "examples/starters/b2b-lead-qualification/behavioral-signal.module.json": "5a45de427b89b3539a9507fb82013817a94584b31cba1f8d1013740fd7159859",
-    "examples/starters/b2b-lead-qualification/enrichment-snapshot.module.json": "2b20a147e0099e0062e7915dbb289d63319624c82a9988ffd62bb07b0f630a6e",
     "examples/starters/b2b-lead-qualification/intelligence.js": "388522415c8a324b3cd2d62028af9a8af2f6e5863c0ceab2ecd3d57ae43f52f5",
     "examples/starters/b2b-lead-qualification/lead.module.json": "f57c7d561fdeeb327463eb174e98c10b156b48dfabc06fecc548118b1233a03d",
-    "examples/starters/b2b-lead-qualification/route-evaluation.module.json": "1cc29334082a9eb7c88e42478084b8a717de2fd34a2b2eb7f74d394ef1f83f91",
-    "examples/starters/b2b-lead-qualification/routing-run.module.json": "0af722563125b1a83ec7ffbc39b63dbbccec6e3d301ca61483fa2c4754018310",
-    "examples/starters/b2b-lead-qualification/score-contribution.module.json": "24a46c9090b066edca2f9eaa7b4e008c93e983e3b6cd903a0e39980cc5b20e7e",
-    "examples/starters/b2b-lead-qualification/score-run.module.json": "a3c985aba54e14d28f7cfebefaea03b679ef92efea7cb90d7676ecef13e19621",
     "examples/starters/b2b-lead-qualification/task.module.json": "581908e08a69cf2618ff3ea53f07468d6b5f4afe6ff561b95827cb993cb447ae",
-    "packages/app/src/create-app.js": "f088f4d017dfe6b8f73641abd7e4670507c7f8613f9fc3d9a74648fc765898c6",
-    "packages/core/src/action-runtime.js": "1f591f98f175034b038b4fa4cf23b014c4faeda0db93258b1765a62b1c118fde",
+    "packages/app/src/create-app.js": "d2229125c195eb98de2d706ebfc63a20f3fb9497a4954ae03c0cadfaee132eef",
+    "packages/core/src/action-runtime.js": "813802d3205c32b161602af08bde56ee4bb70a178ffce415db61e4144f14fb3c",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
-    "packages/core/src/intelligence-actions.js": "0cf16ea5a2b32e28b0d990eab55b4f19a2b8b2728e6b3950e3d98002efa856ca",
-    "packages/core/src/intelligence-registry.js": "95b2ccf361c4ad582533de95d4a2ba0b03942c983060b3db609e14dca3206ccd",
     "packages/core/src/timeout.js": "9af8f74ac0f6fa7b229576c43540364d9014ce2225198c0e84e18070d952ff88",
+    "packages/intelligence/modules/assignment.module.json": "ba3724cc4d9cbcab445cb71ff1cf5116c4f8fc6f4df4faf4a772eee214e18121",
+    "packages/intelligence/modules/behavioral-signal.module.json": "5a45de427b89b3539a9507fb82013817a94584b31cba1f8d1013740fd7159859",
+    "packages/intelligence/modules/enrichment-snapshot.module.json": "2b20a147e0099e0062e7915dbb289d63319624c82a9988ffd62bb07b0f630a6e",
+    "packages/intelligence/modules/route-evaluation.module.json": "1cc29334082a9eb7c88e42478084b8a717de2fd34a2b2eb7f74d394ef1f83f91",
+    "packages/intelligence/modules/routing-run.module.json": "0af722563125b1a83ec7ffbc39b63dbbccec6e3d301ca61483fa2c4754018310",
+    "packages/intelligence/modules/score-contribution.module.json": "24a46c9090b066edca2f9eaa7b4e008c93e983e3b6cd903a0e39980cc5b20e7e",
+    "packages/intelligence/modules/score-run.module.json": "a3c985aba54e14d28f7cfebefaea03b679ef92efea7cb90d7676ecef13e19621",
+    "packages/intelligence/src/actions.js": "02727035298ab8854e349f297f297037a50dac4aa286e4628d4ed69b11844762",
+    "packages/intelligence/src/capability.js": "7ce4d157c87e26274f027354adc2a120efd27ee891e67f1268e7b3c754f291ea",
+    "packages/intelligence/src/index.js": "c0563fa35907915e3f5314f9e7ef05dd2e084a8714c51b105b98dd36f404dbce",
+    "packages/intelligence/src/registry.js": "9f5a84533cd81876f4a05aba7e84621ef2282e6c9465b07af0262abc7606012d",
     "packages/sdk/src/index.js": "e2890b34f885c862f19f470273bf1f2bc14fa7477a623d0bd40cfb87a10ee3fa"
   }
 }

@@ -32,7 +32,9 @@ function project(t, { enrichTimeoutMs } = {}) {
     'route-evaluation.module.json',
     'assignment.module.json',
   ]) {
-    assert.equal(cli(root, ['module', 'create', join(starter, manifest), '--apply']).status, 0, `apply ${manifest}`);
+    const from = ['lead.module.json', 'task.module.json'].includes(manifest)
+      ? starter : join(root, 'packages/intelligence/modules');
+    assert.equal(cli(root, ['module', 'create', join(from, manifest), '--apply']).status, 0, `apply ${manifest}`);
   }
   const builderOptions = enrichTimeoutMs ? `{ timeoutMs: ${enrichTimeoutMs} }` : '';
   writeFileSync(
@@ -41,25 +43,29 @@ function project(t, { enrichTimeoutMs } = {}) {
       '// @ts-check',
       "import { qualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/qualify.js';",
       "import { disqualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/disqualify.js';",
-      "import { buildEnrichAction, buildRecordSignalAction, buildScoreAction, buildRouteAction } from '../../core/src/intelligence-actions.js';",
-      `export const generatedActions = [qualifyLead, disqualifyLead, buildEnrichAction(${builderOptions}), buildRecordSignalAction(), buildScoreAction(), buildRouteAction()];`,
+      'export const generatedActions = [qualifyLead, disqualifyLead];',
       '',
     ].join('\n'),
   );
-  writeIntelligenceIndex(root);
+  writeIntelligenceIndex(root, builderOptions);
   return root;
 }
 
-function writeIntelligenceIndex(root) {
+function writeIntelligenceIndex(root, builderOptions = '') {
+  // Intelligence is composed as a domain package (ADR-018/021). This file used
+  // to write the fixed project-owned definition slot; the slot no longer exists.
   writeFileSync(
-    join(root, 'packages/intelligence/generated/index.js'),
+    join(root, 'packages/domains/generated/index.js'),
     [
       '// @ts-check',
+      "import { createIntelligenceDomain } from '../../intelligence/src/index.js';",
       "import { fixtureFirmographicsProvider, b2bSaasScoreV1, b2bSaasScoreV2, b2bRoutingV1, b2bRoutingV2, routingTargets } from '../../../examples/starters/b2b-lead-qualification/intelligence.js';",
-      'export const generatedEnrichmentProviders = [fixtureFirmographicsProvider];',
-      'export const generatedScoringModels = [b2bSaasScoreV1, b2bSaasScoreV2];',
-      'export const generatedRoutingPolicies = [b2bRoutingV1, b2bRoutingV2];',
-      'export const generatedRoutingTargets = routingTargets;',
+      'export const generatedDomains = [createIntelligenceDomain({',
+      '  enrichmentProviders: [fixtureFirmographicsProvider],',
+      '  scoringModels: [b2bSaasScoreV1, b2bSaasScoreV2],',
+      '  routingPolicies: [b2bRoutingV1, b2bRoutingV2],',
+      `  routingTargets${builderOptions ? `, config: ${builderOptions}` : ''},`,
+      '})];',
       '',
     ].join('\n'),
   );
@@ -96,12 +102,19 @@ test('lead intelligence end to end: enrich → score → route over HTTP/SDK, im
 
   // Schema: intelligence metadata + the four lead actions, all additive.
   const schema = await client.schema();
-  assert.ok(schema.intelligence, 'schema exposes intelligence metadata');
-  assert.deepEqual(schema.intelligence.enrichmentProviders.map((p) => p.name), ['fixture-firmographics']);
-  assert.deepEqual(schema.intelligence.scoringModels.map((m) => `${m.name}@${m.version}`), ['b2b-saas-score@1', 'b2b-saas-score@2']);
-  assert.deepEqual(schema.intelligence.routingPolicies.map((p) => `${p.name}@${p.version}`), ['b2b-sales-routing@1', 'b2b-sales-routing@2']);
-  assert.equal(schema.intelligence.routingTargets.length, 4);
-  assert.match(schema.intelligence.scoringModels[0].fingerprint, /^[0-9a-f]{64}$/);
+  // OWNERSHIP MOVE, not a behaviour change: the block used to be published as
+  // an ambient top-level `intelligence` key and is now the package's own schema
+  // contribution under `domains` (ADR-021 step 3). Every published value below
+  // is asserted unchanged; only where the block hangs is different, which LA0
+  // records as evidence rather than contract.
+  const intelligence = schema.domains?.intelligence;
+  assert.ok(intelligence, 'schema exposes intelligence metadata as the package contribution');
+  assert.equal(schema.intelligence, undefined, 'the ambient block is gone, not duplicated');
+  assert.deepEqual(intelligence.enrichmentProviders.map((p) => p.name), ['fixture-firmographics']);
+  assert.deepEqual(intelligence.scoringModels.map((m) => `${m.name}@${m.version}`), ['b2b-saas-score@1', 'b2b-saas-score@2']);
+  assert.deepEqual(intelligence.routingPolicies.map((p) => `${p.name}@${p.version}`), ['b2b-sales-routing@1', 'b2b-sales-routing@2']);
+  assert.equal(intelligence.routingTargets.length, 4);
+  assert.match(intelligence.scoringModels[0].fingerprint, /^[0-9a-f]{64}$/);
   const leadMeta = schema.generatedModules.find((m) => m.name === 'lead');
   for (const name of ['enrich', 'record-signal', 'route', 'score']) {
     assert.ok(leadMeta.actions.some((a) => a.name === name), `lead action ${name} advertised`);
@@ -136,7 +149,7 @@ test('lead intelligence end to end: enrich → score → route over HTTP/SDK, im
   assert.equal(snapshot.confidence, 95);
   assert.equal(snapshot.sourceRef, 'fixture:ferrari.example');
   assert.match(snapshot.providerFingerprint, /^[0-9a-f]{64}$/, 'snapshot carries the provider fingerprint');
-  assert.equal(snapshot.providerFingerprint, schema.intelligence.enrichmentProviders[0].fingerprint);
+  assert.equal(snapshot.providerFingerprint, intelligence.enrichmentProviders[0].fingerprint);
   assert.ok(snapshot.retrievedAt && snapshot.expiresAt, 'provenance timestamps present');
   assert.equal((await leads.get(lead.id)).enrichmentSnapshotId, snapshotId);
   const again = await leads.action(lead.id, 'enrich', { provider: 'fixture-firmographics' });
@@ -563,17 +576,22 @@ test('lead intelligence concurrency, one-assignment guarantee and fingerprint dr
 
   // Version integrity across processes: editing a REGISTERED version's source
   // fails the next boot loudly (rollback = a new version, never an edit).
+  // Drift is now introduced through the composition, because that is where a
+  // project declares its definitions after the extraction. The guarantee under
+  // test is unchanged and is exactly the one the package protects by keeping
+  // its original `definition_versions` type strings: a registered version whose
+  // source changed must stop the next boot.
   writeFileSync(
-    join(root, 'packages/intelligence/generated/index.js'),
+    join(root, 'packages/domains/generated/index.js'),
     [
       '// @ts-check',
-      'export const generatedEnrichmentProviders = [];',
-      'export const generatedScoringModels = [{',
-      "  name: 'b2b-saas-score', version: 1, label: 'Drifted in place',",
-      "  rules: [{ key: 'drifted', label: 'Drifted', weight: 1, evaluate: () => true }],",
-      '}];',
-      'export const generatedRoutingPolicies = [];',
-      'export const generatedRoutingTargets = [];',
+      "import { createIntelligenceDomain } from '../../intelligence/src/index.js';",
+      'export const generatedDomains = [createIntelligenceDomain({',
+      '  scoringModels: [{',
+      "    name: 'b2b-saas-score', version: 1, label: 'Drifted in place',",
+      "    rules: [{ key: 'drifted', label: 'Drifted', weight: 1, evaluate: () => true }],",
+      '  }],',
+      '})];',
       '',
     ].join('\n'),
   );
