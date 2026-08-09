@@ -201,6 +201,16 @@ pairing as the in-process server.
 - 2026-08-09: full post-review verification passed 781/781 at `5c2adfd`,
   followed by a green smoke run. The public ledger was re-bound to that code
   commit in a separate documentation-only commit.
+- 2026-08-09: clean clone `1864ad8` passed project doctor with zero problems,
+  781/781 and smoke. A bootstrap into a second empty directory returned `ok`,
+  and the generated project passed 3/3, smoke, `app inspect` (`valid: true`, zero
+  problems) and project doctor (zero problems).
+- 2026-08-09: the repository's `site:shots` wrapper could not drive the macOS
+  full Chrome override because that binary needs an explicit headless flag; the
+  wrapper failed and is not reported green. Direct Chrome `--headless=new`
+  renders from the clean clone produced 1270×1900 PNGs for both the homepage and
+  privacy page, and the privacy render was inspected. Repairing the pre-existing
+  wrapper portability gap is outside this transport milestone.
 
 ## 9. Decision log
 
@@ -216,8 +226,8 @@ pairing as the in-process server.
 ## 10. Outcome and follow-up
 
 Implementation and preview validation are complete on the working branch. The
-required live-PR adversarial attack/fix pass is complete; the remaining
-engineering gates are clean-clone verification and CI. The preview is
+required live-PR adversarial attack/fix pass and clean-clone verification are
+complete; the remaining engineering gate is CI. The preview is
 deployment-protected and deliberately has no production alias; it is evidence
 for the transport and corpus, not a public install URL. A human must still merge
 the reviewed PR, approve the privacy/infrastructure commitment, promote a tested
