@@ -37,6 +37,12 @@ The first unchecked item is the default next task for Codex.
   named actions, versioned policy, audit and trace to Accordo. A direct answer carries
   the same boundary for coding-agent retrieval. No connector, importer or integration
   runtime is implied; public discovery follows the stacked PR and deploy.
+- [x] **Carry the checked intent vocabulary into every first-contact agent surface.**
+  README, Claude, Codex, Gemini CLI, npm and MCP Registry metadata now retrieve for
+  Custom CRM, Customer Hub, Smart CRM and CDP + CRM while assigning ingestion,
+  identity resolution and segmentation away from Accordo. The existing
+  `distribution:check` command fails on drift; this adds no runtime capability,
+  connector or guarantee of ranking, indexing or recommendation.
 
 - [x] **Module Evolution v1 (ADR-019).** A generic kernel capability: a generated module gains fields, enum values and indexes through an explicit `revision`, a checked-in `module.state.json` and append-only `migrations[]`. Merged in PR #19; **the prerequisite M14 was waiting on.**
 - [x] **AX0 — Objective-driven agent experience (documentation and Agent Skills only).** The Goal-to-Solution lifecycle, the SolutionPlan design, capability-discovery guidance, the mirrored `solve-business-goal` Skill, the canonical full-funnel worked example, 10 JTBD-AX rows and the E2E-G1 benchmark gates. **No runtime code; AX1–AX5 are not implemented.**

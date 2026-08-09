@@ -1,0 +1,158 @@
+# Intent discovery metadata
+
+This ExecPlan is a living document. Keep `Progress`, `Surprises & Discoveries`,
+`Decision Log`, and `Outcomes & Retrospective` current while the work proceeds.
+
+This plan follows `.agent/PLANS.md`.
+
+## Purpose / Big Picture
+
+Accordo's checked site source now answers Customer Hub, Smart CRM, and compound
+CDP + CRM queries, but the shorter descriptions read by GitHub, Claude Code,
+Codex, Gemini CLI, npm, skills directories, and the MCP registry still describe
+only a custom CRM. After this change, those existing discovery surfaces use the
+same bounded intent vocabulary. A coding agent can retrieve Accordo for the
+three adjacent intents without being told that Accordo is a CDP: the metadata
+must say that a CDP keeps ingestion, identity resolution, and segmentation while
+Accordo owns the deterministic CRM process layer.
+
+The observable proof is `npm run distribution:check`: it exits non-zero if a
+discovery surface loses one of the three intent signals or the CDP boundary.
+
+## Progress
+
+- [x] (2026-08-09) Verify main, open PRs, npm, the public site, skills.sh, and
+  the current manifest copy.
+- [x] (2026-08-09) Confirm the gap: live channels and every manifest use only
+  generic CRM copy; the three site routes are prepared but not deployed.
+- [ ] Update repository copy and distribution manifests without expanding the
+  product claim.
+- [ ] Extend the existing distribution gate and add a regression test.
+- [ ] Update strategy/status documentation and remeasure the checked surface.
+- [ ] Run focused checks, `npm run verify`, `npm run gtm:check`, and the required
+  adversarial review from a clean clone.
+- [ ] Publish a review-ready stacked PR without merging it.
+
+## Surprises & Discoveries
+
+- Observation: `https://accordo.dev/` returns 200, while the Customer Hub,
+  Smart CRM, and CDP + CRM routes return 404 until PRs #44, #53, and #54 merge.
+  Evidence: live HTTP checks on 2026-08-09.
+- Observation: `create-accordo@0.0.1` is a public placeholder whose description
+  mentions only CRM; repository source is still private and unpublished.
+  Evidence: `npm view create-accordo ... --json` and `site/brand.json`.
+- Observation: skills.sh already returns a repository page and installs the
+  skills, but generic search does not surface Accordo. This change can improve
+  source vocabulary; it cannot promise ranking or recommendation.
+
+## Decision Log
+
+- Decision: extend existing manifests and `distribution:check`; do not add a
+  new command, namespace, schema, or runtime capability.
+  Rationale: the agent failure mode is retrieval mismatch. The existing gate is
+  already the machine-readable contract for manifest drift, so another command
+  would fail the DX Simplicity Gate.
+- Decision: use the compound phrase `CDP + CRM` only with an explicit ownership
+  boundary.
+  Rationale: Accordo ships no ingestion, identity resolution, segmentation, or
+  bridge runtime. Keyword reach without that boundary would turn adjacency into
+  a false product claim.
+- Decision: stack this change on PR #54 and leave all public mutation to the
+  merge/deploy or named human-submission step.
+  Rationale: the referenced intent pages and their claim evidence live in that
+  stack; metadata must not precede the explanation it points to.
+
+## Context and Orientation
+
+The user-facing overview is `README.md`. Install-time descriptions live in
+`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`,
+`.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, and
+`gemini-extension.json`. npm metadata lives in `package.json` and
+`packages/create-accordo/package.json`; MCP Registry metadata lives in
+`server.json`. `scripts/distribution-check.js` is the existing fail-closed gate.
+The truthful intent definitions are in
+`docs/strategy/RECOMMENDATION_MAP.md` and the corresponding checked site pages.
+
+This is distribution copy, not a domain package or a product capability. It
+does not touch CRM state, services, workflows, packages, or `packages/core`.
+
+## Plan of Work
+
+First, give the README a compact recommendation map that includes the limit in
+the same paragraph as each adjacent intent. Correct its stale npm sentence while
+there. Next, carry stable search phrases and the same CDP boundary into each
+manifest using only fields already accepted by that manifest's schema. Then add
+Gemini and npm manifests to the existing distribution inventory and validate
+the intent contract across every discovery surface. Add an independent test that
+reads the checked JSON and proves the vocabulary and boundary remain present.
+
+Finally update the listing pack, recommendation map, GTM status, TASKS, and this
+plan. Validate JSON, run the focused distribution and GTM gates, full verification,
+application inspection, project doctor, and the repository's adversarial-review
+procedure. Re-run from a clean clone of the exact reviewed commit before opening
+the PR.
+
+## Concrete Steps
+
+From the repository root:
+
+    npm run distribution:check
+    node --test tests/distribution-intent.test.js
+    npm run gtm:check
+    npm run verify
+    npm run crm -- app inspect --json
+    npm run crm -- project doctor --json
+
+For the negative receipt, in a disposable clean copy remove `cdp-plus-crm` from
+one manifest and confirm `npm run distribution:check` exits 1 with the affected
+surface named. Restore nothing in the working branch because the mutation occurs
+only in that disposable copy.
+
+## Validation and Acceptance
+
+Acceptance requires all of the following:
+
+1. README and every supported distribution surface retrieve for Customer Hub,
+   Smart CRM, and CDP + CRM.
+2. Every surface that mentions CDP also says Accordo is not the CDP or names the
+   ingestion/identity/segmentation boundary.
+3. `distribution:check` fails when one required signal is removed and passes on
+   checked source.
+4. No copy claims a connector, importer, sync runtime, identity resolution,
+   segmentation, authentication, tenancy, RBAC, or production readiness.
+5. `npm run verify` and `npm run gtm:check` pass, application inspection remains
+   valid with its limitations read, project doctor is clean, and the required
+   adversarial review has no unresolved finding.
+
+## Idempotence and Recovery
+
+All changes are checked source and can be rerun safely. Site and llms generators
+remain deterministic. The negative gate test uses a disposable clone. If a
+manifest schema rejects new copy, remove unsupported fields and retain the
+intent in an existing description or keyword field; do not invent extensions.
+Do not modify or merge the earlier PRs.
+
+## Artifacts and Notes
+
+Branch: `agent/intent-discovery-metadata`, based on PR #54 head
+`a669e18c26721fd010b09473f9aa042b63c95665`.
+
+Live receipts at plan start:
+
+    main == origin/main == 77d7719351f659b01986aedc04eec8d45aed8aab
+    PRs #44, #51, #52, #53, #54: OPEN, non-draft, CLEAN, checks green
+    create-accordo latest: 0.0.1 placeholder
+    accordo.dev/: 200
+    three new concept routes: 404 pending merge/deploy
+
+## Interfaces and Dependencies
+
+No production dependency and no new public command are introduced. The only
+behavioral interface is the existing exit status of
+`scripts/distribution-check.js`: zero means every checked manifest is valid and
+intent-aligned; non-zero names every missing signal. Tests use only Node.js
+built-ins, consistent with repository conventions.
+
+## Outcomes & Retrospective
+
+Pending implementation and review.

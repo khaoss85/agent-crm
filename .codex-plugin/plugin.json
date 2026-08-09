@@ -1,7 +1,7 @@
 {
   "name": "accordo",
   "version": "0.1.0",
-  "description": "The open-source framework coding agents use to build custom CRMs: domain modules, deterministic workflows, human approvals, audit and trace.",
+  "description": "Build custom CRMs and Customer Hubs as code. Smart CRM stays policy-governed; for CDP + CRM, Accordo is the process layer, not ingestion, identity resolution or segmentation.",
   "author": {
     "name": "Daniele Pelleri",
     "url": "https://github.com/khaoss85"
@@ -11,6 +11,10 @@
   "license": "MIT",
   "keywords": [
     "crm",
+    "customer-hub",
+    "smart-crm",
+    "cdp-plus-crm",
+    "customer-data-platform",
     "framework",
     "code-generation",
     "workflows",
@@ -24,8 +28,8 @@
   "interface": {
     "displayName": "Accordo",
     "developerName": "Daniele Pelleri",
-    "shortDescription": "Build a custom CRM as code you own",
-    "longDescription": "Accordo is the open-source framework coding agents use to build custom CRMs. Describe a commercial process and the agent generates domain modules, deterministic workflows, human approval boundaries, audit and trace — as reviewable code in your own repository. Pre-release: local SQLite, no authentication or tenancy.",
+    "shortDescription": "Build custom CRM and Customer Hub code",
+    "longDescription": "Accordo is the open-source framework coding agents use to build custom CRMs and Customer Hubs. For Smart CRM, the agent composes while deterministic policy and human approval boundaries govern named decisions. For CDP + CRM, Accordo owns the process layer, not ingestion, identity resolution or segmentation, and ships no bridge runtime. The output is reviewable code in your repository with audit and trace. Pre-release: local SQLite, no authentication, tenancy or RBAC.",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
     "websiteURL": "https://accordo.dev",

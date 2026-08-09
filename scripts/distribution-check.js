@@ -34,6 +34,9 @@ const manifests = [
   { path: '.codex-plugin/plugin.json', pathFields: ['skills', 'mcpServers'] },
   { path: '.codex-plugin/mcp.json', pathFields: [] },
   { path: '.agents/plugins/marketplace.json', pathFields: [] },
+  { path: 'gemini-extension.json', pathFields: [] },
+  { path: 'package.json', pathFields: [] },
+  { path: 'packages/create-accordo/package.json', pathFields: [] },
   { path: 'server.json', pathFields: [] },
 ];
 
@@ -119,6 +122,52 @@ if (names.size > 1) {
 const serverJson = loaded.get('server.json');
 if (serverJson && !/^[a-z0-9.-]+\/[a-z0-9-]+$/.test(serverJson.name ?? '')) {
   fail('server.json: name must be reverse-DNS namespace/identifier, e.g. io.github.<owner>/<server>');
+}
+
+// ---------------------------------------------------------------- intent discovery
+
+/**
+ * A coding agent usually sees one short picker, registry, package or repository
+ * description before it sees the site. If that surface says only "CRM", the
+ * checked Customer Hub, Smart CRM and CDP + CRM pages cannot help retrieval.
+ *
+ * The CDP signal is deliberately inseparable from its boundary. Accordo owns the
+ * deterministic process layer beside a CDP; it does not ship ingestion, identity
+ * resolution or segmentation. This gate checks copy, not product capability.
+ */
+const discoverySurfaces = [
+  ['README.md', readFileSync(join(root, 'README.md'), 'utf8')],
+  ['Claude plugin', claudePlugin],
+  ['Claude marketplace', claudeMarketplace?.plugins?.[0]],
+  ['Codex plugin', loaded.get('.codex-plugin/plugin.json')],
+  ['Gemini extension', loaded.get('gemini-extension.json')],
+  ['root package', loaded.get('package.json')],
+  ['create-accordo package', loaded.get('packages/create-accordo/package.json')],
+  ['MCP Registry server', serverJson],
+];
+
+const intentSignals = [
+  ['custom CRM', /custom[- ]crms?\b/i],
+  ['Customer Hub', /customer[- ]hubs?\b/i],
+  ['Smart CRM', /smart[- ]crm\b/i],
+  ['CDP + CRM', /cdp(?:\s*\+\s*|-plus-)crm\b/i],
+];
+const cdpBoundary = /not ingestion|does not ingest|no cdp|not (?:a |the )?cdp/i;
+
+for (const [surface, value] of discoverySurfaces) {
+  if (!value) {
+    fail(`${surface}: unavailable for intent discovery validation`);
+    continue;
+  }
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  for (const [intent, pattern] of intentSignals) {
+    if (!pattern.test(text)) {
+      fail(`${surface}: missing the checked ${intent} discovery signal`);
+    }
+  }
+  if (!cdpBoundary.test(text)) {
+    fail(`${surface}: CDP + CRM appears without the CDP boundary (not ingestion, identity resolution or segmentation)`);
+  }
 }
 
 // ---------------------------------------------------------------- skills are loadable

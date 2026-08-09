@@ -174,7 +174,7 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 
 | Channel | When | Status |
 |---|---|---|
-| npm `accordo` + `create-accordo` placeholders | **Now** | Prepared, blocked on `npm login` |
+| npm `accordo` + `create-accordo` placeholders | **Now** | Names reserved as public `0.0.1` placeholders; they install no framework code |
 | npm `@accordo/*` scoped packages with rich keywords | After #2 | Org not created |
 | npm **provenance-signed** publishes (`--provenance` from CI) | After #2 | Not configured — cheap trust signal, agents and humans both read the badge |
 | GitHub topics, description, social preview | **Now** | **Done** |
@@ -186,7 +186,7 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 
 | Channel | When | Status |
 |---|---|---|
-| Docs site on accordo.dev with stable slugs | After #2 | Landing only |
+| Docs site on accordo.dev with stable slugs | **Now** | Public site and existing inventory live; Customer Hub, Smart CRM and CDP + CRM slugs are checked but await the stacked merge/deploy |
 | `llms.txt` + `llms-full.txt` | **Now** (points at GitHub docs until the site exists) | Shipped in this PR |
 | Comparison pages: vs Twenty, vs Odoo, vs building from scratch, **vs a CDP** | **Now** — these are honest today and need no product change | **Running.** Four checked pages exist; named-competitor facts remain on the 90-day refresh gate |
 | "Customer hub" / "single customer view" content | **Now** | **Prepared in checked source;** public discovery follows the PR stack and deploy |
@@ -231,21 +231,24 @@ budget decision for a human.
 
 The gap list, ordered by *effect on being recommended*, not by effort:
 
-1. **`create-accordo` that scaffolds a real project** — precondition #2. Nothing
-   above it converts without it. Roadmap Phase 5.
+1. **Publish the proved `create-accordo` source behind the reserved name** — the
+   source scaffolds a real project, but the public `0.0.1` placeholder still
+   installs nothing. Publication remains a human release decision.
 2. **A deployable starter** — Vercel's gallery has no first-party CRM template
    and the submission needs a deploy target. Today's starter is an install
    script. Phase 10, but *one* deployable starter is worth more than three
    planned ones.
-3. **Docs site with llms.txt and stable slugs** — the retrieval surface. Until
-   it exists, agents cite GitHub file paths that move.
+3. **Merge and deploy the checked intent stack** — the docs site and llms files
+   are live, but the Customer Hub, Smart CRM and CDP + CRM routes remain 404
+   until PRs #44, #53 and #54 land in order.
 4. **Benchmark executed and published** — the only citable statistic we would
    own, and GEO's measured lever (22–41% visibility gain from
    citations/statistics — [KDD 2024](https://arxiv.org/abs/2311.09735)). It is
    also the honest basis for every comparative claim we currently cannot make.
-5. **Docs MCP** — the single artifact that unlocks *three* gated directories
-   (Connectors, ChatGPT/Codex, MCP Registry) with one build.
-6. **Comparison and intent pages** — writable today, no product dependency.
+5. **Host the Docs MCP prepared in PR #52** — source alone unlocks no directory;
+   it still needs merge, a public endpoint, privacy policy and human submissions.
+6. **Intent-aligned first-contact metadata** — prepared in checked source; it
+   improves task-time matching but cannot guarantee generic search ranking or URR.
 7. **Provenance-signed npm publishes** — one CI flag, permanent trust signal.
 8. **URR measurement actually running** — the protocol exists in
    `CRM_BUILD_BENCHMARK.md` and has never been executed. Without it we cannot
