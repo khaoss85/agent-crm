@@ -286,7 +286,7 @@ marketplaces and registries, **(c)** the in-session agent surface.
 | **In-session agent surface** | **c** | AGENTS.md, CLAUDE.md, skills ×2 harnesses, MCP config ×2, `app inspect`, harness compatibility | **Strongest layer** | **None — fully ours** |
 | Show HN | launch | `LAUNCH_PACKET.md` §2 | Written | Human posts |
 | Product Hunt | launch | `LAUNCH_PACKET.md` §3 | Written | Human posts, once, on the benchmark |
-| Anthropic Connectors Directory, OpenAI plugin directory | b | A **hosted Docs MCP** — not the project runtime — plus an endpoint, an auth mode and a privacy policy | Source is prepared in PR #52; it is unmerged and no public endpoint or directory submission exists | Merge #52, host, publish privacy policy, then human submissions. *Not* the production spine: a documentation MCP serves docs, not customer records, so it needs none of the CRM's auth, tenancy or RBAC |
+| Anthropic Connectors Directory, OpenAI plugin directory | b | A **hosted Docs MCP** — not the project runtime — plus an endpoint, an auth mode and a privacy policy | Transport and privacy page implemented; production endpoint and submissions unverified | **Human promotion + live protocol receipt + submission review.** *Not* the production spine: this read-only documentation MCP serves public docs, not customer records, and imports no CRM runtime. Its no-auth mode is safe only while that boundary holds |
 | Vercel template gallery, deploy buttons, hosted demo | b | A template with a working deploy and a live demo URL | Cannot be met honestly | **Production spine** — these assert deployability |
 | Discord / Slack | — | — | Deliberately not done | Reconsider at two consecutive months of 20+ substantive Discussions threads **and** a named human on call |
 

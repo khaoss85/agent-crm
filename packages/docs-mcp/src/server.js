@@ -30,9 +30,14 @@ import { createToolRegistry } from './tools.js';
 import { createResourceRegistry } from './resources.js';
 
 const SERVER_INFO = Object.freeze({ name: 'accordo-docs', version: '0.1.0' });
-const CURRENT_PROTOCOL = '2026-07-28';
+export const DOCS_MCP_CURRENT_PROTOCOL = '2026-07-28';
 const LEGACY_PROTOCOL = '2025-11-25';
-const SUPPORTED_PROTOCOLS = [CURRENT_PROTOCOL, LEGACY_PROTOCOL, '2025-06-18', '2024-11-05'];
+export const DOCS_MCP_SUPPORTED_PROTOCOLS = Object.freeze([
+  DOCS_MCP_CURRENT_PROTOCOL,
+  LEGACY_PROTOCOL,
+  '2025-06-18',
+  '2024-11-05',
+]);
 const DEFAULT_ROOT = resolve(fileURLToPath(new URL('../../../', import.meta.url)));
 
 const INSTRUCTIONS =
@@ -65,7 +70,7 @@ export function createDocsMcpServer({ rootDir = DEFAULT_ROOT } = {}) {
         switch (request.method) {
           case 'initialize': {
             const requested = request.params?.protocolVersion;
-            const protocolVersion = SUPPORTED_PROTOCOLS.includes(requested) ? requested : LEGACY_PROTOCOL;
+            const protocolVersion = DOCS_MCP_SUPPORTED_PROTOCOLS.includes(requested) ? requested : LEGACY_PROTOCOL;
             result = {
               protocolVersion,
               capabilities: {
@@ -80,7 +85,7 @@ export function createDocsMcpServer({ rootDir = DEFAULT_ROOT } = {}) {
           case 'server/discover':
             result = {
               resultType: 'complete',
-              supportedVersions: [CURRENT_PROTOCOL],
+              supportedVersions: [DOCS_MCP_CURRENT_PROTOCOL],
               capabilities: {
                 tools: { listChanged: false },
                 resources: {},
@@ -162,7 +167,7 @@ export function createDocsMcpServer({ rootDir = DEFAULT_ROOT } = {}) {
 /** @param {any} request */
 function isModernRequest(request) {
   const version = request.params?._meta?.['io.modelcontextprotocol/protocolVersion'];
-  return version === CURRENT_PROTOCOL || request.method === 'server/discover';
+  return version === DOCS_MCP_CURRENT_PROTOCOL || request.method === 'server/discover';
 }
 
 /** @param {unknown} output @param {boolean} isError @param {boolean} modern */

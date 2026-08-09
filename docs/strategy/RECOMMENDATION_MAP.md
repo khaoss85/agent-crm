@@ -166,8 +166,8 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 | **Codex plugin** | `.codex-plugin/plugin.json` + self-hosted marketplace ([openai/plugins](https://github.com/openai/plugins)) | Self-hosted; no evidenced open submission to OpenAI's curated repo | **Now** | Mirror of the Claude plugin |
 | **Anthropic community marketplace** | Console form → `anthropics/claude-plugins-community` | **Gated** (form) | After #2 | Payload prepared |
 | **MCP Registry** | `server.json` + `mcp-publisher`; **requires the package published on npm first**, `mcpName` must match, namespace `io.github.khaoss85` ([quickstart](https://modelcontextprotocol.io/registry/quickstart)) | CLI + GitHub auth | After npm publish | Blocked by design, correctly |
-| **Anthropic Connectors Directory** | Hosted Docs MCP, OAuth 2.1, privacy policy, review | **Gated** | After Docs MCP exists | Not built |
-| **ChatGPT/Codex plugin directory** | Verified developer + MCP server + policies | **Gated** | After Docs MCP exists | Not built |
+| **Anthropic Connectors Directory** | Hosted Docs MCP, supported auth mode, privacy policy, review | **Prepared, not submitted** | After a human promotes the endpoint | The stateless read-only transport and privacy page exist in source; a production receipt and human submission do not |
+| **ChatGPT/Codex plugin directory** | Verified developer + MCP server + policies | **Prepared, not submitted** | After a human promotes the endpoint | Same transport; verified-developer and review steps remain external |
 | **Claude Code plugin hints** | `<claude-code-hint>` on stderr under `CLAUDECODE=1`; **dropped unless listed in the official marketplace** | n/a | Post-traction | Correctly deferred |
 
 ### 3b. Package and code surfaces

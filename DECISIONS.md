@@ -961,3 +961,50 @@ have their own reinterpretation problem for G1–G4 over a configured product. A
 nothing about publication: which sentences an Edition L result licenses is
 `docs/marketing/BENCHMARK_PUBLICATION.md`, deliberately a separate document with
 a separate gate.
+
+## ADR-025 — Host the existing Docs MCP through one stateless HTTP adapter
+
+**Status:** accepted for implementation. Production promotion and directory
+submission remain human decisions.
+
+**Context.** `packages/docs-mcp` already owns three read-only tools and the
+structural rule that no capability or CRM-job status leaves without its
+limitation. It runs only over stdio, which means a stranger must clone the
+repository and launch a child process before an agent can query it. The reviewed
+Anthropic/OpenAI discovery surfaces require a remote MCP endpoint, while the
+project MCP cannot be hosted safely before authentication, tenancy and RBAC.
+
+**Decision.** Add a Web `Request -> Response` adapter around
+`createDocsMcpServer`, deployed as a Node/Fluid Compute Vercel Function beside
+the existing static site. It is stateless, adds no tool and no dependency, and
+uses the same server instance contract as stdio. Modern MCP routing headers,
+Origin, content negotiation and request size are validated at the HTTP boundary;
+the body remains the source of truth. Runtime-read Markdown and ledgers are
+explicitly included in the Function bundle and ExecPlans explicitly excluded.
+
+No-auth is deliberate for this public, read-only surface. It contains only
+bytes already public on the site/repository, opens no database, calls no provider
+and persists no request. Authentication would reduce discoverability without
+protecting a non-public resource. Adding any private resource, persistence,
+telemetry or write tool reopens this decision and requires authorization before
+deployment.
+
+**Rejected:** a second SDK-based server, because its tool/claim contract could
+drift; and a persistent proxy around the stdio process, because it introduces
+process/session state that modern MCP removed and does not fit request-based
+Functions.
+
+**Consequences.** One remote URL can serve Claude, OpenAI and any conforming MCP
+client without broadening the CRM production claim. Vercel becomes a hosting
+subprocessor for ordinary HTTP/function metadata, stated on the public privacy
+page. A preview proves code and bundle; only a human may promote the endpoint or
+submit it to a directory.
+
+**Adversarial-review addendum (2026-08-09).** The canonical build may replace
+only its own ignored generated directory. A caller-selected assembler output
+must not exist, nor may its staging sibling, so a test/helper invocation cannot
+erase an occupied external directory. HTTP content negotiation counts a media
+type only when its quality is greater than zero; `text/event-stream;q=0` is a
+406, not permission to return a response the client refused. Regression tests
+hold both boundaries and also exercise the post-read body-size check against a
+lying `Content-Length`.

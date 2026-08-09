@@ -17,6 +17,7 @@ The first unchecked item is the default next task for Codex.
 - [ ] Add a provider adapter example for MailUp-compatible list enrollment.
 - [ ] Add tenant and role boundaries before exposing remote write tools.
 - [ ] Add Streamable HTTP transport for MCP with authorization.
+- [x] Add a separate stateless Streamable HTTP transport for the **read-only Docs MCP**. It serves public framework documentation only, accepts no customer/runtime data by design, and therefore adds no authorization surface; production promotion and directory submission remain human decisions (`docs/plans/hosted-docs-mcp.md`). This does not close the authenticated Project MCP item above.
 - [ ] Add PostgreSQL storage adapter behind the existing database contract.
 
 - [ ] **MK0 — Marketing & Growth Operations roadmap (documentation only).** Strategy (`docs/strategy/MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md`), the MK0–MK7 track in `EXECUTION_ROADMAP.md`, 43 JTBD-MK rows (all **not supported**) and five planned E2E-M benchmark scenarios. Opened as a documentation-only PR (#18) targeting `main`. **No Marketing runtime is implemented, and MK1 does not start in it.**

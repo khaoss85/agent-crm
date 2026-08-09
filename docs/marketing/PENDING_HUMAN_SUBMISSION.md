@@ -40,7 +40,7 @@ Recorded here so the queue above is honestly *only* five decisions.
 
 | Gap | Why it blocks a listing | Where it is tracked |
 |---|---|---|
-| **No hosted Docs MCP** | Rules out the Anthropic Connectors Directory and the OpenAI plugin directory. Both want a hosted MCP server, and the right one to submit is a **documentation** MCP — it serves docs, not customer records, so it needs none of the CRM's auth or tenancy. These are the only two reviewed directories reachable before the production spine, and treating them as spine-blocked closes them for no reason | `docs/strategy/AGENT_DISCOVERY.md`, Phase 8 |
+| **Docs MCP production promotion** | The stateless read-only transport and privacy page exist in source, but a preview receipt is not a production endpoint. A human must approve the infrastructure/public commitment, promote it to `accordo.dev`, then submit it to the Anthropic and OpenAI review flows. The server serves public docs, imports no CRM runtime and uses no auth only while that boundary holds | `docs/plans/hosted-docs-mcp.md`, `docs/strategy/AGENT_DISCOVERY.md`, Phase 8 |
 | **No production spine** | Rules out Vercel templates, deploy buttons and any hosted demo — all of them assert deployability | `docs/PROJECT_STATUS.md` production blockers |
 | **Benchmark unexecuted** | Rules out the strongest version of the launch story | `docs/strategy/CRM_BUILD_BENCHMARK.md` |
 
