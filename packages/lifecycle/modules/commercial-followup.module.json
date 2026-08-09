@@ -11,6 +11,8 @@
     { "name": "summary", "type": "string", "writable": "managed" },
     { "name": "currency", "type": "string", "writable": "managed" },
     { "name": "baselineNetAmountCents", "type": "integer", "writable": "managed" },
+    { "name": "baselineChargeType", "type": "enum", "values": ["one_time", "recurring"], "writable": "managed" },
+    { "name": "baselineInterval", "type": "enum", "values": ["month", "year"], "writable": "managed" },
     { "name": "requestedBy", "type": "string", "writable": "managed" },
     { "name": "requestedAt", "type": "timestamp", "writable": "managed" },
     { "name": "resolutionReason", "type": "string", "writable": "managed" },

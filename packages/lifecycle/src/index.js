@@ -387,7 +387,14 @@ export function buildRequestCommercialFollowupAction(moduleNames) {
         // One currency only when the baseline has exactly one; otherwise none,
         // because a mixed-currency total is not a number anybody should act on.
         currency: groups.length > 0 && groups.every((g) => g.currency === groups[0].currency) ? groups[0].currency : null,
+        // An amount travels with the recurrence that gives it meaning, or it
+        // does not travel. "EUR 171.00" is not a fact: monthly, annually and
+        // once are three different asks, and this row is what Commercial reads.
+        // The amount is recorded only when the baseline collapses to exactly
+        // one kind of money, and then its kind is recorded beside it.
         baselineNetAmountCents: groups.length === 1 ? groups[0].netAmountCents : null,
+        baselineChargeType: groups.length === 1 ? groups[0].chargeType : null,
+        baselineInterval: groups.length === 1 ? groups[0].interval : null,
         requestedBy,
         requestedAt,
         resolutionReason: null,

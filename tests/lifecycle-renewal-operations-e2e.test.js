@@ -195,3 +195,29 @@ test('the follow-up state model is an explicit table: terminal never regresses',
   }
 });
 
+test('an amount is recorded only with the recurrence that gives it meaning', async (t) => {
+  const { root, context } = await setup(t, 'money.sqlite');
+  const { app } = context;
+
+  // A baseline that collapses to exactly one kind of money: the amount travels.
+  const mono = await activatedContract(root, app, { name: 'Mono Deal', offers: ['fixture:offer:api-monthly'] });
+  const single = (await run(app, 'commercial-contract', 'request-commercial-followup', mono.contract.id,
+    { intent: 'renewal', summary: 'one kind of money' })).result;
+  assert.equal(single.currency, 'EUR');
+  assert.ok(Number.isSafeInteger(single.baselineNetAmountCents) && single.baselineNetAmountCents > 0);
+  // Regression: the row used to carry a bare amount. "EUR 171.00" is not a
+  // fact — monthly, annually and once are three different asks, and this row is
+  // what Commercial reads.
+  assert.equal(single.baselineChargeType, 'recurring');
+  assert.equal(single.baselineInterval, 'month');
+
+  // A mixed baseline: no amount at all, rather than a total that is not money.
+  const mixed = await activatedContract(root, app, { name: 'Mixed Deal' });
+  const many = (await run(app, 'commercial-contract', 'request-commercial-followup', mixed.contract.id,
+    { intent: 'renewal', summary: 'several kinds of money' })).result;
+  assert.equal(many.baselineNetAmountCents, null, 'no grand total across recurrences');
+  assert.equal(many.baselineChargeType, null);
+  assert.equal(many.baselineInterval, null);
+  assert.equal(many.currency, 'EUR', 'a single shared currency is still honest to state');
+});
+
