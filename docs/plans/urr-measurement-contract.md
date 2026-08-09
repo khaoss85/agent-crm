@@ -62,7 +62,9 @@ and the protocol requires a clean profile that has never been exposed to Accordo
   invalid receipt and classify the evidence discipline across every legacy domain.
 - [x] (2026-08-10) Run the adversarial review and clean-clone verification at
   `1ca300e`: 788/788, smoke, full B2B starter and `gtm:check` pass.
-- [ ] Publish the stacked PR and wait for exact-head CI.
+- [x] (2026-08-10) Publish draft PR #57 stacked on #56. On reviewed head
+  `b1ab5fb`, one exact-head CI run passes 788/788; its duplicate reports one
+  unrelated `ECONNRESET` in the pre-existing delivery exact-read test.
 
 ## Surprises & Discoveries
 
@@ -112,3 +114,9 @@ The first publishable URR still requires dedicated clean provider profiles, acti
 Claude and Gemini credentials, and all 150 raw transcripts. Until then the project
 has no URR, and the invalid pilot must never be restated as zero or as a positive
 name mention.
+
+PR #57 remains open and unmerged. The one remote failure is not evidence against
+this documentation diff: the duplicate workflow on the identical SHA passed, and
+the clean-clone run passed the same delivery suite. No retry wrapper or delivery
+test change belongs in this PR; a repeated reset must be reproduced and fixed in a
+separate, explicitly approved CI-stability change.
