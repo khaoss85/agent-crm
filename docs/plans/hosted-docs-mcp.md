@@ -198,6 +198,9 @@ pairing as the in-process server.
   occupied sentinel in a regression test, honours HTTP quality values and tests
   a body that exceeds 1 MiB despite declaring `Content-Length: 0`. Focused suites
   pass 32/32 after the fixes.
+- 2026-08-09: full post-review verification passed 781/781 at `5c2adfd`,
+  followed by a green smoke run. The public ledger was re-bound to that code
+  commit in a separate documentation-only commit.
 
 ## 9. Decision log
 

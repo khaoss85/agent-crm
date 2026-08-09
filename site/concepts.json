@@ -330,7 +330,7 @@
           "body": [
             "Not capability. The framework may grow a hundred capabilities; it may not grow a hundred things an agent has to read first. Those are different numbers, and conflating them is how a good architecture becomes an unusable one.",
             "Not quality. The budget can tell you another command appeared. It cannot tell you whether the command was well designed, and no count on this page implies anything about the code behind it.",
-            "Not agent success. Question six asks for a measured number, and the one number that would settle whether coding agents can actually build with this does not exist yet — the benchmark protocol is published and has not been run (L-03). The evidence that does exist is narrower and checkable: 780 tests run on every push (C-20), one command that reads an application's real composition from checked-in source and returns a machine-readable list of what it cannot see (C-14), and MCP tools where anything that generates code or destroys state is dry-run unless an explicit apply flag is passed (C-18)."
+            "Not agent success. Question six asks for a measured number, and the one number that would settle whether coding agents can actually build with this does not exist yet — the benchmark protocol is published and has not been run (L-03). The evidence that does exist is narrower and checkable: 781 tests run on every push (C-20), one command that reads an application's real composition from checked-in source and returns a machine-readable list of what it cannot see (C-14), and MCP tools where anything that generates code or destroys state is dry-run unless an explicit apply flag is passed (C-18)."
           ]
         },
         {
