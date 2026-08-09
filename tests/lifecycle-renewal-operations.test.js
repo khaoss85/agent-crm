@@ -6,7 +6,9 @@ import {
   SOURCE_CAPABILITY, createLifecyclePackage, daysToBoundary, evidenceGaps,
   groupBaseline, requireCalendarDate, requireReason,
 } from '../packages/lifecycle/src/index.js';
-import { createContractLifecycleSourceCapability, LIFECYCLE_SOURCE } from '../packages/contracts/src/lifecycle-capability.js';
+import {
+  createContractLifecycleSourceCapability, LIFECYCLE_SOURCE, TERM_SOURCE_SIGNED, termIsSigned,
+} from '../packages/contracts/src/lifecycle-capability.js';
 
 /**
  * M16a is mostly about **what it refuses to say**. A renewal decision is intent
@@ -224,3 +226,82 @@ test('a date that matches the shape but names no real day is refused', () => {
   assert.equal(daysToBoundary('2027-08-01', '2027-08-31'), 30);
 });
 
+
+test('`signed` is derived from the declared term source, and every source is classified', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const manifest = JSON.parse(readFileSync(`${root}packages/contracts/modules/commercial-contract.module.json`, 'utf8'));
+  const declared = manifest.fields.find((field) => field.name === 'termsSource').values;
+
+  // The point of the map: the day M12 adds a source, this fails until somebody
+  // decides whether a term from it is signed. A hard-coded `false` would have
+  // gone on quietly answering for a value nobody had thought about.
+  assert.deepEqual(Object.keys(TERM_SOURCE_SIGNED).sort(), [...declared].sort(),
+    'every declared termsSource must be classified as signed or not');
+  assert.equal(termIsSigned('post-signature-operational-activation'), false,
+    'an activation term is operational metadata, never a signed renewal term');
+  // Fails closed: unknown, absent and non-string are all "not signed", because
+  // reporting an unsigned date as signed is the one failure that matters.
+  for (const unknown of ['something-new', '', null, undefined, 42, {}, true]) {
+    assert.equal(termIsSigned(unknown), false);
+  }
+});
+
+test('nothing the capability hands back is a handle a consumer could write through', () => {
+  const capability = createContractLifecycleSourceCapability();
+  const contract = {
+    id: 'c1', status: 'active', currency: 'EUR', customerName: 'Rossi', currentVersionId: 'v1',
+    termStartDate: '2026-01-01', termEndDate: '2026-12-31', termDays: 365, autoRenew: 1,
+    renewalNoticeDays: 30, termsSource: 'post-signature-operational-activation', termsReason: 'as ordered',
+  };
+  const line = {
+    id: 'l1', contractVersionId: 'v1', label: 'Seats', componentKey: 'seats', chargeType: 'recurring',
+    pricingModel: 'flat_fee', interval: 'month', intervalCount: 1, quantity: 1,
+    netAmountCents: 1_000, currency: 'EUR', commercialActivation: 'subscription', position: 1,
+  };
+  const rows = new Map([
+    ['commercial-contract', { get: (id) => (id === 'c1' ? contract : null) }],
+    ['contract-version', { get: () => ({ versionNumber: 2 }) }],
+    ['contract-line', { listWhere: () => [{ ...line }] }],
+    ['subscription', { listWhere: () => [{ id: 's1' }] }],
+    ['subscription-line', { listWhere: () => [{ id: 'sl1', subscriptionId: 's1', componentKey: 'seats' }] }],
+  ]);
+  const opened = capability.create({ modules: { get: (name) => ({ service: rows.get(name) }) } });
+
+  // The interface itself is frozen: a consumer cannot redefine `termEvidence`
+  // to make its own package lie in its own trace.
+  assert.equal(Object.isFrozen(opened), true);
+  assert.throws(() => { /** @type {any} */ (opened).write = () => 'pwned'; }, TypeError);
+
+  // Nothing exposed is, or reaches, a service, a database or a transaction.
+  assert.deepEqual(Object.keys(opened).filter((key) => key !== 'capabilityContract').sort(),
+    ['listContractLines', 'listSubscriptionLines', 'termEvidence']);
+  assert.equal(Object.keys(opened).some((key) => /service|database|transaction|managed|create|update/i.test(key)), false);
+
+  // Evidence is frozen all the way down, and carries no object a caller could
+  // reach a live row through.
+  const evidence = opened.termEvidence('c1');
+  assert.equal(Object.isFrozen(evidence), true);
+  assert.equal(Object.isFrozen(evidence.term), true);
+  assert.throws(() => Object.defineProperty(evidence, 'injected', { value: 1 }), TypeError);
+  assert.throws(() => Object.setPrototypeOf(evidence, { pwned: 1 }), TypeError);
+  assert.equal(Object.values(evidence).some((value) => typeof value === 'function'), false);
+  assert.deepEqual(Object.entries(evidence).filter(([, value]) => value && typeof value === 'object').map(([key]) => key),
+    ['term'], 'the only nested object is the term, and it is frozen too');
+
+  // The lists are frozen too, and their rows are copies: mutating what a
+  // consumer was handed can never reach the row behind it.
+  for (const list of [opened.listContractLines('c1'), opened.listSubscriptionLines('c1'), opened.listContractLines(''), opened.listSubscriptionLines(null)]) {
+    assert.equal(Object.isFrozen(list), true);
+    assert.throws(() => list.push({ forged: true }), TypeError);
+    for (const row of list) {
+      assert.equal(Object.isFrozen(row), true);
+      assert.equal(Object.values(row).some((value) => value && typeof value === 'object'), false,
+        'every field is a primitive, so no live reference escapes');
+    }
+  }
+  const first = opened.listContractLines('c1')[0];
+  assert.throws(() => { /** @type {any} */ (first).netAmountCents = 1; }, TypeError);
+  assert.equal(opened.listContractLines('c1')[0].netAmountCents, 1_000, 're-reading is unaffected');
+});

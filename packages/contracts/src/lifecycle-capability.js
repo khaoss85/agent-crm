@@ -2,6 +2,7 @@
 
 import { AppError } from '../../core/index.js';
 import { resolvedNames } from './activation.js';
+import { TERMS_SOURCE } from './dates.js';
 
 /**
  * `contract-lifecycle-source@1` — the term and commercial evidence an
@@ -16,16 +17,52 @@ import { resolvedNames } from './activation.js';
  * **Read-only by construction.** There is no method here that writes, and there
  * is no handle a caller could write through: no service, no database, no
  * transaction. A consumer that wants to change a contract must go through
- * Contracts' own actions, as a human.
+ * Contracts' own actions, as a human. Everything handed back is frozen — the
+ * interface, the evidence, the lists and every row in them — and every field on
+ * a row is a primitive copy, so a consumer holds no reference to a live record
+ * and mutating what it was given reaches nothing.
  *
  * **Provenance travels with every date.** M12 records activation terms as
  * *operational metadata*, and `termsSource` exists precisely because those
  * dates may never have been signed. Every term this capability returns carries
  * its source, so a consumer physically cannot report a date without being able
- * to say where it came from.
+ * to say where it came from — and `signed` is *derived* from that source rather
+ * than asserted next to it, so the two can never disagree.
  */
 
 export const LIFECYCLE_SOURCE = Object.freeze({ name: 'contract-lifecycle-source', version: 1 });
+
+/**
+ * Whether a term from each declared `termsSource` is carried by a **signed**
+ * instrument — one entry per value the contract's enum allows.
+ *
+ * `signed` used to be the literal `false`. That was the right answer and the
+ * wrong mechanism: it stated in a second place a fact `termsSource` already
+ * carries, as a constant rather than as data. The day M12 gains a source that
+ * *is* signed, `termsSource` starts telling the truth on its own while a
+ * literal in this file keeps saying `false` — a silent, permanent
+ * under-claim that no test would notice, in a different package from the one
+ * that changed.
+ *
+ * A map instead of a list, so the failure mode is a failing test rather than a
+ * wrong answer: `tests/lifecycle-renewal-operations.test.js` asserts these keys
+ * are exactly the manifest's enum values, so adding a source without deciding
+ * whether it is signed stops the suite.
+ *
+ * Unknown or absent stays `false`. The direction matters: reporting a signed
+ * term as unsigned costs somebody a redundant check, while reporting an
+ * unsigned date as a signed renewal term is the failure this whole package
+ * exists to prevent. It fails towards the safe side, always.
+ */
+export const TERM_SOURCE_SIGNED = Object.freeze({
+  // Recorded by a human *after* signature; the signed document carries no term.
+  [TERMS_SOURCE]: false,
+});
+
+/** @param {unknown} source */
+export function termIsSigned(source) {
+  return typeof source === 'string' && TERM_SOURCE_SIGNED[source] === true;
+}
 
 /** @param {Record<string, string>} [moduleNames] */
 export function createContractLifecycleSourceCapability(moduleNames) {
@@ -54,7 +91,10 @@ export function createContractLifecycleSourceCapability(moduleNames) {
       };
       const safeGet = (svc, id) => { try { return svc.get(id); } catch { return null; } };
 
-      return {
+      // Frozen, like everything else it hands back: the interface a consumer
+      // holds is evidence too, and a consumer that can redefine `termEvidence`
+      // on it can make its own package lie in its own trace.
+      return Object.freeze({
         capabilityContract: 1,
 
         /**
@@ -94,7 +134,9 @@ export function createContractLifecycleSourceCapability(moduleNames) {
               // The whole reason this capability exists in this shape.
               source: contract.termsSource ?? null,
               reason: contract.termsReason ?? null,
-              signed: false,
+              // Derived from the source above, never asserted independently of
+              // it: one truth, in one place. See TERM_SOURCE_SIGNED.
+              signed: termIsSigned(contract.termsSource),
               provenanceNote:
                 'these dates are post-signature OPERATIONAL metadata recorded at activation (M12). They are not signed renewal terms, and nothing here should be reported as one',
             }),
@@ -109,8 +151,8 @@ export function createContractLifecycleSourceCapability(moduleNames) {
          * @param {string} contractId
          */
         listContractLines(contractId) {
-          if (typeof contractId !== 'string' || contractId === '') return [];
-          return service(names.contractLine)
+          if (typeof contractId !== 'string' || contractId === '') return Object.freeze([]);
+          return Object.freeze(service(names.contractLine)
             .listWhere({ contractId })
             .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position))
             .map((row) => Object.freeze({
@@ -127,7 +169,7 @@ export function createContractLifecycleSourceCapability(moduleNames) {
               currency: row.currency,
               commercialActivation: row.commercialActivation,
               position: row.position,
-            }));
+            })));
         },
 
         /**
@@ -135,7 +177,7 @@ export function createContractLifecycleSourceCapability(moduleNames) {
          * @param {string} contractId
          */
         listSubscriptionLines(contractId) {
-          if (typeof contractId !== 'string' || contractId === '') return [];
+          if (typeof contractId !== 'string' || contractId === '') return Object.freeze([]);
           const subscriptions = service(names.subscription).listWhere({ contractId });
           const lines = [];
           for (const subscription of subscriptions) {
@@ -158,10 +200,10 @@ export function createContractLifecycleSourceCapability(moduleNames) {
               }));
             }
           }
-          return lines.sort((a, b) => (a.componentKey === b.componentKey ? (a.id < b.id ? -1 : 1)
-            : a.componentKey < b.componentKey ? -1 : 1));
+          return Object.freeze(lines.sort((a, b) => (a.componentKey === b.componentKey ? (a.id < b.id ? -1 : 1)
+            : a.componentKey < b.componentKey ? -1 : 1)));
         },
-      };
+      });
     },
   };
 }
