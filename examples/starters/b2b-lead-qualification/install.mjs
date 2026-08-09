@@ -103,6 +103,11 @@ try {
   ]) {
     applyModule(root, join(root, 'packages', 'contracts', 'modules', manifest));
   }
+  // Renewal & expansion operations (M16a): intent evidence and a governed
+  // handoff. It renews nothing and signs nothing.
+  for (const manifest of ['renewal-decision.module.json', 'commercial-followup.module.json']) {
+    applyModule(root, join(root, 'packages', 'lifecycle', 'modules', manifest));
+  }
   // Milestone 15 records live in the OPTIONAL service domain package.
   for (const manifest of [
     'service-coverage.module.json', 'service-entitlement.module.json',
@@ -185,6 +190,7 @@ try {
       '// @ts-check',
       "import { createIntelligenceDomain } from '../../intelligence/src/index.js';",
       "import { createContractsDomain } from '../../contracts/src/index.js';",
+      "import { createLifecyclePackage } from '../../lifecycle/src/index.js';",
       "import { createDeliveryPackage } from '../../delivery/src/index.js';",
       "import { createServicePackage } from '../../service/src/index.js';",
       "import { b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1 } from '../../../examples/starters/b2b-lead-qualification/service.js';",
@@ -211,6 +217,7 @@ try {
       '    routingTargets,',
       '  }),',
       '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
+      '  createLifecyclePackage(),',
       '  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1], costPolicies: [b2bDeliveryCostV1] }),',
       '  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1] }),',
       '  createPartnerScorecardPackage(),',
