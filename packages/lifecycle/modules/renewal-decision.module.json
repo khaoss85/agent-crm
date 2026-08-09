@@ -1,0 +1,18 @@
+{
+  "manifestVersion": 1,
+  "name": "renewal-decision",
+  "description": "An immutable record of a human decision about an upcoming contract term boundary: pursue, do not renew, needs changes, or undecided. Intent evidence only — nothing here renews, ends or cancels anything. Read-only publicly: a decision exists only through the lifecycle package's action.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "contractId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "decision", "type": "enum", "values": ["pursue_renewal", "not_renewing", "needs_changes", "undecided"], "index": true, "writable": "managed" },
+    { "name": "reason", "type": "string", "writable": "managed" },
+    { "name": "asOfDate", "type": "string", "writable": "managed" },
+    { "name": "termEndDate", "type": "string", "writable": "managed" },
+    { "name": "termSource", "type": "string", "writable": "managed" },
+    { "name": "daysToBoundary", "type": "integer", "writable": "managed" },
+    { "name": "planFingerprint", "type": "string", "writable": "managed" },
+    { "name": "decidedBy", "type": "string", "writable": "managed" },
+    { "name": "decidedAt", "type": "timestamp", "writable": "managed" }
+  ]
+}

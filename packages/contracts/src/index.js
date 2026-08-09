@@ -12,6 +12,7 @@ import { MAX_NOTICE_DAYS, MAX_TERM_DAYS, TERMS_NOTE, TERMS_SOURCE } from './date
 import { definePackage } from '../../core/index.js';
 import { createDeliveryObligationsCapability } from './capabilities.js';
 import { createServiceObligationsCapability } from './service-capability.js';
+import { createContractLifecycleSourceCapability } from './lifecycle-capability.js';
 
 /**
  * The Contracts domain package (Milestone 12) — the first domain built under
@@ -55,7 +56,7 @@ export function createContractsDomain(options = {}) {
   return definePackage({
     packageContract: 1,
     name: CONTRACTS_DOMAIN,
-    version: 2,
+    version: 3,
     label: 'Contracts and subscriptions',
     description: 'Activates a signed immutable Order into a commercial contract, a subscription and pending delivery/service obligations.',
     resources: [...CONTRACTS_RESOURCES],
@@ -64,6 +65,10 @@ export function createContractsDomain(options = {}) {
     capabilities: [
       createDeliveryObligationsCapability(options.modules),
       createServiceObligationsCapability(options.modules),
+      // Additive again: the two obligation capabilities are untouched, and the
+      // package now also offers the term evidence an operational lifecycle
+      // package needs — read-only, provenance attached (M16a).
+      createContractLifecycleSourceCapability(options.modules),
     ],
     actions: buildContractActions(options.modules),
     policies,

@@ -106,8 +106,9 @@ test('the contracts domain declares its resources, limits and human boundary', (
   assert.ok(built.resources.includes('delivery-obligation'));
   // …and the package offers exactly one capability to other packages.
   assert.deepEqual(built.capabilities.map((entry) => `${entry.name}@${entry.version}`).sort(),
-    ['delivery-obligations@1', 'service-obligations@1'],
-    'M15 added the service half additively: delivery-obligations@1 is untouched');
+    ['contract-lifecycle-source@1', 'delivery-obligations@1', 'service-obligations@1'],
+    'each addition is additive: M15 added the service half, M16a added the read-only lifecycle source, '
+    + 'and delivery-obligations@1 is untouched by both');
   assert.deepEqual(metadata.classification.commercialActivation, [...COMMERCIAL_ACTIVATIONS]);
   assert.deepEqual(metadata.classification.obligations, [...OBLIGATION_TYPES]);
   assert.deepEqual(metadata.classification.dimensions, ['commercial', 'obligations']);

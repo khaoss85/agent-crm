@@ -1,0 +1,20 @@
+{
+  "manifestVersion": 1,
+  "name": "commercial-followup",
+  "description": "A governed handoff asking Commercial to do work arising from a renewal or expansion decision. It is a request, never an instruction: it creates no quote, order or contract and mutates no signed record. It has an exit — resolved externally or withdrawn — so it can never become a dead-end terminal state.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "contractId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "decisionId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "intent", "type": "enum", "values": ["renewal", "expansion", "contraction", "pricing_change", "scope_change"], "index": true, "writable": "managed" },
+    { "name": "status", "type": "enum", "values": ["pending_commercial_followup", "resolved_externally", "withdrawn"], "index": true, "writable": "managed" },
+    { "name": "summary", "type": "string", "writable": "managed" },
+    { "name": "currency", "type": "string", "writable": "managed" },
+    { "name": "baselineNetAmountCents", "type": "integer", "writable": "managed" },
+    { "name": "requestedBy", "type": "string", "writable": "managed" },
+    { "name": "requestedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "resolutionReason", "type": "string", "writable": "managed" },
+    { "name": "resolvedBy", "type": "string", "writable": "managed" },
+    { "name": "resolvedAt", "type": "timestamp", "writable": "managed" }
+  ]
+}
