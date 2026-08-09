@@ -50,6 +50,12 @@ The first unchecked item is the default next task for Codex.
   identity resolution and segmentation away from Accordo. The existing
   `distribution:check` command fails on drift; this adds no runtime capability,
   connector or guarantee of ranking, indexing or recommendation.
+- [x] **Make the unaided-recommendation measurement fail closed.** The first
+  feasibility pilot is recorded as invalid rather than converted into traction:
+  a bare Accordo string with no resolved identity and unsupported RBAC cannot enter
+  the numerator, and Claude/Gemini availability failures cannot shrink the planned
+  150-session denominator. A valid URR still needs dedicated clean provider profiles,
+  all 10 × 5 × 3 raw transcripts and identity-correct recommendations.
 
 - [x] **Module Evolution v1 (ADR-019).** A generic kernel capability: a generated module gains fields, enum values and indexes through an explicit `revision`, a checked-in `module.state.json` and append-only `migrations[]`. Merged in PR #19; **the prerequisite M14 was waiting on.**
 - [x] **AX0 — Objective-driven agent experience (documentation and Agent Skills only).** The Goal-to-Solution lifecycle, the SolutionPlan design, capability-discovery guidance, the mirrored `solve-business-goal` Skill, the canonical full-funnel worked example, 10 JTBD-AX rows and the E2E-G1 benchmark gates. **No runtime code; AX1–AX5 are not implemented.**

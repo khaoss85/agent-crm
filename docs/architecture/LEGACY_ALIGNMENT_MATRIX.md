@@ -76,6 +76,7 @@ horizontal capability the way the contract intends?*
 | **Human-actor boundary** — the decision requires `actor.type === "user"` | `partial` — the boundary is in the approval workflow around a staged move, not in `move-stage` | `partial` — scoring and routing carry no user-actor requirement: they are deterministic computations from a published definition, not decisions | `aligned` — quote approval | `aligned` — requesting a signature | `aligned` — activation | `aligned` — every writing action |
 | **Public refusal receipt** — optional site content renders a tested request, asserted actor and machine-readable result | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ |
 | **Public responsibility map** — optional site content separates exactly two layers and states the missing bridge | `not_applicable` ⁴ | `not_applicable` ⁴ | `not_applicable` ⁴ | `not_applicable` ⁴ | `not_applicable` ⁴ | `not_applicable` ⁴ |
+| **Public recommendation measurement identity contract** — a URR name match resolves to this framework before entering the numerator | `not_applicable` ⁵ | `not_applicable` ⁵ | `not_applicable` ⁵ | `not_applicable` ⁵ | `not_applicable` ⁵ | `not_applicable` ⁵ |
 | **Fingerprinted declared definitions** (ADR-015) — a declared version is content-addressed | `partial` — definitions are validated and drift refuses safely, but a pipeline carries no content-addressed version | `aligned` | `aligned` | `aligned` — provider definitions are fingerprinted | `aligned` | `aligned` |
 | **External-operation contract** (ADR-017) — intent, provider call outside every transaction, finalize, compensate | `not_applicable` | `not_applicable` | `partial` — catalog sync predates it and uses its own fetch-then-reconcile shape | `aligned` — it is the contract's origin | `not_applicable` | `not_applicable` |
 | **Money contract** (ADR-014) — integer minor units, currencies never summed, no FX | `not_applicable` | `not_applicable` | `aligned` | `aligned` | `aligned` | `aligned` |
@@ -123,6 +124,13 @@ capability.** Every domain is `not_applicable`, including those outside the six-
 table. The CDP + CRM page cites Lead Intelligence and the general mutation envelope as
 evidence for the process layer; it does not add a CDP dependency, integration seam or
 new obligation to any domain package.
+
+⁵ **The recommendation measurement identity contract is a project-level GTM
+evidence discipline, not a domain runtime capability.** Every domain is
+`not_applicable`, including Core CRM, the custom-package fixture, Service and
+documentation-only Marketing & Growth. It governs whether an external model response
+may enter a public metric; it adds no requirement to a package, record, action, policy
+or provider.
 
 ### Reading the shape rather than the cells
 
