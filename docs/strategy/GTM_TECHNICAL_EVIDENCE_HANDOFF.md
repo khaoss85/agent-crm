@@ -127,6 +127,17 @@ evidence does not belong in this document.
 
 ---
 
+### 11. Orchestrated project verification
+
+| | |
+|---|---|
+| **Technical fact** | One command orchestrates the framework's own authorities — project doctor as a blocking preflight, `app inspect`, declared-current Solution Plans, package conformance for composed packages, and the project's **declared** test and smoke scripts — into a contract-versioned report with a semantic fingerprint that excludes duration and machine layout. It never guesses a command, bounds every child in time and output, and reports a worktree that changed rather than repairing it. |
+| **Evidence** | `npm run crm -- project verify --json`; `projectVerificationContract: 1`; `tests/project-verify.test.js` |
+| **User value** | After a coding agent changes a project, one command produces the evidence a reviewer needs and names which authority refused. |
+| **Allowed positioning** | "One command orchestrates the project's evidence and reports which authority refused." |
+| **Do not claim** | that it proves the software works for a business scenario, that a green report means a plan is finished, or that it sandboxes anything. It publishes `BROWSER_EVIDENCE_NOT_AUTOMATED`, `SCENARIO_EVIDENCE_NOT_RUN`, `IMPLEMENTATION_EVIDENCE_NOT_MAPPED` and `PROJECT_COMMANDS_TRUSTED` in its own output. **PROVE remains partial** until DX6 and DX10 exist. |
+| **Status** | implemented |
+
 ## Planned only — must never be positioned as available
 
 | Capability | Status | Note |
@@ -154,7 +165,7 @@ honest state. **A stage marked partial must be described as partial.**
 | **PLAN** | Solution Plan | implemented | `crm solution check --json` |
 | **BUILD** | Package Scaffold + the coding agent | implemented | `crm package scaffold` |
 | **CHECK** | Project Doctor + Package Conformance | implemented | `crm project doctor --json`, `crm package test --json` |
-| **PROVE** | Quality Gates today; Project Verify (DX5) and Implementation Evidence (DX10) | **partial** | `docs/QUALITY_GATES.md`; DX5/DX10 **not built** |
+| **PROVE** | Quality Gates and Project Verify (DX5); Scenario Runner (DX6) and Implementation Evidence (DX10) still to come | **partial** | `docs/QUALITY_GATES.md`; `crm project verify --json`; DX6/DX10 **not built** |
 | **PRESERVE** | LA0 Characterization | implemented | `npm run characterize:intelligence` |
 
 Allowed positioning line:
