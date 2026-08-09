@@ -214,6 +214,21 @@ test('the machine-readable answers resolve their own evidence', () => {
   );
 });
 
+test('the Customer Hub intent separates local writes from missing cross-system ingestion', () => {
+  const html = read('concepts/customer-hub.html');
+  assert.match(html, /no pipeline that ingests records or events from external systems/);
+  assert.match(html, /audited CRUD and service APIs/);
+  assert.doesNotMatch(
+    html,
+    /nothing enters this database except through an action/,
+    'the framework has public CRUD and service write paths; denying them to sharpen the CDP contrast is false',
+  );
+
+  const llms = read('llms.txt');
+  assert.match(llms, /Service operations are a partial local slice, not a helpdesk product/);
+  assert.doesNotMatch(llms, /Service package is the next\s+milestone and is not merged/);
+});
+
 test('every internal link resolves to a page that was built', () => {
   /** @type {string[]} */
   const pages = [];

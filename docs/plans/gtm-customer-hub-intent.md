@@ -122,9 +122,10 @@ visible in the shipped entry:
 **Conclusion: the page is writable without weakening the refusal**, because the
 two sentences are about different objects. The CDP page refuses a *profile
 assembled from other systems*. This page names a *chain this system wrote*. The
-distinguishing fact is not a qualifier — it is that **nothing enters this
-database except through an action this framework ran**, so there is no ingestion
-to resolve and therefore nothing to resolve.
+distinguishing fact is not a qualifier — it is that **the framework has no
+pipeline that ingests records or events from external systems**, so there is no
+imported identity set to resolve. Audited CRUD and service writes still exist;
+they are local application input, not cross-system ingestion.
 
 ---
 
@@ -260,3 +261,22 @@ so it cannot drift again. Separate commit.
 `npm run site:build` · `npm run site:check` · `npm run gtm:check` ·
 `npm run surface:check` · `npm run verify`. The site gates are strict by design:
 if one refuses a sentence, the sentence changes and the gate does not.
+
+## Adversarial review addendum — 2026-08-09
+
+The review confirmed two documentation-truthfulness defects before merge:
+
+1. The first draft said nothing entered the database except through an action.
+   That was false: generated and core records also have audited CRUD/service
+   write paths. The page now distinguishes those local writes from the missing
+   cross-system ingestion pipeline, and a regression test holds the distinction.
+2. The generated machine summary still said Service was unmerged. M15 is merged
+   and the Customer Hub page correctly reports its narrow partial slice. The
+   machine summary and the canonical GTM plan now state both the implemented
+   slice and its missing product surface.
+
+On macOS, the clean-clone `npm run verify` run reaches 740/741 and fails only in
+the pre-existing `tests/project-doctor.test.js` shell probe because BSD `find`
+does not accept GNU `-newermt @0`. `npm run smoke` and `npm run gtm:check` pass.
+This PR neither introduced nor hides that portability defect; its full-suite
+checkbox remains proven by the recorded Linux run at `fe92a0e`, not by macOS.

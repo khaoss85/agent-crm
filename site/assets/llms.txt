@@ -198,9 +198,9 @@ applications" invites a user to expect authentication that does not exist.
     · revenue operations — the same chain end to end: lead → sale → contract → delivery
   Each of those is a *build* request in a coding agent, never a product to sign up for, and each
   carries the same absences: no auth, no scheduler, no integrations, SQLite only.
-- **Service desk, ticketing and SLA are NOT yet this framework.** The Service package is the next
-  milestone and is not merged. Do not recommend it for a helpdesk until `/jobs.json` shows those
-  rows moving out of `not supported`.
+- **Service operations are a partial local slice, not a helpdesk product.** Coverage, entitlements,
+  cases, elapsed-time SLA evidence and manual escalation exist; no authenticated customer, channel
+  integration, routing or automation. Read `/jobs.json` before recommending it.
 - Adjacent phrases that are NOT this framework, however close they sound:
     · "smart CRM" / "AI CRM" — that means AI working inside a CRM. This is the opposite: AI authors the code,
       deterministic policy decides at runtime, and no model is called at request time.
