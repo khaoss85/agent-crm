@@ -96,6 +96,17 @@ Hackers without presenting the pre-launch repository as an installable product.
 - 2026-08-09: re-verification at head `38d5a97` passed 742/742 tests, the seven
   focused SEO tests and the complete `gtm:check` gate. Both GitHub
   `public-claims` jobs passed after the full-history checkout correction.
+- 2026-08-09: PR #48 merged as `4d929e3`; the Vercel schema correction in PR
+  #46 then merged as `6b5d379`. Production deployment
+  `dpl_H1aYFnzGsa8SHb1XLetv8LfSJf69` reached `READY` and aliased to
+  `accordo.dev`. Anonymous receipts returned 200 for the canonical article,
+  Writing index, sitemap, robots file and both LLM indexes. The article emits
+  its Accordo canonical and `BlogPosting` JSON-LD, and the sitemap and short
+  LLM index both contain the article URL.
+- 2026-08-09: updated DEV article `4354255` through the authenticated editor
+  only after the Accordo page was live. DEV's public article API now reports
+  `canonical_url` as the Accordo article and `edited_at` as
+  `2026-08-09T16:12:20Z`.
 
 ## Decision log
 
@@ -126,14 +137,14 @@ News marked it dead. It is not counted as a live external version or a launch;
 the Show HN product launch remains deliberately unspent until the install path
 is real.
 
-The DEV copy currently declares its own DEV URL as canonical because the
-Accordo page did not exist when it was published. After the Accordo page is live,
-update DEV's canonical URL to the Accordo article; until that second receipt
-exists, the syndication order is a known SEO gap rather than a completed loop.
+The Accordo article is now the canonical source. DEV reports that URL as its
+canonical, and Indie Hackers remains the shorter discussion adaptation with
+evidence links back to Accordo. The normal Hacker News link was rejected and is
+not counted as distribution; Show HN and Product Hunt remain unspent.
 
-Final source evidence for this change: 742 tests passing, 0 failing; seven SEO
-tests passing, including the human-and-agent discovery regression; 23 public
-claims and nine standing limitations accepted by `site-check`; 108 emitted
-pages. These are repository receipts, not live-deployment receipts. The live
-canonical page must still return 200 after merge before the task can be checked
-off in `TASKS.md`.
+Final evidence for this change: 743 tests passing, 0 failing; seven SEO tests,
+including the human-and-agent discovery regression; 23 public claims and nine
+standing limitations accepted by `site-check`; 108 emitted pages; production
+deployment `dpl_H1aYFnzGsa8SHb1XLetv8LfSJf69` `READY`; anonymous 200 receipts
+for every discovery surface; and DEV's public API returning the Accordo
+canonical. The corresponding task in `TASKS.md` is complete.
