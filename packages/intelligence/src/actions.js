@@ -1,9 +1,9 @@
 // @ts-check
 
-import { AppError, ConflictError, ValidationError } from './errors.js';
-import { computeDefinitionFingerprint } from './definition-fingerprint.js';
-import { rankRoutingTargets } from './intelligence-registry.js';
-import { withTimeout } from './timeout.js';
+import {
+  AppError, ConflictError, ValidationError, computeDefinitionFingerprint, withTimeout,
+} from '../../core/index.js';
+import { rankRoutingTargets } from './registry.js';
 
 /**
  * Framework-provided Lead Intelligence actions (ADR-015), starter-registered
@@ -284,7 +284,7 @@ function leadInputView(record) {
  * persists nothing.
  * @param {IntelligenceActionConfig} [config]
  */
-export function buildEnrichAction(config) {
+export function buildEnrichAction(config, registries) {
   const cfg = resolved(config);
   return {
     module: cfg.module,
@@ -298,8 +298,8 @@ export function buildEnrichAction(config) {
       { name: 'provider', type: 'string', required: true, hint: 'Registered enrichment provider name (see schema intelligence.enrichmentProviders).' },
     ],
     /** @param {any} ctx */
-    async prepare({ record, input, intelligence, modules, config: appConfig, now, step }) {
-      const { definition: provider, fingerprint } = intelligence.getProvider(input.provider);
+    async prepare({ record, input, modules, config: appConfig, now, step }) {
+      const { definition: provider, fingerprint } = registries.getProvider(input.provider);
       if (!provider.capabilities.includes('company')) {
         throw new ValidationError(`Enrichment provider "${provider.name}" does not support company enrichment`, {
           field: 'provider',
@@ -418,7 +418,7 @@ function snapshotSummary(snapshot) {
  * second record, never a duplicated contribution.
  * @param {IntelligenceActionConfig} [config]
  */
-export function buildRecordSignalAction(config) {
+export function buildRecordSignalAction(config, registries) {
   const cfg = resolved(config);
   return {
     module: cfg.module,
@@ -475,7 +475,7 @@ export function buildRecordSignalAction(config) {
  * stay evidenced after the lead changes.
  * @param {IntelligenceActionConfig} [config]
  */
-export function buildScoreAction(config) {
+export function buildScoreAction(config, registries) {
   const cfg = resolved(config);
   return {
     module: cfg.module,
@@ -490,8 +490,8 @@ export function buildScoreAction(config) {
       { name: 'version', type: 'integer', required: true, hint: 'Explicit model version — never an implicit latest.' },
     ],
     /** @param {any} ctx */
-    async execute({ record, input, actor, modules, intelligence, managed, now, step }) {
-      const { definition, fingerprint } = intelligence.getScoringModel(input.model, input.version);
+    async execute({ record, input, actor, modules, managed, now, step }) {
+      const { definition, fingerprint } = registries.getScoringModel(input.model, input.version);
       const evaluatedAt = now();
 
       /** @type {any} */
@@ -607,7 +607,7 @@ export function buildScoreAction(config) {
  * historical decision stays explainable after target data changes.
  * @param {IntelligenceActionConfig} [config]
  */
-export function buildRouteAction(config) {
+export function buildRouteAction(config, registries) {
   const cfg = resolved(config);
   return {
     module: cfg.module,
@@ -622,7 +622,7 @@ export function buildRouteAction(config) {
       { name: 'version', type: 'integer', required: true, hint: 'Explicit policy version — never an implicit latest.' },
     ],
     /** @param {any} ctx */
-    async execute({ record, input, actor, modules, intelligence, managed, now, step }) {
+    async execute({ record, input, actor, modules, managed, now, step }) {
       if (record.assignedTargetId) {
         throw new AppError(`Lead is already assigned to "${record.assignedTargetId}" — rerouting is not supported in v1`, {
           code: 'ALREADY_ASSIGNED',
@@ -636,7 +636,7 @@ export function buildRouteAction(config) {
           status: 409,
         });
       }
-      const { definition, fingerprint } = intelligence.getRoutingPolicy(input.policy, input.version);
+      const { definition, fingerprint } = registries.getRoutingPolicy(input.policy, input.version);
       const scoreRun = modules.get(cfg.scoreRunModule).service.get(record.scoreRunId);
       if (scoreRun.leadId !== record.id) {
         throw new AppError('The lead\'s score-run link points at another lead\'s run', {
@@ -653,7 +653,7 @@ export function buildRouteAction(config) {
       const leadService = modules.get(cfg.module).service;
       const loadOf = (key) => leadService.countWhere({ assignedTargetId: key, status: [...ACTIVE_LEAD_STATUSES] });
       const score = record.score ?? scoreRun.totalScore;
-      const allTargets = intelligence
+      const allTargets = registries
         .listTargets()
         .map((target) => Object.freeze({ ...target, currentLoad: loadOf(target.key) }));
       const candidates = allTargets.filter((target) => target.kind !== 'fallback');
@@ -715,7 +715,7 @@ export function buildRouteAction(config) {
         }
         matchedRule = typeof decision.rule === 'string' ? decision.rule.slice(0, MAX_TEXT) : null;
       } else {
-        const fallback = intelligence.fallbackTarget();
+        const fallback = registries.fallbackTarget();
         if (!fallback || fallback.active !== true) {
           throw new AppError('No eligible routing target and no active fallback queue', {
             code: 'NO_ELIGIBLE_TARGET',
@@ -734,7 +734,7 @@ export function buildRouteAction(config) {
           policy: definition.name,
           policyVersion: definition.version,
           fingerprint,
-          targetsFingerprint: intelligence.targetsFingerprint(),
+          targetsFingerprint: registries.targetsFingerprint(),
           scoreRunId: scoreRun.id,
           snapshotId: snapshot?.id ?? null,
           evaluatedTargets: candidates.length,

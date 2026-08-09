@@ -1,5 +1,5 @@
 import { normalizeIds, observation } from './characterization-contract.mjs';
-import { boot, characterizationProject } from './intelligence-harness.mjs';
+import { boot, characterizationProject, intelligenceSchemaBlock, intelligenceSchemaLocation } from './intelligence-harness.mjs';
 
 /**
  * The Lead Intelligence characterization cases.
@@ -100,12 +100,13 @@ export async function runIntelligenceCases(t, record) {
   // architecture — what the extraction must MIGRATE, not what it must preserve
   // -------------------------------------------------------------------------
   const schema = await client.schema();
+  const intelligenceBlock = intelligenceSchemaBlock(schema);
   record(observation({
     id: 'architecture.schema-intelligence-block-present',
     category: 'architecture',
     classification: 'pre_extraction_evidence',
     surface: 'schema',
-    observed: { present: Boolean(schema.intelligence), keys: Object.keys(schema.intelligence ?? {}).sort() },
+    observed: { present: Boolean(intelligenceBlock), keys: Object.keys(intelligenceBlock ?? {}).sort(), foundAt: intelligenceSchemaLocation(schema) },
     note: 'Published today as an ambient `intelligence` block on /api/schema. After extraction it should be the package\'s own schema contribution — a deliberate migration, not a behaviour change to hide.',
   }));
   record(observation({
@@ -123,16 +124,16 @@ export async function runIntelligenceCases(t, record) {
     classification: 'contractual',
     surface: 'schema',
     observed: {
-      enrichmentProviders: (schema.intelligence?.enrichmentProviders ?? []).map((entry) => `${entry.name}@${entry.version}`).sort(),
-      scoringModels: (schema.intelligence?.scoringModels ?? []).map((entry) => `${entry.name}@${entry.version}`).sort(),
-      routingPolicies: (schema.intelligence?.routingPolicies ?? []).map((entry) => `${entry.name}@${entry.version}`).sort(),
-      routingTargetCount: (schema.intelligence?.routingTargets ?? []).length,
+      enrichmentProviders: (intelligenceBlock?.enrichmentProviders ?? []).map((entry) => `${entry.name}@${entry.version}`).sort(),
+      scoringModels: (intelligenceBlock?.scoringModels ?? []).map((entry) => `${entry.name}@${entry.version}`).sort(),
+      routingPolicies: (intelligenceBlock?.routingPolicies ?? []).map((entry) => `${entry.name}@${entry.version}`).sort(),
+      routingTargetCount: (intelligenceBlock?.routingTargets ?? []).length,
     },
   }));
 
   // Fingerprints are the decision's identity, so they are contractual by value.
   for (const kind of ['enrichmentProviders', 'scoringModels', 'routingPolicies']) {
-    for (const entry of schema.intelligence?.[kind] ?? []) {
+    for (const entry of intelligenceBlock?.[kind] ?? []) {
       record(observation({
         id: `architecture.fingerprint.${kind}.${entry.name}@${entry.version}`,
         category: 'architecture',
@@ -266,7 +267,7 @@ export async function runIntelligenceCases(t, record) {
     category: 'enrichment',
     classification: 'contractual',
     surface: 'storage',
-    observed: snapshot.providerFingerprint === (schema.intelligence?.enrichmentProviders ?? [])[0]?.fingerprint,
+    observed: snapshot.providerFingerprint === (intelligenceBlock?.enrichmentProviders ?? [])[0]?.fingerprint,
   }));
   record(observation({
     id: 'enrichment.lead-link',

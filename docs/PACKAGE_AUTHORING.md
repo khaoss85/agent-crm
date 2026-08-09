@@ -161,6 +161,36 @@ anything a package writes as the record of a decision — make every field
 `"writable": "managed"`: the module then exposes only `get`/`list` publicly and
 exists solely through your actions.
 
+### Acting on a record you do not own
+
+A package often needs to act on a record the **project** owns — a `lead`, a
+`company`, an `opportunity`. That is a **host-record dependency**, and it is a
+different thing from depending on another package.
+
+**Do not list it in `resources`.** `resources` declares what your package
+*owns*, and ownership is what makes a second claimant a startup collision. A
+package that lists `lead` is claiming the project's record, which is both untrue
+and a conflict waiting for the next package that does the same.
+
+| | Host-record dependency | Package dependency |
+|---|---|---|
+| Example | Intelligence's `score` action targets the project's `lead` | Delivery reads Contracts' obligations |
+| Declared as | nothing — the action names the module it targets | `requires: [{ package, capability, version }]` |
+| Reached through | the action runtime, which hands you the record and a managed write path | `domains.capability(...)` |
+| If it is missing | the action is simply not registered on a module the project does not have | startup fails, naming the unmet edge |
+| Listed in `resources` | **no** | no — the *provider* lists its own |
+
+The practical test: *if the customer deleted this record type, would my package
+be wrong, or just unused?* If the record is the project's and your package would
+simply have nothing to act on, it is a host-record dependency. If your package
+would be broken because it needed somebody else's *behaviour*, that is a
+capability, and it must be declared.
+
+Removing a package must leave host records untouched. Lead Intelligence's
+extraction is the worked example: it owns seven evidence records, declares
+`lead` in none of them, and removing the package leaves every Lead intact —
+proved in `tests/intelligence-package-absence.test.js`.
+
 ## 5. Write actions and policies
 
 An action is an ordinary action definition (`docs/ACTIONS.md`): the same

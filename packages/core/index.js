@@ -32,6 +32,17 @@ export {
 // never formats its own transport response.
 export { AppError, ValidationError, NotFoundError, ConflictError, ForbiddenError } from './src/errors.js';
 
+// ---- bounded outbound calls ----
+// A package that calls a provider bounds it with the framework's timeout
+// rather than racing its own, so the refusal a caller sees is the same one the
+// kernel produces. Public because `packages/core/src/*` is private and a
+// package cannot reach into it.
+export { withTimeout } from './src/timeout.js';
+
+// ---- the framework clock ----
+// One ISO-8601 clock, so a package never stamps a record from its own.
+export { nowIso } from './src/time.js';
+
 // ---- declared-definition fingerprints (ADR-015) ----
 // A package that publishes versioned policies uses the same mechanism every
 // first-party definition uses: declared JSON-safe config, canonical source.

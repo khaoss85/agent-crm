@@ -43,6 +43,10 @@ try {
   applyModule(root, join(starterInProject, 'task.module.json'));
   // Lead Intelligence record modules (Milestone 9): every field is managed, so
   // the records are immutable through public CRUD and writable only by actions.
+  // They live with the package that owns them, applied the same way the other
+  // package-owned manifests are. The manifests are byte-identical to the ones
+  // the starter used to carry, so the tables, migrations and checksums of an
+  // existing project are untouched by the move.
   for (const manifest of [
     'enrichment-snapshot.module.json',
     'behavioral-signal.module.json',
@@ -51,6 +55,8 @@ try {
     'routing-run.module.json',
     'route-evaluation.module.json',
     'assignment.module.json',
+  ]) applyModule(root, join(root, 'packages', 'intelligence', 'modules', manifest));
+  for (const manifest of [
     // Commercial Operations record modules (Milestone 10): all read-only
     // publicly — records exist only through catalog sync and quote actions.
     'product.module.json',
@@ -144,12 +150,6 @@ try {
       "import { disqualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/disqualify.js';",
       "import { convertLead } from '../../../examples/starters/b2b-lead-qualification/actions/convert.js';",
       "import { buildMoveStageAction } from '../../core/src/pipeline-actions.js';",
-      'import {',
-      '  buildEnrichAction,',
-      '  buildRecordSignalAction,',
-      '  buildScoreAction,',
-      '  buildRouteAction,',
-      "} from '../../core/src/intelligence-actions.js';",
       "import { buildCommercialActions } from '../../core/src/commercial-actions.js';",
       "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
       '',
@@ -158,10 +158,6 @@ try {
       '  disqualifyLead,',
       '  convertLead,',
       "  buildMoveStageAction({ module: 'opportunity' }),",
-      '  buildEnrichAction(),',
-      '  buildRecordSignalAction(),',
-      '  buildScoreAction(),',
-      '  buildRouteAction(),',
       '  ...buildCommercialActions(),',
       '  buildRequestSignatureAction(),',
       '];',
@@ -187,6 +183,7 @@ try {
     join(root, 'packages', 'domains', 'generated', 'index.js'),
     [
       '// @ts-check',
+      "import { createIntelligenceDomain } from '../../intelligence/src/index.js';",
       "import { createContractsDomain } from '../../contracts/src/index.js';",
       "import { createDeliveryPackage } from '../../delivery/src/index.js';",
       "import { createServicePackage } from '../../service/src/index.js';",
@@ -195,10 +192,24 @@ try {
       "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
       "import { b2bDeliveryHandoverV1 } from '../../../examples/starters/b2b-lead-qualification/delivery.js';",
       "import { b2bDeliveryCostV1 } from '../../../examples/starters/b2b-lead-qualification/delivery-cost.js';",
+      'import {',
+      '  fixtureFirmographicsProvider,',
+      '  b2bSaasScoreV1,',
+      '  b2bSaasScoreV2,',
+      '  b2bRoutingV1,',
+      '  b2bRoutingV2,',
+      '  routingTargets,',
+      "} from '../../../examples/starters/b2b-lead-qualification/intelligence.js';",
       '',
       '// The composition file is the ONLY place a project names its packages.',
       '// Deleting a line removes that package; nothing in the kernel changes.',
       'export const generatedDomains = [',
+      '  createIntelligenceDomain({',
+      '    enrichmentProviders: [fixtureFirmographicsProvider],',
+      '    scoringModels: [b2bSaasScoreV1, b2bSaasScoreV2],',
+      '    routingPolicies: [b2bRoutingV1, b2bRoutingV2],',
+      '    routingTargets,',
+      '  }),',
       '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
       '  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1], costPolicies: [b2bDeliveryCostV1] }),',
       '  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1] }),',
@@ -214,26 +225,6 @@ try {
       "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
       '',
       'export const generatedSignatureProviders = [fixtureSignatureProvider];',
-      '',
-    ].join('\n'),
-  );
-  writeFileSync(
-    join(root, 'packages', 'intelligence', 'generated', 'index.js'),
-    [
-      '// @ts-check',
-      'import {',
-      '  fixtureFirmographicsProvider,',
-      '  b2bSaasScoreV1,',
-      '  b2bSaasScoreV2,',
-      '  b2bRoutingV1,',
-      '  b2bRoutingV2,',
-      '  routingTargets,',
-      "} from '../../../examples/starters/b2b-lead-qualification/intelligence.js';",
-      '',
-      'export const generatedEnrichmentProviders = [fixtureFirmographicsProvider];',
-      'export const generatedScoringModels = [b2bSaasScoreV1, b2bSaasScoreV2];',
-      'export const generatedRoutingPolicies = [b2bRoutingV1, b2bRoutingV2];',
-      'export const generatedRoutingTargets = routingTargets;',
       '',
     ].join('\n'),
   );

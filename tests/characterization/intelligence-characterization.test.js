@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -199,8 +199,17 @@ test('the wiring seam owns every path that knows where Intelligence lives', () =
       `${file} reaches an Intelligence internal directly; it belongs in the harness`);
     assert.doesNotMatch(source, /['"][^'"]*intelligence\/generated[^'"]*['"]/, file);
   }
-  assert.match(INTELLIGENCE_SOURCE.registry, /intelligence-registry/);
+  // Post-extraction the seam points into the package. This assertion used to
+  // read /intelligence-registry/, which was the pre-extraction filename — a
+  // test that encoded the old topology and had to move with it.
+  assert.match(INTELLIGENCE_SOURCE.registry, /packages\/intelligence\/src\/registry\.js$/);
+  assert.match(INTELLIGENCE_SOURCE.entry, /packages\/intelligence\/src\/index\.js$/);
   assert.equal(INTELLIGENCE_SOURCE.greps.length, 4);
+  // And the kernel must no longer contain the domain at all.
+  assert.equal(existsSync(join(repoRoot, 'packages/core/src/intelligence-registry.js')), false,
+    'the extraction is not done while the kernel still carries an Intelligence file');
+  assert.equal(existsSync(join(repoRoot, 'packages/intelligence/generated/index.js')), false,
+    'the fixed project-owned definition slot is replaced by composition, not kept alongside it');
 });
 
 test('a case that observes nothing is refused at build time', () => {

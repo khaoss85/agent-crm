@@ -1,0 +1,16 @@
+{
+  "manifestVersion": 1,
+  "name": "score-disclosure",
+  "description": "An immutable record of which declared scoring model a reviewer disclosed for a lead, with the model's declared-definition fingerprint at the moment of disclosure (customer-authored example package). Read-only publicly: a disclosure exists only through the package's disclose-scoring-model action.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "leadId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "modelName", "type": "string", "index": true, "writable": "managed" },
+    { "name": "modelVersion", "type": "integer", "writable": "managed" },
+    { "name": "modelLabel", "type": "string", "writable": "managed" },
+    { "name": "modelFingerprint", "type": "string", "writable": "managed" },
+    { "name": "ruleCount", "type": "integer", "writable": "managed" },
+    { "name": "disclosedBy", "type": "string", "writable": "managed" },
+    { "name": "disclosedAt", "type": "timestamp", "writable": "managed" }
+  ]
+}

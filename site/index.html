@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accordo — the framework coding agents use to build custom CRMs</title>
+<meta name="description" content="Accordo is the open-source framework coding agents use to build custom CRMs. Describe your commercial process to Claude Code or Codex; get a working CRM as reviewable code you own — deterministic workflows, human approvals, audit and trace built in.">
+<link rel="canonical" href="https://accordo.dev/">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://accordo.dev/">
+<meta property="og:title" content="Accordo — the framework coding agents use to build custom CRMs">
+<meta property="og:description" content="Describe your commercial process to Claude Code or Codex; get a working CRM as reviewable code you own — deterministic workflows, human approvals, audit and trace built in.">
+<meta property="og:image" content="https://accordo.dev/assets/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Accordo — the framework coding agents use to build custom CRMs">
+<meta name="twitter:description" content="Describe your commercial process to Claude Code or Codex; get a working CRM as reviewable code you own.">
+<meta name="twitter:image" content="https://accordo.dev/assets/social-preview.png">
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0C10'/%3E%3Cg stroke='%237AA2FF' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M8 11h16'/%3E%3Cpath d='M8 16h16' opacity='.65'/%3E%3Cpath d='M8 21h16' opacity='.4'/%3E%3C/g%3E%3C/svg%3E">
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body, h1, h2, p, ul, li, figure { margin: 0; padding: 0; }
+  ul { list-style: none; }
+
+  :root {
+    --bg: #0A0C10;
+    --ink: #E8EAED;
+    --muted: #8A93A6;
+    --dim: #C3CADB;
+    --line: rgba(255,255,255,0.10);
+    --accent: #7AA2FF;
+    --panel: rgba(255,255,255,0.04);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  body::before,
+  body::after {
+    content: "";
+    position: fixed;
+    pointer-events: none;
+    z-index: 0;
+  }
+  body::before {
+    width: 900px; height: 900px;
+    left: -300px; top: -450px;
+    background: radial-gradient(circle, rgba(94,134,255,0.20) 0%, rgba(94,134,255,0) 62%);
+  }
+  body::after {
+    width: 820px; height: 820px;
+    right: -340px; bottom: -520px;
+    background: radial-gradient(circle, rgba(255,164,94,0.11) 0%, rgba(255,164,94,0) 62%);
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: clamp(48px, 9vw, 104px) clamp(20px, 5vw, 32px) 72px;
+  }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .eyebrow .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 14px rgba(122,162,255,0.9);
+  }
+
+  h1 {
+    font-size: clamp(52px, 12vw, 96px);
+    line-height: 1;
+    letter-spacing: -0.045em;
+    font-weight: 700;
+    margin: 22px 0 0;
+    background: linear-gradient(180deg, #FFFFFF 25%, #A9B6D6 120%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .lede {
+    margin-top: 22px;
+    font-size: clamp(19px, 2.6vw, 24px);
+    line-height: 1.45;
+    letter-spacing: -0.012em;
+    color: var(--dim);
+    max-width: 48ch;
+  }
+  .lede b { color: #fff; font-weight: 600; }
+
+  .cmd {
+    display: inline-block;
+    margin-top: 34px;
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: clamp(15px, 2.2vw, 18px);
+    color: #DDE3F0;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    padding: 14px 20px;
+  }
+  .cmd .p { color: #6E7A93; }
+  .cmd .k { color: var(--accent); }
+
+  .note {
+    margin-top: 12px;
+    font-size: 14px;
+    color: var(--muted);
+  }
+
+  .rule {
+    height: 1px;
+    background: var(--line);
+    margin: clamp(44px, 7vw, 68px) 0;
+  }
+
+  h2 {
+    font-size: 13px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .facts {
+    margin-top: 22px;
+    display: grid;
+    gap: 18px;
+  }
+  .facts li {
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: 14px;
+    align-items: start;
+    font-size: 17px;
+    color: var(--dim);
+  }
+  .facts svg { margin-top: 4px; color: var(--accent); }
+  .facts b { color: #fff; font-weight: 600; }
+
+  .links {
+    margin-top: 30px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  a.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    text-decoration: none;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--ink);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    padding: 12px 18px;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  a.btn:hover { border-color: rgba(122,162,255,0.55); background: rgba(122,162,255,0.08); }
+  a.btn.primary { background: rgba(122,162,255,0.14); border-color: rgba(122,162,255,0.42); }
+
+  footer {
+    margin-top: clamp(44px, 7vw, 68px);
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-size: 14px;
+    color: var(--muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    justify-content: space-between;
+  }
+  footer a { color: var(--dim); text-decoration: none; }
+  footer a:hover { color: #fff; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="eyebrow"><span class="dot"></span>Open source · MIT · Pre-release</div>
+
+  <h1>Accordo</h1>
+
+  <p class="lede">
+    The framework coding agents use to build <b>custom CRMs</b>. Describe your
+    commercial process to Claude Code or Codex; get a working CRM as reviewable
+    code you own.
+  </p>
+
+  <div class="cmd"><span class="p">$</span> git clone https://github.com/khaoss85/<span class="k">agent-crm</span>.git</div>
+  <p class="note">Scaffolding via <code>npm create accordo</code> lands at the first public release.</p>
+
+  <div class="rule"></div>
+
+  <h2>What the framework does today</h2>
+  <ul class="facts">
+    <li>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+      <span><b>Deterministic workflows.</b> Commercial policy is code, not a prompt — the same inputs produce the same decision, every run.</span>
+    </li>
+    <li>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+      <span><b>Human approval boundaries.</b> Consequential decisions require a human actor by construction; an agent cannot make them on your behalf.</span>
+    </li>
+    <li>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+      <span><b>Audit and trace inside the transaction.</b> Every mutation records who did what, under which policy version — explainable after the fact.</span>
+    </li>
+    <li>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+      <span><b>Declared, fail-closed packages.</b> Domains are opt-in and removable; an undeclared dependency stops the app at startup, never mid-transaction.</span>
+    </li>
+  </ul>
+
+  <div class="links">
+    <a class="btn primary" href="https://github.com/khaoss85/agent-crm">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.98 5.24.98 11.52c0 4.86 3.15 8.98 7.52 10.44.55.1.75-.24.75-.53v-1.9c-3.06.67-3.71-1.3-3.71-1.3-.5-1.28-1.23-1.62-1.23-1.62-1-.68.08-.67.08-.67 1.1.08 1.68 1.14 1.68 1.14.98 1.69 2.58 1.2 3.21.92.1-.71.39-1.2.7-1.48-2.44-.28-5.01-1.22-5.01-5.44 0-1.2.43-2.18 1.13-2.95-.11-.28-.49-1.4.11-2.92 0 0 .93-.3 3.03 1.13a10.5 10.5 0 0 1 5.52 0c2.1-1.43 3.02-1.13 3.02-1.13.6 1.52.22 2.64.11 2.92.71.77 1.13 1.75 1.13 2.95 0 4.23-2.58 5.16-5.03 5.43.4.34.75 1.01.75 2.04v3.03c0 .29.2.64.76.53a10.55 10.55 0 0 0 7.51-10.44C23.02 5.24 18.27.5 12 .5Z"/></svg>
+      Read the code
+    </a>
+    <a class="btn" href="https://github.com/khaoss85/agent-crm/blob/main/docs/strategy/GTM_TECHNICAL_EVIDENCE_HANDOFF.md">What is proven, and what is not</a>
+    <a class="btn" href="https://github.com/khaoss85/agent-crm/blob/main/ROADMAP.md">Roadmap</a>
+  </div>
+
+  <footer>
+    <span>Pre-release. No auth, tenancy or RBAC yet — not production software.</span>
+    <span><a href="https://github.com/khaoss85/agent-crm/blob/main/LICENSE">MIT</a></span>
+  </footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,39 @@
+{
+  "name": "accordo",
+  "owner": {
+    "name": "Daniele Pelleri",
+    "url": "https://github.com/khaoss85"
+  },
+  "metadata": {
+    "description": "Accordo — the open-source framework coding agents use to build custom CRMs."
+  },
+  "plugins": [
+    {
+      "name": "accordo",
+      "source": "./",
+      "description": "Skills that teach Claude Code how to build a custom CRM with Accordo: domain modules, deterministic workflows, human approvals, audit and trace, commercial operations, signature and order, contract activation, delivery and service.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Daniele Pelleri",
+        "url": "https://github.com/khaoss85"
+      },
+      "homepage": "https://accordo.dev",
+      "repository": "https://github.com/khaoss85/agent-crm",
+      "license": "MIT",
+      "category": "development",
+      "tags": [
+        "crm",
+        "framework",
+        "workflows",
+        "approvals",
+        "audit",
+        "cpq",
+        "delivery",
+        "service"
+      ],
+      "skills": [
+        "./.claude/skills"
+      ]
+    }
+  ]
+}

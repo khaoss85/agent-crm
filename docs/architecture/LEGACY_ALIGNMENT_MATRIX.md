@@ -6,9 +6,15 @@ it.**
 
 Two domains — Contract Activation and Delivery — were built *after* the domain
 package seam (ADR-018) and use it. Three older ones — Lead Intelligence,
-Commercial Operations, and Signature & Order — were built before it and live in
-`packages/core/src/`. That is a fact, not a defect: they were built when the seam
-did not exist, and each one is what taught us what the seam had to be.
+Commercial Operations, and Signature & Order — were built before it and lived in
+`packages/core/src/`. That was a fact, not a defect: they were built when the
+seam did not exist, and each one is what taught us what the seam had to be.
+
+**Lead Intelligence has since been extracted** and is now a package like any
+other. It is the proof that a legacy domain can move without changing what it
+decides: LA0 froze its externally observable behaviour first, and zero asserted
+observations moved across the extraction. Commercial Operations and Signature &
+Order are still where they were.
 
 Pipeline is in `packages/core/src/` too and belongs there. It is a reusable
 runtime capability rather than a domain, and it is in the matrix so that a reader
@@ -41,7 +47,7 @@ Verified against the working tree, 2026-08-07.
 |---|---|---|
 | Core CRM (Sales) | project-generated modules: company, contact, opportunity, lead, task, approval | no — these are a project's own records, not a domain package |
 | Pipeline | `packages/core/src/pipeline-*.js`; `packages/pipelines/generated/` | no — and correctly so, see ¹ |
-| Lead Intelligence | `packages/core/src/intelligence-registry.js`, `intelligence-actions.js`; `packages/intelligence/generated/` | no |
+| Lead Intelligence | `packages/intelligence/` — `src/`, `modules/`, `README.md` | **yes** — the first legacy domain extracted |
 | Commercial Operations | `packages/core/src/commercial-*.js`, `catalog-sync.js`; `packages/commercial/generated/` | no |
 | Signature & Order | `packages/core/src/signature-*.js`, `external-operation.js`; `packages/signature/generated/` | no |
 | Contract Activation | `packages/contracts/` — `src/`, `modules/`, `README.md` | **yes** |
@@ -61,10 +67,10 @@ horizontal capability the way the contract intends?*
 
 | Horizontal capability | Pipeline | Lead Intelligence | Commercial Ops | Signature & Order | Contract Activation | Delivery |
 |---|---|---|---|---|---|---|
-| **Domain package seam** (ADR-018) — `definePackage`, declared resources, one static import | `not_applicable` ¹ | `needs_extraction` | `needs_extraction` | `needs_extraction` | `aligned` | `aligned` |
-| **Declared cross-package capability** — reaching another domain only through a named, versioned capability | `not_applicable` ¹ | `needs_extraction` | `needs_extraction` | `needs_extraction` | `aligned` — provides `delivery-obligations@1` | `aligned` — requires that one; provides three |
-| **`packageContract: 1` conformance** — validated at startup, detach/reattach proven | `not_applicable` ¹ | `needs_extraction` | `needs_extraction` | `needs_extraction` | `aligned` | `aligned` |
-| **Package version discipline** — additive bumps, never a silent break | `not_applicable` ¹ | `not_applicable` — no package version exists | `not_applicable` | `not_applicable` | `aligned` | `aligned` |
+| **Domain package seam** (ADR-018) — `definePackage`, declared resources, one static import | `not_applicable` ¹ | `aligned` | `needs_extraction` | `needs_extraction` | `aligned` | `aligned` |
+| **Declared cross-package capability** — reaching another domain only through a named, versioned capability | `not_applicable` ¹ | `aligned` | `needs_extraction` | `needs_extraction` | `aligned` — provides `delivery-obligations@1` | `aligned` — requires that one; provides three |
+| **`packageContract: 1` conformance** — validated at startup, detach/reattach proven | `not_applicable` ¹ | `aligned` | `needs_extraction` | `needs_extraction` | `aligned` | `aligned` |
+| **Package version discipline** — additive bumps, never a silent break | `not_applicable` ¹ | `aligned` — `intelligence@1` | `not_applicable` | `not_applicable` | `aligned` | `aligned` |
 | **Module Evolution v1** (ADR-019) — a shipped record grows through a declared revision | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Managed records** — `writable: "managed"`, no public create, update or delete | `partial` — the stage fields are managed and CRUD cannot write them, but a stage is current state rather than append-only evidence | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Human-actor boundary** — the decision requires `actor.type === "user"` | `partial` — the boundary is in the approval workflow around a staged move, not in `move-stage` | `partial` — scoring and routing carry no user-actor requirement: they are deterministic computations from a published definition, not decisions | `aligned` — quote approval | `aligned` — requesting a signature | `aligned` — activation | `aligned` — every writing action |
@@ -74,14 +80,14 @@ horizontal capability the way the contract intends?*
 | **Transaction-scoped events** (ADR-012) | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Audit and trace on every write** | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Exact reads past the display bound** — `listWhere`/`countWhere` on every correctness path | `not_applicable` — `move-stage` reads one record by id and makes no collection read | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
-| **AX1 visibility** — appears in `app inspect` as a package with resources, actions and capabilities | `partial` ¹ — its actions are reported; there is no package to report | `partial` | `partial` | `partial` | `aligned` | `aligned` |
-| **AX2 citability** — a Solution Plan can cite the domain's capabilities and record revisions | `partial` ¹ | `partial` — modules and actions are citable; no capability exists to cite | `partial` | `partial` | `aligned` | `aligned` |
+| **AX1 visibility** — appears in `app inspect` as a package with resources, actions and capabilities | `partial` ¹ — its actions are reported; there is no package to report | `aligned` — discovered as a package, with no fixed slot | `partial` | `partial` | `aligned` | `aligned` |
+| **AX2 citability** — a Solution Plan can cite the domain's capabilities and record revisions | `partial` ¹ | `aligned` — `intelligence@1` is citable | `partial` | `partial` | `aligned` | `aligned` |
 | **Package-scoped Admin section** — renders only while the package's schema metadata is published | `not_applicable` — the board is a core Admin feature | `not_applicable` | `partial` — the quote screens are core Admin, not gated on package metadata | `partial` | `aligned` | `aligned` |
-| **Detach/reattach proof** — removing the domain removes its whole surface and nothing else | `not_applicable` ¹ | `needs_extraction` | `needs_extraction` | `needs_extraction` | `aligned` | `aligned` |
+| **Detach/reattach proof** — removing the domain removes its whole surface and nothing else | `not_applicable` ¹ | `aligned` | `needs_extraction` | `needs_extraction` | `aligned` | `aligned` |
 | **Fault-injection and two-connection evidence** | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Migration array with per-entry checksums** — an applied migration cannot be edited | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Declared action metadata** — `fromStates`/`toState` published in the schema and in `app inspect` | `aligned` | `not_applicable` — scoring and routing are not transitions | `aligned` | `aligned` | `aligned` | `aligned` |
-| **A domain Skill, mirrored in `.claude/` and `.agents/`** | `partial` — covered by `create-crm-workflow`, no pipeline-specific Skill | `partial` — `.claude/` only; no `.agents/` mirror | `partial` — `.claude/` only | `partial` — `.claude/` only | `partial` — `.claude/` only | `partial` — `.claude/` only |
+| **A domain Skill, mirrored in `.claude/` and `.agents/`** | `partial` — covered by `create-crm-workflow`, no pipeline-specific Skill | `partial` ² | `partial` ² | `partial` ² | `partial` ² | `partial` ² |
 | **A tool namespace of its own** | `not_applicable` | `deferred` — DX13 | `deferred` — DX13 | `deferred` — DX13 | `deferred` — DX13 | `deferred` — DX13 |
 | **JTBD rows with linked evidence** | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 
@@ -91,7 +97,7 @@ horizontal capability the way the contract intends?*
 |---|---|
 | **Core CRM (Sales)** — company, contact, opportunity, lead, task, approval | `not_applicable` on every package-seam row: these are a *project's* generated records, not a domain package, and a customer's own CRM objects must never require one. `aligned` on the kernel rows (module evolution, migration checksums, managed fields where declared, events, audit and trace, exact reads, JTBD evidence). Its Skills are `create-crm-module` and `create-crm-workflow` |
 | **Custom-package fixture** (`examples/custom-packages/partner-scorecard/`) | `aligned` on the package seam by construction — it exists to prove a customer-authored package attaches, works and detaches with no kernel change. It deliberately exercises only a slice: one resource, one action, no capability of its own, so the capability rows read `not_applicable` |
-| **Service** | **built, on an open PR (M15).** Package-native from its first commit: `aligned` on the package seam, declared capabilities (requires `contracts/service-obligations@1`, provides three), `packageContract: 1` conformance, package version discipline, managed records, the human-actor boundary, fingerprinted declared definitions, transaction-scoped events, audit and trace, exact reads, AX1 visibility, AX2 citability, detach proof, fault-injection and two-connection evidence, and JTBD rows with linked evidence. `not_applicable` on the money contract and the external-operation contract: it prices nothing and calls no provider. `partial` on the Skill mirror — `build-service-operations` exists under `.claude/skills/` only, the same DX2 gap every domain has. `deferred` on a tool namespace: §C.2b of `AGENT_TOOL_SURFACE.md` now works one through on Service, and it stays a proposal until DX13 |
+| **Service** | **built, on an open PR (M15).** Package-native from its first commit: `aligned` on the package seam, declared capabilities (requires `contracts/service-obligations@1`, provides three), `packageContract: 1` conformance, package version discipline, managed records, the human-actor boundary, fingerprinted declared definitions, transaction-scoped events, audit and trace, exact reads, AX1 visibility, AX2 citability, detach proof, fault-injection and two-connection evidence, and JTBD rows with linked evidence. `not_applicable` on the money contract and the external-operation contract: it prices nothing and calls no provider. `partial` ² on the Skill mirror — the mirrors currently agree, but nothing keeps them agreeing; the same DX2 gap every domain has. `deferred` on a tool namespace: §C.2b of `AGENT_TOOL_SURFACE.md` now works one through on Service, and it stays a proposal until DX13 |
 | **Marketing & Growth** | documentation only. No row can be assessed, and none is claimed |
 
 ¹ **Pipeline is not a domain.** `buildMoveStageAction` is a generic factory that
@@ -162,17 +168,34 @@ conformance, and the detach proof.
   the agent's side, not separate work.
 - **Compatibility risk.** Low on its own; it inherits the extraction's risk.
 
-### `partial` — the Skill mirrors
+### `partial` ² — the Skill mirrors: the state is clean, the mechanism is not
 
-- **Gap.** `build-lead-intelligence`, `build-commercial-operations`,
-  `build-signature-order`, `build-contract-activation`,
-  `build-delivery-handover` and `build-service-operations` exist under
-  `.claude/skills/` only. `.agents/skills/` carries six skills, none of them a
-  domain build skill.
-- **Evidence.** `ls .agents/skills/` versus `ls .claude/skills/`.
-- **Pass.** **DX2** (`crm agent skills sync|check`), which is where a drift check
-  belongs — hand-copying six more files just moves the problem.
+**Re-measured against the current tree, because the earlier entry was stale.**
+It said the domain build Skills existed under `.claude/skills/` only and that
+`.agents/skills/` carried none of them. That was true when it was written and is
+**no longer true**: the agent-discovery work merged to main copied the mirrors
+across.
+
+- **Measured now.** `.claude/skills/` and `.agents/skills/` each carry **12**
+  skills, with **none** on one side only. `crm project doctor` reports
+  `skills.mirror-coverage` **passing** and `skills.mirror-drift` **passing**,
+  and the whole report is `passed`.
+- **So why is this still `partial`?** Because the row is about a *capability
+  used as the contract intends*, and the contract needs the mirrors to **stay**
+  in agreement. Nothing keeps them there. There is no canonical source, no
+  `sync`, no CI drift gate and no adapter generation — Project Doctor *detects*
+  disagreement and, by design, never writes. The debt was paid down **by hand,
+  in state**; the **mechanism** is still missing, and the next skill added to
+  one side re-opens it silently until somebody runs the doctor.
+- **Evidence.** `ls .claude/skills/` versus `ls .agents/skills/`;
+  `crm project doctor --json` → `skills.mirror-coverage`, `skills.mirror-drift`.
+- **Pass.** **DX2** (`crm agent skills sync|check`) — unchanged, and now the
+  *only* thing missing rather than one of two.
 - **Compatibility risk.** **None.** Additive files; no runtime reads them.
+
+This is the distinction the matrix exists to keep: a green check today is not an
+aligned capability. Marking this row `aligned` on the strength of a clean `ls`
+is exactly the drift-by-silence the document was written to prevent.
 
 ### `partial` — Commercial Operations against the external-operation contract
 
