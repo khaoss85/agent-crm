@@ -52,6 +52,86 @@ npm run tour
   </div>
 
   <div class="shell">
+    <section id="start" aria-labelledby="start-h">
+      <p class="kicker">Where to go from here</p>
+      <h2 id="start-h">This page is the front door, not the building.</h2>
+      <p class="section-lede">
+        Each area below is a pillar page over its own set of pages, and every one of those pages
+        prints what it does not do next to what it does. Links say the name of the thing they lead
+        to; the information architecture behind them is written down in
+        <span class="mono">docs/marketing/SITE_ARCHITECTURE.md</span>.
+      </p>
+
+      <div class="cluster-grid">
+        <a class="cluster-card" href="{{page.root}}capabilities.html">
+          <h3>Capabilities</h3>
+          <p class="card-plain">Can it do my commercial process?</p>
+          <p>
+            Lead to Order to delivery, one domain per page — what the code does today, the tests
+            that hold it, and the boundary each domain stops at.
+          </p>
+        </a>
+
+        <a class="cluster-card" href="{{page.root}}tools.html">
+          <h3>Agent tools</h3>
+          <p class="card-plain">What can my coding agent actually do here?</p>
+          <p>
+            The commands and MCP tools an agent has: inspect an application's real composition,
+            check a Solution Plan against it, run a read-only doctor, scaffold and conformance-test
+            a package. Contracts and exit codes, not prose.
+          </p>
+        </a>
+
+        <a class="cluster-card" href="{{page.root}}concepts.html">
+          <h3>Concepts</h3>
+          <p class="card-plain">Why is it built this way?</p>
+          <p>
+            Why every mutation goes through a service or a named workflow, why approval is
+            deterministic policy rather than a prompt, and why a domain is a package whose one
+            static import you can delete.
+          </p>
+        </a>
+
+        <a class="cluster-card" href="{{page.root}}compare.html">
+          <h3>Compare</h3>
+          <p class="card-plain">Why this and not that?</p>
+          <p>
+            Against configuring a CRM platform, and against writing one from scratch. Sourced from
+            <span class="mono">docs/strategy/COMPETITOR_MAP.md</span> with its citations, including
+            the cases where the alternative is the right answer.
+          </p>
+        </a>
+
+        <a class="cluster-card" href="{{page.root}}jobs.html">
+          <h3>CRM jobs</h3>
+          <p class="card-plain">Is this specific job supported?</p>
+          <p>
+            Every catalogued job with its status and its evidence, generated from the matrix in the
+            repository. &ldquo;Not supported&rdquo; is the default status, and it is still the
+            status most rows carry.
+          </p>
+        </a>
+
+        <a class="cluster-card" href="{{page.root}}answers.html">
+          <h3>Answers</h3>
+          <p class="card-plain">A direct question, directly answered.</p>
+          <p>
+            The questions a sceptical developer asks first, answered against the ledger — and the
+            list of questions this project refuses to answer, published rather than avoided.
+          </p>
+        </a>
+      </div>
+
+      <p class="cta-note" style="margin-top:20px">
+        Checking rather than reading: <a href="{{page.root}}evidence.html">every claim and its
+        tests</a> · <a href="{{page.root}}jobs.json"><span class="mono">jobs.json</span></a> ·
+        <a href="{{page.root}}answers.json"><span class="mono">answers.json</span></a> ·
+        <a href="{{page.root}}llms.txt"><span class="mono">llms.txt</span></a>
+      </p>
+    </section>
+  </div>
+
+  <div class="shell">
     <section aria-labelledby="sixty">
       <p class="kicker">The whole idea, in one exchange</p>
       <h2 id="sixty">A rule you say out loud becomes a rule the system enforces.</h2>
@@ -95,7 +175,7 @@ npm run tour
         <div>
           <span>2</span>
           <strong>The agent reads the project</strong>
-          <small>AGENTS.md and CLAUDE.md, eleven repository skills, an MCP server, and one command that reports what the application actually contains.</small>
+          <small>AGENTS.md and CLAUDE.md, twelve repository skills under <span class="mono">.claude/skills/</span>, an MCP server, and one command that reports what the application actually contains.</small>
         </div>
         <div>
           <span>3</span>
@@ -233,7 +313,7 @@ npm run tour
               <td>How you get the code <span class="muted">(today)</span></td>
               <td>You do not — you configure a running platform</td>
               <td>You write it</td>
-              <td><strong>You copy the source into your project.</strong> There is no create-command and no published package yet</td>
+              <td><strong>You copy the source into your project.</strong> There is no create-project CLI; the two names held on npm are empty reservations that install nothing</td>
             </tr>
             <tr>
               <td>Process semantics</td>
@@ -373,10 +453,12 @@ npm run crm -- solution check my-plan.json
       <details>
         <summary>What is the project actually called?</summary>
         <p>
-          It does not have a public name yet. The working title fails as a brand for reasons written
-          down in the repository, and choosing a replacement needs a registrar check and a trademark
-          screen that a person has to do. Everything on this page is generated from a single tokens
-          file, so the rename is one edit rather than a rewrite.
+          {{status.name}} It was chosen over two shortlisted alternatives that each had a live
+          word-mark in an adjacent class; the research and the eliminated candidates are in
+          <span class="mono">docs/marketing/NAME_VERIFICATION.md</span>. The screen is a job for a
+          person, not for this repository, so treat the name as settled and unscreened. Everything
+          on this page is generated from a single tokens file, so if it has to change, the rename
+          is one edit rather than a rewrite.
         </p>
       </details>
 

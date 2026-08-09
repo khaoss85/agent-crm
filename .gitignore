@@ -20,3 +20,6 @@ site/.used-claims.json
 # lock and blocks nothing; the command reports it so a human can remove it.
 packages/.scaffold-*
 **/.scaffold-*
+
+# Screenshots from the render audit — a local artifact, never published.
+site/.render-check/

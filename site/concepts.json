@@ -1,0 +1,372 @@
+{
+  "conceptContract": 1,
+  "$comment": "The vision layer. Five pages that argue why the framework is shaped this way. A concept page may be more essayistic than a capability page, but every paragraph still resolves to a file in this repository: an ADR, a strategy document, a test, or a command whose output is quoted verbatim. Claim and limitation ids resolve against site/claims.json; job ids against docs/benchmarks/jobs.json, including jobs whose status is 'not supported' where they are the honest neighbours of what the page describes. Nothing here may state a capability the capability pages do not already carry with its limitation attached.",
+  "entries": [
+    {
+      "id": "concept-customer-and-revenue-os",
+      "slug": "customer-and-revenue-os",
+      "title": "Why CRM is the narrowest true label",
+      "plainName": "CRM is the narrowest true label",
+      "intent": "framework a coding agent uses to build a CRM, a CPQ or a delivery system",
+      "summary": "The kernel has no concept of a deal, a quote or a commessa. Those words belong to optional domain packages that a project enables with one static import and removes by deleting it, which is why the same framework is the honest answer to build-it requests that say CPQ, contract lifecycle or professional-services delivery as well as ones that say CRM. This page describes an architecture, not a capability list. Every wider reading inherits the same absences — no authentication, no scheduler, no integrations, SQLite only — and a category claim is not evidence of anything.",
+      "metaDescription": "The kernel knows nothing of a deal, a quote or a commessa: those live in optional packages. An architecture note, not a capability list, and it adds no claim.",
+      "sections": [
+        {
+          "heading": "What the kernel does not know",
+          "body": [
+            "ADR-018 draws the line and names both sides of it. The core runtime may own module and runtime contracts, the deterministic database boundary, transactions and savepoints, audit, trace, the event-buffer contract, the action and workflow runtimes, the external-operation runtime, provider and definition registries as mechanism rather than as any particular provider kind, policy-version and fingerprint helpers, the module factory, the schema contract, and the generic HTTP, SDK and Admin adapters. Domain packages own Lead Intelligence, Commercial Operations, Signature and Documents, Contract and Subscription, Delivery, Service and Analytics — their records, their policies, their provider kinds and their actions.",
+            "A package declares itself as plain data: a name, its record manifests, its versioned policies, its actions and function-free schema metadata. A project enables it with one static import in packages/domains/generated/index.js. The runtime validates the declaration, fingerprints each policy version, registers the actions and publishes the metadata under /api/schema, and it never learns the domain's vocabulary. Removing the import removes the domain and everything else keeps working (ARCHITECTURE.md, 'Domain packages').",
+            "That is a testable property rather than a design intention. A customer-authored package attaches and detaches with the kernel's fingerprint unchanged, and reaches another package only through a capability it declares (C-13, tests/package-contract.test.js and tests/custom-package-e2e.test.js). The core budget rule that keeps it true is a review gate, not a lint: new domain-specific behaviour is not added to packages/core unless at least two domains need it, and a PR that adds a domain concept to core has to say which runtime capability it is."
+          ]
+        },
+        {
+          "heading": "The wider set of build-it requests",
+          "body": [
+            "GO_TO_MARKET.md §2.0 lists what the same framework is therefore the honest answer to: quote-to-cash and CPQ, contract and subscription lifecycle, delivery and professional services, and the whole chain as revenue operations — lead to sale to contract to delivery. The internal framing is a Customer and Revenue Operating System that a coding agent builds on. The public sentence stays narrower than that on purpose.",
+            "What exists as composed software today is one starter's application, and it is countable: 68 modules, 4 packages, 32 resources, 52 actions, 7 policies and 10 providers, applied from manifests and driven end to end by one command, which then prints the eleven things the inspector says it cannot see (C-22). Those counts describe that starter's composition. A different composition gives different numbers, and none of them is yours until you compose it."
+          ]
+        },
+        {
+          "heading": "Three constraints on widening, all binding",
+          "body": [
+            "First: every widened trigger must be a build request inside a coding agent. 'I need a CPQ' said in general chat means buy one. The trigger is the phrase plus the surface, and that rule does not relax as the category widens.",
+            "Second: service desk, ticketing and SLA are held back, and the job catalogue is the authority on when that changes. GO_TO_MARKET.md §2.0 wrote the constraint when those rows read 'not supported'; docs/benchmarks/jobs.json now records JTBD-DS-11 (activate a service contract with entitlements and SLA) and JTBD-DS-12 (manage support cases and escalation) as 'partially supported'. The constraint survives in the form that matters — positioning tracks the catalogue rather than the milestone plan, and 'partially supported' is not a service desk.",
+            "Third: the existing refusals stand. 'Smart CRM' and 'AI CRM' remain the opposite of this model: AI interprets intent and composes the system, and commercial state changes pass through services and workflows (ARCHITECTURE.md core rule). 'Customer data platform' is a different category. 'Customer hub' is only ours in the build-one reading."
+          ]
+        },
+        {
+          "heading": "What the catalogue says about the widened area",
+          "body": [
+            "The job catalogue covers 149 jobs across CRM, marketing, analytics, data operations, governance, commercial, contract, delivery and packaging. Of those, 22 are validated end to end, 29 are partially supported and 98 are not supported. That distribution is the reason this page argues about architecture and not about coverage.",
+            "A wider label describes what the framework is able to be pointed at, not what it already does. Reading the same absence list four ways does not shorten it: there is no authentication, tenancy or RBAC (L-01), no scheduler or task engine (L-04), no email, calendar or marketing adapter (L-05), and persistence is SQLite (L-02). MRR, ARR and TCV are deliberately not derived because contract term and normalization policy are not modelled (JTBD-CS-05), and there is no semantic metric layer at all (JTBD-AN-01)."
+          ]
+        },
+        {
+          "heading": "What this page is not claiming",
+          "body": [
+            "It is not claiming the wider category as a capability. CATEGORY.md is explicit that the product is not a CRM product — there is no hosted CRM to sign up for, and the output of the framework is the customer's application (L-07).",
+            "It is not claiming a measured advantage. The build benchmark protocol is published and has not been run, so no Successful Agent Build Rate exists and any number quoted for this project is not ours (L-03). The proof that separates this from a platform is structural — what you are left with if the project disappears — and that argument is made on its own page rather than borrowed here."
+          ]
+        }
+      ],
+      "boundaries": [
+        "The kernel is not a CRM with the CRM parts hidden. Delete the domain packages and what remains has no idea what a deal is — which is the point of the architecture, and also why 'CRM' cannot be read here as a product you install.",
+        "A wider category name buys no wider capability. CPQ, contract lifecycle and delivery readings inherit exactly the same absences: no authentication, no scheduler, no integrations, SQLite only.",
+        "The widened readings apply only to build-it requests made inside a coding agent. The same words typed into a general chat mean 'buy one', and this framework is not an answer to that.",
+        "Service desk, ticketing and SLA positioning stays behind the job catalogue. Two service jobs read 'partially supported' today; nothing on this site may describe a support product.",
+        "'AI CRM' and 'customer data platform' are different categories, not smaller versions of this one. Runtime AI features are optional additions, never the control plane.",
+        "The composed counts belong to one starter's application, run locally against SQLite with no authentication. They are not a description of what you would get.",
+        "Nothing on this page is measured against a competitor or a benchmark. The build benchmark has not been run."
+      ],
+      "claims": ["C-13", "C-22"],
+      "limitations": ["L-01", "L-02", "L-04", "L-05", "L-07", "L-03"],
+      "jobs": ["JTBD-AX-02", "JTBD-PK-01", "JTBD-PK-02", "JTBD-DS-11", "JTBD-DS-12", "JTBD-CS-05", "JTBD-AN-01", "JTBD-PK-06"],
+      "docs": [
+        "PRODUCT.md",
+        "ARCHITECTURE.md",
+        "DECISIONS.md",
+        "docs/strategy/CATEGORY.md",
+        "docs/strategy/GO_TO_MARKET.md",
+        "docs/PACKAGE_AUTHORING.md",
+        "docs/benchmarks/CRM_JTBD_MATRIX.md"
+      ],
+      "tests": [
+        "tests/package-contract.test.js",
+        "tests/custom-package-e2e.test.js",
+        "tests/app-inspect.test.js"
+      ],
+      "related": ["code-you-own", "the-refusal-boundary", "how-we-decide-what-to-build"]
+    },
+    {
+      "id": "concept-refusal-boundary",
+      "slug": "the-refusal-boundary",
+      "title": "Your agent can write the CRM. It can't approve the discount.",
+      "plainName": "The agent cannot approve",
+      "intent": "can an AI coding agent approve a deal or a discount for me",
+      "summary": "Two refusals, asserted in two different places, and which is which matters. The renewal boundary has its own named test in tests/workflow.test.js: 'approval workflow rejects an agent pretending to make the human decision'. The discount boundary is equally real but is asserted inside a composite test in tests/commercial-e2e.test.js, where an agent actor calling quote.approve is refused 403 HUMAN_APPROVAL_REQUIRED. Both hold against an honest agent and neither holds against an attacker: the actor is asserted in a header and never authenticated.",
+      "metaDescription": "Two refusals in two places: a named renewal test, and an agent actor refused 403 on quote.approve. Both hold against an honest agent, not against an attacker.",
+      "sections": [
+        {
+          "heading": "The renewal refusal, and the test that asserts it",
+          "body": [
+            "ADR-003 states the policy: moving a renewal worth at least €50,000 to Proposal creates an approval request and moves the opportunity to Approval Pending. An AI model may explain or recommend, and it does not override that. Commercial policy is deterministic code rather than a model's judgement (C-03).",
+            "The assertion is the named test 'approval workflow rejects an agent pretending to make the human decision' in tests/workflow.test.js. It runs request-opportunity-stage-change with an agent actor, takes the pending approval that policy created, then runs decide-opportunity-approval with the same agent actor and asserts the rejection names an explicit human actor. It then asserts what did not happen: the approval is still pending and the opportunity is still in approval_pending. A refusal that left the state changed would not be a refusal (C-04)."
+          ]
+        },
+        {
+          "heading": "The discount refusal, and exactly where it lives",
+          "body": [
+            "ADR-016 states the same boundary where the money is: the approve and reject actions on a quote accept only actor.type === 'user', and an agent actor is refused 403 HUMAN_APPROVAL_REQUIRED (C-21). One decision is allowed per quote version — a second is 409 ALREADY_DECIDED — the decision and the quote lifecycle commit atomically, and concurrent approve and reject calls resolve to exactly one winner.",
+            "That refusal is asserted inside the composite test 'commercial e2e: approval boundary, revise/version-2, concurrency, fault injection, provider failures, drift' in tests/commercial-e2e.test.js. It does not have a named test of its own yet. GO_TO_MARKET.md §2.4 records this as a standing correction risk and as a pending move: extract it, so the strongest sentence this project owns cites a test name rather than a line inside a longer scenario. Until that lands, a headline that says discount must cite tests/commercial-e2e.test.js and not the renewal test."
+          ]
+        },
+        {
+          "heading": "Why it is a test and not a convention",
+          "body": [
+            "A test count says how much was written, not what would have to go wrong for a test to stay green. The falsification kit answers the second question by removing rules on purpose and reporting which named test caught each one. The approval-actor-guard mutation removes the rule that a commercial approval decision requires a human actor — the failure it models is an agent recording the human decision as if it were the human — and tests/workflow.test.js is what catches it. The approval-threshold-boundary mutation removes the rule that a renewal exactly at the threshold requires approval.",
+            "Five mutations run in about two seconds and each names its catcher. A mutation that survives is reported as a gap in the tests, and a mutation whose target code is gone is reported as stale; both exit non-zero, because a falsification kit that has quietly stopped aiming at anything goes on printing reassurance (C-23, docs/FALSIFY.md)."
+          ]
+        },
+        {
+          "heading": "What the decision is made of",
+          "body": [
+            "The discount policy is a versioned code-first definition carrying a name, a version, a label, a declared config and an evaluate function. Thresholds live in the config, which is fingerprinted and passed frozen into every evaluation. Evaluate must return synchronously one of auto_approve, approval_required or reject; a Promise or an out-of-contract result is refused. The decision, the policy name, the version and the fingerprint are stored on the immutable quote version, so a quote decided last quarter stays explainable after policy v2 ships (C-08).",
+            "auto_approve creates no approval record, because a record with nobody's decision in it is evidence of nothing. approval_required creates exactly one approval, unique per version in the database, and parks the quote in pending_approval. Every mutation along that path goes through a module service or a named workflow and leaves an audit event and a step-level trace behind it (C-16)."
+          ]
+        },
+        {
+          "heading": "Where the boundary stops",
+          "body": [
+            "The actor is an assertion, not an identity. There is no authentication, no tenancy and no RBAC, and an actor header is a claim the caller makes about itself (L-01). The boundary therefore holds against an honest agent that says what it is, and not against anyone with network access who says otherwise. The server is local-development-only for exactly this reason.",
+            "The approval key is a label. The commercial test asserts requiredApprovalKey equals 'sales-manager' with the comment that this is a LABEL, not enforced security — real Sales-Manager or Finance role enforcement needs authentication, tenancy and roles enforced in services, and none of that exists. Obtaining the required commercial approval on a discount is 'partially supported' in the catalogue (JTBD-CO-04) for this reason, and enforcing team or tenant permissions is not supported at all (JTBD-15).",
+            "The renewal rule is proven on one built-in object with one threshold value. Managing a custom object with an approval rule is 'partially supported' (JTBD-06). And nothing raises an approval because time passed: there is no scheduler, no delayed workflow and no queue, so every approval in this system starts from somebody or something asking for a state change (L-04)."
+          ]
+        }
+      ],
+      "boundaries": [
+        "It is not authentication. The actor is asserted in a header, never verified, so the refusal holds against an honest agent and not against an attacker who can reach the port.",
+        "The discount refusal has no named test of its own. It is asserted inside a composite commercial end-to-end test, and extracting it is recorded as pending work rather than described as done.",
+        "requiredApprovalKey is a label, not a permission. Nothing checks that the human who approved was a sales manager, because there are no roles to check.",
+        "The renewal policy is proven on the built-in Opportunity object at a single threshold value. It is not a general approval engine over arbitrary objects.",
+        "Refusing the decision is not refusing the work. An agent may create the quote, add lines, submit it, trigger the policy and read every piece of evidence — it may not be the human at the end.",
+        "The framework decides who may decide, not whether the decision was right. There is no second signature, no review of the human's judgement and no way to undo an approval other than a new version.",
+        "No approval is ever raised by the passage of time. Without a scheduler, a renewal notice period fires nothing."
+      ],
+      "claims": ["C-04", "C-03", "C-21", "C-23", "C-08", "C-16"],
+      "limitations": ["L-01", "L-04"],
+      "jobs": ["JTBD-02", "JTBD-CO-03", "JTBD-CO-04", "JTBD-06", "JTBD-15", "JTBD-LI-06"],
+      "docs": [
+        "DECISIONS.md",
+        "ARCHITECTURE.md",
+        "docs/COMMERCIAL_OPERATIONS.md",
+        "docs/FALSIFY.md",
+        "docs/strategy/GO_TO_MARKET.md"
+      ],
+      "tests": [
+        "tests/workflow.test.js",
+        "tests/commercial-e2e.test.js",
+        "tests/falsify.test.js"
+      ],
+      "related": ["deterministic-by-construction", "customer-and-revenue-os"]
+    },
+    {
+      "id": "concept-code-you-own",
+      "slug": "code-you-own",
+      "title": "What ownership actually means here, and where it stops",
+      "plainName": "Ownership means copying source today",
+      "intent": "own the CRM source my coding agent builds, without a vendor runtime underneath",
+      "summary": "Ownership here means the source is yours to keep, read and change, and today it means copying it. There is no create-project CLI and no published package; the one working installer copies packages, apps and examples into a new project, so upgrading means merging rather than bumping a version. What you get is MIT, Node 22 and a checkout with zero third-party runtime dependencies. What you do not get is the npm create story the roadmap describes, and that gap is L-08 on every surface rather than sold around.",
+      "metaDescription": "Ownership means MIT source you keep and change — and today it means copying it. No create-project CLI and no published package, so upgrading means merging.",
+      "sections": [
+        {
+          "heading": "What you are left with if this project disappears",
+          "body": [
+            "The ownership test in GO_TO_MARKET.md §2.6 is one question: if this project disappears tomorrow, what am I left with? Here the answer is a Node application in your repository, no third-party runtime dependencies, and a SQLite file any client can open. That last part is measurable: package.json has no dependencies field, persistence is node:sqlite, and the HTTP server, the test runner and the database adapter are all Node built-ins (C-17). The comparison it is drawn against answers the same question with a runtime you must keep operating.",
+            "The licence is MIT, and ADR-023 confirmed it rather than assuming it. Nothing about the file changed; what changed is the kind of statement being made, because three distribution manifests carry a licence field and a licence in a manifest is an assertion to everyone who installs from it. scripts/distribution-check.js reads brand.json before it will let a manifest state a licence to a third party. The ADR is explicit about what it does not decide: nothing about a future managed offering, and nothing about the licence of anything a customer generates — generated code belongs to the customer under whatever terms they choose, which is the point of generating it.",
+            "The property is also bounded. Zero runtime dependencies is a property of the framework, not of whatever you add on top of it; the first library you install is yours to carry."
+          ]
+        },
+        {
+          "heading": "Where ownership stops today",
+          "body": [
+            "L-08 states it without softening: there is no create-project CLI and no published package. The one working installer, examples/starters/b2b-lead-qualification/install.mjs, copies packages, apps, examples and package.json into a new project. You own the result outright, and the ergonomics of npm create and a versioned framework dependency do not exist. Until they do, upgrading means merging, not bumping.",
+            "GO_TO_MARKET.md §1 calls this a mechanism problem rather than a credibility problem, and it has one consequence for language that is worth stating on the page rather than in a style guide: the sentence 'the framework is a dependency you could remove' was removed from this site because today the code arrives by copying, not by installing, and that sentence may not come back through a comparison page.",
+            "The plan records two honest endings and no third. Either an ejection proof lands — an application in its own package that depends on the framework, verifies green, and documents what survives deleting the dependency — or L-08 is accepted permanently. Neither the examples/ejected application nor the test that would prove it exists in this tree today."
+          ]
+        },
+        {
+          "heading": "The unit of ownership is a package, not a fork",
+          "body": [
+            "The reason ownership does not have to mean forking is ADR-018: domain behaviour lives in optional packages built on the runtime's contracts, so extending the system is adding a package rather than editing a platform you then have to keep merging. A customer-authored package attaches and detaches with the kernel's fingerprint unchanged and reaches another package only through a capability it declares (C-13).",
+            "Detaching is clean for code and not for data: removing a package removes its behaviour and leaves its rows behind, which is why removing a package without losing its data is only 'partially supported' (JTBD-PK-04). There is no registry or marketplace to install a package from (JTBD-PK-06), and no sandbox — a package you enable runs with the host process's authority, so running an untrusted one safely is not supported (JTBD-PK-07)."
+          ]
+        },
+        {
+          "heading": "What owning it does not buy you yet",
+          "body": [
+            "Owning the code does not make it deployable. There is no authentication, tenancy or RBAC, and the server is local-development-only (L-01); persistence is SQLite (L-02); there is no import, export, dedupe, merge, bulk edit, saved view or global search (L-06). You cannot put real customer data in it: a CRM is a personal-data system by definition, and this one has no way to service an access or deletion request (L-09).",
+            "And there is nothing to sign up to. No hosted CRM, no free tier, no account — the output is an application in your repository that you run (L-07). Ownership today is ownership of a framework and a local application, not of a system your team logs into on Monday."
+          ]
+        }
+      ],
+      "boundaries": [
+        "Ownership is not installation. No npm create, no published package, no versioned framework dependency — upgrading means merging changes into a copy.",
+        "Neither half of the ejection proof exists yet: there is no examples/ejected application and no test asserting a project still verifies green once the framework dependency is deleted.",
+        "Zero third-party runtime dependencies describes the framework, not your application. Everything you add, you carry.",
+        "The MIT confirmation covers this framework only. It decides nothing about a future managed offering and nothing about the licence of the code you generate.",
+        "Owning the source does not make it safe to deploy. No authentication, no tenancy, no RBAC, SQLite only, and no path to service a data-subject request.",
+        "A package detaches without touching the kernel, but its data stays behind and there is no export to take it with you.",
+        "There is no registry, marketplace or sandbox. An enabled package runs with the host process's authority."
+      ],
+      "claims": ["C-17", "C-13"],
+      "limitations": ["L-08", "L-07", "L-01", "L-02", "L-06", "L-09"],
+      "jobs": ["JTBD-PK-01", "JTBD-PK-02", "JTBD-PK-04", "JTBD-PK-06", "JTBD-PK-07", "JTBD-DO-04", "JTBD-15"],
+      "docs": [
+        "PRODUCT.md",
+        "DECISIONS.md",
+        "docs/strategy/CATEGORY.md",
+        "docs/strategy/GO_TO_MARKET.md",
+        "docs/PACKAGE_AUTHORING.md",
+        "docs/PROJECT_STATUS.md"
+      ],
+      "tests": [
+        "tests/custom-package-e2e.test.js",
+        "tests/package-contract.test.js",
+        "tests/api.test.js"
+      ],
+      "related": ["customer-and-revenue-os", "deterministic-by-construction"]
+    },
+    {
+      "id": "concept-deterministic-by-construction",
+      "slug": "deterministic-by-construction",
+      "title": "Versioned policies, fingerprints, append-only evidence",
+      "plainName": "Decisions you can account for later",
+      "intent": "make an agent-built system reproducible and auditable",
+      "summary": "Determinism here means a decision can be reproduced and accounted for later. It does not mean the decision was correct, and nothing in the framework checks that a policy encodes the rule you meant. A policy version is a fingerprint of its own source and declared config, and editing a registered version stops the application at boot rather than quietly changing what an old score meant. Evidence is append-only: immutable quote versions, append-only migrations, one contribution row per scoring rule. The event buffer is in-process and not durable.",
+      "metaDescription": "A decision you can reproduce and account for later, not a decision that is correct. Policy versions are fingerprinted and evidence is append-only.",
+      "sections": [
+        {
+          "heading": "Why an agent-written system needs this more than a hand-written one",
+          "body": [
+            "The core rule is one sentence: CRM state is deterministic; AI agents interpret the user's intent and compose the system, but state changes pass through services and workflows (ARCHITECTURE.md).",
+            "A hand-written system keeps part of its rules in the memory of the person who wrote them. Six months later somebody asks why a deal was approved, and there is a human to ask. A system composed by a coding agent has no such author, and the agent that wrote it does not remember. So the rules have to be in artifacts a reviewer can diff and a machine can verify: a versioned policy, a fingerprint, a named migration, a step-level trace, an audit event. Every mutation goes through a module service or a named workflow and leaves an audit event and a step-level trace behind it (C-16), and preserving validation, actor identity, audit and trace is one of the repository's non-negotiable rules rather than a convention.",
+            "This is also why the same architecture insists that generated infrastructure is not generated behaviour. Manifests generate migrations and adapters; business logic stays explicit, reviewable source (ADR-006, ADR-011). There is no interpreter over a config format to read when you want to know what the system decided."
+          ]
+        },
+        {
+          "heading": "A version is a fingerprint, not a commit",
+          "body": [
+            "ADR-015 puts it directly: git history alone is not runtime policy versioning. Every scoring-model, routing-policy, enrichment-provider and discount-policy version carries a deterministic SHA-256 fingerprint of its canonicalized source. A core migration adds a definition_versions table, and startup inserts-or-verifies each name, version and fingerprint in one transaction: re-registering identical source is a no-op, and a registered version whose source has changed stops the application. Definitions are immutable once registered, and rollback means publishing a new version derived from an earlier definition — v3 carrying v1's rules — never editing history.",
+            "What the fingerprint does not capture is stated as plainly as what it does. It covers a definition's own source and its declared config; a handler closing over a mutable outer variable or an out-of-file helper is not captured, because toString() serializes identifiers and not values, and closure analysis is deliberately not attempted. Thresholds and tunables must therefore live in config, which is fingerprinted and passed frozen into every evaluation. Values that cannot be canonicalized — Date, Map, Set, class instances, BigInt, symbols, non-finite numbers, cycles — fail fingerprinting loudly rather than producing a fingerprint that does not describe the definition.",
+            "The runs carry their versions with them. Every score run stores the model name, version and fingerprint it executed under plus stable references to its inputs, and persists one contribution row per rule, so a number from last quarter can still be accounted for (C-07). Every quote version stores the discount policy's decision, name, version and fingerprint (C-08)."
+          ]
+        },
+        {
+          "heading": "Atomicity, and the outbox named precisely",
+          "body": [
+            "ADR-012 was written after two real gaps were found rather than imagined: the workflow engine ran steps with manual compensation and no outer transaction, and generated services emitted domain events as each savepoint released, so a subscriber could observe a half-applied multi-step action. An action's business writes now run inside one BEGIN IMMEDIATE transaction with generated-service savepoints nested inside it — all writes commit or none do — and the event bus installs a transaction-scoped outbox on Node's AsyncLocalStorage. Events are queued inside that scope, dispatched only after the commit, and dropped on rollback or on a throw. The workflow trace is written after the transaction resolves, so a failed action still leaves a record (ADR-011).",
+            "The ADR then names the thing precisely, and this page repeats the name rather than the benefit: this is a transaction-scoped in-process event buffer, not a durable transactional outbox. Events live only in memory until the flush, and a process crash after the database commit but before the flush loses delivery. In-process subscribers are the intended consumers. A persistent outbox is required before these events can back remote integrations, and none is claimed."
+          ]
+        },
+        {
+          "heading": "Schema history is append-only too",
+          "body": [
+            "A generated module that already holds rows gains a field, a status or an index by an explicit revision bump. A changed schema at the same revision is refused and names the field; an identical schema with a bumped revision is refused; skipping a revision is refused, so each step has its own reviewable migration. The factory then appends exactly one migration for the difference, and the next boot runs it (ADR-019, docs/MODULE_EVOLUTION.md, C-19).",
+            "History is not rewritten. The create migration keeps its original identity forever and is never regenerated from a newer manifest, because its checksum is recorded in every database that ran it; an edited applied migration stops the next boot. The module.state.json file that records the last generated definition is checked in deliberately — it travels with the source, is reviewable in a diff, exists before any database does, and is identical in every environment — and a hand-edited one is refused, because its fingerprint and every migration checksum must match what they describe.",
+            "What v1 refuses is the list of things that could lose or silently reinterpret stored data, and every refusal happens before any file or database write: removing or renaming a field, changing a type, narrowing an enum, adding a required or unique field, changing unique or a reference target or delete rule, renaming a table, and rebuilding a table another table holds a foreign key into. There is no data transformation, no default backfill, no arbitrary SQL hook and no field split or merge. If you need one, you write and review it yourself."
+          ]
+        },
+        {
+          "heading": "Evidence you can break on purpose",
+          "body": [
+            "Determinism claims are easy to write and hard to check, so five of them can be removed on purpose in one command. Each mutation deletes exactly one rule this project makes in public, runs the suite that is supposed to defend it, and reports which named test caught it — in about two seconds, with every edit restored in a finally block and the restoration verified byte-for-byte (C-23, docs/FALSIFY.md). One of the five is definition-version-immutability: with it removed, a scoring model or discount policy could change behaviour while keeping its version, so every historical decision citing that version would now cite something else.",
+            "The same discipline shows up in what the domains persist. Delivery records what it consumed as append-only time and expense evidence, costed server-side by a versioned fingerprinted policy, with a reproducible contribution estimate (C-12). A submitted quote version snapshots everything needed to reproduce the commercial decision, and a later catalog sync leaves every existing quote version byte-identical (C-08)."
+          ]
+        }
+      ],
+      "boundaries": [
+        "Determinism is about reproducibility, not correctness. Nothing verifies that a policy encodes the rule you meant, and a wrong rule is reproduced exactly.",
+        "The event buffer is in-process. A crash between the database commit and the flush loses the events, and no durable outbox exists — so these events cannot back a remote integration.",
+        "A fingerprint covers a definition's own source and its declared config. Closure state and out-of-file helpers are not captured, and closure analysis is deliberately not attempted.",
+        "Reproducing a decision is not reproducing its inputs. A score run fingerprints the mutable record fields it read rather than copying them, which is why reproducing a historical routing decision exactly stays partially supported.",
+        "A code-version fingerprint is not remote-provider reproducibility. Every provider underneath is an offline fixture, and no fixture can promise what a real external service would return.",
+        "Module evolution does no data transformation, backfill, field split or merge, and no table rename. Rolling generated source back after a migration has applied is not supported.",
+        "There is no scheduler, so no policy is ever evaluated because time passed."
+      ],
+      "claims": ["C-16", "C-07", "C-08", "C-12", "C-19", "C-23"],
+      "limitations": ["L-04", "L-02", "L-01"],
+      "jobs": ["JTBD-LI-07", "JTBD-LI-08", "JTBD-LI-09", "JTBD-CS-10", "JTBD-DG-05", "JTBD-DG-08"],
+      "docs": [
+        "ARCHITECTURE.md",
+        "DECISIONS.md",
+        "docs/MODULE_EVOLUTION.md",
+        "docs/ACTIONS.md",
+        "docs/FALSIFY.md"
+      ],
+      "tests": [
+        "tests/module-evolution.test.js",
+        "tests/intelligence-contract.test.js",
+        "tests/event-bus-outbox.test.js",
+        "tests/action-runtime-semantics.test.js",
+        "tests/falsify.test.js"
+      ],
+      "related": ["the-refusal-boundary", "how-we-decide-what-to-build"]
+    },
+    {
+      "id": "concept-how-we-decide-what-to-build",
+      "slug": "how-we-decide-what-to-build",
+      "title": "Internal complexity may grow; perceived complexity must fall",
+      "plainName": "How a new command gets refused",
+      "intent": "how do you decide whether to add another agent-facing command or tool",
+      "summary": "A decision rule, not a roadmap: it decides whether an agent-facing primitive should exist, never when it ships. New internal complexity is justified only if it reduces perceived user or agent complexity, or measurably improves reliability or evidence. Eight questions have to be answered in the PR that introduces a command, tool, contract or namespace, and a checked-in budget with an exit code holds the surface an agent must read before it can start. The budget measures surface, not capability, and it cannot tell whether what got built was any good.",
+      "metaDescription": "A decision rule, not a roadmap: internal complexity is justified only where perceived complexity falls. Eight questions, and a surface budget with an exit code.",
+      "sections": [
+        {
+          "heading": "The rule, and the failure it prevents",
+          "body": [
+            "Goal-first outside, rigorous inside. The user states a business goal; the rails are selected by the workflow rather than hand-orchestrated by the user. Every rail may be rigorous, deterministic and opinionated inside — that is what makes the result trustworthy — but none of that rigour may leak outward as a step the user has to perform, sequence or remember.",
+            "The named failure is specific: a user who has to know that app inspect comes before solution check, which comes before package scaffold, has been handed our implementation as their workflow. Every primitive is judged against that outcome rather than against its own merits.",
+            "The budget itself is deliberately asymmetric. New internal complexity is allowed to grow, and it has grown — a package contract, a conformance kit, a characterization harness. Each was justified by something that became simpler or provable on the outside. None was justified by being interesting."
+          ]
+        },
+        {
+          "heading": "The eight questions",
+          "body": [
+            "Every new agent-facing command, tool, contract or namespace must answer all eight in the PR that introduces it. One: which concrete agent failure mode does it prevent — the failure, not the capability. Two: why are existing primitives insufficient, with the attempt shown, because if an existing command almost does it then extending it usually beats adding one. Three: does it overlap semantically with an existing tool, since two commands that answer nearly the same question are worse than one that answers it completely — the agent now has to choose, and will choose wrong. Four: can it remain deferred or on-demand, which most things can.",
+            "Five: does it preserve Claude, Codex and Gemini portability — if the behaviour lives anywhere but a CLI, a JSON contract, the Package Contract, canonical Skill semantics or the Quality Gates, the answer is no. Six: what machine-readable evidence proves its value — an exit code, a contract-versioned document, a fingerprint, a measured number; 'it feels better' is not evidence. Seven: does horizontal impact update the compatibility backfill, because a capability every domain could use, recorded for one domain only, is a fork. Eight: does the end-user goal flow become simpler rather than more manual — if the answer is 'the agent now has one more thing to run', the primitive has failed question one.",
+            "A primitive that cannot answer these is not blocked forever. It is blocked until somebody can name the failure it prevents. AGENTS.md carries the same gate as a standing review item, so the rule is cited in review rather than remembered."
+          ]
+        },
+        {
+          "heading": "The budget, with today's numbers",
+          "body": [
+            "A principle stated in a strategy document erodes one reasonable addition at a time, so it is also a number with a ceiling, a reason and an exit code. Running node scripts/surface-check.js prints the surface an agent has to understand before it can start: goal entry points 1 / 1, skills 12 / 12, always-on tools 9 / 10, commands in skills 11 / 11, and then the line 'Internal complexity may grow. Perceived complexity has not.'",
+            "Three of the four measures are at or on their ceiling, which is what a budget looks like when it is doing something. The commands ceiling was raised from 10 to 11 on 2026-08-09, and the argument is written into scripts/surface-check.js beside the number: project doctor, package scaffold and package test shipped three genuinely new answers and took nothing out. The same comment then closes the door — eleven is where it stops, the package namespace already holds four verbs, package test already proves what package validate checks, and the next command that wants a place in a skill pays for it by folding validate into test rather than by moving the number again. A ceiling raised twice is not a ceiling.",
+            "The check is not only counting. It fails a skill whose description never says what it is not for, because the description is the routing table a harness matches against and a skill that does not exclude competes with every skill it overlaps. It fails a second skill that describes itself as answering a bare business goal, because two front doors means the user picks, and the user should not have to know there is a choice. And the ceilings are themselves exercised: tests/surface-budget.test.js builds a fixture that breaks each one, on the grounds that a budget nobody has watched fail is a budget nobody should trust."
+          ]
+        },
+        {
+          "heading": "What it deliberately does not measure",
+          "body": [
+            "Not capability. The framework may grow a hundred capabilities; it may not grow a hundred things an agent has to read first. Those are different numbers, and conflating them is how a good architecture becomes an unusable one.",
+            "Not quality. The budget can tell you another command appeared. It cannot tell you whether the command was well designed, and no count on this page implies anything about the code behind it.",
+            "Not agent success. Question six asks for a measured number, and the one number that would settle whether coding agents can actually build with this does not exist yet — the benchmark protocol is published and has not been run (L-03). The evidence that does exist is narrower and checkable: 701 tests run on every push (C-20), one command that reads an application's real composition from checked-in source and returns a machine-readable list of what it cannot see (C-14), and MCP tools where anything that generates code or destroys state is dry-run unless an explicit apply flag is passed (C-18)."
+          ]
+        },
+        {
+          "heading": "What the document is not",
+          "body": [
+            "Not a roadmap — other documents sequence work; this one decides whether work should exist. Not permission to build the rails it lists as future: of the thirteen rails in the table, six are marked future, including skill mirror reconciliation, project verify, the scenario runner, the context pack, implementation evidence and MCP parity. Every entry is either implemented and verifiable by a command, or future and marked as such, with nothing in between.",
+            "Not marketing either. Positioning claims live elsewhere and are bounded by evidence and by an explicit list of things not to claim. The reason this page exists on a public site is narrower than a manifesto: the rule is only binding if a reviewer can cite it, and a rule with an exit code can be cited by someone who does not work here."
+          ]
+        }
+      ],
+      "boundaries": [
+        "It is a decision rule, not a roadmap. It never says when anything ships, and a rail listed as future is not a commitment to build it.",
+        "It measures the surface an agent must read before starting — not capability, not code quality, not whether the primitive was worth building.",
+        "Three of the four measures sit on their ceiling today, so the next agent-facing command has to remove something rather than be added.",
+        "The budget is a count plus two description checks. It cannot detect a well-named command that answers the wrong question.",
+        "Six of the thirteen rails in the document are marked future, including project verify, the scenario runner and implementation evidence. None of them may be described as available.",
+        "No number here comes from a benchmark of agent build success. That run has not happened, and any such figure quoted for this project is not ours.",
+        "Portability is a target held by contracts, not a measured result across harnesses. The practical test — could a different agent, given only the CLI and the JSON, do this correctly — is applied in review, not by a script."
+      ],
+      "claims": ["C-20", "C-14", "C-18"],
+      "limitations": ["L-03", "L-08"],
+      "jobs": ["JTBD-AX-01", "JTBD-AX-02", "JTBD-AX-03", "JTBD-AX-05", "JTBD-AX-06", "JTBD-AX-09", "JTBD-AX-10"],
+      "docs": [
+        "docs/strategy/CODING_AGENT_DX_NORTH_STAR.md",
+        "AGENTS.md",
+        "docs/QUALITY_GATES.md",
+        "docs/APPLICATION_INSPECTION.md",
+        "scripts/surface-check.js"
+      ],
+      "tests": [
+        "tests/surface-budget.test.js",
+        "tests/app-inspect.test.js",
+        "tests/mcp.test.js",
+        "tests/project-doctor.test.js"
+      ],
+      "related": ["customer-and-revenue-os", "code-you-own", "deterministic-by-construction"]
+    }
+  ]
+}

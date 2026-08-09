@@ -27,6 +27,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, existsSync
 import { join, dirname, relative } from 'node:path';
 
 import { buildJobPages, buildAnswerPages, hasOwnPage, STATUS_MEANING } from './site-pages.js';
+import { buildClusterPages } from './site-clusters.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -109,9 +110,28 @@ const shell = readFileSync(join(siteDir, 'shell.html'), 'utf8');
 const jobsIndex = existsSync(jobsSource) ? readJson(jobsSource) : null;
 const answers = readJson(join(siteDir, 'answers.json'));
 
+// The four hub-and-spoke clusters and the blog engine, from the same evidence-bearing sources.
+// docs/marketing/SITE_ARCHITECTURE.md §3 is the contract; scripts/site-clusters.js enforces it and
+// throws before a page is written, so a bad claim id or a job link with no destination stops the
+// build here rather than shipping as an internal 404.
+const clusterSources = {
+  capabilities: readJson(join(siteDir, 'capabilities.json')),
+  tools: readJson(join(siteDir, 'tools.json')),
+  concepts: readJson(join(siteDir, 'concepts.json')),
+  compare: readJson(join(siteDir, 'compare.json')),
+};
+
 const generated = [
   ...(jobsIndex ? buildJobPages({ jobs: jobsIndex, brand, origin: ORIGIN }) : []),
   ...buildAnswerPages({ answers, ledger, brand, origin: ORIGIN }),
+  ...buildClusterPages({
+    sources: clusterSources,
+    ledger,
+    jobs: jobsIndex,
+    brand,
+    origin: ORIGIN,
+    blogDir: join(siteDir, 'blog'),
+  }),
 ];
 for (const page of generated) {
   const source = shell
