@@ -60,7 +60,9 @@ and the protocol requires a clean profile that has never been exposed to Accordo
   unsupported capabilities; Claude was quota-blocked and Gemini lacked auth.
 - [x] (2026-08-10) Strengthen the protocol, freeze prompt set v1, record the
   invalid receipt and classify the evidence discipline across every legacy domain.
-- [ ] Verify, adversarially review and publish the stacked PR.
+- [x] (2026-08-10) Run the adversarial review and clean-clone verification at
+  `1ca300e`: 788/788, smoke, full B2B starter and `gtm:check` pass.
+- [ ] Publish the stacked PR and wait for exact-head CI.
 
 ## Surprises & Discoveries
 
@@ -99,6 +101,14 @@ reinterprets this pilot receipt.
 
 ## Outcome and Follow-up
 
-Not complete yet. The first publishable URR still requires dedicated clean provider
-profiles, active Claude and Gemini credentials, the frozen ten-prompt set, and all
-150 raw transcripts.
+The measurement contract and invalid receipt are complete. The adversarial review
+found no critical or high issue. It found two medium documentation defects: the
+horizontal evidence discipline had no Legacy Alignment Matrix declaration, and a
+150-session denominator had no frozen ten-prompt input. Both are fixed in
+`1ca300e`; all six built domains are explicitly `not_applicable`, and prompt set v1
+is verbatim and versioned in the benchmark protocol.
+
+The first publishable URR still requires dedicated clean provider profiles, active
+Claude and Gemini credentials, and all 150 raw transcripts. Until then the project
+has no URR, and the invalid pilot must never be restated as zero or as a positive
+name mention.
