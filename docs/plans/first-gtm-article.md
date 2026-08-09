@@ -81,6 +81,12 @@ Hackers without presenting the pre-launch repository as an installable product.
   article emits bounded `BlogPosting` JSON-LD, and `generate-llms.js` reuses
   `readBlogPosts` so there is one editorial contract. The discovery regression
   asserts all three corrections.
+- 2026-08-09: submitted the technical article to Hacker News as a normal link,
+  not as a Show HN launch. Item `49232416` is live; the future product launch
+  remains a separate artifact.
+- 2026-08-09: the public-claims CI failure was a shallow-checkout defect rather
+  than a claims failure: `site-check` could not resolve historical measurement
+  commit `9958ed9`. The job now fetches full history before verifying the ledger.
 
 ## Decision log
 
@@ -100,13 +106,15 @@ public-content gates pass. The two external versions are live:
 
 - `https://dev.to/dpelleri/if-a-coding-agent-builds-your-crm-what-should-it-refuse-to-do-5cke`
 - `https://www.indiehackers.com/post/what-should-a-coding-agent-be-structurally-unable-to-do-in-a-crm-484d2d2862`
+- `https://news.ycombinator.com/item?id=49232416`
 
 The initial repository-wide verification was not green because the
 project-doctor immutability test invoked a GNU-only `find` date literal on
 macOS. That test is now platform-independent and the final verification receipt
 below is the authority for deployment. The external posts were published before
 that correction and therefore link only to already-live evidence surfaces.
-Hacker News remains deliberately unspent until the install path is real.
+The technical Hacker News submission is live. A distinct Show HN product launch
+remains deliberately unspent until the install path is real.
 
 The DEV copy currently declares its own DEV URL as canonical because the
 Accordo page did not exist when it was published. After the Accordo page is live,

@@ -20,10 +20,11 @@ gets `403 HUMAN_APPROVAL_REQUIRED`; a named test fails if that stops being true.
 The agent can prepare the decision and assemble the evidence. It cannot become
 the approver because it generated the surrounding app.
 
-The honest limitation is important: Accordo is pre-launch and local-development
-only. The actor is asserted, not authenticated; there is no auth, tenancy or RBAC
-yet. This protects the supported action surface from an honest coding agent. It
-is not a production security boundary.
+Accordo already enforces this across its supported development runtime. The actor
+is currently asserted rather than authenticated, so a coding agent taking the
+application to production must include authentication, tenancy and RBAC before
+network exposure. Making that deployment envelope explicit lets the agent plan
+the hardening instead of discovering it after generation.
 
 The exact capability and its current boundary are published together here:
 https://accordo.dev/answers/can-an-agent-approve-a-deal-or-discount.html

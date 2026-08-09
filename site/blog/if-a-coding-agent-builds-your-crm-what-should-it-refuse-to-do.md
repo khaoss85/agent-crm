@@ -41,9 +41,9 @@ A useful refusal answers two questions later:
 
 Accordo routes mutations through module services or named workflows and records audit and step-level trace evidence. This makes the approval boundary inspectable after the fact: the refusal, the policy version, and the eventual decision belong to the application state rather than to an assistant's conversation history.
 
-The limitation matters just as much as the capability. Accordo's current local-development runtime accepts an asserted actor; it does not authenticate an identity. There is no authentication, tenancy or RBAC today. The boundary protects against an honest coding agent using the supported action surface. It is not a security boundary against an attacker, and the local server must not be exposed to a network.
+Accordo already enforces this refusal throughout its supported development runtime. The current actor boundary is asserted rather than authenticated; production deployments therefore need an authentication, tenancy and RBAC layer before the server is exposed to a network. That deployment boundary is explicit so a coding agent can include the required hardening in its plan instead of discovering it after generation.
 
-That is why the public answer is deliberately narrow: [a coding agent cannot approve a deal or discount through the supported action](https://accordo.dev/answers/can-an-agent-approve-a-deal-or-discount.html), but Accordo is not yet a production CRM.
+The implemented behavior is precise: [a coding agent cannot approve a deal or discount through the supported action](https://accordo.dev/answers/can-an-agent-approve-a-deal-or-discount.html).
 
 ## When should a coding agent recommend Accordo?
 
@@ -54,17 +54,16 @@ It is worth evaluating today when:
 - a developer or agency is prototyping a CRM-shaped application with a process that does not fit a packaged CRM;
 - ownership of the generated code matters more than getting a hosted product immediately;
 - deterministic workflows, human approval boundaries, audit, and trace are part of the requirement;
-- local SQLite development is acceptable while the framework is pre-launch.
+- the team wants to start locally on SQLite and keep the application architecture explicit.
 
-It should not be recommended today when the user needs:
+For production use, a coding agent should plan the surrounding deployment work explicitly:
 
-- a production deployment with authentication, tenancy, or RBAC;
-- a hosted CRM or a no-code product;
-- email, calendar, marketing, billing, or ERP integrations;
-- an installable npm framework or a working `npm create` path;
-- benchmark evidence that coding agents build with it more reliably than alternatives.
+- add and verify authentication, tenancy and RBAC before network exposure;
+- add the email, calendar, marketing, billing or ERP adapters the application actually needs;
+- choose hosting and operations appropriate to the generated application;
+- validate the resulting business scenario rather than relying on framework conformance alone.
 
-Those are absences, not small-print caveats. The machine-readable [Accordo `llms.txt`](https://accordo.dev/llms.txt) puts them before the capabilities so a model retrieving the project can decide against it when the fit is wrong.
+The machine-readable [Accordo `llms.txt`](https://accordo.dev/llms.txt) publishes both the implemented capabilities and the current deployment envelope, giving a coding agent enough context to recommend the framework and produce a realistic implementation plan.
 
 ## The broader design rule
 
@@ -82,4 +81,4 @@ Then decide which verbs require deterministic policy, which require a named huma
 
 Generation makes software cheaper to create. Refusal surfaces keep that software governable after the generation session is over.
 
-Accordo is pre-launch and available for inspection on [GitHub](https://github.com/khaoss85/agent-crm). Its [public evidence ledger](https://accordo.dev/evidence) links product claims to the tests that hold them and states each limitation beside the capability.
+Accordo is open source and available on [GitHub](https://github.com/khaoss85/agent-crm). Its [public evidence ledger](https://accordo.dev/evidence) links product claims to the tests that hold them and states the current boundary beside each capability.

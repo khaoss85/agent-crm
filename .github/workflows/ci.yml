@@ -22,6 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # site-check verifies that the claims measurement points at a real
+          # repository commit. A shallow PR checkout cannot prove that fact.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22.16.0
