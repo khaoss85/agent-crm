@@ -117,7 +117,7 @@ Every entry below is either **implemented** and verifiable by a command, or
 | **Quality Gates** | what must a change prove before it merges? | **implemented** — `docs/QUALITY_GATES.md` |
 | **LA0 — legacy characterization** | does a refactor preserve behaviour? | **implemented** — `tests/characterization/`, `npm run characterize:intelligence` |
 | DX2 — Skill mirror sync | do the harness mirrors agree, and stay agreeing? | **future, and now a reconciliation** — the mirrors currently agree (12/12, doctor `passed`) because they were aligned by hand on main. Project Doctor detects disagreement and by design never writes: no canonical source, no sync command, no CI drift gate, no adapter generation |
-| DX5 — Project Verify | does everything actually work? | **future** |
+| **DX5 — Project Verify** | can I prove this project is healthy enough to hand back? | **implemented** — `crm project verify --json` |
 | DX6 — Scenario Runner | does it work for this business scenario? | **future** |
 | DX9 — Context Pack | what does an agent need to know, compactly? | **future** |
 | DX10 — Implementation Evidence | is the plan actually finished? | **future** |

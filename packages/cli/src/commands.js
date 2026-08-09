@@ -9,6 +9,7 @@ import { packageTestCommand } from './package-test-command.js';
 import { packageScaffoldCommand } from './package-scaffold.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
 import { projectDoctorCommand } from './project-doctor-command.js';
+import { projectVerifyCommand } from './project-verify-command.js';
 import { solutionCommand } from './solution-command.js';
 
 /** @param {string[]} argv */
@@ -35,6 +36,12 @@ export async function runCli(argv) {
   // tree". It is deliberately NOT the existing `crm doctor`, which boots the
   // application and opens the database: this one reads source, opens nothing,
   // and works on a project that will not boot — which is when you need it.
+  // "project verify" answers "can we PROVE this project works" — the expensive
+  // counterpart to the doctor's cheap source read (DX5).
+  if (command === 'project' && positional[0] === 'verify') {
+    command = 'project:verify';
+    positional.shift();
+  }
   if (command === 'project' && positional[0] === 'doctor') {
     command = 'project:doctor';
     positional = positional.slice(1);
@@ -78,6 +85,15 @@ export async function runCli(argv) {
       mode: /** @type {'inspect'|'validate'|'check'} */ (command.slice('solution:'.length)),
       json: flags.json === true,
       rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+    });
+    process.exitCode = result.exitCode;
+    return;
+  }
+
+  if (command === 'project:verify') {
+    const result = await projectVerifyCommand({
+      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+      json: flags.json === true,
     });
     process.exitCode = result.exitCode;
     return;
