@@ -28,6 +28,35 @@ workflow. That is the failure this North Star exists to prevent.
 
 ---
 
+## The story the rails tell
+
+One shape, so a reader can hold the whole surface at once:
+
+```text
+GOAL
+  → SEE       what exists                        App Inspect (AX1)
+  → PLAN      what to build                      Solution Plan (AX2)
+  → BUILD     a conforming start, then the work  Package Scaffold (DX3) + the agent
+  → CHECK     inconsistencies, and the rules     Project Doctor (DX1) + Package Conformance (DX4)
+  → PROVE     that it works                      Quality Gates; DX5 + DX10 are future
+
+Refactor-only:
+  → PRESERVE  freeze behaviour before changing it   LA0 Characterization
+```
+
+**It is a story, not a sequence a user performs.** A user gives a goal;
+`solve-business-goal` chooses the minimum rails internally, and a pure refactor
+takes PRESERVE and may skip PLAN. This is the goal-first rule applied to the
+rails themselves: if a user ever has to know that SEE precedes PLAN, the story
+has leaked out as a workflow, and that is the failure this document exists to
+prevent.
+
+The worked example is checked in rather than described:
+`docs/evidence/lead-intelligence-extraction.md`.
+
+Roadmap and category framing that follow from this:
+`docs/strategy/CUSTOMER_REVENUE_OS_ROADMAP.md`.
+
 ## The complexity budget
 
 > **New internal complexity is justified only if it reduces perceived
@@ -87,7 +116,7 @@ Every entry below is either **implemented** and verifiable by a command, or
 | **DX4 — Package Conformance** | does this package satisfy the framework contract? | **implemented** — `crm package test --json` |
 | **Quality Gates** | what must a change prove before it merges? | **implemented** — `docs/QUALITY_GATES.md` |
 | **LA0 — legacy characterization** | does a refactor preserve behaviour? | **implemented** — `tests/characterization/`, `npm run characterize:intelligence` |
-| DX2 — Skill mirror sync | do the harness mirrors agree? | **future** — Project Doctor detects both halves today (`skills.mirror-drift` fails, `skills.mirror-coverage` warns) but never writes; the reconciliation is not built |
+| DX2 — Skill mirror sync | do the harness mirrors agree, and stay agreeing? | **future, and now a reconciliation** — the mirrors currently agree (12/12, doctor `passed`) because they were aligned by hand on main. Project Doctor detects disagreement and by design never writes: no canonical source, no sync command, no CI drift gate, no adapter generation |
 | DX5 — Project Verify | does everything actually work? | **future** |
 | DX6 — Scenario Runner | does it work for this business scenario? | **future** |
 | DX9 — Context Pack | what does an agent need to know, compactly? | **future** |
