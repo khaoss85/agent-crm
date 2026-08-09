@@ -356,7 +356,11 @@ export function buildRequestCommercialFollowupAction(moduleNames) {
       }
       // An OPEN follow-up of the same intent is not duplicated. A resolved one
       // does not block a new ask — the work genuinely came round again.
-      const open = followups.listWhere({ contractId: record.id, intent: input.intent, status: FOLLOWUP_OPEN });
+      //
+      // Both reads are exact (`listWhere`, no page bound): the guard and the
+      // round number below must be complete, not the first 500 rows.
+      const history = followups.listWhere({ contractId: record.id, intent: input.intent });
+      const open = history.filter((row) => row.status === FOLLOWUP_OPEN);
       if (open.length > 0) {
         throw new AppError(`A ${input.intent} follow-up is already pending on this contract`, {
           code: 'FOLLOWUP_ALREADY_PENDING', status: 409,
@@ -366,7 +370,15 @@ export function buildRequestCommercialFollowupAction(moduleNames) {
       const groups = groupBaseline(lines);
       const requestedAt = now();
       return followups.createManaged({
-        sourceKey: `commercial-followup:${record.id}:${input.intent}:${requestedAt}`,
+        // The key is (contract, intent, round) — derived from state, never from
+        // the clock. A timestamp here looked like an idempotency key and was
+        // not one: under an injected clock two rounds collide forever, so the
+        // second genuine ask was refused 409 for all time; under a wall clock
+        // every call produces a different key, so it identified nothing and
+        // guarded nothing. The round number is deterministic, lets the work
+        // come round again exactly as documented, and makes the unique
+        // constraint a real second line of defence behind the pending check.
+        sourceKey: `commercial-followup:${record.id}:${input.intent}:${history.length + 1}`,
         contractId: record.id,
         decisionId: input.decisionId ?? null,
         intent: input.intent,
