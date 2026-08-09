@@ -41,12 +41,19 @@ test('every first-contact distribution surface carries the checked intent vocabu
 });
 
 test('every CDP-adjacent discovery surface keeps the non-CDP boundary in the same artifact', () => {
-  const boundary = /not ingestion|does not ingest|no cdp|not (?:a |the )?cdp/i;
+  const boundary = /not ingestion,\s*identity resolution or segmentation|external cdp owns\s+ingestion,\s*identity resolution and audiences/i;
   for (const [surface, copy] of surfaces) {
     assert.match(copy, boundary, `${surface} mentions CDP + CRM without its ownership boundary`);
-    assert.match(copy, /identity resolution/i, `${surface} does not assign identity resolution away from Accordo`);
-    assert.match(copy, /segmentation|audiences/i, `${surface} does not assign segmentation or audiences away from Accordo`);
   }
+});
+
+test('negating ingestion alone cannot hide an identity-resolution or segmentation claim', () => {
+  const contradictory = [
+    ['attacked surface', 'custom CRM Customer Hub Smart CRM CDP + CRM: not ingestion, but Accordo owns identity resolution and segmentation'],
+  ];
+  assert.deepEqual(validateDiscoverySurfaces(contradictory), [
+    'attacked surface: CDP + CRM appears without the CDP boundary (not ingestion, identity resolution or segmentation)',
+  ]);
 });
 
 test('ignored and prototype-shaped manifest fields cannot smuggle intent past public copy', () => {

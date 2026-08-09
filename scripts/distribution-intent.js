@@ -54,7 +54,7 @@ export function validateDiscoverySurfaces(surfaces) {
     ['Smart CRM', /smart[- ]crm\b/i],
     ['CDP + CRM', /cdp(?:\s*\+\s*|-plus-)crm\b/i],
   ];
-  const cdpBoundary = /not ingestion|does not ingest|no cdp|not (?:a |the )?cdp/i;
+  const cdpBoundary = /not ingestion,\s*identity resolution or segmentation|external cdp owns\s+ingestion,\s*identity resolution and audiences/i;
 
   for (const [surface, copy] of surfaces) {
     if (!copy) {
