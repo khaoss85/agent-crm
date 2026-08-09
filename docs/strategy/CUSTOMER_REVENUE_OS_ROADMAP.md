@@ -71,10 +71,17 @@ Two framings to explore, both unresolved:
   wedge, and "operating system" is a claim that has to be earned by the
   extension and distribution pillars below, which do not exist yet.
 
-The honest position today: the second framing describes the *destination*; using
-it now would be a claim about a system whose extension surface is still
-`ADMIN_EXTENSIONS_UNSUPPORTED`. Revisit when the Package Extension Surface and
-Package Distribution pillars have shipped something.
+**Keep "CRM" as the entry term.** It is what people search for and what makes
+the project legible in five seconds, and an entry term does not have to be the
+ceiling of the architecture. The broader framings are for the long-term story,
+used alongside CRM rather than instead of it.
+
+The honest position today: the second framing describes the *destination*, and
+**"operating system" is a claim to be earned, not asserted**. It rests on an
+extension surface that is still `ADMIN_EXTENSIONS_UNSUPPORTED`, a distribution
+story that does not exist, and production foundations that are not built. Revisit
+when the Extension Surface, Package Distribution and Production Spine pillars
+have shipped something.
 
 **The brand decision — Accordo / accordo.dev — is a human's and is unchanged.**
 
@@ -107,33 +114,47 @@ Read this before positioning anything.
 
 ## Competitor-informed audit
 
-**Method and honesty note.** Retrieved **2026-08-08** via web search. Several
-vendor documentation hosts (`docs.attio.com`, `attio.com`) are blocked by this
-environment's network egress proxy, so those rows are sourced from search-result
-summaries of the official pages rather than from the pages themselves, and are
-marked accordingly. Nothing here is a market-share, superiority or benchmark
-claim, and none of it may become one.
+**Method, and what this review is worth.** Retrieved **2026-08-08** via web
+search. This is a **bounded review of published material, not an exhaustive
+audit**: it read vendor documentation and changelogs reachable from search, not
+every page, release note, private beta or roadmap. Several vendor documentation
+hosts (`docs.attio.com`, `attio.com`) are blocked by this environment's network
+egress proxy, so those rows are **search-summary sourced** rather than read
+directly.
 
-| Vendor | What their official material describes | Source | Directly fetched? |
-|---|---|---|---|
-| **Salesforce / Agentforce 360 / Data 360** | A metadata layer as the agent's context: fields, labels and automations carry metadata agents read. Agent definitions are **metadata that flows through DevOps Center, change sets or CI**; the 2026 Agentforce Builder adds `AiAuthoringBundle`, `agentScript`, `agentGraph`. Data 360 unifies sources behind a trusted metadata/semantics layer. | `developer.salesforce.com/blogs/2026/05/new-agentforce-metadata-and-development-lifecycle`; `salesforce.com/platform/metadata-data/` | no — search summary |
-| **HubSpot Customer Platform / Data Hub** | A unified developer platform: **CLI + projects framework + UI extensions + APIs**, described as an *AI-ready framework* with Breeze Agent Tools. Projects are versioned (`2026.03`), built locally, deployed with `hs project upload`, developed with `hs project dev`, with sandboxes and GitHub integration. UI customization is in beta. | `developers.hubspot.com/developer-platform-basics`; `developers.hubspot.com/docs/platform/ui-customization-overview`; 2026 changelogs | no — search summary |
-| **Twenty** | Open source, self-hostable. **Twenty 2.0 ships a native MCP server with every Cloud workspace**, connected by OAuth so an assistant can read and write CRM data. Community MCP servers add schema discovery and CRUD. | `twenty.com/product`; 2026 release coverage | no — search summary |
-| **Attio** | An **App SDK**, a **REST API**, and an **MCP server** — including one serving their *documentation* so agents can search it autonomously. New apps are **pre-configured for Claude Code via a `.mcp.json`**; their engineering blog describes Claude Code plus their docs MCP producing code that "feels" like it was written at Attio. | `docs.attio.com/sdk/guides/ai`; `attio.com/platform/developers`; `attio.com/engineering/blog/building-better-software-with-ai` | **no — egress blocked**; search summary only |
+Because the review is bounded, this document does not say *nobody does X*. It
+says **we did not find X in the material we reviewed**, which is a weaker and
+truthful claim, and one a single counter-example corrects rather than
+demolishes. Nothing here is a market-share, superiority or benchmark claim, and
+none of it may become one.
+
+| Source quality | Meaning |
+|---|---|
+| **direct** | the official page was fetched and read |
+| **search summary** | the official page was described in search results but not fetched (egress-blocked) |
+
+| Vendor | What the reviewed material describes | Source | Source quality |
+| **Salesforce / Agentforce 360 / Data 360** | A metadata layer as the agent's context: fields, labels and automations carry metadata agents read. Agent definitions are **metadata that flows through DevOps Center, change sets or CI**; the 2026 Agentforce Builder adds `AiAuthoringBundle`, `agentScript`, `agentGraph`. Data 360 unifies sources behind a trusted metadata/semantics layer. | `developer.salesforce.com/blogs/2026/05/new-agentforce-metadata-and-development-lifecycle`; `salesforce.com/platform/metadata-data/` | search summary |
+| **HubSpot Customer Platform / Data Hub** | A unified developer platform: **CLI + projects framework + UI extensions + APIs**, described as an *AI-ready framework* with Breeze Agent Tools. Projects are versioned (`2026.03`), built locally, deployed with `hs project upload`, developed with `hs project dev`, with sandboxes and GitHub integration. UI customization is in beta. | `developers.hubspot.com/developer-platform-basics`; `developers.hubspot.com/docs/platform/ui-customization-overview`; 2026 changelogs | search summary |
+| **Twenty** | Open source, self-hostable. **Twenty 2.0 ships a native MCP server with every Cloud workspace**, connected by OAuth so an assistant can read and write CRM data. Community MCP servers add schema discovery and CRUD. | `twenty.com/product`; 2026 release coverage | search summary |
+| **Attio** | An **App SDK**, a **REST API**, and an **MCP server** — including one serving their *documentation* so agents can search it autonomously. New apps are **pre-configured for Claude Code via a `.mcp.json`**; their engineering blog describes Claude Code plus their docs MCP producing code that "feels" like it was written at Attio. | `docs.attio.com/sdk/guides/ai`; `attio.com/platform/developers`; `attio.com/engineering/blog/building-better-software-with-ai` | search summary (egress-blocked) |
 
 ### The hypothesis, tested
 
 > AI-friendly docs, MCP, app scaffolding and coding-agent guidance are becoming
 > table stakes.
 
-**Confirmed.** All four vendors ship at least two of the four, and two of them
-(Attio, HubSpot) ship something close to all four. A roadmap whose differentiation
-is "we have an MCP server and good docs for agents" is describing parity, not a
-wedge, and should be read as such.
+**Supported by the evidence reviewed, and held as a strategy hypothesis rather
+than a law.** In the material reviewed, all four vendors ship at least two of
+the four, and two of them (Attio, HubSpot) ship something close to all four.
+That is enough to plan on: a roadmap whose differentiation is "we have an MCP
+server and good docs for agents" is most likely describing parity rather than a
+wedge. It is not enough to assert as a universal fact about the market, and the
+hypothesis should be re-tested when the next round of vendor releases lands.
 
-### Where the differentiation actually is
+### Where the differentiation appears to be
 
-None of the four, on their own published material, describes:
+**We did not find, in the material reviewed**, any of the four describing:
 
 - **goal-first orchestration** — the user states an objective; the system picks
   the rails. The vendors above expose *tools* to an agent; the agent still
@@ -154,9 +175,10 @@ None of the four, on their own published material, describes:
 - **proof instead of agent self-report** — the whole point. An agent saying "done"
   is not evidence; a command that fails is.
 
-**This is the wedge, and most of it is implemented.** What is *not* implemented
-is the loop that turns it into a demonstrable advantage — see the Agent Proof
-Loop pillar.
+**This looks like the wedge, and most of it is implemented.** What is *not*
+implemented is the loop that turns it into a demonstrable advantage — see the
+Agent Proof Loop pillar. Until that exists, "these things differentiate us" is a
+reasoned position from a bounded review, not a measured result.
 
 ---
 
@@ -184,7 +206,9 @@ attribution without a customer data foundation would be built on sand.
 | Customer Interactions / Communications | **missing** — no email, calendar, call or conversation model at all |
 | Package Extension Surface | **under-prioritized** — the gaps were *documented* (`ADMIN_EXTENSIONS_UNSUPPORTED`, no route contribution) but never a track |
 | Package Distribution & Lifecycle | **missing** — "marketplace" appeared in prose with no install, version or trust story |
-| Agent Proof Loop | **under-prioritized** — DX2/DX5/DX6/DX9/DX10/AX3 all existed as items, scattered; none was framed as the moat |
+| Project Bootstrap / Installability | **missing** — and it is the first conversion blocker; found by the GTM track, not by architecture review |
+| Agent Proof Loop | **under-prioritized** — DX5/DX6/DX9/DX10/AX3 existed as scattered items; none was framed as the moat |
+| DX2 | **partly delivered, and mis-tracked** — the mirror state was fixed on main while the roadmap still described it as unstarted parallel work |
 
 **4. What must be proven rather than claimed?**
 Autonomous build quality. Every differentiator above is *architecturally* true
@@ -200,6 +224,35 @@ additive.
 
 ## Pillars: elevated and added
 
+### Project Bootstrap / Installability — **new pillar, and the first conversion blocker**
+
+**Found by the GTM/discovery track, not by architecture review**, which is why
+it is worth stating plainly: retrieval now reaches the repository — the skills
+install path works across harnesses, and the discovery surfaces exist — and a
+user *still cannot get a running project in one command*. Distribution outran
+installability.
+
+Goal:
+
+```text
+one command  →  a runnable local project
+             →  deterministic source ownership
+             →  crm project doctor green
+             →  a clear next workflow
+```
+
+**Package Scaffold is not Project Scaffold.** `crm package scaffold` creates a
+conforming *domain inside an existing project*; it does nothing for somebody who
+has no project yet. Those are different jobs and the roadmap previously had only
+the first.
+
+A future brand-facing entry point may be `create-accordo`. **Nothing is
+implemented or renamed here** — the milestone is recorded, not started.
+
+**Ordering rule:** distribution and marketplace work must not outrun this. A
+package ecosystem that a new user cannot install into a project is an ecosystem
+for people who already have one.
+
 ### Customer Data Foundation — **new pillar, hard dependency**
 
 A CRM that cannot import, deduplicate or resolve identity is a demo. This is
@@ -211,8 +264,20 @@ unified customer profile · activity timeline · data quality and remediation ·
 bulk operations · saved views and global search · consent and suppression
 linkage · warehouse and storage boundaries.
 
-**Dependency rule:** MK5–MK7 (experiments, paid media, attribution) must not
-claim closed-loop optimization before this ships.
+**Dependency rule, stated narrowly on purpose.** The Data Foundation is a hard
+prerequisite for the things that need a **resolved identity**, not for every
+downstream feature:
+
+| Needs the Data Foundation first | Does not |
+|---|---|
+| a unified customer profile | sending a campaign to a declared audience |
+| dedupe-sensitive analytics and counts | a single-channel experiment on a known list |
+| cross-channel attribution | recording an interaction against a known record |
+| any closed-loop claim requiring identity resolution | landing pages, forms, content, journeys on explicit records |
+
+So MK0–MK4 can proceed, and parts of MK5/MK6 can too. What must wait is the
+*claim* that a result is attributed across channels or deduplicated — that is
+arithmetic on unresolved identities until this pillar exists.
 
 ### Customer Interactions / Communications — **new pillar**
 
@@ -224,6 +289,12 @@ different thing from *real send and provider execution*. The model can ship,
 be characterized and be useful while sending is still a provider contract
 nobody has implemented. Building them as one thing is how a CRM accidentally
 becomes a mail server.
+
+**Runs in parallel with the Data Foundation**, not behind it. Interactions
+feed the timeline, Marketing, Service and Sales context, and the two pillars
+sharpen each other: the Foundation resolves *who*, Interactions record *what
+happened*. Only the identity-dependent half of Interactions — stitching one
+person's activity across channels — actually waits.
 
 **Not promised:** contact-centre breadth. Not now, and not before the
 interaction foundation exists.
@@ -259,6 +330,38 @@ a provenance and signing decision · disable/remove versus uninstall ·
 Nothing here is implemented. "Marketplace" must not appear in positioning until
 it is.
 
+### DX2 — reconciliation, not a greenfield build
+
+**Status corrected against the repository, because the assumption was wrong.**
+This work was described as sitting on a parallel branch, unmerged and unreviewed
+on main. It is **on main**: commits `6a8aa15` and `4d5b865` arrived through
+PRs #36 and #37, and both are ancestors of `main`.
+
+What that work delivered, measured on the current tree rather than reported:
+
+- `.claude/skills/` and `.agents/skills/` each carry **12** skills, with **none**
+  on one side only;
+- `crm project doctor` reports `skills.mirror-coverage` and
+  `skills.mirror-drift` **passing**, and the whole report `passed` — it was
+  `warning` before;
+- Claude, Codex and Gemini discovery/distribution surfaces exist, and the
+  `npx skills add` path was verified.
+
+**What DX2 still is.** The mirrors agree today because somebody made them agree.
+The mechanism is missing, and these are the open questions:
+
+| Question | State |
+|---|---|
+| Is there a **canonical semantic source** the mirrors derive from? | no — two hand-maintained copies |
+| Is there a **deterministic sync/check** command? | no — Project Doctor detects and, by design, never writes |
+| Is there **CI drift prevention**? | only in the sense that doctor would report it if run |
+| Is there **adapter generation** per harness? | no |
+
+So DX2 is **reconciliation**: inspect what landed, decide what becomes canonical,
+and build the mechanism — not start from nothing. The Legacy Alignment Matrix
+keeps the Skill-mirror row at `partial` for exactly this reason: *the state is
+clean, the mechanism is not*, and a green `ls` is not an aligned capability.
+
 ### Agent Proof Loop — **elevated to a visible moat track**
 
 DX2 Skill sync · DX5 Project Verify · DX6 Scenario Runner · DX9 Context Pack ·
@@ -281,30 +384,44 @@ dependencies permit.
 
 **A — Agent-native moat**
 ```text
-Lead Intelligence extraction → DX2 → DX5 → DX6 → DX9 → DX10 → AX3
+Lead Intelligence extraction → DX2 reconciliation → DX5 → DX6 → DX9 → DX10 → AX3
 ```
-DX5 and DX6 are independent of each other. DX10 needs DX5's notion of "verified".
-AX3 needs DX6 and DX10 to have anything to measure.
+DX5 and DX6 are independent of each other. DX10 needs DX5's notion of
+"verified". AX3 needs DX6 and DX10 to have anything to measure. **DX2 is
+"reconciliation" rather than "build"** — see the note below; part of it already
+landed by hand.
 
 **B — Customer & Revenue OS**
 ```text
-M16 Renewal/Expansion → Customer Data Foundation → Analytics → Marketing
-                                                 → Interactions/Communications
+M16 Renewal/Expansion  (independent — explicit Contract/Subscription evidence)
+Customer Data Foundation  ┐
+Customer Interactions      ┘ in parallel; they sharpen each other
+        → Analytics and Marketing, per the hard dependencies below
 ```
-M16 depends on contracts and subscriptions (shipped). **Customer Data Foundation
-gates Analytics and gates any closed-loop Marketing claim.** Interactions depends
-on the Data Foundation for identity, not on Analytics. Marketing MK0–MK4 can
-proceed on the existing model; MK5–MK7 cannot.
+**M16 proceeds independently.** It rests on explicit Contract and Subscription
+evidence, which shipped, and needs neither the Data Foundation nor Interactions.
+
+**Customer Data Foundation and Interactions run in parallel.** The Foundation
+resolves *who*; Interactions record *what happened*. Only the identity-dependent
+half of each waits for the other.
+
+**What genuinely gates what:** dedupe-sensitive analytics, unified profiles and
+cross-channel attribution need the Data Foundation. Marketing MK0–MK4 and
+single-channel, known-list work do not.
 
 **C — Production & Ecosystem**
 ```text
-Extension Surface → Integration Runtime → Jobs/Outbox → Production Spine
-                                                      → Cloud
-                                                      → Package Distribution
+Project Bootstrap / Installability   ← first: nothing downstream matters if
+                                        a user cannot get a running project
+        → Extension Surface + Integration Runtime + Jobs/Outbox
+          (independent of each other, as dependencies allow)
+        → Production Spine → Cloud → Package Distribution / Lifecycle
 ```
-Jobs/Outbox and Integration Runtime are independent of the Extension Surface and
-of each other. **Production Spine gates Cloud** — the existing invariant, unchanged.
-Package Distribution needs the Extension Surface's trust boundaries first.
+**Project Bootstrap comes first**, for the reason in its pillar: discovery
+already reaches the repository and a user still cannot get to a running project
+in one command. **Production Spine gates Cloud** — the existing invariant,
+unchanged. Package Distribution needs the Extension Surface's trust boundaries
+first.
 
 Preserved from the existing roadmap and **not** renumbered: M16 Renewal/Expansion,
 Analytics Studio, the Marketing MK track, Data Governance, Integration Runtime,
@@ -325,6 +442,7 @@ Things not to chase, each with the reason:
 | A full billing / accounting core | invoicing, payment, tax, revenue recognition are their own products |
 | Contact-centre breadth before the interaction foundation | breadth before a model is how a CRM becomes a worse mail server |
 | A marketplace before lifecycle and trust | distributing code without install, version and provenance is a liability, not an ecosystem |
+| Distribution before installability | an ecosystem a new user cannot install into a project is an ecosystem for people who already have one |
 
 **The wedge, in six words:** source-owned · coding-agent-native · goal-first ·
 deterministic · package-extensible · evidence-driven.

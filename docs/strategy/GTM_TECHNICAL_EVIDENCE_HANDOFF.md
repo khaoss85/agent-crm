@@ -173,8 +173,11 @@ tagline change is authorized here** — see
 `docs/strategy/CUSTOMER_REVENUE_OS_ROADMAP.md`.
 
 **Competitor context.** AI-friendly docs, MCP servers, app scaffolding and
-coding-agent guidance are **table stakes**, not differentiation — confirmed
-against four vendors' official material on 2026-08-08 in the roadmap document.
+coding-agent guidance look like **table stakes** rather than differentiation.
+That is a **strategy hypothesis supported by a bounded review** of four vendors'
+published material on 2026-08-08 — not an exhaustive audit, and two of the four
+were search-summary sourced because their docs hosts were unreachable. Treat it
+as a planning assumption to re-test, never as a stated fact about the market.
 Differentiation claims must rest on goal-first orchestration, deterministic
 discovery and planning, architectural constraints that refuse, machine-readable
 evidence, behavioural characterization, package conformance and approval
