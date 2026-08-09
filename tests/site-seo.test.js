@@ -264,6 +264,7 @@ test('the Smart CRM intent has one bounded search identity', (t) => {
 
   const structured = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
     .map((match) => JSON.parse(match[1]));
+  assert.deepEqual(structured.map((block) => block['@type']), ['BreadcrumbList']);
   const breadcrumb = structured.find((block) => block['@type'] === 'BreadcrumbList');
   assert.equal(breadcrumb?.itemListElement.at(-1)?.name, 'A smart CRM knows when the agent must stop');
 });

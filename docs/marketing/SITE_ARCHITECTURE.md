@@ -14,7 +14,7 @@ questions, and states its own boundary. That is the hub-and-spoke model — a pi
 page for a topic, ten to twenty spokes each owning one sub-question, every spoke
 linking back to its pillar with descriptive anchor text.
 
-We already had two clusters and did not call them that: `jobs.html` over 68 job pages,
+We already had two clusters and did not call them that: `jobs.html` over 60 job pages,
 and `answers.html` over 15 answer pages. Both are generated from a structured source
 with evidence attached to every row. **That is the pattern; the rest of the site is
 built the same way, or it is not built.**
@@ -33,7 +33,7 @@ with evidence paths, and pages are a rendering of it.
 | **Agent tools** | `tools.html` | 8 | "what can my coding agent actually do here?" |
 | **Concepts** | `concepts.html` | 8 | "why is it built this way?" |
 | **Compare** | `compare.html` | 4 | "why this and not that?" |
-| **Jobs** *(exists)* | `jobs.html` | 68 | "is this specific job supported?" |
+| **Jobs** *(exists)* | `jobs.html` | 60 | "is this specific job supported?" |
 | **Answers** *(exists)* | `answers.html` | 15 | a direct question, directly answered |
 
 **Capabilities is the commercial entry point and Jobs is its evidence.** A visitor

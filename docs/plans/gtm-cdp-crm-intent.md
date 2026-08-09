@@ -134,7 +134,7 @@ npm run smoke
 npm run site:shots
 ```
 
-The generated page must contain one canonical URL, one `WebPage` JSON-LD block,
+The generated page must contain one canonical URL, one `BreadcrumbList` JSON-LD block,
 the exact two responsibility labels, a visible absent-bridge statement, the
 existing limitation language and resolved internal links. Hostile text in every
 new authored field must render as inert text. Missing, blank, multiline,
@@ -154,6 +154,10 @@ oversized or unknown `responsibilityMap` fields must fail the build.
 - 2026-08-09 — inspected 1270px and 390px Chromium renders. The two layers are
   legible without color, stack without clipping and retain the absent-bridge
   sentence. The standard screenshot harness remains part of the final gate.
+- 2026-08-09 — adversarial review confirmed two low documentation findings:
+  this plan named a `WebPage` JSON-LD block the template never emits, and
+  `SITE_ARCHITECTURE.md` still said 68 generated job pages while the build emits
+  60. Both were reproduced from the built artifact, corrected and regression-held.
 
 ## Decision log
 

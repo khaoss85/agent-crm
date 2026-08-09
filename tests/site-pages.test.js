@@ -37,6 +37,23 @@ test('the site builds before anything here is inspected', () => {
   assert.ok(existsSync(join(dist, 'answers.html')), 'the answers hub must exist');
 });
 
+test('the documented site inventory is derived from the pages the build emits', () => {
+  const countPages = (/** @type {string} */ directory) => readdirSync(join(dist, directory))
+    .filter((name) => name.endsWith('.html')).length;
+  const jobsCount = countPages('jobs');
+  const answersCount = countPages('answers');
+  const conceptsCount = countPages('concepts');
+  const total = readdirSync(dist, { recursive: true })
+    .filter((name) => String(name).endsWith('.html')).length;
+  const architecture = readFileSync(join(repo, 'docs/marketing/SITE_ARCHITECTURE.md'), 'utf8');
+  const brief = readFileSync(join(repo, 'docs/marketing/DESIGN_BRIEF.md'), 'utf8');
+
+  assert.match(architecture, new RegExp('`jobs\\.html` over ' + jobsCount + ' job pages'));
+  assert.match(architecture, new RegExp('`answers\\.html` over ' + answersCount + ' answer pages'));
+  assert.match(architecture, new RegExp('\\| \\*\\*Concepts\\*\\* \\| `concepts\\.html` \\| ' + conceptsCount + ' \\|'));
+  assert.match(brief, new RegExp(`Page inventory — ${total} pages`));
+});
+
 const read = (/** @type {string} */ path) => readFileSync(join(dist, path), 'utf8');
 const escape = (/** @type {string} */ value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -401,6 +418,22 @@ test('the responsibility map contract is closed, bounded, single-line and escape
   const layerUnknown = structuredClone(sources);
   mapOf(layerUnknown).layers[0].owner = 'typo';
   assert.throws(() => build(layerUnknown), /responsibilityMap\.layers\[0\] has unknown field owner/);
+
+  for (const [label, target] of [
+    ['root', (map) => map],
+    ['layer', (map) => map.layers[0]],
+  ]) {
+    const prototypeShaped = structuredClone(sources);
+    Object.defineProperty(target(mapOf(prototypeShaped)), '__proto__', {
+      value: { polluted: true }, enumerable: true, configurable: true, writable: true,
+    });
+    assert.throws(
+      () => build(prototypeShaped),
+      /responsibilityMap.*unknown field __proto__/,
+      `${label} prototype-shaped content must fail closed`,
+    );
+    assert.equal(Object.hasOwn({}, 'polluted'), false);
+  }
 
   const fields = [
     ['title', (map) => map],
