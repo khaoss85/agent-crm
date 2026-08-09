@@ -109,7 +109,7 @@ be a visual element — chips, a grid, a marquee of honesty:
 
 **Nobody else publishes their own blind spots.** That is the brand.
 
-## 5. Page inventory — 107 pages, six clusters
+## 5. Page inventory — 112 pages, six clusters
 
 Hub-and-spoke: each pillar page links down to its spokes, each spoke links back up.
 
@@ -117,10 +117,10 @@ Hub-and-spoke: each pillar page links down to its spokes, each spoke links back 
 |---|---|---|---|
 | **Agent tools** | `tools.html` | 8 | one command: what it answers, what it refuses to claim, what it costs to run |
 | **Capabilities** | `capabilities.html` | 6 | one business domain: what it models, what the framework refuses, what proves it |
-| **Concepts** | `concepts.html` | 7 | why it is built this way — the vision layer |
+| **Concepts** | `concepts.html` | 8 | why it is built this way — the vision layer |
 | **Compare** | `compare.html` | 4 | opens by naming where the *alternative* wins |
 | **Jobs** | `jobs.html` | 60 | one CRM job, its support status, its evidence |
-| **Answers** | `answers.html` | 14 | one blunt question, answered, plus 15 published refusals |
+| **Answers** | `answers.html` | 15 | one blunt question, answered, plus 15 published refusals |
 
 Plus: `index.html`, `evidence.html` (the full claims ledger as a table), `blog.html`
 (the first evidence-backed post now ships; the honest zero-post state remains a renderer requirement),
@@ -203,7 +203,7 @@ the identity here** — it is the voice of the machine reporting on itself.
 
 ## 9. Existing class names — keep these working
 
-The generator emits these; renaming one breaks 107 pages.
+The generator emits these; renaming one breaks 112 pages.
 
 `breadcrumbs` · `cluster-hero` · `cluster-grid` · `cluster-card` · `card-plain` ·
 `spoke-hero` · `plain-name` · `boundary-block` · `boundary-list` · `evidence-rail` ·
@@ -247,7 +247,7 @@ In priority order:
 1. **Homepage** — hero, the five-step loop, the 403, falsify output, the blind-spot
    chips, the six-cluster grid, the limits section.
 2. **Spoke template** — breadcrumbs, h1 + plain name, boundary block, body
-   sections, evidence rail, related rail. This is 97 of the 107 pages.
+   sections, evidence rail, related rail. This is 102 of the 112 pages.
 3. **Pillar template** — hero plus a card grid.
 4. **Table template** — evidence ledger and jobs catalogue, dense and scannable.
 5. **Blog index and article page**, retaining the tested empty state for a build with no posts.

@@ -136,6 +136,19 @@ const REFUSAL_PROOF_FIELDS = new Map([
   ['result', 160],
 ]);
 
+/** Closed bounds for a two-layer responsibility map. */
+const RESPONSIBILITY_MAP_FIELDS = new Map([
+  ['title', 140],
+  ['caption', 300],
+  ['bridge', 240],
+]);
+const RESPONSIBILITY_LAYER_FIELDS = new Map([
+  ['label', 80],
+  ['name', 140],
+  ['doesNotOwn', 240],
+]);
+const RESPONSIBILITY_OWN_ITEM_MAX = 160;
+
 /** Front-matter fields a blog post must declare (SITE_ARCHITECTURE.md §5). */
 export const REQUIRED_FRONT_MATTER = ['title', 'date', 'claims', 'transcript', 'editor'];
 
@@ -234,6 +247,43 @@ export function buildClusterPages({ sources, ledger, jobs, brand, origin, blogDi
           if (proof[field].length > max) throw new Error(`${where}: refusalProof.${field} exceeds ${max} characters`);
           if (/[\u0000-\u001f\u007f\u2028\u2029]/u.test(proof[field])) {
             throw new Error(`${where}: refusalProof.${field} must be one line without control characters`);
+          }
+        }
+      }
+
+      if (entry.responsibilityMap !== undefined) {
+        const map = entry.responsibilityMap;
+        if (!map || typeof map !== 'object' || Array.isArray(map)) throw new Error(`${where}: responsibilityMap must be an object`);
+        const allowed = new Set([...RESPONSIBILITY_MAP_FIELDS.keys(), 'layers']);
+        for (const field of Object.keys(map)) {
+          if (!allowed.has(field)) throw new Error(`${where}: responsibilityMap has unknown field ${field}`);
+        }
+        for (const [field, max] of RESPONSIBILITY_MAP_FIELDS) {
+          assertResponsibilityText(map[field], max, `${where}: responsibilityMap.${field}`);
+        }
+        if (!Array.isArray(map.layers) || map.layers.length !== 2) {
+          throw new Error(`${where}: responsibilityMap.layers must contain exactly 2 layers`);
+        }
+        for (const [index, layer] of map.layers.entries()) {
+          if (!layer || typeof layer !== 'object' || Array.isArray(layer)) {
+            throw new Error(`${where}: responsibilityMap.layers[${index}] must be an object`);
+          }
+          const layerAllowed = new Set([...RESPONSIBILITY_LAYER_FIELDS.keys(), 'owns']);
+          for (const field of Object.keys(layer)) {
+            if (!layerAllowed.has(field)) throw new Error(`${where}: responsibilityMap.layers[${index}] has unknown field ${field}`);
+          }
+          for (const [field, max] of RESPONSIBILITY_LAYER_FIELDS) {
+            assertResponsibilityText(layer[field], max, `${where}: responsibilityMap.layers[${index}].${field}`);
+          }
+          if (!Array.isArray(layer.owns) || layer.owns.length !== 3) {
+            throw new Error(`${where}: responsibilityMap.layers[${index}].owns must contain exactly 3 items`);
+          }
+          for (const [itemIndex, item] of layer.owns.entries()) {
+            assertResponsibilityText(
+              item,
+              RESPONSIBILITY_OWN_ITEM_MAX,
+              `${where}: responsibilityMap.layers[${index}].owns[${itemIndex}]`,
+            );
           }
         }
       }
@@ -416,6 +466,7 @@ function spokePage({ cluster, entry, claims, limitations, jobIndex, standing, ta
       '    <section>',
       // Above the sections, deliberately. Everything below is downstream of this being read.
       boundaryBlock(entry, standing),
+      responsibilityMap(entry),
       recordChain(entry),
       refusalProof(entry),
       ...entry.sections.map((section) => [
@@ -430,6 +481,41 @@ function spokePage({ cluster, entry, claims, limitations, jobIndex, standing, ta
       '  </div>',
     ].join('\n'),
   };
+}
+
+/**
+ * A semantic two-layer map for a page whose argument is division of responsibility. The fixed
+ * two-column shape is intentional: a generic card collection would not say which system owns
+ * which question, and could silently grow into a feature grid.
+ *
+ * @param {any} entry
+ */
+function responsibilityMap(entry) {
+  if (!entry.responsibilityMap) return '';
+  const map = entry.responsibilityMap;
+  return [
+    '      <figure class="responsibility-map" aria-labelledby="responsibility-map-title">',
+    '        <figcaption>',
+    '          <span class="kicker">Two layers, two questions</span>',
+    `          <strong id="responsibility-map-title">${escapeHtml(map.title)}</strong>`,
+    `          <span>${escapeHtml(map.caption)}</span>`,
+    '        </figcaption>',
+    '        <div class="responsibility-layers">',
+    ...map.layers.map((layer) => [
+      '          <article class="responsibility-layer">',
+      `            <span class="responsibility-label">${escapeHtml(layer.label)}</span>`,
+      `            <h3>${escapeHtml(layer.name)}</h3>`,
+      '            <strong class="responsibility-subhead">Owns</strong>',
+      '            <ul>',
+      ...layer.owns.map((item) => `              <li>${escapeHtml(item)}</li>`),
+      '            </ul>',
+      `            <p><strong>Does not own here:</strong> ${escapeHtml(layer.doesNotOwn)}</p>`,
+      '          </article>',
+    ].join('\n')),
+    '        </div>',
+    `        <p class="responsibility-bridge"><strong>Bridge:</strong> ${escapeHtml(map.bridge)}</p>`,
+    '      </figure>',
+  ].join('\n');
 }
 
 /**
@@ -1003,9 +1089,22 @@ function authoredStrings(entry) {
     ...(entry.recordChain?.nodes ?? []).flatMap((/** @type {any} */ node) => [node.label, node.detail, node.state]),
     entry.refusalProof?.title, entry.refusalProof?.caption, entry.refusalProof?.request,
     entry.refusalProof?.actor, entry.refusalProof?.result,
+    entry.responsibilityMap?.title, entry.responsibilityMap?.caption, entry.responsibilityMap?.bridge,
+    ...(entry.responsibilityMap?.layers ?? []).flatMap((/** @type {any} */ layer) => [
+      layer.label, layer.name, ...(layer.owns ?? []), layer.doesNotOwn,
+    ]),
     ...(entry.boundaries ?? []),
     ...(entry.sections ?? []).flatMap((/** @type {any} */ section) => [section.heading, ...(section.body ?? [])]),
   ].filter((value) => typeof value === 'string');
+}
+
+/** @param {unknown} value @param {number} max @param {string} where */
+function assertResponsibilityText(value, max, where) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${where} must not be blank`);
+  if (value.length > max) throw new Error(`${where} exceeds ${max} characters`);
+  if (/[\u0000-\u001f\u007f\u2028\u2029]/u.test(value)) {
+    throw new Error(`${where} must be one line without control characters`);
+  }
 }
 
 /**

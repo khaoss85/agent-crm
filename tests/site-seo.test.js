@@ -268,6 +268,27 @@ test('the Smart CRM intent has one bounded search identity', (t) => {
   assert.equal(breadcrumb?.itemListElement.at(-1)?.name, 'A smart CRM knows when the agent must stop');
 });
 
+test('the CDP + CRM intent has one bounded search identity', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+
+  const path = 'concepts/cdp-plus-crm.html';
+  assert.ok(site.pages.includes(path));
+  const html = site.read(path);
+  assert.equal(/<title>([\s\S]*?)<\/title>/.exec(html)?.[1], 'CDP + CRM: profile beside process | Accordo');
+  assert.equal(canonicalOf(html), `${ORIGIN}/${path}`);
+  assert.match(metaContent(html, 'description') ?? '', /Pair a CDP profile layer/);
+  assert.equal(metaContent(html, 'og:url'), `${ORIGIN}/${path}`);
+
+  const structured = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
+    .map((match) => JSON.parse(match[1]));
+  const breadcrumb = structured.find((block) => block['@type'] === 'BreadcrumbList');
+  assert.equal(
+    breadcrumb?.itemListElement.at(-1)?.name,
+    'CDP + CRM works when profile and process stay separate',
+  );
+});
+
 test('the indexing gate flips every dependent output together, in both directions', (t) => {
   const priv = build({ repositoryStatus: 'private' });
   const pub = build({ repositoryStatus: 'public' });

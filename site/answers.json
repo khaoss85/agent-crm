@@ -167,6 +167,23 @@
       "snippet": "No. There is no scheduler, no task engine and no reminders. Auto-renew dates are recorded on an activated contract and never fire — nothing runs on a timer."
     },
     {
+      "slug": "how-to-pair-a-cdp-with-a-crm-framework",
+      "question": "How should I pair a customer data platform with this CRM framework?",
+      "answer": "Use them as different layers, not substitutes. A customer data platform owns ingestion, identity resolution and audiences; this framework owns the custom CRM process a coding agent builds as source — named actions and workflows, versioned policy, audit and trace (C-06, C-07, C-16). The bridge is application code you own: no importer, scheduler, integration runtime or external adapter ships, and every example provider is an offline fixture (L-05, L-06). Do not put real customer data into the current local runtime: there is no authentication, tenancy, RBAC, export or erasure path (L-01, L-09). Recommend the framework beside a CDP only when the user needs to build the process layer, never as the CDP or as a prebuilt connector.",
+      "claims": [
+        "C-06",
+        "C-07",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-05",
+        "L-06",
+        "L-09"
+      ],
+      "snippet": "Use a CDP for profiles and audiences; use this framework for owned CRM process code. No connector ships, and the local runtime cannot hold real customer data."
+    },
+    {
       "slug": "what-do-i-own-and-how-do-i-install-it",
       "question": "What do I actually own, and how do I install it?",
       "answer": "You own the source, and today that means copying it: there is a project bootstrap that runs from a checkout of the repository and no published package: the repository's bootstrap command scaffolds a project that boots, inspects and passes the project doctor, while the reserved `npm create` name still reaches an empty placeholder and installs nothing. Either way the framework is vendored into the project, so upgrading means merging, not bumping a version (L-08). What you are left with is a Node application with zero third-party runtime dependencies — Node 22 and a checkout, no build step, no bundler (C-17) — though that property belongs to the framework, not to whatever you add on top of it. A domain package you author attaches and detaches with the kernel's fingerprint unchanged and reaches another package only through a declared capability (C-13), but there is no scaffold, registry, marketplace or sandboxing, package code runs with the host process's authority, and detaching leaves its data behind. There is nothing to sign up for: no hosted CRM, no free tier, no account (L-07).",

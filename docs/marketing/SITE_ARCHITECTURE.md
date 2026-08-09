@@ -15,7 +15,7 @@ page for a topic, ten to twenty spokes each owning one sub-question, every spoke
 linking back to its pillar with descriptive anchor text.
 
 We already had two clusters and did not call them that: `jobs.html` over 68 job pages,
-and `answers.html` over 14 answer pages. Both are generated from a structured source
+and `answers.html` over 15 answer pages. Both are generated from a structured source
 with evidence attached to every row. **That is the pattern; the rest of the site is
 built the same way, or it is not built.**
 
@@ -31,10 +31,10 @@ with evidence paths, and pages are a rendering of it.
 |---|---|---|---|
 | **Capabilities** | `capabilities.html` | 6 | "can it do *my* commercial process?" |
 | **Agent tools** | `tools.html` | 8 | "what can my coding agent actually do here?" |
-| **Concepts** | `concepts.html` | 7 | "why is it built this way?" |
+| **Concepts** | `concepts.html` | 8 | "why is it built this way?" |
 | **Compare** | `compare.html` | 4 | "why this and not that?" |
 | **Jobs** *(exists)* | `jobs.html` | 68 | "is this specific job supported?" |
-| **Answers** *(exists)* | `answers.html` | 14 | a direct question, directly answered |
+| **Answers** *(exists)* | `answers.html` | 15 | a direct question, directly answered |
 
 **Capabilities is the commercial entry point and Jobs is its evidence.** A visitor
 searching "quote approval workflow" lands on a capability page; the JTBD rows that prove
@@ -92,6 +92,19 @@ Four new sources, all in `site/`, all with the same shape. Every one is read by
         "actor": "{ type: … }",
         "result": "403 …"
       },
+      "responsibilityMap": {              // optional; only when two layers divide one job
+        "title": "…",
+        "caption": "…",
+        "bridge": "…",                   // says whether the connection actually exists
+        "layers": [                       // exactly two
+          {
+            "label": "Profile layer",
+            "name": "…",
+            "owns": ["…", "…", "…"],   // exactly three bounded responsibilities
+            "doesNotOwn": "…"
+          }
+        ]
+      },
       "boundaries": ["…"],                // REQUIRED, non-empty — what it does not do
       "claims": ["C-06"],                 // ledger ids, must exist in claims.json
       "limitations": ["L-04"],            // ledger ids, must exist in claims.json
@@ -127,6 +140,14 @@ but before the essay. Every field is non-blank, single-line and bounded (`title`
 `caption` 300, `request` 500, `actor` 300, `result` 160 characters); unknown fields fail
 the build. A sample response that no test asserts, or a generic code panel used only for
 visual emphasis, does not clear this contract.
+
+**`responsibilityMap` is optional and semantic.** It is reserved for a page whose argument is
+that exactly two systems or layers answer different questions. The shape is deliberately fixed:
+two layers, three owned responsibilities per layer, one explicit non-responsibility per layer and
+one bridge sentence. Every string is non-blank, single-line, bounded and escaped; unknown fields
+fail the build. The bridge sentence must say whether the connection exists — a connector line that
+silently implies an integration does not clear this contract. The CDP + CRM page uses the map to
+separate profile ownership from process ownership while stating that Accordo ships no connector.
 
 ## 4. What may not be written
 

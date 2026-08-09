@@ -327,6 +327,104 @@ test('the refusal proof content contract rejects an incomplete receipt', () => {
   }
 });
 
+test('the CDP + CRM intent separates profile and process without inventing a connector', () => {
+  const html = read('concepts/cdp-plus-crm.html');
+  const answer = read('answers/how-to-pair-a-cdp-with-a-crm-framework.html');
+
+  assert.match(html, /<figure class="responsibility-map" aria-labelledby="responsibility-map-title">/);
+  assert.match(html, /Profile layer/);
+  assert.match(html, /Customer data platform/);
+  assert.match(html, /Process layer/);
+  assert.match(html, /Accordo CRM framework/);
+  assert.match(html, /Accordo ships no connector, importer or sync runtime/);
+  assert.ok(
+    html.indexOf('boundary-block') < html.indexOf('responsibility-map')
+      && html.indexOf('responsibility-map') < html.indexOf('section-block'),
+    'limitations must be read before the layer map, and the map before the supporting essay',
+  );
+  assert.match(html, /not a deployment guide/i);
+  assert.match(html, /no authentication, tenancy or RBAC/i);
+  assert.doesNotMatch(html, /built-in (?:CDP )?(?:connector|integration)/i);
+
+  assert.match(read('concepts.html'), /concepts\/cdp-plus-crm\.html/);
+  assert.match(read('compare/vs-a-customer-data-platform.html'), /concepts\/cdp-plus-crm\.html/);
+  assert.match(answer, /different layers, not substitutes/i);
+  assert.match(answer, /no importer, scheduler, integration runtime or external adapter ships/i);
+  assert.match(read('llms.txt'), /\[CDP \+ CRM works when profile and process stay separate\]\(concepts\/cdp-plus-crm\.html\)/);
+  assert.match(read('llms.txt'), /answers\/how-to-pair-a-cdp-with-a-crm-framework\.html/);
+});
+
+test('the responsibility map contract is closed, bounded, single-line and escaped', () => {
+  const readJson = (/** @type {string} */ path) => JSON.parse(readFileSync(join(repo, path), 'utf8'));
+  const sources = {
+    capabilities: readJson('site/capabilities.json'),
+    tools: readJson('site/tools.json'),
+    concepts: readJson('site/concepts.json'),
+    compare: readJson('site/compare.json'),
+  };
+  const build = (source) => buildClusterPages({
+    sources: source,
+    ledger,
+    jobs,
+    brand: readJson('site/brand.json'),
+    origin: 'https://accordo.dev',
+  });
+  const mapOf = (source) => source.concepts.entries
+    .find((/** @type {any} */ entry) => entry.slug === 'cdp-plus-crm').responsibilityMap;
+
+  const incomplete = structuredClone(sources);
+  delete mapOf(incomplete).bridge;
+  assert.throws(() => build(incomplete), /responsibilityMap\.bridge must not be blank/);
+
+  const wrongLayerCount = structuredClone(sources);
+  mapOf(wrongLayerCount).layers.pop();
+  assert.throws(() => build(wrongLayerCount), /responsibilityMap\.layers must contain exactly 2 layers/);
+
+  for (const [value, expected] of [
+    ['   ', /responsibilityMap\.bridge must not be blank/],
+    ['connector\nexists', /responsibilityMap\.bridge must be one line/],
+    ['x'.repeat(241), /responsibilityMap\.bridge exceeds 240 characters/],
+  ]) {
+    const invalid = structuredClone(sources);
+    mapOf(invalid).bridge = value;
+    assert.throws(() => build(invalid), expected);
+  }
+
+  const shortOwns = structuredClone(sources);
+  mapOf(shortOwns).layers[0].owns.pop();
+  assert.throws(() => build(shortOwns), /responsibilityMap\.layers\[0\]\.owns must contain exactly 3 items/);
+
+  const rootUnknown = structuredClone(sources);
+  mapOf(rootUnknown).bridg = 'typo';
+  assert.throws(() => build(rootUnknown), /responsibilityMap has unknown field bridg/);
+
+  const layerUnknown = structuredClone(sources);
+  mapOf(layerUnknown).layers[0].owner = 'typo';
+  assert.throws(() => build(layerUnknown), /responsibilityMap\.layers\[0\] has unknown field owner/);
+
+  const fields = [
+    ['title', (map) => map],
+    ['caption', (map) => map],
+    ['bridge', (map) => map],
+    ['label', (map) => map.layers[0]],
+    ['name', (map) => map.layers[0]],
+    ['doesNotOwn', (map) => map.layers[0]],
+  ];
+  for (const [field, target] of fields) {
+    const hostile = structuredClone(sources);
+    target(mapOf(hostile))[field] = `<${field} & value>`;
+    const page = build(hostile).find((candidate) => candidate.path === 'concepts/cdp-plus-crm.html');
+    assert.match(page.body, new RegExp(`&lt;${field} &amp; value&gt;`), `${field} must be escaped before rendering`);
+    assert.doesNotMatch(page.body, new RegExp(`<${field} & value>`));
+  }
+
+  const hostileOwn = structuredClone(sources);
+  mapOf(hostileOwn).layers[0].owns[0] = '<owns & value>';
+  const page = build(hostileOwn).find((candidate) => candidate.path === 'concepts/cdp-plus-crm.html');
+  assert.match(page.body, /&lt;owns &amp; value&gt;/);
+  assert.doesNotMatch(page.body, /<owns & value>/);
+});
+
 test('every internal link resolves to a page that was built', () => {
   /** @type {string[]} */
   const pages = [];

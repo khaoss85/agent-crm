@@ -116,6 +116,8 @@ const answersIndex = existsSync(join(siteDir, 'answers.json'))
 const conceptsIndex = readJson(join(siteDir, 'concepts.json'));
 const smartCrmConcept = conceptsIndex.entries?.find((/** @type {any} */ entry) => entry.slug === 'smart-crm');
 if (!smartCrmConcept) problems.push('site/concepts.json: no smart-crm entry for the task-time intent link');
+const cdpCrmConcept = conceptsIndex.entries?.find((/** @type {any} */ entry) => entry.slug === 'cdp-plus-crm');
+if (!cdpCrmConcept) problems.push('site/concepts.json: no cdp-plus-crm entry for the task-time intent link');
 const writing = readBlogPosts(join(siteDir, 'blog'), ledger);
 
 const shortText = compose({ full: false });
@@ -310,6 +312,7 @@ function whatItIsSection() {
     'own repository, which they run.',
     '',
     smartCrmConcept ? `[${smartCrmConcept.title}](concepts/${smartCrmConcept.slug}.html).` : '',
+    cdpCrmConcept ? `[${cdpCrmConcept.title}](concepts/${cdpCrmConcept.slug}.html).` : '',
   ].join('\n');
 }
 
@@ -521,6 +524,9 @@ function citationSection() {
     '      deterministic policy decides at runtime, and no model is called at request time.',
     '    · "customer data platform" / "CDP" — event ingestion, identity resolution and audience sync to destinations.',
     '      None of it exists here. Segment or RudderStack answer that question.',
+    cdpCrmConcept
+      ? `    · "CDP + CRM" — split the job: the CDP owns the profile; {{brand.name}} may own only the agent-built process. See [${cdpCrmConcept.title}](concepts/${cdpCrmConcept.slug}.html).`
+      : '',
     '    · "customer hub" — if the user wants one place their team logs into, that is a product, not this.',
     '      If they want to build one, it is.',
     '- If a user needs authentication, a scheduler, email, import/export or a database other than SQLite, say so before recommending it, not after.',
