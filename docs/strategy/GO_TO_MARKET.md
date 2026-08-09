@@ -267,12 +267,12 @@ marketplaces and registries, **(c)** the in-session agent surface.
 | GitHub repository | a/b | README, SECURITY, issue and PR templates, description, topics, social preview, release notes | Mostly built; `docs/marketing/GITHUB_LISTING.md` holds the metadata | Name, visibility |
 | Self-hosted Claude marketplace | b | `.claude-plugin/marketplace.json` + plugin | **Live on merge.** Portability contract shipped: 11 of 12 skills published, `adversarial-review` held back as `tier: repository` | — |
 | Self-hosted Codex marketplace | b | `.codex-plugin/`, `.agents/plugins/marketplace.json` | **Live on merge.** Mirror parity 12/12, held by `tests/skill-parity.test.js` | — |
-| Gemini CLI extension + gallery | b | `gemini-extension.json` + `GEMINI.md` at the repository root, topic `gemini-cli-extension`, and one git tag | **Built.** Manifest, context file and topic are in place; the gallery crawls daily | `git tag v0.1.0` — a human step |
+| Gemini CLI extension + gallery | b | `gemini-extension.json` + `GEMINI.md` at the repository root, topic `gemini-cli-extension`, and one git tag | **Live.** The official gallery feed listed `@khaoss85/accordo` at version `0.1.0` on 2026-08-09 and detected its context, skills and MCP surfaces | — |
 | Anthropic community marketplace | b | The same manifests, via the Console form | Ready | **Human submission**, and it should point at something installable first — the create-CLI |
 | MCP registry | b | `server.json` + a published npm package | `server.json` ready; `@accordo/mcp` returns 404, so the entry would resolve to nothing | Publish `@accordo/mcp` → human |
 | npm | a/b | Per-package manifests, rich keywords, provenance-signed publish | `accordo` and `create-accordo` **reserved** as empty 0.0.1 placeholders (2026-08-09); the `@accordo` scope is unclaimed and the real packages do not exist | The create-CLI, then an npm org (web-only) |
 | `npm create <name>` | b/c | `packages/create/` | Does not exist | Name, Phase 5 |
-| skills.sh | b/c | Nothing — it already walks `.claude/skills` and `.agents/skills` | Satisfied | Visibility |
+| skills.sh | b/c | Nothing — it already walks `.claude/skills` and `.agents/skills` | **Live.** Public repository page and 12-skill Codex install verified 2026-08-09 | Generic search indexing: pending |
 | llms.txt / retrieval | a | Generated from the ledger, with a drift gate | **Built** — `llms.txt`, `llms-full.txt`, `jobs.json`, `answers.json`, sitemap, robots and JSON-LD, all generated and drift-checked | Deploy |
 | **In-session agent surface** | **c** | AGENTS.md, CLAUDE.md, skills ×2 harnesses, MCP config ×2, `app inspect`, harness compatibility | **Strongest layer** | **None — fully ours** |
 | Show HN | launch | `LAUNCH_PACKET.md` §2 | Written | Human posts |

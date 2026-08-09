@@ -96,6 +96,18 @@ Hackers without presenting the pre-launch repository as an installable product.
 - 2026-08-09: re-verification at head `38d5a97` passed 742/742 tests, the seven
   focused SEO tests and the complete `gtm:check` gate. Both GitHub
   `public-claims` jobs passed after the full-history checkout correction.
+- 2026-08-09: PR #48 merged as `4d929e3`; deployment
+  `dpl_EWhqaktN1ovZhLb31UY3UzqeizQa` reached `READY` after the Vercel schema fix
+  in PR #46 merged as `6b5d379`. Anonymous production checks proved the article
+  returns 200, is self-canonical and indexable, emits `BlogPosting` JSON-LD, and
+  appears in sitemap, `llms.txt` and `llms-full.txt`. DEV's public API then
+  returned that exact Accordo URL as article `4354255`'s `canonical_url`.
+- 2026-08-09: created the `Accordo` Hashnode publication at
+  `accordo.hashnode.dev` and published the same article with four discovery tags,
+  the project's validated social preview and the Accordo production URL as its
+  canonical. Browser receipts confirmed the public page, Accordo links and the
+  `text/markdown` `.md` representation. Plain HTTP clients from this environment
+  received a Cloudflare 403, so crawler accessibility is recorded as unverified.
 
 ## Decision log
 
@@ -110,11 +122,12 @@ Hackers without presenting the pre-launch repository as an installable product.
 
 ## Outcome and follow-up
 
-The first canonical article and its adapted external versions are ready and the
-public-content gates pass. The two external versions are live:
+The first canonical article and its adapted external versions are live and the
+public-content gates pass. The external versions are:
 
 - `https://dev.to/dpelleri/if-a-coding-agent-builds-your-crm-what-should-it-refuse-to-do-5cke`
 - `https://www.indiehackers.com/post/what-should-a-coding-agent-be-structurally-unable-to-do-in-a-crm-484d2d2862`
+- `https://accordo.hashnode.dev/if-a-coding-agent-builds-your-crm-what-should-it-refuse-to-do`
 
 The initial repository-wide verification was not green because the
 project-doctor immutability test invoked a GNU-only `find` date literal on
@@ -126,14 +139,14 @@ News marked it dead. It is not counted as a live external version or a launch;
 the Show HN product launch remains deliberately unspent until the install path
 is real.
 
-The DEV copy currently declares its own DEV URL as canonical because the
-Accordo page did not exist when it was published. After the Accordo page is live,
-update DEV's canonical URL to the Accordo article; until that second receipt
-exists, the syndication order is a known SEO gap rather than a completed loop.
+The DEV copy now declares the Accordo production article as canonical. This was
+verified independently through DEV's public article API after the Accordo page
+was live, so the syndication order is closed rather than inferred from an editor
+save.
 
-Final source evidence for this change: 742 tests passing, 0 failing; seven SEO
-tests passing, including the human-and-agent discovery regression; 23 public
-claims and nine standing limitations accepted by `site-check`; 108 emitted
-pages. These are repository receipts, not live-deployment receipts. The live
-canonical page must still return 200 after merge before the task can be checked
-off in `TASKS.md`.
+Final repository verification after the production and distribution closeout:
+743 tests passing, 0 failing; `gtm:check` green, including the human-and-agent
+discovery regression; 23 public claims and nine standing limitations accepted
+by `site-check`; 108 emitted pages. These repository receipts are paired with
+the live-deployment receipts above. The canonical page returned 200 after merge
+and the task is checked off in `TASKS.md`.
