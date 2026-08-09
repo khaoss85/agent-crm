@@ -271,20 +271,39 @@ export function declaredScripts(rootDir) {
   }
 }
 
-/** Tracked source files that differ from HEAD, or null when this is not a git checkout. */
-export function trackedChanges(rootDir, run = defaultGit) {
+/**
+ * Every path git considers dirty right now, or null when this is not a git
+ * checkout. Sampled **twice** — once before any delegate runs and once after —
+ * because the only interesting question is which of these paths the
+ * verification itself is responsible for.
+ *
+ * @param {string} rootDir @param {(dir: string) => string|null} [run]
+ */
+export function worktreeState(rootDir, run = defaultGit) {
   const result = run(rootDir);
   if (result === null) return null;
-  return result.split('\n').map((line) => line.trim()).filter(Boolean).sort();
+  return [...new Set(String(result).split('\n').map((line) => line.trim()).filter(Boolean))].sort();
 }
 
-/** @param {string} rootDir */
+/**
+ * `git status --porcelain`, not `git diff --name-only HEAD`.
+ *
+ * `git diff` lists only *tracked* files, so a suite that wrote a brand-new
+ * file into the project — a scratch database, a generated module, a coverage
+ * directory nobody gitignored — left the report saying the worktree was clean.
+ * Porcelain reports the untracked ones too, and still says nothing about
+ * `.gitignore`d build output, which is exactly the line we want: build output
+ * is not source.
+ *
+ * @param {string} rootDir
+ */
 function defaultGit(rootDir) {
   const inside = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: rootDir, encoding: 'utf8' });
   if (inside.status !== 0) return null;
-  const changed = spawnSync('git', ['diff', '--name-only', 'HEAD', '--'], { cwd: rootDir, encoding: 'utf8' });
+  const changed = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: rootDir, encoding: 'utf8' });
   if (changed.status !== 0) return null;
-  return changed.stdout ?? '';
+  // "XY path" — drop the two status columns and their separating space.
+  return (changed.stdout ?? '').split('\n').map((line) => line.slice(3)).join('\n');
 }
 
 /**
@@ -316,6 +335,12 @@ export async function projectVerifyCommand(options = {}) {
   const problems = [];
   /** @type {any[]} */
   const evidence = [];
+
+  // The worktree as it was *before* this command did anything. Without this
+  // sample, "changed since HEAD" cannot distinguish a tree the operator had
+  // already edited — the normal state of a coding-agent handover — from a
+  // suite writing into the source it is meant to be reading.
+  const worktreeBefore = worktreeState(rootDir, git);
 
   // ---- 1. structural preflight -------------------------------------------
   // A project whose source the doctor refuses is not worth a fifteen-minute
@@ -503,29 +528,62 @@ export async function projectVerifyCommand(options = {}) {
   }
 
   // ---- 6. the worktree this command promised not to change -----------------
-  const changed = trackedChanges(rootDir, git);
-  if (changed === null) {
+  //
+  // The question is not "is the tree dirty" — after a coding-agent change it
+  // almost always is, and answering that produced a warning on every real run
+  // until a reader learned to skim past it. The question is **what did this
+  // command change**, which is a difference between two samples.
+  const worktreeAfter = worktreeState(rootDir, git);
+  if (worktreeBefore === null || worktreeAfter === null) {
     checks.push(check({
       code: 'worktree.clean', category: 'worktree', status: 'not_applicable', authority: 'git',
-      evidence: 'not a git checkout, so "changed since HEAD" has no meaning here', reason: 'NOT_A_GIT_CHECKOUT',
-    }));
-  } else if (changed.length === 0) {
-    checks.push(check({
-      code: 'worktree.clean', category: 'worktree', status: 'passed', authority: 'git',
-      evidence: 'no tracked source changed while verifying',
+      evidence: 'not a git checkout, so "changed while verifying" has no meaning here', reason: 'NOT_A_GIT_CHECKOUT',
     }));
   } else {
-    // Reported, never repaired. A verification command that silently resets the
-    // thing it is verifying is worse than one that tells you.
-    checks.push(check({
-      code: 'worktree.clean', category: 'worktree', status: 'warning', authority: 'git',
-      evidence: `${changed.length} tracked file(s) differ from HEAD after verifying`,
-      reason: changed.slice(0, 10).join(', '),
-    }));
-    problems.push({
-      code: 'WORKTREE_DIRTY_AFTER_VERIFY',
-      message: 'tracked source differs from HEAD after the run. Verification does not intentionally edit source, so either a suite writes into the project or the tree was already dirty. Nothing was reset, stashed or hidden',
+    const before = new Set(worktreeBefore);
+    const after = new Set(worktreeAfter);
+    const caused = worktreeAfter.filter((path) => !before.has(path));
+    // A path that was dirty before and is clean now means something *undid* an
+    // operator's uncommitted work. That is the failure the "never repaired"
+    // promise is about, and until now nothing could have detected it.
+    const reverted = worktreeBefore.filter((path) => !after.has(path));
+    evidence.push({
+      kind: 'worktree',
+      dirtyBeforeVerify: [...worktreeBefore],
+      changedByVerify: caused,
+      revertedByVerify: reverted,
+      note: 'sampled before and after the run; git-ignored build output is excluded by design',
     });
+
+    if (caused.length === 0 && reverted.length === 0) {
+      checks.push(check({
+        code: 'worktree.clean', category: 'worktree', status: 'passed', authority: 'git',
+        evidence: worktreeBefore.length === 0
+          ? 'the tree was clean before the run and nothing changed while verifying'
+          : `${worktreeBefore.length} path(s) were already modified before the run; verification changed none of them`,
+        reason: worktreeBefore.length === 0 ? null : 'DIRTY_BEFORE_VERIFY',
+      }));
+    } else {
+      // Reported, never repaired. A verification command that silently resets
+      // the thing it is verifying is worse than one that tells you.
+      checks.push(check({
+        code: 'worktree.clean', category: 'worktree', status: 'warning', authority: 'git',
+        evidence: `${caused.length} path(s) changed and ${reverted.length} reverted while verifying; ${worktreeBefore.length} were already dirty beforehand`,
+        reason: [...caused, ...reverted].slice(0, 10).join(', '),
+      }));
+      if (caused.length > 0) {
+        problems.push({
+          code: 'WORKTREE_DIRTY_AFTER_VERIFY',
+          message: `${caused.length} path(s) that were clean before this run differ from HEAD after it, so something the verification ran writes into the project. Paths already modified beforehand are excluded from this count. Nothing was reset, stashed or hidden`,
+        });
+      }
+      if (reverted.length > 0) {
+        problems.push({
+          code: 'WORKTREE_REPAIRED_BY_VERIFY',
+          message: `${reverted.length} path(s) were modified before this run and match HEAD after it, so something the verification ran discarded uncommitted work. This command never resets, stashes or cleans; a delegate did`,
+        });
+      }
+    }
   }
 
   const counts = tally(checks);

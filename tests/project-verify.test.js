@@ -178,11 +178,20 @@ test('a status change moves the fingerprint', async (t) => {
   assert.notEqual(pass.report.fingerprint, fail.report.fingerprint);
 });
 
-test('a dirty worktree is reported and never repaired', async (t) => {
+/**
+ * The worktree is sampled twice, so a git stub is a *script* of samples: what
+ * the tree looked like before the run, then after it.
+ */
+function gitSamples(...samples) {
+  let call = 0;
+  return () => samples[Math.min(call++, samples.length - 1)];
+}
+
+test('a worktree the run itself dirtied is reported and never repaired', async (t) => {
   const root = project(t);
-  const dirty = () => 'packages/core/src/schema.js\ndata/scratch.json\n';
+  const dirtiedByTheRun = gitSamples('', 'packages/core/src/schema.js\ndata/scratch.json\n');
   const { exitCode, report } = await projectVerifyCommand({
-    rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: recordingStep([]), git: dirty,
+    rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: recordingStep([]), git: dirtiedByTheRun,
   });
   assert.equal(exitCode, 0, 'a dirty tree is a warning a human must see, not a hard failure');
   assert.equal(report.status, 'warning');
@@ -192,6 +201,70 @@ test('a dirty worktree is reported and never repaired', async (t) => {
   assert.ok(report.problems.some((p) => p.code === 'WORKTREE_DIRTY_AFTER_VERIFY'));
   assert.match(report.problems.find((p) => p.code === 'WORKTREE_DIRTY_AFTER_VERIFY').message,
     /Nothing was reset, stashed or hidden/);
+});
+
+/**
+ * REGRESSION — a pre-existing dirty tree was accused of being dirtied by the
+ * run. DX5 sampled the worktree only *after* verifying, so the state a coding
+ * agent normally hands over in (uncommitted edits) was indistinguishable from a
+ * suite writing into source. The whole check exists to catch the second, and it
+ * fired on every instance of the first.
+ */
+test('a tree that was already dirty before the run is not blamed on the run', async (t) => {
+  const root = project(t);
+  const alreadyDirty = 'packages/core/src/schema.js\n';
+  const { exitCode, report } = await projectVerifyCommand({
+    rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: recordingStep([]),
+    git: gitSamples(alreadyDirty, alreadyDirty),
+  });
+  assert.equal(exitCode, 0);
+  const worktree = report.checks.find((c) => c.code === 'worktree.clean');
+  assert.equal(worktree.status, 'passed', 'verification changed nothing, so it is not accused of doing so');
+  assert.equal(worktree.reason, 'DIRTY_BEFORE_VERIFY', 'but the reader is still told the tree was not clean');
+  assert.equal(report.status, 'passed');
+  assert.ok(!report.problems.some((p) => p.code === 'WORKTREE_DIRTY_AFTER_VERIFY'));
+  // The two sets are published, so "who dirtied this" is machine-answerable.
+  const evidence = report.evidence.find((e) => e.kind === 'worktree');
+  assert.deepEqual(evidence.dirtyBeforeVerify, ['packages/core/src/schema.js']);
+  assert.deepEqual(evidence.changedByVerify, []);
+});
+
+/**
+ * REGRESSION — only paths the run introduced are blamed. With a single
+ * post-run sample, a tree with one operator edit and one suite-written file
+ * reported both, and a reader had no way to tell which was which.
+ */
+test('when a run dirties an already-dirty tree, only the new path is blamed', async (t) => {
+  const root = project(t);
+  const { report } = await projectVerifyCommand({
+    rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: recordingStep([]),
+    git: gitSamples('src/edited-by-the-operator.js\n', 'src/edited-by-the-operator.js\nsrc/written-by-the-suite.js\n'),
+  });
+  const worktree = report.checks.find((c) => c.code === 'worktree.clean');
+  assert.equal(worktree.status, 'warning');
+  assert.equal(worktree.reason, 'src/written-by-the-suite.js', 'the operator\'s own edit is not evidence against the run');
+  const evidence = report.evidence.find((e) => e.kind === 'worktree');
+  assert.deepEqual(evidence.changedByVerify, ['src/written-by-the-suite.js']);
+});
+
+/**
+ * REGRESSION — the "nothing was reset, stashed or hidden" promise had no
+ * detector. `git diff --name-only HEAD` after the fact cannot see that a
+ * delegate threw away an operator's uncommitted work: the tree simply looks
+ * clean, which read as a pass.
+ */
+test('a delegate that discards uncommitted work is caught, not read as a clean pass', async (t) => {
+  const root = project(t);
+  const { report } = await projectVerifyCommand({
+    rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: recordingStep([]),
+    git: gitSamples('src/precious.js\n', ''),
+  });
+  const worktree = report.checks.find((c) => c.code === 'worktree.clean');
+  assert.equal(worktree.status, 'warning', 'a tree that got *cleaner* during a verification is not a pass');
+  assert.ok(report.problems.some((p) => p.code === 'WORKTREE_REPAIRED_BY_VERIFY'));
+  assert.match(report.problems.find((p) => p.code === 'WORKTREE_REPAIRED_BY_VERIFY').message,
+    /discarded uncommitted work/);
+  assert.deepEqual(report.evidence.find((e) => e.kind === 'worktree').revertedByVerify, ['src/precious.js']);
 });
 
 test('a project that is not a git checkout is not applicable, never a failure', async (t) => {
