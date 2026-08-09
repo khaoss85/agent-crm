@@ -25,6 +25,18 @@ the application **refuses to start** and names the unmet edge.
 | `request-commercial-followup` | immutable handoff candidate | user |
 | `resolve-commercial-followup` | terminal transition with a reason | user |
 
+Four actions, and these are all of them. Expansion and contraction are two of
+the five `intent` values on `request-commercial-followup`, not separate records,
+and **nothing here records a successor** — there is no successor field, table or
+action, because a successor has to exist before it can be linked, and creating
+one is M16b.
+
+Keys are derived from state, never from the clock:
+`renewal-decision:<contractId>:<asOf>` (one decision per contract per day; a
+second is a 409, not an overwrite) and
+`commercial-followup:<contractId>:<intent>:<round>` (an open follow-up of the
+same intent is refused, a resolved one does not block the next round).
+
 ## What it will never say
 
 This package records **intent**, not outcomes:
@@ -40,14 +52,29 @@ This package records **intent**, not outcomes:
 
 M12 records activation terms as **operational metadata**, and `termsSource`
 exists because those dates may never have been signed. Every date this package
-reports carries its source, and `term.signed` is always `false`. A consumer
-physically cannot report a date without being able to say where it came from.
+reports carries its source, so a consumer physically cannot report a date
+without being able to say where it came from.
+
+`term.signed` is **derived from that source**, never asserted beside it: a
+single map in `packages/contracts/src/lifecycle-capability.js` classifies every
+`termsSource` the contract's enum allows, and a test fails if a new one is added
+without a decision. It is `false` for every source that exists today, and an
+unknown source stays `false` — reporting a signed term as unsigned costs
+somebody a redundant check, while reporting an unsigned date as a signed
+renewal term is the failure this package exists to prevent.
 
 ## Money is grouped, never totalled
 
 A commercial baseline is grouped by currency and recurrence. A one-time fee and
 a monthly charge are not the same kind of money, and there is no FX here — so
 there is no grand total, because it would not be a number anybody should act on.
+
+The same rule holds for the one row that *stores* money. A follow-up records
+`baselineNetAmountCents` only when the baseline collapses to exactly one kind of
+money, and then records `baselineChargeType` and `baselineInterval` beside it —
+because "EUR 171.00" is not a fact, and monthly, annually and once are three
+different asks. When the baseline is mixed, the amount is `null` rather than a
+total that is not money.
 
 ## Why amendment execution is not here
 

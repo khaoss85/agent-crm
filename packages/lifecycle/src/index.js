@@ -235,10 +235,11 @@ export function buildPlanRenewalAction(moduleNames) {
           subscriptionLineCount: subscriptionLines.length,
         },
         evidenceGaps: evidenceGaps(evidence),
-        approvalRequired: 'recording a decision, an intent, a follow-up or a successor all require actor.type === "user"',
+        approvalRequired: 'recording a decision, requesting a follow-up and resolving one all require actor.type === "user". No successor is recorded anywhere in M16a',
         limitations: [
           'NO_SCHEDULER — nothing fires on a boundary; this is asked, never pushed',
           'NOT_A_LEGAL_RENEWAL — no automatic or legal renewal is modelled or claimed',
+          'NO_SUCCESSOR_LINK — nothing here records or synthesizes a successor contract',
           'TERMS_MAY_BE_UNSIGNED — see term.source; activation terms are operational metadata',
           'NO_REVENUE_RECOGNITION — no ARR, MRR, TCV or forecast is computed',
         ],
