@@ -154,6 +154,34 @@ Do not merge the PR or promote production; those remain human gates.
 
 ## Outcome and follow-up
 
-Pending implementation and independent review. The final entry here will record the
-PR, immutable head SHA, test count, screenshot paths, clean-clone receipt, CI state
-and any human-only publication dependency.
+Implemented and independently reviewed in stacked PR
+[#53](https://github.com/khaoss85/agent-crm/pull/53), targeting the Customer Hub
+branch from PR #44. The reviewed artifact head is `b5d5a5d`; this plan-only closeout
+commit follows it. The functional review fix is `eb6f167`, and the claims ledger is
+bound to that SHA: `npm run verify` reports **777 passing, 0 failing**.
+
+The review found and fixed two defects:
+
+- **Medium — the displayed HTTP receipt was composed from two proofs.** The quote
+  refusal was asserted through a direct runtime call while the page printed the
+  generated POST route. The commercial end-to-end test now sends the approval via
+  an SDK client with `actor.type: agent`, exercising the route, actor headers and
+  normalized 403 as one event.
+- **Low — the new content contract did not fail closed.** A whitespace-only result,
+  multiline receipt, oversized field or unknown key could pass validation. All
+  five fields are now closed, bounded and single-line, and hostile markup is
+  escaped in every position.
+
+Clean clone `/tmp/accordo-smart-clean.zZ0RrR` passed `npm install`, `npm run verify`
+(777/777) and `npm run smoke`. A project scaffolded into the empty directory
+`/tmp/accordo-smart-starter.rnUcqm/project` reported valid from `app inspect`,
+passed `project doctor`, its own 3/3 tests and its own smoke. Real Chromium produced
+the repository's four standard screenshot artifacts; the Smart CRM page was also
+inspected at 1270 px and 390 px from
+`/tmp/accordo-smart-clean-{desktop,mobile}.png`. All live GitHub checks passed and
+there were zero review threads.
+
+The PR is safe to merge **after PR #44**, using a regular merge. A human still has
+to merge the stack and allow the normal site deployment. Nothing in this work
+publishes to npm, submits to a directory, promotes production or spends a one-shot
+launch channel.
