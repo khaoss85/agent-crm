@@ -145,6 +145,8 @@ const discoverySurfaces = collectDiscoverySurfaces({
   rootPackage: loaded.get('package.json'),
   createPackage: loaded.get('packages/create-accordo/package.json'),
   serverJson,
+  goalSkillDescription: readFileSync(join(root, 'skills/solve-business-goal/SKILL.md'), 'utf8')
+    .match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? '',
 });
 for (const failure of validateDiscoverySurfaces(discoverySurfaces)) fail(failure);
 

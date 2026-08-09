@@ -22,6 +22,8 @@ const manifests = {
   rootPackage: json('package.json'),
   createPackage: json('packages/create-accordo/package.json'),
   serverJson: json('server.json'),
+  goalSkillDescription: readFileSync(join(root, 'skills/solve-business-goal/SKILL.md'), 'utf8')
+    .match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? '',
 };
 const surfaces = new Map(collectDiscoverySurfaces(manifests));
 

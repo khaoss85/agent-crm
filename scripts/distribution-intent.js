@@ -14,6 +14,7 @@
  *   rootPackage: any,
  *   createPackage: any,
  *   serverJson: any,
+ *   goalSkillDescription: string,
  * }} input
  * @returns {Array<[string, string]>}
  */
@@ -41,6 +42,7 @@ export function collectDiscoverySurfaces(input) {
     ['root package', joinCopy(input.rootPackage?.description, input.rootPackage?.keywords)],
     ['create-accordo package', joinCopy(input.createPackage?.description, input.createPackage?.keywords)],
     ['MCP Registry server', joinCopy(input.serverJson?.description)],
+    ['skills.sh goal skill', joinCopy(input.goalSkillDescription)],
   ];
 }
 
