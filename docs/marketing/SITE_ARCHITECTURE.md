@@ -121,17 +121,18 @@ Above the floor, three rules that no regex enforces:
 
 ## 5. The blog
 
-The blog **engine** ships; the blog ships empty.
+The blog **engine** originally shipped empty. The first post now ships from
+`site/blog/if-a-coding-agent-builds-your-crm-what-should-it-refuse-to-do.md`.
 
 `site/blog/*.md` renders through the same shell, with front-matter that must declare
 the claim ids the piece uses, the transcript it is grounded in, and the named human
 editor of record — the six gates in `docs/strategy/ORGANIC_GROWTH.md` §11, made
 mechanical. `scripts/site-clusters.js` fails the build on a post missing any of them.
 
-There are zero posts, and the index page says so rather than showing placeholders. A
-post that has not been written is not content, and an editorial calendar rendered as if
-it were published is exactly the roadmap-ware the content rules forbid. The engine
-exists so that publishing the first piece is a one-file commit rather than a project.
+The renderer still has an honest zero-post state rather than showing
+placeholders. This repository has crossed that state once: the first post names
+its claims, transcript and editor, and the build refuses it if any of those
+artifacts disappears. An editorial calendar is still not published content.
 
 ## 6. What is deliberately absent
 
