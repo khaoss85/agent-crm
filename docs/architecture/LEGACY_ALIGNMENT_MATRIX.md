@@ -90,6 +90,7 @@ horizontal capability the way the contract intends?*
 | **A domain Skill, mirrored in `.claude/` and `.agents/`** | `partial` — covered by `create-crm-workflow`, no pipeline-specific Skill | `partial` ² | `partial` ² | `partial` ² | `partial` ² | `partial` ² |
 | **A tool namespace of its own** | `not_applicable` | `deferred` — DX13 | `deferred` — DX13 | `deferred` — DX13 | `deferred` — DX13 | `deferred` — DX13 |
 | **JTBD rows with linked evidence** | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
+| **Scenario evidence (DX6)** — a checked-in scenario runs a real journey and maps what it observed onto the domain's JTBD rows, with the rows it did *not* establish stated | `aligned` — JTBD-03 claimed and established | `aligned` — LI-01, LI-02, LI-04 claimed and established; LI-07 is not claimed | `aligned` — CO-01, CO-03, CO-07 | `partial` ³ | `partial` ³ | `partial` ³ |
 
 ### The domains outside the six-column table
 
@@ -99,6 +100,23 @@ horizontal capability the way the contract intends?*
 | **Custom-package fixture** (`examples/custom-packages/partner-scorecard/`) | `aligned` on the package seam by construction — it exists to prove a customer-authored package attaches, works and detaches with no kernel change. It deliberately exercises only a slice: one resource, one action, no capability of its own, so the capability rows read `not_applicable` |
 | **Service** | **built, on an open PR (M15).** Package-native from its first commit: `aligned` on the package seam, declared capabilities (requires `contracts/service-obligations@1`, provides three), `packageContract: 1` conformance, package version discipline, managed records, the human-actor boundary, fingerprinted declared definitions, transaction-scoped events, audit and trace, exact reads, AX1 visibility, AX2 citability, detach proof, fault-injection and two-connection evidence, and JTBD rows with linked evidence. `not_applicable` on the money contract and the external-operation contract: it prices nothing and calls no provider. `partial` ² on the Skill mirror — the mirrors currently agree, but nothing keeps them agreeing; the same DX2 gap every domain has. `deferred` on a tool namespace: §C.2b of `AGENT_TOOL_SURFACE.md` now works one through on Service, and it stays a proposal until DX13 |
 | **Marketing & Growth** | documentation only. No row can be assessed, and none is claimed |
+
+**Scenario evidence for the domains outside the six-column table.** Core CRM
+(Sales) is `aligned` — JTBD-04, JTBD-05 and JTBD-05b are claimed and established
+by the shipped scenario. The custom-package fixture is `aligned` — JTBD-PK-01 and
+JTBD-PK-02. **Service is `deferred`**: its package is composed in the journey's
+application and appears in the composition evidence, but no step observes it and
+no claim cites it, so the scenario establishes nothing about it. A service
+scenario is the next one to write, and needs no code. Marketing & Growth is
+`not_applicable` — documentation only.
+
+³ **`partial` on scenario evidence** means the shipped scenario reaches the
+domain and claims part of it, not all of it. The journey drives the signature
+envelope, webhook verification and reconciliation, the subscription activation,
+and delivery handover — but a claim only exists where a scenario wrote one, and
+DX6 publishes that as `COVERAGE_IS_CLAIMED_NOT_DISCOVERED`. Delivery execution,
+economics, change and acceptance (M14a/M14b1/M14b2) are not in this journey at
+all. Closing these is writing scenarios, not changing any domain.
 
 ¹ **Pipeline is not a domain.** `buildMoveStageAction` is a generic factory that
 stages *any* module a project points it at — a reusable runtime capability, which
@@ -397,6 +415,35 @@ Two rows of this document were prose until now and are now mechanical:
   `crm package test`.
 - **No generated-source drift beyond what a generator contract proves.** A
   fuzzy comparison that cries wolf is a check people silence.
+
+## The DX6 backfill answer, as the rule requires
+
+DX6 (`crm scenario run`) is a **horizontal capability**: business-scenario
+evidence is something every domain could have, and this matrix already carries a
+"JTBD rows with linked evidence" row that DX6 turns from prose into a report.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None at runtime.** DX6 adds one CLI command, three CLI modules, one checked-in scenario document and two test files. It changes no kernel behaviour, refactors no domain, and writes nothing into the project it reports on — the journey composes its application in a temporary directory outside the repository, which is removed afterwards. The one change outside the CLI is that `EXECUTABLE_SHAPES` is now **exported** from `packages/core/src/solution-plan.js`, so the scenario contract refuses commands from the same constant rather than a second copy. No behaviour changed |
+| Which are already aligned? | Pipeline, Lead Intelligence and Commercial Operations, plus Core CRM and the custom-package fixture outside the table: the shipped scenario claims and establishes their headline rows |
+| Which need metadata only? | **None.** A domain gets scenario evidence by a scenario claiming it — a checked-in JSON document, no code |
+| Which need a code backfill? | **None.** A *new journey* would need a registry entry in `packages/cli/src/scenario-journey.js`, deliberately: that boundary is what keeps a document from naming something to run |
+| What is `partial`, and why | Signature & Order, Contract Activation and Delivery: the journey drives more of each than any claim cites. DX6 cannot discover coverage — it checks what a scenario claims, and says so as `COVERAGE_IS_CLAIMED_NOT_DISCOVERED` |
+| What is `deferred`, and closed by what | **Service.** Its package composes into the journey's application but nothing observes it. Closed by writing a service scenario; no milestone is required |
+| What changed for extraction? | Nothing. DX6 measures jobs, not seams. It is neutral on the three `needs_extraction` domains and adds no blocker |
+| Matrix updated? | Yes — the row above, footnote ³, the note under the outside-the-table domains, and this section |
+
+### What DX6 deliberately did not close
+
+- **It promotes no JTBD row.** `docs/QUALITY_GATES.md` §3 keeps that with a
+  person, on merged tests. DX6 reports evidence, publishes
+  `SCENARIO_IS_NOT_PROMOTION`, and opens `jobs.json` and the matrix read-only.
+- **It discovers no coverage.** A row a journey exercises but no scenario claims
+  is reported as **not established**, exactly like a row nothing touched.
+- **It drives no browser**, so nothing here is evidence about the Admin as a user
+  sees it — the same `BROWSER_EVIDENCE_NOT_AUTOMATED` gap DX5 publishes.
+- **It speaks for one composition only** (`EVIDENCE_IS_ONE_COMPOSITION`), and one
+  journey and one scenario ship today.
 
 ## The LA0 backfill answer, as the rule requires
 

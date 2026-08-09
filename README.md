@@ -61,9 +61,10 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 | A customer-authored domain package attaches and detaches with the kernel fingerprint unchanged | no scaffold, no registry, no sandboxing — package code runs with the host's authority | `tests/package-contract.test.js`, `tests/custom-package-e2e.test.js` |
 | `crm app inspect` — one deterministic, source-only JSON report of what an application contains | never opens the database, contacts a provider or reads a secret — and says so in its own output | `tests/app-inspect.test.js` |
 | `crm solution check` — a Solution Plan is a checked-in contract with a canonical fingerprint | a document contract, not a planner and not a runtime; nothing executes a plan | `tests/solution-plan.test.js` |
+| `crm scenario run` — a checked-in business scenario runs against a real composed application and reports which JTBD rows it earned **and which it did not** | coverage is claimed by a scenario rather than discovered; it promotes no row, drives no browser, and speaks for one composition | `tests/scenario-run.test.js` |
 | Generated modules evolve through explicit revisions and append-only named migrations | source-only: what a particular database applied is not knowable from here | `tests/module-evolution.test.js` |
 
-**701 tests, 0 failing**, run on every push together with the smoke test.
+**793 tests, 0 failing**, run on every push together with the smoke test.
 
 ## Run it
 

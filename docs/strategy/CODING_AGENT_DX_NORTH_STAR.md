@@ -38,7 +38,8 @@ GOAL
   → PLAN      what to build                      Solution Plan (AX2)
   → BUILD     a conforming start, then the work  Package Scaffold (DX3) + the agent
   → CHECK     inconsistencies, and the rules     Project Doctor (DX1) + Package Conformance (DX4)
-  → PROVE     that it works                      Quality Gates; DX5 + DX10 are future
+  → PROVE     that it works                      Quality Gates + Project Verify (DX5)
+              which business jobs it earns        Scenario Evidence (DX6); DX10 is future
 
 Refactor-only:
   → PRESERVE  freeze behaviour before changing it   LA0 Characterization
@@ -118,7 +119,7 @@ Every entry below is either **implemented** and verifiable by a command, or
 | **LA0 — legacy characterization** | does a refactor preserve behaviour? | **implemented** — `tests/characterization/`, `npm run characterize:intelligence` |
 | DX2 — Skill mirror sync | do the harness mirrors agree, and stay agreeing? | **future, and now a reconciliation** — the mirrors currently agree (12/12, doctor `passed`) because they were aligned by hand on main. Project Doctor detects disagreement and by design never writes: no canonical source, no sync command, no CI drift gate, no adapter generation |
 | **DX5 — Project Verify** | can I prove this project is healthy enough to hand back? | **implemented** — `crm project verify --json` |
-| DX6 — Scenario Runner | does it work for this business scenario? | **future** |
+| **DX6 — Scenario Runner** | which JTBD rows does this checkout actually earn, and which does it not? | **implemented** — `crm scenario run <scenario> --json` |
 | DX9 — Context Pack | what does an agent need to know, compactly? | **future** |
 | DX10 — Implementation Evidence | is the plan actually finished? | **future** |
 | DX13 — MCP parity | the same contracts as tools | **future** — policy in `docs/architecture/AGENT_TOOL_SURFACE.md` |
@@ -141,6 +142,7 @@ wrong. Each row names the failure first.
 | drowning in tools, then picking the wrong one | Agent Tool Surface: tiered, deferred, searchable namespaces | policy implemented, tools future |
 | mutating a project while claiming to inspect it | read/write separation, dry-run defaults, explicit `--apply`, human approval boundaries | implemented |
 | non-reproducible answers that cannot be diffed or trusted | deterministic contracts, canonical JSON, fingerprints, stable exit codes | implemented |
+| claiming a checkout supports a business job because a test filename sits next to that row in a Markdown table, with no way to state what a run did *not* establish | DX6 Scenario Runner | implemented |
 | reporting a plan complete while work is missing | DX10 Implementation Evidence | **future** |
 | exhausting context on a project it cannot summarize | DX9 Context Pack | **future** |
 
