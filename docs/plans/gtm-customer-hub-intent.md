@@ -324,3 +324,11 @@ Playwright cache layouts, a full Chromium binary is explicitly headless, and
 the harness treats the output file — not exit zero — as the receipt. The
 four-image publishing bundle then rendered successfully at its declared pixel
 dimensions.
+
+The rebased review tree at `171c1a9` was cloned into a new directory and run
+without inherited build output. `npm install --ignore-scripts` reported zero
+vulnerabilities; `npm run verify` passed **774/774**; `npm run smoke` returned
+`ok: true`. That exact tree is the new `site/claims.json` measurement receipt.
+The following ledger-only commit updates every present-tense count and generated
+retrieval surface; historical 741-test notes above remain historical evidence,
+not current claims.
