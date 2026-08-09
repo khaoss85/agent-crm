@@ -87,6 +87,14 @@ Hackers without presenting the pre-launch repository as an installable product.
 - 2026-08-09: the public-claims CI failure was a shallow-checkout defect rather
   than a claims failure: `site-check` could not resolve historical measurement
   commit `9958ed9`. The job now fetches full history before verifying the ledger.
+- 2026-08-09: adversarial browser smoke covered the generated article at desktop
+  width and the populated Writing index at a real 390 px emulated viewport. The
+  mobile document's viewport and scroll widths both measured 390 px; the status
+  banner, navigation, heading, article card and limitation block rendered without
+  clipping or horizontal overflow.
+- 2026-08-09: re-verification at head `38d5a97` passed 742/742 tests, the seven
+  focused SEO tests and the complete `gtm:check` gate. Both GitHub
+  `public-claims` jobs passed after the full-history checkout correction.
 
 ## Decision log
 
