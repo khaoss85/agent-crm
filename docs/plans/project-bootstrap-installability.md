@@ -502,6 +502,22 @@ Expected: `app inspect` → `"valid": true`, exit 0. `project doctor` → `"stat
   mechanically if the two ever drift. All three new gates were falsified by hand
   before being trusted.
 - **2026-08-09** — M6 green; final numbers in §12.
+- **2026-08-09 — adversarial review.** A fresh clone at PR head `a093b931`
+  found two bootstrap-proof defects and two portability/concurrency defects in
+  the quality gate. The copied bootstrap executable silently exited `0` when
+  macOS canonicalized `/var` to `/private/var`, because its main-module guard
+  compared URL spellings rather than file identity; it now compares real paths,
+  and the existing isolated-placeholder test proves exit `2` with the complete
+  refusal report. The package-rung proof reached back to the framework checkout
+  and passed an absolute path instead of using the generated project's own CLI
+  as its README instructs; it now proves that exact self-contained flow. The
+  doctor mutation test used GNU-only `find -newermt @0`; it now inventories
+  files with Node and also detects content-size or mtime changes. Finally, the
+  package cleanup test compared the shared system temp directory while other
+  suites used it concurrently; its real CLI subprocesses now receive a private
+  temp root, preserving the success/failure cleanup assertion without treating
+  another test's scratch as this command's leak. Focused evidence: 61/61
+  bootstrap-and-doctor tests and the isolated cleanup regression pass.
 
 ## 10. Decision log
 
@@ -559,16 +575,22 @@ exit 0), the project's own `scripts/check.js`, its own `node --test`
 
 **Numbers, measured in this worktree.**
 
-| | Baseline (`0c8a29d`, clean tree) | After (`83df814`) |
+| | Baseline (`0c8a29d`, clean tree) | After adversarial review |
 |---|---|---|
-| `npm run verify` | 741 tests, 739 passing, **2 failing** | 769 tests, 767 passing, **2 failing** |
-| Delta | — | **+28 tests, +28 passing, 0 new failures** |
-| The 2 failures | pre-existing and environmental (§11) | byte-for-byte the same two: `tests/delivery-change-acceptance-evidence.test.js:377` and `tests/package-test-command.test.js:259` |
+| `npm run verify` | 741 tests, 739 passing, **2 failing** | **769 tests, 769 passing, 0 failing** |
+| Delta | — | **+28 tests, +30 passing, -2 environmental failures** |
+| Baseline failures | pre-existing and environmental (§11) | the package scratch assertion is now concurrency-safe; the high-volume delivery case passed during the first review run |
 | `npm run smoke` | green | green |
 | `accordo project doctor --json` | `passed`, 0 failed, 0 warning | `passed`, 0 failed, 0 warning |
 | `npm run distribution:check` | passed | passed, with three new gates |
 | `npm run site:check` | passed, 23 claims / 9 limitations | passed, 23 claims / 9 limitations |
 | `npm run surface:check` | 1/1, 12/12, 9/10, 11/11 | **identical** — no skill, no MCP tool, no command added |
+
+The final adversarial-review run completed in the fresh clone with `npm run
+verify` green: syntax checked 252 JavaScript files and all 769 tests passed. A
+separate empty-directory run used the generated project's own CLI and produced
+`app inspect valid: true`, `project doctor passed` with 0 failed / 0 warning,
+its own tests at 3 passed / 0 failed, and a green smoke, with no install step.
 
 **Clean-clone verification** (`docs/QUALITY_GATES.md` §1.7). A fresh
 `git clone` of this branch into a new directory, with no `npm install` anywhere:

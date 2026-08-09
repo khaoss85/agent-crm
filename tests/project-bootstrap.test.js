@@ -151,14 +151,18 @@ test('the bootstrapped project can then take a package, which is the rung above 
   const workspace = scratch(t);
   const target = join(workspace, 'ladder-crm');
   assert.equal(bootstrap([target, '--apply']).exitCode, 0);
+  const generatedAccordoBin = join(target, 'packages/cli/bin/accordo.js');
 
   // DX3 inside the project the bootstrap made: the two commands are adjacent
   // rungs, and this is the proof that the lower one lands you on the higher.
-  const scaffold = run(accordoBin, ['package', 'scaffold', 'renewals', '--apply', '--json', '--root', target], { cwd: target });
+  // Use the generated project's own CLI and the relative path its README gives
+  // an operator; reaching back into the framework checkout would not prove the
+  // vendored result is self-contained.
+  const scaffold = run(generatedAccordoBin, ['package', 'scaffold', 'renewals', '--apply', '--json'], { cwd: target });
   assert.equal(scaffold.exitCode, 0);
   assert.equal(existsSync(join(target, 'packages/renewals/src/index.js')), true);
 
-  const conformance = run(accordoBin, ['package', 'test', join(target, 'packages/renewals'), '--json'], { cwd: target });
+  const conformance = run(generatedAccordoBin, ['package', 'test', 'packages/renewals', '--json'], { cwd: target });
   assert.equal(conformance.exitCode, 0, 'the scaffolded package conforms inside the bootstrapped project');
   assert.equal(JSON.parse(conformance.stdout).counts.failed, 0);
 });

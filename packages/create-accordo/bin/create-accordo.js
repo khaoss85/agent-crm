@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // @ts-check
 
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { applyProjectBootstrap, planProjectBootstrap } from '../src/project-bootstrap.js';
 
 /**
@@ -157,6 +159,16 @@ export function runCreateAccordo(argv) {
 // Guarded so the argument parser, the exit-code mapping and the text renderer
 // can be unit-tested by importing this file, which is also the only way to
 // prove the three of them agree with the executable that ships.
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+function isMainModule() {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(invoked);
+  } catch {
+    return import.meta.url === pathToFileURL(resolve(invoked)).href;
+  }
+}
+
+if (isMainModule()) {
   process.exitCode = runCreateAccordo(process.argv.slice(2));
 }
