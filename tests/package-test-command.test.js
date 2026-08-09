@@ -8,7 +8,7 @@ import { packageTestCommand } from '../packages/cli/src/package-test-command.js'
 import { AUTHORITIES } from '../packages/cli/src/package-test-checks.js';
 import {
   HANGS, HOSTILE_PACKAGES, SCRATCH_PROBES, SPAWNS_LONG_LIVED_CHILD, WELL_FORMED, consumer,
-  fixtureProject, manifestFor, provider, writeFixturePackage,
+  fixtureProject, manifestFor, ownedTempRoot, provider, writeFixturePackage,
 } from './helpers/package-test-fixtures.js';
 
 /**
@@ -258,7 +258,16 @@ throw new Error('failed while reading /home/somebody/private/thing.js');
 
 test('the caller\'s project is never written to, and the scratch is always removed', async (t) => {
   const before = new Set(readdirSync(join(repoRoot, 'packages', 'modules')));
-  const scratchBefore = readdirSync(tmpdir()).filter((entry) => entry.startsWith('accordo-package-test-'));
+  // Scratch projects are counted in a temp root this invocation owns, never in
+  // the machine's. The command puts its scratch wherever `os.tmpdir()` points,
+  // and that directory is shared: listing it counts the live scratch of every
+  // other Accordo process on the box, so this assertion used to fail for work
+  // it never did — two agents running the suite at once, or two CI jobs on one
+  // runner, was enough. Redirected here, a directory in this listing can only
+  // have been created by this run, and the assertion keeps its teeth: a scratch
+  // the command fails to remove still shows up.
+  const scratchRoot = ownedTempRoot(t);
+  const scratchBefore = readdirSync(scratchRoot).filter((entry) => entry.startsWith('accordo-package-test-'));
 
   await run('packages/service');
   const failing = fixtureProject(t);
@@ -267,7 +276,7 @@ test('the caller\'s project is never written to, and the scratch is always remov
 
   assert.deepEqual([...readdirSync(join(repoRoot, 'packages', 'modules'))].sort(), [...before].sort(),
     'no generated module appeared in the real project');
-  const scratchAfter = readdirSync(tmpdir()).filter((entry) => entry.startsWith('accordo-package-test-'));
+  const scratchAfter = readdirSync(scratchRoot).filter((entry) => entry.startsWith('accordo-package-test-'));
   assert.deepEqual(scratchAfter, scratchBefore, 'every scratch project was removed, on success and on failure');
   assert.ok(t);
 });

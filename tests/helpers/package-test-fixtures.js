@@ -17,6 +17,44 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
+/** The variables `os.tmpdir()` consults, in the order it consults them. */
+const TEMP_VARS = Object.freeze(['TMPDIR', 'TMP', 'TEMP']);
+
+/**
+ * A temporary directory this test alone owns, installed as the process's temp
+ * directory for the duration of the test.
+ *
+ * It exists so a test can assert on scratch directories *it* created rather
+ * than on the machine's. `mkdtemp` names are unique but the directory holding
+ * them is shared: the OS temp directory also carries the live scratch of every
+ * other Accordo process on the box — a second test runner, a parallel CI job,
+ * an agent working in another checkout — so a test that lists it is reading
+ * state it does not own and fails for work it never did.
+ *
+ * `os.tmpdir()` re-reads these variables on every call and a child process
+ * inherits them, so pointing them here moves the scratch of this process *and*
+ * of everything it spawns into a directory with exactly one author. Nothing
+ * outside that directory is ever listed or removed.
+ *
+ * The previous values are restored afterwards, so the redirection cannot leak
+ * into a sibling test.
+ *
+ * @param {import('node:test').TestContext} t
+ */
+export function ownedTempRoot(t) {
+  const previous = TEMP_VARS.map((name) => /** @type {const} */ ([name, process.env[name]]));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-owned-tmp-'));
+  for (const name of TEMP_VARS) process.env[name] = root;
+  t.after(() => {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+  return root;
+}
+
 /**
  * A minimal project: the framework, its apps and the manifest. The checked-in
  * composition files come with `packages/` and stay at their empty defaults,

@@ -29,7 +29,14 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
  *   living under a path with spaces behaves exactly like one that does not.
  */
 
-/** One scratch root per invocation; concurrent applies share a staging name. */
+/**
+ * One scratch root per invocation; concurrent applies share a staging name.
+ *
+ * It is created under `os.tmpdir()`, which re-reads `TMPDIR` on every call, so
+ * a caller that sets that variable decides where the scratch lands. That is the
+ * seam the suite uses to count only the scratch its own run created, instead of
+ * every `accordo-package-test-*` directory on the machine.
+ */
 const SCRATCH_PREFIX = 'accordo-package-test-';
 
 /** Copied unconditionally: the framework, its apps, and the manifest. */
