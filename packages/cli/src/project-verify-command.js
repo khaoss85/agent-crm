@@ -432,19 +432,35 @@ export async function projectVerifyCommand(options = {}) {
   // or design-only plan going stale is a fact, not a fault, and re-deciding
   // that here would be a second opinion nobody asked for.
   const planChecks = (doctorReport.checks ?? []).filter((entry) => entry.id?.startsWith('plans.'));
-  const gradedPlans = planChecks.filter((entry) => entry.status === 'failed' || entry.status === 'passed');
+  // DX1's vocabulary, used verbatim rather than re-derived: `passed` binds,
+  // `failed` is malformed or a declared-**required** plan that no longer binds,
+  // `warning` is a declared-**current** plan that no longer binds, and
+  // `not_applicable` is a plan nobody declared.
+  //
+  // Keeping only `passed` and `failed` dropped exactly the declared-current
+  // ones. A project that declares a single current plan which has since gone
+  // stale reported `not_applicable` — "this project declares no plan as
+  // current" — the check denying the very condition it exists to surface, while
+  // its evidence called the required plans it *did* grade "declared-current".
+  const gradedPlans = planChecks.filter((entry) => entry.status !== 'not_applicable');
+  const failedPlans = gradedPlans.filter((entry) => entry.status === 'failed');
+  const stalePlans = gradedPlans.filter((entry) => entry.status === 'warning');
   checks.push(check({
     code: 'plans.current',
     category: 'plans',
+    // DX1 decides; this only aggregates. A stale *current* plan stays a warning
+    // here because that is what the doctor called it — promoting it would be a
+    // second opinion nobody asked for.
     status: gradedPlans.length === 0 ? 'not_applicable'
-      : gradedPlans.every((entry) => entry.status === 'passed') ? 'passed' : 'failed',
+      : failedPlans.length > 0 ? 'failed'
+        : stalePlans.length > 0 ? 'warning' : 'passed',
     authority: 'solution-plan',
     required: true,
     evidence: gradedPlans.length === 0
-      ? 'this project declares no plan as current'
-      : `${gradedPlans.length} declared-current plan(s) graded`,
-    reason: gradedPlans.length === 0 ? 'NO_CURRENT_PLANS_DECLARED'
-      : gradedPlans.filter((e) => e.status === 'failed').map((e) => e.id).sort().join(', ') || null,
+      ? 'this project declares no plan; an undeclared plan is graded by nobody'
+      : `${gradedPlans.length} declared plan(s) graded, ${stalePlans.length} declared-current and no longer binding`,
+    reason: gradedPlans.length === 0 ? 'NO_DECLARED_PLANS'
+      : [...failedPlans, ...stalePlans].map((e) => e.id).sort().join(', ') || null,
   }));
 
   // ---- 4. package conformance ---------------------------------------------

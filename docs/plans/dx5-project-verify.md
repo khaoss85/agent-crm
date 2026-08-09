@@ -66,7 +66,7 @@ exit 2   the project or the verification infrastructure is unreadable
 |---|---|---|
 | structural preflight | `crm project doctor --json` | a doctor **failure blocks** verification; warnings are carried into the report |
 | application | `crm app inspect --json` | record the inspection fingerprint and any problems |
-| solution plans | DX1's applicability rules | only plans the project declares **current** are graded |
+| solution plans | DX1's applicability rules | every plan the project **declares** is aggregated, using DX1's own four-state grading verbatim: `passed` binds, `failed` is malformed or a declared-**required** plan that no longer binds, `warning` is a declared-**current** plan that no longer binds, `not_applicable` is a plan nobody declared. DX5 aggregates; it never re-decides |
 | package conformance | `crm package test` | composed local packages only, where source and prerequisites exist. A project-owned core module is never treated as a package |
 | project suite | the project's **declared** script | run it only if declared; never guess `npm test` |
 | smoke | the project's **declared** script | same rule |

@@ -531,6 +531,46 @@ test('an absolute path with unusual characters is fully redacted', () => {
 });
 
 /**
+ * REGRESSION — a project that declared a current plan which had since gone
+ * stale was told it declares no current plan.
+ *
+ * DX1 grades plans in four states: `passed` binds, `failed` is malformed or a
+ * declared-*required* plan that no longer binds, `warning` is a declared-
+ * *current* plan that no longer binds, `not_applicable` is undeclared. DX5 kept
+ * only `passed` and `failed` — dropping exactly the declared-current ones — so
+ * the single-stale-current-plan case fell into the "nothing was graded" branch
+ * and published `NO_CURRENT_PLANS_DECLARED`. The check denied the condition it
+ * exists to surface, and called the *required* plans it did grade
+ * "declared-current".
+ */
+test('a declared-current plan that has gone stale is not reported as no plan at all', async (t) => {
+  const root = project(t);
+  const withPlan = (status) => doctorOk({
+    checks: [{ id: 'plans.docs-renewals-plan-json', status, reason: 'the plan no longer binds to this composition' }],
+  });
+  const run = async (status) => {
+    const { report } = await projectVerifyCommand({
+      rootDir: root, doctor: withPlan(status), inspect: inspectOk, step: recordingStep([]), git: cleanGit,
+    });
+    return report.checks.find((c) => c.code === 'plans.current');
+  };
+
+  // DX1 says `warning` for a declared-CURRENT plan that no longer binds.
+  const stale = await run('warning');
+  assert.equal(stale.status, 'warning', 'DX1 called it a warning, so DX5 does too — it does not re-decide');
+  assert.notEqual(stale.reason, 'NO_CURRENT_PLANS_DECLARED');
+  assert.equal(stale.reason, 'plans.docs-renewals-plan-json', 'and it names the plan');
+  assert.match(stale.evidence, /declared-current and no longer binding/);
+
+  // DX1 says `failed` for a declared-REQUIRED plan that no longer binds.
+  assert.equal((await run('failed')).status, 'failed');
+  // DX1 says `not_applicable` for a plan nobody declared: graded by nobody.
+  const undeclared = await run('not_applicable');
+  assert.equal(undeclared.status, 'not_applicable');
+  assert.equal(undeclared.reason, 'NO_DECLARED_PLANS');
+});
+
+/**
  * REGRESSION — package conformance never ran on any project that composes
  * anything.
  *
