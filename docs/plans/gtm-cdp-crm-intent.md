@@ -107,6 +107,24 @@ two layers stack, while the bridge remains a sentence rather than a connector
 line that could imply an existing integration. Reduced-motion behaviour is
 unchanged because the component introduces no motion.
 
+## DX Simplicity Gate
+
+The concrete failure is a coding agent recommending this framework as a CDP, or
+assuming a connector exists because a two-system diagram draws one. Existing
+primitives were tried and are insufficient: `recordChain` is reserved for an
+ordered chain of records the framework owns, while `refusalProof` is an executed
+request/actor/result receipt. Reusing either would encode the wrong semantics.
+
+`responsibilityMap` is optional and appears only on a page whose argument needs
+it. It adds no command, tool, namespace or session-time choice. Its value is
+machine-readable and testable: exactly two layers, exactly three owned
+responsibilities each, one non-responsibility each, a mandatory bridge sentence,
+closed keys, bounded single-line text and escaped output. The end-user flow gets
+simpler because one retrieved page answers the compound query without requiring
+the agent to reconcile the negative comparison with a generic CRM page. The
+Compatibility Backfill row records every domain as `not_applicable`: this is a
+site content contract, not a runtime capability a domain must adopt.
+
 ## Milestones
 
 1. Add the ExecPlan and record the baseline.
@@ -161,6 +179,10 @@ oversized or unknown `responsibilityMap` fields must fail the build.
 - 2026-08-09 — the final reviewed functional commit is `a2888ed`. A clean
   worktree at that exact SHA passed 781/781 and smoke; C-20 is remeasured against
   that SHA rather than against the later ledger-only commit.
+- 2026-08-09 — pushed the reviewed stack through ledger commit `e611d96` and
+  re-cloned it from GitHub. Fresh install, full verify, smoke and the B2B Lead
+  Qualification starter all exited 0. The same clone produced all four standard
+  browser artifacts plus 1270×4200 and 390×5200 CDP + CRM page captures.
 
 ## Decision log
 
@@ -175,4 +197,38 @@ oversized or unknown `responsibilityMap` fields must fail the build.
 
 ## Outcome and follow-up
 
-Pending implementation and review.
+The compound intent is implemented in draft PR #54. A crawler or coding agent
+can retrieve the canonical concept page, a direct answer, the existing CDP
+comparison's related link and both `llms` variants. The page assigns profile and
+audience work to a CDP and named actions, versioned policy, audit and trace to
+the CRM process layer. It states above the essay that no connector, importer,
+integration runtime, production spine or real-customer-data path ships.
+
+The adversarial review found two low documentation defects and no remaining
+applicable defect:
+
+1. this plan asked for a `WebPage` JSON-LD block even though the template's
+   contract emits `BreadcrumbList`; a runnable parse returned exactly that one
+   type, the plan was corrected and the SEO test now holds the exact shape;
+2. `SITE_ARCHITECTURE.md` said 68 generated job pages while the build emitted
+   60; the document was corrected and a regression now derives jobs, answers,
+   concepts and total-page counts from the built artifact.
+
+Hostile markup, blank, multiline, oversized, unknown and prototype-shaped
+responsibility-map input fail closed or render inert. Existing entries build
+unchanged, every internal link resolves, metadata/canonical/sitemap checks pass,
+the layer map is readable at desktop and mobile widths, and the retrieval
+surface remains below budget. Runtime mutation, state-machine, transaction,
+idempotency, concurrency, exact-query, provider, replay, immutable-record and
+audit-count attacks are not applicable: this PR changes no CRM runtime path.
+
+C-20 is measured at the reviewed functional commit `a2888ed`: 781 passing and
+0 failing. The following `e611d96` commit changes only the ledger and its derived
+public copy. Final clean-clone install, verify, smoke, starter and browser gates
+are green. No JTBD status changed; the page links both validated and unsupported
+rows without promoting any of them.
+
+Human follow-up remains: CI must be green on the final plan-only head, then the
+draft may be marked ready. Merge order is #44 → #53 → #54 with regular merge
+commits, followed by site deployment. Until those actions happen, this work is
+repository-ready and not publicly discoverable at its canonical URL.
