@@ -106,3 +106,34 @@ test('a connection that stays idle past the reap deadline is still closed', asyn
   assert.equal(await Promise.race([closed, timedOut]), true,
     'an idle keep-alive connection must still be reaped, or the fix has simply disabled reaping');
 });
+
+test('a half-sent request that arrives across an overdue reap is still bounded', async (t) => {
+  // The one behaviour this changes: bytes that arrive while the reap timer is
+  // overdue keep the connection, so it is no longer reaped at THAT deadline.
+  // Keeping it must not become holding it open — the arriving bytes refresh the
+  // socket's idle timer, so the reap re-fires one keep-alive window later.
+  const { accepted, port } = await startServer(t, 100);
+
+  const client = connect(port, '127.0.0.1');
+  client.setNoDelay(true);
+  t.after(() => client.destroy());
+  await new Promise((resolve) => client.once('connect', resolve));
+
+  client.write(request(port));
+  assert.match(await nextResponse(client), /^HTTP\/1\.1 200 /);
+
+  const [served] = accepted;
+  const deadline = served.timeout;
+  // A request head that is never terminated, sent across an overdue reap.
+  client.write(`GET /api/notifications HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n`);
+  const start = Date.now();
+  while (Date.now() - start < deadline + 200) { /* block: no timers, no poll */ }
+
+  const closed = new Promise((resolve) => served.once('close', () => resolve(Date.now())));
+  const timedOut = new Promise((resolve) => setTimeout(() => resolve(false), deadline * 4));
+  const closedAt = await Promise.race([closed, timedOut]);
+  assert.notEqual(closedAt, false,
+    'a request that arrives but never completes must still be reaped, never held open forever');
+  assert.ok(closedAt - start <= deadline * 3,
+    'and reaped within one further keep-alive window, not deferred indefinitely');
+});

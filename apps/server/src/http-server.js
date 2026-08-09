@@ -126,6 +126,11 @@ export function createHttpServer(app, options = {}) {
  * If nothing arrived, the connection really is idle and is destroyed exactly as
  * before.
  *
+ * Keeping it cannot become holding it open. Bytes that arrive but do not finish
+ * a request refresh the socket's own idle timer, so the reap simply re-fires one
+ * keep-alive window later and destroys it then — measured at exactly one window,
+ * and pinned in tests/http-keep-alive-reap.test.js.
+ *
  * This changes how a connection is reaped, never when. The residual window —
  * bytes still on the wire, not yet in the receive queue, when the socket is
  * destroyed — is inherent to HTTP/1.1 keep-alive and belongs to the client.
