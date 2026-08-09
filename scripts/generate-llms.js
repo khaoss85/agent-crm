@@ -18,6 +18,7 @@
  *   the documents on disk       the reading order is checked against the filesystem,
  *                               and an uncatalogued doc is described from its own text
  *                               rather than silently omitted
+ *   site/blog/*.md              published writing, linked as a task-time retrieval path
  *   docs/benchmarks/jobs.json   the structured JTBD index, if it exists; when it does
  *                               not, the file says so instead of guessing
  *
@@ -31,6 +32,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { readBlogPosts } from './site-clusters.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -110,6 +112,7 @@ const jobs = readJobIndex(join(root, 'docs', 'benchmarks', 'jobs.json'));
 const answersIndex = existsSync(join(siteDir, 'answers.json'))
   ? readJson(join(siteDir, 'answers.json'))
   : null;
+const writing = readBlogPosts(join(siteDir, 'blog'), ledger);
 
 const shortText = compose({ full: false });
 const fullText = compose({ full: true });
@@ -187,6 +190,7 @@ function compose({ full }) {
     provenSection(full),
     jobCoverageSection(),
     answersSection(answersIndex),
+    writingSection(),
     commandsSection(),
     readingOrderSection(),
     citationSection(),
@@ -199,6 +203,25 @@ function compose({ full }) {
   }
 
   return `${blocks.join('\n\n').replace(/\n{3,}/g, '\n\n').trim()}\n`;
+}
+
+function writingSection() {
+  const lines = [
+    '## Published writing',
+    '',
+    'Evidence-backed articles are canonical on the project site. Syndicated copies may exist,',
+    'but these URLs are the versions bound to this repository\'s claims and transcripts.',
+    '',
+  ];
+  if (writing.length === 0) {
+    lines.push('- No article has crossed the editorial gate yet.');
+    return lines.join('\n');
+  }
+  for (const post of writing) {
+    const evidence = post.claims.length > 0 ? `; evidence ${post.claims.join(', ')}` : '';
+    lines.push(`- [${post.title}](blog/${post.slug}.html) — ${post.date}${evidence}.`);
+  }
+  return lines.join('\n');
 }
 
 /** @param {boolean} full */

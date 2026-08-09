@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -125,10 +125,18 @@ test('a project whose path contains spaces is read the same way', async (t) => {
 
 test('the doctor mutates nothing', async (t) => {
   const root = project(t);
-  const before = execFileSync('find', [root, '-type', 'f', '-newermt', '@0'], { encoding: 'utf8' }).split('\n').sort().join('\n');
+  const inventory = (directory) => readdirSync(directory, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => {
+      const path = join(entry.parentPath, entry.name);
+      const stat = statSync(path);
+      return [path.slice(root.length + 1), stat.size, stat.mtimeMs];
+    })
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  const before = inventory(root);
   await run(root);
-  const after = execFileSync('find', [root, '-type', 'f', '-newermt', '@0'], { encoding: 'utf8' }).split('\n').sort().join('\n');
-  assert.equal(after, before, 'no file may be created, moved or removed');
+  const after = inventory(root);
+  assert.deepEqual(after, before, 'no file may be created, moved, removed or modified');
   assert.equal(readFileSync(join(root, 'packages/domains/generated/index.js'), 'utf8'),
     readFileSync(join(repoRoot, 'packages/domains/generated/index.js'), 'utf8'));
 });
