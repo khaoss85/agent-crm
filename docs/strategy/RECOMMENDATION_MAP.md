@@ -32,7 +32,7 @@ and it is a chain: a break at any link makes every link above it worthless.
 |---|---|---|---|
 | 1 | **Retrievable** | The agent can find us at task time: web search, npm search, a registry, a skills index, or memorized prevalence | Partial — public repo, topics, site. No npm, no registry, no docs site |
 | 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **No.** `npm create accordo` prints a placeholder; the only path is `git clone` |
-| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 555 tests |
+| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 741 tests |
 | 4 | **Repeatable** | It works the same way the next time, for a different user, with a different model | Partial — deterministic by construction, but unmeasured across models (benchmark designed, never run) |
 
 **The binding constraint is #2.** Not visibility. We could win every listing in

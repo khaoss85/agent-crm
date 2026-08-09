@@ -188,7 +188,7 @@ the whole ledger via `{{ledger:limitations}}`, so the surface-coverage check in
 `scripts/site-check.js` is satisfied by construction, and neither needs a README
 sentence written to justify it.
 
-## The ledger measurement block — measured, and deliberately not corrected
+## The ledger measurement block — measured three times, then corrected
 
 `site/claims.json` records `sha: "9958ed9", tests: 701`. Main is `0c8a29d`, and
 the block's own note says *"A claims file measured against a stale SHA is a
@@ -216,20 +216,32 @@ directory while this worktree's copy of that test asserted no such directory
 survives. A serial re-run (`--test-concurrency=1`) was started to get a clean
 number and did not survive the contention either.
 
-**So the block is left as it is.** `tests: 741` is measured and could be
-written; `failures: 0` is not, and the entire point of the block is that it does
-not carry a number nobody ran. Writing an unobserved zero into the file whose
-own note warns against exactly that would be worse than leaving a stale SHA
-next to a `site-check` note that already announces the staleness on every build:
+The block was therefore **not** going to be corrected: `tests: 741` was measured
+and `failures: 0` was not, and the entire point of the block is that it never
+carries a number nobody ran.
 
-> note: The ledger was measured 22 commit(s) ago at 9958ed9. Re-run npm run
-> verify and update measuredAgainst before publishing anything.
+Then the sibling sessions finished, and a third run on a quiet machine — at
+`fe92a0e`, with a clean worktree — reported **741 tests, 741 passing, 0 failing,
+exit 0, in 225 seconds**. That is the measurement, so the block now records it:
 
-The correction is one clean full run away, on a machine that is not shared, and
-it should also carry `README.md`, `site/answers.json`, `site/concepts.json`,
-C-20's text and repoFact, and the two launch documents — every surface that
-states the count in the present tense. `docs/strategy/RECOMMENDATION_MAP.md` §1
-says **555 tests** and belongs in the same sweep.
+```
+sha: fe92a0e   tests: 741   failures: 0   date: 2026-08-09
+```
+
+`fe92a0e` is the commit whose tree was tested, not a commit chosen for
+convenience. **If this branch is squashed rather than merged, that SHA stops
+existing and `site-check` fails with "measuredAgainst.sha … is not a commit in
+this repository" — which is the gate behaving correctly, because a squashed
+branch is a different tree that nobody measured.** Merge it, or re-measure.
+
+The count is corrected on every surface that states it in the present tense, not
+only the two `site-check` sweeps: `site/claims.json` (the block, C-20's text and
+C-20's repoFact), `README.md`, `site/answers.json`, `site/concepts.json`,
+`docs/marketing/OBJECTIONS.md`, `docs/marketing/LAUNCH_PACKET.md`, and
+`docs/strategy/RECOMMENDATION_MAP.md` §1, which said **555**. Documents that
+quote a count *as of a stated date* — `GO_TO_MARKET.md`, `AGENT_RECOMMENDATION.md`,
+`RENAME_SURFACE.md`, `FOUNDER_CHECKLIST.md`, `PENDING_HUMAN_SUBMISSION.md` and
+the milestone plans — are records of a moment and are left alone.
 
 ## The other stale number, found on the way
 

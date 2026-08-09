@@ -3,11 +3,11 @@
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used.",
   "measuredAgainst": {
     "date": "2026-08-09",
-    "sha": "9958ed9",
+    "sha": "fe92a0e",
     "command": "npm run verify",
-    "tests": 701,
+    "tests": 741,
     "failures": 0,
-    "note": "Re-measure and update this block before any public launch. A claims file measured against a stale SHA is a claims file that lies."
+    "note": "Re-measure and update this block before any public launch. A claims file measured against a stale SHA is a claims file that lies. The sha is the commit whose tree was actually tested, so squashing the branch that set it makes it unresolvable and site-check will refuse it — merge, or measure again."
   },
   "claims": [
     {
@@ -442,10 +442,10 @@
     },
     {
       "id": "C-20",
-      "text": "701 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
+      "text": "741 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
       "evidence": {
         "repoFacts": [
-          "npm run verify at 9958ed9: 701 passing, 0 failing",
+          "npm run verify at fe92a0e: 741 passing, 0 failing",
           ".github/workflows/ci.yml runs verify and smoke on push and pull_request"
         ],
         "docs": [
