@@ -63,7 +63,7 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 | `crm solution check` — a Solution Plan is a checked-in contract with a canonical fingerprint | a document contract, not a planner and not a runtime; nothing executes a plan | `tests/solution-plan.test.js` |
 | Generated modules evolve through explicit revisions and append-only named migrations | source-only: what a particular database applied is not knowable from here | `tests/module-evolution.test.js` |
 
-**701 tests, 0 failing**, run on every push together with the smoke test.
+**The whole suite runs on every push**, together with the smoke test. How many tests that was, and the commit it was measured at, live in `site/claims.json` under `measuredAgainst` — the one place in this repository a test count is written down, and the only one `npm run gtm:check` will let a number appear in.
 
 ## Run it
 
@@ -71,7 +71,7 @@ Node.js 22.16 or newer. There are no third-party runtime dependencies and no bui
 
 ```bash
 npm run tour     # compose the whole application and inspect it
-npm run verify   # 701 tests
+npm run verify   # source checks, then the whole test suite
 npm run falsify  # break five rules on purpose and watch the suite catch them
 npm run demo     # the approval slice, end to end
 npm run dev      # http://localhost:4000
