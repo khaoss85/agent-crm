@@ -53,6 +53,8 @@ export const STEP_TIMEOUT_MS = 15 * 60_000;
 export const MAX_CAPTURED_OUTPUT = 64 * 1024;
 /** How much of a captured stream reaches the report as a summary. */
 export const MAX_SUMMARY = 400;
+/** After the step's own process exits, how long to collect what it wrote. */
+export const DRAIN_MS = 250;
 
 /**
  * The scripts DX5 will run **if the project declares them**, and the check each
@@ -126,52 +128,90 @@ export function check(entry) {
  * built from structured fields rather than from the log, cannot corrupt the
  * JSON document either.
  *
- * @param {{command: string, args: string[], cwd: string, timeoutMs?: number}} options
+ * **The step settles on the child's `exit`, not on its streams closing.** A
+ * grandchild the script spawned — a dev server, a watcher, a leaked worker —
+ * inherits these pipes and holds them open for as long as it lives, so `close`
+ * can arrive long after the process we started has already finished and exited
+ * 0. Waiting for it made every project whose suite leaks a background process
+ * burn the full fifteen-minute timeout and then report a *false* failure. This
+ * is the same defect `child-report.js` documents having found in AX1; the fix
+ * is the same one: settle on `exit`, drain briefly for what was still in
+ * flight, and treat an inherited pipe that never closes as not our problem.
+ *
+ * @param {{command: string, args: string[], cwd: string, timeoutMs?: number,
+ *   env?: NodeJS.ProcessEnv}} options
  */
-export function runStep({ command, args, cwd, timeoutMs = STEP_TIMEOUT_MS }) {
+export function runStep({ command, args, cwd, timeoutMs = STEP_TIMEOUT_MS, env }) {
   return new Promise((resolveStep) => {
     const started = Date.now();
     let out = '';
     let truncated = false;
     let settled = false;
     /** @type {any} */
+    let drain = null;
+    /** @type {any} */
     let child;
     try {
-      child = spawn(command, args, { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(command, args, {
+        cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
+      });
     } catch (error) {
       resolveStep({ ok: false, code: null, signal: null, output: '', timedOut: false, truncated: false, durationMs: 0, spawnError: String(/** @type {any} */ (error).message) });
       return;
     }
     const absorb = (chunk) => {
       if (out.length >= MAX_CAPTURED_OUTPUT) { truncated = true; return; }
-      out += chunk.toString();
+      out += chunk;
       if (out.length > MAX_CAPTURED_OUTPUT) { out = out.slice(0, MAX_CAPTURED_OUTPUT); truncated = true; }
     };
-    child.stdout.on('data', absorb);
-    child.stderr.on('data', absorb);
+    for (const stream of [child.stdout, child.stderr]) {
+      if (!stream) continue;
+      // Decode on the stream, never per chunk: a multi-byte character split
+      // across two `data` events becomes U+FFFD twice if each Buffer is
+      // stringified on its own, and mojibake in a failure reason is a worse
+      // diagnostic than no reason at all.
+      stream.setEncoding('utf8');
+      stream.on('data', absorb);
+      // A stream torn down by the kill is not a diagnostic.
+      stream.on('error', () => {});
+    }
 
     const stopGroup = () => {
       try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ }
       try { child.kill('SIGKILL'); } catch { /* already gone */ }
     };
-    const timer = setTimeout(() => {
+    /** @param {any} result */
+    const finish = (result) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
+      if (drain) clearTimeout(drain);
+      // A grandchild may still hold these pipes. Let go of them, or this
+      // command's own event loop stays alive waiting on a process it does not
+      // own and never agreed to supervise.
+      try { child.stdout?.destroy(); child.stderr?.destroy(); child.unref?.(); } catch { /* already gone */ }
+      resolveStep(result);
+    };
+    const timer = setTimeout(() => {
       stopGroup();
-      resolveStep({ ok: false, code: null, signal: 'SIGKILL', output: out, timedOut: true, truncated, durationMs: Date.now() - started, spawnError: null });
+      finish({ ok: false, code: null, signal: 'SIGKILL', output: out, timedOut: true, truncated, durationMs: Date.now() - started, spawnError: null });
     }, timeoutMs);
 
     child.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolveStep({ ok: false, code: null, signal: null, output: out, timedOut: false, truncated, durationMs: Date.now() - started, spawnError: String(error.message) });
+      finish({ ok: false, code: null, signal: null, output: out, timedOut: false, truncated, durationMs: Date.now() - started, spawnError: String(error.message) });
     });
-    child.on('close', (code, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolveStep({ ok: code === 0, code, signal, output: out, timedOut: false, truncated, durationMs: Date.now() - started, spawnError: null });
+    /** @param {number|null} code @param {string|null} signal */
+    const done = (code, signal) => finish({
+      ok: code === 0, code, signal, output: out, timedOut: false, truncated,
+      durationMs: Date.now() - started, spawnError: null,
+    });
+    // `close` is the happy path and arrives within microseconds of `exit` when
+    // nothing leaked; the drain only ever fires when something did.
+    child.on('close', done);
+    child.on('exit', (code, signal) => {
+      if (settled || drain) return;
+      drain = setTimeout(() => done(code, signal), DRAIN_MS);
+      if (typeof drain.unref === 'function') drain.unref();
     });
   });
 }
@@ -374,6 +414,7 @@ export async function projectVerifyCommand(options = {}) {
         command: process.execPath,
         args: ['--no-warnings', join(rootDir, 'packages/cli/bin/accordo.js'), 'package', 'test', path, '--json', '--root', rootDir],
         cwd: rootDir,
+        env: childEnv,
       });
       checks.push(check({
         code: `packages.conformance.${path}`,
@@ -381,7 +422,7 @@ export async function projectVerifyCommand(options = {}) {
         status: result.ok ? 'passed' : 'failed',
         authority: 'package-conformance',
         required: true,
-        evidence: `crm package test ${path}`,
+        evidence: `crm package test ${path}${result.truncated ? ' [output truncated]' : ''}`,
         reason: result.ok ? null : stepReason(result, rootDir),
         durationMs: result.durationMs,
       }));
@@ -420,7 +461,7 @@ export async function projectVerifyCommand(options = {}) {
       status: result.ok ? 'passed' : 'failed',
       authority: 'project-script',
       required,
-      evidence: `npm run ${script}`,
+      evidence: `npm run ${script}${result.truncated ? ' [output truncated]' : ''}`,
       reason: result.ok ? null : stepReason(result, rootDir),
       durationMs: result.durationMs,
     }));
@@ -486,7 +527,12 @@ function stepReason(result, rootDir) {
   if (result.spawnError) return `could not start: ${redact(result.spawnError, rootDir)}`;
   if (result.timedOut) return `timed out after ${STEP_TIMEOUT_MS}ms; its process group was stopped`;
   const summary = summarize(result.output, rootDir);
-  return `exit ${result.code}${summary ? `: ${summary}` : ''}${result.truncated ? ' [output truncated]' : ''}`;
+  const tail = `${summary ? `: ${summary}` : ''}${result.truncated ? ' [output truncated]' : ''}`;
+  // A child killed by a signal has no exit code. Reporting that as "exit null"
+  // hid the one fact worth knowing: an OOM-killed suite and a suite that
+  // returned garbage read identically.
+  if (result.code === null && result.signal) return `killed by ${result.signal}${tail}`;
+  return `exit ${result.code}${tail}`;
 }
 
 /** @param {any[]} checks */

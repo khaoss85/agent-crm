@@ -297,6 +297,85 @@ test('runStep really bounds a hang, and stops the process group', async () => {
   assert.ok(Date.now() - started < 20_000, 'the timeout must actually fire');
 });
 
+/**
+ * REGRESSION — the step settled on `close`, which is the *streams* closing, not
+ * the process exiting. Any suite that leaves a background process behind — a
+ * dev server, a watcher, a leaked worker — has a grandchild holding the
+ * inherited stdout pipe open, so `close` never came and the step burned its
+ * whole fifteen-minute timeout before reporting a **false** timeout failure for
+ * a suite that had already exited 0. `child-report.js` documents finding and
+ * fixing exactly this in AX1; DX5 forked the pattern without the fix.
+ */
+test('a suite that exits 0 but leaks a background process is not a false timeout', async () => {
+  const started = Date.now();
+  const result = await runStep({
+    command: process.execPath,
+    args: ['-e', `
+      const { spawn } = require('node:child_process');
+      // A grandchild that inherits the pipes and outlives its parent.
+      spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'inherit' });
+      console.log('SUITE PASSED');
+      process.exit(0);`],
+    cwd: process.cwd(),
+    timeoutMs: 8000,
+  });
+  assert.equal(result.ok, true, 'the suite exited 0; the leaked grandchild is not the suite\'s verdict');
+  assert.equal(result.code, 0);
+  assert.equal(result.timedOut, false);
+  assert.match(result.output, /SUITE PASSED/, 'what it wrote before exiting is still captured');
+  assert.ok(Date.now() - started < 6000, 'and it settled on exit rather than waiting out the timeout');
+});
+
+/**
+ * REGRESSION — output was decoded with `chunk.toString()` per `data` event, so
+ * a multi-byte character split across two chunks became two U+FFFD replacement
+ * characters. Mojibake in a failure reason is a worse diagnostic than none.
+ */
+test('a multi-byte character split across two chunks is not corrupted', async () => {
+  const result = await runStep({
+    command: process.execPath,
+    // "café" with the two bytes of "é" written in separate flushes.
+    args: ['-e', `
+      process.stdout.write(Buffer.from([0x63, 0x61, 0x66, 0xc3]));
+      setTimeout(() => { process.stdout.write(Buffer.from([0xa9])); process.exit(0); }, 120);`],
+    cwd: process.cwd(),
+    timeoutMs: 8000,
+  });
+  assert.equal(result.output, 'café');
+  assert.ok(!result.output.includes('�'), 'no replacement characters');
+});
+
+/** REGRESSION — a signal-killed child reported "exit null", hiding the signal. */
+test('a step killed by a signal names the signal instead of reporting "exit null"', async (t) => {
+  const root = project(t);
+  const killed = async () => ({
+    ok: false, code: null, signal: 'SIGKILL', output: 'running tests', durationMs: 5,
+    truncated: false, timedOut: false, spawnError: null,
+  });
+  const { report } = await projectVerifyCommand({
+    rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: killed, git: cleanGit,
+  });
+  const verify = report.checks.find((c) => c.code === 'suite.verify');
+  assert.equal(verify.status, 'failed');
+  assert.match(verify.reason, /killed by SIGKILL/, 'an OOM-killed suite must not read like a garbage exit code');
+  assert.doesNotMatch(verify.reason, /exit null/);
+});
+
+/** REGRESSION — a *passing* step whose output was truncated said so nowhere. */
+test('truncation is disclosed even when the step passed', async (t) => {
+  const root = project(t);
+  const chatty = async () => ({
+    ok: true, code: 0, signal: null, output: 'x', durationMs: 5,
+    truncated: true, timedOut: false, spawnError: null,
+  });
+  const { report } = await projectVerifyCommand({
+    rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: chatty, git: cleanGit,
+  });
+  const verify = report.checks.find((c) => c.code === 'suite.verify');
+  assert.equal(verify.status, 'passed');
+  assert.match(verify.evidence, /output truncated/, 'a pass built on a truncated log says so');
+});
+
 test('declaredScripts reads package.json and never throws on a broken one', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'dx5-scripts-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
