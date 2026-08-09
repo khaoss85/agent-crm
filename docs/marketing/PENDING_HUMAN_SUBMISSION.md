@@ -22,15 +22,17 @@ Nothing here is blocked on more engineering. It is blocked on you.
 | Artifact | Where | Action when unblocked | Blocked by |
 |---|---|---|---|
 | Claude Code plugin + self-hosted marketplace | `.claude-plugin/` | **Live once this branch merges.** `/plugin marketplace add khaoss85/agent-crm` needs no third-party approval | — |
+| DEV Community syndication | Canonical Accordo article + DEV article `4354255` | **Live.** DEV's public API returned the exact Accordo production URL as `canonical_url` on 2026-08-09 | — |
+| Hashnode syndication | Canonical Accordo article | **Live:** `https://accordo.hashnode.dev/if-a-coding-agent-builds-your-crm-what-should-it-refuse-to-do`. Browser verification found the exact Accordo canonical, article links, OG image and a `text/markdown` `.md` variant. Plain HTTP clients from the verification environment received a Cloudflare 403, so crawler accessibility remains unverified rather than assumed | — |
 | Anthropic community marketplace listing | same manifests | Submit via the Console form | 1, 3 |
 | Codex plugin + marketplace | `.codex-plugin/`, `.agents/plugins/marketplace.json` | Same, self-hosted — skill parity is 12/12 mirrored, 11 published, held by `tests/skill-parity.test.js` | — |
 | MCP registry entry | `server.json` | `mcp-publisher` under the `io.github.<owner>` namespace | `@accordo/mcp` is still unpublished — the scope returns 404, so the registry entry would resolve to nothing |
 | npm packages | root `package.json` is `private: true`; no per-package manifests exist | **Names reserved 2026-08-09**: `accordo@0.0.1` and `create-accordo@0.0.1` are published placeholders that install nothing — verified against the registry. Still to do, and both are yours: create the `@accordo` **organization** (web-only, no CLI), and publish the real packages with `--provenance` once `create-accordo` scaffolds a project | the create-CLI (Phase 5) |
-| GitHub repository metadata | `docs/marketing/GITHUB_LISTING.md` | Description and 14 topics **applied**. Remaining and yours: upload `site/assets/social-preview.png` under Settings → Social preview (GitHub exposes no API for it), and cut `git tag v0.1.0` so the Gemini CLI gallery crawler lists the extension | — |
-| Landing page and evidence page | `site/dist/` | **Unblocked.** Domain registered, repository public, `noindex` and `X-Robots-Tag` both removed. Remaining: point `accordo.dev` DNS at the Vercel project and deploy from `main` after this branch merges | — |
+| GitHub repository metadata | `docs/marketing/GITHUB_LISTING.md` | Description and topics **applied**. Release `v0.1.0` exists and the Gemini CLI gallery feed lists `@khaoss85/accordo`. Remaining and yours: upload `site/assets/social-preview.png` under Settings → Social preview (GitHub exposes no API for it) | — |
+| Landing page and evidence page | `site/dist/` | **Live.** Vercel deployment `dpl_EWhqaktN1ovZhLb31UY3UzqeizQa` is `READY` and aliased to `accordo.dev`; anonymous checks verified the canonical article, sitemap, robots, `llms.txt` and `llms-full.txt` | — |
 | Show HN packet | `docs/marketing/LAUNCH_PACKET.md` §2 | Post it | 1, 3, 5 |
 | Product Hunt packet | `docs/marketing/LAUNCH_PACKET.md` §3 | Post it, once, on the benchmark edition | 1, 3, 5, and a benchmark result |
-| skills.sh | nothing to build — that tool already walks `.claude/skills` and `.agents/skills` | **Live.** `npx skills add khaoss85/agent-crm` verified working 2026-08-08 | — |
+| skills.sh | nothing to build — that tool already walks `.claude/skills` and `.agents/skills` | **Live.** The public repository page returns 200 and `npx skills add khaoss85/agent-crm --agent codex --skill '*'` copied all 12 skills in a publisher-verification run on 2026-08-09. Generic search indexing remains pending | — |
 
 ## Not blocked on you — blocked on us
 
