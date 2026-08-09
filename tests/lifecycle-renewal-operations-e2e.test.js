@@ -221,3 +221,320 @@ test('an amount is recorded only with the recurrence that gives it meaning', asy
   assert.equal(many.currency, 'EUR', 'a single shared currency is still honest to state');
 });
 
+test('audit, events and trace are exact, and every event name is one M16a can honour', async (t) => {
+  const { root, context } = await setup(t, 'evidence.sqlite');
+  const { app } = context;
+  const { contract } = await activatedContract(root, app, { name: 'Evidence Deal' });
+
+  const emitted = [];
+  const original = app.events.emit.bind(app.events);
+  app.events.emit = async (name, payload) => { emitted.push(name); return original(name, payload); };
+
+  const countAudit = () => app.database.raw.prepare('SELECT COUNT(*) AS n FROM audit_events').get().n;
+  const countRuns = () => app.database.raw.prepare('SELECT COUNT(*) AS n FROM workflow_runs').get().n;
+  const auditBefore = countAudit();
+  const runsBefore = countRuns();
+
+  const decision = (await run(app, 'commercial-contract', 'record-renewal-decision', contract.id,
+    { decision: 'pursue_renewal', reason: 'worth keeping', asOf: '2027-08-01' })).result;
+  const followup = (await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+    { intent: 'renewal', summary: 'please requote', decisionId: decision.id })).result;
+  await run(app, 'commercial-followup', 'resolve-commercial-followup', followup.id,
+    { outcome: 'resolved_externally', reason: 'handled by Commercial' });
+  await run(app, 'commercial-contract', 'plan-renewal', contract.id, { asOf: '2027-08-01' });
+
+  // Counts, not presence: three writes produce three audit rows and no more.
+  assert.equal(countAudit() - auditBefore, 3);
+  assert.equal(countRuns() - runsBefore, 4, 'four actions, four trace runs — the read is traced too');
+  assert.deepEqual(emitted, ['renewal-decision.created', 'commercial-followup.created', 'commercial-followup.updated'],
+    'the plan emits nothing at all');
+
+  // The names M16a must never emit, because it does none of these things.
+  for (const forbidden of ['contract.renewed', 'customer.churned', 'subscription.cancelled', 'invoice.created']) {
+    assert.equal(emitted.includes(forbidden), false, `${forbidden} must never be emitted`);
+  }
+  const auditActions = app.database.raw
+    .prepare("SELECT DISTINCT action FROM audit_events WHERE action LIKE 'renewal-decision%' OR action LIKE 'commercial-followup%'")
+    .all().map((row) => row.action).sort();
+  assert.deepEqual(auditActions, ['commercial-followup.created', 'commercial-followup.updated', 'renewal-decision.created']);
+});
+
+test('two application instances race one transition: one winner, and no raw SQLite error', async (t) => {
+  const { root, context } = await setup(t, 'race.sqlite');
+  const { app } = context;
+  const { contract } = await activatedContract(root, app, { name: 'Race Deal' });
+  const second = await boot(root, join(root, 'data', 'race.sqlite'));
+  t.after(() => second.close());
+
+  const outcome = (results) => results.map((entry) => (entry.status === 'fulfilled'
+    ? 'ok' : `${entry.reason.code}/${entry.reason.status}`));
+  const noRawSqlite = (results) => results.every((entry) => entry.status === 'fulfilled'
+    || !/SQLITE_|database is locked/i.test(String(entry.reason.message)));
+
+  // Contradictory decisions behind one key, from two connections at once.
+  const decisions = await Promise.allSettled([
+    run(app, 'commercial-contract', 'record-renewal-decision', contract.id,
+      { decision: 'pursue_renewal', reason: 'A says keep it', asOf: '2027-08-01' }),
+    run(second.app, 'commercial-contract', 'record-renewal-decision', contract.id,
+      { decision: 'not_renewing', reason: 'B says drop it', asOf: '2027-08-01' }),
+  ]);
+  assert.equal(outcome(decisions).filter((value) => value === 'ok').length, 1, 'exactly one winner');
+  assert.ok(noRawSqlite(decisions), 'the loser gets a normalized conflict, never a driver error');
+  assert.equal(app.modules.get('renewal-decision').service.listWhere({ contractId: contract.id, asOfDate: '2027-08-01' }).length, 1);
+
+  // The pending-follow-up guard is a read followed by a write; two instances
+  // must not both pass it.
+  const followups = await Promise.allSettled([
+    run(app, 'commercial-contract', 'request-commercial-followup', contract.id, { intent: 'renewal', summary: 'from A' }),
+    run(second.app, 'commercial-contract', 'request-commercial-followup', contract.id, { intent: 'renewal', summary: 'from B' }),
+  ]);
+  assert.equal(outcome(followups).filter((value) => value === 'ok').length, 1);
+  assert.ok(noRawSqlite(followups));
+  assert.equal(
+    app.modules.get('commercial-followup').service
+      .listWhere({ contractId: contract.id, intent: 'renewal', status: 'pending_commercial_followup' }).length,
+    1, 'no lost update: one pending follow-up, not two',
+  );
+
+  // And the same for the terminal transition.
+  const open = app.modules.get('commercial-followup').service
+    .listWhere({ contractId: contract.id, intent: 'renewal', status: 'pending_commercial_followup' })[0];
+  const resolves = await Promise.allSettled([
+    run(app, 'commercial-followup', 'resolve-commercial-followup', open.id, { outcome: 'resolved_externally', reason: 'A closes it' }),
+    run(second.app, 'commercial-followup', 'resolve-commercial-followup', open.id, { outcome: 'withdrawn', reason: 'B withdraws it' }),
+  ]);
+  assert.equal(outcome(resolves).filter((value) => value === 'ok').length, 1);
+  assert.ok(noRawSqlite(resolves));
+});
+
+test('a failure after the write rolls everything back, and the retry produces exactly one result', async (t) => {
+  const { root, context } = await setup(t, 'faults.sqlite');
+  const { app } = context;
+  const { contract } = await activatedContract(root, app, { name: 'Fault Deal' });
+
+  const decisions = app.modules.get('renewal-decision').service;
+  const originalCreate = decisions.createManaged.bind(decisions);
+  const auditBefore = app.database.raw.prepare('SELECT COUNT(*) AS n FROM audit_events').get().n;
+
+  decisions.createManaged = async (patch, ctx) => {
+    await originalCreate(patch, ctx);
+    throw new Error('injected failure after the decision row was written');
+  };
+  await assert.rejects(() => run(app, 'commercial-contract', 'record-renewal-decision', contract.id,
+    { decision: 'needs_changes', reason: 'the price has to move', asOf: '2027-08-01' }));
+  decisions.createManaged = originalCreate;
+
+  assert.equal(decisions.listWhere({ contractId: contract.id }).length, 0, 'no orphan row survives the rollback');
+  assert.equal(app.database.raw.prepare('SELECT COUNT(*) AS n FROM audit_events').get().n, auditBefore,
+    'and no audit entry claims a write that did not happen');
+  const failed = app.workflows.listRuns({ workflowName: 'commercial-contract.record-renewal-decision', limit: 5 })[0];
+  assert.equal(failed.status, 'failed', 'the failed attempt is still traced honestly');
+
+  const retry = await run(app, 'commercial-contract', 'record-renewal-decision', contract.id,
+    { decision: 'needs_changes', reason: 'the price has to move', asOf: '2027-08-01' });
+  const rows = decisions.listWhere({ contractId: contract.id, asOfDate: '2027-08-01' });
+  assert.equal(rows.length, 1, 'exactly one complete result, not two and not none');
+  assert.equal(rows[0].id, retry.result.id);
+
+  // The same for the transition half of the milestone.
+  const followup = (await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+    { intent: 'contraction', summary: 'fewer seats' })).result;
+  const followups = app.modules.get('commercial-followup').service;
+  const originalApply = followups.applyManaged.bind(followups);
+  followups.applyManaged = async (id, patch, ctx) => {
+    await originalApply(id, patch, ctx);
+    throw new Error('injected failure after the status was updated');
+  };
+  await assert.rejects(() => run(app, 'commercial-followup', 'resolve-commercial-followup', followup.id,
+    { outcome: 'withdrawn', reason: 'never mind' }));
+  followups.applyManaged = originalApply;
+
+  const rolledBack = followups.get(followup.id);
+  assert.equal(rolledBack.status, 'pending_commercial_followup', 'the transition rolled back with everything else');
+  assert.equal(rolledBack.resolutionReason, null, 'and left no half-written reason behind');
+  const done = await run(app, 'commercial-followup', 'resolve-commercial-followup', followup.id,
+    { outcome: 'withdrawn', reason: 'never mind' });
+  assert.equal(done.result.status, 'withdrawn');
+});
+
+test('every correctness read is exact past the 500-row page bound', async (t) => {
+  const { root, context } = await setup(t, 'scale.sqlite');
+  const { app } = context;
+  const { contract } = await activatedContract(root, app, { name: 'Scale Deal' });
+  const actor = ACTOR;
+
+  // (1) The baseline decides what is persisted on the handoff, so it must see
+  //     every line, not the first page of them.
+  const lines = app.modules.get('contract-line').service;
+  const version = app.modules.get('contract-version').service.listWhere({ contractId: contract.id })[0];
+  const seeded = lines.listWhere({ contractId: contract.id }).length;
+  for (let index = seeded; index < 620; index += 1) {
+    await lines.createManaged({
+      sourceKey: `scale:line:${index}`, contractId: contract.id, contractVersionId: version.id,
+      label: `Seeded ${index}`, componentKey: `seed-${index}`, chargeType: 'recurring', pricingModel: 'flat_fee',
+      interval: 'month', intervalCount: 1, quantity: 1, netAmountCents: 100, currency: 'EUR',
+      commercialActivation: 'subscription', position: 1000 + index,
+    }, { actor });
+  }
+  const allLines = lines.listWhere({ contractId: contract.id });
+  assert.ok(allLines.length > 500, 'the fixture is genuinely past the bound');
+  assert.equal(lines.list({ limit: 500 }).length, 500, 'the paged list is a display bound, and stays one');
+  const plan = await run(app, 'commercial-contract', 'plan-renewal', contract.id, { asOf: '2027-08-01' });
+  assert.equal(plan.result.baseline.contractLineCount, allLines.length);
+  const monthly = plan.result.baseline.groups.find((group) => group.interval === 'month');
+  assert.equal(monthly.netAmountCents, allLines
+    .filter((line) => line.currency === 'EUR' && line.chargeType === 'recurring' && line.interval === 'month')
+    .reduce((sum, line) => sum + line.netAmountCents, 0), 'the total is over every line, exactly');
+
+  // (2) The decisionId check authorizes a link, so a legitimate decision beyond
+  //     the page bound must still be citable.
+  const decisions = app.modules.get('renewal-decision').service;
+  for (let index = 0; index < 610; index += 1) {
+    await decisions.createManaged({
+      sourceKey: `scale:decision:${index}`, contractId: contract.id, decision: 'undecided',
+      reason: `seed ${index}`, asOfDate: '2027-01-01', termEndDate: '2027-08-31',
+      termSource: 'post-signature-operational-activation', daysToBoundary: 242,
+      decidedBy: 'seed', decidedAt: '2026-09-15T10:00:00.000Z',
+    }, { actor });
+  }
+  const oldest = [...decisions.listWhere({ contractId: contract.id })]
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))[0];
+  assert.equal(decisions.list({ limit: 500 }).some((row) => row.id === oldest.id), false,
+    'the oldest decision is invisible to the paged list — which is exactly the trap');
+  const cited = await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+    { intent: 'pricing_change', summary: 'cites an old decision', decisionId: oldest.id });
+  assert.equal(cited.result.decisionId, oldest.id, 'and the exact read still finds it');
+
+  // (3) The pending guard decides a 409, so an open follow-up buried under more
+  //     than a page of resolved ones must still block a duplicate.
+  const followups = app.modules.get('commercial-followup').service;
+  for (let index = 0; index < 560; index += 1) {
+    await followups.createManaged({
+      sourceKey: `scale:followup:${index}`, contractId: contract.id, intent: 'scope_change',
+      status: 'resolved_externally', summary: `seed ${index}`, requestedBy: 'seed',
+      requestedAt: '2026-09-15T10:00:00.000Z', resolutionReason: 'seeded',
+      resolvedBy: 'seed', resolvedAt: '2026-09-15T10:00:00.000Z',
+    }, { actor });
+  }
+  await followups.createManaged({
+    sourceKey: 'scale:followup:open', contractId: contract.id, intent: 'scope_change',
+    status: 'pending_commercial_followup', summary: 'the buried open one',
+    requestedBy: 'seed', requestedAt: '2026-09-15T10:00:00.000Z',
+  }, { actor });
+  await assert.rejects(
+    () => run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+      { intent: 'scope_change', summary: 'would be a duplicate' }),
+    (error) => error.code === 'FOLLOWUP_ALREADY_PENDING',
+    'the guard sees past the page bound',
+  );
+});
+
+test('the evidence is read-only through every generic surface, and writing needs a human', async (t) => {
+  const { root, context } = await setup(t, 'boundary.sqlite');
+  const { app, client, agentClient } = context;
+  const { contract } = await activatedContract(root, app, { name: 'Boundary Deal' });
+  const decision = (await run(app, 'commercial-contract', 'record-renewal-decision', contract.id,
+    { decision: 'pursue_renewal', reason: 'seed', asOf: '2027-08-01' })).result;
+  const followup = (await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+    { intent: 'renewal', summary: 'seed' })).result;
+
+  const refused = async (method, path, body) => {
+    await assert.rejects(() => client.request(path, { method, body }), (error) => error.status === 404,
+      `${method} ${path} must not be a route`);
+  };
+  for (const [module, id] of [['renewal-decision', decision.id], ['commercial-followup', followup.id]]) {
+    // Readable…
+    assert.ok((await client.request(`/api/modules/${module}/records`)).items.length > 0);
+    assert.ok((await client.request(`/api/modules/${module}/records/${id}`)).id);
+    // …and not writable, not even with an empty body.
+    await refused('POST', `/api/modules/${module}/records`, {});
+    await refused('POST', `/api/modules/${module}/records`, { contractId: 'forged', status: 'withdrawn' });
+    await refused('PATCH', `/api/modules/${module}/records/${id}`, {});
+    await refused('PATCH', `/api/modules/${module}/records/${id}`, { status: 'withdrawn', decision: 'not_renewing' });
+    await refused('DELETE', `/api/modules/${module}/records/${id}`);
+  }
+
+  // Every writing action is a human decision, over the real route.
+  for (const [module, action, recordId, input] of [
+    ['commercial-contract', 'record-renewal-decision', contract.id, { decision: 'undecided', reason: 'bot', asOf: '2027-05-01' }],
+    ['commercial-contract', 'request-commercial-followup', contract.id, { intent: 'contraction', summary: 'bot' }],
+    ['commercial-followup', 'resolve-commercial-followup', followup.id, { outcome: 'withdrawn', reason: 'bot' }],
+  ]) {
+    await assert.rejects(
+      () => agentClient.request(`/api/modules/${module}/records/${recordId}/actions/${action}`, { method: 'POST', body: input }),
+      (error) => error.status === 403 && error.code === 'HUMAN_APPROVAL_REQUIRED',
+    );
+  }
+  assert.equal(app.modules.get('renewal-decision').service.listWhere({ contractId: contract.id }).length, 1,
+    'the agent wrote nothing while being refused');
+
+  // AX1: the package, its one dependency and its actions are on the schema.
+  const schema = await client.request('/api/schema');
+  assert.equal(schema.domains.lifecycle.packageContract, 1);
+  assert.deepEqual(schema.domains.lifecycle.requires,
+    [{ package: 'contracts', capability: 'contract-lifecycle-source', version: 1 }]);
+  assert.deepEqual(schema.domains.lifecycle.provides, [], 'M16a consumes; it offers nothing yet');
+  assert.deepEqual(schema.domains.lifecycle.actions, [
+    'commercial-contract.plan-renewal', 'commercial-contract.record-renewal-decision',
+    'commercial-contract.request-commercial-followup', 'commercial-followup.resolve-commercial-followup',
+  ], 'exactly the four actions that exist — no expansion-intent action and no successor action');
+});
+
+test('the package detaches and reattaches, and its rows outlive it', async (t) => {
+  const root = project(t, { withLifecycle: true });
+  const dbPath = join(root, 'data', 'absence.sqlite');
+  const composition = join(root, 'packages/domains/generated/index.js');
+  const attached = readFileSync(composition, 'utf8');
+
+  const context = await boot(root, dbPath);
+  const { app } = context;
+  const { contract } = await activatedContract(root, app, { name: 'Absence Deal' });
+  await run(app, 'commercial-contract', 'record-renewal-decision', contract.id,
+    { decision: 'pursue_renewal', reason: 'recorded before the package was removed', asOf: '2027-08-01' });
+  await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+    { intent: 'renewal', summary: 'also recorded before' });
+  await context.close();
+
+  // Each phase runs in ITS OWN process. Node caches ES modules by URL, so
+  // re-booting in-process would re-use the composition already loaded and give
+  // a false pass — a mistake this repository has made before.
+  const inspect = () => {
+    const probe = spawnSync(process.execPath, ['--no-warnings', '-e', `
+      const { createAccordoApp } = await import(${JSON.stringify(pathToFileURL(join(root, 'packages/app/src/index.js')).href)});
+      const app = createAccordoApp({ dbPath: ${JSON.stringify(dbPath)}, clock: () => '2026-09-15T10:00:00.000Z' });
+      const decisions = app.modules.get('renewal-decision').service.listWhere({});
+      const followups = app.modules.get('commercial-followup').service.listWhere({});
+      console.log(JSON.stringify({
+        packages: [...app.domains.names()].sort(),
+        lifecycleActions: app.domains.actions().map((a) => a.module + '.' + a.name).filter((n) => /renewal|followup/.test(n)).sort(),
+        decisions: decisions.length,
+        followups: followups.length,
+        reason: decisions[0] ? decisions[0].reason : null,
+        status: followups[0] ? followups[0].status : null,
+      }));
+      app.close();
+    `], { encoding: 'utf8', cwd: root });
+    assert.equal(probe.status, 0, probe.stderr);
+    return JSON.parse(probe.stdout.trim().split('\n').at(-1));
+  };
+
+  // Removing the package is one line in the composition file.
+  writeFileSync(composition, attached.split('\n')
+    .filter((line) => !line.includes('createLifecyclePackage')).join('\n'));
+  const detached = inspect();
+  assert.deepEqual(detached.packages, ['contracts'], 'the application boots without it');
+  assert.deepEqual(detached.lifecycleActions, [], 'and its actions are gone with it');
+  assert.equal(detached.decisions, 1, 'the rows it wrote are left alone, not deleted');
+  assert.equal(detached.followups, 1);
+  assert.equal(detached.reason, 'recorded before the package was removed', 'and are still readable');
+  assert.equal(detached.status, 'pending_commercial_followup');
+
+  // Putting the line back restores the surface over the same rows.
+  writeFileSync(composition, attached);
+  const reattached = inspect();
+  assert.deepEqual(reattached.packages, ['contracts', 'lifecycle']);
+  assert.equal(reattached.lifecycleActions.length, 4);
+  assert.equal(reattached.decisions, 1, 'the same row, not a new one');
+  assert.equal(reattached.reason, 'recorded before the package was removed');
+  assert.equal(reattached.status, 'pending_commercial_followup');
+});
