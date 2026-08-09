@@ -65,6 +65,34 @@ function lifecycleSource({ domains, modules, actor, now }) {
   }
 }
 
+/**
+ * A **real** calendar date, returned canonically.
+ *
+ * The shape is not the check. JavaScript turns `2027-02-30` into March 2 and
+ * `2027-06-31` into July 1, so a value that matches `YYYY-MM-DD` can still name
+ * a day that never existed. Accepting one stores evidence twice over wrong: the
+ * `asOfDate` on the record is a date nobody could have decided anything on, and
+ * the `daysToBoundary` beside it is measured from a *different* day — a record
+ * whose own two fields disagree.
+ *
+ * M12 already refuses this for the term dates (`requireCalendarDate` in the
+ * contracts package). The rule is repeated rather than imported because a
+ * package reaches another only through a declared capability, and a shared
+ * date-validation helper is not what `contract-lifecycle-source@1` is for.
+ *
+ * @param {unknown} value @param {string} field
+ */
+export function requireCalendarDate(value, field) {
+  if (typeof value !== 'string' || !DATE_RE.test(value)) {
+    throw new ValidationError(`${field} must be a calendar date (YYYY-MM-DD)`, { field });
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw new ValidationError(`${field} is not a real calendar date`, { field });
+  }
+  return value;
+}
+
 /** A bounded, control-character-free human reason. */
 export function requireReason(value, field = 'reason') {
   if (typeof value !== 'string') throw new ValidationError(`${field} is required`, { field });
@@ -98,11 +126,20 @@ function requireHuman(actor, what) {
  * @param {string} asOf @param {string} endDate
  */
 export function daysToBoundary(asOf, endDate) {
-  if (!DATE_RE.test(asOf) || !DATE_RE.test(endDate)) return null;
+  // A date that is not a real day yields null rather than a confident number
+  // measured from whatever JavaScript rolled it over to.
+  if (!isRealCalendarDate(asOf) || !isRealCalendarDate(endDate)) return null;
   const from = Date.parse(`${asOf}T00:00:00.000Z`);
   const to = Date.parse(`${endDate}T00:00:00.000Z`);
   if (Number.isNaN(from) || Number.isNaN(to)) return null;
   return Math.round((to - from) / 86_400_000);
+}
+
+/** @param {unknown} value */
+function isRealCalendarDate(value) {
+  if (typeof value !== 'string' || !DATE_RE.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 /**
@@ -165,9 +202,7 @@ export function buildPlanRenewalAction(moduleNames) {
       { name: 'windowDays', type: 'integer', required: false, hint: 'How far ahead a boundary counts as upcoming. Defaults to 90.' },
     ],
     async execute({ record, input, actor, modules, domains, now }) {
-      if (!DATE_RE.test(input.asOf)) {
-        throw new ValidationError('asOf must be a calendar date (YYYY-MM-DD)', { field: 'asOf' });
-      }
+      requireCalendarDate(input.asOf, 'asOf');
       const windowDays = Number.isSafeInteger(input.windowDays) && input.windowDays > 0 ? input.windowDays : 90;
       const source = lifecycleSource({ domains, modules, actor, now });
       const evidence = source.termEvidence(record.id);
@@ -240,9 +275,7 @@ export function buildRecordRenewalDecisionAction(moduleNames) {
     async execute({ record, input, actor, modules, domains, now }) {
       const decidedBy = requireHuman(actor, 'Recording a renewal decision');
       const reason = requireReason(input.reason);
-      if (!DATE_RE.test(input.asOf)) {
-        throw new ValidationError('asOf must be a calendar date (YYYY-MM-DD)', { field: 'asOf' });
-      }
+      requireCalendarDate(input.asOf, 'asOf');
       const source = lifecycleSource({ domains, modules, actor, now });
       const evidence = source.termEvidence(record.id);
       if (!evidence) {

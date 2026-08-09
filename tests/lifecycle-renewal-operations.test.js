@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   DECISIONS, FOLLOWUP_OPEN, FOLLOWUP_TERMINAL, INTENTS, LIFECYCLE_RESOURCES,
   SOURCE_CAPABILITY, createLifecyclePackage, daysToBoundary, evidenceGaps,
-  groupBaseline, requireReason,
+  groupBaseline, requireCalendarDate, requireReason,
 } from '../packages/lifecycle/src/index.js';
 import { createContractLifecycleSourceCapability, LIFECYCLE_SOURCE } from '../packages/contracts/src/lifecycle-capability.js';
 
@@ -204,3 +204,23 @@ test('the resources it owns are evidence records, immutable through public CRUD'
       `${name} must not describe itself with a word it cannot honour`);
   }
 });
+
+test('a date that matches the shape but names no real day is refused', () => {
+  // Regression: `asOf` was checked with `/^\d{4}-\d{2}-\d{2}$/` alone, so
+  // `2027-02-30` was accepted and JavaScript quietly rolled it over to March 2.
+  // The stored evidence then held an `asOfDate` for a day that never existed
+  // beside a `daysToBoundary` measured from a different one.
+  assert.equal(requireCalendarDate('2027-08-01', 'asOf'), '2027-08-01');
+  assert.equal(requireCalendarDate('2028-02-29', 'asOf'), '2028-02-29', 'a real leap day is a real day');
+  for (const bad of ['2027-02-30', '2027-02-29', '2027-06-31', '2027-13-01', '2027-00-10', '2027-01-32']) {
+    assert.throws(() => requireCalendarDate(bad, 'asOf'), (error) => error.details?.field === 'asOf', bad);
+  }
+  for (const bad of ['31/12/2027', '2027-8-1', '', undefined, null, 42, {}]) {
+    assert.throws(() => requireCalendarDate(bad, 'asOf'), /must be a calendar date/);
+  }
+  // And the arithmetic refuses to produce a number from a day that is not one.
+  assert.equal(daysToBoundary('2027-02-30', '2027-08-31'), null);
+  assert.equal(daysToBoundary('2027-08-01', '2027-02-30'), null);
+  assert.equal(daysToBoundary('2027-08-01', '2027-08-31'), 30);
+});
+
