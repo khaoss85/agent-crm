@@ -188,17 +188,48 @@ the whole ledger via `{{ledger:limitations}}`, so the surface-coverage check in
 `scripts/site-check.js` is satisfied by construction, and neither needs a README
 sentence written to justify it.
 
-## The ledger measurement block
+## The ledger measurement block — measured, and deliberately not corrected
 
-`site/claims.json` records `sha: "9958ed9", tests: 701`. Main is `0c8a29d` with
-741 tests, and the block's own note says *"A claims file measured against a
-stale SHA is a claims file that lies."*
+`site/claims.json` records `sha: "9958ed9", tests: 701`. Main is `0c8a29d`, and
+the block's own note says *"A claims file measured against a stale SHA is a
+claims file that lies."* Correcting it was in scope, conditional on measuring it
+rather than copying a number from somewhere.
 
-Re-measured in this worktree at `0c8a29d` and corrected, in a **separate commit**
-so it can be dropped independently. The correction propagates to the four
-surfaces that quote the count and are gated for it: `site/claims.json` (the
-block and C-20's text and repoFact), `README.md`, `site/answers.json`, plus the
-two ungated launch documents that also quote it.
+It was measured, twice, with `npm run verify` in this worktree — once at
+`0c8a29d` before any edit and once after the page landed. Both runs report
+**741 tests**, and both report **739 passing and 2 failing**. Neither pair of
+failures is the same pair, and every one of them passes when its file is run on
+its own:
+
+| Run | Failing | Why |
+|---|---|---|
+| 1 | `tests/package-test-command.test.js` | a leftover `/tmp/accordo-package-test-*` scratch directory it did not create; passes with `/tmp` cleaned |
+| 1, 2 | `tests/delivery-change-acceptance-evidence.test.js` | `ECONNRESET` against its own loopback server under load; the named case passes alone in 11.9s |
+| 2 | `tests/contracts-activation-e2e.test.js` | `MODULE_NOT_FOUND` for a file its own `cpSync` had just written into `/tmp`; passes alone |
+
+The cause is not this repository. `ps` shows two other agent sessions —
+`/home/user/agent-crm-worktrees/audit-dx5` and
+`/home/user/agent-crm-worktrees/bootstrap` — running full suites on the same
+four cores and, more to the point, in the same `/tmp`: one of them was executing
+`tests/package-test-command.test.js` and holding a `/tmp/accordo-package-test-*`
+directory while this worktree's copy of that test asserted no such directory
+survives. A serial re-run (`--test-concurrency=1`) was started to get a clean
+number and did not survive the contention either.
+
+**So the block is left as it is.** `tests: 741` is measured and could be
+written; `failures: 0` is not, and the entire point of the block is that it does
+not carry a number nobody ran. Writing an unobserved zero into the file whose
+own note warns against exactly that would be worse than leaving a stale SHA
+next to a `site-check` note that already announces the staleness on every build:
+
+> note: The ledger was measured 22 commit(s) ago at 9958ed9. Re-run npm run
+> verify and update measuredAgainst before publishing anything.
+
+The correction is one clean full run away, on a machine that is not shared, and
+it should also carry `README.md`, `site/answers.json`, `site/concepts.json`,
+C-20's text and repoFact, and the two launch documents — every surface that
+states the count in the present tense. `docs/strategy/RECOMMENDATION_MAP.md` §1
+says **555 tests** and belongs in the same sweep.
 
 ## The other stale number, found on the way
 
