@@ -84,7 +84,7 @@ The link goes to the document; `Proof:` names one of the tests that hold it.
 
 ## CRM job coverage
 
-Of 149 catalogued CRM jobs: 22 validated end to end, 29 partially supported, 98 not supported. Status is conservative by policy —
+Of 149 catalogued CRM jobs: 22 validated end to end, 30 partially supported, 97 not supported. Status is conservative by policy —
 a job counts as validated end to end only when a test or a checked-in example proves it, so
 these numbers understate what can be built rather than overstate it.
 

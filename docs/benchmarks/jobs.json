@@ -1,7 +1,7 @@
 {
   "counts": {
-    "not supported": 98,
-    "partially supported": 29,
+    "not supported": 97,
+    "partially supported": 30,
     "technically supported": 0,
     "total": 149,
     "validated end to end": 22
@@ -536,7 +536,7 @@
       "id": "JTBD-CS-08",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
       "status": "not supported",
-      "summary": "the versioned-policy mechanism exists (ADR-015/016/018) and M12 uses it to classify, but the renewal domain does not exist",
+      "summary": "the versioned-policy mechanism exists (ADR-015/016/018) and M12 uses it to classify. M16a added the renewal domain, but it declares no policy at all and computes no price: uplift needs pricing, which lives in Commercial and is unreachable from a package",
       "tests": [],
       "title": "Apply a versioned price-uplift policy at renewal"
     },
@@ -544,9 +544,12 @@
       "docs": [],
       "id": "JTBD-CS-09",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
-      "status": "not supported",
-      "summary": "no cancellation primitives",
-      "tests": [],
+      "status": "partially supported",
+      "summary": "the non-renew half only, as recorded intent. M16a's record-renewal-decision stores an immutable not_renewing decision with a required human reason, its actor, the term boundary it was taken against and that term's declared provenance. It ends no contract, cancels no subscription, stops no service and recognizes no churn — there are still no cancellation primitives, and the cancel half of this row is not supported. Evidence: tests/lifecycle-renewal-operations-e2e.test.js, tests/lifecycle-renewal-operations.test.js",
+      "tests": [
+        "tests/lifecycle-renewal-operations-e2e.test.js",
+        "tests/lifecycle-renewal-operations.test.js"
+      ],
       "title": "Cancel or non-renew with an audited reason"
     },
     {
