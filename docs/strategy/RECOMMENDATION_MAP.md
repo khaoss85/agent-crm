@@ -32,7 +32,7 @@ and it is a chain: a break at any link makes every link above it worthless.
 |---|---|---|---|
 | 1 | **Retrievable** | The agent can find us at task time: web search, npm search, a registry, a skills index, or memorized prevalence | Partial — public repo, topics, site. No npm, no registry, no docs site |
 | 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **Candidate proven, channel not live.** The assembled `create-accordo@0.1.0` tarball installs offline and leaves a verified project; `npm create accordo` still reaches the `0.0.1` placeholder until human-approved staging and a registry receipt |
-| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 804 tests measured at `93c5bd5` |
+| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 807 tests measured at `0b2ce10` |
 | 4 | **Repeatable** | It works the same way the next time, for a different user, with a different model | Partial — deterministic by construction, but unmeasured across models (benchmark designed, never run) |
 
 **The binding constraint remains the live half of #2.** The candidate works; the
