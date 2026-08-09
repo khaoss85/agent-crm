@@ -135,7 +135,7 @@ evidence does not belong in this document.
 | **Evidence** | `npm run crm -- project verify --json`; `projectVerificationContract: 1`; `tests/project-verify.test.js` |
 | **User value** | After a coding agent changes a project, one command produces the evidence a reviewer needs and names which authority refused. |
 | **Allowed positioning** | "One command orchestrates the project's evidence and reports which authority refused." |
-| **Do not claim** | that it proves the software works for a business scenario, that a green report means a plan is finished, or that it sandboxes anything. It publishes `BROWSER_EVIDENCE_NOT_AUTOMATED`, `SCENARIO_EVIDENCE_NOT_RUN`, `IMPLEMENTATION_EVIDENCE_NOT_MAPPED` and `PROJECT_COMMANDS_TRUSTED` in its own output. **PROVE remains partial** until DX6 and DX10 exist. |
+| **Do not claim** | that it proves the software works for a business scenario, that a green report means a plan is finished, or that it sandboxes anything. It publishes `BROWSER_EVIDENCE_NOT_AUTOMATED`, `SCENARIO_EVIDENCE_NOT_RUN`, `IMPLEMENTATION_EVIDENCE_NOT_MAPPED` and `PROJECT_COMMANDS_TRUSTED` in its own output. **PROVE remains partial** until DX6 and DX10 exist. Also do not present a run against **this repository** as evidence of package conformance: Accordo's default composition is empty by design, so that stage honestly reports `not_applicable` / `NO_PACKAGES_COMPOSED` and nothing is conformance-tested. Demonstrate it inside a composed project (`npm run tour -- --keep DIR`). |
 | **Status** | implemented |
 
 ## Planned only — must never be positioned as available
