@@ -193,8 +193,8 @@ tenancy or RBAC.
 - 2026-08-09: a pre-rebase clean clone passed 777/777, smoke and the full B2B
   lead-qualification starter from an empty directory. Its implementation was
   then rebased after PRs #43 and #50 merged; the rebased exact-head clean-clone
-  gate passed 778/778 and smoke. Browser smoke is not applicable: this diff
-  changes no UI or browser runtime.
+  gate passed 778/778 and smoke. At that point the diff changed no public UI;
+  the later continuation review below added and browser-checked public copy.
 - 2026-08-09: continuation review found public copy still saying no
   create-project CLI existed after the candidate had become real, and the site
   repeated the explicitly forbidden claim that the vendored framework could be
@@ -202,6 +202,13 @@ tenancy or RBAC.
   the built landing page, corrected across the release runbooks and public
   template, and bound to the package test so a verified candidate cannot again
   be confused with either no source command or a live registry release.
+- 2026-08-09: a fresh clone at reviewed head `2f29955` installed with zero
+  vulnerabilities; app inspection returned `valid: true`, no problems and all
+  eleven source-only limitations; doctor returned `ok: true`; full verification
+  passed 779/779; framework smoke and the complete B2B starter both returned
+  `ok: true`. The built 108-page site was rendered in real headless Chrome at
+  1270 px, including the changed comparison and FAQ copy, with no overflow or
+  layout break. The only subsequent repository change is this receipt.
 
 ## 8a. Adversarial review outcome
 
@@ -239,8 +246,8 @@ tenancy or RBAC.
 
 ## 10. Outcome and follow-up
 
-Implementation and adversarial review are complete; CI and human review remain.
-After merge, a human must configure npm trusted
+Implementation, public-copy review and adversarial review are complete; CI and
+human review remain. After merge, a human must configure npm trusted
 publishing for the exact workflow, dispatch it, inspect the staged tarball and
 approve it with 2FA. Only the resulting registry receipt authorizes changing
 `site/brand.json` to `published` or using `npm create accordo` in public copy.
