@@ -35,8 +35,9 @@
  * HTML somebody then has to trace back to the sentence that produced it. Two lists is the cost; an
  * author who can find the sentence is the return. It caught one on its first run.
  *
- * The blog engine ships and the blog ships empty (SITE_ARCHITECTURE.md §5). The front-matter gate is
- * mechanical, so publishing the first piece is a one-file commit rather than a project.
+ * The blog engine originally shipped empty (SITE_ARCHITECTURE.md §5). Its
+ * front-matter gate is mechanical, so each real piece remains a one-file,
+ * evidence-bound publication rather than a placeholder or an editorial plan.
  */
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -708,7 +709,9 @@ function blogPages({ posts, claims, standing, brand, origin }) {
       breadcrumbs([['Home', '{{page.root}}index.html'], ['Writing', null]]),
       '    <header class="cluster-hero">',
       '      <p class="eyebrow">Writing</p>',
-      '      <h1>The engine ships; the blog ships empty.</h1>',
+      posts.length === 0
+        ? '      <h1>The engine ships; the blog ships empty.</h1>'
+        : '      <h1>Writing grounded in evidence.</h1>',
       posts.length === 0
         ? `      <p><strong>There are zero posts.</strong> Nothing has been written, so nothing is listed —
         no placeholders, no editorial calendar rendered as if it were published. A post that has not been
@@ -756,6 +759,20 @@ function blogPages({ posts, claims, standing, brand, origin }) {
       description: truncate(post.summary, 300),
       jsonLd: [
         breadcrumbList(origin, [['Home', '/'], ['Writing', '/blog.html'], [post.title, `/blog/${post.slug}.html`]]),
+        {
+          '@context': 'https://schema.org',
+          '@type': 'BlogPosting',
+          headline: post.title,
+          description: post.summary,
+          datePublished: post.date,
+          dateModified: post.date,
+          author: { '@type': 'Person', name: post.editor },
+          editor: { '@type': 'Person', name: post.editor },
+          mainEntityOfPage: { '@type': 'WebPage', '@id': `${origin}/blog/${post.slug}.html` },
+          url: `${origin}/blog/${post.slug}.html`,
+          isPartOf: { '@type': 'Blog', name: `Writing — ${brand.name.value}`, url: `${origin}/blog.html` },
+          keywords: post.claims,
+        },
       ],
       body: [
         '  <div class="shell">',

@@ -125,6 +125,13 @@ has no answer here yet — not a plausible reconstruction.
 - Does it send renewal reminders or run anything on a schedule? → `/answers/does-it-run-scheduled-work-or-reminders.html` (C-10, C-06, L-04)
 - What do I actually own, and how do I install it? → `/answers/what-do-i-own-and-how-do-i-install-it.html` (C-17, C-13, L-08, L-07)
 
+## Published writing
+
+Evidence-backed articles are canonical on the project site. Syndicated copies may exist,
+but these URLs are the versions bound to this repository's claims and transcripts.
+
+- [If a coding agent builds your CRM, what should it refuse to do?](blog/if-a-coding-agent-builds-your-crm-what-should-it-refuse-to-do.html) — 2026-08-09; evidence C-04, C-16, C-21.
+
 ## Commands an agent runs to check for itself
 
 A harness needs only: run a shell command, read stdout, read the exit code, parse JSON,

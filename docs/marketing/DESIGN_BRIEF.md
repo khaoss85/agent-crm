@@ -123,7 +123,7 @@ Hub-and-spoke: each pillar page links down to its spokes, each spoke links back 
 | **Answers** | `answers.html` | 14 | one blunt question, answered, plus 15 published refusals |
 
 Plus: `index.html`, `evidence.html` (the full claims ledger as a table), `blog.html`
-(engine built, **zero posts** — the empty state is deliberate and must be designed),
+(the first evidence-backed post now ships; the honest zero-post state remains a renderer requirement),
 `404.html`.
 
 **Only four templates are needed:** homepage · pillar · spoke · table-page
@@ -250,7 +250,7 @@ In priority order:
    sections, evidence rail, related rail. This is 97 of the 107 pages.
 3. **Pillar template** — hero plus a card grid.
 4. **Table template** — evidence ledger and jobs catalogue, dense and scannable.
-5. **Empty state** for the blog.
+5. **Blog index and article page**, retaining the tested empty state for a build with no posts.
 6. **Nav and footer** at desktop and 360px.
 
 Light and dark for each.
