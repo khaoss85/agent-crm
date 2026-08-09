@@ -94,6 +94,36 @@ test('the private source manifest and public publication manifest cannot be conf
   assert.equal(assembly.files.some((file) => file.relativePath.startsWith('framework/docs/')), false);
 });
 
+test('public copy distinguishes the verified candidate from the live npm placeholder', () => {
+  const brand = JSON.parse(readFileSync(join(repoRoot, 'site/brand.json'), 'utf8'));
+  assert.equal(brand.npm.sourceScaffolds, true);
+  assert.equal(brand.npm.status, 'names-reserved');
+
+  const surfaces = Object.fromEntries([
+    'site/templates/index.html',
+    'docs/marketing/PENDING_HUMAN_SUBMISSION.md',
+    'docs/marketing/LAUNCH_PACKET.md',
+    'docs/strategy/DISTRIBUTION_SUBMISSIONS.md',
+    'docs/strategy/GO_TO_MARKET.md',
+    'docs/strategy/RECOMMENDATION_MAP.md',
+    'docs/strategy/AGENT_RECOMMENDATION.md',
+  ].map((path) => [path, readFileSync(join(repoRoot, path), 'utf8')]));
+
+  for (const [path, source] of Object.entries(surfaces)) {
+    assert.match(source, /candidate/i, `${path} omits the verified publication candidate`);
+    assert.match(source, /(not (?:on the registry|published)|placeholder|registry unchanged)/i,
+      `${path} lets a candidate read as a live npm release`);
+    assert.doesNotMatch(source, /there is no create-project CLI|\bno create-command\b/i,
+      `${path} says the source bootstrap does not exist`);
+  }
+
+  const site = surfaces['site/templates/index.html'];
+  const ownershipCopy = `${site}\n${readFileSync(join(repoRoot, 'docs/marketing/OBJECTIONS.md'), 'utf8')}`;
+  assert.doesNotMatch(ownershipCopy, /dependency you could delete|delete and still ship/i,
+    'ownership means keeping vendored source, not deleting the framework');
+  assert.match(site, /deleting the copied framework\s+breaks the application/i);
+});
+
 test('two assemblies pack byte-identically, install offline and create a working project', async (t) => {
   const workspace = scratch(t);
   const first = join(workspace, 'assembly-a');

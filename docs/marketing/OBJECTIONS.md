@@ -98,11 +98,11 @@ until you pass `--apply` (`C-18`). Judge the output before installing anything.
 
 ### 11. "What happens when you abandon this?"
 
-You keep a Node application in your repository with no third-party runtime dependencies and a
-SQLite file any client can open. That is a design constraint, not a reassurance: the framework
-is a dependency you could delete and still ship. The uncomfortable half is that you would also
-keep the missing pieces — no auth, no scheduler, no integrations — and would be building those
-yourself.
+You keep the Node application, its vendored framework source and a SQLite file any client can
+open. No hosted Accordo runtime remains underneath it. That is a design constraint, not a
+maintenance exemption: deleting the copied framework breaks the application. The uncomfortable
+half is that you also keep the missing pieces — no auth, no scheduler, no integrations — and
+would be building those yourself.
 
 ### 12. "Show me the benchmark."
 

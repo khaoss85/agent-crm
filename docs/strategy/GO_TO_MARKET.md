@@ -15,12 +15,13 @@ Written against `HEAD` on 2026-08-07 with 373 tests passing. Volatile facts live
 This project does not have a credibility problem or a quality problem. It has a **reachability
 problem** and a **mechanism problem**.
 
-- **Reachability**: no public name, no published package, no public repository. Nothing
-  compounds, because none of the channels that accrue prevalence have started.
-- **Mechanism**: the public promise is *"own the CRM it builds"*, and the only shipping install
-  path copies this monorepo. That is real ownership and it is not the `npm create` plus
-  versioned-dependency story the roadmap describes. The gap is now stated as `L-08` on every
-  surface rather than papered over.
+- **Reachability**: the name, repository, site and agent manifests are public, but generic search
+  still does not surface Accordo and the live npm command remains an empty placeholder. The
+  compounding channels have started; the main conversion path has not.
+- **Mechanism**: the public promise is *"own the CRM it builds"*. Source bootstrap works and a
+  deterministic `create-accordo@0.1.0` publication candidate packs, installs and verifies from a
+  clean project, but it is not on the registry. Ownership still means vendored source rather
+  than a versioned dependency, and the gap remains `L-08` on every surface.
 
 So the strategy is:
 

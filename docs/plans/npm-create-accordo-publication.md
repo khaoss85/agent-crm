@@ -195,6 +195,13 @@ tenancy or RBAC.
   then rebased after PRs #43 and #50 merged; the rebased exact-head clean-clone
   gate passed 778/778 and smoke. Browser smoke is not applicable: this diff
   changes no UI or browser runtime.
+- 2026-08-09: continuation review found public copy still saying no
+  create-project CLI existed after the candidate had become real, and the site
+  repeated the explicitly forbidden claim that the vendored framework could be
+  deleted while the application kept shipping. Both were reproduced by reading
+  the built landing page, corrected across the release runbooks and public
+  template, and bound to the package test so a verified candidate cannot again
+  be confused with either no source command or a live registry release.
 
 ## 8a. Adversarial review outcome
 
@@ -208,6 +215,12 @@ tenancy or RBAC.
 - **Medium — fixed:** release actions used movable major-version tags while
   holding OIDC permission. Both actions are pinned to verified full commit SHAs,
   and the distribution gate rejects any future non-SHA release action.
+- **Medium — fixed:** public copy erased the verified create candidate by saying
+  no create-project CLI existed, while a landing-page FAQ claimed the vendored
+  framework could be deleted without breaking the application. The corrected
+  copy keeps all three states distinct — source bootstrap, verified publication
+  candidate and live registry — and states that ownership still includes
+  maintaining the copied framework source.
 - **Held:** eight concurrent assembly processes produced exactly one applied
   result and seven stable refusals; no partial candidate or staging residue was
   observed. Direct source and assembled publication manifests remain distinct;

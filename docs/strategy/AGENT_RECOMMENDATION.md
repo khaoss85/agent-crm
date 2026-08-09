@@ -44,10 +44,12 @@ conversion at the slot rather than slot volume.
 
 **Every comparable can complete the loop; we cannot yet.** Each of them ends the recommendation
 with a command that works: `npx create-next-app`, `npm i resend`, `npx supabase init`. Ours ends
-with `L-08` — ownership today means copying this monorepo, there is no published package and no
-create-CLI. An agent that decided to recommend us has no verb to finish the sentence with. This
-is a larger gap than any content or listing lever in `AGENT_DISCOVERY.md`, and it is the one
-least discussed as a *discovery* problem, because it looks like a packaging problem.
+with `L-08` — ownership today means vendored source. A deterministic create-CLI publication
+candidate now exists and passes offline installation plus generated-project verification, but
+the live npm command still reaches the empty `0.0.1` placeholder. An agent that decided to
+recommend us therefore still has no public verb it can safely finish the sentence with. This is
+a larger gap than any content or listing lever in `AGENT_DISCOVERY.md`, and it is the one least
+discussed as a *discovery* problem, because it looks like a release receipt.
 
 ---
 
