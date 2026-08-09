@@ -325,3 +325,22 @@ test('the build receipt is not published', (t) => {
   );
   assert.ok(existsSync(join(site.root, 'site/.used-claims.json')), 'it should still be written, just not into the output');
 });
+
+test('the screenshot harness drives a full Chrome binary headlessly and verifies the artifact', () => {
+  const source = readFileSync(join(repo, 'scripts/site-shots.js'), 'utf8');
+  assert.match(
+    source,
+    /headless_shell.*--headless=new/s,
+    'a full Chrome binary is not the headless shell; it needs an explicit headless mode',
+  );
+  assert.match(
+    source,
+    /Library.*Caches.*ms-playwright/s,
+    'macOS stores Playwright browsers outside the Linux-only cache this harness first searched',
+  );
+  assert.match(
+    source,
+    /if \(!existsSync\(output\)\)/,
+    'the harness must verify the artifact, not treat exit 0 as proof that Chrome wrote it',
+  );
+});

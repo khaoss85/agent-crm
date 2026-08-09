@@ -280,3 +280,47 @@ the pre-existing `tests/project-doctor.test.js` shell probe because BSD `find`
 does not accept GNU `-newermt @0`. `npm run smoke` and `npm run gtm:check` pass.
 This PR neither introduced nor hides that portability defect; its full-suite
 checkbox remains proven by the recorded Linux run at `fe92a0e`, not by macOS.
+
+## Rebase and design review addendum — 2026-08-09
+
+The branch was rebased onto `origin/main` at `77d7719` after the project
+bootstrap and GTM evidence work merged. That made the old generated
+`llms-full.txt` and the `fe92a0e` measurement stale; both are regenerated and
+re-measured in the final verification below rather than carried forward as if
+the old tree were still current.
+
+The rendered page was reviewed at 1270px and 390px against the two references
+in the brief. The useful lesson from Medusa is a short category thesis followed
+by a visual model of the product; the useful lesson from Twenty is showing the
+working object model rather than describing extensibility in the abstract. The
+first page did neither: its title led with “only intent”, then an eight-line
+warning block occupied the whole first viewport, and the first product-shaped
+content arrived as another long paragraph.
+
+The revised page keeps the repository's existing palette and type system, but
+spends its one visual gesture on the thing specific to this product: an ordered,
+semantic record chain from Lead Intelligence through Service. It is an `<ol>`,
+not a dashboard mock-up or decorative image, and each node states `working` or
+`partial`. The boundary still renders before it, as the site contract requires,
+but redundant lines were consolidated so the chain enters the first desktop
+reading sequence. The title now leads with the owned-code proposition; L-08 is
+attached to the page so that proposition carries the unpublished-package
+limitation in the same evidence rail.
+
+The review also found the earlier write-path correction was incomplete. The
+body mentioned audited CRUD and service APIs, while the hero, boundary and the
+first paragraph still narrowed the chain to records the framework's “own
+actions wrote”. A source-level regression now scans every authored Customer Hub
+surface for that wording, and the page consistently names actions, CRUD routes
+and module services as local application writes distinct from cross-system
+ingestion.
+
+The browser pass also confirmed `npm run site:shots` could not find the standard
+Playwright headless shell installed in macOS's user cache. Pointing it at the
+desktop Chrome exposed a second failure: the script never requested headless
+mode, so Chrome could exit successfully without creating an image and the
+harness crashed later with `ENOENT`. Discovery now covers the Linux and macOS
+Playwright cache layouts, a full Chromium binary is explicitly headless, and
+the harness treats the output file — not exit zero — as the receipt. The
+four-image publishing bundle then rendered successfully at its declared pixel
+dimensions.
