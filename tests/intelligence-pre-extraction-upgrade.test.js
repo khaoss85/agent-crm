@@ -36,7 +36,7 @@ const INTELLIGENCE_MODULES = [
 const STARTER = '../../../examples/starters/b2b-lead-qualification';
 
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'agent-crm-upgrade-'));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-upgrade-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
@@ -48,7 +48,7 @@ function project(t) {
   // database is then restored separately and booted against that source, which
   // is exactly the shape of a customer pulling a new release.
   const cli = (args) => spawnSync(process.execPath,
-    ['--no-warnings', join(root, 'packages/cli/bin/agent-crm.js'), ...args, '--root', root],
+    ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), ...args, '--root', root],
     { encoding: 'utf8', cwd: root });
   const starter = join(root, 'examples/starters/b2b-lead-qualification');
   for (const manifest of ['lead.module.json', 'task.module.json']) {
@@ -103,11 +103,11 @@ function restore(root) {
 function phase(root, dbPath, body, label) {
   const script = join(root, `phase-${label}.mjs`);
   writeFileSync(script, [
-    "import { createAgentCrmApp } from './packages/app/src/index.js';",
+    "import { createAccordoApp } from './packages/app/src/index.js';",
     'const out = {};',
     'let app;',
     'try {',
-    `  app = createAgentCrmApp({ dbPath: ${JSON.stringify(dbPath)} });`,
+    `  app = createAccordoApp({ dbPath: ${JSON.stringify(dbPath)} });`,
     '} catch (error) {',
     '  out.bootFailed = { code: error.code, message: String(error.message) };',
     "  console.log('__RESULT__' + JSON.stringify(out)); process.exit(0);",

@@ -37,7 +37,7 @@ const COMPOSITION = 'packages/domains/generated/index.js';
 const STARTER = '../../../examples/starters/b2b-lead-qualification';
 
 function cli(root, args) {
-  return spawnSync(process.execPath, ['--no-warnings', join(root, 'packages/cli/bin/agent-crm.js'), ...args, '--root', root],
+  return spawnSync(process.execPath, ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), ...args, '--root', root],
     { encoding: 'utf8', cwd: root });
 }
 
@@ -61,8 +61,8 @@ function compose(root, withIntelligence) {
 function phase(root, dbPath, body) {
   const script = join(root, `phase-${Math.abs(hash(body))}.mjs`);
   writeFileSync(script, [
-    "import { createAgentCrmApp } from './packages/app/src/index.js';",
-    `const app = createAgentCrmApp({ dbPath: ${JSON.stringify(dbPath)} });`,
+    "import { createAccordoApp } from './packages/app/src/index.js';",
+    `const app = createAccordoApp({ dbPath: ${JSON.stringify(dbPath)} });`,
     'const actor = { type: "user", id: "absence" };',
     'const out = {};',
     'try {',
@@ -85,7 +85,7 @@ function hash(value) {
 }
 
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'agent-crm-intel-absent-'));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-intel-absent-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });

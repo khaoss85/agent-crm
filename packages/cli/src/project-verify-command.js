@@ -372,7 +372,7 @@ export async function projectVerifyCommand(options = {}) {
     for (const path of conformanceTargets) {
       const result = await step({
         command: process.execPath,
-        args: ['--no-warnings', join(rootDir, 'packages/cli/bin/agent-crm.js'), 'package', 'test', path, '--json', '--root', rootDir],
+        args: ['--no-warnings', join(rootDir, 'packages/cli/bin/accordo.js'), 'package', 'test', path, '--json', '--root', rootDir],
         cwd: rootDir,
       });
       checks.push(check({
@@ -529,7 +529,7 @@ export function semanticFingerprint(report) {
 /** @param {any} report */
 function render(report) {
   const lines = [];
-  lines.push(`Agent CRM project verify (contract ${report.projectVerificationContract})`);
+  lines.push(`Accordo project verify (contract ${report.projectVerificationContract})`);
   lines.push(`status: ${report.status}`);
   lines.push('');
   for (const category of CATEGORIES) {

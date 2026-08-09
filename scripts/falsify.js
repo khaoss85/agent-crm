@@ -80,7 +80,7 @@ export const MUTATIONS = [
   },
   {
     id: 'definition-version-immutability',
-    file: 'packages/core/src/intelligence-registry.js',
+    file: 'packages/intelligence/src/registry.js',
     find: 'if (String(existing.fingerprint) !== entry.fingerprint) {',
     replace: 'if (false) {',
     rule: 'a registered policy version cannot be edited in place',
