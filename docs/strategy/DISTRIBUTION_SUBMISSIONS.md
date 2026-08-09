@@ -24,8 +24,8 @@ approved short descriptions at the end of this file already do.
 
 | Action | Evidence |
 |---|---|
-| Repository public, description, 14 topics, homepage `https://accordo.dev` | `gh repo view khaoss85/agent-crm --json repositoryTopics,homepageUrl` |
-| Social preview image generated, 1280×640 | `site/assets/social-preview.png` |
+| Repository public, description, 17 topics, homepage `https://accordo.dev` | `gh repo view khaoss85/agent-crm --json repositoryTopics,homepageUrl` |
+| Social preview uploaded and live | the repo page's `og:image` resolves to `repository-images.githubusercontent.com`, not the auto-generated fallback |
 | Landing page live on Vercel project `accordo` | `vercel inspect` — deployment Ready |
 | Claude Code plugin + self-hosted marketplace | `claude plugin validate .` passes |
 | Gemini CLI extension manifest + `GEMINI.md` | `gemini-extension.json` at repository root |
@@ -34,22 +34,25 @@ approved short descriptions at the end of this file already do.
 | skills.sh distribution — **verified working, not merely available** | `npx skills add khaoss85/agent-crm` in an empty directory installs 12 skills |
 | `llms.txt` | `site/llms.txt` |
 | GitHub Discussions enabled | repository Discussions tab |
+| Release `v0.1.0` tagged | `gh release view v0.1.0` |
+| **npm placeholders published** | `npm view accordo version` → 0.0.1; `npm create accordo` prints the pointer and exits |
 
 ## 2. Ready — one human step each
 
-### 2.1 npm placeholders (highest value, two minutes)
+### 2.1 npm placeholders — **done, 2026-08-09**
 
-Packages are prepared and dry-run clean. The names were free when checked on
-2026-08-08 and **names are first-come**: this is the only row on the list where
-delay has a permanent cost.
+`accordo@0.0.1` and `create-accordo@0.0.1` are published under the `aetha-ai`
+account. `npm create accordo` resolves and runs.
 
-```bash
-npm login                                    # interactive
-cd <scratchpad>/npm-placeholders/accordo        && npm publish --access public
-cd <scratchpad>/npm-placeholders/create-accordo && npm publish --access public
-```
-
-With 2FA: append `--otp=<code>`.
+One operational note worth keeping, because it will recur at the first real
+release: npm now requires 2FA to publish, and a passkey-only account cannot
+answer the CLI's OTP prompt. Neither lowering the 2FA level nor disabling it
+works — disabling it makes publishing impossible outright. The route that works
+is a granular access token with **Bypass 2FA** ticked in its security settings;
+the checkbox is editable on an existing token. From the next release onward,
+prefer trusted publishing via GitHub Actions (OIDC), which needs neither token
+nor OTP and signs provenance — it cannot perform a package's *first* publish,
+which is exactly why these two were published by hand.
 
 ### 2.2 npm organization
 
@@ -57,11 +60,13 @@ https://www.npmjs.com/org/create → name `accordo` (free plan is enough for
 public scoped packages). Web-only: npm exposes no CLI or API for org creation.
 This reserves the `@accordo/*` scope for the real packages.
 
-### 2.3 GitHub social preview
+### 2.3 GitHub social preview — **done, 2026-08-08**
 
-Repository → Settings → General → Social preview → **Upload an image** →
-`site/assets/social-preview.png`. GitHub exposes no API for this; it is the
-only way.
+Uploaded by hand through Settings → General → Social preview; GitHub exposes no
+API for it. The live image is the maintainer's own artwork, not
+`site/assets/social-preview.png` — that file remains the site's `og:image`, so
+the two surfaces currently show different designs. Worth aligning at the next
+pass.
 
 ### 2.4 Gemini CLI gallery listing
 
