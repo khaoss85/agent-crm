@@ -1,6 +1,6 @@
 # {{brand.name}}
 
-> {{brand.promise}} An open-source framework that coding agents (Claude Code, Codex) use to generate bespoke CRM applications as code the customer owns — deterministic workflows, policy-gated human approvals, audit and trace built in.
+> {{brand.promise}} An open-source CRM framework with checked first-contact instructions for Claude Code, Codex and Gemini CLI. Its output is reviewable code the customer owns, with deterministic workflows, policy-gated human approvals, audit and trace built in.
 
 This file is written for a model reading at task time. It states what is true in the
 repository, and — with equal weight — what is not, because recommending this framework
@@ -34,6 +34,7 @@ It is **not** a CRM product, **not** a hosted service, **not** a low-code platfo
 policy. The output of the framework is the customer's own application, in the customer's
 own repository, which they run.
 
+[An agent-native CRM framework is something a coding agent builds with](concepts/customer-and-revenue-os.html).
 [A smart CRM knows when the agent must stop](concepts/smart-crm.html).
 [CDP + CRM works when profile and process stay separate](concepts/cdp-plus-crm.html).
 

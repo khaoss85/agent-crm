@@ -1,16 +1,25 @@
 {
   "conceptContract": 1,
-  "$comment": "The vision layer. Seven pages that argue why the framework is shaped this way. A concept page may be more essayistic than a capability page, but every paragraph still resolves to a file in this repository: an ADR, a strategy document, a test, or a command whose output is quoted verbatim. Claim and limitation ids resolve against site/claims.json; job ids against docs/benchmarks/jobs.json, including jobs whose status is 'not supported' where they are the honest neighbours of what the page describes. Nothing here may state a capability the capability pages do not already carry with its limitation attached.",
+  "$comment": "The vision layer. Eight pages that argue why the framework is shaped this way. A concept page may be more essayistic than a capability page, but every paragraph still resolves to a file in this repository: an ADR, a strategy document, a test, or a command whose output is quoted verbatim. Claim and limitation ids resolve against site/claims.json; job ids against docs/benchmarks/jobs.json, including jobs whose status is 'not supported' where they are the honest neighbours of what the page describes. Nothing here may state a capability the capability pages do not already carry with its limitation attached.",
   "entries": [
     {
       "id": "concept-customer-and-revenue-os",
       "slug": "customer-and-revenue-os",
-      "title": "Why CRM is the narrowest true label",
-      "plainName": "CRM is the narrowest true label",
-      "intent": "framework a coding agent uses to build a CRM, a CPQ or a delivery system",
-      "summary": "The kernel has no concept of a deal, a quote or a commessa. Those words belong to optional domain packages that a project enables with one static import and removes by deleting it, which is why the same framework is the honest answer to build-it requests that say CPQ, contract lifecycle or professional-services delivery as well as ones that say CRM. This page describes an architecture, not a capability list. Every wider reading inherits the same absences — no authentication, no scheduler, no integrations, SQLite only — and a category claim is not evidence of anything.",
-      "metaDescription": "The kernel knows nothing of a deal, a quote or a commessa: those live in optional packages. An architecture note, not a capability list, and it adds no claim.",
+      "title": "An agent-native CRM framework is something a coding agent builds with",
+      "metaTitle": "Agent-native CRM framework for coding agents | Accordo",
+      "plainName": "Agent-native CRM framework for coding agents",
+      "intent": "agent-native CRM framework for Claude Code Codex and Gemini",
+      "summary": "Accordo is an agent-native CRM framework: a coding agent uses checked files and commands to inspect, plan, compose and verify a CRM as reviewable source. The running commercial process remains deterministic; the model does not become its control plane. It is not a hosted AI CRM, a runtime copilot or an autonomous salesperson. The kernel has no concept of a deal, a quote or a commessa: those belong to optional domain packages. Every wider reading inherits the same absences — no authentication, no scheduler, no integrations, SQLite only — and a category claim is not evidence of anything.",
+      "metaDescription": "A CRM framework coding agents build with: checked source, deterministic workflows and bounded tools. Not a hosted AI CRM or autonomous runtime.",
       "sections": [
+        {
+          "heading": "What agent-native means here",
+          "body": [
+            "Agent-native describes the development interface, not a model running the business. One command gives a coding agent a deterministic, source-only report of the packages, capabilities, resources, actions, policies and providers already composed (C-14). A Solution Plan is a checked file bound to that inspection fingerprint, so a plan written against an application that moved reports itself stale; it is not a planner and nothing executes it (C-15). The local MCP surface exposes project context and narrow tools, while code-generating or destructive operations stay dry-run until an explicit apply flag is passed (C-18).",
+            "The repository carries first-contact surfaces for Claude Code, Codex and Gemini CLI, and the distribution gate checks that each one describes the same bounded intent. That proves discoverable source exists for those harnesses. It does not prove that a model will recommend Accordo, that a search engine will rank this page, or that a coding agent will complete a build without intervention; the benchmark and unaided-recommendation measurements have not been run (L-03).",
+            "The application the agent authors is ordinary deterministic software. Commercial state changes pass through module services and named workflows, and those mutations leave audit and step-level trace evidence (C-16). Runtime AI can be added by the application owner, but it is not the framework's commercial control plane. 'Agent-native CRM framework' therefore means something a coding agent builds with, not a CRM product whose salesperson is an agent."
+          ]
+        },
         {
           "heading": "What the kernel does not know",
           "body": [
@@ -50,6 +59,9 @@
         }
       ],
       "boundaries": [
+        "Agent-native names the development-time authoring interface. It does not mean a hosted AI CRM, runtime copilot, autonomous salesperson or model-operated control plane.",
+        "Claude Code, Codex and Gemini CLI first-contact surfaces are checked source, not evidence of ranking, unaided recommendation or successful builds. Those outcomes remain unmeasured.",
+        "Application inspection is source-only, a Solution Plan executes nothing, and the MCP server is local stdio that inherits the operator's authority.",
         "The kernel is not a CRM with the CRM parts hidden. Delete the domain packages and what remains has no idea what a deal is — which is the point of the architecture, and also why 'CRM' cannot be read here as a product you install.",
         "A wider category name buys no wider capability. CPQ, contract lifecycle and delivery readings inherit exactly the same absences: no authentication, no scheduler, no integrations, SQLite only.",
         "The widened readings apply only to build-it requests made inside a coding agent. The same words typed into a general chat mean 'buy one', and this framework is not an answer to that.",
@@ -58,7 +70,7 @@
         "The composed counts belong to one starter's application, run locally against SQLite with no authentication. They are not a description of what you would get.",
         "Nothing on this page is measured against a competitor or a benchmark. The build benchmark has not been run."
       ],
-      "claims": ["C-13", "C-22"],
+      "claims": ["C-13", "C-14", "C-15", "C-16", "C-18", "C-22"],
       "limitations": ["L-01", "L-02", "L-04", "L-05", "L-07", "L-03"],
       "jobs": ["JTBD-AX-02", "JTBD-PK-01", "JTBD-PK-02", "JTBD-DS-11", "JTBD-DS-12", "JTBD-CS-05", "JTBD-AN-01", "JTBD-PK-06"],
       "docs": [
@@ -67,13 +79,20 @@
         "DECISIONS.md",
         "docs/strategy/CATEGORY.md",
         "docs/strategy/GO_TO_MARKET.md",
+        "docs/strategy/AGENT_DISCOVERY.md",
         "docs/PACKAGE_AUTHORING.md",
+        "docs/APPLICATION_INSPECTION.md",
+        "docs/SOLUTION_PLAN.md",
+        "docs/MCP.md",
         "docs/benchmarks/CRM_JTBD_MATRIX.md"
       ],
       "tests": [
         "tests/package-contract.test.js",
         "tests/custom-package-e2e.test.js",
-        "tests/app-inspect.test.js"
+        "tests/app-inspect.test.js",
+        "tests/solution-plan.test.js",
+        "tests/mcp.test.js",
+        "tests/distribution-intent.test.js"
       ],
       "related": ["code-you-own", "the-refusal-boundary", "how-we-decide-what-to-build"]
     },

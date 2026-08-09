@@ -26,6 +26,13 @@ The first unchecked item is the default next task for Codex.
   DEV Community and Indie Hackers adaptations are live, and DEV's public API now
   returns the Accordo article as `canonical_url`. Hacker News and Product Hunt
   remain intentionally unspent until the install path is real.
+- [x] **Give the core agent-native CRM category one canonical search identity.**
+  The existing Customer and Revenue OS concept now answers the external query its
+  checked intent already carried: a CRM framework that Claude Code, Codex or Gemini
+  builds with. The same first-contact page says this is a development-time authoring
+  model, not a hosted AI CRM, runtime copilot or autonomous salesperson; harness
+  manifests do not prove ranking, recommendation or build success. Publication
+  follows the reviewed intent stack and deploy.
 - [x] **Cover the Customer Hub and Smart CRM long-tail intents in checked source.**
   Customer Hub is framed as one local commercial record chain rather than a CDP;
   Smart CRM is framed as agent-built and policy-governed, with the tested
