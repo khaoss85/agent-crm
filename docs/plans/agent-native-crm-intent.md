@@ -74,7 +74,9 @@ agent advantage.
   the generated compact and full `llms.txt` surfaces.
 - [x] (2026-08-09) Render and adversarially review the page; focused tests pass
   28/28, `gtm:check` passes, and the full suite passes 787/787.
-- [ ] Run clean-clone verification and publish the stacked PR.
+- [x] (2026-08-09) Verify commit `1d8a1b4` from a clean clone: 787/787,
+  smoke, the complete B2B starter, `gtm:check` and four Chromium site shots pass.
+- [ ] Publish the stacked PR and wait for its remote checks.
 
 ## Surprises & Discoveries
 
@@ -92,6 +94,9 @@ agent advantage.
   implied successful builds that the unrun benchmark cannot prove. The overview
   now says only what is checked: first-contact instructions exist for the three
   coding-agent surfaces.
+- An adversarial mutation that removed the canonical concept slug made
+  `generate-llms --check` exit 1 with the missing-link diagnostic. The retrieval
+  surface therefore fails closed instead of silently dropping the core intent.
 
 ## Decision Log
 
@@ -114,7 +119,14 @@ touching the earlier PRs or the user's dirty `.codex/config.toml` on `main`.
 
 ## Outcome and Follow-up
 
-Not complete yet. After review, the source still needs the regular merge order
+The source change and adversarial review are complete. The existing canonical now
+has one consistent agent-native CRM identity across page metadata, breadcrumb,
+index and both generated `llms.txt` files, with the authoring-time and unrun-
+benchmark limits in the same artifacts. Visual review found no redesign need: the
+page keeps the established editorial system, puts the limitations before the
+essay, and introduces no overflow or duplicate route.
+
+Publication is still pending. The source needs the regular merge order
 `#44 → #53 → #54 → #55 → this PR` and a successful site deployment before the
 page is public. Search indexing and unaided recommendation are measured outcomes,
 not acceptance criteria a source change can claim.
