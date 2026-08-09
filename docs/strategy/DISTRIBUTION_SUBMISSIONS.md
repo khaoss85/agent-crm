@@ -1,0 +1,133 @@
+# Distribution submissions runbook
+
+Every distribution action, in dependency order, with the exact command or the
+exact text to paste. `RECOMMENDATION_MAP.md` explains *why* each one is
+sequenced where it is; this file is the checklist.
+
+Three states are used throughout:
+
+- **Done** — executed, with the evidence to check it.
+- **Ready** — the artifact exists; one human step remains, spelled out here.
+- **Blocked** — a precondition is genuinely missing; the blocker is named.
+
+The blocker that dominates the list: **`create-accordo` does not scaffold a
+project yet** (roadmap Phase 5). Directories that accept us today would resolve
+to `git clone`, and one-shot channels (Product Hunt, Show HN, Reddit) are worth
+more spent later than early. Rows below say so per row rather than in general.
+
+Copy for any public surface must pass `GTM_TECHNICAL_EVIDENCE_HANDOFF.md`. The
+approved short descriptions at the end of this file already do.
+
+---
+
+## 1. Done
+
+| Action | Evidence |
+|---|---|
+| Repository public, description, 14 topics, homepage `https://accordo.dev` | `gh repo view khaoss85/agent-crm --json repositoryTopics,homepageUrl` |
+| Social preview image generated, 1280×640 | `site/assets/social-preview.png` |
+| Landing page live on Vercel project `accordo` | `vercel inspect` — deployment Ready |
+| Claude Code plugin + self-hosted marketplace | `claude plugin validate .` passes |
+| Gemini CLI extension manifest + `GEMINI.md` | `gemini-extension.json` at repository root |
+| Codex plugin manifest | `.codex-plugin/plugin.json` |
+| Skill mirror completed — all 12 skills in both `.claude/skills/` and `.agents/skills/` | `npm run crm -- project doctor --json` → 0 warnings |
+| skills.sh distribution — **verified working, not merely available** | `npx skills add khaoss85/agent-crm` in an empty directory installs 12 skills |
+| `llms.txt` | `site/llms.txt` |
+| GitHub Discussions enabled | repository Discussions tab |
+
+## 2. Ready — one human step each
+
+### 2.1 npm placeholders (highest value, two minutes)
+
+Packages are prepared and dry-run clean. The names were free when checked on
+2026-08-08 and **names are first-come**: this is the only row on the list where
+delay has a permanent cost.
+
+```bash
+npm login                                    # interactive
+cd <scratchpad>/npm-placeholders/accordo        && npm publish --access public
+cd <scratchpad>/npm-placeholders/create-accordo && npm publish --access public
+```
+
+With 2FA: append `--otp=<code>`.
+
+### 2.2 npm organization
+
+https://www.npmjs.com/org/create → name `accordo` (free plan is enough for
+public scoped packages). Web-only: npm exposes no CLI or API for org creation.
+This reserves the `@accordo/*` scope for the real packages.
+
+### 2.3 GitHub social preview
+
+Repository → Settings → General → Social preview → **Upload an image** →
+`site/assets/social-preview.png`. GitHub exposes no API for this; it is the
+only way.
+
+### 2.4 Gemini CLI gallery listing
+
+Zero-submission: the gallery crawls repositories daily and lists those that
+carry the topic `gemini-cli-extension`, have `gemini-extension.json` at the
+repository root, and have at least one git tag
+([releasing guide](https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/releasing.md)).
+
+Topic: **set**. Manifest: **on this branch**. Remaining, after the merge:
+
+```bash
+gh release create v0.1.0 --title "v0.1.0" --notes "Pre-release: Gemini CLI extension and agent surface."
+```
+
+Then verify within ~24h at https://geminicli.com/extensions/browse/
+
+### 2.5 Announce the install lines
+
+Nothing to submit — these work the moment the branch merges, and they are the
+lines every later piece of content must repeat verbatim:
+
+```bash
+/plugin marketplace add khaoss85/agent-crm    # Claude Code
+gemini extensions install https://github.com/khaoss85/agent-crm
+npx skills add khaoss85/agent-crm             # skills.sh, indexes on install telemetry
+```
+
+## 3. Blocked, with the blocker named
+
+| Submission | Blocker | Unblocks when |
+|---|---|---|
+| **MCP Registry** ([quickstart](https://modelcontextprotocol.io/registry/quickstart)) | The registry stores metadata only — the server package must already be on npm, with `mcpName` in `package.json` matching `server.json`, under namespace `io.github.khaoss85` | `@accordo/mcp` is published |
+| **Vercel templates** ([submit](https://vercel.com/templates/submit)) | Requires a deployable app with a demo URL. The one starter (`examples/starters/b2b-lead-qualification`) is an install script, not a deployable project | One deployable starter exists (Phase 10) |
+| **Anthropic community marketplace** ([submit](https://platform.claude.com/plugins/submit)) | Form submission; the plugin should point at something installable before review | Phase 5 |
+| **Anthropic Connectors Directory** | Needs a hosted Docs MCP with OAuth 2.1 and a privacy policy | Docs MCP is built (Phase 8) |
+| **ChatGPT / Codex plugin directory** | Verified developer + hosted MCP + policies | Same as above |
+| **Awesome lists** (`awesome-mcp-servers`, `awesome-claude-code`) | These reject entries that cannot be installed and used | Phase 5 |
+| **Product Hunt / Show HN / Reddit** | One-shot channels. A launch that ends in "clone the repo" spends the shot for a fraction of the return | Phase 5 + a deployable starter |
+| **Paid search** | No brand volume; nothing to convert to | Phase 5 + a converting landing page |
+| **`CITATION.cff`** | Nothing citable — the benchmark has never been run | First benchmark results |
+| **npm provenance** (`--provenance`) | Needs publishing from CI with an OIDC-enabled workflow | First real package release |
+
+## 4. Approved copy
+
+Reusable across directories, forms and package metadata. Each line traces to
+`GTM_TECHNICAL_EVIDENCE_HANDOFF.md`; do not extend them without adding a row
+there first.
+
+**One line (≤80 chars)**
+> The open-source framework coding agents use to build custom CRMs.
+
+**Short (≤200 chars)**
+> Describe your commercial process to Claude Code, Codex or Gemini; get a working CRM as reviewable code you own — deterministic workflows, human approvals, audit and trace built in.
+
+**Long**
+> Accordo is an open-source framework for building custom CRMs with coding agents. You describe a commercial process; the agent generates domain modules, deterministic workflows, human approval boundaries, and audit and trace — as reviewable code in your own repository, not configuration inside someone else's platform. The commercial lifecycle it models runs from lead capture through enrichment, scoring and routing, qualification, conversion, pipeline, composite quoting with versioned discount policy, verified signature evidence, immutable orders, contract and subscription activation, delivery projects with economics and acceptance, and service coverage with SLA evidence. Pre-release: it runs locally on SQLite and has no authentication, tenancy or RBAC. It is not a billing or ERP system.
+
+**Keywords**
+> crm, framework, ai-agents, coding-agents, claude-code, codex, gemini-cli, mcp, workflows, approvals, audit, cpq, contracts, subscriptions, delivery, service, nodejs
+
+**Never say** (from the handoff): production-ready, cloud-ready, benchmark
+superiority of any kind, "fully autonomous", "works with every model", "zero
+hallucinations", marketplace availability, or anything implying billing,
+invoicing or ERP.
+
+## Related
+
+`RECOMMENDATION_MAP.md` · `AGENT_DISCOVERY.md` · `ORGANIC_GROWTH.md` ·
+`GTM_TECHNICAL_EVIDENCE_HANDOFF.md`

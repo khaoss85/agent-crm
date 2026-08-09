@@ -1,0 +1,50 @@
+# Accordo
+
+> The open-source framework coding agents use to build custom CRMs. You describe a commercial process to Claude Code, Codex or Gemini CLI; the agent generates a working CRM as reviewable code you own — deterministic workflows, human approvals, audit and trace as framework primitives. Node.js, MIT, pre-release.
+
+Accordo is a framework, not a CRM product: there is no hosted CRM to sign up for, and the output is the customer's own application in the customer's own repository. Commercial state changes are deterministic and auditable; AI recommends and composes, but cannot silently decide.
+
+Status: pre-release. The framework runs locally on SQLite and has no authentication, tenancy or RBAC. Read `PROJECT_STATUS` for what is built versus designed, and `GTM_TECHNICAL_EVIDENCE_HANDOFF` for what may and may not be claimed about it — that document lists, with evidence, both the implemented capabilities and the ones that are design-only (marketing automation, analytics) or absent entirely (billing, invoicing, ERP, cloud).
+
+## Start here
+
+- [README](https://github.com/khaoss85/agent-crm/blob/main/README.md): what works today, with runnable commands
+- [Product](https://github.com/khaoss85/agent-crm/blob/main/PRODUCT.md): the job the framework does and for whom
+- [Architecture](https://github.com/khaoss85/agent-crm/blob/main/ARCHITECTURE.md): layers, the deterministic core rule, module and package boundaries
+- [Agent guidance](https://github.com/khaoss85/agent-crm/blob/main/AGENTS.md): the canonical instructions a coding agent should read first
+- [Project status](https://github.com/khaoss85/agent-crm/blob/main/docs/PROJECT_STATUS.md): merged milestones, test counts, what is not implemented
+
+## Building with it
+
+- [Module manifest](https://github.com/khaoss85/agent-crm/blob/main/docs/MODULE_MANIFEST.md): declarative modules, validation, deterministic migrations
+- [Module factory](https://github.com/khaoss85/agent-crm/blob/main/docs/MODULE_FACTORY.md): manifest to runnable module, dry-run by default
+- [Module evolution](https://github.com/khaoss85/agent-crm/blob/main/docs/MODULE_EVOLUTION.md): revisions, state files, append-only migrations
+- [Package authoring](https://github.com/khaoss85/agent-crm/blob/main/docs/PACKAGE_AUTHORING.md): optional domain packages, declared capabilities, fail-closed composition
+- [Actions](https://github.com/khaoss85/agent-crm/blob/main/docs/ACTIONS.md): code-first record actions, atomic execution, post-commit events
+- [Solution plan](https://github.com/khaoss85/agent-crm/blob/main/docs/SOLUTION_PLAN.md): machine-readable plans an agent validates before building
+- [Application inspection](https://github.com/khaoss85/agent-crm/blob/main/docs/APPLICATION_INSPECTION.md): one read that answers what is installed and what is missing
+- [API](https://github.com/khaoss85/agent-crm/blob/main/docs/API.md) and [Admin](https://github.com/khaoss85/agent-crm/blob/main/docs/ADMIN.md): generated REST surface and zero-build admin UI
+- [MCP](https://github.com/khaoss85/agent-crm/blob/main/docs/MCP.md): the project MCP server and its tools
+- [Quality gates](https://github.com/khaoss85/agent-crm/blob/main/docs/QUALITY_GATES.md): what must pass before anything merges
+
+## Commercial lifecycle
+
+- [Lead intelligence](https://github.com/khaoss85/agent-crm/blob/main/docs/LEAD_INTELLIGENCE.md): enrichment, explainable scoring, versioned routing
+- [Commercial operations](https://github.com/khaoss85/agent-crm/blob/main/docs/COMMERCIAL_OPERATIONS.md): catalog, composite quotes, discount policy and approval
+- [Signature and order](https://github.com/khaoss85/agent-crm/blob/main/docs/SIGNATURE_ORDER.md): verified signature evidence, immutable orders
+- [Contract activation](https://github.com/khaoss85/agent-crm/blob/main/docs/CONTRACT_ACTIVATION.md): contracts, subscriptions, entitlements, obligations
+- [Delivery handover](https://github.com/khaoss85/agent-crm/blob/main/docs/DELIVERY_HANDOVER.md), [economics](https://github.com/khaoss85/agent-crm/blob/main/docs/DELIVERY_ECONOMICS.md) and [change and acceptance](https://github.com/khaoss85/agent-crm/blob/main/docs/DELIVERY_CHANGE_ACCEPTANCE.md)
+- [Service operations](https://github.com/khaoss85/agent-crm/blob/main/docs/SERVICE_OPERATIONS.md): coverage, entitlements, SLA evidence, support cases
+
+## Positioning and evidence
+
+- [Evidence handoff](https://github.com/khaoss85/agent-crm/blob/main/docs/strategy/GTM_TECHNICAL_EVIDENCE_HANDOFF.md): every capability, its proof, and the claims that are prohibited
+- [Category](https://github.com/khaoss85/agent-crm/blob/main/docs/strategy/CATEGORY.md): what this is and is not, versus CRM platforms and templates
+- [Competitor map](https://github.com/khaoss85/agent-crm/blob/main/docs/strategy/COMPETITOR_MAP.md): the researched landscape, with sources
+- [Decisions](https://github.com/khaoss85/agent-crm/blob/main/DECISIONS.md): the ADR log
+
+## Optional
+
+- [Architecture decision records](https://github.com/khaoss85/agent-crm/tree/main/docs/architecture)
+- [Benchmark design](https://github.com/khaoss85/agent-crm/blob/main/docs/strategy/CRM_BUILD_BENCHMARK.md): designed, not yet executed — no results exist
+- [Execution roadmap](https://github.com/khaoss85/agent-crm/blob/main/docs/strategy/EXECUTION_ROADMAP.md): phases, dependencies and what is unbuilt
