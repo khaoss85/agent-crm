@@ -1,7 +1,7 @@
 // @ts-check
 
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { projectFiles } from './project-files.js';
@@ -272,6 +272,42 @@ function lstatSafe(path) {
 }
 
 /**
+ * Resolve the physical destination of a path that may not exist yet.
+ *
+ * `realpath` cannot resolve a missing target, so walk to the nearest existing
+ * ancestor, resolve every symlink there, then append the missing suffix. This
+ * keeps the source-overlap boundary true when the caller reaches the checkout
+ * through a symlinked parent rather than naming the checkout lexically.
+ *
+ * @param {string} path
+ * @returns {string|null}
+ */
+function physicalDestination(path) {
+  let cursor = path;
+  const suffix = [];
+  while (!lstatSafe(cursor)) {
+    const parent = dirname(cursor);
+    if (parent === cursor) return null;
+    suffix.unshift(basename(cursor));
+    cursor = parent;
+  }
+  try {
+    return resolve(realpathSync(cursor), ...suffix);
+  } catch {
+    return null;
+  }
+}
+
+/** @param {string} parent @param {string} child */
+function pathsOverlap(parent, child) {
+  const fromParent = relative(parent, child);
+  const toParent = relative(child, parent);
+  const inside = fromParent === '' || (!fromParent.startsWith('..') && !isAbsolute(fromParent));
+  const contains = toParent === '' || (!toParent.startsWith('..') && !isAbsolute(toParent));
+  return inside || contains;
+}
+
+/**
  * Every file the manifest covers, with its content hash.
  *
  * Symlinks are **refused, never followed**. A symlink in the source would make
@@ -359,11 +395,10 @@ export function resolveTarget({ directory, cwd, sourceRoot }) {
   const target = isAbsolute(directory) ? resolve(directory) : resolve(cwd, directory);
 
   if (sourceRoot) {
-    const fromSource = relative(sourceRoot, target);
-    const toSource = relative(target, sourceRoot);
-    const inside = fromSource === '' || (fromSource !== '' && !fromSource.startsWith('..') && !isAbsolute(fromSource));
-    const contains = toSource === '' || (toSource !== '' && !toSource.startsWith('..') && !isAbsolute(toSource));
-    if (inside || contains) {
+    const physicalSource = physicalDestination(resolve(sourceRoot));
+    const physicalTarget = physicalDestination(target);
+    if (pathsOverlap(resolve(sourceRoot), target)
+      || (physicalSource && physicalTarget && pathsOverlap(physicalSource, physicalTarget))) {
       return {
         ok: false,
         code: 'TARGET_INSIDE_FRAMEWORK_SOURCE',

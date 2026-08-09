@@ -252,9 +252,15 @@ packages/create-accordo/
 ```
 
 `private: true` is deliberate and load-bearing: **npm refuses to publish a
-private package**, so this branch cannot cause an accidental publication. A human
-removes that field, adds a `files` array covering the vendored source, and
-publishes. That is written in the package README rather than left implicit.
+private package**, so this branch cannot cause an accidental publication. A
+publishable artifact needs a separate release-packaging step that stages this
+package and the framework source under one package root: npm's `files` array
+cannot reach sibling directories, and `npm pack --dry-run
+./packages/create-accordo` proves the current tarball contains only five files
+and would resolve `FRAMEWORK_SOURCE_UNAVAILABLE`. The staged tarball must be
+installed and driven through bootstrap, inspect, doctor, tests and smoke before
+a human removes `private` in that artifact and publishes it. That boundary is
+written in the package README rather than left implicit.
 
 `"type": "module"` is required, not cosmetic: a `package.json` under
 `packages/` without it would make every `.js` file beneath it CommonJS.
@@ -526,6 +532,20 @@ Expected: `app inspect` → `"valid": true`, exit 0. `project doctor` → `"stat
   Eight two-process races each produced exactly one applied project and one
   `TARGET_CLAIMED` refusal. The review also corrected this plan's generated-file
   count from nine to the ten files already proved by the CLI regression.
+- **2026-08-09 — latest-main adversarial review.** Merged `fc07d9e` into the
+  review branch and resolved the GTM receipt document by preserving both newer
+  production receipts and the bootstrap's source-only status. The hostile-path
+  attack found a real boundary bypass: a target whose ancestor was a symlink
+  into the framework checkout passed the lexical overlap check and wrote inside
+  the source. `resolveTarget` now compares physical destinations through the
+  nearest existing ancestor; the regression proves plan and apply both refuse
+  it and leave the source untouched. A second review finding corrected the
+  publication handoff: npm cannot include sibling directories via `files`, and
+  `npm pack --dry-run ./packages/create-accordo` proves the current five-file
+  tarball carries no framework. Publication therefore needs a staged release
+  artifact plus an isolated tarball E2E, not merely removing `private`. Latest
+  clean-clone evidence: 772/772 tests, smoke green, GTM checks green, and the
+  focused bootstrap suite 29/29.
 
 ## 10. Decision log
 
@@ -568,7 +588,7 @@ feature PR stops being reviewable. The number that matters for review is the
 ## 12. Outcome and follow-up
 
 **What shipped.** `packages/create-accordo` — five files — plus
-`tests/project-bootstrap.test.js` (27 tests) and this plan. Contract
+`tests/project-bootstrap.test.js` (29 tests) and this plan. Contract
 `projectBootstrapContract: 1`; eleven problem codes; fourteen published
 limitations; exit codes `0 | 1 | 2`.
 
@@ -585,8 +605,8 @@ exit 0), the project's own `scripts/check.js`, its own `node --test`
 
 | | Baseline (`0c8a29d`, clean tree) | After adversarial review |
 |---|---|---|
-| `npm run verify` | 741 tests, 739 passing, **2 failing** | **769 tests, 769 passing, 0 failing** |
-| Delta | — | **+28 tests, +30 passing, -2 environmental failures** |
+| `npm run verify` | 741 tests, 739 passing, **2 failing** | **772 tests, 772 passing, 0 failing** |
+| Delta | — | **+31 tests, +33 passing, -2 environmental failures**, including changes merged to `main` while this PR was open |
 | Baseline failures | pre-existing and environmental (§11) | the package scratch assertion is now concurrency-safe; the high-volume delivery case passed during the first review run |
 | `npm run smoke` | green | green |
 | `accordo project doctor --json` | `passed`, 0 failed, 0 warning | `passed`, 0 failed, 0 warning |
@@ -594,8 +614,8 @@ exit 0), the project's own `scripts/check.js`, its own `node --test`
 | `npm run site:check` | passed, 23 claims / 9 limitations | passed, 23 claims / 9 limitations |
 | `npm run surface:check` | 1/1, 12/12, 9/10, 11/11 | **identical** — no skill, no MCP tool, no command added |
 
-The original adversarial-review run completed in the fresh clone with `npm run
-verify` green: syntax checked 252 JavaScript files and all 769 tests passed. A
+The latest adversarial-review run completed in the fresh clone with `npm run
+verify` green: syntax checked 252 JavaScript files and all 772 tests passed. A
 separate empty-directory run used the generated project's own CLI and produced
 `app inspect valid: true`, `project doctor passed` with 0 failed / 0 warning,
 its own tests at 3 passed / 0 failed, and a green smoke, with no install step.

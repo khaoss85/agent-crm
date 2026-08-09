@@ -79,11 +79,17 @@ That is deliberate: it is what makes an accidental publish impossible from this
 repository. Turning the reservation into a real package means a person
 decides to, and in the same commit:
 
-1. removes `private` from `packages/create-accordo/package.json`;
-2. adds a `files` array that carries the framework source the bootstrap copies,
-   because a tarball without it resolves `FRAMEWORK_SOURCE_UNAVAILABLE`;
-3. updates `site/brand.json` → `npm.status` (`scripts/distribution-check.js`
+1. adds a release-packaging step that stages this package **and** the framework
+   source into one publish root. npm cannot include sibling directories through
+   a `files` array; `npm pack --dry-run ./packages/create-accordo` currently
+   proves that the tarball contains only this package and would report
+   `FRAMEWORK_SOURCE_UNAVAILABLE`;
+2. verifies the packed tarball by installing it in an isolated empty directory,
+   bootstrapping a project, and running that project's inspect, doctor, tests
+   and smoke;
+3. removes `private` from the staged publish manifest only after that proof;
+4. updates `site/brand.json` → `npm.status` (`scripts/distribution-check.js`
    fails while that status and this manifest disagree);
-4. publishes with `--provenance`.
+5. publishes the verified tarball with `--provenance`.
 
 Nothing in this repository performs any of those steps.

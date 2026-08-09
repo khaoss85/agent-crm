@@ -300,6 +300,43 @@ test('the framework may not be bootstrapped onto itself, in either direction', (
   assert.equal(planProjectBootstrap({ directory: join(workspace, 'fine'), cwd: workspace }).report.ok, true);
 });
 
+test('a symlinked target ancestor cannot bypass the framework-source boundary', (t) => {
+  const workspace = scratch(t);
+  const source = join(workspace, 'framework');
+  for (const marker of ['packages/core/index.js', 'packages/cli/bin/accordo.js', 'packages/app/src/index.js', 'packages/domains/generated/index.js']) {
+    mkdirSync(join(source, dirname(marker)), { recursive: true });
+    writeFileSync(join(source, marker), '// marker\n');
+  }
+  for (const directory of ['skills', 'examples/modules']) {
+    mkdirSync(join(source, directory), { recursive: true });
+    writeFileSync(join(source, directory, 'fixture.js'), '// fixture\n');
+  }
+
+  const outside = join(workspace, 'outside');
+  mkdirSync(outside);
+  symlinkSync(join(source, 'packages'), join(outside, 'linked-parent'));
+  const escapedTarget = join(outside, 'linked-parent', 'escaped-project');
+
+  const plan = planProjectBootstrap({
+    directory: escapedTarget,
+    name: 'escaped-project',
+    cwd: outside,
+    sourceRoot: source,
+  }).report;
+  assert.equal(plan.ok, false);
+  assert.equal(plan.problems.some((problem) => problem.code === 'TARGET_INSIDE_FRAMEWORK_SOURCE'), true);
+
+  const applied = applyProjectBootstrap({
+    directory: escapedTarget,
+    name: 'escaped-project',
+    cwd: outside,
+    sourceRoot: source,
+  });
+  assert.equal(applied.ok, false);
+  assert.equal(existsSync(join(source, 'packages', 'escaped-project')), false,
+    'nothing is written inside the source through the symlinked ancestor');
+});
+
 test('a second bootstrap into the same directory is refused, because the first one is there', (t) => {
   const workspace = scratch(t);
   const target = join(workspace, 'once-only');
