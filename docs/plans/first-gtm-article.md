@@ -74,6 +74,13 @@ Hackers without presenting the pre-launch repository as an installable product.
   passed 40/40, `npm run gtm:check` passed, the built site contains 108 pages,
   and the canonical article is present in the blog index, sitemap, `llms.txt`
   and `llms-full.txt`.
+- 2026-08-09: adversarial rendering review found the populated blog index still
+  rendered the old empty-state H1 and the article exposed no `BlogPosting`
+  structured data. It also found that the LLM index had introduced a second
+  front-matter parser. The index heading now branches on real post count, each
+  article emits bounded `BlogPosting` JSON-LD, and `generate-llms.js` reuses
+  `readBlogPosts` so there is one editorial contract. The discovery regression
+  asserts all three corrections.
 
 ## Decision log
 

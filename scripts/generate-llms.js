@@ -32,6 +32,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { readBlogPosts } from './site-clusters.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -111,7 +112,7 @@ const jobs = readJobIndex(join(root, 'docs', 'benchmarks', 'jobs.json'));
 const answersIndex = existsSync(join(siteDir, 'answers.json'))
   ? readJson(join(siteDir, 'answers.json'))
   : null;
-const writing = readPublishedWriting(join(siteDir, 'blog'));
+const writing = readBlogPosts(join(siteDir, 'blog'), ledger);
 
 const shortText = compose({ full: false });
 const fullText = compose({ full: true });
@@ -711,43 +712,6 @@ function readJobIndex(path) {
   }
 
   return { present: true, total: list.length, counts };
-}
-
-/**
- * Read only the front-matter fields needed for retrieval. The site renderer is
- * the authority on the full post contract; this index fails closed on the
- * smaller identity it publishes rather than inventing a title or date.
- * @param {string} directory
- */
-function readPublishedWriting(directory) {
-  if (!existsSync(directory)) return [];
-  const posts = [];
-  for (const name of readdirSync(directory).filter((entry) => entry.endsWith('.md') && entry !== 'README.md').sort()) {
-    const path = join(directory, name);
-    const text = readFileSync(path, 'utf8');
-    const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
-    if (!match) {
-      problems.push(`site/blog/${name}: missing front matter; cannot add it to Published writing`);
-      continue;
-    }
-    const field = (key) => new RegExp(`^${key}:\\s*(.+)$`, 'm').exec(match[1])?.[1]?.trim() ?? '';
-    const title = field('title');
-    const date = field('date');
-    const claimsRaw = field('claims');
-    let claims = /^\[.*\]$/.test(claimsRaw)
-      ? claimsRaw.slice(1, -1).split(',').map((value) => value.trim()).filter(Boolean)
-      : [];
-    if (claims.length === 0) {
-      const block = /^claims:\s*\n((?:\s+-\s*.+(?:\n|$))+)/m.exec(match[1])?.[1] ?? '';
-      claims = block.split('\n').map((line) => /^\s+-\s*(.+)$/.exec(line)?.[1]?.trim()).filter(Boolean);
-    }
-    if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      problems.push(`site/blog/${name}: Published writing needs a title and YYYY-MM-DD date`);
-      continue;
-    }
-    posts.push({ slug: name.slice(0, -3), title, date, claims });
-  }
-  return posts;
 }
 
 /**

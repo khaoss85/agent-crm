@@ -220,7 +220,20 @@ test('the first article is discoverable by both people and coding agents', (t) =
   const title = 'If a coding agent builds your CRM, what should it refuse to do?';
 
   assert.ok(site.pages.includes(`blog/${slug}.html`), 'the canonical article was built');
-  assert.match(site.read('blog.html'), new RegExp(`href="blog/${slug}\\.html"`));
+  const index = site.read('blog.html');
+  assert.match(index, new RegExp(`href="blog/${slug}\\.html"`));
+  assert.match(index, /<h1>Writing grounded in evidence\.<\/h1>/);
+  assert.doesNotMatch(index, /<h1>The engine ships; the blog ships empty\.<\/h1>/,
+    'the populated index must not keep presenting the original empty state');
+  const article = site.read(`blog/${slug}.html`);
+  const structured = [...article.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
+    .map((match) => JSON.parse(match[1]));
+  const posting = structured.find((block) => block['@type'] === 'BlogPosting');
+  assert.ok(posting, 'the canonical article identifies itself as a BlogPosting');
+  assert.equal(posting.headline, title);
+  assert.equal(posting.datePublished, '2026-08-09');
+  assert.equal(posting.author?.name, 'Daniele Pelleri');
+  assert.equal(posting.url, `${ORIGIN}/blog/${slug}.html`);
   const llmsEntry = `[${title}](blog/${slug}.html)`;
   assert.ok(site.read('llms.txt').includes(llmsEntry), 'the short retrieval surface links the canonical article');
   assert.ok(site.read('llms-full.txt').includes(llmsEntry), 'the full retrieval surface links the canonical article');
