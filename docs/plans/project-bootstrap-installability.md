@@ -301,7 +301,7 @@ Excluded everywhere: `node_modules`, `.git`, `data`, `*.sqlite*`,
 `.scaffold-*`, and `packages/create-accordo` itself — a project is not a
 bootstrapper. Symlinks are refused rather than followed.
 
-Generated (nine files, none copied):
+Generated (ten files, none copied):
 
 ```text
 package.json      name, engines, bin: accordo, scripts: crm/test/check/smoke/verify/doctor/dev
@@ -518,6 +518,14 @@ Expected: `app inspect` → `"valid": true`, exit 0. `project doctor` → `"stat
   temp root, preserving the success/failure cleanup assertion without treating
   another test's scratch as this command's leak. Focused evidence: 61/61
   bootstrap-and-doctor tests and the isolated cleanup regression pass.
+- **2026-08-09 — refreshed-head review.** After current `main` was merged into
+  the branch at `3620000`, both GitHub verify jobs and both public-claims jobs
+  passed. A second clean clone passed 771/771 tests and smoke; an independent
+  empty-directory run produced `app inspect` valid, `project doctor` passed,
+  three generated-project tests passing and green smoke, with no install step.
+  Eight two-process races each produced exactly one applied project and one
+  `TARGET_CLAIMED` refusal. The review also corrected this plan's generated-file
+  count from nine to the ten files already proved by the CLI regression.
 
 ## 10. Decision log
 
@@ -586,7 +594,7 @@ exit 0), the project's own `scripts/check.js`, its own `node --test`
 | `npm run site:check` | passed, 23 claims / 9 limitations | passed, 23 claims / 9 limitations |
 | `npm run surface:check` | 1/1, 12/12, 9/10, 11/11 | **identical** — no skill, no MCP tool, no command added |
 
-The final adversarial-review run completed in the fresh clone with `npm run
+The original adversarial-review run completed in the fresh clone with `npm run
 verify` green: syntax checked 252 JavaScript files and all 769 tests passed. A
 separate empty-directory run used the generated project's own CLI and produced
 `app inspect valid: true`, `project doctor passed` with 0 failed / 0 warning,
@@ -599,7 +607,7 @@ project reported `app inspect valid: true`, `project doctor: passed, failed 0,
 warning 0`, `pass 3 / fail 0` from its own tests, and a green smoke. The
 `fingerprint` and `source.fingerprint` produced by the clone are **byte-identical**
 to the ones produced by this worktree for the same request
-(`aa3b0be7…` / `f12ae28d…`), which is the determinism claim measured rather than
+(`c9382762…` / `f12ae28d…`), which is the determinism claim measured rather than
 asserted.
 
 **Claims changed, and the line held.** Only the *source* claim moved. The npm
