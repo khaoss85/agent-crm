@@ -23,3 +23,10 @@ packages/.scaffold-*
 
 # Screenshots from the render audit — a local artifact, never published.
 site/.render-check/
+
+# Local Vercel project metadata and pulled preview credentials.
+.vercel/
+.env.local
+
+# Deterministic Vercel Function corpus, assembled during the build.
+packages/docs-mcp/runtime-corpus/

@@ -101,8 +101,8 @@ npx skills add khaoss85/agent-crm             # skills.sh, indexes on install te
 | **MCP Registry** ([quickstart](https://modelcontextprotocol.io/registry/quickstart)) | The registry stores metadata only — the server package must already be on npm, with `mcpName` in `package.json` matching `server.json`, under namespace `io.github.khaoss85` | `@accordo/mcp` is published |
 | **Vercel templates** ([submit](https://vercel.com/templates/submit)) | Requires a deployable app with a demo URL. The one starter (`examples/starters/b2b-lead-qualification`) is an install script, not a deployable project | One deployable starter exists (Phase 10) |
 | **Anthropic community marketplace** ([submit](https://platform.claude.com/plugins/submit)) | Form submission; the plugin should point at something installable before review | Phase 5 |
-| **Anthropic Connectors Directory** | Needs a hosted Docs MCP with OAuth 2.1 and a privacy policy | Docs MCP is built (Phase 8) |
-| **ChatGPT / Codex plugin directory** | Verified developer + hosted MCP + policies | Same as above |
+| **Anthropic Connectors Directory** | The read-only Streamable HTTP transport and privacy page are implemented, but the production endpoint has not been human-promoted or submitted | Human promotion, live `tools/list`/`tools/call` receipt, then review submission |
+| **ChatGPT / Codex plugin directory** | Same hosted transport; verified-developer and directory review remain external | Human promotion and verified-developer submission |
 | **Awesome lists** (`awesome-mcp-servers`, `awesome-claude-code`) | These reject entries that cannot be installed and used | Phase 5 |
 | **Product Hunt / Show HN / Reddit** | One-shot channels. A launch that ends in "clone the repo" spends the shot for a fraction of the return | Phase 5 + a deployable starter |
 | **Paid search** | No brand volume; nothing to convert to | Phase 5 + a converting landing page |
