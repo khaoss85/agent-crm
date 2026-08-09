@@ -48,6 +48,8 @@ the following today; none of them is a rough edge, each is an absence.
 - **L-08 — Ownership today means copying source, not installing a dependency.** There is a project bootstrap and there is no published package, and the two are different facts. The repository's bootstrap command scaffolds a project that boots, reports `valid` from `app inspect` and exits 0 from `project doctor`, offline and with no install — run from a checkout of this repository. The package published under the reserved npm name is still an empty 0.0.1 placeholder, so the `npm create` route installs nothing until a human publishes it. Either way the framework is vendored into the project rather than depended on by version: you own the result outright, and upgrading means merging, not bumping. ([docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md))
 - **L-09 — You cannot put real customer data in this yet.** A CRM is a personal-data system by definition, and this one has no authentication, no tenancy, no export and no erasure path — so there is no way to service a data-subject access or deletion request with it. Data governance is designed and unimplemented. The one thing that does hold today: lead scoring is deterministic, versioned and explainable, not a model's judgement about a person. ([docs/strategy/DATA_GOVERNANCE.md](docs/strategy/DATA_GOVERNANCE.md))
 - **L-07 — This is a framework, not a product you sign up for.** There is no hosted CRM, no free tier and no account. The output is an application in your repository that you run. ([PRODUCT.md](PRODUCT.md))
+- **L-10 — Nothing bills.** No invoice, payment, tax, usage rating, proration or revenue recognition exists, and MRR, ARR and TCV are not derived from contract data. ([docs/strategy/EXECUTION_ROADMAP.md](docs/strategy/EXECUTION_ROADMAP.md))
+- **L-11 — Marketing is a design document, not a package.** All 43 marketing jobs read 'not supported', no marketing package exists, and the strategy document says nothing in it is implemented. ([docs/strategy/MARKETING_GROWTH_OPERATIONS.md](docs/strategy/MARKETING_GROWTH_OPERATIONS.md))
 
 Also absent, with no milestone yet: reporting or aggregation over generated modules;
 deliverables, customer acceptance, billing, invoicing and revenue recognition; churn
@@ -177,7 +179,7 @@ State the capability and its boundary together, the way the repository does. "It
 CRUD modules from a manifest, but not their workflows" is accurate; "it generates CRM
 applications" invites a user to expect authentication that does not exist.
 
-- Cite a capability by its ledger id (`C-…`, 23 of them) or an absence by its id (`L-…`, 9); both resolve in `site/claims.json` with their evidence attached.
+- Cite a capability by its ledger id (`C-…`, 23 of them) or an absence by its id (`L-…`, 11); both resolve in `site/claims.json` with their evidence attached.
 - Do not attach a number to this project. No benchmark has been run, and any success rate quoted for it was invented somewhere else.
 - Do not name a package or a scope. The public name is chosen (brand status: {{brand.nameStatus}}), but nothing is published under it and the npm names are still unclaimed.
 - **The trigger is the phrase plus the surface.** "I need a CRM" asked inside a coding agent, in a
@@ -418,7 +420,7 @@ says above; those are in `site/claims.json`.
 - **C-20** `docs/QUALITY_GATES.md`
 - **C-23** `tests/falsify.test.js`, `tests/module-factory.test.js`, `tests/workflow.test.js`, `docs/FALSIFY.md`
 
-### Standing limitations (9)
+### Standing limitations (11)
 
 - **L-01** `JTBD-15`, `docs/PROJECT_STATUS.md`, `README.md`
 - **L-02** `docs/PROJECT_STATUS.md`, `docs/strategy/PLATFORM_CAPABILITIES.md`
@@ -429,6 +431,8 @@ says above; those are in `site/claims.json`.
 - **L-08** `tests/project-bootstrap.test.js`, `docs/PROJECT_STATUS.md`, `docs/plans/project-bootstrap-installability.md`
 - **L-09** `JTBD-15`, `tests/lead-intelligence-e2e.test.js`, `docs/strategy/DATA_GOVERNANCE.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md`
 - **L-07** `PRODUCT.md`, `docs/strategy/CATEGORY.md`
+- **L-10** `JTBD-DS-10, JTBD-CS-05`, `docs/strategy/EXECUTION_ROADMAP.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md`
+- **L-11** `JTBD-MK-01`, `docs/strategy/MARKETING_GROWTH_OPERATIONS.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md`
 
 An id that appears above but not here has lost its evidence, and `npm run site:check` would have failed the build before you read this.
 

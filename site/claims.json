@@ -645,6 +645,46 @@
         "readme",
         "launch"
       ]
+    },
+    {
+      "id": "L-10",
+      "headline": "Nothing bills.",
+      "text": "No invoice, payment, tax, usage rating, proration or revenue recognition exists, and MRR, ARR and TCV are not derived from contract data.",
+      "evidence": {
+        "jtbd": "JTBD-DS-10, JTBD-CS-05",
+        "docs": [
+          "docs/strategy/EXECUTION_ROADMAP.md",
+          "docs/benchmarks/CRM_JTBD_MATRIX.md"
+        ],
+        "repoFacts": [
+          "EXECUTION_ROADMAP.md lists invoicing, billing, payment, usage rating, proration, tax and FX as explicitly deferred",
+          "packages/contracts/modules/subscription.module.json describes itself as a commercial activation record, not a billing engine, with no invoice schedule, usage rating, proration, payment, renewal or cancellation state",
+          "JTBD-DS-10 (activate billing on accepted milestones) and JTBD-CS-05 (calculate MRR, ARR and TCV from real contract data) both read 'not supported'"
+        ]
+      },
+      "surfaces": [
+        "site"
+      ]
+    },
+    {
+      "id": "L-11",
+      "headline": "Marketing is a design document, not a package.",
+      "text": "All 43 marketing jobs read 'not supported', no marketing package exists, and the strategy document says nothing in it is implemented.",
+      "evidence": {
+        "jtbd": "JTBD-MK-01",
+        "docs": [
+          "docs/strategy/MARKETING_GROWTH_OPERATIONS.md",
+          "docs/benchmarks/CRM_JTBD_MATRIX.md"
+        ],
+        "repoFacts": [
+          "MARKETING_GROWTH_OPERATIONS.md opens with 'Status: product strategy and roadmap only. Nothing in this document is implemented.'",
+          "all 43 JTBD-MK rows in docs/benchmarks/jobs.json read 'not supported'",
+          "the work is sequenced as EXECUTION_ROADMAP track MK0-MK7 and none of it is merged"
+        ]
+      },
+      "surfaces": [
+        "site"
+      ]
     }
   ]
 }
