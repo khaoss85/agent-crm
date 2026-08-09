@@ -7,7 +7,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { canonicalJson } from '../../core/index.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
 import { projectDoctorCommand } from './project-doctor-command.js';
-import { discoverCandidatePackages, projectKind, resolveComposedPackages } from './project-doctor-checks.js';
+import { discoverCandidatePackages, projectKind } from './project-doctor-checks.js';
 
 /**
  * `crm project verify [--json] [--root <dir>]` — DX5.
@@ -450,10 +450,19 @@ export async function projectVerifyCommand(options = {}) {
   // ---- 4. package conformance ---------------------------------------------
   // Composed packages only. A project-owned core module is not a package and
   // must never be graded as one.
-  const composedNames = doctorReport.project?.packagesComposed ?? [];
-  const { resolved } = resolveComposedPackages({ rootDir, composed: composedNames });
+  //
+  // The doctor has **already** resolved this: it reads composed package *names*
+  // from AX1, locates each one through the composition file, and publishes the
+  // resolved *paths* as `project.packagesComposed`. Feeding those paths back
+  // into `resolveComposedPackages` — which selects by directory basename —
+  // compared `packages/contracts` against `contracts` and matched nothing, so
+  // the intersection was empty for every project that composes anything at
+  // all. Package conformance then reported `not_applicable` claiming "none
+  // with local source in this project" about packages whose source was right
+  // there. Use the doctor's answer instead of recomputing it wrongly.
+  const composedPaths = doctorReport.project?.packagesComposed ?? [];
   const candidates = discoverCandidatePackages(rootDir).map((entry) => entry.path);
-  const conformanceTargets = resolved.map((entry) => entry.path).filter((path) => existsSync(join(rootDir, path)));
+  const conformanceTargets = [...composedPaths].sort().filter((path) => existsSync(join(rootDir, path)));
 
   if (blocked) {
     checks.push(check({
@@ -464,10 +473,10 @@ export async function projectVerifyCommand(options = {}) {
     checks.push(check({
       code: 'packages.conformance', category: 'packages', status: 'not_applicable', authority: 'package-conformance',
       required: true,
-      evidence: composedNames.length === 0
+      evidence: composedPaths.length === 0
         ? 'this project composes no package'
-        : `${composedNames.length} composed package(s), none with local source in this project`,
-      reason: composedNames.length === 0 ? 'NO_PACKAGES_COMPOSED' : 'NO_LOCAL_PACKAGE_SOURCE',
+        : `${composedPaths.length} composed package(s), none with local source in this project`,
+      reason: composedPaths.length === 0 ? 'NO_PACKAGES_COMPOSED' : 'NO_LOCAL_PACKAGE_SOURCE',
     }));
   } else {
     for (const path of conformanceTargets) {
@@ -492,7 +501,7 @@ export async function projectVerifyCommand(options = {}) {
   if (candidates.length > conformanceTargets.length) {
     evidence.push({
       kind: 'packages',
-      composed: [...composedNames].sort(),
+      composed: [...composedPaths].sort(),
       uncomposedCandidates: candidates.filter((path) => !conformanceTargets.includes(path)).sort(),
       note: 'an uncomposed package is inventory, not a verification target',
     });
@@ -615,7 +624,7 @@ export async function projectVerifyCommand(options = {}) {
     command: 'project:verify',
     project: {
       kind: projectKind(rootDir),
-      packagesComposed: [...composedNames].sort(),
+      packagesComposed: [...composedPaths].sort(),
       declaredScripts: [...scripts].filter((name) => DECLARED_SCRIPTS.some((s) => s.script === name)).sort(),
     },
     inspectionFingerprint,

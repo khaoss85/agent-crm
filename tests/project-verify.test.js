@@ -530,6 +530,57 @@ test('an absolute path with unusual characters is fully redacted', () => {
   assert.equal(redact('./packages/core/src/thing.js', '/x'), './packages/core/src/thing.js');
 });
 
+/**
+ * REGRESSION — package conformance never ran on any project that composes
+ * anything.
+ *
+ * Project Doctor reads composed package *names* from AX1, locates each through
+ * the composition file, and publishes the resolved *paths* as
+ * `project.packagesComposed`. DX5 read those paths and fed them back into
+ * `resolveComposedPackages`, which selects by directory basename — so
+ * `packages/contracts` was compared against `contracts` and matched nothing.
+ * The intersection was empty for every real project, and this required check
+ * reported `not_applicable` claiming "none with local source in this project"
+ * about packages whose source was sitting right there. A `not_applicable`
+ * required check does not fail a run, so the whole stage was invisible.
+ *
+ * It looked healthy on this repository only because Accordo's own default
+ * composition is deliberately empty, which reports `NO_PACKAGES_COMPOSED`.
+ */
+test('every composed package is conformance-tested, first-party or customer-authored', async (t) => {
+  const composed = [
+    'examples/custom-packages/partner-scorecard',
+    'packages/contracts',
+    'packages/zzz-acme-widgets',
+  ];
+  const root = project(t);
+  for (const path of composed) mkdirSync(join(root, path, 'src'), { recursive: true });
+  // A composed package whose source directory is missing is not a target.
+  const declared = [...composed, 'packages/ghost'];
+
+  const calls = [];
+  const { report } = await projectVerifyCommand({
+    rootDir: root,
+    doctor: doctorOk({ project: { packagesComposed: declared } }),
+    inspect: inspectOk,
+    step: recordingStep(calls),
+    git: cleanGit,
+  });
+
+  const conformance = report.checks.filter((c) => c.code.startsWith('packages.conformance'));
+  assert.deepEqual(
+    conformance.map((c) => c.code).sort(),
+    composed.map((p) => `packages.conformance.${p}`).sort(),
+    'a customer-authored package is selected on exactly the same rule as a first-party one, and a composed package with no source directory is not selected at all',
+  );
+  for (const entry of conformance) assert.equal(entry.status, 'passed');
+
+  const tested = calls.filter((c) => c.args.includes('test')).map((c) => c.args[c.args.indexOf('test') + 1]).sort();
+  assert.deepEqual(tested, [...composed].sort(), 'and each one was really spawned');
+  // No hard-coded name and no first-party allowlist: the list is the project's.
+  assert.deepEqual(report.project.packagesComposed, [...declared].sort());
+});
+
 test('declaredScripts reads package.json and never throws on a broken one', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'dx5-scripts-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
