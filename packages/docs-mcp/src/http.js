@@ -207,7 +207,22 @@ function decodeHeaderValue(value) {
 /** @param {string | null} value */
 function acceptsMcpResponses(value) {
   if (value === null) return false;
-  const types = new Set(value.split(',').map((entry) => entry.split(';', 1)[0].trim().toLowerCase()));
+  const types = new Set();
+  for (const entry of value.split(',')) {
+    const [rawType, ...rawParameters] = entry.split(';');
+    let quality = 1;
+    for (const rawParameter of rawParameters) {
+      const [rawName, rawValue = ''] = rawParameter.split('=', 2);
+      if (rawName.trim().toLowerCase() !== 'q') continue;
+      const value = rawValue.trim();
+      if (!/^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.test(value)) {
+        quality = 0;
+        break;
+      }
+      quality = Number(value);
+    }
+    if (quality > 0) types.add(rawType.trim().toLowerCase());
+  }
   return types.has('application/json') && types.has('text/event-stream');
 }
 

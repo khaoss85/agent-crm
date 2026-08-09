@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -146,6 +146,7 @@ test('the HTTP envelope fails closed on malformed or oversized input', async () 
     [new Request(endpoint, { method: 'GET' }), 405],
     [new Request(endpoint, { method: 'POST', headers: { 'content-type': 'text/plain', accept: 'application/json, text/event-stream' }, body: '{}' }), 415],
     [new Request(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: '{}' }), 406],
+    [new Request(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream;q=0' }, body: '{}' }), 406],
     [new Request(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: '{' }), 400],
     [new Request(endpoint, {
       method: 'POST',
@@ -155,6 +156,15 @@ test('the HTTP envelope fails closed on malformed or oversized input', async () 
         'content-length': String(DOCS_MCP_MAX_HTTP_BODY_BYTES + 1),
       },
       body: '{}',
+    }), 413],
+    [new Request(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        'content-length': '0',
+      },
+      body: 'x'.repeat(DOCS_MCP_MAX_HTTP_BODY_BYTES + 1),
     }), 413],
   ];
   for (const [request, expected] of cases) {
@@ -188,11 +198,13 @@ test('the Vercel entry and config keep one server authority and include the corp
 });
 
 test('runtime corpus assembly is deterministic and excludes every ExecPlan', (t) => {
-  const firstDir = mkdtempSync(join(tmpdir(), 'accordo-docs-mcp-runtime-a-'));
-  const secondDir = mkdtempSync(join(tmpdir(), 'accordo-docs-mcp-runtime-b-'));
+  const firstRoot = mkdtempSync(join(tmpdir(), 'accordo-docs-mcp-runtime-a-'));
+  const secondRoot = mkdtempSync(join(tmpdir(), 'accordo-docs-mcp-runtime-b-'));
+  const firstDir = join(firstRoot, 'runtime');
+  const secondDir = join(secondRoot, 'runtime');
   t.after(() => {
-    rmSync(firstDir, { recursive: true, force: true });
-    rmSync(secondDir, { recursive: true, force: true });
+    rmSync(firstRoot, { recursive: true, force: true });
+    rmSync(secondRoot, { recursive: true, force: true });
   });
   const first = assembleDocsMcpRuntime({ sourceRoot: process.cwd(), outputDir: firstDir });
   const second = assembleDocsMcpRuntime({ sourceRoot: process.cwd(), outputDir: secondDir });
@@ -205,4 +217,19 @@ test('runtime corpus assembly is deterministic and excludes every ExecPlan', (t)
   assert.ok(first.files.every((path) => !path.startsWith('docs/plans/')));
   assert.equal(existsSync(join(firstDir, 'docs', 'plans')), false);
   assert.equal(JSON.parse(readFileSync(join(firstDir, 'site', 'claims.json'), 'utf8')).claimsContract, 1);
+});
+
+test('runtime corpus assembly never replaces a caller-selected path', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-docs-mcp-runtime-occupied-'));
+  const occupied = join(root, 'runtime');
+  const sentinel = join(occupied, 'DO_NOT_DELETE');
+  mkdirSync(occupied);
+  writeFileSync(sentinel, 'sentinel');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  assert.throws(
+    () => assembleDocsMcpRuntime({ sourceRoot: process.cwd(), outputDir: occupied }),
+    /must not exist/,
+  );
+  assert.equal(readFileSync(sentinel, 'utf8'), 'sentinel');
 });

@@ -999,3 +999,12 @@ client without broadening the CRM production claim. Vercel becomes a hosting
 subprocessor for ordinary HTTP/function metadata, stated on the public privacy
 page. A preview proves code and bundle; only a human may promote the endpoint or
 submit it to a directory.
+
+**Adversarial-review addendum (2026-08-09).** The canonical build may replace
+only its own ignored generated directory. A caller-selected assembler output
+must not exist, nor may its staging sibling, so a test/helper invocation cannot
+erase an occupied external directory. HTTP content negotiation counts a media
+type only when its quality is greater than zero; `text/event-stream;q=0` is a
+406, not permission to return a response the client refused. Regression tests
+hold both boundaries and also exercise the post-read body-size check against a
+lying `Content-Length`.

@@ -191,6 +191,13 @@ pairing as the in-process server.
 - 2026-08-09: `npm run gtm:check`, `npm run verify` (780/780) and
   `npm run smoke` passed. A final full run remains part of clean-clone review
   after the PR head is fixed.
+- 2026-08-09: adversarial review on live draft PR #52 confirmed two defects.
+  An explicit assembler output replaced an occupied directory (medium), and an
+  `Accept` range with `text/event-stream;q=0` was accepted (low). The branch now
+  refuses any existing caller-selected output/staging path, preserves the
+  occupied sentinel in a regression test, honours HTTP quality values and tests
+  a body that exceeds 1 MiB despite declaring `Content-Length: 0`. Focused suites
+  pass 32/32 after the fixes.
 
 ## 9. Decision log
 
@@ -206,8 +213,8 @@ pairing as the in-process server.
 ## 10. Outcome and follow-up
 
 Implementation and preview validation are complete on the working branch. The
-remaining engineering gates are full repository verification, the required
-live-PR adversarial review, clean-clone verification and CI. The preview is
+required live-PR adversarial attack/fix pass is complete; the remaining
+engineering gates are clean-clone verification and CI. The preview is
 deployment-protected and deliberately has no production alias; it is evidence
 for the transport and corpus, not a public install URL. A human must still merge
 the reviewed PR, approve the privacy/infrastructure commitment, promote a tested

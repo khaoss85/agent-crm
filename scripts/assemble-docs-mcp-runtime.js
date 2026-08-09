@@ -10,6 +10,7 @@
  */
 
 import {
+  existsSync,
   mkdirSync,
   renameSync,
   rmSync,
@@ -33,9 +34,10 @@ export const DOCS_MCP_RUNTIME_DIR = join(repositoryRoot, 'packages', 'docs-mcp',
 export function assembleDocsMcpRuntime(options = {}) {
   const sourceRoot = resolve(options.sourceRoot ?? repositoryRoot);
   const outputDir = resolve(options.outputDir ?? DOCS_MCP_RUNTIME_DIR);
+  const callerSelectedOutput = options.outputDir !== undefined;
   const relativeOutput = relative(sourceRoot, outputDir);
   const outputIsOutsideSource = relativeOutput === '..' || relativeOutput.startsWith(`..${sep}`);
-  if (options.outputDir !== undefined && !outputIsOutsideSource) {
+  if (callerSelectedOutput && !outputIsOutsideSource) {
     // The canonical generated directory is intentionally inside the source
     // checkout. Any caller-selected output must be outside so tests and other
     // tooling cannot overwrite arbitrary repository paths.
@@ -59,8 +61,11 @@ export function assembleDocsMcpRuntime(options = {}) {
 
   const parent = dirname(outputDir);
   const staging = `${outputDir}.assembling`;
+  if (callerSelectedOutput && (existsSync(outputDir) || existsSync(staging))) {
+    throw new Error('A caller-selected Docs MCP runtime directory and its staging path must not exist');
+  }
   mkdirSync(parent, { recursive: true });
-  rmSync(staging, { recursive: true, force: true });
+  if (!callerSelectedOutput) rmSync(staging, { recursive: true, force: true });
   for (const file of files) {
     const target = join(staging, file.path);
     mkdirSync(dirname(target), { recursive: true });
@@ -75,7 +80,7 @@ export function assembleDocsMcpRuntime(options = {}) {
     exclusions: ['docs/plans/**'],
   };
   writeFileSync(join(staging, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  rmSync(outputDir, { recursive: true, force: true });
+  if (!callerSelectedOutput) rmSync(outputDir, { recursive: true, force: true });
   renameSync(staging, outputDir);
   return manifest;
 }
