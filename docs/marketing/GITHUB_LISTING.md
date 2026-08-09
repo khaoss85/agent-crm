@@ -14,9 +14,10 @@ paraphrase back to a user.
 
 **Next description** (kept below GitHub's limit so it survives being quoted in full):
 
-> The open-source framework coding agents use to build custom CRMs and Customer Hubs as code.
-> Smart CRM stays policy-governed; for CDP + CRM, Accordo is the process layer—not ingestion,
-> identity resolution or segmentation. Human approvals, audit and trace built in.
+> Agent-native CRM framework for Claude Code, Codex and Gemini CLI. Author custom CRM and
+> Customer Hub source with deterministic workflows, human approvals, audit and trace. Smart
+> CRM is policy-governed; CDP + CRM means process layer—not ingestion, identity resolution or
+> segmentation.
 
 **Website**: the landing page URL once a domain exists. Until then, leave empty rather than
 pointing at a placeholder.

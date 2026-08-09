@@ -79,6 +79,9 @@ agent advantage.
 - [x] (2026-08-09) Publish draft PR #56 stacked on #55; at reviewed head
   `fa1e6db`, both remote CI runs and public-claims checks pass, the PR is clean
   and mergeable, and it has zero review threads.
+- [x] (2026-08-09) Re-audit the live GitHub About panel. Keep the public mutation
+  human-gated, but replace its prepared description with the same bounded
+  agent-native vocabulary and add a regression for the 350-character contract.
 
 ## Surprises & Discoveries
 
@@ -99,6 +102,10 @@ agent advantage.
 - An adversarial mutation that removed the canonical concept slug made
   `generate-llms --check` exit 1 with the missing-link diagnostic. The retrieval
   surface therefore fails closed instead of silently dropping the core intent.
+- The live GitHub topics already include the agent surfaces and Discussions is
+  enabled, but the About description still says agents “use” Accordo to build and
+  omits Gemini. The replacement stays a release action until the page stack is
+  deployed; its checked source now avoids both defects.
 
 ## Decision Log
 
