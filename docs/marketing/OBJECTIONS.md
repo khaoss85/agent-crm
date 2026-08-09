@@ -39,7 +39,7 @@ event and a step-level trace (`C-08`, `C-09`, `C-16`). The agent composes primit
 reviewed once; it does not reinvent them per project. That is the actual pitch — the agent is
 constrained, not trusted.
 
-### 4. "783 tests is a vanity number."
+### 4. "785 tests is a vanity number."
 
 It is. A test count measures effort, not correctness, and the ledger says so in `C-20`'s own
 limitation. The useful artifact is `docs/QUALITY_GATES.md` §2 — the sixteen adversarial

@@ -84,7 +84,7 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 | `crm solution check` — a Solution Plan is a checked-in contract with a canonical fingerprint | a document contract, not a planner and not a runtime; nothing executes a plan | `tests/solution-plan.test.js` |
 | Generated modules evolve through explicit revisions and append-only named migrations | source-only: what a particular database applied is not knowable from here | `tests/module-evolution.test.js` |
 
-**783 tests, 0 failing**, run on every push together with the smoke test.
+**785 tests, 0 failing**, run on every push together with the smoke test.
 
 ## Run it
 
@@ -92,7 +92,7 @@ Node.js 22.16 or newer. There are no third-party runtime dependencies and no bui
 
 ```bash
 npm run tour     # compose the whole application and inspect it
-npm run verify   # 783 tests
+npm run verify   # 785 tests
 npm run falsify  # break five rules on purpose and watch the suite catch them
 npm run demo     # the approval slice, end to end
 npm run dev      # http://localhost:4000
