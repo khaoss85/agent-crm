@@ -54,6 +54,11 @@ discovery surface loses one of the three intent signals or the CDP boundary.
   when the same sentence claimed Accordo owned identity resolution and
   segmentation. A runnable contradictory sentence returned zero failures. Fixed
   by requiring the complete canonical ownership boundary (`b0035d7`).
+- Finding (medium): skills.sh was the one live channel observed missing generic
+  search, but its indexed `solve-business-goal` frontmatter still described only
+  generic business objectives. Plugin manifests cannot repair skill-index text.
+  Fixed in all three byte-identical copies and added as the ninth checked
+  first-contact surface (`1762f1c`).
 
 ## Decision Log
 
@@ -162,7 +167,7 @@ Live receipts at plan start:
 
 Review receipts:
 
-    functional SHA: b0035d7
+    functional SHA: 1762f1c
     npm run verify: 785 passing, 0 failing
     npm run gtm:check: 112 pages; all four gates green
     claude plugin validate .: passed
@@ -171,7 +176,8 @@ Review receipts:
     contradictory CDP sentence before fix: zero failures; regression now refuses it
     app inspect: valid, zero problems, 11 limitations read
     project doctor: passed, zero warnings/failures, 149 documents
-    clean clone: install, 785-test verify, smoke, starter, four Chromium shots all green
+    clean clone before the skills.sh review finding: install, 785-test verify,
+      smoke, starter, four Chromium shots all green
 
 ## Interfaces and Dependencies
 
@@ -186,9 +192,10 @@ built-ins, consistent with repository conventions.
 The existing distribution gate now binds eight first-contact surfaces to four
 truthful retrieval intents using only the fields those surfaces actually read.
 The implementation added no product capability and no extra step for an agent.
-Two review findings were reproduced and fixed rather than documented away: hidden
-metadata cannot satisfy public copy, and a partial CDP disclaimer cannot coexist
-with an identity or segmentation claim. The remaining work is release sequencing,
+Three review findings were reproduced and fixed rather than documented away: hidden
+metadata cannot satisfy public copy, a partial CDP disclaimer cannot coexist with
+an identity or segmentation claim, and the live skills.sh index now carries the
+same bounded intents. The remaining work is release sequencing,
 not source work: human regular merges #44 → #53 → #54 → #55, deploy, then apply
 the prepared GitHub metadata and publish the real npm package through its own
 release gate. Generic indexing and unaided recommendation remain measured outcomes,
