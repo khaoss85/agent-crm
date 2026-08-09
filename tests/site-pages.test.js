@@ -21,6 +21,7 @@ import { spawnSync } from 'node:child_process';
 import { join, relative, dirname, resolve } from 'node:path';
 
 import { hasOwnPage, OWN_PAGE_MIN_SUMMARY, slugify, sectionTitle, truncate, stripMarkdown } from '../scripts/site-pages.js';
+import { buildClusterPages } from '../scripts/site-clusters.js';
 
 const repo = process.cwd();
 const dist = join(repo, 'site/dist');
@@ -247,6 +248,70 @@ test('the Customer Hub intent separates local writes from missing cross-system i
   const llms = read('llms.txt');
   assert.match(llms, /Service operations are a partial local slice, not a helpdesk product/);
   assert.doesNotMatch(llms, /Service package is the next\s+milestone and is not merged/);
+});
+
+test('the Smart CRM intent prints a tested refusal without widening it into a universal AI claim', () => {
+  const html = read('concepts/smart-crm.html');
+  const source = JSON.parse(readFileSync(join(repo, 'site/concepts.json'), 'utf8'))
+    .entries.find((/** @type {any} */ entry) => entry.slug === 'smart-crm');
+
+  assert.match(html, /<figure class="refusal-proof" aria-labelledby="refusal-proof-title">/);
+  assert.match(html, /POST \/api\/modules\/quote\/records\/:id\/actions\/approve/);
+  assert.match(html, /\{ type: "agent" \}/);
+  assert.match(html, /403 HUMAN_APPROVAL_REQUIRED/);
+  assert.ok(
+    html.indexOf('boundary-block') < html.indexOf('refusal-proof')
+      && html.indexOf('refusal-proof') < html.indexOf('section-block'),
+    'limitations must be read before the receipt, and the receipt before the supporting essay',
+  );
+  assert.match(html, /actor is asserted rather than authenticated/i);
+  assert.match(html, /no model can run anywhere at runtime/i);
+  assert.doesNotMatch(
+    source.summary,
+    /no (?:LLM|model) (?:runs|decides) at runtime/i,
+    'the ledger does not support a repository-wide absence-of-runtime-model claim',
+  );
+
+  const pillar = read('concepts.html');
+  assert.match(pillar, /concepts\/smart-crm\.html/);
+  assert.match(read('llms.txt'), /\[A smart CRM knows when the agent must stop\]\(concepts\/smart-crm\.html\)/);
+});
+
+test('the refusal proof content contract rejects an incomplete receipt', () => {
+  const readJson = (/** @type {string} */ path) => JSON.parse(readFileSync(join(repo, path), 'utf8'));
+  const sources = {
+    capabilities: readJson('site/capabilities.json'),
+    tools: readJson('site/tools.json'),
+    concepts: readJson('site/concepts.json'),
+    compare: readJson('site/compare.json'),
+  };
+  const edited = structuredClone(sources);
+  const smart = edited.concepts.entries.find((/** @type {any} */ entry) => entry.slug === 'smart-crm');
+  delete smart.refusalProof.result;
+
+  assert.throws(
+    () => buildClusterPages({
+      sources: edited,
+      ledger,
+      jobs,
+      brand: readJson('site/brand.json'),
+      origin: 'https://accordo.dev',
+    }),
+    /site\/concepts\.json → smart-crm: refusalProof is missing result/,
+  );
+
+  const hostile = structuredClone(sources);
+  hostile.concepts.entries.find((/** @type {any} */ entry) => entry.slug === 'smart-crm')
+    .refusalProof.actor = '<agent & user>';
+  const page = buildClusterPages({
+    sources: hostile,
+    ledger,
+    jobs,
+    brand: readJson('site/brand.json'),
+    origin: 'https://accordo.dev',
+  }).find((candidate) => candidate.path === 'concepts/smart-crm.html');
+  assert.match(page.body, /&lt;agent &amp; user&gt;/, 'authored proof fields must be escaped before rendering');
+  assert.doesNotMatch(page.body, /<agent & user>/);
 });
 
 test('every internal link resolves to a page that was built', () => {

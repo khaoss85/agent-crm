@@ -19,6 +19,7 @@
  *                               and an uncatalogued doc is described from its own text
  *                               rather than silently omitted
  *   site/blog/*.md              published writing, linked as a task-time retrieval path
+ *   site/concepts.json          the bounded Smart CRM intent page linked for task-time retrieval
  *   docs/benchmarks/jobs.json   the structured JTBD index, if it exists; when it does
  *                               not, the file says so instead of guessing
  *
@@ -112,6 +113,9 @@ const jobs = readJobIndex(join(root, 'docs', 'benchmarks', 'jobs.json'));
 const answersIndex = existsSync(join(siteDir, 'answers.json'))
   ? readJson(join(siteDir, 'answers.json'))
   : null;
+const conceptsIndex = readJson(join(siteDir, 'concepts.json'));
+const smartCrmConcept = conceptsIndex.entries?.find((/** @type {any} */ entry) => entry.slug === 'smart-crm');
+if (!smartCrmConcept) problems.push('site/concepts.json: no smart-crm entry for the task-time intent link');
 const writing = readBlogPosts(join(siteDir, 'blog'), ledger);
 
 const shortText = compose({ full: false });
@@ -304,6 +308,8 @@ function whatItIsSection() {
     '**not** an autonomous salesperson. It does not sell, write emails or decide commercial',
     'policy. The output of the framework is the customer\'s own application, in the customer\'s',
     'own repository, which they run.',
+    '',
+    smartCrmConcept ? `[${smartCrmConcept.title}](concepts/${smartCrmConcept.slug}.html).` : '',
   ].join('\n');
 }
 

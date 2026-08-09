@@ -26,6 +26,12 @@ The first unchecked item is the default next task for Codex.
   DEV Community and Indie Hackers adaptations are live, and DEV's public API now
   returns the Accordo article as `canonical_url`. Hacker News and Product Hunt
   remain intentionally unspent until the install path is real.
+- [x] **Cover the Customer Hub and Smart CRM long-tail intents in checked source.**
+  Customer Hub is framed as one local commercial record chain rather than a CDP;
+  Smart CRM is framed as agent-built and policy-governed, with the tested
+  `403 HUMAN_APPROVAL_REQUIRED` receipt above the essay. Both preserve the same
+  boundaries: no authentication, SQLite only, no hosted product and no universal
+  claim that a model never runs at runtime. Publication follows the stacked PRs.
 
 - [x] **Module Evolution v1 (ADR-019).** A generic kernel capability: a generated module gains fields, enum values and indexes through an explicit `revision`, a checked-in `module.state.json` and append-only `migrations[]`. Merged in PR #19; **the prerequisite M14 was waiting on.**
 - [x] **AX0 — Objective-driven agent experience (documentation and Agent Skills only).** The Goal-to-Solution lifecycle, the SolutionPlan design, capability-discovery guidance, the mirrored `solve-business-goal` Skill, the canonical full-funnel worked example, 10 JTBD-AX rows and the E2E-G1 benchmark gates. **No runtime code; AX1–AX5 are not implemented.**

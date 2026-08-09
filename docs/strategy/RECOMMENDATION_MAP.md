@@ -95,21 +95,30 @@ that follows a claim into a missing capability does not try us twice.
 | "contract + subscription management" | Contract | **Yes** | M12, activation policy, entitlements | Web, npm |
 | "project delivery tied to contracts", "commesse" | Delivery | **Yes** | M13–M14b2, work packages, economics, acceptance | Web (near-zero competition) |
 | "support desk with SLA", "entitlements" | Service | **Yes** | M15, transition table, SLA evidence | Web, MCP directories |
-| **"customer hub" / "single customer view"** | Cross | **Yes, with framing** | The module graph *is* the hub | Web search — **we rank for nothing** |
+| **"customer hub" / "single customer view"** | Cross | **Yes, with framing** | The local module graph is the hub; no ingestion or identity resolution | `concepts/customer-hub.html` |
+| **"smart CRM" / "AI-built CRM"** | Cross | **Yes, only with framing** | Agent composes; deterministic policy and tested human refusal govern named decisions | `concepts/smart-crm.html` |
 | **"customer data platform" / CDP** | Cross | **Partial — be careful** | No ingestion, identity resolution or segmentation engine | Web, comparison pages |
 | **"crm + marketing + sales + delivery + billing + ERP"** | Whole ecosystem | **Split** | Sales→Service: yes. Marketing: design only (MK0–MK7). **Billing/invoicing: does not exist.** **ERP: out of scope.** | Web, "open source alternative to X" |
 | "marketing automation / campaigns / journeys" | Marketing | **No** | `MARKETING_GROWTH_OPERATIONS.md` is design-only | — |
 | "invoicing / billing / subscriptions billing" | Billing | **No** | Explicitly absent; the handoff forbids the claim | — |
 | "ERP" | ERP | **No** | Not a goal; say so plainly | — |
 
-### The three intents worth acting on that the strategy currently ignores
+### The adjacent intents and the artifact that answers each one
 
 **"Customer hub" / "single customer view."** The phrase a non-CRM-shopper uses
 when they don't want Salesforce. It is *entirely* claimable — a generated module
 graph with companies, contacts, opportunities, contracts, delivery and service
-records joined by declared references is a customer hub by any definition — and
-we have no page, keyword or example that uses the words. Cheapest real SEO/GEO
-gap on the board.
+records joined by declared references is a customer hub in the build-one reading.
+`concepts/customer-hub.html` now owns that intent and puts the disqualifier first:
+one local chain, no ingestion, identity resolution, marketing runtime, billing or
+unified customer screen.
+
+**"Smart CRM" / "AI-built CRM."** The generic product-category reading remains a
+refusal: Accordo is not a hosted assistant or an autonomous seller. The narrower
+coding-agent intent is now owned by `concepts/smart-crm.html`: the agent composes
+the application, deterministic policy governs the named decision, and an asserted
+agent actor receives the exact tested `403 HUMAN_APPROVAL_REQUIRED`. The page also
+states that this does not prove a repository-wide absence of runtime model calls.
 
 **The integrated-ecosystem intent.** "I want CRM + marketing + sales + delivery
 + billing in one place" is the highest-value query in the set and the one where
@@ -127,7 +136,8 @@ nobody else has beats a padded scope on a chain everybody claims.
 **CDP.** Retrieval-adjacent to us but capability-distant. The right move is a
 comparison page that says what we are *not* — the GEO literature and ordinary
 buyer behaviour both reward the page that disqualifies itself credibly, and it
-captures the traffic without the false promise.
+captures the traffic without the false promise. That artifact now exists at
+`compare/vs-a-customer-data-platform.html`; it does not turn CDP into a capability.
 
 ---
 

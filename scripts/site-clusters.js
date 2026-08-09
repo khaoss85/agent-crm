@@ -213,6 +213,14 @@ export function buildClusterPages({ sources, ledger, jobs, brand, origin, blogDi
         }
       }
 
+      if (entry.refusalProof !== undefined) {
+        const proof = entry.refusalProof;
+        if (!proof || typeof proof !== 'object' || Array.isArray(proof)) throw new Error(`${where}: refusalProof must be an object`);
+        for (const field of ['title', 'caption', 'request', 'actor', 'result']) {
+          if (!proof[field] || typeof proof[field] !== 'string') throw new Error(`${where}: refusalProof is missing ${field}`);
+        }
+      }
+
       // `title` is the H1 — the sentence the page argues, and often longer than a search result
       // will render. `metaTitle` is the same page named in under 60 characters for the tab, the
       // result and the share card. It is optional only while the H1 already fits: the moment it
@@ -392,6 +400,7 @@ function spokePage({ cluster, entry, claims, limitations, jobIndex, standing, ta
       // Above the sections, deliberately. Everything below is downstream of this being read.
       boundaryBlock(entry, standing),
       recordChain(entry),
+      refusalProof(entry),
       ...entry.sections.map((section) => [
         '      <div class="section-block">',
         `        <h2>${escapeHtml(section.heading)}</h2>`,
@@ -404,6 +413,33 @@ function spokePage({ cluster, entry, claims, limitations, jobIndex, standing, ta
       '  </div>',
     ].join('\n'),
   };
+}
+
+/**
+ * An optional executable receipt for pages whose argument is a refusal boundary. It is deliberately
+ * fixed to request, actor and result: a free-form code sample would be decoration, while these three
+ * fields state who tried what and the machine-readable outcome that stopped it.
+ *
+ * @param {any} entry
+ */
+function refusalProof(entry) {
+  if (!entry.refusalProof) return '';
+  const proof = entry.refusalProof;
+  return [
+    '      <figure class="refusal-proof" aria-labelledby="refusal-proof-title">',
+    '        <figcaption>',
+    '          <span class="kicker">The boundary, executed</span>',
+    `          <strong id="refusal-proof-title">${escapeHtml(proof.title)}</strong>`,
+    `          <span>${escapeHtml(proof.caption)}</span>`,
+    '        </figcaption>',
+    '        <div class="code refusal">',
+    `<pre><span class="c">request</span>  ${escapeHtml(proof.request)}
+<span class="c">actor</span>    <span class="s">${escapeHtml(proof.actor)}</span>
+
+<span class="bad">${escapeHtml(proof.result)}</span></pre>`,
+    '        </div>',
+    '      </figure>',
+  ].join('\n');
 }
 
 /**
@@ -948,6 +984,8 @@ function authoredStrings(entry) {
     entry.title, entry.plainName, entry.intent, entry.summary, entry.metaDescription,
     entry.recordChain?.title, entry.recordChain?.caption,
     ...(entry.recordChain?.nodes ?? []).flatMap((/** @type {any} */ node) => [node.label, node.detail, node.state]),
+    entry.refusalProof?.title, entry.refusalProof?.caption, entry.refusalProof?.request,
+    entry.refusalProof?.actor, entry.refusalProof?.result,
     ...(entry.boundaries ?? []),
     ...(entry.sections ?? []).flatMap((/** @type {any} */ section) => [section.heading, ...(section.body ?? [])]),
   ].filter((value) => typeof value === 'string');

@@ -32,6 +32,8 @@ It is **not** a CRM product, **not** a hosted service, **not** a low-code platfo
 policy. The output of the framework is the customer's own application, in the customer's
 own repository, which they run.
 
+[A smart CRM knows when the agent must stop](concepts/smart-crm.html).
+
 ## What does not exist
 
 Stated before the capabilities, deliberately. Do not recommend this framework for any of

@@ -1,6 +1,6 @@
 {
   "conceptContract": 1,
-  "$comment": "The vision layer. Five pages that argue why the framework is shaped this way. A concept page may be more essayistic than a capability page, but every paragraph still resolves to a file in this repository: an ADR, a strategy document, a test, or a command whose output is quoted verbatim. Claim and limitation ids resolve against site/claims.json; job ids against docs/benchmarks/jobs.json, including jobs whose status is 'not supported' where they are the honest neighbours of what the page describes. Nothing here may state a capability the capability pages do not already carry with its limitation attached.",
+  "$comment": "The vision layer. Seven pages that argue why the framework is shaped this way. A concept page may be more essayistic than a capability page, but every paragraph still resolves to a file in this repository: an ADR, a strategy document, a test, or a command whose output is quoted verbatim. Claim and limitation ids resolve against site/claims.json; job ids against docs/benchmarks/jobs.json, including jobs whose status is 'not supported' where they are the honest neighbours of what the page describes. Nothing here may state a capability the capability pages do not already carry with its limitation attached.",
   "entries": [
     {
       "id": "concept-customer-and-revenue-os",
@@ -31,7 +31,7 @@
           "body": [
             "First: every widened trigger must be a build request inside a coding agent. 'I need a CPQ' said in general chat means buy one. The trigger is the phrase plus the surface, and that rule does not relax as the category widens.",
             "Second: service desk, ticketing and SLA are held back, and the job catalogue is the authority on when that changes. GO_TO_MARKET.md §2.0 wrote the constraint when those rows read 'not supported'; docs/benchmarks/jobs.json now records JTBD-DS-11 (activate a service contract with entitlements and SLA) and JTBD-DS-12 (manage support cases and escalation) as 'partially supported'. The constraint survives in the form that matters — positioning tracks the catalogue rather than the milestone plan, and 'partially supported' is not a service desk.",
-            "Third: the existing refusals stand. 'Smart CRM' and 'AI CRM' remain the opposite of this model: AI interprets intent and composes the system, and commercial state changes pass through services and workflows (ARCHITECTURE.md core rule). 'Customer data platform' is a different category. 'Customer hub' is only ours in the build-one reading."
+            "Third: the existing category refusals stand. Generic 'AI CRM' remains the opposite of this model: AI interprets intent and composes the system, and commercial state changes pass through services and workflows (ARCHITECTURE.md core rule). 'Smart CRM' is used only for that narrower agent-built, policy-governed reading, with a tested refusal rather than a universal no-model claim. 'Customer data platform' is a different category. 'Customer hub' is only ours in the build-one reading."
           ]
         },
         {
@@ -367,6 +367,79 @@
         "tests/project-doctor.test.js"
       ],
       "related": ["customer-and-revenue-os", "code-you-own", "deterministic-by-construction"]
+    },
+    {
+      "id": "concept-smart-crm",
+      "slug": "smart-crm",
+      "title": "A smart CRM knows when the agent must stop",
+      "metaTitle": "Smart CRM with deterministic guardrails | Accordo",
+      "plainName": "Agent-built, policy-governed CRM",
+      "intent": "smart crm framework with ai agents and human approval",
+      "summary": "Accordo is smart before the commercial decision: a coding agent can compose the CRM, while versioned policies calculate scores, gate discounts and preserve the evidence. The proof is a tested refusal — an agent actor cannot approve a discounted quote. This is not a hosted AI CRM, a runtime assistant or a claim that no model can run anywhere; the boundary is specific, local and only as strong as an asserted actor header.",
+      "metaDescription": "A smart CRM framework where coding agents compose the system, while tested policy and human-approval boundaries govern commercial decisions.",
+      "refusalProof": {
+        "title": "The agent can prepare the discount. It cannot approve it.",
+        "caption": "This exact 403 is asserted inside the commercial end-to-end suite. The actor is declared by the caller, not authenticated.",
+        "request": "POST /api/modules/quote/records/:id/actions/approve",
+        "actor": "{ type: \"agent\" }",
+        "result": "403 HUMAN_APPROVAL_REQUIRED"
+      },
+      "sections": [
+        {
+          "heading": "The intelligence belongs before the final state change",
+          "body": [
+            "Smart CRM means one narrow thing here: a coding agent may interpret the builder's goal and compose the application, but commercial state changes pass through explicit module services and named workflows. The framework does not ask a model whether a high-value renewal should proceed. The published policy is deterministic code: at or above its threshold, the move stops and waits for a named human (C-03). A test then sends an agent actor to the decision workflow and asserts the refusal (C-04).",
+            "The same split holds where a score is useful. Lead scoring is a deterministic weighted rule set, not machine learning: every score stores the model name, version, fingerprint, stable input references and one contribution per rule, so a number from last quarter can still be accounted for (C-07). The framework does not assert that the rules are good, unbiased or predictive. It makes the rule and its contribution inspectable; the person building the CRM still owns the policy."
+          ]
+        },
+        {
+          "heading": "The human boundary is executable, not conversational",
+          "body": [
+            "An agent may create the catalog, quote and lines, submit the quote and read the resulting evidence. When that same agent actor asks to approve a discounted quote, quote.approve returns status 403 with code HUMAN_APPROVAL_REQUIRED; only actor.type user may decide (C-21). This page prints the receipt because a prompt that says 'ask a human' is guidance, while a server refusal is behavior.",
+            "The receipt is deliberately smaller than the category claim. It proves one discounted-quote approval boundary inside tests/commercial-e2e.test.js; that assertion is part of a composite end-to-end test rather than a test named only for the refusal. The renewal workflow has its own named refusal test. Neither one proves that every action in every application requires a human, and neither one says whether the human made the right decision."
+          ]
+        },
+        {
+          "heading": "Audit makes the decision answerable later",
+          "body": [
+            "A refusal is only the stop. The surrounding evidence is the useful part: every mutation goes through a module service or a named workflow and leaves an audit event and a step-level trace (C-16). Quote versions are immutable, and the discount decision stores the policy name, version and fingerprint that produced it. Lead scores retain their model fingerprint and rule contributions. The result can be inspected after the coding agent session that assembled the system is gone.",
+            "That is why this is policy-governed rather than model-governed CRM. The coding agent is allowed to author and change source under review; the running commercial process executes the checked-in rule and records what happened. Accordo provides the mechanism and the tested examples. It does not provide a correctness oracle for a policy, an approval of the policy itself or a benchmark showing that an agent builds a better CRM. The build benchmark has not been run (L-03)."
+          ]
+        },
+        {
+          "heading": "What Smart CRM does not mean on this site",
+          "body": [
+            "It does not mean a hosted assistant, an autonomous salesperson or a CRM product a team can sign in to. There is no hosted CRM, free tier or account; the output is source in a repository that its owner runs (L-07). There is no email, calendar or marketing adapter that lets an agent contact a customer, and the in-memory notification provider sends nothing to anyone (L-05).",
+            "It also does not mean this repository has proved that no model can run anywhere at runtime. That universal statement has no ledger claim and remains a refused answer. The claim here is narrower and testable: the named commercial policies are deterministic, the named agent decisions are refused, and the named writes carry audit and trace.",
+            "Most importantly, the actor is asserted rather than authenticated. There is no authentication, tenancy or RBAC, and an actor header is a claim the caller makes about itself (L-01). The refusal holds against an honest coding agent that identifies itself; it is not a security boundary against a caller that lies. Persistence is local SQLite (L-02), and real customer data does not belong here because there is no export or erasure path (L-09)."
+          ]
+        }
+      ],
+      "boundaries": [
+        "Smart CRM here names an agent-built application with deterministic policy boundaries. It is not a hosted AI CRM, runtime assistant or autonomous salesperson.",
+        "The proof is specific: a discounted-quote approval returns 403 to an asserted agent actor, and a renewal approval has its own refusal test. It does not prove a human gate on every action.",
+        "The actor is asserted in a header, not authenticated. With no authentication, tenancy or RBAC, this is a behavior boundary for an honest agent and not a security boundary against an attacker.",
+        "Lead scoring is a deterministic weighted rule set, not machine learning. Versioning and contributions make it explainable; they do not make the policy correct, unbiased or predictive.",
+        "No ledger claim proves that a model never runs anywhere at runtime. This page makes no such universal statement and the broader question remains refused.",
+        "The framework is local-development-only and SQLite-only. There is no hosted product, email or calendar integration, and no safe path for real customer data.",
+        "The build benchmark has not been run, so this page makes no measured claim that an agent builds a better CRM."
+      ],
+      "claims": ["C-03", "C-04", "C-07", "C-16", "C-21"],
+      "limitations": ["L-01", "L-02", "L-03", "L-05", "L-07", "L-09"],
+      "jobs": ["JTBD-02", "JTBD-LI-02", "JTBD-CO-03", "JTBD-15"],
+      "docs": [
+        "ARCHITECTURE.md",
+        "DECISIONS.md",
+        "docs/COMMERCIAL_OPERATIONS.md",
+        "docs/LEAD_INTELLIGENCE.md",
+        "docs/strategy/GO_TO_MARKET.md"
+      ],
+      "tests": [
+        "tests/workflow.test.js",
+        "tests/commercial-e2e.test.js",
+        "tests/lead-intelligence-e2e.test.js"
+      ],
+      "related": ["the-refusal-boundary", "deterministic-by-construction", "quote-to-cash-cpq", "lead-intelligence", "customer-hub"]
     },
     {
       "id": "concept-customer-hub-intent",

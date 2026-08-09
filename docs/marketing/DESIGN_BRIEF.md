@@ -117,7 +117,7 @@ Hub-and-spoke: each pillar page links down to its spokes, each spoke links back 
 |---|---|---|---|
 | **Agent tools** | `tools.html` | 8 | one command: what it answers, what it refuses to claim, what it costs to run |
 | **Capabilities** | `capabilities.html` | 6 | one business domain: what it models, what the framework refuses, what proves it |
-| **Concepts** | `concepts.html` | 5 | why it is built this way — the vision layer |
+| **Concepts** | `concepts.html` | 7 | why it is built this way — the vision layer |
 | **Compare** | `compare.html` | 4 | opens by naming where the *alternative* wins |
 | **Jobs** | `jobs.html` | 60 | one CRM job, its support status, its evidence |
 | **Answers** | `answers.html` | 14 | one blunt question, answered, plus 15 published refusals |
