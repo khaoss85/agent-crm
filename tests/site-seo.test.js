@@ -213,6 +213,21 @@ test('the sitemap lists exactly the pages that were built', (t) => {
   }
 });
 
+test('the first article is discoverable by both people and coding agents', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+  const slug = 'if-a-coding-agent-builds-your-crm-what-should-it-refuse-to-do';
+  const title = 'If a coding agent builds your CRM, what should it refuse to do?';
+
+  assert.ok(site.pages.includes(`blog/${slug}.html`), 'the canonical article was built');
+  assert.match(site.read('blog.html'), new RegExp(`href="blog/${slug}\\.html"`));
+  const llmsEntry = `[${title}](blog/${slug}.html)`;
+  assert.ok(site.read('llms.txt').includes(llmsEntry), 'the short retrieval surface links the canonical article');
+  assert.ok(site.read('llms-full.txt').includes(llmsEntry), 'the full retrieval surface links the canonical article');
+  assert.doesNotMatch(readFileSync(join(repo, 'site/partials/footer.html'), 'utf8'), /zero posts/i,
+    'the shared footer must not describe the old empty state after the first post ships');
+});
+
 test('the indexing gate flips every dependent output together, in both directions', (t) => {
   const priv = build({ repositoryStatus: 'private' });
   const pub = build({ repositoryStatus: 'public' });

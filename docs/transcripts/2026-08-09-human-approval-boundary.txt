@@ -1,0 +1,17 @@
+Command run from repository root on 2026-08-09:
+
+node --no-warnings --test --test-name-pattern='approval workflow rejects an agent pretending to make the human decision' tests/workflow.test.js
+
+Complete output:
+
+✔ approval workflow rejects an agent pretending to make the human decision (7.480208ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 86.401291
+
+The duration is a receipt from this run, not a performance claim.
