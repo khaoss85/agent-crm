@@ -42,7 +42,7 @@ export function createHttpServer(app, options = {}) {
   const publicDir = resolve(options.publicDir ?? DEFAULT_PUBLIC_DIR);
   const router = buildRouter(app);
 
-  return createServer(async (request, response) => {
+  const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? '/', 'http://localhost');
       const route = router.match(request.method ?? 'GET', url.pathname);
@@ -95,6 +95,49 @@ export function createHttpServer(app, options = {}) {
         },
       });
     }
+  });
+
+  // Node's own reap would destroy a request this server has already accepted.
+  server.on('timeout', reapIdleConnection);
+  return server;
+}
+
+/**
+ * Reap an idle keep-alive connection without resetting a request that has
+ * already arrived.
+ *
+ * Node's default is `socket.destroy()` the instant the keep-alive timer fires.
+ * The event loop runs TIMERS BEFORE POLL, so when that timer is *overdue* the
+ * reap runs before the poll phase delivers request bytes that are already
+ * sitting in the socket's receive queue — and `close(2)` on a socket with
+ * unread data answers RST. The client then loses an accepted request as
+ * ECONNRESET instead of receiving either a response or a clean close. A timer
+ * is overdue whenever the loop has been blocked for longer than the keep-alive
+ * window, which is also exactly when a pooling client cannot tell that the
+ * window has passed: its own idle clock is driven by the same loop.
+ *
+ * Registering this listener takes the reap away from Node — its default only
+ * runs when nothing handled `timeout` — so the decision is deferred by one
+ * phase. `setImmediate` runs in the CHECK phase, after this iteration's POLL
+ * phase, by which time anything already in the receive queue has been read and
+ * `bytesRead` has moved. If it moved, a request is in flight and the connection
+ * is kept: Node re-arms the keep-alive timer when that response finishes, and
+ * `headersTimeout`/`requestTimeout` still bound a request that never completes.
+ * If nothing arrived, the connection really is idle and is destroyed exactly as
+ * before.
+ *
+ * This changes how a connection is reaped, never when. The residual window —
+ * bytes still on the wire, not yet in the receive queue, when the socket is
+ * destroyed — is inherent to HTTP/1.1 keep-alive and belongs to the client.
+ *
+ * @param {import('node:net').Socket} socket
+ */
+function reapIdleConnection(socket) {
+  const bytesReadWhenIdle = socket.bytesRead;
+  setImmediate(() => {
+    if (socket.destroyed) return;
+    if (socket.bytesRead !== bytesReadWhenIdle) return;
+    socket.destroy();
   });
 }
 
