@@ -522,3 +522,71 @@ footer { border-top: 1px solid var(--line); padding: 44px 0 60px; color: var(--m
   .cluster-card { padding: 18px; }
   .evidence-rail { gap: 18px; }
 }
+
+/* ---------------------------------------------------------------- the loop
+   The five things an agent does here, as the hero's structural element rather
+   than a paragraph. It is an <ol> because the order is the argument: you cannot
+   check what you did not plan, or prove what you did not build. Numbers come
+   from the counter, so the markup stays a plain ordered list for a reader that
+   ignores CSS entirely. */
+.loop {
+  list-style: none;
+  counter-reset: loop;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 1px;
+  margin: 30px 0 0;
+  padding: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.loop li {
+  counter-increment: loop;
+  background: var(--surface);
+  padding: 16px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.loop li::before {
+  content: counter(loop);
+  font: 600 11px/1 var(--mono);
+  color: var(--accent);
+  letter-spacing: .06em;
+}
+.loop-step {
+  font-weight: 620;
+  font-size: 15px;
+  color: var(--ink);
+  letter-spacing: -.01em;
+}
+.loop code {
+  font: 500 12.5px/1.5 var(--mono);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 5px;
+  padding: 2px 6px;
+  align-self: flex-start;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.loop-note {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* The refusal block. The 403 is the single most differentiated thing on the
+   site, so it is typeset as evidence rather than as decoration: no gradient,
+   no glow, just the request, the actor that made it, and the status. */
+.code.refusal { border-color: var(--accent); }
+.code .s { color: var(--warning); }
+.code .bad {
+  color: var(--warning);
+  font-weight: 650;
+  letter-spacing: .01em;
+}
+
