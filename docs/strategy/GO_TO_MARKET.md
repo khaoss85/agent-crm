@@ -184,12 +184,13 @@ Sourcing, caveats and the places the alternative genuinely wins are maintained i
 | Objection bank | `docs/marketing/OBJECTIONS.md` | ✅ |
 | Corrections log, seeded before the first public correction | `docs/marketing/CORRECTIONS.md` | ✅ |
 | Content pillars and editorial calendar | `docs/marketing/CONTENT_PILLARS.md` | ✅ |
+| Per-channel production plan — unit of work, cadence, effort, who, and the blocker where there is one | `docs/marketing/CONTENT_PRODUCTION.md` | ✅ |
 | CI job holding public claims to the same standard as the code | `.github/workflows/ci.yml` → `public-claims` | ✅ |
-| The tour — one command composing 61 modules, 3 packages, 25 resources, 42 actions, 5 policies and 10 providers, then printing every limitation code | `scripts/tour.js`, `npm run tour` | ✅ (0.1) |
+| The tour — one command composing 68 modules, 4 packages, 32 resources, 52 actions, 7 policies and 10 providers, then printing every limitation code | `scripts/tour.js`, `npm run tour` | ✅ (0.1) |
 | Skill portability contract — a `requires` block per skill (`tier`, surfaces, `degradesTo`) and a published subset that holds no repository-only skill, both gated | `docs/SKILL_PACKAGING.md`, `skills/`, `scripts/distribution-check.js` | ✅ (1.3) |
 | `llms.txt` and `llms-full.txt` generated from the ledger, the docs and the job index, with a drift check | `scripts/generate-llms.js` | ✅ (1.10) |
 | Rename inventory and executor — five casings, four blast-radius groups, held-back set, dry-run by default | `scripts/brand-set.js`, `docs/RENAME_SURFACE.md` | ✅ |
-| Benchmark protocol amendment — Edition L (G1–G4) and Edition D (G5–G6, blocked), points out of 75, SABR and TTFW ruled out | `CRM_BUILD_BENCHMARK.md`, ADR-022 | ✅ (0.3) |
+| Benchmark protocol amendment — Edition L (G1–G4) and Edition D (G5–G6, blocked), points out of 75, SABR and TTFW ruled out | `CRM_BUILD_BENCHMARK.md`, ADR-024 | ✅ (0.3) |
 | Edition L harness — prepare, record, score, all three refusing rather than guessing | `benchmarks/harness/`, `npm run bench:*` | ✅ (0.4, harness only) |
 | Pilot runbook and publication gate — how a run is driven, and which sentences a result licenses | `docs/benchmarks/PILOT_PROTOCOL.md`, `docs/marketing/BENCHMARK_PUBLICATION.md` | ✅ |
 | Falsification kit — six mutations, three outcomes, refuses to run over uncommitted files, prints what it skipped | `scripts/falsify.js`, `docs/FALSIFY.md`, `npm run falsify` | ✅ (0.2) |
@@ -264,14 +265,15 @@ marketplaces and registries, **(c)** the in-session agent surface.
 | Channel | Layer | Artifact required | State | Gate |
 |---|---|---|---|---|
 | GitHub repository | a/b | README, SECURITY, issue and PR templates, description, topics, social preview, release notes | Mostly built; `docs/marketing/GITHUB_LISTING.md` holds the metadata | Name, visibility |
-| Self-hosted Claude marketplace | b | `.claude-plugin/marketplace.json` + plugin | Built; split and portability pending | Name, visibility, portability |
-| Self-hosted Codex marketplace | b | `.codex-plugin/`, `.agents/plugins/marketplace.json` | Built; skills 6/11 | Name, visibility, parity |
-| Anthropic community marketplace | b | The same manifests, via the Console form | Ready | **Human submission** |
-| MCP registry | b | `server.json` + a published npm package | `server.json` ready | Name → npm publish → human |
-| npm | a/b | Per-package manifests, rich keywords, provenance-signed publish | Not started; root is private | Name, licence |
+| Self-hosted Claude marketplace | b | `.claude-plugin/marketplace.json` + plugin | **Live on merge.** Portability contract shipped: 11 of 12 skills published, `adversarial-review` held back as `tier: repository` | — |
+| Self-hosted Codex marketplace | b | `.codex-plugin/`, `.agents/plugins/marketplace.json` | **Live on merge.** Mirror parity 12/12, held by `tests/skill-parity.test.js` | — |
+| Gemini CLI extension + gallery | b | `gemini-extension.json` + `GEMINI.md` at the repository root, topic `gemini-cli-extension`, and one git tag | **Built.** Manifest, context file and topic are in place; the gallery crawls daily | `git tag v0.1.0` — a human step |
+| Anthropic community marketplace | b | The same manifests, via the Console form | Ready | **Human submission**, and it should point at something installable first — the create-CLI |
+| MCP registry | b | `server.json` + a published npm package | `server.json` ready; `@accordo/mcp` returns 404, so the entry would resolve to nothing | Publish `@accordo/mcp` → human |
+| npm | a/b | Per-package manifests, rich keywords, provenance-signed publish | `accordo` and `create-accordo` **reserved** as empty 0.0.1 placeholders (2026-08-09); the `@accordo` scope is unclaimed and the real packages do not exist | The create-CLI, then an npm org (web-only) |
 | `npm create <name>` | b/c | `packages/create/` | Does not exist | Name, Phase 5 |
 | skills.sh | b/c | Nothing — it already walks `.claude/skills` and `.agents/skills` | Satisfied | Visibility |
-| llms.txt / retrieval | a | Generated from the ledger, with a drift gate | Hand-written today | Domain, deploy |
+| llms.txt / retrieval | a | Generated from the ledger, with a drift gate | **Built** — `llms.txt`, `llms-full.txt`, `jobs.json`, `answers.json`, sitemap, robots and JSON-LD, all generated and drift-checked | Deploy |
 | **In-session agent surface** | **c** | AGENTS.md, CLAUDE.md, skills ×2 harnesses, MCP config ×2, `app inspect`, harness compatibility | **Strongest layer** | **None — fully ours** |
 | Show HN | launch | `LAUNCH_PACKET.md` §2 | Written | Human posts |
 | Product Hunt | launch | `LAUNCH_PACKET.md` §3 | Written | Human posts, once, on the benchmark |

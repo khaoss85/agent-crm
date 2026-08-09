@@ -238,13 +238,30 @@ function statusSection() {
     // The caveat is derived from brand.json rather than written down, so it stops
     // being said the moment the ledger records the namespace as claimed.
     brand.name.status === 'chosen'
-      ? `- **The public name is chosen** (brand status: {{brand.nameStatus}})${brand.npm.status === 'published' ? '.' : ', but the npm package and scope are unclaimed. Do not treat "{{brand.name}}" as a package name or a namespace until they are registered.'}`
+      ? `- **The public name is chosen** (brand status: {{brand.nameStatus}})${npmCaveat(brand.npm.status)}`
       : '- **The public name is undecided** (brand status: {{brand.nameStatus}}). "{{brand.name}}" is a placeholder. Do not treat it as a package name, a brand or a namespace.',
-    '- **Nothing is published.** No npm package, no hosted service, no registry entry. License: {{brand.license}}.',
+    `- **${brand.npm.status === 'names-reserved' ? 'The only things published are two empty npm name reservations' : 'Nothing is published'}.** No hosted service, no registry entry, no installable framework. License: {{brand.license}}.`,
     '- **There is no production spine**: no authentication, no tenancy, no RBAC. The HTTP server is local-development-only, and an actor header is an assertion rather than an identity.',
     '- **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any percentage attributed to this project is fabricated.',
     '- Measured at commit {{measured.sha}} on {{measured.date}}: **{{measured.tests}} tests passing, 0 failing.**',
   ].join('\n');
+}
+
+/**
+ * Three states, three different sentences, because collapsing them lies in both
+ * directions: "unclaimed" is false once the names are held, and "published" is
+ * false while the reservation installs nothing.
+ *
+ * @param {string} status
+ */
+function npmCaveat(status) {
+  if (status === 'published') return '.';
+  if (status === 'names-reserved') {
+    return ', and the unscoped npm names are reserved by empty placeholder packages that install nothing.'
+      + ' The `{{brand.scope}}` scope is unclaimed. Do not tell a user to install or scaffold from npm:'
+      + ' `{{brand.createCommand}}` reserves a name, it does not create a project.';
+  }
+  return ', but the npm package and scope are unclaimed. Do not treat "{{brand.name}}" as a package name or a namespace until they are registered.';
 }
 
 function whatItIsSection() {

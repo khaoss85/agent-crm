@@ -91,7 +91,7 @@ horizontal capability the way the contract intends?*
 |---|---|
 | **Core CRM (Sales)** — company, contact, opportunity, lead, task, approval | `not_applicable` on every package-seam row: these are a *project's* generated records, not a domain package, and a customer's own CRM objects must never require one. `aligned` on the kernel rows (module evolution, migration checksums, managed fields where declared, events, audit and trace, exact reads, JTBD evidence). Its Skills are `create-crm-module` and `create-crm-workflow` |
 | **Custom-package fixture** (`examples/custom-packages/partner-scorecard/`) | `aligned` on the package seam by construction — it exists to prove a customer-authored package attaches, works and detaches with no kernel change. It deliberately exercises only a slice: one resource, one action, no capability of its own, so the capability rows read `not_applicable` |
-| **Service** | not built. M15 is the next runtime milestone and must arrive package-native on every seam row from its first commit; the Compatibility Backfill Rule applies to it as an author, not as a legacy |
+| **Service** | **built, on an open PR (M15).** Package-native from its first commit: `aligned` on the package seam, declared capabilities (requires `contracts/service-obligations@1`, provides three), `packageContract: 1` conformance, package version discipline, managed records, the human-actor boundary, fingerprinted declared definitions, transaction-scoped events, audit and trace, exact reads, AX1 visibility, AX2 citability, detach proof, fault-injection and two-connection evidence, and JTBD rows with linked evidence. `not_applicable` on the money contract and the external-operation contract: it prices nothing and calls no provider. `partial` on the Skill mirror — `build-service-operations` exists under `.claude/skills/` only, the same DX2 gap every domain has. `deferred` on a tool namespace: §C.2b of `AGENT_TOOL_SURFACE.md` now works one through on Service, and it stays a proposal until DX13 |
 | **Marketing & Growth** | documentation only. No row can be assessed, and none is claimed |
 
 ¹ **Pipeline is not a domain.** `buildMoveStageAction` is a generic factory that
@@ -165,12 +165,13 @@ conformance, and the detach proof.
 ### `partial` — the Skill mirrors
 
 - **Gap.** `build-lead-intelligence`, `build-commercial-operations`,
-  `build-signature-order`, `build-contract-activation` and
-  `build-delivery-handover` exist under `.claude/skills/` only. `.agents/skills/`
-  carries six skills, none of them a domain build skill.
+  `build-signature-order`, `build-contract-activation`,
+  `build-delivery-handover` and `build-service-operations` exist under
+  `.claude/skills/` only. `.agents/skills/` carries six skills, none of them a
+  domain build skill.
 - **Evidence.** `ls .agents/skills/` versus `ls .claude/skills/`.
 - **Pass.** **DX2** (`crm agent skills sync|check`), which is where a drift check
-  belongs — hand-copying five more files just moves the problem.
+  belongs — hand-copying six more files just moves the problem.
 - **Compatibility risk.** **None.** Additive files; no runtime reads them.
 
 ### `partial` — Commercial Operations against the external-operation contract
@@ -259,6 +260,150 @@ Three practical consequences:
 3. A reviewer may reject a PR for a missing row the same way they reject a
    missing test — and `docs/QUALITY_GATES.md` §1 now says so.
 
+## The M15 backfill answer, as the rule requires
+
+M15 introduced one horizontal change: a **second capability on an existing
+package**, `contracts/service-obligations@1`, and with it the first evolution of
+a shipped M12 record (`service-obligation` → revision 2, gaining `coverageRef`
+and `activatedAt` and an `activated` status).
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **Contracts only.** It gains a capability and a record revision; nothing else in the repository changed shape |
+| Which are already aligned? | Contracts is `aligned` on every seam row and stays so: the capability is additive, `delivery-obligations@1` is byte-identical, and `packageContract: 1` did not move |
+| Which need metadata only? | **None.** No other domain gained a concept it must now declare |
+| Which need a code backfill? | **None.** Service is a new package and owns its own surface; the three `needs_extraction` domains are untouched and no closer to extraction than before |
+| Was the matrix updated? | Yes — the Service row above, and this section |
+
+The honest note: M15 is *not* evidence that the seam is finished. It is the
+third package and the second consumer, and what it showed the seam still cannot
+express is the input to step 3 of the sequencing below.
+
+## The DX4 backfill answer, as the rule requires
+
+DX4 (`crm package test`) is a **horizontal capability**: it applies to every
+package, including the three domains that are not packages yet.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None at runtime.** DX4 adds a CLI command and moves three pieces of shared CLI logic into their own modules. No kernel behaviour changes, no domain is refactored |
+| Which are already aligned? | The three first-party packages — Contracts, Delivery, Service — pass `crm package test` mechanically, which is stronger than the prose "aligned" that preceded it. The custom-package fixture **does not**: it acts on a record `delivery` owns without declaring `delivery`, and no capability of `delivery` expresses that. A real seam gap, reported rather than rescued |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None today.** The three `needs_extraction` domains cannot be run through DX4 at all: they are not packages, so there is nothing for it to compose. That is not a new gap — it is the same gap, now measurable |
+| What changed for extraction? | DX4 is the gate the extraction pilot was waiting for. An extracted domain is a package, and a package that cannot pass `crm package test` has not been extracted, only moved |
+| Matrix updated? | Yes — this section, the conformance row below and the revised extraction gate |
+
+One row of the matrix changes meaning rather than status: **"JTBD rows with
+linked evidence"** and the package-seam rows were previously argued from prose
+and per-package suites. For the four packages they are now argued from a
+mechanical run whose output is a stable document. The three legacy domains stay
+exactly where they were.
+
+### `service` had no conformance coverage until now
+
+`assertPackageConforms` was called three times — for `contracts`, `delivery` and
+`partner-scorecard`. The newest package, the one M15 built and the one this
+matrix cites as validating the seam, had **none**. Anything this document said
+about "every package conforms" was untrue of `service` at the moment it was
+written. DX4's official matrix covers all four, and its suite fails if a package
+is added without being listed.
+
+## The DX3 backfill answer, as the rule requires
+
+DX3 (`crm package scaffold`) is a **horizontal capability** in the same sense
+DX4 is: it applies to every package that could exist, including the three
+domains that are not packages yet.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None, at runtime or on disk.** DX3 adds one CLI command and one test file. It changes no kernel behaviour, refactors no domain, and its own output is written only where a caller points it |
+| Which are already aligned? | Not the right question for this capability. DX3 produces *new* packages; the four existing ones were written before it and none is regenerated. What is aligned is the **shape**: scaffolded output passes the same `crm package test` matrix the four packages are held to, so DX4's contract is now the default starting point rather than something an author has to remember |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None.** The three `needs_extraction` domains cannot be scaffolded any more than they can be conformance-tested — they are not packages. DX3 does not change that, and a scaffold is explicitly *not* an extraction tool: it writes an empty package, never a migration of an existing one |
+| What changed for extraction? | The pilot gains a starting point but no permission. An extraction now begins `crm package scaffold lead-intelligence --apply` and proceeds by moving code into it, with `crm package test` as the gate. Every precondition recorded below is unchanged and still unproved |
+| Matrix updated? | Yes — this section and the re-evaluated ordering below |
+
+### What DX3 deliberately did not close
+
+- **No domain semantics.** The scaffold generates no record, action, policy,
+  capability, provider, Admin section, Solution Plan or MCP tool. That is a
+  decision, not an omission: a generated field is a claim about a business
+  nobody described, and an agent reads generated code as a decision already
+  taken.
+- **No composition.** `packages/domains/generated/index.js` is still edited by
+  hand. Automating it would remove the one deliberate human act in the
+  package-installation path.
+- **No migration, no database, no install, no publish, no registry.**
+- **No HTTP-route contribution.** Still the open seam DX4 identified, still a
+  precondition for Commercial and Signature specifically, and still untouched.
+
+## The DX1 backfill answer, as the rule requires
+
+DX1 (`crm project doctor`) is a **horizontal capability**: it applies to every
+project built on this framework, and to every domain in one.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None at runtime.** DX1 adds one CLI command, two CLI modules and a test file. It changes no kernel behaviour, refactors no domain, mutates nothing and executes no project source in its own process |
+| Which are already aligned? | All of them, in the only sense the command measures: it reports composition, package-boundary, module-state, plan, Skill, docs-link and hygiene health for whatever the project contains, and the three `needs_extraction` domains are ordinary kernel source to it. Its first run on this repository is **0 failures** with three real warnings — two stale Solution Plans and six one-sided Skill mirrors |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None.** The doctor asks existing authorities; it introduces no rule any domain must now satisfy |
+| What changed for extraction? | It becomes a precondition of the *process* rather than of the seam: an extraction should start from a project whose coherence is machine-checked, and should be re-checked after. It does not remove any of the four open blockers |
+| Matrix updated? | Yes — this section, and the extraction gate now maintained in `EXTRACTION_PREPARATION.md` |
+
+### What DX1 measured that this matrix had only asserted
+
+Two rows of this document were prose until now and are now mechanical:
+
+- **the Skill mirrors.** This matrix records `partial` because six domain build
+  skills exist under `.claude/` only. `crm project doctor` reports that as
+  `skills.mirror-coverage: warning` with the six named, and would report a
+  **failure** if two mirrors of one skill ever disagreed in content. DX2 still
+  owns the fix; the gap is now observed on every run rather than remembered.
+- **Solution Plan currency.** Two of the three checked-in plans no longer bind to
+  the current composition. That was true before this PR — verified identical on
+  `main@5da5205` — and nothing reported it. It is now `plans.*: warning`.
+
+### What DX1 deliberately did not close
+
+- **No mutation, no `--fix`.** Every finding names the existing command that
+  would fix it.
+- **No domain behaviour, no database, no provider health, no production
+  readiness.** All named limitations in the report itself.
+- **No package conformance run.** `PACKAGE_CONFORMANCE_NOT_RUN` points at
+  `crm package test`.
+- **No generated-source drift beyond what a generator contract proves.** A
+  fuzzy comparison that cries wolf is a check people silence.
+
+## The LA0 backfill answer, as the rule requires
+
+LA0 (the Lead Intelligence characterization harness) is **not** a horizontal
+capability in the sense the rule usually means — it adds no kernel behaviour and
+no contract any domain must satisfy. It is recorded here because it changes what
+this matrix can claim about one domain.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **Lead Intelligence only**, and only by observing it. No code moved, no helper was relocated, no ambient field replaced, no seam added |
+| Which are already aligned? | Not the frame. What changed is coverage: Lead Intelligence now has a frozen, machine-checked record of its externally observable behaviour — 149 observations, 779 asserted values. Commercial Operations and Signature & Order have **none** |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None from LA0 itself.** It surfaced two `defect_candidate` findings in `record-signal` — an unbounded `value` and control characters stored verbatim — which are fixed in their own open PR, before the extraction rather than during it |
+| What changed for extraction? | The acceptance criterion — behaviour preservation proved from the outside — is mechanical for the first time. It was the last unknown; what remains is decisions |
+| Matrix updated? | Yes — this section |
+
+### Characterization coverage, by domain
+
+| Domain | Characterized | Note |
+|---|---|---|
+| Lead Intelligence | **yes** — `tests/characterization/`, `legacyCharacterizationContract: 1` | the extraction candidate. Still **not** package-aligned: it remains kernel source with an ambient runtime field and a fixed definition slot |
+| Commercial Operations | no | would need its own suite before any extraction |
+| Signature & Order | no | same, plus the HTTP-route seam it owns |
+| Contracts, Delivery, Service | **not applicable** | package-native from birth; `crm package test` plus their own suites already cover them |
+
+**LA0 is a gate for extracting a legacy domain, not a requirement for building a
+new one.** A package written package-native has no pre-move behaviour to
+preserve, and demanding a characterization baseline from it would be ceremony.
+
 ## Sequencing, which this document does not change
 
 ```text
@@ -309,6 +454,225 @@ What must be true before it is chosen — none of which is established today:
 
 If any of those fails, another domain is the pilot, or none is. **Nothing in this
 document authorizes starting an extraction.**
+
+### The three candidates, measured (M15 review)
+
+The hypothesis above was written before M15 shipped. The M15 review measured the
+three candidates rather than reasoning about them, so the eventual decision is
+argued against numbers. **Still planning only: nothing here starts an
+extraction, and no extraction work is in PR #27.**
+
+| | Lead Intelligence | Commercial Operations | Signature & Order |
+|---|---|---|---|
+| kernel source to move | 1,313 lines, 2 files | 1,393 lines, 3 files | 1,488 lines, 2 files |
+| files outside the domain that name it | 11 | 16 | 10 |
+| dedicated HTTP routes in the kernel server | none | `POST /api/catalog/sync` | `POST /api/signature/providers/:provider/events`, `POST /api/signature/envelopes/:id/reconcile` |
+| dedicated method on the app object | none | `syncCatalog` | `ingestSignatureEvent`, `reconcileSignature` |
+| `/api/schema` block | `intelligence` | `commercial` | `signature` |
+| Admin files that read its schema block | 0 | 6 | 3 |
+| carries money | no | **yes** (`commercial-money.js`, 416 lines) | yes, by reference |
+| calls an external provider | yes, in a `prepare` phase the kernel already isolates | yes, outside the write transaction | **yes, and it receives inbound webhooks** |
+| depended on by another domain | no | **yes** — Contracts activates an Order; Delivery and Service reach obligations raised from it | yes — Contracts reads the signed Order |
+| what a regression looks like | a reproduction test disagrees | a stored amount disagrees | an envelope or artifact is lost, or a webhook is accepted twice |
+
+Three things the table says that prose did not:
+
+1. **Intelligence is the only candidate with no kernel HTTP surface, no app
+   method and no Admin coupling.** Its extraction is a package boundary and
+   nothing else. Commercial and Signature each require moving a route out of
+   `apps/server`, which is a second, unrelated piece of work — and one the
+   package seam does not currently support at all: **no package can contribute
+   an HTTP route today.** That is a seam gap, not a scheduling problem.
+2. **Commercial is the most depended-upon.** Contracts, Delivery and Service all
+   sit downstream of the Order it produces. Moving it first means designing
+   three capability edges at once, on the domain that carries money.
+3. **Signature is the riskiest for a reason unrelated to size.** It is the only
+   domain that accepts bytes from outside. An extraction that changes where the
+   verification code lives is an extraction that has to re-prove replay,
+   out-of-order and wrong-tenant handling — the evidence hardest to be confident
+   about after a move.
+
+**Recommendation: Lead Intelligence, at moderate confidence.** Moderate rather
+than high because two of its four preconditions are still unproved — DX4 does
+not exist, and "nothing reads Intelligence internals" is read off the file
+layout rather than established by a tool. The measurement strengthens the
+hypothesis; it does not convert it into a decision.
+
+**A precondition the table added:** before Commercial or Signature could ever be
+a candidate, the package seam needs a way for a package to own an HTTP route.
+Neither is extractable today at any confidence, and that is a finding about the
+*seam*, not about them.
+
+### Recommended next ordering
+
+Ordering, with the reason each item sits where it does. This is a
+recommendation to a human, not a plan of record:
+
+1. **DX4 — `crm package test` (conformance harness).** Everything else that
+   touches the seam is safer after it, and it is the stated gate for any
+   extraction. Without it an extraction's only proof is that the old tests still
+   pass, which is exactly the proof that misses a boundary violation.
+2. **DX3 — package scaffold.** Cheap next to DX4, and it makes DX4's contract
+   the default shape rather than something to remember.
+3. **DX1 — `crm doctor` deepening.** Independent of the seam, useful to every
+   other item, and the smallest of the four.
+4. **The extraction pilot — Lead Intelligence.** Only after 1 and 2, and only if
+   its four preconditions are established rather than assumed.
+5. **DX2 — Skill mirror sync.** Real (six domain build skills now live under
+   `.claude/` only) but nothing depends on it, and it stays a documentation
+   correctness gap rather than a runtime one.
+6. **M16 — Analytics Studio.** Last, because it is the item most likely to
+   *consume* whatever the extraction learns about reading across packages. Doing
+   it before the pilot risks writing the cross-package read pattern twice.
+
+The one ordering claim worth arguing with: DX2 sits fifth despite being the
+cheapest, because cheap and urgent are different, and the gap is already
+documented in this matrix.
+
+### Re-evaluated after DX4 was built
+
+DX4 is now item 1 done. Three things it established change the ordering below
+it, and one thing it did **not** establish leaves a recommendation where it was.
+
+**Lead Intelligence is still the recommended pilot, and the confidence rises
+from moderate to moderate-high.** DX4 removes the largest unknown: "how would we
+know the extracted domain still conforms" now has a mechanical answer, and that
+answer is a stable document rather than a reviewer's judgement. The remaining
+preconditions are unchanged and still unproved — nothing yet establishes that
+no code reads Intelligence internals, and behaviour preservation across the move
+is still the whole acceptance criterion.
+
+**But DX4 also measured what an extraction would have to produce.** A package
+passes `crm package test` only if it declares its records, its actions target
+records somebody owns, its dependencies are declared capabilities, its manifests
+apply and the application boots without it. Intelligence today has none of that
+shape: its actions live in `packages/core/src/intelligence-actions.js` and its
+registries in the kernel. The extraction is therefore not a move — it is an
+authoring exercise with a conformance target, which is a better-defined job than
+it was a week ago and not a smaller one.
+
+**The HTTP-route seam is confirmed as an extraction precondition, and DX4 did
+not need it.** DX4 composes and boots packages without any package contributing
+a route, so the answer to "is route contribution required for generic package
+conformance" is **no**. It stays exactly what the previous section called it: a
+precondition for Commercial and Signature specifically, because each owns a
+route in `apps/server` that would have to go somewhere. Neither is extractable
+at any confidence until that seam exists, and building it was correctly out of
+DX4's scope.
+
+**One new precondition DX4 surfaced, and its review sharpened it.** There are
+two different situations that look alike:
+
+- acting on a record **no package owns** — a *host-application* record. Every
+  legacy domain does this (Commercial and Signature on `quote` and `order`,
+  Intelligence on `lead`), every package here does it on `order`, and it is
+  ordinary: the project supplies the manifest. `crm package test` passes it.
+- acting on a record **another package owns**, without declaring that package.
+  `crm package test` **fails** it, because the package cannot be composed into
+  any project that lacks the owner and nothing in its declaration says so.
+
+For extraction this is good news: the legacy domains' record dependencies are
+almost all of the first kind. The one that would need a decision is any
+extracted domain acting on another *extracted* domain's record — and the answer
+is either a capability on the owner, or an explicit contract extension for
+record-level coupling. Neither is needed to start the pilot.
+
+`partner-scorecard` is the worked example of the second kind, and it is
+**non-conforming** as a result: `delivery` offers no capability that expresses
+rating a partner engagement. That is a real seam gap, recorded rather than
+patched.
+
+### The extraction gate now lives in its own document
+
+The measured blockers, the LA0 characterization-harness design, and the decision
+analyses for `app.intelligence` and the definition registry are maintained in
+**`docs/architecture/EXTRACTION_PREPARATION.md`**, produced alongside DX1. The
+summary below is the state as of DX3 and remains accurate; the newer document
+adds the recommendations and the ordering.
+
+### Re-evaluated after DX3 was built — extraction readiness, measured
+
+The question DX3 makes it fair to ask: **is the path now complete enough to
+extract Lead Intelligence?**
+
+```text
+crm app inspect        the composition before                    exists (AX1)
+crm solution check     a plan bound to that composition          exists (AX2)
+crm package scaffold   an empty conforming lead-intelligence     exists (DX3)
+  move code            registries, actions, records              by hand
+crm package test       does the result conform?                  exists (DX4)
+  characterization     does it still decide identically?         DOES NOT EXIST
+```
+
+Five of six rungs exist. **The recommendation does not change: do not start.**
+Confidence in Lead Intelligence as the right *first* pilot stays moderate-high;
+confidence that it can be started *today* is low, and the reasons are now
+measured rather than assumed.
+
+**The precondition "no code reads Intelligence internals" is disproved.** It was
+recorded as unproved; it is now false, and the evidence is three imports:
+
+| Reader | What it reaches for | Why it blocks |
+|---|---|---|
+| `packages/core/index.js` | re-exports `computeDefinitionFingerprint` from `intelligence-registry.js` | it is **public kernel API** that every package depends on, sitting inside the domain that would move |
+| `packages/core/src/catalog-sync.js` | `withTimeout` from `intelligence-actions.js`, `computeDefinitionFingerprint` from `intelligence-registry.js` | Commercial Operations' provider sync depends on Intelligence's *files*, and Commercial is itself `needs_extraction` |
+| `packages/cli/src/app-inspect.js` | `packages/intelligence/generated/index.js` by path, as one of AX1's fixed composition slots | AX1's report shape names `intelligence` as a first-class definition kind |
+
+The first two are the real blocker and they have the same shape: the
+fingerprint and timeout helpers are **horizontal kernel machinery that happens
+to live in an Intelligence file**. They must move to a neutral kernel module
+*before* any extraction, as a separate, behaviour-preserving PR. That is a
+prerequisite, not part of the pilot.
+
+> **Resolved** by the neutral-helper move. `computeDefinitionFingerprint`,
+> its canonicalizer and `validateDeclaredConfig` now live in
+> `packages/core/src/definition-fingerprint.js`, and `withTimeout` in
+> `packages/core/src/timeout.js`. The finding above is left standing as the
+> record of what was measured; what changed is where the code lives, not
+> whether the reading was true. The importer list LA0 measures shrank from
+> ten files to four, and the four that remain — `create-app.js`, the
+> starter's `install.mjs`, `DECISIONS.md` and Intelligence's own actions
+> module — are genuine Intelligence dependencies rather than helper reach-ins.
+> The third row, AX1's fixed composition slot, is untouched and still open.
+
+**Two seams the extracted package would need and cannot declare today.**
+
+- `app.intelligence` is a field on the application object. It is published in
+  `/api/schema` (`apps/server/src/http-server.js`) and injected into every
+  action's context (`packages/core/src/action-runtime.js`). A package can
+  declare a *capability*, which another package opens deliberately; it cannot
+  contribute an ambient context key that every action in the application
+  receives. Either that ambient key becomes a declared capability — a real
+  behaviour change for every existing action — or the contract grows a way to
+  express it. Neither is decided.
+- `packages/intelligence/generated/index.js` is a **project-owned registry
+  file**, on the same pattern as `packages/actions/generated`. A package that
+  owns a definition kind needs somewhere for a project to declare instances of
+  it. There is no generic seam for a package to contribute one, and inventing
+  one for a single consumer would violate this repository's own rule that a new
+  generic seam needs two real consumers.
+
+**And the acceptance criterion has no harness.** The criterion is behaviour
+preservation proved from the outside: every historical decision reproduces
+identically. `crm package test` cannot answer that — it says so itself, under
+`DOMAIN_CORRECTNESS_NOT_PROVEN` — and no characterization-test harness exists.
+An extraction started before that harness has, as its only proof, "the existing
+tests still pass", which is precisely the proof this document has twice said is
+insufficient.
+
+**So the ordered blockers, none of which is an extraction:**
+
+1. Move `computeDefinitionFingerprint` and `withTimeout` out of the Intelligence
+   files into neutral kernel modules. Behaviour-preserving, mechanical, its own PR.
+2. Decide `app.intelligence`: ambient context key, or declared capability.
+3. Decide how a package contributes a project-owned definition registry — or
+   establish that Intelligence keeps its registry in the host application.
+4. Build the characterization harness that can prove behaviour preservation.
+5. *Then* the pilot, one domain, one PR.
+
+Item 1 is small and independently useful; it is the honest next thing anyone
+who wants the pilot should do. Items 2 and 3 are contract decisions and belong
+to a human. Nothing in this section authorizes starting any of them.
 
 ## What this document is not
 

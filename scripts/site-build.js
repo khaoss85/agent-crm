@@ -428,7 +428,7 @@ function resolve(token) {
     // working title. brand.json calls itself the single source of brand truth and recorded both
     // decisions as made; the prose had simply not been told. Both sentences are derived now.
     'status.license': brand.license.status === 'confirmed'
-      ? `${brand.license.value}-licensed (ADR-021).`
+      ? `${brand.license.value}-licensed (ADR-023).`
       : `${brand.license.value} today, pending a final human confirmation before launch.`,
     'status.name': brand.name.status === 'chosen'
       ? `\u201c${brand.name.value}\u201d is the chosen name; the trademark screen has not been run.`
@@ -448,6 +448,7 @@ function resolve(token) {
     'brand.repository': brand.repository.value,
     'brand.license': brand.license.value,
     'brand.createCommand': brand.npm.createCommand,
+    'brand.scope': brand.npm.scope,
     'brand.nameStatus': brand.name.status,
     'font.sans': brand.typography.sans,
     'font.mono': brand.typography.mono,

@@ -1,9 +1,10 @@
 // @ts-check
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PackageRegistry, validatePackageDefinition } from '../../core/index.js';
+import { PRIVATE_IMPORT_RE, packageSources } from './package-sources.js';
 
 /**
  * `crm package validate|inspect` — the agent-facing surface of the domain
@@ -22,12 +23,6 @@ import { PackageRegistry, validatePackageDefinition } from '../../core/index.js'
  * a package you would be willing to boot.
  */
 
-// A package may not reach into `packages/core/src`. The rule has to see the
-// import however it is written: single or double quotes, a backtick, a static
-// `from` clause or a dynamic `import()` — a quote style is not a boundary.
-const PRIVATE_IMPORT_RE = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)(['"`])[^'"`]*core\/src\/[^'"`]*\1/;
-const SOURCE_RE = /\.m?js$/;
-
 /**
  * The package directory as the caller named it, relative to where they ran the
  * command — never the resolved absolute path.
@@ -39,7 +34,7 @@ function relativeToCwd(dir) {
 }
 
 /** @param {string} value */
-function resolvePackageDir(value) {
+export function resolvePackageDir(value) {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new Error('Usage: crm package validate <package-directory>');
   }
@@ -61,7 +56,7 @@ function resolvePackageDir(value) {
  *
  * @param {string} entry
  */
-async function loadDefinitions(entry) {
+export async function loadDefinitions(entry) {
   const module = await import(pathToFileURL(entry).href);
   /** @type {any[]} */
   const found = [];
@@ -80,25 +75,6 @@ async function loadDefinitions(entry) {
     throw new Error('No package definition found: export a definition object or a create…Package() factory from src/index.js');
   }
   return found;
-}
-
-/** Every source file in the package, so import rules can be checked statically. */
-function sourceFiles(dir) {
-  /** @type {string[]} */
-  const out = [];
-  const walk = (current) => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      const full = join(current, entry.name);
-      if (entry.isDirectory()) {
-        if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
-        walk(full);
-      } else if (SOURCE_RE.test(entry.name)) {
-        out.push(full);
-      }
-    }
-  };
-  walk(dir);
-  return out.sort();
 }
 
 /**
@@ -136,7 +112,7 @@ export async function validatePackageCommand({ packagePath }) {
   }
 
   // The public-import rule: a package may not reach into kernel internals.
-  const privateImports = sourceFiles(dir)
+  const privateImports = packageSources(dir)
     .filter((file) => PRIVATE_IMPORT_RE.test(readFileSync(file, 'utf8')))
     .map((file) => file.slice(dir.length + 1));
   for (const file of privateImports) {

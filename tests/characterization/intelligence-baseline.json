@@ -1,0 +1,2563 @@
+{
+  "attachment": "kernel-actions-and-fixed-definition-slot",
+  "counts": {
+    "compatibility_required": 15,
+    "contractual": 127,
+    "defect_candidate": 2,
+    "incidental": 2,
+    "pre_extraction_evidence": 5
+  },
+  "domain": "lead-intelligence",
+  "fingerprint": "f80592be883eac6d634c9020ffcc91bcfc06c902c09f8b05979195a1e831a668",
+  "legacyCharacterizationContract": 1,
+  "limitations": [
+    {
+      "code": "DETERMINISTIC_FIXTURES_ONLY",
+      "message": "every provider is a checked-in deterministic fixture. No network call is made, so nothing here characterizes a real provider's latency, error shape or data quality"
+    },
+    {
+      "code": "INCIDENTAL_NOT_ASSERTED",
+      "message": "observations classified incidental are recorded and not compared. Row ordering nobody specified and internal id shapes are free to change; freezing them would block the refactor this baseline exists to enable"
+    },
+    {
+      "code": "DEFECTS_NOT_FROZEN",
+      "message": "observations classified defect_candidate are reproduced and documented but never asserted as must-stay. Each one is a recommendation for a separate pre-extraction fix"
+    },
+    {
+      "code": "NOT_A_PERFORMANCE_BASELINE",
+      "message": "no timing is captured. An extraction that preserves every value and doubles the latency passes this suite"
+    },
+    {
+      "code": "CONCURRENCY_ONLY_WHERE_OBSERVABLE",
+      "message": "races are characterized only where the current implementation exposes a deterministic outcome. Where it does not, the absence of a case is not a statement that concurrency is safe"
+    },
+    {
+      "code": "ADMIN_SURFACE_NOT_MODELLED",
+      "message": "Lead Intelligence contributes no Admin section today, so there is no Admin behaviour to freeze. If one is added before the extraction, this baseline does not cover it"
+    },
+    {
+      "code": "SINGLE_ATTACHMENT_SHAPE",
+      "message": "a baseline records how Intelligence was attached when it was generated. Comparing baselines generated under different attachment shapes is a comparison of two different applications, and the contract carries the shape so that cannot happen silently"
+    }
+  ],
+  "observations": [
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.action-contract.enrich",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": false,
+        "fromStates": [
+          "new",
+          "qualified"
+        ],
+        "input": [
+          {
+            "name": "provider",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "path": "/api/modules/lead/records/:id/actions/enrich",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.action-contract.record-signal",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": false,
+        "fromStates": [
+          "new",
+          "qualified"
+        ],
+        "input": [
+          {
+            "name": "signalType",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "source",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "observedAt",
+            "required": true,
+            "type": "timestamp"
+          },
+          {
+            "name": "value",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "sourceKey",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "path": "/api/modules/lead/records/:id/actions/record-signal",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.action-contract.route",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": false,
+        "fromStates": [
+          "new"
+        ],
+        "input": [
+          {
+            "name": "policy",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "required": true,
+            "type": "integer"
+          }
+        ],
+        "path": "/api/modules/lead/records/:id/actions/route",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.action-contract.score",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": false,
+        "fromStates": [
+          "new",
+          "qualified"
+        ],
+        "input": [
+          {
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "required": true,
+            "type": "integer"
+          }
+        ],
+        "path": "/api/modules/lead/records/:id/actions/score",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.app-intelligence-consumers",
+      "note": "Blocker 2 evidence: every file that really reads the ambient field, in code rather than in prose. Scanner limits: LEXICAL_NOT_SYNTACTIC — comments and literals are stripped, but no AST is built; ALIASING_NOT_TRACKED — a consumer that copies the field to another name first is not followed; DYNAMIC_KEYS_NOT_RESOLVED — a computed property name built at runtime is not evaluated.",
+      "observed": [
+        "apps/server/src/http-server.js"
+      ],
+      "surface": "sdk"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.app-intelligence-field-present",
+      "note": "The ambient action-context field. Blocker 2 in EXTRACTION_PREPARATION.md; recorded as architecture evidence, deliberately separate from behavioural compatibility.",
+      "observed": {
+        "present": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.definition-kinds-published",
+      "note": null,
+      "observed": {
+        "enrichmentProviders": [
+          "fixture-firmographics@1"
+        ],
+        "routingPolicies": [
+          "b2b-sales-routing@1",
+          "b2b-sales-routing@2"
+        ],
+        "routingTargetCount": 4,
+        "scoringModels": [
+          "b2b-saas-score@1",
+          "b2b-saas-score@2"
+        ]
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.definition-registry-slot",
+      "note": "Blocker 3 evidence: who depends on the fixed project-owned definition slot, in code.",
+      "observed": [
+        "packages/app/src/create-app.js",
+        "packages/cli/src/app-inspect.js"
+      ],
+      "surface": "app-inspect"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.fingerprint.enrichmentProviders.fixture-firmographics@1",
+      "note": null,
+      "observed": "f015b7da36f2461af86e1467a836869cdcb1235c3a2a89b2fbb4b81c7025b3d1",
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.fingerprint.routingPolicies.b2b-sales-routing@1",
+      "note": null,
+      "observed": "2327771591326c4b5a2c19b900a554845d80879ea1f094c3820bff4400fc40e2",
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.fingerprint.routingPolicies.b2b-sales-routing@2",
+      "note": null,
+      "observed": "f7ce988c12b8af897b983d6e3148704bbd703b49ece929c42b40dd6c8ca8c1ed",
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.fingerprint.scoringModels.b2b-saas-score@1",
+      "note": null,
+      "observed": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.fingerprint.scoringModels.b2b-saas-score@2",
+      "note": null,
+      "observed": "8fe68275a23cf455f3b19ebdcef93764901459819c78d0a15999debf10b8bdb9",
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.intelligence-internal-importers",
+      "note": "Blocker 1 evidence: every file with a real import statement naming an Intelligence internal.",
+      "observed": [
+        "packages/app/src/create-app.js",
+        "packages/core/src/intelligence-actions.js"
+      ],
+      "surface": "sdk"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.lead-actions-advertised",
+      "note": null,
+      "observed": [
+        "disqualify",
+        "enrich",
+        "qualify",
+        "record-signal",
+        "route",
+        "score"
+      ],
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.lead-managed-fields",
+      "note": null,
+      "observed": [
+        "assignedAt",
+        "assignedTargetId",
+        "convertedAt",
+        "convertedCompanyId",
+        "convertedContactId",
+        "convertedOpportunityId",
+        "disqualificationReason",
+        "enrichedAt",
+        "enrichmentSnapshotId",
+        "qualifiedAt",
+        "routingRunId",
+        "score",
+        "scoreRunId",
+        "scoredAt",
+        "status"
+      ],
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.schema-intelligence-block-present",
+      "note": "Published today as an ambient `intelligence` block on /api/schema. After extraction it should be the package's own schema contribution — a deliberate migration, not a behaviour change to hide.",
+      "observed": {
+        "keys": [
+          "enrichmentProviders",
+          "routingPolicies",
+          "routingTargets",
+          "routingTargetsFingerprint",
+          "scoringModels"
+        ],
+        "present": true
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "assignment",
+      "classification": "contractual",
+      "id": "assignment.created-from-routing",
+      "note": null,
+      "observed": [
+        {
+          "createdAt": "<present>",
+          "effectiveAt": "2026-01-01T00:00:00.000Z",
+          "id": "<present>",
+          "leadId": "<present>",
+          "previousAssignmentId": null,
+          "reason": "country/language match (IT/it) → enterprise-italy",
+          "routingRunId": "<present>",
+          "source": "automatic",
+          "targetId": "enterprise-italy",
+          "updatedAt": "<present>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "assignment",
+      "classification": "contractual",
+      "id": "assignment.lead-link",
+      "note": null,
+      "observed": {
+        "assignedTargetPresent": true,
+        "routingRunLinked": true
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit.action-vocabulary",
+      "note": null,
+      "observed": [
+        "assignment.created",
+        "behavioral-signal.created",
+        "enrichment-snapshot.created",
+        "lead.created",
+        "lead.updated",
+        "route-evaluation.created",
+        "routing-run.created",
+        "score-contribution.created",
+        "score-run.created"
+      ],
+      "surface": "audit"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit.counts-by-action",
+      "note": null,
+      "observed": {
+        "assignment.created": 1,
+        "behavioral-signal.created": 133,
+        "enrichment-snapshot.created": 1,
+        "lead.created": 3,
+        "lead.updated": 8,
+        "route-evaluation.created": 3,
+        "routing-run.created": 1,
+        "score-contribution.created": 25,
+        "score-run.created": 4
+      },
+      "surface": "audit"
+    },
+    {
+      "category": "enrichment",
+      "classification": "contractual",
+      "id": "enrichment.first-run-result",
+      "note": null,
+      "observed": {
+        "reused": false,
+        "sourceKey": "enrich:<leadId>:fixture-firmographics@1:1"
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "enrichment",
+      "classification": "contractual",
+      "id": "enrichment.lead-link",
+      "note": null,
+      "observed": true,
+      "surface": "storage"
+    },
+    {
+      "category": "enrichment",
+      "classification": "contractual",
+      "id": "enrichment.provider-fingerprint-matches-schema",
+      "note": null,
+      "observed": true,
+      "surface": "storage"
+    },
+    {
+      "category": "enrichment",
+      "classification": "contractual",
+      "id": "enrichment.reuse-not-expired",
+      "note": null,
+      "observed": {
+        "reused": true,
+        "snapshotCount": 1
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "enrichment",
+      "classification": "contractual",
+      "id": "enrichment.snapshot-record",
+      "note": null,
+      "observed": {
+        "companyDomain": "ferrari.example",
+        "companyName": "Ferrari Sistemi",
+        "confidence": 95,
+        "country": "IT",
+        "createdAt": "<present>",
+        "employeeRange": "1000-5000",
+        "expiresAt": "2026-01-31T00:00:00.000Z",
+        "id": "<present>",
+        "industry": "automotive",
+        "language": "it",
+        "leadId": "<present>",
+        "provider": "fixture-firmographics",
+        "providerFingerprint": "f015b7da36f2461af86e1467a836869cdcb1235c3a2a89b2fbb4b81c7025b3d1",
+        "providerVersion": 1,
+        "retrievedAt": "2026-01-01T00:00:00.000Z",
+        "revenueRange": ">100M",
+        "sourceKey": "enrich:<id:1>:fixture-firmographics@1:1",
+        "sourceRef": "fixture:ferrari.example",
+        "status": "complete",
+        "updatedAt": "<present>"
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "enrichment",
+      "classification": "contractual",
+      "id": "enrichment.unknown-provider-refused",
+      "note": null,
+      "observed": {
+        "refused": true,
+        "status": 404
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.array-order",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "a615eeaee21de5179de080de8c3052c8da901138406ba71c38c032845f7d54f4",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.array-order-reversed",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "30c8681f9b840aceee56b737f3b126ae67ec4eb71d2881db831f86014fba016d",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.canonicality",
+      "note": "The two properties every consumer of a declared-definition fingerprint depends on.",
+      "observed": {
+        "arrayOrderSignificant": true,
+        "keyOrderIrrelevant": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.deep",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "1483c541b89021accfb771c0a0a245325dd78f173fa3d0dc44a83094585e2b1e",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.empty-array",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.empty-object",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.flat",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "d3626ac30a87e6f7a6428233b3c68299976865fa5508e4267c5415c76af7a772",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.key-order-swapped",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "d3626ac30a87e6f7a6428233b3c68299976865fa5508e4267c5415c76af7a772",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.nested",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "af6dfe024dbde461baa9bb4ae4228bcb60f5ccca359664481570fa7ef7946af3",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.null",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.scalar-boolean",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.scalar-number",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.scalar-string",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "ac8d8342bbb2362d13f0a559a3621bb407011368895164b628a54f7fc33fc43c",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.computeDefinitionFingerprint.unicode",
+      "note": "Pinned so the recommended mechanical move of this helper out of an Intelligence file can be proved to change nothing.",
+      "observed": "7a91ab4d12a7d0bc6480becd9e2591e4ca97b7c05ed906e8a79c312adace7dac",
+      "surface": "sdk"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.withTimeout.outcomes",
+      "note": "Pinned for the same reason: the move must not change which error a caller sees.",
+      "observed": {
+        "rejected": {
+          "message": "inner failure",
+          "outcome": "threw"
+        },
+        "resolved": {
+          "outcome": "resolved",
+          "value": "value"
+        },
+        "timedOut": {
+          "message": "probe timed out after 20ms",
+          "outcome": "threw"
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.record-signal.carriage-return",
+      "note": null,
+      "observed": {
+        "accepted": false,
+        "status": 400,
+        "stored": null
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.record-signal.constructor-key",
+      "note": null,
+      "observed": {
+        "accepted": true,
+        "status": null,
+        "stored": {
+          "byteIdentical": true,
+          "length": 11,
+          "present": true
+        }
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "defect_candidate",
+      "id": "hostile-input.record-signal.control",
+      "note": "control characters are stored verbatim. partner-scorecard — the teaching example this repository points authors at — refuses them with CONTROL_RE. record-signal has no such check. Recommend the same refusal before the extraction.",
+      "observed": {
+        "accepted": false,
+        "status": 400,
+        "stored": null
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.record-signal.markup",
+      "note": null,
+      "observed": {
+        "accepted": true,
+        "status": null,
+        "stored": {
+          "byteIdentical": true,
+          "length": 25,
+          "present": true
+        }
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.record-signal.newline",
+      "note": null,
+      "observed": {
+        "accepted": false,
+        "status": 400,
+        "stored": null
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "defect_candidate",
+      "id": "hostile-input.record-signal.oversized",
+      "note": "a 5,000-character value is accepted and stored unbounded. Every other text surface here is bounded — MAX_TEXT is 2,000 for a Solution Plan and MAX_REASON is 300 in partner-scorecard — and `value` on behavioral-signal declares no length at all. Any caller can write it. Recommend bounding it before the extraction, not during.",
+      "observed": {
+        "accepted": false,
+        "status": 400,
+        "stored": null
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.record-signal.path",
+      "note": null,
+      "observed": {
+        "accepted": true,
+        "status": null,
+        "stored": {
+          "byteIdentical": true,
+          "length": 22,
+          "present": true
+        }
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.record-signal.prototype-key",
+      "note": null,
+      "observed": {
+        "accepted": true,
+        "status": null,
+        "stored": {
+          "byteIdentical": true,
+          "length": 9,
+          "present": true
+        }
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.record-signal.quotes",
+      "note": null,
+      "observed": {
+        "accepted": true,
+        "status": null,
+        "stored": {
+          "byteIdentical": true,
+          "length": 33,
+          "present": true
+        }
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.record-signal.sql-shaped",
+      "note": null,
+      "observed": {
+        "accepted": true,
+        "status": null,
+        "stored": {
+          "byteIdentical": true,
+          "length": 22,
+          "present": true
+        }
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.record-signal.template",
+      "note": null,
+      "observed": {
+        "accepted": true,
+        "status": null,
+        "stored": {
+          "byteIdentical": true,
+          "length": 19,
+          "present": true
+        }
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.record-signal.unicode-separator",
+      "note": null,
+      "observed": {
+        "accepted": false,
+        "status": 400,
+        "stored": null
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.storage-survives",
+      "note": null,
+      "observed": true,
+      "surface": "storage"
+    },
+    {
+      "category": "lifecycle",
+      "classification": "contractual",
+      "id": "lifecycle.disqualified-lead.enrich",
+      "note": null,
+      "observed": {
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "lifecycle",
+      "classification": "contractual",
+      "id": "lifecycle.disqualified-lead.record-signal",
+      "note": null,
+      "observed": {
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "lifecycle",
+      "classification": "contractual",
+      "id": "lifecycle.disqualified-lead.route",
+      "note": null,
+      "observed": {
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "lifecycle",
+      "classification": "contractual",
+      "id": "lifecycle.disqualified-lead.score",
+      "note": null,
+      "observed": {
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "routing",
+      "classification": "contractual",
+      "id": "routing.v1.decision",
+      "note": null,
+      "observed": {
+        "fallbackReason": null,
+        "targetKey": "enterprise-italy"
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "routing",
+      "classification": "contractual",
+      "id": "routing.v1.run-record",
+      "note": null,
+      "observed": {
+        "createdAt": "<present>",
+        "eligibleTargets": 3,
+        "evaluatedTargets": 3,
+        "fallbackReason": null,
+        "fingerprint": "2327771591326c4b5a2c19b900a554845d80879ea1f094c3820bff4400fc40e2",
+        "id": "<present>",
+        "leadId": "<present>",
+        "matchedRule": "country/language match (IT/it) → enterprise-italy",
+        "policy": "b2b-sales-routing",
+        "policyVersion": 1,
+        "routedAt": "2026-01-01T00:00:00.000Z",
+        "scoreRunId": "<present>",
+        "selectedTarget": "enterprise-italy",
+        "snapshotId": "<present>",
+        "status": "completed",
+        "targetsFingerprint": "dda60eb42c7bc677198465e74691764e4bc296fbc14c27a8075e48892e3e6963",
+        "updatedAt": "<present>"
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "routing",
+      "classification": "contractual",
+      "id": "routing.v1.target-set-evidence",
+      "note": null,
+      "observed": [
+        {
+          "eligible": true,
+          "reason": "selected",
+          "targetKey": "enterprise-italy"
+        },
+        {
+          "eligible": true,
+          "reason": "eligible, not selected",
+          "targetKey": "growth-queue"
+        },
+        {
+          "eligible": true,
+          "reason": "eligible, not selected",
+          "targetKey": "spain-sales"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.distinct-fingerprints",
+      "note": null,
+      "observed": 1,
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-000",
+      "note": null,
+      "observed": {
+        "fallbackReason": null,
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 0,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "demo-requested",
+          "pricing-page-visited",
+          "missing-company-name"
+        ],
+        "target": "enterprise-italy",
+        "total": 60
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-001",
+      "note": null,
+      "observed": {
+        "fallbackReason": null,
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 1,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "growth-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-002",
+      "note": null,
+      "observed": {
+        "fallbackReason": null,
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 2,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "enterprise-italy",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-003",
+      "note": null,
+      "observed": {
+        "fallbackReason": null,
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 3,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "missing-company-name"
+        ],
+        "target": "growth-queue",
+        "total": 25
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-004",
+      "note": null,
+      "observed": {
+        "fallbackReason": null,
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 4,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "enterprise-italy",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-005",
+      "note": null,
+      "observed": {
+        "fallbackReason": null,
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 5,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "demo-requested"
+        ],
+        "target": "enterprise-italy",
+        "total": 65
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-006",
+      "note": null,
+      "observed": {
+        "fallbackReason": null,
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 6,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited",
+          "missing-company-name"
+        ],
+        "target": "growth-queue",
+        "total": 35
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-007",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 7,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-008",
+      "note": null,
+      "observed": {
+        "fallbackReason": null,
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 8,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "enterprise-italy",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-009",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 9,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 25
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-010",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 10,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "demo-requested",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 75
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-011",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 11,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-012",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 12,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 35
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-013",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 13,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-014",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 14,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-015",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 15,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "demo-requested",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-016",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 16,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-017",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 17,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-018",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 18,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 35
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-019",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 19,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-020",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 20,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "demo-requested",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 75
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-021",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 21,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 25
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-022",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 22,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-023",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 23,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-024",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 24,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 35
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-025",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 25,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "demo-requested"
+        ],
+        "target": "unrouted-queue",
+        "total": 65
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-026",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 26,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-027",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 27,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 25
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-028",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 28,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-029",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 29,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-030",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 30,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "demo-requested",
+          "pricing-page-visited",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 60
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-031",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 31,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-032",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 32,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-033",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 33,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 25
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-034",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 34,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-035",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 35,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "demo-requested"
+        ],
+        "target": "unrouted-queue",
+        "total": 65
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-036",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 36,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 35
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-037",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 37,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-038",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 38,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-039",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 39,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 25
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-040",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 40,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "demo-requested",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 75
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-041",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 41,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-042",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 42,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 35
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-043",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 43,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-044",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 44,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-045",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 45,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "demo-requested",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-046",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 46,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-047",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 47,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-048",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 48,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 35
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-049",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 49,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-050",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 50,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "demo-requested",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 75
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-051",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 51,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 25
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-052",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 52,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-053",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 53,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-054",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 54,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 35
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-055",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 55,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "demo-requested"
+        ],
+        "target": "unrouted-queue",
+        "total": 65
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-056",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 56,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-057",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 57,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "missing-company-name"
+        ],
+        "target": "unrouted-queue",
+        "total": 25
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-058",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 58,
+        "matched": [
+          "enterprise-company",
+          "supported-country",
+          "pricing-page-visited"
+        ],
+        "target": "unrouted-queue",
+        "total": 50
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.lead-059",
+      "note": null,
+      "observed": {
+        "fallbackReason": "policy declined all eligible targets",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "index": 59,
+        "matched": [
+          "enterprise-company",
+          "supported-country"
+        ],
+        "target": "unrouted-queue",
+        "total": 40
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scale.total-distribution",
+      "note": null,
+      "observed": {
+        "25": 8,
+        "35": 8,
+        "40": 16,
+        "50": 18,
+        "60": 2,
+        "65": 4,
+        "75": 4
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.historical-run-keeps-its-version",
+      "note": null,
+      "observed": 1,
+      "surface": "storage"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.input-fingerprints-stable-for-identical-inputs",
+      "note": null,
+      "observed": {
+        "definitionFingerprintStable": true,
+        "leadFingerprintStable": true,
+        "signalsFingerprintStable": true
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.rerun-is-a-new-run-with-the-same-total",
+      "note": null,
+      "observed": {
+        "newRunId": true,
+        "oldRunStillReadable": 75,
+        "sameTotal": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.signal-count-beyond-the-default-page",
+      "note": null,
+      "observed": {
+        "signalCount": 130,
+        "total": 50
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.unknown-version-refused",
+      "note": null,
+      "observed": {
+        "refused": true,
+        "status": 404
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.v1.contribution-order",
+      "note": null,
+      "observed": [
+        "enterprise-company",
+        "supported-country",
+        "demo-requested",
+        "pricing-page-visited",
+        "highly-engaged",
+        "missing-company-name"
+      ],
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.v1.identity",
+      "note": null,
+      "observed": {
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "model": "b2b-saas-score",
+        "version": 1
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.v1.input-fingerprints-present",
+      "note": null,
+      "observed": {
+        "fingerprintMatchesResult": true,
+        "leadFingerprint": true,
+        "signalsFingerprint": true
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.v1.rule.demo-requested",
+      "note": null,
+      "observed": {
+        "contribution": 25,
+        "matched": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.v1.rule.enterprise-company",
+      "note": null,
+      "observed": {
+        "contribution": 30,
+        "matched": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.v1.rule.highly-engaged",
+      "note": null,
+      "observed": {
+        "contribution": 0,
+        "matched": false
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.v1.rule.missing-company-name",
+      "note": null,
+      "observed": {
+        "contribution": 0,
+        "matched": false
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.v1.rule.pricing-page-visited",
+      "note": null,
+      "observed": {
+        "contribution": 10,
+        "matched": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.v1.rule.supported-country",
+      "note": null,
+      "observed": {
+        "contribution": 10,
+        "matched": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.v1.run-record",
+      "note": null,
+      "observed": {
+        "createdAt": "<present>",
+        "evaluatedAt": "2026-01-01T00:00:00.000Z",
+        "fingerprint": "ced810d846cf46a8f33e6462004d88c343a273c278d668cae69d09f1f85aabda",
+        "id": "<present>",
+        "leadFingerprint": "<input-fingerprint>",
+        "leadId": "<present>",
+        "model": "b2b-saas-score",
+        "modelVersion": 1,
+        "signalCount": 2,
+        "signalsFingerprint": "<input-fingerprint>",
+        "snapshotId": "<present>",
+        "status": "completed",
+        "totalScore": 75,
+        "updatedAt": "<present>"
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.v1.total",
+      "note": null,
+      "observed": 75,
+      "surface": "sdk"
+    },
+    {
+      "category": "scoring",
+      "classification": "contractual",
+      "id": "scoring.v2.total-and-distinct-fingerprint",
+      "note": null,
+      "observed": {
+        "fingerprintDiffersFromV1": true,
+        "total": 100,
+        "version": 2
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "signals",
+      "classification": "contractual",
+      "id": "signals.beyond-the-default-page",
+      "note": null,
+      "observed": {
+        "complete": true,
+        "readBack": 130,
+        "written": 130
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "signals",
+      "classification": "contractual",
+      "id": "signals.duplicate-source-key-refused",
+      "note": null,
+      "observed": {
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "signals",
+      "classification": "incidental",
+      "id": "signals.list-order",
+      "note": "Nothing declares an ordering for this list. Recorded so a change is visible; never asserted, because freezing it would forbid an index change.",
+      "observed": [
+        "demo-requested",
+        "pricing-page-visited"
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "signals",
+      "classification": "contractual",
+      "id": "signals.stored-count-after-duplicate",
+      "note": null,
+      "observed": 2,
+      "surface": "storage"
+    },
+    {
+      "category": "signals",
+      "classification": "contractual",
+      "id": "signals.stored-shape",
+      "note": null,
+      "observed": [
+        {
+          "createdAt": "<present>",
+          "id": "<present>",
+          "leadId": "<present>",
+          "observedAt": "2026-08-01T11:00:00.000Z",
+          "signalType": "demo-requested",
+          "source": null,
+          "sourceKey": "signal:<id:1>:demo-requested:2026-08-01T11:00:00.000Z",
+          "updatedAt": "<present>",
+          "value": null
+        },
+        {
+          "createdAt": "<present>",
+          "id": "<present>",
+          "leadId": "<present>",
+          "observedAt": "2026-08-01T10:00:00.000Z",
+          "signalType": "pricing-page-visited",
+          "source": null,
+          "sourceKey": "signal:<id:1>:pricing-page-visited:2026-08-01T10:00:00.000Z",
+          "updatedAt": "<present>",
+          "value": null
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "signals",
+      "classification": "contractual",
+      "id": "signals.unknown-lead-refused",
+      "note": null,
+      "observed": {
+        "refused": true,
+        "status": 404
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "storage-restart",
+      "classification": "contractual",
+      "id": "storage-restart.rescore-reproduces",
+      "note": null,
+      "observed": {
+        "sameFingerprint": true,
+        "sameTotal": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "storage-restart",
+      "classification": "contractual",
+      "id": "storage-restart.score-run-identical",
+      "note": null,
+      "observed": {
+        "fingerprint": true,
+        "leadFingerprint": true,
+        "modelVersion": true,
+        "signalsFingerprint": true,
+        "totalScore": true
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "incidental",
+      "id": "trace.run-order",
+      "note": "Nothing declares an ordering for the trace listing; recorded, never asserted.",
+      "observed": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "surface": "trace"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "trace.run-vocabulary",
+      "note": null,
+      "observed": [
+        null
+      ],
+      "surface": "trace"
+    }
+  ],
+  "source": {
+    "apps/server/src/http-server.js": "b15f61f7c3b2e0eb601c511218c73ce65c0d674029168a06bd53b4198bc4257b",
+    "examples/starters/b2b-lead-qualification/actions/disqualify.js": "8e722cf7073ff4d52c0f332391217fd6b4568f24f64bb1c7a058e989d9b07a69",
+    "examples/starters/b2b-lead-qualification/actions/qualify.js": "b6b6a8ae7c0c532fb2e3e3c56d34efa4ad7908361dc3c0a52c488ed6c2ee03b9",
+    "examples/starters/b2b-lead-qualification/assignment.module.json": "ba3724cc4d9cbcab445cb71ff1cf5116c4f8fc6f4df4faf4a772eee214e18121",
+    "examples/starters/b2b-lead-qualification/behavioral-signal.module.json": "5a45de427b89b3539a9507fb82013817a94584b31cba1f8d1013740fd7159859",
+    "examples/starters/b2b-lead-qualification/enrichment-snapshot.module.json": "2b20a147e0099e0062e7915dbb289d63319624c82a9988ffd62bb07b0f630a6e",
+    "examples/starters/b2b-lead-qualification/intelligence.js": "388522415c8a324b3cd2d62028af9a8af2f6e5863c0ceab2ecd3d57ae43f52f5",
+    "examples/starters/b2b-lead-qualification/lead.module.json": "f57c7d561fdeeb327463eb174e98c10b156b48dfabc06fecc548118b1233a03d",
+    "examples/starters/b2b-lead-qualification/route-evaluation.module.json": "1cc29334082a9eb7c88e42478084b8a717de2fd34a2b2eb7f74d394ef1f83f91",
+    "examples/starters/b2b-lead-qualification/routing-run.module.json": "0af722563125b1a83ec7ffbc39b63dbbccec6e3d301ca61483fa2c4754018310",
+    "examples/starters/b2b-lead-qualification/score-contribution.module.json": "24a46c9090b066edca2f9eaa7b4e008c93e983e3b6cd903a0e39980cc5b20e7e",
+    "examples/starters/b2b-lead-qualification/score-run.module.json": "a3c985aba54e14d28f7cfebefaea03b679ef92efea7cb90d7676ecef13e19621",
+    "examples/starters/b2b-lead-qualification/task.module.json": "581908e08a69cf2618ff3ea53f07468d6b5f4afe6ff561b95827cb993cb447ae",
+    "packages/app/src/create-app.js": "40314bd036335c4a89645ae70f6199febff51e8e3350a774e68cfeeeb3d530c0",
+    "packages/core/src/action-runtime.js": "70d051d4af0803b52385d3507001aadb9ef504687d7f82627568c6fe2e6c7438",
+    "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
+    "packages/core/src/intelligence-actions.js": "0cf16ea5a2b32e28b0d990eab55b4f19a2b8b2728e6b3950e3d98002efa856ca",
+    "packages/core/src/intelligence-registry.js": "95b2ccf361c4ad582533de95d4a2ba0b03942c983060b3db609e14dca3206ccd",
+    "packages/core/src/timeout.js": "9af8f74ac0f6fa7b229576c43540364d9014ce2225198c0e84e18070d952ff88",
+    "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325"
+  }
+}

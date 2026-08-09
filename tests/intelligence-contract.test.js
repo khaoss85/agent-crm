@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   IntelligenceRegistries,
-  computeDefinitionFingerprint,
   rankRoutingTargets,
   validateEnrichmentProvider,
   validateScoringModel,
   validateRoutingPolicy,
   validateRoutingTarget,
 } from '../packages/core/src/intelligence-registry.js';
+import { computeDefinitionFingerprint } from '../packages/core/src/definition-fingerprint.js';
 import { createDatabase } from '../packages/core/src/database.js';
 import { runRecordAction } from '../packages/core/src/action-runtime.js';
 import { validateActionDefinition } from '../packages/core/src/action-registry.js';

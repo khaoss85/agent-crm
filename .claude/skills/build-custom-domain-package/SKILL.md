@@ -29,6 +29,15 @@ The package contract itself is enforced by a command, not by a document: `npm ru
 2. A package is justified only when it owns several related resources, invariants across them, the actions that enforce those invariants, its own evidence records, and a real install/remove boundary.
 3. Never create a package to hold shared helpers or to work around a kernel limitation.
 
+## Start from a scaffold
+
+1. `npm run crm -- package scaffold <name>` prints a plan and writes nothing; `--apply` writes exactly two files, `src/index.js` and `README.md`, with an identity and five **empty** declarations. That output already passes `package validate`, `package inspect` and `package test` — start from it rather than from a copy of somebody else's domain.
+2. It generates **no** record, action, policy, capability, provider, Admin section, Solution Plan or MCP tool, and that is deliberate. Do not treat the empty lists as something to be filled by pattern-matching another package: every entry you add is a decision about this business.
+3. It composes nothing, opens no database and runs no migration. An occupied directory is refused, never overwritten; an invalid name is refused **with a suggestion**, never silently renamed — if you get `PACKAGE_NAME_INVALID`, ask for the canonical name explicitly rather than assuming the suggestion.
+4. `--into <dir>` places the package outside `packages/`; `--json` gives you the plan, its per-file hashes and a `fingerprint`. Exit 0 planned or applied, exit 1 refused — so **read `modeReason`, not the exit code**, to know whether anything was written; an explicit `--dry-run` beats `--apply` and still exits 0.
+5. A plan reserves nothing. `--apply` re-checks the target and answers `TARGET_CLAIMED` if another process got there first. An interrupted earlier run blocks nothing: its staging is reported as `staleStaging` for you to remove, never deleted automatically and never treated as a lock.
+6. The scaffold cannot tell you the identity is unique in the application — it checks the target directory only. Compose the package, then run `crm app inspect --json`.
+
 ## Author it against the public contract
 
 1. Declare identity: `packageContract: 1`, a canonical `name` (`^[a-z][a-z0-9-]*$`), a positive integer `version`, a bounded `label` and `description`.
@@ -48,10 +57,24 @@ The package contract itself is enforced by a command, not by a document: `npm ru
 ## Register, validate, prove
 
 1. Registration is one static import in `packages/domains/generated/index.js`. No dynamic import, no `eval`, no remote install, no marketplace, no hot loading.
-2. Run `npm run crm -- package validate <dir>` and `package inspect <dir>` — read-only, same validator as startup, non-zero exit on any problem.
-3. Prove optionality: the same project without your package boots and behaves identically, and removing the import leaves the data alone.
-4. Reuse the shared package-conformance helper where the project ships one (`tests/helpers/package-conformance.js` in this repository); otherwise write the same assertions yourself. Then add an end-to-end test that drives your action over the real HTTP/SDK path in a clean project.
-5. Ship a README: what it owns, what it needs, how to enable it, what it deliberately does not do.
+2. Walk the three commands in order; they answer three different questions and none of them substitutes for another:
+
+```text
+crm package scaffold <name>  an empty package that already conforms
+crm package inspect <dir>    what does it declare, own, offer and need?
+crm package validate <dir>   is that declaration structurally valid?
+crm package test <dir>       does it hold up when a real application composes it?
+npm test -- <your suite>     does it do the right thing?   ← only your tests answer this
+npm run verify               does the whole project still hold?
+```
+
+3. `crm package test` (DX4) composes your package into a throwaway copy of the project and boots it twice — with it and without it. It proves the declaration, the boundaries, every composition refusal, module manifests and migration identity, attach and detach, and that `app inspect` describes the same package you declared. **Generic conformance is not domain correctness**: no action is executed, no policy is evaluated and no state transition is driven. Every such gap is a named limitation in the report, starting with `DOMAIN_CORRECTNESS_NOT_PROVEN`. Your business JTBDs still need package-specific tests.
+4. All three commands **import** your package, and `test` also boots it, so your code runs with the CLI's authority. The harness does not intentionally mutate the caller project, and `test` imports your package from a throwaway copy rather than from your tree — but process isolation protects the invoking process from crashes, global-state changes and hangs, and is **not** a filesystem, network or OS sandbox. Never describe it as one.
+5. **Do not patch the kernel to make a check pass.** A conformance failure is a statement about your package. If you are certain it is a statement about the framework instead, say so in the PR with the exact check id and evidence — and if it is a horizontal gap, it goes through the Compatibility Backfill Rule in `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, not through a local fix.
+6. If your action targets a record another **package** owns, declare a capability of that package in `requires`. Without it, `package test` fails you with `UNDECLARED_PACKAGE_RECORD_DEPENDENCY` and names what the owner offers — because your package cannot be composed into any project that lacks the owner, and nothing in your declaration says so. Records **no** package owns are different: they belong to the host application, every package here acts on `order`, and depending on them needs no declaration. If no capability of the owner expresses what you do, that is a real seam gap: say so in the PR rather than working around it.
+7. Prove optionality: the same project without your package boots and behaves identically, and removing the import leaves the data alone.
+8. Reuse the shared package-conformance helper where the project ships one (`tests/helpers/package-conformance.js` in this repository); otherwise write the same assertions yourself. Then add an end-to-end test that drives your action over the real HTTP/SDK path in a clean project.
+9. Ship a README: what it owns, what it needs, how to enable it, what it deliberately does not do.
 
 ## Claims discipline
 
@@ -59,7 +82,7 @@ Where the project carries a jobs matrix (`docs/benchmarks/CRM_JTBD_MATRIX.md` in
 
 ## Do not implement here
 
-A package registry, npm publication, remote install, auto-update, cryptographic signing, a marketplace, hot loading, a scaffold generator (deferred until Delivery and Service settle the file shape), or any kernel patch.
+A package registry, npm publication, remote install, auto-update, cryptographic signing, a marketplace, hot loading, or any kernel patch. The scaffold (DX3) exists and stops at an identity on purpose — do not extend it to generate domain semantics, to edit `packages/domains/generated/index.js`, or to run a migration. See `docs/plans/dx3-package-scaffold.md`.
 
 Finish with `npm run verify`, the starter (`node examples/starters/b2b-lead-qualification/install.mjs`) and `docs/QUALITY_GATES.md`; leave the PR open for adversarial review.
 

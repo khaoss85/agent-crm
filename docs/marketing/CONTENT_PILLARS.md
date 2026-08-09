@@ -96,5 +96,9 @@ In descending order of expected signal for this audience:
 5. Maintainer accounts on X, LinkedIn and Bluesky, in the maintainer's voice. Agents draft;
    the human owns the account and the voice.
 
+Per-channel cadence, effort and the two production bottlenecks are in
+`CONTENT_PRODUCTION.md`; this file decides what gets written, that one decides
+how much of it can be.
+
 Add every published piece to `llms.txt` and the docs index in the same change. A piece that
 answer engines cannot retrieve is a piece written for one week instead of two years.

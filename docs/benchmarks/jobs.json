@@ -1,7 +1,7 @@
 {
   "counts": {
-    "not supported": 100,
-    "partially supported": 27,
+    "not supported": 98,
+    "partially supported": 29,
     "technically supported": 0,
     "total": 149,
     "validated end to end": 22
@@ -875,20 +875,26 @@
       "title": "Activate billing on accepted milestones"
     },
     {
-      "docs": [],
+      "docs": [
+        "docs/ADMIN_SMOKE.md"
+      ],
       "id": "JTBD-DS-11",
       "section": "Delivery & Service (handover at M13, execution at M14a, economics at M14b1, and change, deliverables and acceptance at M14b2 — all merged; docs/DELIVERY_HANDOVER.md, docs/DELIVERY_ECONOMICS.md, docs/DELIVERY_CHANGE_ACCEPTANCE.md)",
-      "status": "not supported",
-      "summary": "no service primitives",
-      "tests": [],
+      "status": "partially supported",
+      "summary": "M15 (open PR): a contract's pending Service Obligations are activated by a human into an operational Service Coverage with immutable Entitlements, under a versioned fingerprinted activation policy that refuses rather than guesses when it cannot classify an obligation. SLA targets exist as elapsed wall-clock minutes with recorded evaluations that state the instant and inputs they used, and a package-scoped Admin section drives the whole path — tests/service-operations-e2e.test.js, tests/admin-service.test.js, 24 real-Chromium checks in docs/ADMIN_SMOKE.md, and tests/service-operations-upgrade.test.js for a shipped M12 project adopting it over live obligations. Partial, and narrowly so: a Coverage is *not* a signed contract (nobody signed it, it has no envelope, signer or artifact, and it amends no commercial record), there is no business-hours or holiday calendar, no paused clock, no contractual or legal SLA judgement, no renewal and no billing. The adversarial review narrowed it further before this row was written: the case-evidence keys had to be namespaced and given an occurrence ordinal before the ordinary in_progress ↔ waiting_customer loop could be walked twice at all",
+      "tests": [
+        "tests/admin-service.test.js",
+        "tests/service-operations-e2e.test.js",
+        "tests/service-operations-upgrade.test.js"
+      ],
       "title": "Activate a Service Contract with Entitlements and SLA"
     },
     {
       "docs": [],
       "id": "JTBD-DS-12",
       "section": "Delivery & Service (handover at M13, execution at M14a, economics at M14b1, and change, deliverables and acceptance at M14b2 — all merged; docs/DELIVERY_HANDOVER.md, docs/DELIVERY_ECONOMICS.md, docs/DELIVERY_CHANGE_ACCEPTANCE.md)",
-      "status": "not supported",
-      "summary": "no case/escalation primitives",
+      "status": "partially supported",
+      "summary": "M15 (open PR): a Support Case recorded against an entitlement over an explicit five-state transition table, with append-only Case Activity, a first response stamped exactly once, and manually recorded Escalation evidence. Entitlement is enforced server-side — an uncovered category, an uncovered priority, an out-of-date coverage or a full open-case limit is refused, and exceeding a limit bills nothing. Not a contact centre: no customer is authenticated, no email, chat, WhatsApp or telephony channel exists, nothing is routed, assigned or escalated automatically, and no attachment is stored",
       "tests": [],
       "title": "Manage support cases and escalation"
     },

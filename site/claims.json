@@ -2,10 +2,10 @@
   "claimsContract": 1,
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used.",
   "measuredAgainst": {
-    "date": "2026-08-07",
-    "sha": "6489982",
+    "date": "2026-08-09",
+    "sha": "PENDING",
     "command": "npm run verify",
-    "tests": 518,
+    "tests": 701,
     "failures": 0,
     "note": "Re-measure and update this block before any public launch. A claims file measured against a stale SHA is a claims file that lies."
   },
@@ -294,7 +294,7 @@
     },
     {
       "id": "C-22",
-      "text": "One command composes the whole thing and then inspects it: 61 modules, 3 packages, 25 resources, 42 actions, 5 policies and 10 providers, applied from manifests and driven end to end — then it prints the eleven things the inspector says it cannot see.",
+      "text": "One command composes the whole thing and then inspects it: 68 modules, 4 packages, 32 resources, 52 actions, 7 policies and 10 providers, applied from manifests and driven end to end — then it prints the eleven things the inspector says it cannot see.",
       "evidence": {
         "tests": [
           "tests/app-inspect.test.js",
@@ -442,10 +442,10 @@
     },
     {
       "id": "C-20",
-      "text": "518 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
+      "text": "701 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
       "evidence": {
         "repoFacts": [
-          "npm run verify at 6489982: 518 passing, 0 failing",
+          "npm run verify at PENDING: 701 passing, 0 failing",
           ".github/workflows/ci.yml runs verify and smoke on push and pull_request"
         ],
         "docs": [

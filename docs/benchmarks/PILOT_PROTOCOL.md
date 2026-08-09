@@ -2,7 +2,7 @@
 
 How one operator runs one benchmark prompt, end to end, and what they are allowed
 to do while it runs. The scoring rules are in `docs/strategy/CRM_BUILD_BENCHMARK.md`
-and ADR-022; this file is the runbook.
+and ADR-024; this file is the runbook.
 
 A pilot is a small, honest run — a handful of prompts, one agent product, one
 model — done before any public edition, to find out whether the instrument

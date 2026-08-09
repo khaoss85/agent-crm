@@ -39,7 +39,7 @@ event and a step-level trace (`C-08`, `C-09`, `C-16`). The agent composes primit
 reviewed once; it does not reinvent them per project. That is the actual pitch — the agent is
 constrained, not trusted.
 
-### 4. "518 tests is a vanity number."
+### 4. "701 tests is a vanity number."
 
 It is. A test count measures effort, not correctness, and the ledger says so in `C-20`'s own
 limitation. The useful artifact is `docs/QUALITY_GATES.md` §2 — the sixteen adversarial
@@ -118,7 +118,7 @@ tenancy or RBAC — running them would mean putting an unauthenticated CRM on th
 internet to earn points. So the benchmark is split into Edition L (G1–G4, scoreable
 locally, reported as points out of 75) and Edition D (G5–G6, blocked on the Production
 Spine), and every scored run carries that blocker in its own output rather than dropping
-it (ADR-022). SABR and "time to first working CRM" are Edition D metrics and will not be
+it (ADR-024). SABR and "time to first working CRM" are Edition D metrics and will not be
 quoted from Edition L runs, because with two gates unrunnable they would be different
 metrics wearing the same names. The full list of sentences a result does and does not
 license is `docs/marketing/BENCHMARK_PUBLICATION.md`, written before there was a result

@@ -118,5 +118,5 @@ test('the ceilings are the published ones, so raising one is an edit with an arg
   assert.equal(SURFACE_BUDGET.goalEntryPoints.max, 1);
   assert.equal(SURFACE_BUDGET.skills.max, 12);
   assert.equal(SURFACE_BUDGET.alwaysOnTools.max, 10);
-  assert.equal(SURFACE_BUDGET.commandsAcrossSkills.max, 10);
+  assert.equal(SURFACE_BUDGET.commandsAcrossSkills.max, 11);
 });

@@ -44,6 +44,43 @@ limitation, or to "organize" code you already have. If you need a kernel change
 to make your package work, that is a missing runtime capability: raise it as
 one rather than reaching into `packages/core/src`.
 
+### Then start from a scaffold, not from somebody else's domain
+
+```bash
+npm run crm -- package scaffold field-service            # a plan; writes nothing
+npm run crm -- package scaffold field-service --apply    # two files
+```
+
+You get exactly two files — `src/index.js` and `README.md` — with an identity, a
+contract version and five **empty** declarations. That is already a conforming
+package: `crm package test packages/field-service` exits 0 on it before you have
+typed anything, so every edit you make from here starts from a known-good
+baseline instead of from a domain you then have to subtract.
+
+It deliberately generates **no** record, action, policy, capability, provider,
+Admin section, Solution Plan or MCP tool. A generated `status` field is a
+decision about a business nobody described, and a decision you have to notice
+before you can delete it is worse than an empty list. It also does not compose
+the package, run a migration, open a database or install anything — see §12.
+
+An occupied directory is refused rather than overwritten, and a name the
+registry would reject is refused **with a suggestion** rather than quietly
+renamed. It checks the target directory, not the composed application: a name
+already registered by another package is refused at startup by the registry, and
+`crm app inspect --json` is what shows you that once the package is composed.
+
+Two things worth knowing before you automate it. A plan **reserves nothing** —
+`--apply` re-checks the target and answers `TARGET_CLAIMED` if something got
+there first. And because a plan and an apply both exit 0, read **`modeReason`**
+rather than the exit code to learn whether anything was written; an explicit
+`--dry-run` beats `--apply`. An interrupted earlier run blocks nothing: its
+staging directory is reported as `staleStaging` for you to remove, never
+deleted automatically.
+
+`--into <dir>` puts the package somewhere other than `packages/`; `--json`
+gives an agent the plan, its file hashes and a `fingerprint`.
+ExecPlan: `docs/plans/dx3-package-scaffold.md`.
+
 ## 2. Pick a canonical identity
 
 ```js
@@ -259,11 +296,75 @@ public export or a missing runtime capability, never a deep import.
 Within your own package, import freely — but never reach into another
 *package's* private source either. That is what capabilities are for.
 
-## 11. Tests, example and evidence
+## 11. Prove conformance mechanically
+
+```bash
+npm run crm -- package test packages/<your-package> --json
+```
+
+`crm package test` (DX4) answers one question — **does this package satisfy the
+framework's generic package contract and integration invariants?** — by
+composing it into a throwaway copy of your project and booting an application
+twice, once with it and once without.
+
+It is not the same question as the other three:
+
+```text
+package scaffold   give me an empty package that already conforms
+package validate   is this declaration structurally valid?
+package inspect    what does this package declare, own, offer and need?
+package test       does it hold up when a real application composes it?
+```
+
+What it proves, from the framework's own machinery rather than a second
+implementation of it: the declaration validates and the contract version is
+supported · metadata is data, function-free, bounded and identical twice · every
+policy carries a fingerprint · no source reaches into `packages/core/src` or
+another package's private `src/` · no `eval`, `new Function` or dynamic import ·
+a duplicate registration, a resource collision, a capability collision, **every**
+unmet dependency and an undeclared reach are all refused · every module manifest
+applies with a valid state file and unique migration identities · the
+application boots with the package, registers every declared action against a
+real generated module and opens every declared capability · `crm app inspect`
+describes the same package the declaration does · and the whole surface
+disappears when the package is removed from the composition.
+
+Every check row names the **authority** it speaks for — `package-contract`,
+`composition`, `authoring-rule`, `module-factory`, `application-boot` or
+`app-inspect`. There is deliberately no `dx4` authority: a rule this command
+would have had to invent is either advisory or absent, because a conformance kit
+that invents rules is a second, undocumented package contract.
+
+**One rule is worth reading before you write an action.** If your action targets
+a record another *package* owns, declare a capability of that package in
+`requires`. Without it your package cannot be composed into any project that
+lacks the owner, and nothing in your declaration says so — `package test` fails
+it with `UNDECLARED_PACKAGE_RECORD_DEPENDENCY` and names the capabilities the
+owner does offer. Records that **no** package owns are different: those belong to
+the host application, every package here acts on `order`, and depending on them
+needs no declaration.
+
+What it deliberately does **not** prove is listed by code in every report:
+`DOMAIN_CORRECTNESS_NOT_PROVEN` first among them. No action is executed, no
+policy is evaluated, no state transition is driven and no provider is contacted.
+Those are your package's own tests.
+
+**Trusted source, isolated execution, not a sandbox.** Every import and every
+boot happens in a child process, in its own process group, under a timeout, with
+the report on file descriptor 3 so a package that prints cannot corrupt it. Your
+project is never written to and your database is never opened. The child still
+holds your authority.
+
+Exit codes: `0` conforms · `1` conformance failures · `2` the package or the
+project could not be read.
+
+## 12. Tests, example and evidence
 
 - Reuse `tests/helpers/package-conformance.js` for the checks every package
   shares: contract metadata, public imports only, dependency resolution,
-  deterministic function-free schema, collision handling.
+  deterministic function-free schema, collision handling. It and
+  `crm package test` share one private-import rule and one source walk
+  (`packages/cli/src/package-sources.js`), so they cannot drift apart.
 - Add an end-to-end test that boots a real project with your package applied
   and drives your action over the real HTTP/SDK path.
 - Prove optionality: the same project without your package must boot and
@@ -274,15 +375,30 @@ Within your own package, import freely — but never reach into another
 - Ship a README next to your package: what it owns, what it needs, how to
   enable it, and what it deliberately does not do.
 
-## 12. Submit for review
+## 13. Submit for review
 
-Run `npm run verify` from a clean clone, run the starter, then open a PR and
+The whole path, end to end:
+
+```text
+crm app inspect        what does this application already have?      (AX1)
+crm solution check     does my plan still match it?                  (AX2)
+crm package scaffold   an empty package that already conforms        (DX3)
+  edit                 records, actions, capabilities, policies — by hand
+crm module create      each record you own, from its manifest
+crm package validate   is the declaration structurally valid?
+crm package inspect    what does it declare, own, offer and need?
+crm package test       does it hold up when an application composes it? (DX4)
+  your own tests       is the DOMAIN right? nothing above answers this
+  compose              one import, added by hand, deliberately
+```
+
+Run `crm package test` on your package, `npm run verify` from a clean clone, run the starter, then open a PR and
 leave it open for the adversarial review in `docs/QUALITY_GATES.md` §5. The
 review will attack your package's boundary, its atomicity and its claims — the
 same way it attacks first-party ones.
 
 
-## 13. Official packages are reference implementations, not a framework tax
+## 14. Official packages are reference implementations, not a framework tax
 
 The first-party packages (`contracts`, `delivery`, and the planned Marketing
 packages in `docs/strategy/MARKETING_GROWTH_OPERATIONS.md`) attach through the
@@ -311,17 +427,17 @@ it.
 identities, not shipped code, and a future Marketing authoring Skill is planned
 rather than implemented.)*
 
-## 14. When an agent is working from a business goal
+## 15. When an agent is working from a business goal
 
 A package is often the answer an agent reaches when a user states an *objective*
 rather than a change — "track our funnel by acquisition channel" resolves to
 reused packages plus, sometimes, one new custom package. The rules do not
 change, and two of them matter more in that mode:
 
-- **Discover before you create.** `crm package inspect` and `GET /api/schema`
-  say what is already installed and what it provides. Duplicating an existing
-  domain is the most common failure; there is no application-level inspector
-  yet (`crm app inspect` is planned, not implemented).
+- **Discover before you create.** `crm app inspect --json` (AX1) says what this
+  application already is; `crm package inspect` and `GET /api/schema` say what
+  one package provides. Duplicating an existing domain is the most common
+  failure, and it is the one inspection exists to prevent.
 - **Report what you could not build.** A package that silently omits the part
   of the goal it had no capability for is worse than one that names the gap.
 
@@ -341,11 +457,12 @@ extraction is its own PR, its own review and its own acceptance criterion, and
 it is sequenced:
 
 ```text
-1.  M14b2, reviewed and merged
-2.  M15 — Service, built on this seam
-3.  review the M15 learnings: what the seam still cannot express
-4.  DX4 (`crm package test`) — mechanical conformance
-5.  one controlled extraction, one domain, one PR
+1.  M14b2, reviewed and merged                                   done
+2.  M15 — Service, built on this seam                            done
+3.  review the M15 learnings: what the seam still cannot express done
+4.  DX4 (`crm package test`) — mechanical conformance            done
+5.  DX3 (`crm package scaffold`) — a conforming starting point   done
+6.  one controlled extraction, one domain, one PR                not started
 ```
 
 Steps 3 and 4 are not ceremony. Contracts and Delivery are two data points and
@@ -366,10 +483,11 @@ exist first. It is a hypothesis, and nothing in this guide authorizes starting.
 
 ## What is deliberately not here yet
 
-- **A scaffold command.** `crm package new <name>` will exist once Delivery and
-  Service have taught us the stable file shape. Generating the wrong skeleton
-  into every customer repository is harder to undo than typing four files, so
-  the decision waits for evidence.
+- **A scaffold that generates domain semantics.** `crm package scaffold` ships
+  (§1), and it deliberately stops at an identity. A record still needs a
+  manifest and `crm module create`; an action, a capability and a policy are
+  still yours to write. Generating the wrong skeleton into every customer
+  repository is harder to undo than typing two files.
 - **A registry, npm publication, remote install, auto-update, signing or a
   marketplace.** Packages are checked-in source. Distribution is a separate
   problem with a separate threat model, and none of it is needed to author a

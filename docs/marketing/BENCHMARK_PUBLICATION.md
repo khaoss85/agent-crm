@@ -42,7 +42,7 @@ in the same place the number appears — not in a footnote, not one click away:
 
 | Sentence | Why it is refused |
 |---|---|
-| "87% on the CRM build benchmark" | Edition L reports points, never a percentage. A percentage reads as a success rate, which this is not. See ADR-022. |
+| "87% on the CRM build benchmark" | Edition L reports points, never a percentage. A percentage reads as a success rate, which this is not. See ADR-024. |
 | "SABR of 0.67" | SABR counts *fully successful* prompts against six gates. With two unrunnable, an Edition-L SABR is a different metric wearing the same name. |
 | "Time to first working CRM: 12 minutes" | TTFW is measured brief → deployed smoke green. There is no deploy. Wall-clock to a green local suite is a different quantity and needs a different name. |
 | "Passed the CRM build benchmark" | The benchmark is six gates. Four of them passing is Edition L, and the sentence must say so. |

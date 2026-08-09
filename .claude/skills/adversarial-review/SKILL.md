@@ -35,7 +35,10 @@ Never trust the task description's summary of the PR. Establish, from the API an
 - nothing tracked that must never be: `.env`, databases, logs, build output, browser profiles, webhook captures, signed artifacts, generated starter output, `node_modules`;
 - the specific fixes the description claims are actually present in the diff.
 
-Then run `npm install && npm run verify && npm run smoke` from a **clean clone**, plus the starter from an empty project and the browser smoke where supported. Do this before reviewing, so a pre-existing failure is not attributed to the PR.
+Run `npm run crm -- project doctor --json` first: it answers composition, module-state,
+stale-plan, Skill-mirror, documentation-link and tracked-artifact health in about a
+second, and a failure there explains a `verify` failure you would otherwise spend an
+hour attributing to the diff. Then run `npm install && npm run verify && npm run smoke` from a **clean clone**, plus the starter from an empty project and the browser smoke where supported. Do this before reviewing, so a pre-existing failure is not attributed to the PR.
 
 ## 2. Attack it
 

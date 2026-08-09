@@ -5,7 +5,10 @@ import { scaffoldModule } from './scaffold-module.js';
 import { validateManifestCommand, generateMigrationCommand, readManifestFile } from './manifest-commands.js';
 import { planModule, applyModulePlan } from './module-factory.js';
 import { validatePackageCommand, inspectPackageCommand } from './package-commands.js';
+import { packageTestCommand } from './package-test-command.js';
+import { packageScaffoldCommand } from './package-scaffold.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
+import { projectDoctorCommand } from './project-doctor-command.js';
 import { solutionCommand } from './solution-command.js';
 
 /** @param {string[]} argv */
@@ -18,8 +21,22 @@ export async function runCli(argv) {
   }
   // "package validate|inspect <dir>" reads the domain-package contract with the
   // same validator the application runs at startup. Both are read-only.
-  if (command === 'package' && ['validate', 'inspect'].includes(positional[0])) {
+  // "package test <dir>" additionally composes the package into a throwaway
+  // copy of this project and boots it; it never touches the caller's own
+  // application or database.
+  // "package scaffold <name>" is the only one of the four that can write, and
+  // only with an explicit --apply. It writes source and stops: no composition,
+  // no migration, no database.
+  if (command === 'package' && ['validate', 'inspect', 'test', 'scaffold'].includes(positional[0])) {
     command = `package:${positional[0]}`;
+    positional = positional.slice(1);
+  }
+  // "project doctor" answers "what is inconsistent or stale in this source
+  // tree". It is deliberately NOT the existing `crm doctor`, which boots the
+  // application and opens the database: this one reads source, opens nothing,
+  // and works on a project that will not boot — which is when you need it.
+  if (command === 'project' && positional[0] === 'doctor') {
+    command = 'project:doctor';
     positional = positional.slice(1);
   }
   // "app inspect" reads the checked-in composition and answers "what is this
@@ -61,6 +78,41 @@ export async function runCli(argv) {
       mode: /** @type {'inspect'|'validate'|'check'} */ (command.slice('solution:'.length)),
       json: flags.json === true,
       rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+    });
+    process.exitCode = result.exitCode;
+    return;
+  }
+
+  if (command === 'project:doctor') {
+    const result = await projectDoctorCommand({
+      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+      json: flags.json === true,
+    });
+    process.exitCode = result.exitCode;
+    return;
+  }
+
+  if (command === 'package:scaffold') {
+    const result = packageScaffoldCommand({
+      name: positional[0],
+      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+      into: typeof flags.into === 'string' ? flags.into : undefined,
+      // An explicit --dry-run always wins over --apply, matching module:create.
+      // Both flags are passed through so the report can say which one won,
+      // rather than answering 0 with a plan and leaving the caller to guess.
+      apply: flags.apply === true,
+      dryRun: flags['dry-run'] === true,
+      json: flags.json === true,
+    });
+    process.exitCode = result.exitCode;
+    return;
+  }
+
+  if (command === 'package:test') {
+    const result = await packageTestCommand({
+      packagePath: positional[0],
+      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+      json: flags.json === true,
     });
     process.exitCode = result.exitCode;
     return;
@@ -257,6 +309,7 @@ Usage:
   accordo doctor [--db path]
   accordo db:migrate [--db path]
   accordo app inspect [--json] [--root dir]
+  accordo project doctor [--json] [--root dir]
   accordo solution inspect <plan.json> [--json]
   accordo solution validate <plan.json> [--json]
   accordo solution check <plan.json> [--json] [--root dir]
@@ -267,8 +320,10 @@ Usage:
   accordo module:create <name> [--apply] [--root path]
   accordo module:validate <manifest.json>
   accordo module:migration <manifest.json> [--dry-run] [--out file.sql] [--force]
+  accordo package:scaffold <package-name> [--into dir] [--apply|--dry-run] [--json] [--root dir]
   accordo package:validate <package-directory>
   accordo package:inspect <package-directory>
+  accordo package:test <package-directory> [--json] [--root dir]
   accordo mcp [--db path]
 
 "module plan", "module create", "module validate" and "module migration" are accepted aliases.
@@ -276,10 +331,65 @@ module:plan is always read-only. module:create with a manifest generates a compl
 runnable module (service, migration, registration, tests) and is a dry-run unless
 --apply is explicit; with a bare name it keeps the legacy template scaffold.
 Migration generation is a dry-run unless --out is provided; --force allows overwriting.
-"package validate" and "package inspect" are accepted aliases. Both are read-only:
-they run the same domain-package validator the application runs at startup, write
-nothing, open no database and reach no network, and exit non-zero on any problem.
+"package scaffold", "package validate", "package inspect" and "package test" are
+accepted aliases, and they answer four different questions:
+
+  scaffold  give me an empty package that already conforms
+  validate  is this package declaration structurally valid?
+  inspect   what does this package declare, own, offer and need?
+  test      does it hold up when a real application composes it?
+
+scaffold takes a package NAME, not a directory, and is the only one that can write.
+Reach for it only after "app inspect" and a Solution Plan have shown that what you
+need is a new bounded domain rather than a module, an action or a policy.
+
+It is a plan unless --apply is explicit, and an explicit --dry-run beats --apply;
+because both answer exit 0, every report carries "modeReason" saying which flag won.
+It never overwrites, and it writes exactly two files: an empty-but-valid package
+definition and a README. It invents no record, action, policy, capability, provider,
+Admin section or MCP tool; it does not compose the package, run a migration, open a
+database, or install or publish anything.
+
+Its output passes validate, inspect and test with no manual edit — which proves
+framework conformance and nothing at all about a domain it does not yet model. It
+also cannot prove the identity is unique in your application: it checks the target
+directory only. Compose the package, then run "app inspect --json" for that.
+
+validate and inspect are read-only: they run the same domain-package validator the
+application runs at startup, write nothing, open no database and reach no network.
+test additionally copies this project to a temporary directory, composes the package
+into that copy, applies its module manifests and boots an application twice — once
+with the package and once without it. It never writes to your project and never
+opens your database; the scratch copy is destroyed on success, failure and timeout.
+
+All three IMPORT the package, and test also boots it, so the package's own code runs
+with this process's authority. That is the framework's normal trust boundary —
+repository source is trusted — but it is isolation in a child process, NOT a
+filesystem, network or OS sandbox. Point them only at a package you would boot.
+
+test proves framework conformance: declaration, boundaries, composition, refusals,
+records and migrations, attach and detach, and agreement with app inspect. It
+proves NOTHING about whether the domain logic is correct — that is what the
+package's own tests are for, and the report lists every such limitation by code.
+Exit codes: 0 conforms, 1 conformance failures, 2 package or project unreadable.
 Manifest schema: docs/MODULE_MANIFEST.md — module factory: docs/MODULE_FACTORY.md
+"project doctor" answers "what is structurally inconsistent or stale in this
+project, before I edit it or pay for a full verification run?" Run it first, when
+you arrive at an unfamiliar checkout, after a merge, or before opening a PR.
+
+It reports composition health (from app inspect), the package source boundary,
+module state and migration-history drift, Solution Plan staleness, Skill mirror
+drift, broken repository-relative documentation links, and forbidden tracked
+artifacts. Every finding names the authority that refuses it and the existing
+command that fixes it. It changes nothing and there is no --fix.
+
+It is NOT "crm doctor", which boots the application and opens the database; this
+one reads source, opens nothing and works on a project that will not boot. It is
+also not a substitute for npm run verify: it runs no test and proves nothing
+about behaviour, domain correctness, database migration state, provider health
+or production readiness. Every such gap is a named limitation in the report.
+Exit codes: 0 no failures, 1 inconsistencies, 2 not a readable project.
+
 "solution inspect|validate|check" read a machine-readable Solution Plan (AX2).
 validate reads no project at all; check binds the plan to this project's app
 inspect report and reports PLAN_STALE when the composition has moved. None of

@@ -33,7 +33,8 @@
     "bench:prompts": "node benchmarks/harness/generate-prompts.js",
     "bench:prepare": "node benchmarks/harness/prepare.js",
     "bench:record": "node benchmarks/harness/record.js",
-    "bench:score": "node benchmarks/harness/score.js"
+    "bench:score": "node benchmarks/harness/score.js",
+    "characterize:intelligence": "node scripts/characterize-intelligence.mjs"
   },
   "keywords": [
     "crm",
@@ -43,5 +44,12 @@
     "claude-code",
     "workflow"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "agentCrm": {
+    "solutionPlans": {
+      "current": [
+        "examples/solution-plans/lead-to-won.plan.json"
+      ]
+    }
+  }
 }

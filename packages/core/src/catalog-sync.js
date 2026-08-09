@@ -4,8 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { AppError, ValidationError, normalizeError } from './errors.js';
 import { nowIso } from './time.js';
 import { writeTrace } from './action-runtime.js';
-import { withTimeout } from './intelligence-actions.js';
-import { computeDefinitionFingerprint } from './intelligence-registry.js';
+import { computeDefinitionFingerprint } from './definition-fingerprint.js';
+import { withTimeout } from './timeout.js';
 import { requireAmount, requireCurrency, validatePriceComponent } from './commercial-money.js';
 
 /**

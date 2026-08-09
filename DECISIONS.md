@@ -709,7 +709,155 @@ rung and the capability gap; the first draft accepted a `create-package`
 decision from an author who never looked at rung 1, which is precisely how a
 domain that already exists gets duplicated.
 
-## ADR-021 — MIT is confirmed as the licence, before any distribution manifest asserts it
+## ADR-021 — An extracted domain reaches its consumers through a declared capability, never an ambient field
+
+**Status:** accepted. Not implemented — this decides the contract, not the
+schedule. Measurement: `docs/architecture/EXTRACTION_PREPARATION.md` (Blocker 2)
+and the LA0 observation `architecture.app-intelligence-consumers`. Target shape:
+`docs/architecture/INTELLIGENCE_PACKAGE_TARGET.md`.
+
+Lead Intelligence publishes its registries as `app.intelligence`, a field on the
+application object that the action runtime injects into every action's context.
+It predates the domain package seam (ADR-018) by four milestones and it works.
+It is also the single reason Intelligence cannot become a package without
+deciding something first: ADR-018's whole claim is that a dependency you cannot
+see is a dependency you cannot reason about, and an ambient field is a
+dependency nobody declares.
+
+**Ambient (status quo)** costs nothing and is a permanent exception to ADR-018:
+the package's interface stays reachable without declaring it, so `requires`
+stops being the whole truth, and a custom package could never obtain the same
+privilege — contradicting the equality `docs/PACKAGE_AUTHORING.md` §14 promises
+between first-party and customer packages.
+
+**A generic named-service registry** — packages register services, the runtime
+resolves them into the context by name — is **rejected**. It is a new generic
+seam with one consumer, which this repository's own rule refuses, and it does
+not buy the property it costs: an action would still reach a package it never
+declared, which is ambient access under a new name. It becomes reconsiderable
+only when two real packages need runtime resolution that capabilities cannot
+express; one imagined case is not evidence.
+
+**Decision: a declared capability.** Intelligence offers `intelligence@1`; a
+consumer declares it in `requires` and opens it with `domains.capability(...)`,
+exactly as Delivery opens Contract Activation's `delivery-obligations@1` today.
+
+1. **Identity and version.** The capability is `intelligence@1`. Its version is
+   the capability's own, independent of the package version, and moves under
+   ADR-018's additive rule: new members are a minor concern, a removed or
+   narrowed member is a new major. The four registries reachable through it —
+   enrichment providers, scoring models, routing policies, routing targets —
+   are the members, and each keeps the accessor names it has today.
+2. **Runtime resolution.** Resolution happens at composition time, not at call
+   time. The package registry already refuses a composition whose declared
+   `requires` does not resolve, so a missing capability is a startup failure
+   naming the consumer, not an `undefined` discovered inside an action.
+3. **Package absence.** A project that has not composed Intelligence has no
+   provider for `intelligence@1`. If nothing requires it, the project boots and
+   the domain is simply absent. If something requires it, the registry refuses
+   at startup and says which package asked. Absence is never a silent
+   `undefined`.
+4. **Action-context access.** Actions reach it through the capability they
+   declare, not through an ambient context key. The measurement is what makes
+   this cheap: the ambient key is handed to every action and read by **no**
+   action outside Intelligence's own four, which move into the package anyway.
+5. **AX1 representation.** The dependency becomes an edge `crm app inspect`
+   reports, a Solution Plan can cite and bind, and `crm package test` enforces.
+   The fixed `intelligence` composition slot is retired in favour of ordinary
+   package discovery; see `INTELLIGENCE_PACKAGE_TARGET.md`.
+6. **Custom-package parity.** A customer package obtains `intelligence@1` by
+   declaring it, with no privilege a first-party package has and it lacks. This
+   is the property the ambient field cannot offer at all, and the reason the
+   decision is not merely tidiness.
+7. **Compatibility bridge.** During the migration the package offers the
+   capability **while** `app.intelligence` still exists, and both work. The
+   bridge is explicitly temporary and must not survive the final head of the
+   extraction: a legacy fallback left in place is the ambient field wearing a
+   deprecation notice.
+8. **Removal gate for `app.intelligence`.** The field may be removed only when
+   all four hold: no source file reads it, proved by the code-level scanner
+   rather than a substring search; `/api/schema` publishes the block as the
+   package's own contribution; the LA0 baseline shows no asserted observation
+   moved; and the compatibility bridge is deleted in the same change that
+   removes the field.
+
+**Consequences.** The framework gains no mechanism. The last invisible
+dependency in the oldest domain becomes visible, and the rule that first-party
+packages get no privilege a customer package cannot have stops having an
+exception. The cost is a migration whose every step shows up in a diff, which
+is the point rather than a drawback.
+
+## ADR-022 — Extracted definition kinds reuse existing contracts; routing targets are declared configuration; no new registry seam
+
+**Status:** accepted. Not implemented. Measurement:
+`docs/architecture/EXTRACTION_PREPARATION.md` (Blocker 3) and the LA0
+observation `architecture.definition-registry-slot`.
+
+`packages/intelligence/generated/index.js` is a checked-in, project-owned file
+where a project declares enrichment providers, scoring models, routing policies
+and routing targets. AX1 reads it as one of a fixed set of composition slots. If
+Intelligence becomes a package, that file is a *project* file describing a
+*package's* definition kinds, and no generic seam covers it.
+
+The temptation is to build one. The measurement argues against it: **two**
+runtime dependants (`packages/app/src/create-app.js`, which constructs the
+registries, and `packages/cli/src/app-inspect.js`, which holds the fixed slot),
+and three of the four definition kinds already have a contract that fits.
+
+**Decision.** Express the extracted definitions with the contracts that already
+exist, and add no generic package-contributed definition-registry seam.
+
+1. **Enrichment providers use the provider contract.** Unchanged in shape,
+   already inspected by AX1 and enforced by DX4.
+2. **Scoring models and routing policies use `policies`.** Already versioned,
+   already fingerprinted (ADR-015), already the shape Commercial Operations
+   ships for discount policies. Identity, version, fingerprint and declared
+   `config` are preserved exactly; a definition whose fingerprint moved is a
+   behaviour change, and LA0 fails on it.
+3. **Routing targets are declared configuration of the routing capability**,
+   not a new definition kind and not a managed resource. This was the open
+   question in the proposed version; it is closed on evidence, inventoried
+   below.
+4. **No generic definition-registry seam.** If, after Intelligence is extracted,
+   a *second* package needs a project-owned registry the existing contracts
+   cannot express, that is the evidence a generic seam requires — and it will be
+   a better seam for having two real cases instead of one imagined one.
+
+### Why routing targets are configuration and not a resource
+
+The human rule is that static, source-defined routing configuration belongs to
+routing-policy configuration, and independently mutable operational data
+belongs in a package-owned managed resource. Which one a routing target is was
+settled by reading the runtime, not by preference:
+
+| Question | What the code says |
+|---|---|
+| How is a target defined? | declared in checked-in source and validated at startup — `key`, `label`, `kind`, `active`, `countries`, `languages`, `skills`, `capacity`, `priority`, `scoreMin/scoreMax` |
+| Is it mutable at runtime? | **no.** The registry Map is populated once at construction from the declared definitions. There is no register, create, update or delete path |
+| Does it have a table or a module manifest? | **no.** It is not a record; there is no migration, no row and no revision |
+| Can it be queried or edited through the API? | **no.** No route, no module, no CRUD. It is published read-only as schema metadata |
+| What does `capacity` mean? | a declared **ceiling**, not a counter. The mutable half — `currentLoad` — is computed at decision time by an exact indexed count of active leads, so the number that changes lives on Lead records, not on the target |
+| Is it versioned? | not per target. The **set** is fingerprinted and that fingerprint is recorded on every RoutingRun, so drift is already visible and explainable |
+
+Nothing about a target is independently mutable, so the managed-resource
+branch of the rule does not apply. It is source-defined configuration that the
+routing capability reads, and it stays that — carried as the package's declared
+configuration, **keeping the existing separate target-set fingerprint** so no
+recorded routing decision changes meaning.
+
+**When this would be revisited.** If a customer needs targets that operations
+can change without a deploy — a rep toggling their own availability, a queue
+opened for a week — that is a genuinely different requirement, and it is the
+managed-resource branch. It is a new capability with its own evidence, not a
+reinterpretation of this one, and it does not become a generic registry seam
+either.
+
+**Consequences.** No new seam, no new versioning story, no new answer needed for
+"what if two packages claim one definition kind", and no new AX1 representation
+to design. Every recorded routing decision keeps the fingerprints that make it
+explainable.
+
+## ADR-023 — MIT is confirmed as the licence, before any distribution manifest asserts it
 
 **Decision.** The framework ships under MIT, confirmed rather than assumed. `site/brand.json`
 moves `license.status` to `confirmed`, which is what `scripts/distribution-check.js` reads before
@@ -737,7 +885,7 @@ licence is load-bearing for the strategy, which is exactly why it could not be l
 licence of anything a customer generates — generated code belongs to the customer under whatever
 terms they choose, which is the point of generating it.
 
-## ADR-022 — The build benchmark splits into a runnable Edition L and a blocked Edition D, scored in points
+## ADR-024 — The build benchmark splits into a runnable Edition L and a blocked Edition D, scored in points
 
 **Status:** accepted.
 

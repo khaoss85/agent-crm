@@ -248,13 +248,60 @@ surface rather than a list of commands:
 |---|---|---|
 | `app_inspect` | T0 | AX1 — shipped as a CLI today |
 | `solution_check` | T0 | AX2 — shipped as a CLI today |
+| `package_inspect` | T0 | `crm package inspect` — shipped as a CLI today |
+| `package_scaffold` | T0 / **T2** | DX3 `crm package scaffold` — shipped as a CLI today. **T0 as a plan, T2 with `--apply`** |
+| `package_test` | **T1** | DX4 `crm package test` — shipped as a CLI today |
 | `explain` | T0 | DX8, not built |
-| `doctor` | T0 | DX1, not built |
+| `project_doctor` | T0 | DX1 `crm project doctor` — shipped as a CLI today |
 | `change_inspect` | T0 | DX7, not built |
 | `context_pack` | T0 | DX9, not built — advisory only, never authorization |
 | `verify` | T1 | DX5, not built |
 | `scenario` | T1 | DX6, not built |
 | `trace_query` | T1 | DX16 — **Production-Spine gated** |
+
+`package_test` is the one **T1** entry that is already built, and the tier is the
+point: it is read-only about the caller's project — it writes nothing there and
+opens no database — but it copies the project, applies module manifests into
+that copy and **boots an application twice**. Unlike every T0 entry it consumes
+real time and real disk, and it runs the package's own code. A blanket allow on
+something that executes checked-in source is a different decision from a blanket
+allow on something that reads it, so the tiers differ even though neither
+mutates the project.
+
+`project_doctor` is T0 without qualification, and it is the clearest case in the
+table: it mutates nothing, opens no database, reaches no network, and the one
+place it causes code to run is the `app inspect` load it already reuses. It is
+also the entry most worth exposing, because "what is wrong with this project"
+is the question an agent has at the start of every session, and its `problems`
+array is deliberately compact enough to carry.
+
+Note the name. `crm doctor` already exists and boots the application against a
+database; `project.doctor` and `app.doctor` are different tools answering
+different questions, and the namespace keeps them apart rather than overloading
+one name with two trust profiles.
+
+`package_scaffold` is the one entry whose tier **depends on its arguments**, and
+that is the argument for keeping the two modes one tool rather than splitting
+them. Without `--apply` it is a pure planner: it writes nothing, opens nothing
+and reads only the target directory, so it is T0 for the same reason
+`package_inspect` is. With `--apply` it creates files in the caller's own
+repository, which is a T2 mutation no matter how small. The mapping that follows
+is: **the tool defaults to the plan**, `apply` is an explicit boolean the caller
+must set, and a host that grants the namespace broadly is granting the planner,
+not the writer. That mirrors `crm_scaffold_module`, the one existing MCP tool
+with the same shape, whose server instructions already say *code scaffolding is
+dry-run unless apply is explicitly true*.
+
+Its refusals are part of the contract an agent depends on: an occupied target,
+an invalid name and a path that leaves the project are all refused with a code
+and exit 1, and the plan carries a `fingerprint` so a caller can tell "the same
+scaffold" from "a different one". Nothing about it is remote — there is no
+registry, install or publish — so it needs no Production-Spine gate.
+
+The `package` namespace stays **deferred and searchable** rather than
+always-loaded: four commands that only matter while somebody is authoring a
+package should not occupy the surface of every session. `app_inspect` remains
+the tool an agent reaches for first.
 
 Two properties this table is designed to have. Most of the surface is **T0**,
 which is what makes it safe to expose broadly and cheap to keep correct. And
@@ -264,6 +311,47 @@ every entry is a **mirror of a stable CLI contract**, not a second implementatio
 **Remote mutation stays Production-Spine and human-approval work**, exactly as
 the roadmap says. That is not a scheduling statement: there is no auth, tenancy
 or RBAC, so there is no one to authorize a remote write.
+
+### C.2b A domain namespace, worked through on Service (M15)
+
+Nothing below exists. **No MCP tool is implemented for the Service package, and
+none is proposed for this milestone.** This section exists because M15 is the
+first package whose actions a reader would plausibly want as tools, and the
+useful moment to decide the *shape* of a domain namespace is before anybody
+writes one.
+
+A domain namespace mirrors the package's own action names, one to one, so there
+is nothing to keep true twice:
+
+| Proposed tool | Tier | Mirrors the action |
+|---|---|---|
+| `service.plan_activation` | T0 | `commercial-contract.plan-service-activation` |
+| `service.activate` | T2 | `commercial-contract.activate-service` |
+| `service.create_case` | T2 | `service-entitlement.record-service-case` |
+| `service.transition_case` | T2 | `support-case.transition-case` |
+| `service.evaluate_sla` | T0 read / T2 record | `support-case.preview-sla` / `record-sla-evaluation` |
+| `service.record_escalation` | T2 | `support-case.record-escalation` |
+
+Three rules fall out of the tiering, and they are the point of the table:
+
+- only **`service.plan_activation`** and the read half of
+  **`service.evaluate_sla`** are T0. Both are read-only in the package itself,
+  both already refuse to write, and both are open to an agent actor today.
+- everything else is **T2 — bounded write**, which under §C.1 means explicit
+  per-call approval and never a blanket allow. That is not a policy invented
+  here: the package already refuses an agent actor on all six writes with
+  `403 HUMAN_APPROVAL_REQUIRED`, so a T2 tool that carried an agent identity
+  would simply be refused by the server. The tier records *why* the tool must
+  carry a human's identity, not a bot's.
+- there is deliberately **no `service.end_coverage`, no `service.close_case` and
+  no `service.record_activity`** in the proposed surface. Ending a coverage and
+  closing a case are the two irreversible-looking moves in the domain, and
+  recording activity is the one an agent could use to manufacture history. They
+  stay human, in the Admin or the CLI, until there is somebody to authorize
+  them.
+
+The same shape would apply to Delivery and Contracts. It is written down once,
+here, rather than three times in three packages.
 
 ### C.3 The existing tools
 

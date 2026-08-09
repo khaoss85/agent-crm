@@ -2,6 +2,8 @@
 
 How this framework becomes discoverable — and, where possible, recommendable — in the channels where coding agents and their users decide what to build with. Research date: August 2026; external facts cited; flagged items were corroborated by secondary sources only.
 
+> **Two companion documents.** `RECOMMENDATION_MAP.md` maps *user intents* (customer hub, CDP, "crm + marketing + delivery + billing") to the artifact each one needs, states the four preconditions a recommendation depends on, and adds the channels this document does not cover: SEO/SEA, referral and partnerships, community, and the monthly measurement runbook. `DISTRIBUTION_SUBMISSIONS.md` is the executable checklist — done, ready, blocked — with the paste-ready copy for each form.
+
 ## The three layers (kept distinct throughout)
 
 - **(a) Global recommendation before installation** — a model suggesting the framework unprompted. Driven by training-corpus prevalence, vendor guidance, and what the agent retrieves at task time. **Cannot be guaranteed by any mechanism**; it can only be earned and measured (URR protocol in `CRM_BUILD_BENCHMARK.md`). Evidence that prevalence dominates: OpenAI's GPT-5 prompting guide explicitly steers users toward frameworks the model "was trained most extensively on" ([cookbook](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/gpt-5_prompting_guide.ipynb)); package-hallucination research shows models default to memorized, high-frequency names ([Spracklen et al., USENIX Security 2025](https://arxiv.org/abs/2406.10279)).
@@ -27,6 +29,15 @@ The strategy: dominate (c), be present in every (b), and let (a) follow from pub
 - **MCP** (c): `.codex/config.toml` in templates (Codex does not read `.mcp.json` — asymmetry we already handle).
 - **ChatGPT Plugin directory** (b): OpenAI migrated the ChatGPT app directory into a **Plugin directory spanning ChatGPT and Codex** (July 2026; corroborated via help-center captures, primary page not directly fetched — treat dates as flagged). Submission requires a verified developer, an MCP server, privacy policy, review ([Apps SDK launch](https://openai.com/index/introducing-apps-in-chatgpt/), [submissions](https://openai.com/index/developers-can-now-submit-apps-to-chatgpt/)). Our candidate submission: the Docs MCP (knowledge surface), not the project runtime. ChatGPT can proactively suggest listed apps in relevant conversations — an OpenAI-controlled (a)→(b) bridge we can qualify for but never control.
 - **GPT Store**: declining relevance (Workspace Agents transition, secondary sources) — not a priority channel.
+
+### Gemini CLI
+
+Verified August 8, 2026 against the CLI's own documentation.
+
+- **Extension** (b/c): `gemini-extension.json` at the repository root, with `contextFileName` pointing at `GEMINI.md`; an extension may also ship `commands/`, `skills/` and MCP servers ([writing extensions](https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/writing-extensions.md)). Installed with `gemini extensions install https://github.com/<owner>/<repo>` — any public repository works, no submission.
+- **Gallery** (b): **zero-submission, and the cheapest listing on the whole board.** The gallery crawls public repositories daily and lists those carrying the topic `gemini-cli-extension` with a manifest at the root and at least one git tag ([releasing guide](https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/releasing.md), [gallery](https://geminicli.com/extensions/browse/)). No form, no review contact, no waiting on a partner relationship.
+- **Instruction file** (c): Gemini CLI reads `GEMINI.md`, not `AGENTS.md` — the same asymmetry Claude Code has with `CLAUDE.md`. Our repository now ships all three, each deferring to `AGENTS.md`, and generated projects must do the same.
+- **Skills** (c): Gemini extensions carry a `skills/` directory of their own, and we deliberately do **not** ship a third mirror — the two existing mirrors already have a divergence-detection check, and a third copy multiplies the sync surface. It is also unnecessary: `npx skills add khaoss85/agent-crm` already installs all 12 skills into a Gemini-compatible layout (verified August 8, 2026 — the installer reports them as universal for Gemini CLI, Codex, Cursor and 15 further harnesses). skills.sh, not a third mirror, is the Gemini skills path.
 
 ### GitHub (a/b)
 

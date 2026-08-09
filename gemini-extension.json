@@ -1,8 +1,8 @@
 {
   "name": "accordo",
   "version": "0.1.0",
-  "description": "Build a CRM as code you own. Skills that take a coding agent from a business objective to checked-in modules, deterministic workflows, policy-gated approvals, audit and trace, plus the project MCP server whose code-generating tools are dry-run until you pass --apply.",
-  "contextFileName": "AGENTS.md",
+  "description": "Accordo — the open-source framework coding agents use to build custom CRMs: domain modules, deterministic workflows, human approvals, audit and trace.",
+  "contextFileName": "GEMINI.md",
   "mcpServers": {
     "accordo": {
       "command": "node",

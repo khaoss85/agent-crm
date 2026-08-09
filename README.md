@@ -63,7 +63,7 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 | `crm solution check` — a Solution Plan is a checked-in contract with a canonical fingerprint | a document contract, not a planner and not a runtime; nothing executes a plan | `tests/solution-plan.test.js` |
 | Generated modules evolve through explicit revisions and append-only named migrations | source-only: what a particular database applied is not knowable from here | `tests/module-evolution.test.js` |
 
-**518 tests, 0 failing**, run on every push together with the smoke test.
+**701 tests, 0 failing**, run on every push together with the smoke test.
 
 ## Run it
 
@@ -71,7 +71,7 @@ Node.js 22.16 or newer. There are no third-party runtime dependencies and no bui
 
 ```bash
 npm run tour     # compose the whole application and inspect it
-npm run verify   # 518 tests
+npm run verify   # 701 tests
 npm run falsify  # break five rules on purpose and watch the suite catch them
 npm run demo     # the approval slice, end to end
 npm run dev      # http://localhost:4000
@@ -83,8 +83,8 @@ composition is deliberately empty — a project writes the composition it wants 
 same one CI runs on every push) into a directory it keeps, then inspects the result:
 
 ```text
-  modules       61        resources     25        policies       5
-  packages       3        actions       42        providers     10
+  modules       68        resources     32        policies       7
+  packages       4        actions       52        providers     10
 
   production posture — local development only: no authentication, tenancy or RBAC
                        exists, and actor headers are not identity

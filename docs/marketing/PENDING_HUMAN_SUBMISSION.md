@@ -12,8 +12,8 @@ Nothing here is blocked on more engineering. It is blocked on you.
 | # | Decision | What it unblocks | Notes before you decide |
 |---|---|---|---|
 | 1 | ~~Public name~~ — **DECIDED 2026-08-07: Accordo** | — | Applied to the whole tree by `scripts/brand-set.js --apply`: 389 occurrences across 139 files, 410 tests still passing. **`accordo.dev` is registered.** Two follow-ups remain and are yours: the trademark screen (EUIPO + USPTO, classes 9 and 42) has not been run and is the only thing that can still force a second rename; and `accordo`, `create-accordo` and `@accordo` were free on npm this morning but are still unclaimed — namespaces are first-come and unrenameable |
-| 2 | ~~Final licence confirmation~~ — **DECIDED 2026-08-07: MIT, ADR-021** | — | `license.status` is `confirmed`, so a distribution manifest may now state it. The ADR records why the licence is load-bearing rather than incidental: a copyleft core would weaken the ownership claim the whole positioning rests on, and a source-available one would make it false |
-| 3 | **Repository visibility** — **now the critical path** | Every `{{brand.repository}}` link, the "read the test" call to action, both self-hosted marketplaces, `npx skills add`, and the whole slow-burn retrieval channel | The name is decided and applied, so the reason to wait is gone. Renaming the GitHub repository to `accordo` at the same time keeps the URLs consistent with everything else |
+| 2 | ~~Final licence confirmation~~ — **DECIDED 2026-08-07: MIT, ADR-023** | — | `license.status` is `confirmed`, so a distribution manifest may now state it. The ADR records why the licence is load-bearing rather than incidental: a copyleft core would weaken the ownership claim the whole positioning rests on, and a source-available one would make it false |
+| 3 | ~~Repository visibility~~ — **DONE 2026-08-08: public** | Every `{{brand.repository}}` link, the "read the test" call to action, both self-hosted marketplaces, `npx skills add`, and the whole slow-burn retrieval channel — all live | Confirmed against the GitHub API. `site/brand.json` records `repository.status: public`, which is the single field that turns indexing on; `scripts/site-check.js` refuses to let `vercel.json` and the ledger disagree about it. The repository is still named `agent-crm`; renaming it to `accordo` is optional and would break every existing link unless GitHub's redirect is relied on |
 | 4 | **Telemetry policy** | The generated-projects and successful-deployments metrics | No collection code should ship before the policy exists; shipping it presumes the decision |
 | 5 | **Every public claim and the launch timing** | `docs/marketing/LAUNCH_PACKET.md` | Includes the pre-commitment to publish the benchmark result whatever it says. An agent must not make that commitment on your behalf |
 
@@ -21,16 +21,16 @@ Nothing here is blocked on more engineering. It is blocked on you.
 
 | Artifact | Where | Action when unblocked | Blocked by |
 |---|---|---|---|
-| Claude Code plugin + self-hosted marketplace | `.claude-plugin/` | Push public, then `/plugin marketplace add <owner>/<repo>` works with no third-party approval | 1, 3, and skill portability (below) |
+| Claude Code plugin + self-hosted marketplace | `.claude-plugin/` | **Live once this branch merges.** `/plugin marketplace add khaoss85/agent-crm` needs no third-party approval | — |
 | Anthropic community marketplace listing | same manifests | Submit via the Console form | 1, 3 |
-| Codex plugin + marketplace | `.codex-plugin/`, `.agents/plugins/marketplace.json` | Same, self-hosted — skill parity is now 11/11 and held by `tests/skill-parity.test.js` | 1, 3 |
-| MCP registry entry | `server.json` | `mcp-publisher` under the `io.github.<owner>` namespace | 1, plus an actually-published npm package |
-| npm packages | root `package.json` is `private: true`; no per-package manifests exist | Publish with provenance | 1, 2 |
-| GitHub repository metadata | `docs/marketing/GITHUB_LISTING.md` | Apply description, topics and social preview | 1, 3 |
-| Landing page and evidence page | `site/dist/` | Register a domain, remove the `noindex` tag in the same change that sets the name | 1, 2, 3 |
+| Codex plugin + marketplace | `.codex-plugin/`, `.agents/plugins/marketplace.json` | Same, self-hosted — skill parity is 12/12 mirrored, 11 published, held by `tests/skill-parity.test.js` | — |
+| MCP registry entry | `server.json` | `mcp-publisher` under the `io.github.<owner>` namespace | `@accordo/mcp` is still unpublished — the scope returns 404, so the registry entry would resolve to nothing |
+| npm packages | root `package.json` is `private: true`; no per-package manifests exist | **Names reserved 2026-08-09**: `accordo@0.0.1` and `create-accordo@0.0.1` are published placeholders that install nothing — verified against the registry. Still to do, and both are yours: create the `@accordo` **organization** (web-only, no CLI), and publish the real packages with `--provenance` once `create-accordo` scaffolds a project | the create-CLI (Phase 5) |
+| GitHub repository metadata | `docs/marketing/GITHUB_LISTING.md` | Description and 14 topics **applied**. Remaining and yours: upload `site/assets/social-preview.png` under Settings → Social preview (GitHub exposes no API for it), and cut `git tag v0.1.0` so the Gemini CLI gallery crawler lists the extension | — |
+| Landing page and evidence page | `site/dist/` | **Unblocked.** Domain registered, repository public, `noindex` and `X-Robots-Tag` both removed. Remaining: point `accordo.dev` DNS at the Vercel project and deploy from `main` after this branch merges | — |
 | Show HN packet | `docs/marketing/LAUNCH_PACKET.md` §2 | Post it | 1, 3, 5 |
 | Product Hunt packet | `docs/marketing/LAUNCH_PACKET.md` §3 | Post it, once, on the benchmark edition | 1, 3, 5, and a benchmark result |
-| skills.sh | nothing to build — that tool already walks `.claude/skills` and `.agents/skills` | Nothing, once public | 1, 3 |
+| skills.sh | nothing to build — that tool already walks `.claude/skills` and `.agents/skills` | **Live.** `npx skills add khaoss85/agent-crm` verified working 2026-08-08 | — |
 
 ## Not blocked on you — blocked on us
 

@@ -46,7 +46,7 @@
     {
       "slug": "what-does-app-inspect-tell-an-agent",
       "question": "How does a coding agent find out what an application built with this actually contains?",
-      "answer": "One command returns packages, capabilities, resources, actions, policies and providers as a single deterministic JSON report, read from checked-in source (C-14). It is source-only and read-only: it never opens the database, contacts a provider, reads a secret, or reports runtime, CI or authorization state — and it lists those blind spots as machine-readable limitations in its own output. Composing the starter and inspecting it gives 61 modules, 3 packages, 25 resources, 42 actions, 5 policies and 10 providers, then prints the eleven things the inspector says it cannot see (C-22). Those counts describe that starter's composition, not yours, it runs locally against SQLite with no authentication, and wall-clock time is deliberately not claimed.",
+      "answer": "One command returns packages, capabilities, resources, actions, policies and providers as a single deterministic JSON report, read from checked-in source (C-14). It is source-only and read-only: it never opens the database, contacts a provider, reads a secret, or reports runtime, CI or authorization state — and it lists those blind spots as machine-readable limitations in its own output. Composing the starter and inspecting it gives 68 modules, 4 packages, 32 resources, 52 actions, 7 policies and 10 providers, then prints the eleven things the inspector says it cannot see (C-22). Those counts describe that starter's composition, not yours, it runs locally against SQLite with no authentication, and wall-clock time is deliberately not claimed.",
       "claims": [
         "C-14",
         "C-22"
@@ -68,7 +68,7 @@
     {
       "slug": "is-there-a-benchmark-for-agent-built-crms",
       "question": "Is there a benchmark showing how often a coding agent builds a working CRM with this?",
-      "answer": "No. The build benchmark protocol is designed and published, but it has not been run, so no Successful Agent Build Rate exists and any number quoted for this project is not ours (L-03). What exists instead is a test suite: 518 tests run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them (C-20). That count measures effort, not correctness, and real-browser tests are run manually and are not in CI.",
+      "answer": "No. The build benchmark protocol is designed and published, but it has not been run, so no Successful Agent Build Rate exists and any number quoted for this project is not ours (L-03). What exists instead is a test suite: 701 tests run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them (C-20). That count measures effort, not correctness, and real-browser tests are run manually and are not in CI.",
       "claims": [
         "C-20"
       ],
@@ -80,7 +80,7 @@
     {
       "slug": "how-do-i-check-these-claims-myself",
       "question": "How do I check that these claims are true instead of taking them on trust?",
-      "answer": "Every claim in site/claims.json names the evidence that holds it — a test file, a document, or a named repository fact — and the limitation that travels with it, so each sentence resolves to something you can check. Run the suite — 518 tests on every push — and read docs/QUALITY_GATES.md for the adversarial-review categories, because the count itself measures effort rather than correctness (C-20). Then run falsify: five rules are removed on purpose in one command and the suite catches every one in about two seconds, naming the test that caught it, and anything that survives is reported as a gap rather than omitted (C-23). Its scope is narrow on purpose — it falsifies six named rules, not the claims in this ledger, it proves only that a test holds each rule, and a rule that is wrong but faithfully defended survives every mutation.",
+      "answer": "Every claim in site/claims.json names the evidence that holds it — a test file, a document, or a named repository fact — and the limitation that travels with it, so each sentence resolves to something you can check. Run the suite — 701 tests on every push — and read docs/QUALITY_GATES.md for the adversarial-review categories, because the count itself measures effort rather than correctness (C-20). Then run falsify: five rules are removed on purpose in one command and the suite catches every one in about two seconds, naming the test that caught it, and anything that survives is reported as a gap rather than omitted (C-23). Its scope is narrow on purpose — it falsifies six named rules, not the claims in this ledger, it proves only that a test holds each rule, and a rule that is wrong but faithfully defended survives every mutation.",
       "claims": [
         "C-20",
         "C-23"

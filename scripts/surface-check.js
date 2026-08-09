@@ -55,10 +55,17 @@ export const SURFACE_BUDGET = Object.freeze({
       + 'and defer the rest behind search. This is the always-on count, not the capability count.',
   },
   commandsAcrossSkills: {
-    max: 10,
+    max: 11,
     why: 'The distinct commands the skills tell an agent to run. This is the closest measurable '
       + 'proxy for how much ceremony the framework imposes, and it is the number that must not '
-      + 'grow as the internals do.',
+      + 'grow as the internals do. '
+      + 'Raised 10 → 11 on 2026-08-09, and the gate is why the question got asked at all: DX1, DX3 '
+      + 'and DX4 shipped `project doctor`, `package scaffold` and `package test`, three genuinely '
+      + 'new answers, and took nothing out. Eleven is where it stops. The `package` namespace now '
+      + 'holds four verbs — scaffold, inspect, validate, test — and `package test` already proves '
+      + 'what `package validate` checks, so the next command that wants a place in a skill pays '
+      + 'for it by folding `validate` into `test` rather than by moving this number again. A '
+      + 'ceiling raised twice is not a ceiling.',
   },
 });
 

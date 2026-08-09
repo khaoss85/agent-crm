@@ -154,7 +154,7 @@ record: zero interventions passes, one or more fails, and *no record at all* is
 `needs-operator` rather than a free 25 points. Every report says so in its own
 `attestation` field, and any figure derived from these runs must repeat it.
 
-ADR-022 records this decision and what would have to change to retire it.
+ADR-024 records this decision and what would have to change to retire it.
 
 ## Deployment criteria
 

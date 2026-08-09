@@ -2,12 +2,13 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { actionMetadata } from '../../core/src/action-registry.js';
 import { resolvePackageComposition } from '../../core/src/package-composition.js';
 import { readModuleState } from '../../core/src/module-evolution.js';
 import { SUPPORTED_PACKAGE_CONTRACT } from '../../core/src/package-registry.js';
+import { repoRelative, safeMessage } from './safe-text.js';
 
 /**
  * **Application inspection** (AX1) — one deterministic document describing the
@@ -81,29 +82,6 @@ const LIMITATIONS = Object.freeze([
   ['DATA_QUALITY_UNKNOWN', 'source-only inspection can say which records exist, never whether their data is correct, complete or duplicated'],
   ['RUNTIME_STATE_UNKNOWN', 'nothing here reports what is running, deployed or reachable'],
 ]);
-
-/** @param {string} rootDir @param {string} path */
-function repoRelative(rootDir, path) {
-  const value = relative(rootDir, path);
-  // Never an absolute path: this JSON is written for agents and pasted into
-  // issues, and an absolute path carries the operator's home directory and
-  // machine layout with it for no diagnostic gain.
-  return value.split(sep).join('/');
-}
-
-/**
- * A message safe to publish: bounded, single-line, and free of the absolute
- * paths a stack trace is made of.
- * @param {unknown} error @param {string} rootDir
- */
-function safeMessage(error, rootDir) {
-  const raw = error instanceof Error ? error.message : String(error);
-  return raw
-    .split('\n')[0]
-    .replaceAll(rootDir, '<project>')
-    .replace(/(file:\/\/)?\/[^\s'"]+/g, (match) => (match.includes('/') ? '<path>' : match))
-    .slice(0, 400);
-}
 
 /** Import one composition file, turning any failure into a problem rather than a throw. */
 async function loadComposition(rootDir, entry, problems) {

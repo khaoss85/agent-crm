@@ -147,17 +147,21 @@ test('the first-party contracts package conforms', () => {
     definition: createContractsDomain({ policies: [b2bSaasOrderActivationV1] }),
     dir: join(repoRoot, 'packages/contracts'),
     expected: {
+      // Version 2: M15 added `service-obligations@1` additively. Every M12
+      // resource, action and the `delivery-obligations@1` capability are
+      // untouched, and `packageContract: 1` did not move.
       name: 'contracts',
-      version: 1,
+      version: 2,
       resources: [
         'commercial-contract', 'contract-version', 'contract-line', 'contract-activation',
         'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
       ],
       actions: ['order.activate-contract', 'order.plan-activation'],
       requires: [],
-      provides: ['delivery-obligations@1'],
+      provides: ['delivery-obligations@1', 'service-obligations@1'],
     },
-    forbiddenImports: [/from '[^']*delivery\//],
+    // Contracts must reach neither of the packages that consume it.
+    forbiddenImports: [/from '[^']*delivery\//, /from '[^']*\/service\//],
   });
 });
 

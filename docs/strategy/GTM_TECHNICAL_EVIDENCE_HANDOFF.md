@@ -1,0 +1,179 @@
+# GTM technical evidence handoff
+
+**This is not marketing copy, and it does not replace the GTM claims ledger.**
+
+It is the engineering side of the wall: for each technical fact, what proves it,
+what a user gets from it, what may be said about it, and what must not be said.
+The GTM track may consume this later. Nothing here modifies GTM assets, and
+nothing here is a launch decision.
+
+Every row's **Status** is one of `implemented`, `partial` or `planned`, and the
+Evidence column is a command or a test somebody can run. A row with no runnable
+evidence does not belong in this document.
+
+---
+
+## Implemented — evidence-backed today
+
+### 1. Deterministic application discovery
+
+| | |
+|---|---|
+| **Technical fact** | An application's composition — packages, capability edges, resources, actions, policies, providers, modules — is reported as a contract-versioned JSON document, produced without opening a database, in an isolated child process. |
+| **Evidence** | `npm run crm -- app inspect --json`; `applicationInspectionContract: 1`; `inspectionFingerprint`; `tests/app-inspect*.test.js` |
+| **User value** | A coding agent can find out what a project already is before proposing to change it, instead of guessing from file names. |
+| **Allowed positioning** | "Agents can discover an application's real structure deterministically, before they change it." |
+| **Do not claim** | that it verifies behaviour, reads a database, or proves the application works. |
+| **Status** | implemented |
+
+### 2. Machine-readable Solution Plan validation
+
+| | |
+|---|---|
+| **Technical fact** | A plan is a contract-versioned document that can be validated standalone and *bound* to a specific application inspection; a plan written against a composition that has since moved reports `PLAN_STALE`. |
+| **Evidence** | `npm run crm -- solution validate\|check <plan.json> --json`; `solutionPlanContract: 1`; `examples/solution-plans/` |
+| **User value** | The gap between "the plan an agent wrote" and "the application it will run against" becomes a checkable fact, not a hope. |
+| **Allowed positioning** | "Plans are machine-checkable against the real application, and go stale visibly." |
+| **Do not claim** | that plans are executed, or that a valid plan means the work was done. Nothing executes a plan. |
+| **Status** | implemented |
+
+### 3. Source-level project diagnostics
+
+| | |
+|---|---|
+| **Technical fact** | Composition health, package source boundaries, module state and migration drift, Solution Plan currency, Skill mirror agreement, repository-relative documentation links and forbidden tracked artifacts are reported read-only in well under a second on this repository, each finding naming the existing authority that refuses it. |
+| **Evidence** | `npm run crm -- project doctor --json`; `projectDoctorContract: 1`; `tests/project-doctor.test.js` |
+| **User value** | An agent arriving at an unfamiliar checkout learns what is already broken before it edits anything, without paying for a full verification run — sub-second against minutes. |
+| **Allowed positioning** | "A fast, read-only structural health check an agent can afford to run before every change." |
+| **Do not claim** | that it replaces tests, checks a database, checks provider health, or assesses production readiness. It states all four limits in its own output. |
+| **Status** | implemented |
+
+### 4. Deterministic package scaffolding
+
+| | |
+|---|---|
+| **Technical fact** | `crm package scaffold <name>` produces two files — an identity and five empty declarations — whose output passes validate, inspect and conformance with no manual edit. Dry-run by default; never overwrites; refuses an invalid name with a suggestion instead of renaming. |
+| **Evidence** | `npm run crm -- package scaffold <name> --json`; `packageScaffoldContract: 1`; `tests/package-scaffold.test.js` |
+| **User value** | A new domain starts from a known-good baseline instead of a copy of somebody else's domain that has to be subtracted. |
+| **Allowed positioning** | "New domains start conforming, not hoping to conform." |
+| **Do not claim** | that it generates a working domain. It deliberately generates **no** business capability. |
+| **Status** | implemented |
+
+### 5. Generic package conformance
+
+| | |
+|---|---|
+| **Technical fact** | Any package is composed into a throwaway copy of the project and booted twice — with and without it — and checked against the framework's own authorities. No package is special-cased by name. |
+| **Evidence** | `npm run crm -- package test <path> --json`; `packageConformanceContract: 1`; `tests/package-test-command.test.js`. The official matrix currently records `partner-scorecard` as **non-conforming**, recorded rather than patched. |
+| **User value** | "Does this package satisfy the framework?" is a mechanical answer with a stable document, not a reviewer's judgement. |
+| **Allowed positioning** | "Package conformance is mechanical, generic and honest about what it does not prove." |
+| **Do not claim** | that conformance means correctness. The report says `DOMAIN_CORRECTNESS_NOT_PROVEN` itself. |
+| **Status** | implemented |
+
+### 6. Legacy behaviour characterization
+
+| | |
+|---|---|
+| **Technical fact** | One legacy domain's externally observable behaviour is frozen as 151 classified observations / 822 individually asserted values, with 16 mutation probes proving the comparison can fail — including one that catches a score keeping its number under a different definition fingerprint. |
+| **Evidence** | `npm run characterize:intelligence`; `legacyCharacterizationContract: 1`; `tests/characterization/` |
+| **User value** | A risky refactor can be proved to change no observable behaviour, instead of argued about. |
+| **Allowed positioning** | "Behaviour-preserving refactors can be proved from the outside, before they start." |
+| **Do not claim** | that every legacy domain is characterized — **one** is. Commercial Operations and Signature & Order are not. Do not claim any extraction has happened; none has. |
+| **Status** | implemented, for one domain |
+
+### 7. Optional package-native domains
+
+| | |
+|---|---|
+| **Technical fact** | A domain package is checked-in source registered by one static import; deleting that import removes the whole domain and the application still boots. Three first-party packages and one customer-authored example use the same contract. |
+| **Evidence** | `packages/domains/generated/index.js`; ADR-018 and addenda; `docs/PACKAGE_AUTHORING.md`; the detach/reattach checks in `crm package test` |
+| **User value** | Domains are opt-in and removable, and a customer's own package is not second-class. |
+| **Allowed positioning** | "Domains are optional, removable, and authored through the same contract first-party ones use." |
+| **Do not claim** | a marketplace, a registry, remote install, publication, signing, hot loading or auto-update. None exist. |
+| **Status** | implemented |
+
+### 8. Fail-closed capability graph
+
+| | |
+|---|---|
+| **Technical fact** | A package reaches another only through a declared, versioned capability. A missing package, an undeclared reach, a version mismatch or a dependency cycle stops the application at startup with the offending edge named — never at runtime inside a transaction. |
+| **Evidence** | `packages/core/src/package-registry.js`, `package-composition.js`; the refusal checks in `crm package test`; `tests/package-contract.test.js` |
+| **User value** | Cross-domain coupling is visible and enforced, so an agent cannot quietly create a hidden dependency. |
+| **Allowed positioning** | "Cross-domain dependencies are declared and fail closed at startup." |
+| **Do not claim** | that it sandboxes anything. Checked-in source is trusted and runs with the operator's authority; the docs say so explicitly. |
+| **Status** | implemented |
+
+### 9. Audit, trace and evidence records
+
+| | |
+|---|---|
+| **Technical fact** | Every mutation records audit and trace within the transaction that made it, and domain decisions persist evidence records — versioned policies, declared-definition fingerprints, target-set evidence, contribution breakdowns. |
+| **Evidence** | ADR-011, ADR-012, ADR-015; `crm trace:list`; the exact audit-count assertions across the suites |
+| **User value** | A past decision can be explained later with the inputs and the policy version that produced it. |
+| **Allowed positioning** | "Decisions are explainable after the fact, with the versioned policy that made them." |
+| **Do not claim** | regulatory compliance, tamper-proof audit, or immutability guarantees beyond what the schema enforces. |
+| **Status** | implemented |
+
+### 10. Human approval boundaries
+
+| | |
+|---|---|
+| **Technical fact** | Specific decisions require `actor.type === 'user'` and are refused for a system or agent actor; approval thresholds are deterministic policy, and an AI recommendation cannot silently override them. |
+| **Evidence** | the approval workflow tests, including "approval workflow rejects an agent pretending to make the human decision" |
+| **User value** | The commercially consequential steps stay with a person. |
+| **Allowed positioning** | "Consequential decisions are gated on a human actor by construction." |
+| **Do not claim** | authentication, authorization, RBAC, tenancy or identity verification. **None exist** — actor headers are not authentication, and the HTTP server is local-development-only. |
+| **Status** | implemented, within a local-development trust model |
+
+---
+
+## Planned only — must never be positioned as available
+
+| Capability | Status | Note |
+|---|---|---|
+| Context Pack (DX9) | planned | not built |
+| Implementation Evidence (DX10) | planned | not built |
+| Project Verify (DX5) | planned | not built |
+| Scenario Runner (DX6) | planned | not built |
+| Skill mirror sync (DX2) | planned | detection exists (diverging copies fail, one-sided skills warn); automatic reconciliation is not built |
+| Full legacy alignment | planned | one domain characterized, **zero** extracted |
+| Cloud | planned | no auth, tenancy, RBAC or production spine exists |
+| MCP tool parity (DX13) | planned | policy written, tools not built |
+| Marketing runtime, Analytics Studio | planned | documentation only |
+
+---
+
+## The allowed thesis
+
+Evidence-based, and the strongest form currently supportable:
+
+> **Accordo is designed to make coding agents more reliable at building CRM
+> solutions by constraining architecture, exposing deterministic contracts, and
+> proving work rather than relying on agent self-report.**
+
+Every clause maps to a row above: *constraining architecture* → 7 and 8;
+*deterministic contracts* → 1, 2, 4, 5; *proving work* → 3, 5, 6, 9.
+
+## Claims that are prohibited without separate proof
+
+- "the best framework for coding agents" — no comparative benchmark exists
+- "zero hallucinations" — unprovable and false in form
+- "fully autonomous CRM generation" — a human approves, and the loop is not built
+- "works with every model" — portability is a design target with **no**
+  cross-model benchmark run
+- benchmark superiority of any kind — `CRM_BUILD_BENCHMARK.md` is a design
+  document, not results
+- production-ready or cloud-ready — there is no auth, tenancy or RBAC
+- marketplace availability — no registry, no publication, no remote install
+
+If one of these becomes true, it becomes a new row in this table with a command
+next to it, and only then may it be said.
+
+## Related
+
+`docs/strategy/CODING_AGENT_DX_NORTH_STAR.md` · `docs/QUALITY_GATES.md` ·
+`docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` ·
+`docs/architecture/EXTRACTION_PREPARATION.md` · `DECISIONS.md`
+
+Brand and naming are a human decision and are recorded on the GTM track. This
+document deliberately does not restate them.

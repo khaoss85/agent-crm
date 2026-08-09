@@ -1,24 +1,32 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace.json",
-  "name": "accordo-marketplace",
+  "name": "accordo",
   "description": "The framework's own plugin marketplace. Self-hosted from this repository, which is all `/plugin marketplace add <owner>/<repo>` requires — no third party has to accept anything for this route to work.",
   "version": "0.1.0",
   "owner": {
-    "name": "Accordo maintainers",
-    "url": "https://github.com/khaoss85/agent-crm"
+    "name": "Daniele Pelleri",
+    "url": "https://github.com/khaoss85"
+  },
+  "metadata": {
+    "description": "Accordo — the open-source framework coding agents use to build custom CRMs."
   },
   "plugins": [
     {
       "name": "accordo",
       "source": "./",
-      "displayName": "Accordo",
-      "description": "Build a CRM as code you own. Eleven skills that take a coding agent from a business objective to checked-in modules, deterministic workflows, policy-gated approvals, audit and trace — plus the project MCP server, whose code-generating tools are dry-run until you pass --apply.",
+      "displayName": "Accordo — agent-native CRM framework",
+      "description": "Build a CRM as code you own. Skills that take a coding agent from a business objective to checked-in modules, deterministic workflows, policy-gated approvals, audit and trace — plus the project MCP server, whose code-generating tools are dry-run until you pass --apply.",
       "version": "0.1.0",
-      "category": "Developer Tools",
-      "license": "MIT",
+      "author": {
+        "name": "Daniele Pelleri",
+        "url": "https://github.com/khaoss85"
+      },
+      "homepage": "https://accordo.dev",
       "repository": "https://github.com/khaoss85/agent-crm",
-      "tags": ["crm", "sales", "revenue-operations", "code-generation", "workflows", "approvals", "audit", "mcp"],
-      "author": { "name": "Accordo maintainers" }
+      "license": "MIT",
+      "category": "development",
+      "tags": ["crm", "framework", "sales", "revenue-operations", "code-generation", "workflows", "approvals", "audit", "cpq", "delivery", "service", "mcp"],
+      "skills": ["./skills"]
     }
   ]
 }

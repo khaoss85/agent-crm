@@ -1,7 +1,9 @@
 // @ts-check
 
 import { AppError, ConflictError, ValidationError } from './errors.js';
-import { computeDefinitionFingerprint, rankRoutingTargets } from './intelligence-registry.js';
+import { computeDefinitionFingerprint } from './definition-fingerprint.js';
+import { rankRoutingTargets } from './intelligence-registry.js';
+import { withTimeout } from './timeout.js';
 
 /**
  * Framework-provided Lead Intelligence actions (ADR-015), starter-registered
@@ -30,6 +32,17 @@ const KEY_RE = /^[a-z][a-z0-9-]*$/;
 const COUNTRY_RE = /^[A-Z]{2}$/;
 const LANGUAGE_RE = /^[a-z]{2}$/;
 const MAX_TEXT = 500;
+/**
+ * Characters a single-line label may not contain: the C0 range including tab,
+ * newline and carriage return, DEL, the C1 range, and the Unicode line and
+ * paragraph separators.
+ *
+ * Deliberately stricter than this repository's prose rule elsewhere, which
+ * permits tab and newline because a human-written *reason* is prose. A signal
+ * `value` is not prose — see `optionalSignalValue` — so it is one line by
+ * contract.
+ */
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 /**
@@ -89,31 +102,6 @@ async function createRecord(modules, moduleName, patch, actor) {
   return service.createManaged(patch, { actor });
 }
 
-/**
- * Bounded provider-call timeout. The losing promise is explicitly observed so
- * a late rejection can never become an unhandled rejection; a late RESOLUTION
- * is simply discarded (best-effort abandonment — the framework does not claim
- * cancellation, and nothing a provider settles late can be persisted because
- * persistence happens only in execute from the already-returned prepared
- * value).
- * @param {Promise<any>} promise @param {number} ms @param {string} label
- */
-export function withTimeout(promise, ms, label) {
-  /** @type {any} */
-  let timer;
-  const guarded = Promise.resolve(promise);
-  guarded.catch(() => {}); // observe late rejections; never unhandled
-  return Promise.race([
-    guarded,
-    new Promise((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new AppError(`${label} timed out after ${ms}ms`, { code: 'PROVIDER_TIMEOUT', status: 504 })),
-        ms,
-      );
-    }),
-  ]).finally(() => clearTimeout(timer));
-}
-
 /** @param {unknown} value @param {string} field @param {RegExp | null} [shape] */
 function optionalBoundedText(value, field, shape = null) {
   if (value === undefined || value === null) return null;
@@ -123,6 +111,70 @@ function optionalBoundedText(value, field, shape = null) {
       status: 502,
       details: { field },
     });
+  }
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * A caller-supplied signal `value`: optional, bounded, single-line.
+ *
+ * **What `value` is.** An optional scalar qualifier on an immutable observed
+ * signal — which pricing page, which plan tier, which campaign. Measured before
+ * choosing a rule: nothing in this repository *reads* it. Scoring counts
+ * `signalType`, routing never sees it, no Admin section renders it. It is
+ * stored evidence, and the thing stored evidence must be is bounded and
+ * inspectable.
+ *
+ * **Why 500, and why nothing was copied.** `MAX_TEXT` above is this domain's
+ * own existing bound, already governing every other text this file accepts;
+ * `value` was simply never held to it. Reusing it keeps one number for one
+ * domain instead of adding a third opinion. The larger prose bounds elsewhere
+ * in this repository govern prose, and a short qualifier is not prose.
+ *
+ * **Why single-line.** The rule protects the record's *structural* integrity,
+ * not its appearance. A NUL, a C0/C1 control or a line break changes what the
+ * stored value **is** to anything that reads it line by line; that is a
+ * storage-level concern and belongs here.
+ *
+ * It is deliberately **not** a rendering rule. Bidirectional overrides
+ * (U+202E), zero-width characters and homoglyphs are display hazards, and they
+ * are accepted today, unchanged — escaping and display safety are the
+ * renderer's job, which is also why every accepted value is still stored
+ * byte-identical. Drawing the line anywhere else would mean this function
+ * quietly becoming a sanitizer, and a sanitizer that runs on write is how
+ * evidence stops being evidence.
+ *
+ * **A known asymmetry, recorded rather than widened.** The provider-supplied
+ * snapshot fields above share this `MAX_TEXT` bound but carry no control
+ * character rule. They are a different trust boundary — provider output, a 502
+ * — and holding them to this rule would be a second behaviour migration beyond
+ * the two defects this change exists to close. Tracked in
+ * `docs/architecture/EXTRACTION_PREPARATION.md`, not smuggled in here.
+ *
+ * A refusal is a `ValidationError` (400): this is caller input. Provider output
+ * is a different failure with a different meaning and stays a 502.
+ *
+ * **Trimming and empty-to-null are pre-existing**, not introduced here: the
+ * generated module service already trimmed and nullified. Verified against the
+ * pre-fix tree, input by input, so this change adds no normalization of its
+ * own — only a length bound and a control-character refusal.
+ *
+ * @param {unknown} value
+ */
+function optionalSignalValue(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') {
+    throw new ValidationError('value must be a string', { field: 'value' });
+  }
+  // Bound the raw input, not the trimmed one: 5,000 spaces is still 5,000
+  // characters somebody sent, and accepting it to then discard it invites the
+  // next caller to send 5,000,000.
+  if (value.length > MAX_TEXT) {
+    throw new ValidationError(`value must be at most ${MAX_TEXT} characters`, { field: 'value' });
+  }
+  if (CONTROL_RE.test(value)) {
+    throw new ValidationError('value must not contain control characters or line breaks', { field: 'value' });
   }
   const trimmed = value.trim();
   return trimmed === '' ? null : trimmed;
@@ -380,7 +432,7 @@ export function buildRecordSignalAction(config) {
       { name: 'signalType', type: 'string', required: true, hint: 'Canonical key, e.g. pricing-page-visited, demo-requested.' },
       { name: 'source', type: 'string', required: false },
       { name: 'observedAt', type: 'timestamp', required: true },
-      { name: 'value', type: 'string', required: false },
+      { name: 'value', type: 'string', required: false, hint: 'Optional single-line qualifier, at most 500 characters; no control characters.' },
       { name: 'sourceKey', type: 'string', required: false, hint: 'Deterministic dedupe key; defaults to signal:<leadId>:<type>:<observedAt>.' },
     ],
     /** @param {any} ctx */
@@ -390,6 +442,9 @@ export function buildRecordSignalAction(config) {
           field: 'signalType',
         });
       }
+      // Validated before anything is written, so an invalid value leaves no
+      // record, no audit entry and no trace step behind.
+      const value = optionalSignalValue(input.value);
       const sourceKey = input.sourceKey ?? `signal:${record.id}:${input.signalType}:${input.observedAt}`;
       const signal = await createRecord(
         modules,
@@ -399,7 +454,7 @@ export function buildRecordSignalAction(config) {
           signalType: input.signalType,
           source: input.source ?? null,
           observedAt: input.observedAt,
-          value: input.value ?? null,
+          value,
           sourceKey,
         },
         actor,

@@ -8,20 +8,21 @@ this file.
 > **Update this file in the same PR as every milestone merge.** A status file
 > that lags is worse than no status file.
 
-Generated: **2026-08-07**.
+Generated: **2026-08-09**.
 
 ## Snapshot
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **M14b2 — Delivery change, deliverables and acceptance**, on top of **AX2 — Machine-readable Solution Plans** (ADR-020), **M14b1 — Delivery economics**, **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
-| Main SHA at generation | `de448d4` (merge of PR #26; full SHA `de448d44c6256c4e6309aea4f06dc5120451293c`) |
-| Tests on clean main | **421 passing, 0 failing** at `de448d4`; **518** on the go-to-market branch, which adds the skill-parity, benchmark-scorer, benchmark-harness and tour-claim suites |
+| Latest merged milestone | **DX4 — Package Conformance Kit** (`crm package test`), on top of **M15 — Service operations** and its package-scoped Service Admin, on top of **M14b2 — Delivery change, deliverables and acceptance** and the Agent Tool Surface / Legacy Alignment strategy docs, on top of **AX2 — Machine-readable Solution Plans**, **M14b1 — Delivery economics**, **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
+| Main SHA at generation | `845cd3d` (merge of PR #30 / DX1; PR #29 / DX3 merged as `05fafbd`) |
+| Tests on clean main | **555 passing, 0 failing** (`npm run verify` from a fresh clone of `845cd3d`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | 37/37 in real Chromium on the M14a branch, plus 22 further checks for the M14b2 section as its pre-merge gate, both run manually — **not in CI** |
-| CI | `verify` ×2 + GitGuardian green, plus a `public-claims` job running `npm run gtm:check` on the go-to-market branch |
-| Open PRs | **Go-to-market** (`claude/go-to-market-strategy-gkr4bz`): the claims ledger and its gate, the public site, every distribution manifest prepared and unpublished, the launch packet, the Edition L benchmark harness (prepare/record/score) with its protocol amendment (ADR-022), and `docs/strategy/GO_TO_MARKET.md`. 518 passing on the branch, merged up to `de448d4`. |
+| CI | `verify` ×2 + GitGuardian green |
+| Open PRs | **Go-to-market** (`claude/go-to-market-strategy-gkr4bz`): `origin/main` merged in on 2026-08-09. The claims ledger and its gate, the generated public site with SEO/AEO surfaces, every distribution manifest, the launch packet, the Edition L benchmark harness (ADR-024), the falsification kit and the surface budget. Open and unmerged. |
+| npm | `accordo@0.0.1` and `create-accordo@0.0.1` published as **empty name reservations** on 2026-08-09 — confirmed against the registry, not assumed. Neither installs anything. The `@accordo` scope is **unclaimed** (`@accordo/mcp` and `@accordo/core` return 404), which is why `site/brand.json` records `npm.status: names-reserved` and the MCP-registry submission stays blocked. |
 
 ## Completed functional path
 
@@ -83,17 +84,26 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 | M14a | Delivery execution: eight human-driven transitions, block evidence, a hierarchy gate | ADR-019 addendum 1 |
 | AX1 | Deterministic application inspection: `crm app inspect`, source-only and read-only | — |
 | M14b1 | Delivery economics: cost policy, append-only time and expense evidence, versioned plan, reproducible contribution estimate | ADR-014, ADR-016 |
-| AX2 | Machine-readable Solution Plans: a plan *contract*, not a planner and not a runtime | ADR-020 |
-| M14b2 | Delivery change, deliverables and acceptance: governed change requests, immutable plan revisions, a commercial-change handoff that touches no commercial record and has a recorded end, deliverable evidence and recorded customer acceptance over a frozen scope | ADR-018/019 line |
+| AX2 | Machine-readable Solution Plans: `crm solution inspect\|validate\|check`, bound to an `app inspect` report | ADR-020 |
+| M14b2 | Delivery change, deliverables and acceptance | ADR-014, ADR-019 |
+| M15 | Service operations: coverage, entitlements, a five-state support case, elapsed-time SLA evidence, escalation | ADR-018 |
+| DX4 | Package Conformance Kit: `crm package test`, generic, composed and booted, never special-cased by name | ADR-018 |
+| DX3 | Package Scaffold: `crm package scaffold`, a two-file empty-but-conforming package, dry-run by default | ADR-018 |
+| DX1 | Project Doctor: `crm project doctor`, deterministic source diagnostics in ~155 ms, every finding naming an existing authority | ADR-018, ADR-019, ADR-020 |
 
 ## Next planned development
 
-1. **M15 Service Operations**, the **package contract review** and the first
-   legacy extraction (one of Intelligence / Commercial / Signature), then M16
-   Analytics Studio — `EXECUTION_ROADMAP.md`. The agent tool surface and the
-   legacy alignment matrix are designed but unimplemented
-   (`docs/architecture/AGENT_TOOL_SURFACE.md`,
-   `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`).
+1. **LA0 — Legacy Characterization Harness** — implemented on an open PR,
+   unmerged: `legacyCharacterizationContract: 1`, a checked-in baseline of Lead
+   Intelligence's externally observable behaviour, and twelve mutations proving
+   the suite can fail (`docs/plans/la0-legacy-characterization.md`). **No legacy
+   domain extraction has begun**, and the Accordo public-brand and GTM work is a
+   separate track that is neither merged nor approved here.
+2. Then, in the order `docs/architecture/EXTRACTION_PREPARATION.md` recommends:
+   resolve LA0's **two defect candidates**, the mechanical **neutral-helper
+   move**, the two **architecture ADRs** (`app.intelligence` and the definition
+   registry, both a human's), then the **Lead Intelligence extraction** and its
+   review, then **DX2** and last **M16 Analytics Studio** — `EXECUTION_ROADMAP.md`.
 
 Two parallel tracks run alongside and are not gated by domain progress: the
 **platform track** (domain package boundary, create-project CLI, PostgreSQL,

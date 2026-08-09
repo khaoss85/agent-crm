@@ -1,0 +1,65 @@
+{
+  "manifestVersion": 1,
+  "name": "service-escalation",
+  "description": "Immutable evidence that a human escalated a support case, and why. Nothing is routed, notified or assigned by it: there is no scheduler, no notification channel and no role enforcement, so a target reference is a label rather than a permission.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "writable": "managed",
+      "unique": true
+    },
+    {
+      "name": "supportCaseId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "serviceCoverageId",
+      "type": "string",
+      "writable": "managed",
+      "index": true
+    },
+    {
+      "name": "level",
+      "type": "enum",
+      "writable": "managed",
+      "values": [
+        "internal",
+        "management",
+        "vendor"
+      ]
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "targetRef",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "slaEvaluationId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "evidenceRef",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "recordedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "recordedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

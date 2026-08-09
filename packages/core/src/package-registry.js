@@ -2,7 +2,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { ValidationError, NotFoundError, AppError } from './errors.js';
-import { validateDeclaredConfig } from './intelligence-registry.js';
+import { validateDeclaredConfig } from './definition-fingerprint.js';
 import { resolvePackageComposition } from './package-composition.js';
 
 /**

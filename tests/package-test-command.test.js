@@ -1,0 +1,519 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { packageTestCommand } from '../packages/cli/src/package-test-command.js';
+import { AUTHORITIES } from '../packages/cli/src/package-test-checks.js';
+import {
+  HANGS, HOSTILE_PACKAGES, SCRATCH_PROBES, SPAWNS_LONG_LIVED_CHILD, WELL_FORMED, consumer,
+  fixtureProject, manifestFor, provider, writeFixturePackage,
+} from './helpers/package-test-fixtures.js';
+
+/**
+ * `crm package test` — DX4.
+ *
+ * The command answers one question: does a package satisfy the framework's
+ * generic package contract and integration invariants? These tests hold it to
+ * three standards.
+ *
+ * **It must be honest.** A check that cannot run reports `skipped` or
+ * `not_applicable` with a reason, never `passed`. Nothing here may be made
+ * green by demoting a failure to a limitation.
+ * **It must be deterministic.** The same package produces byte-identical JSON
+ * across runs, processes, working directories and paths containing spaces.
+ * **It must be safe.** The caller's project is never written to, the scratch
+ * copy is always removed, and no absolute path reaches the report.
+ */
+
+const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+const run = (packagePath, options = {}) =>
+  packageTestCommand({ packagePath, rootDir: repoRoot, capture: true, ...options });
+
+/** The three first-party packages, which conform. */
+const OFFICIAL = [
+  ['packages/contracts', 'contracts'],
+  ['packages/delivery', 'delivery'],
+  ['packages/service', 'service'],
+];
+
+test('every first-party package conforms, and the report says how', async (t) => {
+  for (const [path, name] of OFFICIAL) {
+    const { exitCode, report } = await run(path);
+    assert.equal(report.package.name, name);
+    assert.equal(exitCode, 0, `${name}: ${report.checks.filter((c) => c.status === 'failed').map((c) => `${c.id} — ${c.evidence}`).join(' | ')}`);
+    assert.equal(report.ok, true);
+    assert.equal(report.counts.failed, 0);
+    assert.ok(report.counts.passed >= 20, `${name} runs a real battery, not a token one`);
+
+    // The boot actually happened: attach, detach and AX1 agreement all ran.
+    for (const id of ['lifecycle.attach', 'lifecycle.detach', 'inspection.valid', 'inspection.package-row']) {
+      const row = report.checks.find((entry) => entry.id === id);
+      assert.equal(row.status, 'passed', `${name}: ${id} is ${row.status} — ${row.evidence}`);
+    }
+    // Every skip and every not-applicable states why, and every row names the
+    // rule it speaks for. A conformance kit that invents rules is a second,
+    // undocumented package contract.
+    for (const row of report.checks) {
+      if (row.status === 'skipped' || row.status === 'not_applicable') {
+        assert.ok(row.reason, `${name}: ${row.id} declined without a reason`);
+      }
+      assert.ok(AUTHORITIES.includes(row.authority),
+        `${name}: ${row.id} claims authority "${row.authority}", which is not one this framework has`);
+    }
+  }
+  assert.ok(t);
+});
+
+test('the customer fixture does NOT conform, for a reason the contract can state', async (t) => {
+  // `partner-scorecard` acts on `delivery-partner-engagement`, a record the
+  // `delivery` package owns, and declares no dependency on `delivery` at all.
+  // Handing that package to anyone whose project lacks `delivery` produces an
+  // application that will not start, and nothing in its declaration says so.
+  //
+  // This command CAN find the owner — it is in this repository — but rescuing
+  // the package that way and then calling it conforming would be monorepo magic:
+  // a third-party consumer would get a different answer. So the owner is
+  // composed to keep the rest of the report informative, and the check fails.
+  const { exitCode, report } = await run('examples/custom-packages/partner-scorecard');
+  assert.equal(exitCode, 1);
+  assert.equal(report.ok, false);
+
+  const coupling = report.checks.find((entry) => entry.id === 'declaration.action-targets');
+  assert.equal(coupling.status, 'failed');
+  assert.equal(coupling.reason, 'UNDECLARED_PACKAGE_RECORD_DEPENDENCY');
+  assert.equal(coupling.authority, 'composition');
+  assert.match(coupling.evidence, /delivery-partner-engagement \(delivery\)/);
+  assert.match(coupling.evidence, /delivery offers /, 'the author is told what they could declare instead');
+  assert.deepEqual(report.scratch.undeclaredRecordOwners, ['delivery'],
+    'and the report names the package this project happened to contain');
+
+  // Everything else about it is still measured, so the failure is one line of a
+  // real report rather than an early exit.
+  for (const id of ['lifecycle.attach', 'lifecycle.detach', 'inspection.valid']) {
+    assert.equal(report.checks.find((entry) => entry.id === id).status, 'passed', id);
+  }
+  assert.ok(t);
+});
+
+test('the three record-dependency cases are graded differently', async (t) => {
+  const root = fixtureProject(t);
+  writeFixturePackage(root, 'fx-owner', provider('fx-owner', { capability: 'owner-view' }),
+    { modules: { 'fx-owner-record.module.json': manifestFor('fx-owner-record') } });
+
+  // 1 · a host-application record no package owns — ordinary, needs no declaration.
+  writeFixturePackage(root, 'fx-host', consumer('fx-host', { targets: ['host-thing'] }));
+  writeFileSync(join(root, 'host-thing.module.json'), `${JSON.stringify(manifestFor('host-thing'), null, 2)}\n`);
+  const host = await packageTestCommand({ packagePath: join(root, 'packages/fx-host'), rootDir: root, capture: true });
+  const hostRow = host.report.checks.find((entry) => entry.id === 'declaration.action-targets');
+  assert.equal(hostRow.status, 'passed', hostRow.evidence);
+  assert.match(hostRow.evidence, /host-application record/);
+
+  // 2 · a record owned by a package it DOES declare — passed, coupling named.
+  writeFixturePackage(root, 'fx-declared', consumer('fx-declared', {
+    requires: [{ package: 'fx-owner', capability: 'owner-view', version: 1 }],
+    targets: ['fx-owner-record'],
+  }));
+  const declared = await packageTestCommand({ packagePath: join(root, 'packages/fx-declared'), rootDir: root, capture: true });
+  const declaredRow = declared.report.checks.find((entry) => entry.id === 'declaration.action-targets');
+  assert.equal(declaredRow.status, 'passed', declaredRow.evidence);
+  assert.match(declaredRow.evidence, /declared dependency/);
+
+  // 3 · the same record, undeclared — failed, and the owner is named.
+  writeFixturePackage(root, 'fx-undeclared', consumer('fx-undeclared', { targets: ['fx-owner-record'] }));
+  const undeclared = await packageTestCommand({ packagePath: join(root, 'packages/fx-undeclared'), rootDir: root, capture: true });
+  assert.equal(undeclared.exitCode, 1);
+  const undeclaredRow = undeclared.report.checks.find((entry) => entry.id === 'declaration.action-targets');
+  assert.equal(undeclaredRow.status, 'failed');
+  assert.equal(undeclaredRow.reason, 'UNDECLARED_PACKAGE_RECORD_DEPENDENCY');
+  assert.match(undeclaredRow.evidence, /owner-view@1/, 'the capability it could have declared is named');
+
+  // 4 · two foreign owners, one declared and one not — still a failure, and only
+  // the undeclared one is blamed.
+  writeFixturePackage(root, 'fx-second-owner', provider('fx-second-owner', { capability: 'second-view' }),
+    { modules: { 'fx-second-owner-record.module.json': manifestFor('fx-second-owner-record') } });
+  writeFixturePackage(root, 'fx-mixed', consumer('fx-mixed', {
+    requires: [{ package: 'fx-owner', capability: 'owner-view', version: 1 }],
+    targets: ['fx-owner-record', 'fx-second-owner-record'],
+  }));
+  const mixed = await packageTestCommand({ packagePath: join(root, 'packages/fx-mixed'), rootDir: root, capture: true });
+  const mixedRow = mixed.report.checks.find((entry) => entry.id === 'declaration.action-targets');
+  assert.equal(mixedRow.status, 'failed');
+  assert.match(mixedRow.evidence, /fx-second-owner-record \(fx-second-owner\)/);
+  assert.equal(/fx-owner-record \(fx-owner\)/.test(mixedRow.evidence), false,
+    'the declared one is not blamed alongside it');
+  assert.ok(t);
+});
+
+test('the dependency graph is closed deterministically, whatever shape it has', async (t) => {
+  const root = fixtureProject(t);
+  writeFixturePackage(root, 'fx-base', provider('fx-base', { capability: 'base', resources: [] }));
+  // A diamond: two middles both depending on one base, and a top on both.
+  for (const middle of ['fx-left', 'fx-right']) {
+    writeFixturePackage(root, middle, `// @ts-check
+import { definePackage } from '../../core/index.js';
+export function createFixturePackage() {
+  return definePackage({
+    packageContract: 1, name: '${middle}', label: '${middle}', version: 1, resources: [],
+    requires: [{ package: 'fx-base', capability: 'base', version: 1 }],
+    capabilities: [{ name: '${middle}-view', version: 1, create: () => ({}) }],
+  });
+}
+`);
+  }
+  writeFixturePackage(root, 'fx-top', consumer('fx-top', {
+    requires: [
+      { package: 'fx-left', capability: 'fx-left-view', version: 1 },
+      { package: 'fx-right', capability: 'fx-right-view', version: 1 },
+    ],
+  }));
+  const diamond = await packageTestCommand({ packagePath: join(root, 'packages/fx-top'), rootDir: root, capture: true });
+  assert.equal(diamond.exitCode, 0, JSON.stringify(diamond.report?.checks?.filter((c) => c.status === 'failed')));
+  assert.deepEqual(diamond.report.scratch.composed, ['fx-base', 'fx-left', 'fx-right', 'fx-top'],
+    'the whole diamond is composed once each, in a stable order');
+  const again = await packageTestCommand({ packagePath: join(root, 'packages/fx-top'), rootDir: root, capture: true });
+  assert.equal(diamond.report.fingerprint, again.report.fingerprint, 'and the closure is deterministic');
+
+  // A wrong version is not the same as a missing package, and both are refused.
+  writeFixturePackage(root, 'fx-wrong-version', consumer('fx-wrong-version', {
+    requires: [{ package: 'fx-base', capability: 'base', version: 9 }],
+  }));
+  const wrong = await packageTestCommand({ packagePath: join(root, 'packages/fx-wrong-version'), rootDir: root, capture: true });
+  assert.equal(wrong.exitCode, 1);
+  assert.equal(wrong.report.checks.find((entry) => entry.id === 'compose.clean').status, 'failed');
+  assert.ok(wrong.report.problems.some((entry) => /base@9|does not offer/.test(entry.message)),
+    `a wrong version is named: ${JSON.stringify(wrong.report.problems)}`);
+
+  // A second provider of the same capability at the same version is refused.
+  writeFixturePackage(root, 'fx-duplicate-provider', provider('fx-duplicate-provider', { capability: 'base', resources: [] }));
+  const duplicate = await packageTestCommand({ packagePath: join(root, 'packages/fx-duplicate-provider'), rootDir: root, capture: true });
+  assert.equal(duplicate.report.checks.find((entry) => entry.id === 'compose.capability-collision-refused').status, 'passed');
+  assert.ok(t);
+});
+
+test('the report is byte-identical across runs, processes and working directories', async (t) => {
+  const first = (await run('packages/service')).report;
+  const second = (await run('packages/service')).report;
+  assert.equal(JSON.stringify(first), JSON.stringify(second), 'two runs in one process agree');
+
+  // A different working directory must not move a single byte: every path in
+  // the report is relative to the project, never to where the caller stood.
+  const previous = process.cwd();
+  process.chdir(tmpdir());
+  try {
+    const elsewhere = (await run(join(repoRoot, 'packages/service'))).report;
+    assert.equal(JSON.stringify(first), JSON.stringify(elsewhere),
+      'a different working directory does not move one byte');
+  } finally {
+    process.chdir(previous);
+  }
+
+  // A separate process, which is the only way to prove no in-process state is
+  // carrying the answer.
+  const separate = await import('node:child_process').then(({ spawnSync }) => spawnSync(
+    process.execPath,
+    ['--no-warnings', join(repoRoot, 'packages/cli/bin/accordo.js'), 'package', 'test', 'packages/service', '--json'],
+    { encoding: 'utf8', cwd: repoRoot },
+  ));
+  assert.equal(separate.status, 0, separate.stderr);
+  assert.equal(JSON.parse(separate.stdout).fingerprint, first.fingerprint, 'a separate process agrees');
+  assert.ok(t);
+});
+
+test('a project path containing spaces changes nothing', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'accordo dx4 '));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const entry of ['packages', 'apps', 'package.json', 'examples']) {
+    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
+  }
+  const spaced = await packageTestCommand({
+    packagePath: join(root, 'packages/service'), rootDir: root, capture: true,
+  });
+  const plain = await run('packages/service');
+  assert.equal(spaced.exitCode, 0, JSON.stringify(spaced.report?.checks?.filter((c) => c.status === 'failed')));
+  assert.equal(spaced.report.fingerprint, plain.report.fingerprint,
+    'a path with spaces produces the same conformance facts');
+  assert.ok(t);
+});
+
+test('no absolute path, stack or scratch location reaches the report', async (t) => {
+  const root = fixtureProject(t);
+  writeFixturePackage(root, 'fixture-throws', `// @ts-check
+throw new Error('failed while reading /home/somebody/private/thing.js');
+`);
+  const thrown = await packageTestCommand({ packagePath: join(root, 'packages/fixture-throws'), rootDir: root, capture: true });
+  assert.equal(thrown.exitCode, 2, 'a package that cannot be read at all is exit 2');
+
+  for (const [path] of OFFICIAL.slice(0, 1)) {
+    const { report } = await run(path);
+    const text = JSON.stringify(report);
+    assert.equal(/"\/[A-Za-z]/.test(text), false, 'no value starts with an absolute path');
+    assert.equal(text.includes(tmpdir()), false, 'the scratch directory never appears');
+    assert.equal(text.includes(repoRoot.replace(/\/$/, '')), false, 'the caller\'s own root never appears');
+    assert.equal(/ at [A-Za-z]+ \(/.test(text), false, 'no stack frame');
+  }
+  assert.ok(t);
+});
+
+test('the caller\'s project is never written to, and the scratch is always removed', async (t) => {
+  const before = new Set(readdirSync(join(repoRoot, 'packages', 'modules')));
+  const scratchBefore = readdirSync(tmpdir()).filter((entry) => entry.startsWith('accordo-package-test-'));
+
+  await run('packages/service');
+  const failing = fixtureProject(t);
+  writeFixturePackage(failing, 'fixture-bad', HOSTILE_PACKAGES.find(([name]) => name === 'fixture-bad-contract')[1]);
+  await packageTestCommand({ packagePath: join(failing, 'packages/fixture-bad'), rootDir: failing, capture: true });
+
+  assert.deepEqual([...readdirSync(join(repoRoot, 'packages', 'modules'))].sort(), [...before].sort(),
+    'no generated module appeared in the real project');
+  const scratchAfter = readdirSync(tmpdir()).filter((entry) => entry.startsWith('accordo-package-test-'));
+  assert.deepEqual(scratchAfter, scratchBefore, 'every scratch project was removed, on success and on failure');
+  assert.ok(t);
+});
+
+test('a well-formed fixture package conforms; each hostile one is refused with a stable outcome', async (t) => {
+  const root = fixtureProject(t);
+  writeFixturePackage(root, 'fixture-ok', WELL_FORMED);
+  const control = await packageTestCommand({ packagePath: join(root, 'packages/fixture-ok'), rootDir: root, capture: true });
+  assert.equal(control.exitCode, 0, JSON.stringify(control.report?.checks?.filter((c) => c.status === 'failed')));
+
+  /** id → the check that must have caught it, or null when the package cannot be read at all. */
+  const EXPECTED = {
+    'fixture-no-definition': null,
+    'fixture-throws-on-import': null,
+    'fixture-bad-contract': 'declaration.contract',
+    'fixture-bad-name': 'declaration.valid',
+    'fixture-private-import': 'boundary.private-import',
+    'fixture-eval': 'boundary.static-source',
+    'fixture-missing-dependency': null,
+    'fixture-unstable-metadata': 'declaration.metadata',
+    'fixture-noisy': 'noise',
+    'fixture-exits': 'survives',
+  };
+
+  for (const [name, source] of HOSTILE_PACKAGES) {
+    writeFixturePackage(root, name, source);
+    const outcome = await packageTestCommand({
+      packagePath: join(root, 'packages', name), rootDir: root, capture: true, timeoutMs: 20_000,
+    });
+    const expected = EXPECTED[name];
+    if (expected === null) {
+      assert.ok(outcome.exitCode === 1 || outcome.exitCode === 2,
+        `${name}: expected a refusal, got exit ${outcome.exitCode}`);
+      continue;
+    }
+    if (expected === 'survives') {
+      // A package that calls `process.exit` while being imported must take its
+      // own child down and nothing else. This is the case that proved the point:
+      // an early draft read the definition in the parent, and this fixture
+      // killed the test runner that was checking it.
+      assert.equal(outcome.exitCode, 2, `${name}: a package that exits mid-import is unreadable, not conforming`);
+      assert.equal(outcome.report, null);
+      continue;
+    }
+    assert.ok(outcome.report, `${name}: a readable package still produces a report`);
+    if (expected === 'noise') {
+      // A package that floods a stream must not corrupt the document or hang
+      // the parent; whether it conforms is a separate question and either
+      // answer is legitimate.
+      assert.equal(typeof outcome.report.ok, 'boolean');
+      assert.equal(outcome.report.packageConformanceContract, 1);
+      continue;
+    }
+    assert.equal(outcome.exitCode, 1, `${name}: expected conformance failures`);
+    const row = outcome.report.checks.find((entry) => entry.id === expected);
+    assert.equal(row?.status, 'failed', `${name}: ${expected} should have caught it (${row?.evidence})`);
+  }
+  assert.ok(t);
+});
+
+test('a package whose module body never returns is stopped, not waited for', async (t) => {
+  const root = fixtureProject(t);
+  writeFixturePackage(root, 'fixture-hangs', HANGS);
+  const started = Date.now();
+  const outcome = await packageTestCommand({
+    packagePath: join(root, 'packages/fixture-hangs'), rootDir: root, capture: true, timeoutMs: 4_000,
+  });
+  const elapsed = Date.now() - started;
+  // The parent returns; it does not hang. Two boots at four seconds each plus
+  // the AX1 inspection is the bound, and the run is comfortably inside it.
+  assert.ok(elapsed < 90_000, `the command returned in ${elapsed}ms rather than hanging`);
+  assert.ok(outcome.exitCode === 1 || outcome.exitCode === 2, `exit ${outcome.exitCode}`);
+  if (outcome.report) {
+    const attach = outcome.report.checks.find((entry) => entry.id === 'lifecycle.attach');
+    assert.equal(attach.status, 'failed', 'a project that will not start is a failed attach, not a pass');
+  }
+  assert.ok(t);
+});
+
+test('a package outside the project is refused rather than copied in', async (t) => {
+  const outside = mkdtempSync(join(tmpdir(), 'accordo-outside-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  writeFixturePackage(outside, 'fixture-elsewhere', WELL_FORMED);
+  const outcome = await run(join(outside, 'packages/fixture-elsewhere'));
+  assert.equal(outcome.exitCode, 2, 'a package outside the project cannot be composed by relative import');
+  assert.ok(t);
+});
+
+test('the machine-readable contract is stable, and its vocabulary is closed', async (t) => {
+  const { report } = await run('packages/service');
+  assert.deepEqual(Object.keys(report).sort(), [
+    'categories', 'checks', 'command', 'counts', 'fingerprint', 'inspectionFingerprint',
+    'limitations', 'ok', 'package', 'packageConformanceContract', 'path', 'problems', 'scratch',
+  ]);
+  assert.deepEqual(report.categories,
+    ['declaration', 'boundary', 'composition', 'modules', 'lifecycle', 'inspection'],
+    'there is no category of checks that merely re-tests the framework itself');
+  assert.equal(report.packageConformanceContract, 1);
+  assert.equal(report.command, 'package:test');
+  assert.match(report.fingerprint, /^[0-9a-f]{64}$/);
+  assert.match(report.inspectionFingerprint, /^[0-9a-f]{64}$/, 'AX1\'s digest of the composed project travels as evidence');
+
+  const statuses = new Set(report.checks.map((entry) => entry.status));
+  for (const status of statuses) assert.ok(['passed', 'failed', 'skipped', 'not_applicable'].includes(status), status);
+  for (const entry of report.checks) {
+    assert.ok(report.categories.includes(entry.category), `${entry.id} is in a declared category`);
+    assert.equal(typeof entry.evidence, 'string');
+    assert.ok(entry.evidence.length > 0, `${entry.id} states what was observed`);
+  }
+  // Checks are sorted, so a diff between two reports is a diff of substance.
+  assert.deepEqual(report.checks.map((entry) => entry.id), [...report.checks.map((entry) => entry.id)].sort());
+
+  // Every limitation is a code with prose, and the domain boundary is stated.
+  assert.ok(report.limitations.some((entry) => entry.code === 'DOMAIN_CORRECTNESS_NOT_PROVEN'));
+  assert.ok(report.limitations.some((entry) => entry.code === 'PACKAGE_SOURCE_TRUSTED'));
+  // The trust boundary is stated in the exact three clauses the review requires.
+  const trust = report.limitations.find((entry) => entry.code === 'PACKAGE_SOURCE_TRUSTED').message;
+  assert.match(trust, /does not intentionally mutate the caller project/);
+  assert.match(trust, /trusted and executes with the operator’s authority/);
+  assert.match(trust, /not a filesystem, network or OS sandbox/);
+  const scratchLimit = report.limitations.find((entry) => entry.code === 'SCRATCH_PROJECT_ONLY').message;
+  assert.match(scratchLimit, /cannot prevent package code from writing wherever the operator can write/,
+    'the report never promises a hostile package cannot reach the caller project');
+  assert.ok(t);
+});
+
+test('the fingerprint moves when the package moves, and not when the caller does', async (t) => {
+  const root = fixtureProject(t);
+  writeFixturePackage(root, 'fixture-ok', WELL_FORMED);
+  const before = (await packageTestCommand({ packagePath: join(root, 'packages/fixture-ok'), rootDir: root, capture: true })).report;
+
+  writeFileSync(join(root, 'packages/fixture-ok/src/index.js'), WELL_FORMED.replace("version: 1,", 'version: 2,'));
+  const after = (await packageTestCommand({ packagePath: join(root, 'packages/fixture-ok'), rootDir: root, capture: true })).report;
+  assert.notEqual(before.fingerprint, after.fingerprint, 'a changed package version moves the digest');
+  assert.equal(after.package.version, 2);
+  assert.ok(t);
+});
+
+test('a declared dependency this project cannot satisfy skips the boot honestly', async (t) => {
+  const root = fixtureProject(t);
+  writeFixturePackage(root, 'fixture-missing-dependency',
+    HOSTILE_PACKAGES.find(([name]) => name === 'fixture-missing-dependency')[1]);
+  const { exitCode, report } = await packageTestCommand({
+    packagePath: join(root, 'packages/fixture-missing-dependency'), rootDir: root, capture: true,
+  });
+  assert.equal(exitCode, 1);
+  assert.ok(report.problems.some((entry) => entry.code === 'DEPENDENCY_PROVIDER_ABSENT'));
+  for (const id of ['lifecycle.attach', 'lifecycle.detach', 'inspection.valid']) {
+    const row = report.checks.find((entry) => entry.id === id);
+    assert.equal(row.status, 'skipped', `${id} must be skipped, never passed`);
+    assert.equal(row.reason, 'DEPENDENCY_PROVIDER_ABSENT');
+  }
+  assert.equal(report.scratch.manifestsApplied, 0, 'nothing was applied for a package that cannot compose');
+  // …and the declared dependency was still proved to stop registration.
+  assert.equal(report.checks.find((entry) => entry.id === 'compose.unmet-dependency-refused').status, 'passed');
+  assert.ok(t);
+});
+
+test('the isolation claim is exactly what the harness can keep, and no more', async (t) => {
+  // What isolation actually buys is that the invoking process survives. It does
+  // NOT stop package code writing where the operator can write, and the report
+  // must not imply otherwise.
+  const root = fixtureProject(t);
+  for (const [name, source] of SCRATCH_PROBES) writeFixturePackage(root, name, source);
+
+  // 1 · a package reading the environment is not prevented, and is not a failure.
+  const env = await packageTestCommand({
+    packagePath: join(root, 'packages/fixture-reads-env'), rootDir: root, capture: true,
+  });
+  assert.equal(env.exitCode, 0, 'reading the environment is not a conformance rule this framework has');
+
+  // 2 · a package writing beside its own source writes into the SCRATCH copy,
+  // which is what the harness controls. The caller's own package directory is
+  // untouched — not because the package was stopped, but because it was never
+  // the file it opened.
+  const beside = await packageTestCommand({
+    packagePath: join(root, 'packages/fixture-writes-beside-source'), rootDir: root, capture: true,
+  });
+  assert.ok(beside.report, 'a writing package still produces a report');
+  assert.equal(existsSync(join(root, 'packages/fixture-writes-beside-source/src/wrote-beside-source.txt')), false,
+    'the caller\'s copy of the package gained no file, because the package was imported from the scratch copy');
+
+  // 3 · an ordinary short-lived child a package spawns changes nothing.
+  const spawned = await packageTestCommand({
+    packagePath: join(root, 'packages/fixture-spawns-child'), rootDir: root, capture: true, timeoutMs: 20_000,
+  });
+  assert.ok(spawned.report, 'a package that spawns an ordinary child still produces a report');
+  assert.equal(spawned.exitCode, 0);
+  const isolation = spawned.report.limitations.find((entry) => entry.code === 'PROCESS_ISOLATION_BOUNDED');
+  assert.match(isolation.message, /deliberately detaches a process into a new group outlives the run/);
+
+  // 4 · a child that OUTLIVES the import is the timeout path, and it is stable:
+  // the reporting process cannot exit while it holds a live child handle, so
+  // the run is stopped and the whole process group goes with it.
+  writeFixturePackage(root, 'fixture-long-child', SPAWNS_LONG_LIVED_CHILD);
+  const started = Date.now();
+  const long = await packageTestCommand({
+    packagePath: join(root, 'packages/fixture-long-child'), rootDir: root, capture: true, timeoutMs: 3_000,
+  });
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 60_000, `the run was stopped rather than waited out (${elapsed}ms)`);
+  assert.ok(long.exitCode === 1 || long.exitCode === 2, `a stable outcome, got ${long.exitCode}`);
+  assert.ok(t);
+});
+
+test('a forged, doubled or truncated child report never becomes a conformance answer', async (t) => {
+  const { runReportingChild } = await import('../packages/cli/src/child-report.js');
+  const loaderFor = (t2, body) => {
+    const dir = mkdtempSync(join(tmpdir(), 'accordo-loader-'));
+    t2.after(() => rmSync(dir, { recursive: true, force: true }));
+    const file = join(dir, 'loader.mjs');
+    writeFileSync(file, body);
+    return file;
+  };
+
+  // Two JSON documents on fd 3: the concatenation is not valid JSON, so it is
+  // refused rather than half-parsed into a verdict.
+  const doubled = await runReportingChild({
+    loader: loaderFor(t, `import { writeSync } from 'node:fs';
+writeSync(3, JSON.stringify({ read: true, package: { name: 'forged' } }) + '\\n');
+writeSync(3, JSON.stringify({ read: true, package: { name: 'second' } }) + '\\n');
+`),
+  });
+  assert.equal(doubled.report, null);
+  assert.match(doubled.diagnostic, /not valid JSON/);
+
+  // A truncated document is refused, not repaired.
+  const truncated = await runReportingChild({
+    loader: loaderFor(t, `import { writeSync } from 'node:fs';
+writeSync(3, '{"read": true, "package": {"name": "trunc');
+`),
+  });
+  assert.equal(truncated.report, null);
+  assert.match(truncated.diagnostic, /not valid JSON/);
+
+  // Nothing at all on fd 3 is a stated outcome, not an empty pass.
+  const silent = await runReportingChild({ loader: loaderFor(t, 'process.exitCode = 0;\n') });
+  assert.equal(silent.report, null);
+  assert.ok(silent.diagnostic.trim().length > 0);
+
+  // stdout is not the report channel: a package printing a whole JSON document
+  // to stdout cannot become the answer.
+  const impostor = await runReportingChild({
+    loader: loaderFor(t, `console.log(JSON.stringify({ read: true, package: { name: 'impostor' } }));\n`),
+  });
+  assert.equal(impostor.report, null, 'stdout is package noise, never the contract');
+  assert.match(impostor.noise, /impostor/, 'and it is returned as noise instead');
+  assert.ok(t);
+});

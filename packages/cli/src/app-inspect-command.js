@@ -1,9 +1,9 @@
 // @ts-check
 
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LOAD_TIMEOUT_MS, runReportingChild } from './child-report.js';
 
 /**
  * `crm app inspect [--json] [--root <dir>]` — the CLI face of AX1.
@@ -47,19 +47,10 @@ import { fileURLToPath } from 'node:url';
  * would send the reader back to the guessing this command exists to end.
  */
 
-/** A hung import must not hang the operator's terminal. Generous, and finite. */
-const LOAD_TIMEOUT_MS = 60_000;
-/** A report is a document, not a stream; a runaway one is a defect. */
-const MAX_REPORT_BYTES = 16 * 1024 * 1024;
-/** Package chatter is diagnostic, and a package that floods it is not. */
-const MAX_NOISE_BYTES = 64 * 1024;
-/** Between asking the process group to stop and insisting. */
-const KILL_GRACE_MS = 2_000;
-
 const LOADER = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'accordo-inspect.js');
 
 /**
- * @param {{rootDir: string, json?: boolean, timeoutMs?: number}} options
+ * @param {{rootDir: string, json?: boolean, timeoutMs?: number, capture?: boolean}} options
  * @returns {Promise<{exitCode: number, report: any}>}
  */
 export async function inspectApplicationCommand({ rootDir, json = false, timeoutMs = LOAD_TIMEOUT_MS, capture = false }) {
@@ -88,117 +79,24 @@ export async function inspectApplicationCommand({ rootDir, json = false, timeout
 }
 
 /**
- * Run the loader and collect its three streams under explicit bounds.
+ * Run the loader under the shared bounded-child reader. The bounds, the fd-3
+ * report channel and the process-group kill live in `child-report.js` so
+ * `crm package test` uses the same isolation rather than a second copy of it.
  *
  * @param {string} root @param {number} timeoutMs
  * @returns {Promise<{report: any, noise: string, diagnostic: string}>}
  */
 function load(root, timeoutMs) {
-  return new Promise((settle) => {
-    const child = spawn(process.execPath, ['--no-warnings', LOADER, '--root', root], {
-      // Its own process group: a timeout must reach a grandchild a package
-      // spawned, not only the process we started.
-      detached: true,
-      // No stdin — an inspector never prompts, so a package that reads it gets
-      // EOF instead of stalling a CI job. fd 3 carries the report; 1 and 2
-      // belong to whatever the project's own source decides to print.
-      stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
-    });
-
-    const streams = {
-      report: { chunks: /** @type {string[]} */ ([]), bytes: 0, limit: MAX_REPORT_BYTES, exceeded: false },
-      noise: { chunks: /** @type {string[]} */ ([]), bytes: 0, limit: MAX_NOISE_BYTES, exceeded: false },
-    };
-    const collect = (key, stream) => {
-      if (!stream) return;
-      stream.setEncoding('utf8');
-      stream.on('data', (chunk) => {
-        const target = streams[key];
-        if (target.exceeded) return;
-        target.bytes += Buffer.byteLength(chunk, 'utf8');
-        if (target.bytes > target.limit) {
-          target.exceeded = true;
-          if (key === 'report') stop('size');
-          return;
-        }
-        target.chunks.push(chunk);
-      });
-      // A stream torn down by the kill is not a diagnostic.
-      stream.on('error', () => {});
-    };
-    collect('report', /** @type {any} */ (child.stdio[3]));
-    collect('noise', child.stdout);
-    collect('noise', child.stderr);
-
-    /** @type {'timeout'|'size'|null} */
-    let stopped = null;
-    /** @type {any} */
-    let insist = null;
-    const stop = (reason) => {
-      if (stopped) return;
-      stopped = reason;
-      killGroup(child, 'SIGTERM');
-      insist = setTimeout(() => killGroup(child, 'SIGKILL'), KILL_GRACE_MS);
-      if (typeof insist.unref === 'function') insist.unref();
-    };
-
-    const timer = setTimeout(() => stop('timeout'), timeoutMs);
-    if (typeof timer.unref === 'function') timer.unref();
-
-    let settled = false;
-    const finish = (spawnError) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (insist) clearTimeout(insist);
-      const noise = streams.noise.chunks.join('')
-        + (streams.noise.exceeded ? `\n… truncated at ${MAX_NOISE_BYTES} bytes\n` : '');
-
-      if (spawnError) {
-        settle({ report: null, noise, diagnostic: `${spawnError.message}\n` });
-        return;
-      }
-      if (stopped === 'timeout') {
-        settle({
-          report: null, noise,
-          diagnostic: `Timed out after ${timeoutMs / 1000}s loading the project composition, and stopped its process group. `
-            + 'A package whose module body does not return on import will do this.\n',
-        });
-        return;
-      }
-      if (stopped === 'size' || streams.report.exceeded) {
-        settle({
-          report: null, noise,
-          diagnostic: `The inspection report exceeded ${MAX_REPORT_BYTES / 1024 / 1024} MB and was refused. `
-            + 'A package publishing very large metadata() will do this.\n',
-        });
-        return;
-      }
-      const raw = streams.report.chunks.join('');
-      try {
-        settle({ report: JSON.parse(raw), noise, diagnostic: '' });
-      } catch {
-        settle({
-          report: null, noise,
-          diagnostic: raw.trim() === ''
-            ? 'The project composition could not be read; no report was produced.\n'
-            : 'The inspection report was not valid JSON.\n',
-        });
-      }
-    };
-
-    child.once('error', (error) => finish(error));
-    child.once('close', () => finish(null));
+  return runReportingChild({
+    loader: LOADER,
+    args: ['--root', root],
+    timeoutMs,
+    hints: {
+      timeout: 'loading the project composition, and stopped its process group. A package whose module body does not return on import will do this.',
+      size: 'A package publishing very large metadata() will do this.',
+      empty: 'The project composition could not be read; no report was produced.',
+    },
   });
-}
-
-/** Signal the child's whole process group, tolerating a group that is already gone. */
-function killGroup(child, signal) {
-  try {
-    if (child.pid) process.kill(-child.pid, signal);
-  } catch {
-    try { child.kill(signal); } catch { /* already gone */ }
-  }
 }
 
 /**

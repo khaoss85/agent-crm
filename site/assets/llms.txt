@@ -13,8 +13,8 @@ documents on disk — nothing in it is written by hand, and `--check` fails when
 
 ## Status: pre-launch
 
-- **The public name is chosen** (brand status: {{brand.nameStatus}}), but the npm package and scope are unclaimed. Do not treat "{{brand.name}}" as a package name or a namespace until they are registered.
-- **Nothing is published.** No npm package, no hosted service, no registry entry. License: {{brand.license}}.
+- **The public name is chosen** (brand status: {{brand.nameStatus}}), and the unscoped npm names are reserved by empty placeholder packages that install nothing. The `{{brand.scope}}` scope is unclaimed. Do not tell a user to install or scaffold from npm: `{{brand.createCommand}}` reserves a name, it does not create a project.
+- **The only things published are two empty npm name reservations.** No hosted service, no registry entry, no installable framework. License: {{brand.license}}.
 - **There is no production spine**: no authentication, no tenancy, no RBAC. The HTTP server is local-development-only, and an actor header is an assertion rather than an identity.
 - **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any percentage attributed to this project is fabricated.
 - Measured at commit {{measured.sha}} on {{measured.date}}: **{{measured.tests}} tests passing, 0 failing.**
@@ -72,7 +72,7 @@ The link goes to the document; `Proof:` names one of the tests that hold it.
 - [C-12 · JTBD-DS-06, JTBD-DS-07](docs/DELIVERY_ECONOMICS.md) — Delivery records what it consumed: append-only time and expense evidence, costed server-side by a versioned fingerprinted policy, with a reproducible contribution estimate grouped by currency. **Limit:** Deliberately not a margin: no revenue recognition, no cost of goods sold, no ARR/MRR/TCV, no annualization, no FX. A project carrying a recurring obligation returns no estimate at all and says why. Proof: `tests/delivery-economics-e2e.test.js`.
 - [C-13 · JTBD-PK-01, JTBD-PK-02](docs/PACKAGE_AUTHORING.md) — A customer-authored domain package attaches and detaches with the kernel's fingerprint unchanged, and reaches another package only through a capability it declares. **Limit:** No scaffold, no registry, no marketplace, and no sandboxing — package code runs with the host process's authority. Detaching leaves its data behind; there is no uninstall. Proof: `tests/package-contract.test.js`.
 - [C-14 · JTBD-AX-01, JTBD-AX-02](docs/APPLICATION_INSPECTION.md) — One command tells an agent what an application actually is — packages, capabilities, resources, actions, policies, providers — read from checked-in source, in a single deterministic JSON report. **Limit:** Source-only and read-only. It never opens the database, contacts a provider, reads a secret, or reports runtime, CI or authorization state — and it lists those blind spots as machine-readable limitations in its own output. Proof: `tests/app-inspect.test.js`.
-- [C-22](docs/APPLICATION_INSPECTION.md) — One command composes the whole thing and then inspects it: 61 modules, 3 packages, 25 resources, 42 actions, 5 policies and 10 providers, applied from manifests and driven end to end — then it prints the eleven things the inspector says it cannot see. **Limit:** It composes the starter's application, not yours, and it runs entirely locally against SQLite with no authentication. The counts describe what that starter applies; a different composition gives different numbers. Wall-clock time varies by machine and is deliberately not claimed. Proof: `tests/app-inspect.test.js`.
+- [C-22](docs/APPLICATION_INSPECTION.md) — One command composes the whole thing and then inspects it: 68 modules, 4 packages, 32 resources, 52 actions, 7 policies and 10 providers, applied from manifests and driven end to end — then it prints the eleven things the inspector says it cannot see. **Limit:** It composes the starter's application, not yours, and it runs entirely locally against SQLite with no authentication. The counts describe what that starter applies; a different composition gives different numbers. Wall-clock time varies by machine and is deliberately not claimed. Proof: `tests/app-inspect.test.js`.
 - [C-21 · JTBD-CO-03](docs/COMMERCIAL_OPERATIONS.md) — The same refusal holds where the money is: an agent actor asking to approve a discounted quote is refused with a 403, and only a human user actor can decide. **Limit:** The assertion lives inside a composite end-to-end test rather than a test named for it, so the citation is a file and a line rather than a test name. Extracting it into a named test is tracked in docs/strategy/GO_TO_MARKET.md; until then, cite the line. Proof: `tests/commercial-e2e.test.js`.
 - [C-15 · JTBD-AX-03](docs/SOLUTION_PLAN.md) — A Solution Plan is a checked-in file with a contract and a canonical fingerprint, validated against a real inspection — so a plan written against a composition that has since moved reports itself stale. **Limit:** A document contract, not a planner and not a runtime. Nothing executes a plan, and the validator refuses a plan that carries a command. Proof: `tests/solution-plan.test.js`.
 - [C-16 · JTBD-02](ARCHITECTURE.md) — Every mutation goes through a module service or a named workflow, and leaves an audit event and a step-level trace behind it. **Limit:** Audit records what the process did under an asserted actor. It is not a tamper-evident or externally attestable log, and it is not a compliance control. Proof: `tests/workflow.test.js`.
@@ -84,7 +84,7 @@ The link goes to the document; `Proof:` names one of the tests that hold it.
 
 ## CRM job coverage
 
-Of 149 catalogued CRM jobs: 22 validated end to end, 27 partially supported, 100 not supported. Status is conservative by policy —
+Of 149 catalogued CRM jobs: 22 validated end to end, 29 partially supported, 98 not supported. Status is conservative by policy —
 a job counts as validated end to end only when a test or a checked-in example proves it, so
 these numbers understate what can be built rather than overstate it.
 
@@ -246,5 +246,6 @@ fits a user's problem. Fetch `llms-full.txt` if you want the harness and inspect
 - [docs/MODULE_MANIFEST.md](docs/MODULE_MANIFEST.md): A module manifest is a small declarative JSON file that describes one CRM module entity.
 - [docs/PACKAGE_AUTHORING.md](docs/PACKAGE_AUTHORING.md): How Claude Code, Codex — or a person — adds a bounded domain to an {{brand.name}} repository without changing the…
 - [docs/RENAME_SURFACE.md](docs/RENAME_SURFACE.md): The complete inventory of where the working title lives, grouped by what breaks when it moves.
+- [docs/SERVICE_OPERATIONS.md](docs/SERVICE_OPERATIONS.md): The third domain package built under ADR-018, and the second that depends on another package.
 - [docs/SIGNATURE_ORDER.md](docs/SIGNATURE_ORDER.md): Turning an approved Quote Version into a signed commitment and one immutable Order — local development slice.
 - [docs/SKILL_PACKAGING.md](docs/SKILL_PACKAGING.md): A skill is the part of this framework that installs into somebody else's agent.
