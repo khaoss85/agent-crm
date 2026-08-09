@@ -57,6 +57,16 @@ export const MAX_SUMMARY = 400;
 export const DRAIN_MS = 250;
 
 /**
+ * Marks a child of this command, so a nested `project verify` can recognise
+ * that it is running *inside* one and refuse to run declared scripts again.
+ *
+ * Without it, a project whose `verify` script calls `accordo project verify`
+ * recurses without bound — and because DX5 runs both `verify` and `smoke`, the
+ * fan-out is 2^depth, not linear.
+ */
+export const VERIFY_DEPTH_ENV = 'ACCORDO_PROJECT_VERIFY_DEPTH';
+
+/**
  * The scripts DX5 will run **if the project declares them**, and the check each
  * one produces. The names are the framework's own conventions; a project that
  * uses different ones simply reports `not_applicable`.
@@ -294,6 +304,12 @@ export async function projectVerifyCommand(options = {}) {
     return { exitCode: 2, report: null };
   }
 
+  // Am I already running inside a `project verify`? The marker is set on every
+  // child this command spawns, so any depth below the first is recognisable.
+  const outerDepth = Number.parseInt(process.env[VERIFY_DEPTH_ENV] ?? '', 10);
+  const nested = Number.isInteger(outerDepth) && outerDepth > 0;
+  const childEnv = { ...process.env, [VERIFY_DEPTH_ENV]: String((nested ? outerDepth : 0) + 1) };
+
   /** @type {any[]} */
   const checks = [];
   /** @type {any[]} */
@@ -454,7 +470,20 @@ export async function projectVerifyCommand(options = {}) {
       }));
       continue;
     }
-    const result = await step({ command: 'npm', args: ['run', script, '--silent'], cwd: rootDir });
+    // A project whose declared script calls this command back is a project that
+    // cannot be verified: every level runs both declared scripts, so the tree
+    // of processes doubles with depth and each level holds its own
+    // fifteen-minute timer. Refuse loudly at the first nested level rather than
+    // discover the bound the hard way — and never report the recursion as a
+    // pass, which is what an unguarded run did.
+    if (nested) {
+      checks.push(check({
+        code, category: 'suite', status: 'failed', authority: 'project-script', required,
+        evidence: `npm run ${script}`, reason: 'RECURSIVE_VERIFY_REFUSED',
+      }));
+      continue;
+    }
+    const result = await step({ command: 'npm', args: ['run', script, '--silent'], cwd: rootDir, env: childEnv });
     checks.push(check({
       code,
       category: 'suite',
@@ -465,6 +494,12 @@ export async function projectVerifyCommand(options = {}) {
       reason: result.ok ? null : stepReason(result, rootDir),
       durationMs: result.durationMs,
     }));
+  }
+  if (nested && DECLARED_SCRIPTS.some(({ script }) => scripts.has(script)) && !blocked) {
+    problems.push({
+      code: 'RECURSIVE_VERIFY_REFUSED',
+      message: `this run is already inside another "project verify" (${VERIFY_DEPTH_ENV}=${outerDepth}), so its declared scripts were not run. A project whose verify or smoke script invokes "accordo project verify" recurses without bound, doubling the process tree at every level; the recursion is refused here rather than bounded, because a verification that verifies itself proves nothing`,
+    });
   }
 
   // ---- 6. the worktree this command promised not to change -----------------

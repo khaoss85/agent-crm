@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  CATEGORIES, PROJECT_VERIFICATION_CONTRACT, STATUSES, check, declaredScripts,
+  CATEGORIES, PROJECT_VERIFICATION_CONTRACT, STATUSES, VERIFY_DEPTH_ENV, check, declaredScripts,
   projectVerifyCommand, redact, runStep, semanticFingerprint, summarize,
 } from '../packages/cli/src/project-verify-command.js';
 
@@ -374,6 +374,46 @@ test('truncation is disclosed even when the step passed', async (t) => {
   const verify = report.checks.find((c) => c.code === 'suite.verify');
   assert.equal(verify.status, 'passed');
   assert.match(verify.evidence, /output truncated/, 'a pass built on a truncated log says so');
+});
+
+/**
+ * REGRESSION — nothing stopped a project's declared `verify` script from
+ * calling `accordo project verify`. Because DX5 runs both `verify` and `smoke`,
+ * the process tree *doubled* at every level: a probe measured 30 script
+ * invocations from one command before an externally-imposed depth cap, and the
+ * outer report still said `passed`. There was no env marker, no depth counter
+ * and no ancestry check anywhere in the command.
+ */
+test('a project whose verify script re-enters project verify is refused, not recursed', async (t) => {
+  const root = project(t);
+  const calls = [];
+
+  // The outer run marks every child, so a nested run can recognise itself.
+  const outer = await projectVerifyCommand({
+    rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: recordingStep(calls), git: cleanGit,
+  });
+  assert.equal(outer.report.checks.find((c) => c.code === 'suite.verify').status, 'passed');
+  for (const call of calls) {
+    assert.equal(call.env[VERIFY_DEPTH_ENV], '1', 'every child carries the depth marker');
+  }
+
+  // A nested run — what the child would see — refuses the declared scripts.
+  const previous = process.env[VERIFY_DEPTH_ENV];
+  process.env[VERIFY_DEPTH_ENV] = '1';
+  t.after(() => {
+    if (previous === undefined) delete process.env[VERIFY_DEPTH_ENV];
+    else process.env[VERIFY_DEPTH_ENV] = previous;
+  });
+  const nestedCalls = [];
+  const nested = await projectVerifyCommand({
+    rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: recordingStep(nestedCalls), git: cleanGit,
+  });
+  assert.equal(nestedCalls.length, 0, 'a nested run spawns no declared script, so the recursion terminates');
+  assert.equal(nested.exitCode, 1, 'and it never reports the recursion as a pass');
+  const verify = nested.report.checks.find((c) => c.code === 'suite.verify');
+  assert.equal(verify.status, 'failed');
+  assert.equal(verify.reason, 'RECURSIVE_VERIFY_REFUSED');
+  assert.ok(nested.report.problems.some((p) => p.code === 'RECURSIVE_VERIFY_REFUSED'));
 });
 
 test('declaredScripts reads package.json and never throws on a broken one', (t) => {
