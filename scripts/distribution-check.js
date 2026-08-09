@@ -271,11 +271,10 @@ if (asserted.length) {
 /**
  * The one distinction this repository is most likely to lose by accident.
  *
- * `create-accordo` is now real source: `packages/create-accordo` scaffolds a
- * project that boots, inspects and passes the project doctor, proven by
- * `tests/project-bootstrap.test.js`. The package **published** under that name
- * is still the empty `0.0.1` placeholder, so `npm create accordo` reaches the
- * placeholder rather than this code.
+ * `create-accordo` is real source and a deterministic publication candidate.
+ * The package **published** under that name is still the empty `0.0.1`
+ * placeholder, so `npm create accordo` reaches the placeholder rather than the
+ * assembled candidate.
  *
  * Two true sentences and one false one, and the false one is the comfortable one:
  *
@@ -291,6 +290,10 @@ if (asserted.length) {
  */
 const bootstrapManifestPath = 'packages/create-accordo/package.json';
 const bootstrapBinPath = 'packages/create-accordo/bin/create-accordo.js';
+const assemblyPath = 'scripts/assemble-create-accordo.js';
+const packageReadmePath = 'packages/create-accordo/README.package.md';
+const packageTestPath = 'tests/create-accordo-package.test.js';
+const stageWorkflowPath = '.github/workflows/stage-create-accordo.yml';
 const bootstrapExists = existsSync(join(root, bootstrapBinPath));
 
 if (bootstrapExists !== Boolean(brand.npm.sourceScaffolds)) {
@@ -337,12 +340,34 @@ if (bootstrapExists) {
   }
 
   if (brand.npm.status !== 'published') {
+    if (brand.npm.publicationCandidate === 'verified-unpublished') {
+      for (const path of [assemblyPath, packageReadmePath, packageTestPath, stageWorkflowPath]) {
+        if (!existsSync(join(root, path))) fail(`site/brand.json records a verified publication candidate, but ${path} is missing`);
+      }
+      if (existsSync(join(root, stageWorkflowPath))) {
+        const workflow = readFileSync(join(root, stageWorkflowPath), 'utf8');
+        if (!/^\s*workflow_dispatch:/m.test(workflow)) fail(`${stageWorkflowPath}: must remain manual-only`);
+        if (!/^\s*id-token:\s*write\s*$/m.test(workflow)) fail(`${stageWorkflowPath}: trusted publishing requires id-token: write`);
+        if (!/npm stage publish/.test(workflow)) fail(`${stageWorkflowPath}: must stage rather than directly publish`);
+        if (/\bnpm publish\b/.test(workflow) || /NPM_TOKEN/.test(workflow)) {
+          fail(`${stageWorkflowPath}: direct publish and long-lived npm tokens are forbidden`);
+        }
+        const actionReferences = [...workflow.matchAll(/^\s*- uses:\s*([^\s#]+)/gm)].map((match) => match[1]);
+        for (const reference of actionReferences) {
+          if (!/@[0-9a-f]{40}$/.test(reference)) {
+            fail(`${stageWorkflowPath}: ${reference} is not pinned to a full commit SHA; release actions share the OIDC trust boundary`);
+          }
+        }
+      }
+    } else {
+      fail('site/brand.json: npm.publicationCandidate must say verified-unpublished while the registry is only a name reservation');
+    }
     notes.push(
-      'create-accordo scaffolds a working project FROM THIS REPOSITORY (packages/create-accordo, '
-      + `proven by tests/project-bootstrap.test.js). The published \`${brand.npm.createCommand ?? 'npm create accordo'}\` `
+      'create-accordo scaffolds a working project FROM THIS REPOSITORY (packages/create-accordo), '
+      + 'and its deterministic publication candidate packs, installs offline and creates a working project. '
+      + `The published \`${brand.npm.createCommand ?? 'npm create accordo'}\` `
       + 'still reaches an empty 0.0.1 placeholder and installs nothing. Both sentences are true; only '
-      + 'the first may be claimed of this source, and publishing the real package is a human decision '
-      + 'that nothing in this repository performs.',
+      + 'the first may be claimed of this repository. Registry publication remains a human-approved staged action.',
     );
   }
 }

@@ -31,11 +31,11 @@ and it is a chain: a break at any link makes every link above it worthless.
 | # | Precondition | What it means concretely | Us, today |
 |---|---|---|---|
 | 1 | **Retrievable** | The agent can find us at task time: web search, npm search, a registry, a skills index, or memorized prevalence | Partial — public repo, topics, site. No npm, no registry, no docs site |
-| 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **No.** `npm create accordo` prints a placeholder; the only path is `git clone` |
+| 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **Candidate proven, channel not live.** The assembled `create-accordo@0.1.0` tarball installs offline and leaves a verified project; `npm create accordo` still reaches the `0.0.1` placeholder until human-approved staging and a registry receipt |
 | 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 555 tests |
 | 4 | **Repeatable** | It works the same way the next time, for a different user, with a different model | Partial — deterministic by construction, but unmeasured across models (benchmark designed, never run) |
 
-**The binding constraint is #2.** Not visibility. We could win every listing in
+**The binding constraint remains the live half of #2.** Not visibility. We could win every listing in
 section 3 tomorrow and convert almost none of it, because the agent that follows
 the listing arrives at a repository it must clone, on SQLite, with no auth,
 where the entry point is `npm run demo`. Every hour spent on distribution before
@@ -154,7 +154,7 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 
 | Channel | When | Status |
 |---|---|---|
-| npm `accordo` + `create-accordo` placeholders | **Now** | Prepared, blocked on `npm login` |
+| npm `accordo` + `create-accordo` | **Now** | Names reserved; deterministic `create-accordo@0.1.0` candidate verified, blocked on trusted-publisher configuration, manual staging and human 2FA approval |
 | npm `@accordo/*` scoped packages with rich keywords | After #2 | Org not created |
 | npm **provenance-signed** publishes (`--provenance` from CI) | After #2 | Not configured — cheap trust signal, agents and humans both read the badge |
 | GitHub topics, description, social preview | **Now** | **Done** |
@@ -210,8 +210,7 @@ budget decision for a human.
 
 The gap list, ordered by *effect on being recommended*, not by effort:
 
-1. **`create-accordo` that scaffolds a real project** — precondition #2. Nothing
-   above it converts without it. Roadmap Phase 5.
+1. **Publish the verified `create-accordo` candidate through the staged OIDC workflow** — the remaining half of precondition #2. Source and tarball work; the live registry command does not yet.
 2. **A deployable starter** — Vercel's gallery has no first-party CRM template
    and the submission needs a deploy target. Today's starter is an install
    script. Phase 10, but *one* deployable starter is worth more than three
