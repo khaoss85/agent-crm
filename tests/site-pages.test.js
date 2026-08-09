@@ -220,8 +220,28 @@ test('the Customer Hub intent separates local writes from missing cross-system i
   assert.match(html, /audited CRUD and service APIs/);
   assert.doesNotMatch(
     html,
-    /nothing enters this database except through an action/,
+    /nothing enters this database except through an action|framework(?:'s)? own actions (?:already )?wrote/i,
     'the framework has public CRUD and service write paths; denying them to sharpen the CDP contrast is false',
+  );
+
+  const source = JSON.parse(readFileSync(join(repo, 'site/concepts.json'), 'utf8'))
+    .entries.find((/** @type {any} */ entry) => entry.slug === 'customer-hub');
+  const authored = [
+    source.summary,
+    ...source.boundaries,
+    ...source.sections.flatMap((/** @type {any} */ section) => section.body),
+  ].join('\n');
+  assert.doesNotMatch(
+    authored,
+    /framework(?:'s)? own actions (?:already )?wrote/i,
+    'the rendered paragraph was fixed once while the hero and boundary kept the false narrower write path',
+  );
+
+  assert.match(html, /<figure class="record-chain"/);
+  assert.equal((html.match(/<li data-state=/g) ?? []).length, 6, 'the visible chain must carry every commercial stage it claims');
+  assert.ok(
+    html.indexOf('boundary-block') < html.indexOf('record-chain'),
+    'the visual may strengthen the value, but it cannot push ahead of the mandatory boundary',
   );
 
   const llms = read('llms.txt');

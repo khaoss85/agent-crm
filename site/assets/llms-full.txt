@@ -384,63 +384,12 @@ approvals — and the plan says which of its steps need a human.
 `docs/APPLICATION_INSPECTION.md`, `docs/SOLUTION_PLAN.md`,
 `tests/app-inspect.test.js`, `tests/solution-plan.test.js`, `scripts/check.js`.
 
-## The claims ledger: evidence for every entry
-
-From `site/claims.json`, measured at {{measured.sha}} on {{measured.date}} against
-{{measured.tests}} passing tests. Each id above resolves here. `npm run site:check` fails the
-build if an entry loses its evidence, loses its limitation, or names a file that is not on
-disk — which is why every path below exists in the repository.
-
-Paths only. Some entries also carry a prose `repoFact`, which restates what the entry already
-says above; those are in `site/claims.json`.
-
-### Claims (23)
-
-- **C-01** `JTBD-01`, `tests/module-factory-e2e.test.js`, `tests/generated-api-e2e.test.js`, `tests/admin-modules.test.js`, `tests/admin-core.test.js`, `docs/MODULE_FACTORY.md`, `docs/ADMIN.md`
-- **C-02** `JTBD-01b`, `tests/reference-fields-e2e.test.js`, `tests/reference-resolver.test.js`, `tests/module-factory.test.js`, `docs/MODULE_FACTORY.md`
-- **C-03** `JTBD-02`, `tests/workflow.test.js`, `tests/api.test.js`, `ARCHITECTURE.md`, `DECISIONS.md`
-- **C-04** `JTBD-02`, `tests/workflow.test.js`, `ARCHITECTURE.md`
-- **C-05** `JTBD-03`, `tests/opportunity-pipeline-e2e.test.js`, `tests/pipeline-contract.test.js`, `tests/admin-pipeline.test.js`, `docs/ACTIONS.md`
-- **C-06** `JTBD-04, JTBD-05, JTBD-05b, JTBD-LI-01, JTBD-LI-02, JTBD-LI-04`, `tests/lead-qualification-e2e.test.js`, `tests/lead-conversion-e2e.test.js`, `tests/lead-intelligence-e2e.test.js`, `docs/LEAD_INTELLIGENCE.md`
-- **C-07** `JTBD-LI-02, JTBD-LI-07`, `tests/lead-intelligence-e2e.test.js`, `tests/intelligence-contract.test.js`, `docs/LEAD_INTELLIGENCE.md`
-- **C-08** `JTBD-CO-01, JTBD-CO-03`, `tests/commercial-e2e.test.js`, `tests/commercial-contract.test.js`, `tests/admin-quotes.test.js`, `docs/COMMERCIAL_OPERATIONS.md`
-- **C-09** `JTBD-CO-07`, `tests/signature-order-e2e.test.js`, `tests/signature-contract.test.js`, `tests/admin-signature.test.js`, `docs/SIGNATURE_ORDER.md`
-- **C-10** `JTBD-CS-01, JTBD-CS-02`, `tests/contracts-activation-e2e.test.js`, `tests/contracts-contract.test.js`, `tests/admin-contracts.test.js`, `docs/CONTRACT_ACTIVATION.md`
-- **C-11** `JTBD-DS-01`, `tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e.test.js`, `tests/admin-delivery.test.js`, `docs/DELIVERY_HANDOVER.md`
-- **C-12** `JTBD-DS-06, JTBD-DS-07`, `tests/delivery-economics-e2e.test.js`, `docs/DELIVERY_ECONOMICS.md`
-- **C-13** `JTBD-PK-01, JTBD-PK-02`, `tests/package-contract.test.js`, `tests/custom-package-e2e.test.js`, `tests/contracts-registry-review.test.js`, `docs/PACKAGE_AUTHORING.md`
-- **C-14** `JTBD-AX-01, JTBD-AX-02`, `tests/app-inspect.test.js`, `docs/APPLICATION_INSPECTION.md`, `docs/AGENT_HARNESS_COMPATIBILITY.md`
-- **C-22** `tests/app-inspect.test.js`, `tests/contracts-activation-e2e.test.js`, `tests/delivery-economics-e2e.test.js`, `docs/APPLICATION_INSPECTION.md`
-- **C-21** `JTBD-CO-03`, `tests/commercial-e2e.test.js`, `docs/COMMERCIAL_OPERATIONS.md`
-- **C-15** `JTBD-AX-03`, `tests/solution-plan.test.js`, `docs/SOLUTION_PLAN.md`
-- **C-16** `JTBD-02`, `tests/workflow.test.js`, `tests/action-runtime-semantics.test.js`, `tests/event-bus-outbox.test.js`, `ARCHITECTURE.md`, `docs/ACTIONS.md`
-- **C-17** `tests/api.test.js`, `ARCHITECTURE.md`, `AGENTS.md`
-- **C-18** `JTBD-AX-02`, `tests/mcp.test.js`, `tests/scaffold.test.js`, `docs/MCP.md`
-- **C-19** `tests/module-evolution.test.js`, `tests/module-evolution-factory.test.js`, `tests/module-migrations.test.js`, `docs/MODULE_EVOLUTION.md`
-- **C-20** `docs/QUALITY_GATES.md`
-- **C-23** `tests/falsify.test.js`, `tests/module-factory.test.js`, `tests/workflow.test.js`, `docs/FALSIFY.md`
-
-### Standing limitations (11)
-
-- **L-01** `JTBD-15`, `docs/PROJECT_STATUS.md`, `README.md`
-- **L-02** `docs/PROJECT_STATUS.md`, `docs/strategy/PLATFORM_CAPABILITIES.md`
-- **L-03** `docs/strategy/CRM_BUILD_BENCHMARK.md`, `docs/PROJECT_STATUS.md`
-- **L-04** `JTBD-07, JTBD-10`, `docs/strategy/JOBS_AND_OUTBOX.md`
-- **L-05** `JTBD-14`, `docs/strategy/INTEGRATION_RUNTIME.md`
-- **L-06** `docs/benchmarks/CRM_JTBD_MATRIX.md`
-- **L-08** `tests/project-bootstrap.test.js`, `docs/PROJECT_STATUS.md`, `docs/plans/project-bootstrap-installability.md`
-- **L-09** `JTBD-15`, `tests/lead-intelligence-e2e.test.js`, `docs/strategy/DATA_GOVERNANCE.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md`
-- **L-07** `PRODUCT.md`, `docs/strategy/CATEGORY.md`
-- **L-10** `JTBD-DS-10, JTBD-CS-05`, `docs/strategy/EXECUTION_ROADMAP.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md`
-- **L-11** `JTBD-MK-01`, `docs/strategy/MARKETING_GROWTH_OPERATIONS.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md`
-
-An id that appears above but not here has lost its evidence, and `npm run site:check` would have failed the build before you read this.
-
 ## What this file omits
 
 Held under 40,000 characters so it fits a context window whole. Not inlined:
 
 - `docs/APPLICATION_INSPECTION.md` — 8,454 characters, over the remaining budget. Fetch it directly.
+- `site/claims.json (the evidence for every ledger entry)` — 4,673 characters, over the remaining budget. Fetch it directly.
 - The source. No implementation, migration, test or generated artifact appears here.
 - `DECISIONS.md`, the ADR log, and `docs/benchmarks/CRM_JTBD_MATRIX.md`, the job catalogue — both long, and neither needed to decide whether to recommend this.
 - Everything under `docs/strategy/`: plans rather than evidence, and not citable as capability.
