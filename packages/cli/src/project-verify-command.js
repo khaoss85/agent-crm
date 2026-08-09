@@ -255,8 +255,28 @@ export function redact(text, rootDir) {
   // most useful part of a reason — "./packages/core/src/thing.js" tells a
   // reviewer where to look — so the lookbehind keeps `./a/b` intact while still
   // removing `/usr/lib/...` and any other machine location.
-  out = out.replace(/(?<![\w.])(?:\/[\w.@-]+){2,}/g, '<path>');
-  out = out.replace(/\b([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|KEY|CREDENTIAL)[A-Z0-9_]*)\s*[=:]\s*\S+/gi, '$1=<redacted>');
+  //
+  // A path segment is "anything that is not whitespace, a quote or a
+  // separator". The narrower `[\w.@-]` this once used stopped at the first
+  // unusual character, so `/opt/tool+1.2/lib/run.js` published `+1.2/lib/run.js`
+  // and `/home/José/app` published the operator's name — a leak, in the one
+  // function whose job is to prevent leaks.
+  out = out.replace(/(?<![\w.])(?:\/[^\s'"/\\]+){2,}/g, '<path>');
+  // Two rules, deliberately not one case-insensitive rule.
+  //
+  // Environment-variable shape is matched case-SENSITIVELY. Folding case here
+  // meant `KEY` matched inside `monkey`, `foreign key` and `cache key`, so
+  // `foreign key: constraint "fk_order_contract" violated` was published as
+  // `foreign key=<redacted> violated` — the redactor eating the one token the
+  // reader needed. A lower-case `key:` in prose is not a credential.
+  out = out.replace(/\b([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSPHRASE|KEY|CREDENTIAL)[A-Z0-9_]*)\s*[=:]\s*\S+/g, '$1=<redacted>');
+  // Identifier shape (`apiKey`, `accessToken`, `password`) is matched in any
+  // case, but only for words that cannot be ordinary English. Bare `key` is
+  // absent on purpose: it is the one that produced every false positive.
+  out = out.replace(
+    /\b(\w*(?:secret|token|password|passphrase|credential|api[_-]?key|access[_-]?key|private[_-]?key|secret[_-]?key)\w*)\s*[=:]\s*\S+/gi,
+    '$1=<redacted>',
+  );
   return out;
 }
 

@@ -489,6 +489,47 @@ test('a project whose verify script re-enters project verify is refused, not rec
   assert.ok(nested.report.problems.some((p) => p.code === 'RECURSIVE_VERIFY_REFUSED'));
 });
 
+/**
+ * REGRESSION — `redact` folded case, so `KEY` matched inside ordinary words and
+ * `\s*[=:]\s*\S+` ate the token after them. `foreign key: constraint "fk_x"
+ * violated` was published as `foreign key=<redacted> violated`: the redactor
+ * destroying the one identifier the reader needed.
+ */
+test('redact does not eat ordinary prose that merely contains a secret-ish word', () => {
+  for (const survives of [
+    'error: foreign key: constraint "fk_order_contract" violated',
+    'FAIL: primary key: id must be unique',
+    'cache key: user-42 not found',
+    'ok 12 - donkey: renders',
+  ]) {
+    assert.equal(redact(survives, '/x'), survives, `${survives} is a diagnostic, not a credential`);
+  }
+  // And every genuinely secret-shaped name is still removed.
+  for (const [input, expected] of [
+    ['API_TOKEN=super-secret', 'API_TOKEN=<redacted>'],
+    ['DATABASE_PASSWORD=hunter2', 'DATABASE_PASSWORD=<redacted>'],
+    ['apiKey: "sk-live-9999"', 'apiKey=<redacted>'],
+    ['accessToken=eyJhbGciOi', 'accessToken=<redacted>'],
+    ['password: hunter2', 'password=<redacted>'],
+  ]) {
+    assert.equal(redact(input, '/x'), expected);
+  }
+});
+
+/**
+ * REGRESSION — the path rule matched only `[\w.@-]` segments, so an absolute
+ * path stopped being redacted at its first unusual character and published the
+ * rest. `/home/José/app` leaked the operator's name out of the one function
+ * whose entire job is to stop that.
+ */
+test('an absolute path with unusual characters is fully redacted', () => {
+  assert.equal(redact('at /opt/tool+1.2/lib/run.js', '/x'), 'at <path>');
+  assert.equal(redact('at /tmp/build~1/out.js', '/x'), 'at <path>');
+  assert.equal(redact('at /home/José/app/index.js', '/x'), 'at <path>');
+  // The lookbehind still protects the useful half of a reason.
+  assert.equal(redact('./packages/core/src/thing.js', '/x'), './packages/core/src/thing.js');
+});
+
 test('declaredScripts reads package.json and never throws on a broken one', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'dx5-scripts-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
