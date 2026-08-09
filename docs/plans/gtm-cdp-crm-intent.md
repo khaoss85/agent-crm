@@ -183,6 +183,9 @@ oversized or unknown `responsibilityMap` fields must fail the build.
   re-cloned it from GitHub. Fresh install, full verify, smoke and the B2B Lead
   Qualification starter all exited 0. The same clone produced all four standard
   browser artifacts plus 1270×4200 and 390×5200 CDP + CRM page captures.
+- 2026-08-09 — GitHub checks on plan-close head `c77ee6e` passed (`verify` twice,
+  `public-claims` twice and GitGuardian), with zero review threads and a clean,
+  mergeable stack. PR #54 was marked ready for human review.
 
 ## Decision log
 
@@ -228,7 +231,6 @@ public copy. Final clean-clone install, verify, smoke, starter and browser gates
 are green. No JTBD status changed; the page links both validated and unsupported
 rows without promoting any of them.
 
-Human follow-up remains: CI must be green on the final plan-only head, then the
-draft may be marked ready. Merge order is #44 → #53 → #54 with regular merge
-commits, followed by site deployment. Until those actions happen, this work is
-repository-ready and not publicly discoverable at its canonical URL.
+PR #54 is ready for human review. Merge order is #44 → #53 → #54 with regular
+merge commits, followed by site deployment. Until those actions happen, this
+work is repository-ready and not publicly discoverable at its canonical URL.
