@@ -31,16 +31,16 @@ and it is a chain: a break at any link makes every link above it worthless.
 | # | Precondition | What it means concretely | Us, today |
 |---|---|---|---|
 | 1 | **Retrievable** | The agent can find us at task time: web search, npm search, a registry, a skills index, or memorized prevalence | Partial — public repo, topics, site. No npm, no registry, no docs site |
-| 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **No.** `npm create accordo` prints a placeholder; the only path is `git clone` |
-| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 788 tests |
+| 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **Candidate proven, channel not live.** The assembled `create-accordo@0.1.0` tarball installs offline and leaves a verified project; `npm create accordo` still reaches the `0.0.1` placeholder until human-approved staging and a registry receipt |
+| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 788 tests measured at `b57c648` |
 | 4 | **Repeatable** | It works the same way the next time, for a different user, with a different model | Partial — deterministic by construction, but unmeasured across models (benchmark designed, never run) |
 
-**The binding constraint is #2.** Not visibility. We could win every listing in
-section 3 tomorrow and convert almost none of it, because the agent that follows
-the listing arrives at a repository it must clone, on SQLite, with no auth,
-where the entry point is `npm run demo`. Every hour spent on distribution before
-`create-accordo` scaffolds a real project is an hour spent filling a bucket with
-a hole in it.
+**The binding constraint remains the live half of #2.** The candidate works; the
+command users and agents can actually run still resolves to the empty `0.0.1`
+placeholder. We could win every listing in section 3 tomorrow and convert almost
+none of it until the reviewed candidate is staged, approved and verified live.
+Every hour spent on one-shot distribution before that receipt is an hour spent
+filling a bucket with a hole in it.
 
 This is not an argument for silence. It is an argument for **sequence**:
 sections 3 and 4 mark, per row, whether the action pays off *now* or only after
@@ -174,7 +174,7 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 
 | Channel | When | Status |
 |---|---|---|
-| npm `accordo` + `create-accordo` placeholders | **Now** | Names reserved as public `0.0.1` placeholders; they install no framework code |
+| npm `accordo` + `create-accordo` | **Now** | Names reserved; deterministic `create-accordo@0.1.0` candidate verified, blocked on trusted-publisher configuration, manual staging and human 2FA approval |
 | npm `@accordo/*` scoped packages with rich keywords | After #2 | Org not created |
 | npm **provenance-signed** publishes (`--provenance` from CI) | After #2 | Not configured — cheap trust signal, agents and humans both read the badge |
 | GitHub topics, description, social preview | **Now** | **Done** |
@@ -231,9 +231,7 @@ budget decision for a human.
 
 The gap list, ordered by *effect on being recommended*, not by effort:
 
-1. **Publish the proved `create-accordo` source behind the reserved name** — the
-   source scaffolds a real project, but the public `0.0.1` placeholder still
-   installs nothing. Publication remains a human release decision.
+1. **Publish the verified `create-accordo` candidate through the staged OIDC workflow** — the remaining half of precondition #2. Source and tarball work; the live registry command does not yet.
 2. **A deployable starter** — Vercel's gallery has no first-party CRM template
    and the submission needs a deploy target. Today's starter is an install
    script. Phase 10, but *one* deployable starter is worth more than three
@@ -297,7 +295,7 @@ asking a real question.
 Gemini extension + gallery topic + tag · skills.sh layout · Codex mirror ·
 llms.txt · Discussions · npm placeholders · comparison and intent pages.
 
-**The moment `create-accordo` scaffolds a real project:** npm scoped packages
+**The moment the real `create-accordo` is live on npm:** npm scoped packages
 with provenance · deployable starter + Deploy Button · Vercel template
 submission · awesome lists · Anthropic community marketplace · docs site.
 

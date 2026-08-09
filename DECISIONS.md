@@ -1008,3 +1008,60 @@ type only when its quality is greater than zero; `text/event-stream;q=0` is a
 406, not permission to return a response the client refused. Regression tests
 hold both boundaries and also exercise the post-read body-size check against a
 lying `Content-Length`.
+## ADR-026 — The npm bootstrap is assembled from declared source and staged through trusted publishing
+
+**Status:** accepted.
+
+**Context.** `packages/create-accordo` can create a runnable project from this
+repository, but npm packages cannot include files outside their package root.
+Publishing that directory directly would therefore ship a working executable
+beside no framework source; the command would load and then correctly refuse
+with `FRAMEWORK_SOURCE_UNAVAILABLE`. Adding a `files` array does not cross the
+package-root boundary. Checking a second copy of the framework into the package
+would solve the tarball and create a permanent source-drift problem.
+
+**Decision.** The checked-in `packages/create-accordo/package.json` remains
+`private: true`. A maintainer-only, dry-run-by-default assembler creates a new
+publication directory from two explicit inputs: the bootstrap package files and
+the same declared framework inventory the bootstrap already fingerprints. The
+framework is placed under `framework/`; installed code checks that bundled
+location before retaining the repository-ancestor fallback. The assembler
+reports a versioned contract and a content fingerprint, refuses a non-empty
+target, canonicalizes parent symlinks before enforcing the outside-source
+boundary, writes through a unique staging directory and commits with one rename.
+No generated framework copy is checked in.
+
+The publication manifest is generated from an allow-list, not inherited by
+spreading the private development manifest. It has no dependencies or install
+scripts, carries the exact public repository URL required by npm provenance,
+and exposes only the `create-accordo` bin. Every allow-listed input must be a
+regular file; the assembler refuses symlinks rather than following them into a
+signed tarball. Tests pack the assembled directory
+twice, require byte-identical archives, install one into an empty npm project,
+run the installed bin and run the resulting project's inspect, doctor, tests
+and smoke. A tarball that merely contains plausible paths is not evidence.
+
+**Release boundary.** Source never publishes directly. A manually triggered
+GitHub Actions workflow on a GitHub-hosted runner assembles and re-verifies the
+candidate, then uses npm trusted publishing through OIDC. It stages rather than
+publishes the version: CI may prepare a release, but a maintainer reviews and
+approves the staged package with 2FA before it becomes public. No long-lived npm
+write token is stored. Every action in that release workflow is pinned to a full
+commit SHA because it shares the OIDC trust boundary. Trusted-publisher
+configuration on npm must name the
+exact workflow and allow staged publication; repository source cannot prove
+that external setting, so it remains a published limitation until a live
+receipt exists.
+
+**Why this is not another user-facing command.** The failure being prevented is
+a maintainer publishing an incomplete tarball, not a coding agent lacking a
+project operation. The assembler is absent from generated projects, skills,
+MCP and the `accordo` CLI. End users still learn exactly one install line after
+the registry version is verified.
+
+**Consequences.** The repository can prove a publishable artifact before the
+registry changes, while `site/brand.json` continues to say `names-reserved` and
+public copy continues to refuse `npm create accordo`. The eventual registry
+receipt, not a merge or a green pack test, is what authorizes changing that
+status. The generated application remains local-only, SQLite-only and without
+authentication, tenancy or RBAC; packaging changes none of those boundaries.

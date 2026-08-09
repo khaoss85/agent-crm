@@ -10,10 +10,11 @@ Three states are used throughout:
 - **Ready** — the artifact exists; one human step remains, spelled out here.
 - **Blocked** — a precondition is genuinely missing; the blocker is named.
 
-The blocker that dominates the list: **`create-accordo` does not scaffold a
-project yet** (roadmap Phase 5). Directories that accept us today would resolve
-to `git clone`, and one-shot channels (Product Hunt, Show HN, Reddit) are worth
-more spent later than early. Rows below say so per row rather than in general.
+The blocker that dominates the list has narrowed: **a deterministic
+`create-accordo@0.1.0` candidate scaffolds and verifies a project, but the live
+registry still serves the empty `0.0.1` placeholder.** A green tarball is not a
+publication receipt. One-shot channels (Product Hunt, Show HN, Reddit) remain
+worth more after the human-staged release than before it.
 
 Copy for any public surface must pass `GTM_TECHNICAL_EVIDENCE_HANDOFF.md`. The
 approved short descriptions at the end of this file already do.
@@ -54,13 +55,33 @@ prefer trusted publishing via GitHub Actions (OIDC), which needs neither token
 nor OTP and signs provenance — it cannot perform a package's *first* publish,
 which is exactly why these two were published by hand.
 
-### 2.2 npm organization
+### 2.2 Stage the real `create-accordo@0.1.0`
+
+PR #51 prepares a manually triggered, token-free release path. After its regular
+merge to `main`:
+
+1. In npm package settings, configure trusted publishing for repository
+   `khaoss85/agent-crm` and the exact workflow `stage-create-accordo.yml`, with
+   staged publishing allowed.
+2. Dispatch **Stage create-accordo on npm** with confirmation
+   `create-accordo@0.1.0`.
+3. Inspect the staged package, its file inventory and provenance, then approve
+   it with 2FA.
+4. Verify `npm view create-accordo@0.1.0` and run `npm create accordo` from a
+   clean directory before changing any public install copy.
+
+The checked-in source manifest remains private. The workflow assembles the only
+publishable directory, reruns repository and package verification, and calls
+`npm stage publish` through GitHub OIDC. Until step 4 has a live receipt, the
+public command is still the placeholder and must not be recommended.
+
+### 2.3 npm organization
 
 https://www.npmjs.com/org/create → name `accordo` (free plan is enough for
 public scoped packages). Web-only: npm exposes no CLI or API for org creation.
 This reserves the `@accordo/*` scope for the real packages.
 
-### 2.3 GitHub social preview — **done, 2026-08-08**
+### 2.4 GitHub social preview — **done, 2026-08-08**
 
 Uploaded by hand through Settings → General → Social preview; GitHub exposes no
 API for it. The live image is the maintainer's own artwork, not
@@ -68,22 +89,19 @@ API for it. The live image is the maintainer's own artwork, not
 the two surfaces currently show different designs. Worth aligning at the next
 pass.
 
-### 2.4 Gemini CLI gallery listing
+### 2.5 Gemini CLI gallery listing — **done, 2026-08-09**
 
 Zero-submission: the gallery crawls repositories daily and lists those that
 carry the topic `gemini-cli-extension`, have `gemini-extension.json` at the
 repository root, and have at least one git tag
 ([releasing guide](https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/releasing.md)).
 
-Topic: **set**. Manifest: **on this branch**. Remaining, after the merge:
+Topic and manifest are live. The official gallery feed lists
+`@khaoss85/accordo` at version `0.1.0` and detects its context, skills and MCP
+surfaces. Re-verify the feed after a release changes those surfaces; no form is
+required.
 
-```bash
-gh release create v0.1.0 --title "v0.1.0" --notes "Pre-release: Gemini CLI extension and agent surface."
-```
-
-Then verify within ~24h at https://geminicli.com/extensions/browse/
-
-### 2.5 Announce the install lines
+### 2.6 Agent-surface install lines — **live**
 
 Nothing to submit — these work the moment the branch merges, and they are the
 lines every later piece of content must repeat verbatim:
@@ -100,14 +118,13 @@ npx skills add khaoss85/agent-crm             # skills.sh, indexes on install te
 |---|---|---|
 | **MCP Registry** ([quickstart](https://modelcontextprotocol.io/registry/quickstart)) | The registry stores metadata only — the server package must already be on npm, with `mcpName` in `package.json` matching `server.json`, under namespace `io.github.khaoss85` | `@accordo/mcp` is published |
 | **Vercel templates** ([submit](https://vercel.com/templates/submit)) | Requires a deployable app with a demo URL. The one starter (`examples/starters/b2b-lead-qualification`) is an install script, not a deployable project | One deployable starter exists (Phase 10) |
-| **Anthropic community marketplace** ([submit](https://platform.claude.com/plugins/submit)) | Form submission; the plugin should point at something installable before review | Phase 5 |
+| **Anthropic community marketplace** ([submit](https://platform.claude.com/plugins/submit)) | Form submission; the plugin should point at a live install command before review | The candidate is verified; submit only after `create-accordo@0.1.0` is live and independently verified |
 | **Anthropic Connectors Directory** | The read-only Streamable HTTP transport and privacy page are implemented, but the production endpoint has not been human-promoted or submitted | Human promotion, live `tools/list`/`tools/call` receipt, then review submission |
 | **ChatGPT / Codex plugin directory** | Same hosted transport; verified-developer and directory review remain external | Human promotion and verified-developer submission |
-| **Awesome lists** (`awesome-mcp-servers`, `awesome-claude-code`) | These reject entries that cannot be installed and used | Phase 5 |
-| **Product Hunt / Show HN / Reddit** | One-shot channels. A launch that ends in "clone the repo" spends the shot for a fraction of the return | Phase 5 + a deployable starter |
+| **Awesome lists** (`awesome-mcp-servers`, `awesome-claude-code`) | These reject entries that cannot be installed and used | The real npm package or hosted Docs MCP is live, depending on the list |
+| **Product Hunt / Show HN / Reddit** | One-shot channels. A launch that ends at the placeholder spends the shot for a fraction of the return | Real npm package; Product Hunt additionally waits for the benchmark, and deploy claims wait for the production spine |
 | **Paid search** | No brand volume; nothing to convert to | Phase 5 + a converting landing page |
 | **`CITATION.cff`** | Nothing citable — the benchmark has never been run | First benchmark results |
-| **npm provenance** (`--provenance`) | Needs publishing from CI with an OIDC-enabled workflow | First real package release |
 
 ## 4. Approved copy
 

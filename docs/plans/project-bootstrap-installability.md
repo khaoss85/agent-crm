@@ -28,7 +28,9 @@ anything. `create-accordo` on the npm registry remains the empty placeholder it
 was. The true sentence after this merges is *"`create-accordo` scaffolds a
 working project **from this repository**"*. The sentence *"`npm create accordo`
 works today"* stays false until a human publishes, and the bootstrap says so in
-its own machine-readable output (`PUBLISHED_PLACEHOLDER_DOES_NOT_SCAFFOLD`).
+its own machine-readable output (`SOURCE_ORIGIN_NOT_VERIFIED` records that
+nearby bytes cannot prove npm origin or provenance). The separate publication
+work is `docs/plans/npm-create-accordo-publication.md`.
 
 ## 2. Package Scaffold is not Project Scaffold
 
@@ -386,12 +388,12 @@ error that carries an absolute path.
 `LOCAL_DEVELOPMENT_ONLY` · `NO_DOMAIN_PACKAGES_COMPOSED` · `NO_NETWORK_ACCESS` ·
 `SOURCE_IS_A_COPY_NOT_A_DEPENDENCY` · `PROVIDERS_ARE_OFFLINE_FIXTURES` ·
 `NO_SCHEDULER_OR_OUTBOX` · `SOURCE_IS_TRUSTED` ·
-`CONFORMANCE_IS_NOT_CORRECTNESS` · `PUBLISHED_PLACEHOLDER_DOES_NOT_SCAFFOLD` ·
+`CONFORMANCE_IS_NOT_CORRECTNESS` · `SOURCE_ORIGIN_NOT_VERIFIED` ·
 `FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY`
 
-The last two matter most. `PUBLISHED_PLACEHOLDER_DOES_NOT_SCAFFOLD` is the
-npm-versus-source distinction, stated by code in the one place nobody can forget
-to update. `FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY` is inherited verbatim from
+The last two matter most. `SOURCE_ORIGIN_NOT_VERIFIED` is the npm-origin and
+provenance boundary: bundled source proves that the bytes exist, not where they
+came from. `FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY` is inherited verbatim from
 DX3's analysis of POSIX `rename(2)`, because this command commits the same way.
 
 ### 6.6 Name validation
