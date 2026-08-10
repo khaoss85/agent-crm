@@ -2,7 +2,7 @@
   "name": "create-accordo",
   "version": "0.1.0",
   "private": true,
-  "description": "Create a new Accordo CRM project from a checkout of the framework: deterministic, offline, and local-development-only.",
+  "description": "Create a local Accordo project for custom CRM, Customer Hub or policy-governed Smart CRM work. For CDP + CRM, Accordo owns process—not ingestion, identity resolution or segmentation.",
   "type": "module",
   "engines": {
     "node": ">=22.16.0"
@@ -10,5 +10,14 @@
   "bin": {
     "create-accordo": "./bin/create-accordo.js"
   },
+  "keywords": [
+    "crm",
+    "customer-hub",
+    "smart-crm",
+    "cdp-plus-crm",
+    "customer-data-platform",
+    "coding-agents",
+    "scaffold"
+  ],
   "license": "MIT"
 }

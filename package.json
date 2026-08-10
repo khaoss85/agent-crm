@@ -2,7 +2,7 @@
   "name": "accordo",
   "version": "0.1.0",
   "private": true,
-  "description": "Agent-native CRM framework: CRM modules, deterministic workflows, MCP, CLI, trace and audit.",
+  "description": "Agent-native framework for custom CRM, Customer Hub and policy-governed Smart CRM code. For CDP + CRM, Accordo is the process layer, not ingestion, identity resolution or segmentation.",
   "type": "module",
   "engines": {
     "node": ">=22.16.0"
@@ -38,6 +38,10 @@
   },
   "keywords": [
     "crm",
+    "customer-hub",
+    "smart-crm",
+    "cdp-plus-crm",
+    "customer-data-platform",
     "mcp",
     "agents",
     "codex",

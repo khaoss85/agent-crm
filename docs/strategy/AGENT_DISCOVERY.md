@@ -42,6 +42,11 @@ Verified August 8, 2026 against the CLI's own documentation.
 ### GitHub (a/b)
 
 - Precise repo description + topics; README written knowing models paraphrase it; starters as separate template-flagged repos; GitHub Discussions for RFCs. GitHub content feeds both task-time retrieval and eventual training corpora — the slow-burn (a) channel. Measure fork/usage ratios, not stars (category stars are inflation-prone — see COMPETITOR_MAP).
+- First-contact copy is a checked contract, not freehand campaign copy:
+  `npm run distribution:check` requires Custom CRM, Customer Hub, Smart CRM and
+  CDP + CRM signals on the README and every install/registry manifest. The same
+  artifact must keep the CDP boundary; this improves retrieval vocabulary but
+  does not turn Accordo into a CDP or guarantee recommendation.
 
 ### npm (a/b)
 

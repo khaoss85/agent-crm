@@ -18,6 +18,7 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { collectDiscoverySurfaces, validateDiscoverySurfaces } from './distribution-intent.js';
 
 const root = process.cwd();
 const failures = [];
@@ -34,6 +35,9 @@ const manifests = [
   { path: '.codex-plugin/plugin.json', pathFields: ['skills', 'mcpServers'] },
   { path: '.codex-plugin/mcp.json', pathFields: [] },
   { path: '.agents/plugins/marketplace.json', pathFields: [] },
+  { path: 'gemini-extension.json', pathFields: [] },
+  { path: 'package.json', pathFields: [] },
+  { path: 'packages/create-accordo/package.json', pathFields: [] },
   { path: 'server.json', pathFields: [] },
 ];
 
@@ -120,6 +124,31 @@ const serverJson = loaded.get('server.json');
 if (serverJson && !/^[a-z0-9.-]+\/[a-z0-9-]+$/.test(serverJson.name ?? '')) {
   fail('server.json: name must be reverse-DNS namespace/identifier, e.g. io.github.<owner>/<server>');
 }
+
+// ---------------------------------------------------------------- intent discovery
+
+/**
+ * A coding agent usually sees one short picker, registry, package or repository
+ * description before it sees the site. If that surface says only "CRM", the
+ * checked Customer Hub, Smart CRM and CDP + CRM pages cannot help retrieval.
+ *
+ * The CDP signal is deliberately inseparable from its boundary. Accordo owns the
+ * deterministic process layer beside a CDP; it does not ship ingestion, identity
+ * resolution or segmentation. This gate checks copy, not product capability.
+ */
+const discoverySurfaces = collectDiscoverySurfaces({
+  readme: readFileSync(join(root, 'README.md'), 'utf8'),
+  claudePlugin,
+  claudeMarketplace,
+  codexPlugin: loaded.get('.codex-plugin/plugin.json'),
+  geminiExtension: loaded.get('gemini-extension.json'),
+  rootPackage: loaded.get('package.json'),
+  createPackage: loaded.get('packages/create-accordo/package.json'),
+  serverJson,
+  goalSkillDescription: readFileSync(join(root, 'skills/solve-business-goal/SKILL.md'), 'utf8')
+    .match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? '',
+});
+for (const failure of validateDiscoverySurfaces(discoverySurfaces)) fail(failure);
 
 // ---------------------------------------------------------------- skills are loadable
 

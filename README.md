@@ -2,14 +2,15 @@
 
 > **Describe your sales process to your coding agent; own the CRM it builds.**
 
-An open-source framework that Claude Code and Codex use to generate a CRM application
-as code you own — deterministic workflows, policy-gated human approvals, audit and trace
-built in.
+An open-source framework that Claude Code, Codex and Gemini CLI use to generate a CRM
+application as code you own — deterministic workflows, policy-gated human approvals,
+audit and trace built in.
 
-The name is chosen and the domain registered, but the npm package and scope are still
-unclaimed and no trademark screen has been run. The project is **pre-launch**: nothing
-is published, and it is not deployable to production. What that means precisely is in
-[Where it stops](#where-it-stops), which is worth reading before the rest.
+The name is chosen and the domain registered. The npm names hold empty `0.0.1`
+placeholders, while the real package and the `@accordo` scope remain unpublished; no
+trademark screen has been run. The project is **pre-launch** and is not deployable to
+production. What that means precisely is in [Where it stops](#where-it-stops), which is
+worth reading before the rest.
 
 ```text
 Business request
@@ -20,6 +21,26 @@ Modules + deterministic workflows + versioned policy
       ↓
 API + Admin + trace + audit — in your repository, as code you review
 ```
+
+---
+
+## When to reach for Accordo
+
+- **Custom CRM:** when the commercial process is the product and the result should be
+  reviewable code rather than configuration inside somebody else's runtime.
+- **[Customer Hub](https://accordo.dev/concepts/customer-hub.html):** when “hub” means one
+  local commercial record chain with governed actions. Accordo does not ingest sources or
+  resolve customer identities like a CDP.
+- **[Smart CRM](https://accordo.dev/concepts/smart-crm.html):** when a coding agent should
+  compose the application while versioned policy and named humans retain business decisions.
+  It is agent-built software, not an autonomous decision-maker.
+- **[CDP + CRM](https://accordo.dev/concepts/cdp-plus-crm.html):** when an external CDP owns
+  ingestion, identity resolution and audiences, and Accordo owns the deterministic CRM
+  process layer beside it. Accordo ships no CDP, connector, importer or sync runtime.
+
+Those adjacent terms are retrieval paths, not extra capability claims. The checked
+[recommendation map](docs/strategy/RECOMMENDATION_MAP.md) binds each one to what the
+framework proves and where it stops.
 
 ---
 
@@ -63,7 +84,7 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 | `crm solution check` — a Solution Plan is a checked-in contract with a canonical fingerprint | a document contract, not a planner and not a runtime; nothing executes a plan | `tests/solution-plan.test.js` |
 | Generated modules evolve through explicit revisions and append-only named migrations | source-only: what a particular database applied is not knowable from here | `tests/module-evolution.test.js` |
 
-**781 tests, 0 failing**, run on every push together with the smoke test.
+**785 tests, 0 failing**, run on every push together with the smoke test.
 
 ## Run it
 
@@ -71,7 +92,7 @@ Node.js 22.16 or newer. There are no third-party runtime dependencies and no bui
 
 ```bash
 npm run tour     # compose the whole application and inspect it
-npm run verify   # 781 tests
+npm run verify   # 785 tests
 npm run falsify  # break five rules on purpose and watch the suite catch them
 npm run demo     # the approval slice, end to end
 npm run dev      # http://localhost:4000
