@@ -251,29 +251,38 @@ The gap list, ordered by *effect on being recommended*, not by effort:
    improves task-time matching but cannot guarantee generic search ranking or URR.
 7. **Provenance-signed npm publishes** — one CI flag, permanent trust signal.
 8. **URR measurement actually running** — the protocol exists in
-   `CRM_BUILD_BENCHMARK.md` and has never been executed. Without it we cannot
-   tell whether any of this worked. See §5.
+   `CRM_BUILD_BENCHMARK.md`; one feasibility attempt was invalid and no valid
+   150-session run has executed. Without it we cannot tell whether any of this
+   worked. See §5.
 
 ---
 
 ## 5. Measurement: the monthly runbook
 
-`CRM_BUILD_BENCHMARK.md` defines the Unaided Recommendation Rate. It has never
-been run. Making it operational is cheap and is the only defence against
-mistaking activity for traction.
+`CRM_BUILD_BENCHMARK.md` defines the Unaided Recommendation Rate. A first
+feasibility pilot was attempted on 2026-08-10 and declared invalid: one Codex
+response produced an unresolved Accordo name match with unsupported capabilities,
+Claude was quota-blocked and Gemini lacked authentication. It produced no rate.
+The receipt is `docs/benchmarks/URR_PILOT_2026-08-10.md`; the corrected protocol
+now requires identity resolution, full-panel completion and clean provider
+profiles. Making the valid monthly run operational is the only defence against
+mistaking activity — or a hallucinated namesake — for traction.
 
 **Monthly, same day, same prompts, results committed to `docs/benchmarks/`:**
 
-1. Ask each of Claude Code, Codex and Gemini CLI a fixed set of ~10 unaided
-   prompts drawn from §2 ("build me a CRM for…", "I need a customer hub for…").
-   Fresh session, no memory, no repo context.
-2. Record: were we named? in what position? with what install line? was the line
-   correct?
+1. Ask each of Claude Code, Codex and Gemini CLI the same 10 frozen unaided
+   prompts drawn from §2 ("build me a CRM for…", "I need a customer hub for…"),
+   five times each. Use dedicated machine and provider profiles that have never
+   seen Accordo; a fresh session on a contaminated account is not enough.
+2. Resolve a purported name match to the canonical repository/domain or a valid
+   published install surface before counting it. Record position, install line,
+   capability/limitation correctness and false-positive namesakes.
 3. Record the same for the *listing* surfaces: does `npx skills find crm`
    return us; does the Gemini gallery list us; do we appear in npm search for
    `crm framework`.
-4. Commit the raw transcripts. The number is worthless without them, and the
-   transcripts are themselves publishable content.
+4. Commit all 150 raw transcripts, including failures. Never shrink the denominator
+   around quota or auth failures. The number is worthless without the receipts,
+   and the transcripts are themselves publishable content.
 
 Leading indicators that move before URR does: npm weekly downloads of
 `create-accordo`, `npx skills add` installs, fork/star ratio (not stars —
