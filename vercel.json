@@ -2,10 +2,15 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "npm install",
-  "buildCommand": "npm run site:check",
+  "buildCommand": "npm run site:check && node scripts/assemble-docs-mcp-runtime.js",
   "outputDirectory": "site/dist",
   "cleanUrls": false,
   "trailingSlash": false,
+  "functions": {
+    "api/mcp.js": {
+      "includeFiles": "packages/docs-mcp/runtime-corpus/**"
+    }
+  },
   "rewrites": [
     {
       "source": "/evidence",

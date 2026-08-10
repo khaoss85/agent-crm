@@ -15,12 +15,13 @@ Written against `HEAD` on 2026-08-07 with 373 tests passing. Volatile facts live
 This project does not have a credibility problem or a quality problem. It has a **reachability
 problem** and a **mechanism problem**.
 
-- **Reachability**: no public name, no published package, no public repository. Nothing
-  compounds, because none of the channels that accrue prevalence have started.
-- **Mechanism**: the public promise is *"own the CRM it builds"*, and the only shipping install
-  path copies this monorepo. That is real ownership and it is not the `npm create` plus
-  versioned-dependency story the roadmap describes. The gap is now stated as `L-08` on every
-  surface rather than papered over.
+- **Reachability**: the name, repository, site and agent manifests are public, but generic search
+  still does not surface Accordo and the live npm command remains an empty placeholder. The
+  compounding channels have started; the main conversion path has not.
+- **Mechanism**: the public promise is *"own the CRM it builds"*. Source bootstrap works and a
+  deterministic `create-accordo@0.1.0` publication candidate packs, installs and verifies from a
+  clean project, but it is not on the registry. Ownership still means vendored source rather
+  than a versioned dependency, and the gap remains `L-08` on every surface.
 
 So the strategy is:
 
@@ -279,14 +280,14 @@ marketplaces and registries, **(c)** the in-session agent surface.
 | Gemini CLI extension + gallery | b | `gemini-extension.json` + `GEMINI.md` at the repository root, topic `gemini-cli-extension`, and one git tag | **Live.** The official gallery feed listed `@khaoss85/accordo` at version `0.1.0` on 2026-08-09 and detected its context, skills and MCP surfaces | — |
 | Anthropic community marketplace | b | The same manifests, via the Console form | Ready | **Human submission**, and it should point at something installable first — the create-CLI |
 | MCP registry | b | `server.json` + a published npm package | `server.json` ready; `@accordo/mcp` returns 404, so the entry would resolve to nothing | Publish `@accordo/mcp` → human |
-| npm | a/b | Per-package manifests, rich keywords, provenance-signed publish | `accordo` and `create-accordo` **reserved** as empty 0.0.1 placeholders (2026-08-09); the `@accordo` scope is unclaimed and the real packages do not exist | The create-CLI, then an npm org (web-only) |
-| `npm create <name>` | b/c | `packages/create-accordo/` | Working source is proved end to end; the public `0.0.1` placeholder still installs nothing | Human publishes the reviewed real package |
+| npm | a/b | Per-package manifests, rich keywords, provenance-signed publish | `accordo` and `create-accordo` remain empty 0.0.1 reservations; a deterministic `create-accordo@0.1.0` candidate now packs and installs offline but is not on the registry; the `@accordo` scope is unclaimed | Configure the exact trusted publisher, stage from reviewed `main`, inspect and approve with 2FA; then an npm org for scoped packages |
+| `npm create <name>` | b/c | A real create package | Candidate verified end to end; live command still reaches the placeholder | Human-approved staged publish and live receipt |
 | skills.sh | b/c | Nothing — it already walks `.claude/skills` and `.agents/skills` | **Live.** Public repository page and 12-skill Codex install verified 2026-08-09 | Generic search indexing: pending |
 | llms.txt / retrieval | a | Generated from the ledger, with a drift gate | **Built** — `llms.txt`, `llms-full.txt`, `jobs.json`, `answers.json`, sitemap, robots and JSON-LD, all generated and drift-checked | Deploy |
 | **In-session agent surface** | **c** | AGENTS.md, CLAUDE.md, skills ×2 harnesses, MCP config ×2, `app inspect`, harness compatibility | **Strongest layer** | **None — fully ours** |
 | Show HN | launch | `LAUNCH_PACKET.md` §2 | Written | Human posts |
 | Product Hunt | launch | `LAUNCH_PACKET.md` §3 | Written | Human posts, once, on the benchmark |
-| Anthropic Connectors Directory, OpenAI plugin directory | b | A **hosted Docs MCP** — not the project runtime — plus an endpoint, an auth mode and a privacy policy | Source is prepared in PR #52; it is unmerged and no public endpoint or directory submission exists | Merge #52, host, publish privacy policy, then human submissions. *Not* the production spine: a documentation MCP serves docs, not customer records, so it needs none of the CRM's auth, tenancy or RBAC |
+| Anthropic Connectors Directory, OpenAI plugin directory | b | A **hosted Docs MCP** — not the project runtime — plus an endpoint, an auth mode and a privacy policy | Transport and privacy page implemented; production endpoint and submissions unverified | **Human promotion + live protocol receipt + submission review.** *Not* the production spine: this read-only documentation MCP serves public docs, not customer records, and imports no CRM runtime. Its no-auth mode is safe only while that boundary holds |
 | Vercel template gallery, deploy buttons, hosted demo | b | A template with a working deploy and a live demo URL | Cannot be met honestly | **Production spine** — these assert deployability |
 | Discord / Slack | — | — | Deliberately not done | Reconsider at two consecutive months of 20+ substantive Discussions threads **and** a named human on call |
 

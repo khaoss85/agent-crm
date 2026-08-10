@@ -65,6 +65,18 @@ providers, not where the domain lives.
 Columns are the six built domains. Read a row as: *does this domain use this
 horizontal capability the way the contract intends?*
 
+### Hosted Docs MCP transport assessment
+
+The stateless Streamable HTTP transport in `packages/docs-mcp/src/http.js` is a
+horizontal **documentation/distribution** surface, not a CRM runtime capability.
+Its status is `not_applicable` for Pipeline, Lead Intelligence, Commercial
+Operations, Signature & Order, Contract Activation and Delivery: it reads the
+repository-wide public documentation corpus and claims ledger, imports no domain
+package, opens no application/database and exposes no domain mutation. No legacy
+domain can align to it or be backfilled into it. This explicit assessment closes
+the Compatibility Backfill Rule for the transport without inventing six empty
+runtime integrations.
+
 | Horizontal capability | Pipeline | Lead Intelligence | Commercial Ops | Signature & Order | Contract Activation | Delivery |
 |---|---|---|---|---|---|---|
 | **Domain package seam** (ADR-018) — `definePackage`, declared resources, one static import | `not_applicable` ¹ | `aligned` | `needs_extraction` | `needs_extraction` | `aligned` | `aligned` |

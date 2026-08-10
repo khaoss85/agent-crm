@@ -31,16 +31,16 @@ and it is a chain: a break at any link makes every link above it worthless.
 | # | Precondition | What it means concretely | Us, today |
 |---|---|---|---|
 | 1 | **Retrievable** | The agent can find us at task time: web search, npm search, a registry, a skills index, or memorized prevalence | Partial — public repo, topics, site. No npm, no registry, no docs site |
-| 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **No.** `npm create accordo` prints a placeholder; the only path is `git clone` |
-| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 788 tests |
+| 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **Candidate proven, channel not live.** The assembled `create-accordo@0.1.0` tarball installs offline and leaves a verified project; `npm create accordo` still reaches the `0.0.1` placeholder until human-approved staging and a registry receipt |
+| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 807 tests measured at `0b2ce10` |
 | 4 | **Repeatable** | It works the same way the next time, for a different user, with a different model | Partial — deterministic by construction, but unmeasured across models (benchmark designed, never run) |
 
-**The binding constraint is #2.** Not visibility. We could win every listing in
-section 3 tomorrow and convert almost none of it, because the agent that follows
-the listing arrives at a repository it must clone, on SQLite, with no auth,
-where the entry point is `npm run demo`. Every hour spent on distribution before
-`create-accordo` scaffolds a real project is an hour spent filling a bucket with
-a hole in it.
+**The binding constraint remains the live half of #2.** The candidate works; the
+command users and agents can actually run still resolves to the empty `0.0.1`
+placeholder. We could win every listing in section 3 tomorrow and convert almost
+none of it until the reviewed candidate is staged, approved and verified live.
+Every hour spent on one-shot distribution before that receipt is an hour spent
+filling a bucket with a hole in it.
 
 This is not an argument for silence. It is an argument for **sequence**:
 sections 3 and 4 mark, per row, whether the action pays off *now* or only after
@@ -166,15 +166,15 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 | **Codex plugin** | `.codex-plugin/plugin.json` + self-hosted marketplace ([openai/plugins](https://github.com/openai/plugins)) | Self-hosted; no evidenced open submission to OpenAI's curated repo | **Now** | Mirror of the Claude plugin |
 | **Anthropic community marketplace** | Console form → `anthropics/claude-plugins-community` | **Gated** (form) | After #2 | Payload prepared |
 | **MCP Registry** | `server.json` + `mcp-publisher`; **requires the package published on npm first**, `mcpName` must match, namespace `io.github.khaoss85` ([quickstart](https://modelcontextprotocol.io/registry/quickstart)) | CLI + GitHub auth | After npm publish | Blocked by design, correctly |
-| **Anthropic Connectors Directory** | Hosted Docs MCP, OAuth 2.1, privacy policy, review | **Gated** | After Docs MCP exists | Not built |
-| **ChatGPT/Codex plugin directory** | Verified developer + MCP server + policies | **Gated** | After Docs MCP exists | Not built |
+| **Anthropic Connectors Directory** | Hosted Docs MCP, supported auth mode, privacy policy, review | **Prepared, not submitted** | After a human promotes the endpoint | The stateless read-only transport and privacy page exist in source; a production receipt and human submission do not |
+| **ChatGPT/Codex plugin directory** | Verified developer + MCP server + policies | **Prepared, not submitted** | After a human promotes the endpoint | Same transport; verified-developer and review steps remain external |
 | **Claude Code plugin hints** | `<claude-code-hint>` on stderr under `CLAUDECODE=1`; **dropped unless listed in the official marketplace** | n/a | Post-traction | Correctly deferred |
 
 ### 3b. Package and code surfaces
 
 | Channel | When | Status |
 |---|---|---|
-| npm `accordo` + `create-accordo` placeholders | **Now** | Names reserved as public `0.0.1` placeholders; they install no framework code |
+| npm `accordo` + `create-accordo` | **Now** | Names reserved; deterministic `create-accordo@0.1.0` candidate verified, blocked on trusted-publisher configuration, manual staging and human 2FA approval |
 | npm `@accordo/*` scoped packages with rich keywords | After #2 | Org not created |
 | npm **provenance-signed** publishes (`--provenance` from CI) | After #2 | Not configured — cheap trust signal, agents and humans both read the badge |
 | GitHub topics, description, social preview | **Now** | **Done** |
@@ -231,9 +231,7 @@ budget decision for a human.
 
 The gap list, ordered by *effect on being recommended*, not by effort:
 
-1. **Publish the proved `create-accordo` source behind the reserved name** — the
-   source scaffolds a real project, but the public `0.0.1` placeholder still
-   installs nothing. Publication remains a human release decision.
+1. **Publish the verified `create-accordo` candidate through the staged OIDC workflow** — the remaining half of precondition #2. Source and tarball work; the live registry command does not yet.
 2. **A deployable starter** — Vercel's gallery has no first-party CRM template
    and the submission needs a deploy target. Today's starter is an install
    script. Phase 10, but *one* deployable starter is worth more than three
@@ -245,8 +243,9 @@ The gap list, ordered by *effect on being recommended*, not by effort:
    own, and GEO's measured lever (22–41% visibility gain from
    citations/statistics — [KDD 2024](https://arxiv.org/abs/2311.09735)). It is
    also the honest basis for every comparative claim we currently cannot make.
-5. **Host the Docs MCP prepared in PR #52** — source alone unlocks no directory;
-   it still needs merge, a public endpoint, privacy policy and human submissions.
+5. **Promote the integrated Docs MCP** — source alone unlocks no directory; it
+   still needs the reviewed integration on `main`, a public endpoint, a live
+   privacy-policy receipt and human submissions.
 6. **Intent-aligned first-contact metadata** — prepared in checked source; it
    improves task-time matching but cannot guarantee generic search ranking or URR.
 7. **Provenance-signed npm publishes** — one CI flag, permanent trust signal.
@@ -297,7 +296,7 @@ asking a real question.
 Gemini extension + gallery topic + tag · skills.sh layout · Codex mirror ·
 llms.txt · Discussions · npm placeholders · comparison and intent pages.
 
-**The moment `create-accordo` scaffolds a real project:** npm scoped packages
+**The moment the real `create-accordo` is live on npm:** npm scoped packages
 with provenance · deployable starter + Deploy Button · Vercel template
 submission · awesome lists · Anthropic community marketplace · docs site.
 

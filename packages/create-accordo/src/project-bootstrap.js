@@ -27,8 +27,8 @@ import { projectFiles } from './project-files.js';
  * Every other command here is free to reach for `canonicalJson`,
  * `validatePackageDefinition` or `safeMessage` from `packages/core`. This one
  * runs at the moment *before* the framework exists on the caller's disk, and
- * the published `create-accordo` placeholder on npm has no framework beside it
- * at all. So it is standalone Node with a local canonical serializer, and when
+ * a malformed or incomplete package may have no framework beside it at all. So
+ * it is standalone Node with a local canonical serializer, and when
  * the framework source is absent it reports `FRAMEWORK_SOURCE_UNAVAILABLE` and
  * exits 2 rather than crashing on an import. That duplication is deliberate.
  *
@@ -104,7 +104,7 @@ const EXCLUDED_NAMES = Object.freeze([/^\.DS_Store$/, /^\.scaffold-/, /^\.accord
  * claimed about the output.
  */
 const LIMITATIONS = Object.freeze([
-  ['PUBLISHED_PLACEHOLDER_DOES_NOT_SCAFFOLD', 'this command scaffolds from a checkout of the framework repository. `create-accordo` on the npm registry is an empty name reservation that installs nothing, so `npm create accordo` does not run this code and will not until a human publishes the package. Nothing here publishes anything'],
+  ['SOURCE_ORIGIN_NOT_VERIFIED', 'the command found framework source beside itself, either in a checkout or in a bundled package. That proves the bytes are present, not where they came from, whether npm served them or whether a provenance attestation exists'],
   ['NO_AUTHENTICATION', 'the generated project has no authentication. Actor headers are not identity, and its HTTP server is local-development-only'],
   ['NO_TENANCY', 'there is no data boundary between customers. One database is one undivided dataset'],
   ['NO_RBAC', 'there is no role-based access control. Approval keys are labels, and only the actor *type* is enforced'],
@@ -248,16 +248,17 @@ function suggestName(name) {
 /**
  * Find the framework source by walking up from this file.
  *
- * In this repository the answer is the repository root, two levels up. In a
- * published package it would be whatever directory the tarball laid the
- * framework into. When there is no such ancestor — which is the state of the
- * empty `create-accordo` placeholder on the registry today — the answer is
- * `null`, and the caller reports it rather than crashing on a missing import.
+ * In this repository the answer is the repository root, two levels up. In the
+ * assembled npm package the answer is the sibling `framework/` directory. When
+ * neither layout exists the answer is `null`, and the caller reports it rather
+ * than crashing on a missing import.
  *
  * @param {string} [from]
  */
 export function resolveFrameworkSource(from = dirname(fileURLToPath(import.meta.url))) {
   let directory = resolve(from);
+  const bundled = resolve(directory, '..', 'framework');
+  if (SOURCE_MARKERS.every((marker) => existsSync(join(bundled, ...marker.split('/'))))) return bundled;
   for (;;) {
     if (SOURCE_MARKERS.every((marker) => existsSync(join(directory, ...marker.split('/'))))) return directory;
     const parent = dirname(directory);
@@ -471,8 +472,7 @@ export function planProjectBootstrap({ directory, name, cwd = process.cwd(), sou
     problems.push({
       code: 'FRAMEWORK_SOURCE_UNAVAILABLE',
       message: 'no Accordo framework source was found beside this command, so there is nothing to create a project from. '
-        + 'This bootstrap copies a checkout of the framework repository; it downloads nothing. '
-        + 'The `create-accordo` package published to npm is an empty name reservation and has no framework in it',
+        + 'This bootstrap copies source already bundled with it or available in a framework checkout; it downloads nothing',
     });
   }
 

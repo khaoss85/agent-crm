@@ -42,7 +42,7 @@ const accordoBin = join(repoRoot, 'packages/cli/bin/accordo.js');
 
 /** Every limitation code the report is allowed to publish. */
 const LIMITATION_CODES = [
-  'PUBLISHED_PLACEHOLDER_DOES_NOT_SCAFFOLD', 'NO_AUTHENTICATION', 'NO_TENANCY', 'NO_RBAC',
+  'SOURCE_ORIGIN_NOT_VERIFIED', 'NO_AUTHENTICATION', 'NO_TENANCY', 'NO_RBAC',
   'SQLITE_ONLY', 'LOCAL_DEVELOPMENT_ONLY', 'NO_DOMAIN_PACKAGES_COMPOSED', 'NO_NETWORK_ACCESS',
   'SOURCE_IS_A_COPY_NOT_A_DEPENDENCY', 'PROVIDERS_ARE_OFFLINE_FIXTURES', 'NO_SCHEDULER_OR_OUTBOX',
   'SOURCE_IS_TRUSTED', 'CONFORMANCE_IS_NOT_CORRECTNESS', 'FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY',
@@ -363,7 +363,7 @@ test('an unwritable parent is an environment failure that leaves nothing behind'
   assert.equal(readFileSync(join(workspace, 'blocked'), 'utf8'), 'a file, not a directory');
 });
 
-test('with no framework beside it — the published placeholder’s state — it reports and exits 2', (t) => {
+test('with no framework beside it, an incomplete package reports and exits 2', (t) => {
   const workspace = scratch(t);
   // Exactly what an empty `create-accordo` tarball looks like on disk: the
   // command, and no framework anywhere above it.
@@ -376,11 +376,7 @@ test('with no framework beside it — the published placeholder’s state — it
   assert.equal(report.ok, false);
   assert.equal(report.source.resolved, false);
   assert.equal(report.problems.some((problem) => problem.code === 'FRAMEWORK_SOURCE_UNAVAILABLE'), true);
-  assert.match(
-    report.problems.find((problem) => problem.code === 'FRAMEWORK_SOURCE_UNAVAILABLE').message,
-    /empty name reservation/,
-    'and it says why, in the words the registry state deserves',
-  );
+  assert.match(report.problems.find((problem) => problem.code === 'FRAMEWORK_SOURCE_UNAVAILABLE').message, /downloads nothing/);
   assert.equal(existsSync(join(workspace, 'anything')), false);
 });
 
@@ -563,9 +559,10 @@ test('the machine-readable contract is stable, and its vocabulary is closed', (t
   }
 
   // The two claims that must never quietly drift.
-  const published = report.limitations.find((entry) => entry.code === 'PUBLISHED_PLACEHOLDER_DOES_NOT_SCAFFOLD');
-  assert.match(published.message, /npm registry is an empty name reservation/);
-  assert.match(published.message, /until a human publishes/);
+  const origin = report.limitations.find((entry) => entry.code === 'SOURCE_ORIGIN_NOT_VERIFIED');
+  assert.match(origin.message, /framework source beside itself/);
+  assert.match(origin.message, /whether npm served them/);
+  assert.match(origin.message, /provenance attestation/);
   assert.match(report.project.productionPosture, /no authentication, tenancy or RBAC/);
   assert.deepEqual(report.project.composedPackages, []);
 });
@@ -625,7 +622,7 @@ test('the text view leads with the refusal, not with files that were never writt
   // Both views end with the limitations, so the text reader gets them too.
   for (const view of [text, planned]) {
     assert.match(view, /What this project is not/);
-    assert.match(view, /\[PUBLISHED_PLACEHOLDER_DOES_NOT_SCAFFOLD\]/);
+    assert.match(view, /\[SOURCE_ORIGIN_NOT_VERIFIED\]/);
   }
 });
 

@@ -8,22 +8,22 @@ this file.
 > **Update this file in the same PR as every milestone merge.** A status file
 > that lags is worse than no status file.
 
-Generated: **2026-08-09**.
+Generated: **2026-08-10**.
 
 ## Snapshot
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **DX4 — Package Conformance Kit** (`crm package test`), on top of **M15 — Service operations** and its package-scoped Service Admin, on top of **M14b2 — Delivery change, deliverables and acceptance** and the Agent Tool Surface / Legacy Alignment strategy docs, on top of **AX2 — Machine-readable Solution Plans**, **M14b1 — Delivery economics**, **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
-| Main SHA at generation | `845cd3d` (merge of PR #30 / DX1; PR #29 / DX3 merged as `05fafbd`) |
-| Tests on clean main | **555 passing, 0 failing** (`npm run verify` from a fresh clone of `845cd3d`) |
+| Latest merged milestone | **Project Bootstrap** (PR #43), on top of **M16 — Renewal and expansion operations** (PR #42), **DX5 — Project Verify** (PR #41), the package extraction of **Lead Intelligence** (PR #38), and the earlier DX4/M15/M14/AX2 platform chain. The GTM intent and release candidates below are open, not merged. |
+| Main SHA at generation | `77d7719` (regular merge of PR #43 / Project Bootstrap) |
+| Tests on clean main | **772 passing, 0 failing** (`npm run verify` from the clean `77d7719` baseline recorded in `docs/plans/hosted-docs-mcp.md`) |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
-| Browser smoke | 37/37 in real Chromium on the M14a branch, plus 22 further checks for the M14b2 section as its pre-merge gate, both run manually — **not in CI** |
-| CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **Go-to-market** (`claude/go-to-market-strategy-gkr4bz`): `origin/main` merged in on 2026-08-09. The claims ledger and its gate, the generated public site with SEO/AEO surfaces, every distribution manifest, the launch packet, the Edition L benchmark harness (ADR-024), the falsification kit and the surface budget. Open and unmerged. |
+| Browser smoke | Real-Chromium checks remain manual and are **not in CI**. The GTM release candidate adds a checked privacy page to the 113-page site; its final clean-clone browser receipt belongs to PR #58, not to `main`. |
+| CI | `main` is green; PR #58 must have both `verify` runs, both `public-claims` runs and GitGuardian green at its exact head before review closes. |
+| Open PRs | **GTM release sequence:** #44 → #53 → #54 → #55 → #56 → #57 → #58. PR #58 preserves the reviewed ancestry of npm candidate #51 and Docs MCP #52, so #51/#52 are alternative direct-merge paths, not additional steps after #58. PRs #45 and #47 are older conflicting branches with failed checks and are not part of this release. |
 | npm | `accordo@0.0.1` and `create-accordo@0.0.1` published as **empty name reservations** on 2026-08-09 — confirmed against the registry, not assumed. Neither installs anything. The `@accordo` scope is **unclaimed** (`@accordo/mcp` and `@accordo/core` return 404), which is why `site/brand.json` records `npm.status: names-reserved` and the MCP-registry submission stays blocked. **This row describes the registry and nothing in it has changed.** |
-| Project bootstrap | **`create-accordo` is now real source**: `packages/create-accordo`, `projectBootstrapContract: 1`, dry-run by default. Run from a checkout it writes a standalone project that boots with no install, reports `valid` from `app inspect` and exits 0 from `project doctor` — proven end to end in `tests/project-bootstrap.test.js`, which bootstraps into a temporary directory and then runs the result. **The published placeholder is untouched**, so `npm create accordo` still installs nothing; publishing is a human decision and `packages/create-accordo/package.json` is `private: true` so it cannot happen by accident. `site/brand.json` keeps the two facts in separate fields (`npm.status`, `npm.sourceScaffolds`) and `scripts/distribution-check.js` fails when either drifts. Plan: `docs/plans/project-bootstrap-installability.md`. |
+| Project bootstrap | **`create-accordo` is real source and has a verified publication candidate**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates a bounded package directory while the source manifest stays private. The package test proves byte-identical packs, offline tarball installation and the installed bin through generated inspect, doctor, tests and smoke. The manual OIDC workflow stages only reviewed `main`; final approval remains human. **The published placeholder is untouched**, so `npm create accordo` still installs nothing and no provenance receipt exists yet. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
 
 ## Completed functional path
 
@@ -94,17 +94,18 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **LA0 — Legacy Characterization Harness** — implemented on an open PR,
-   unmerged: `legacyCharacterizationContract: 1`, a checked-in baseline of Lead
-   Intelligence's externally observable behaviour, and twelve mutations proving
-   the suite can fail (`docs/plans/la0-legacy-characterization.md`). **No legacy
-   domain extraction has begun**, and the Accordo public-brand and GTM work is a
-   separate track that is neither merged nor approved here.
-2. Then, in the order `docs/architecture/EXTRACTION_PREPARATION.md` recommends:
-   resolve LA0's **two defect candidates**, the mechanical **neutral-helper
-   move**, the two **architecture ADRs** (`app.intelligence` and the definition
-   registry, both a human's), then the **Lead Intelligence extraction** and its
-   review, then **DX2** and last **M16 Analytics Studio** — `EXECUTION_ROADMAP.md`.
+1. The default product task remains the first unchecked item in `TASKS.md`:
+   first-class Activity and Task modules with a reusable automatic follow-up
+   workflow. No GTM branch silently changes that product order.
+2. Before any remote CRM write surface, add tenant and role boundaries; the
+   authenticated Streamable HTTP project MCP and PostgreSQL adapter remain
+   separate platform work. The public Docs MCP in PR #58 is read-only framework
+   documentation and does not satisfy any of those production gates.
+3. The active distribution track is the ordered GTM stack #44 → #53 → #54 →
+   #55 → #56 → #57 → #58, followed by human promotion/publication receipts.
+   LA0, its hardening, the neutral helper move, the Intelligence ADRs and package
+   extraction, DX5 and M16 are already merged on `main`; they are evidence, not
+   future work.
 
 Two parallel tracks run alongside and are not gated by domain progress: the
 **platform track** (domain package boundary, PostgreSQL,

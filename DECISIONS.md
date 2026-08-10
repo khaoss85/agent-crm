@@ -961,3 +961,107 @@ have their own reinterpretation problem for G1–G4 over a configured product. A
 nothing about publication: which sentences an Edition L result licenses is
 `docs/marketing/BENCHMARK_PUBLICATION.md`, deliberately a separate document with
 a separate gate.
+
+## ADR-025 — Host the existing Docs MCP through one stateless HTTP adapter
+
+**Status:** accepted for implementation. Production promotion and directory
+submission remain human decisions.
+
+**Context.** `packages/docs-mcp` already owns three read-only tools and the
+structural rule that no capability or CRM-job status leaves without its
+limitation. It runs only over stdio, which means a stranger must clone the
+repository and launch a child process before an agent can query it. The reviewed
+Anthropic/OpenAI discovery surfaces require a remote MCP endpoint, while the
+project MCP cannot be hosted safely before authentication, tenancy and RBAC.
+
+**Decision.** Add a Web `Request -> Response` adapter around
+`createDocsMcpServer`, deployed as a Node/Fluid Compute Vercel Function beside
+the existing static site. It is stateless, adds no tool and no dependency, and
+uses the same server instance contract as stdio. Modern MCP routing headers,
+Origin, content negotiation and request size are validated at the HTTP boundary;
+the body remains the source of truth. Runtime-read Markdown and ledgers are
+explicitly included in the Function bundle and ExecPlans explicitly excluded.
+
+No-auth is deliberate for this public, read-only surface. It contains only
+bytes already public on the site/repository, opens no database, calls no provider
+and persists no request. Authentication would reduce discoverability without
+protecting a non-public resource. Adding any private resource, persistence,
+telemetry or write tool reopens this decision and requires authorization before
+deployment.
+
+**Rejected:** a second SDK-based server, because its tool/claim contract could
+drift; and a persistent proxy around the stdio process, because it introduces
+process/session state that modern MCP removed and does not fit request-based
+Functions.
+
+**Consequences.** One remote URL can serve Claude, OpenAI and any conforming MCP
+client without broadening the CRM production claim. Vercel becomes a hosting
+subprocessor for ordinary HTTP/function metadata, stated on the public privacy
+page. A preview proves code and bundle; only a human may promote the endpoint or
+submit it to a directory.
+
+**Adversarial-review addendum (2026-08-09).** The canonical build may replace
+only its own ignored generated directory. A caller-selected assembler output
+must not exist, nor may its staging sibling, so a test/helper invocation cannot
+erase an occupied external directory. HTTP content negotiation counts a media
+type only when its quality is greater than zero; `text/event-stream;q=0` is a
+406, not permission to return a response the client refused. Regression tests
+hold both boundaries and also exercise the post-read body-size check against a
+lying `Content-Length`.
+## ADR-026 — The npm bootstrap is assembled from declared source and staged through trusted publishing
+
+**Status:** accepted.
+
+**Context.** `packages/create-accordo` can create a runnable project from this
+repository, but npm packages cannot include files outside their package root.
+Publishing that directory directly would therefore ship a working executable
+beside no framework source; the command would load and then correctly refuse
+with `FRAMEWORK_SOURCE_UNAVAILABLE`. Adding a `files` array does not cross the
+package-root boundary. Checking a second copy of the framework into the package
+would solve the tarball and create a permanent source-drift problem.
+
+**Decision.** The checked-in `packages/create-accordo/package.json` remains
+`private: true`. A maintainer-only, dry-run-by-default assembler creates a new
+publication directory from two explicit inputs: the bootstrap package files and
+the same declared framework inventory the bootstrap already fingerprints. The
+framework is placed under `framework/`; installed code checks that bundled
+location before retaining the repository-ancestor fallback. The assembler
+reports a versioned contract and a content fingerprint, refuses a non-empty
+target, canonicalizes parent symlinks before enforcing the outside-source
+boundary, writes through a unique staging directory and commits with one rename.
+No generated framework copy is checked in.
+
+The publication manifest is generated from an allow-list, not inherited by
+spreading the private development manifest. It has no dependencies or install
+scripts, carries the exact public repository URL required by npm provenance,
+and exposes only the `create-accordo` bin. Every allow-listed input must be a
+regular file; the assembler refuses symlinks rather than following them into a
+signed tarball. Tests pack the assembled directory
+twice, require byte-identical archives, install one into an empty npm project,
+run the installed bin and run the resulting project's inspect, doctor, tests
+and smoke. A tarball that merely contains plausible paths is not evidence.
+
+**Release boundary.** Source never publishes directly. A manually triggered
+GitHub Actions workflow on a GitHub-hosted runner assembles and re-verifies the
+candidate, then uses npm trusted publishing through OIDC. It stages rather than
+publishes the version: CI may prepare a release, but a maintainer reviews and
+approves the staged package with 2FA before it becomes public. No long-lived npm
+write token is stored. Every action in that release workflow is pinned to a full
+commit SHA because it shares the OIDC trust boundary. Trusted-publisher
+configuration on npm must name the
+exact workflow and allow staged publication; repository source cannot prove
+that external setting, so it remains a published limitation until a live
+receipt exists.
+
+**Why this is not another user-facing command.** The failure being prevented is
+a maintainer publishing an incomplete tarball, not a coding agent lacking a
+project operation. The assembler is absent from generated projects, skills,
+MCP and the `accordo` CLI. End users still learn exactly one install line after
+the registry version is verified.
+
+**Consequences.** The repository can prove a publishable artifact before the
+registry changes, while `site/brand.json` continues to say `names-reserved` and
+public copy continues to refuse `npm create accordo`. The eventual registry
+receipt, not a merge or a green pack test, is what authorizes changing that
+status. The generated application remains local-only, SQLite-only and without
+authentication, tenancy or RBAC; packaging changes none of those boundaries.
