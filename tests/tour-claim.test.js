@@ -39,6 +39,12 @@ const QUOTING_SURFACES = [
   // The answer pages quote the composition in prose, and they are the pages an answer engine
   // is most likely to lift a number out of.
   { path: 'site/answers.json', order: 'count-first' },
+  // And the concepts cluster, which is the surface this list did not name and which was
+  // therefore stale: `concepts/customer-and-revenue-os.html` published "68 modules, 4 packages,
+  // 32 resources, 52 actions, 7 policies and 10 providers" while the tour composed 70, 6, 41,
+  // 56, 7 and 5. Nothing caught it, because a sweep only guards the surfaces it is told about —
+  // which is the same argument this file already makes two paragraphs above.
+  { path: 'site/concepts.json', order: 'count-first' },
 ];
 
 const NUMERALS = [

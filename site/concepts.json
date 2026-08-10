@@ -23,7 +23,7 @@
           "heading": "The wider set of build-it requests",
           "body": [
             "GO_TO_MARKET.md §2.0 lists what the same framework is therefore the honest answer to: quote-to-cash and CPQ, contract and subscription lifecycle, delivery and professional services, and the whole chain as revenue operations — lead to sale to contract to delivery. The internal framing is a Customer and Revenue Operating System that a coding agent builds on. The public sentence stays narrower than that on purpose.",
-            "What exists as composed software today is one starter's application, and it is countable: 68 modules, 4 packages, 32 resources, 52 actions, 7 policies and 10 providers, applied from manifests and driven end to end by one command, which then prints the eleven things the inspector says it cannot see (C-22). Those counts describe that starter's composition. A different composition gives different numbers, and none of them is yours until you compose it."
+            "What exists as composed software today is one starter's application, and it is countable: 70 modules, 6 packages, 41 resources, 56 actions, 7 policies and 5 providers, applied from manifests and driven end to end by one command, which then prints the eleven things the inspector says it cannot see (C-22). Those counts describe that starter's composition. A different composition gives different numbers, and none of them is yours until you compose it."
           ]
         },
         {
@@ -330,7 +330,7 @@
           "body": [
             "Not capability. The framework may grow a hundred capabilities; it may not grow a hundred things an agent has to read first. Those are different numbers, and conflating them is how a good architecture becomes an unusable one.",
             "Not quality. The budget can tell you another command appeared. It cannot tell you whether the command was well designed, and no count on this page implies anything about the code behind it.",
-            "Not agent success. Question six asks for a measured number, and the one number that would settle whether coding agents can actually build with this does not exist yet — the benchmark protocol is published and has not been run (L-03). The evidence that does exist is narrower and checkable: 701 tests run on every push (C-20), one command that reads an application's real composition from checked-in source and returns a machine-readable list of what it cannot see (C-14), and MCP tools where anything that generates code or destroys state is dry-run unless an explicit apply flag is passed (C-18)."
+            "Not agent success. Question six asks for a measured number, and the one number that would settle whether coding agents can actually build with this does not exist yet — the benchmark protocol is published and has not been run (L-03). The evidence that does exist is narrower and checkable: 774 tests run on every push (C-20), one command that reads an application's real composition from checked-in source and returns a machine-readable list of what it cannot see (C-14), and MCP tools where anything that generates code or destroys state is dry-run unless an explicit apply flag is passed (C-18)."
           ]
         },
         {
@@ -367,6 +367,127 @@
         "tests/project-doctor.test.js"
       ],
       "related": ["customer-and-revenue-os", "code-you-own", "deterministic-by-construction"]
+    },
+    {
+      "id": "concept-customer-hub-intent",
+      "slug": "customer-hub",
+      "title": "A customer hub starts with CRM code you own",
+      "metaTitle": "Customer hub as CRM code you own | Accordo",
+      "plainName": "One commercial record chain, from lead to service",
+      "intent": "customer hub with a single customer view across crm, marketing, delivery and billing",
+      "summary": "Accordo gives coding agents a deterministic CRM foundation for the commercial journey the application already controls: lead, opportunity, quote, order, contract, delivery and service. Each transition is explicit, audited and test-backed. This is one local chain of application records, not an identity-resolved profile assembled from other systems; marketing, billing and a unified customer screen remain outside the runtime.",
+      "metaDescription": "Build a customer hub as CRM code you own: lead to service in one audited record chain. No ingestion, identity resolution or unified screen.",
+      "recordChain": {
+        "title": "One customer, six connected operating records",
+        "caption": "Stored identifiers carry provenance forward. They do not ingest or reconcile an identity from another system.",
+        "nodes": [
+          {
+            "label": "Lead intelligence",
+            "detail": "Capture, qualify, enrich, score and route under versioned policy.",
+            "state": "working"
+          },
+          {
+            "label": "Company · Contact · Opportunity",
+            "detail": "Convert atomically, then advance the deal through server-owned pipeline actions.",
+            "state": "working"
+          },
+          {
+            "label": "Quote · Approval · Order",
+            "detail": "Price on the server, gate discounts and freeze immutable commercial evidence.",
+            "state": "working"
+          },
+          {
+            "label": "Contract · Subscription",
+            "detail": "Activate operational terms and lines from the signed Order snapshot.",
+            "state": "partial"
+          },
+          {
+            "label": "Delivery",
+            "detail": "Handover work, record execution and economics, govern change and acceptance.",
+            "state": "partial"
+          },
+          {
+            "label": "Service",
+            "detail": "Activate entitlements, record support cases and retain elapsed-time SLA evidence.",
+            "state": "partial"
+          }
+        ]
+      },
+      "sections": [
+        {
+          "heading": "Start from a CRM foundation that already runs",
+          "body": [
+            "A reader who typed customer hub or single customer view is asking for something wider than CRM, and the honest first answer is the narrower word. CRM is the part of this framework that is merged and proved: a lead is captured, scored, routed, qualified and converted into a Company, a Contact and an Opportunity through explicit actions, each one atomic and audited (C-06); that opportunity moves through code-first pipeline stages under a server-authoritative action (C-05); a quote is priced on the server from a catalog, and a discount that crosses the policy threshold stops and waits for a named human, with an agent actor refused a 403 (C-08, C-21). Everything wider on this page is measured against that, and none of it replaces it.",
+            "The job catalogue is the arbiter for every status below, not this page. Of the seventeen rows in the core CRM section of docs/benchmarks/jobs.json, eight read validated end to end, four partially supported and five not supported. That file is generated from docs/benchmarks/CRM_JTBD_MATRIX.md and held in step with it by tests/jobs-json.test.js, which also asserts that every test named as evidence still exists on disk — so a status quoted here is checkable rather than asserted."
+          ]
+        },
+        {
+          "heading": "One commercial chain, not an identity graph",
+          "body": [
+            "Single customer view, on this page, means the records this application's audited actions, CRUD routes and module services wrote about one customer in one local SQLite database, each carrying the id of the record it came from. A Contact and an Opportunity carry the companyId the conversion action wrote, checked against a Company that exists. A Commercial Contract carries orderId, quoteVersionId, opportunityId and companyId, copied from the immutable Order rather than read back from a live catalog. A Delivery Project and a Service Coverage each carry contractId, orderId and the companyId the contract recorded. A Support Case carries the coverage and the entitlement it was recorded against. Following one customer means reading those ids.",
+            "It is a chain this system wrote, not a profile it assembled. Nothing here builds one profile per person or account out of records held in other systems, because this framework has no pipeline that ingests records or events from external systems: there is no imported identity set to resolve, and no resolution step exists to do it with. Records can still be created through the framework's audited CRUD and service APIs; that is local application input, not cross-system ingestion. Two records for the same human stay two records forever. Detecting duplicates on import or entry (JTBD-DO-02), merging two Companies or Contacts (JTBD-DO-03), searching across modules (JTBD-DO-07) and seeing a unified activity timeline for a record (JTBD-DO-08) all read not supported, and there is no import or export of any kind (L-06).",
+            "This page adds nothing to the customer data platform question and takes nothing away from it. Not a customer data platform states that refusal in full, and this page inherits it rather than re-arguing it in softer words: a platform of that kind ingests records and events continuously from many source systems, resolves them into one profile per person or account, and builds segments over those profiles that can be frozen, suppressed and synced to a destination. None of those three exists here in any form. The word hub on this page never reaches for any of them, and no product in that category is named anywhere on this site, because the only competitor research it may cite carries no research on them at all.",
+            "There is no screen for it either. The Admin navigates by module and by domain — generated modules, pipeline boards, Quotes, Contracts, Delivery, Service — and carries no per-customer page anywhere in it. A single customer view here is a property of how the records reference each other, not a view somebody opens; and every one of those ids is managed storage written by the action that created the record, never a value a client supplied."
+          ]
+        },
+        {
+          "heading": "Each operating domain has a precise boundary",
+          "body": [
+            "CRM and lead intelligence — merged, several jobs validated end to end. Capturing, qualifying and converting a lead (JTBD-04, JTBD-05, JTBD-05b) and moving a deal through pipeline stages (JTBD-03) read validated end to end, as do enrichment with snapshot and provenance, explainable scoring, automatic routing under a published policy, and policy versioning (JTBD-LI-01, JTBD-LI-02, JTBD-LI-04, JTBD-LI-07). Four further lead rows read partially supported, and manual reassignment with permission and reason (JTBD-LI-06) reads not supported. Where it stops: the enrichment provider is a checked-in fixture with no external data source wired, routing targets are application identifiers rather than authenticated users, and the Lead model belongs to the starter rather than to the framework core.",
+            "Quote, discount approval, signature and order — merged, several jobs validated end to end. Creating a quote from a price book (JTBD-CO-01), requesting a discount under a deterministic policy (JTBD-CO-03) and creating an immutable signed Order snapshot (JTBD-CO-07) read validated end to end; synchronising an external catalog, obtaining the required commercial approval and the two signature rows (JTBD-CO-02, JTBD-CO-04, JTBD-CO-05, JTBD-CO-06) read partially supported. Where it stops: every catalog and signature provider is an offline fixture, no envelope has ever been sent to a real signer, the signed document is canonical JSON rather than a PDF, and the phrase quote-to-cash stops at the quote.",
+            "Contract and subscription — merged, partial. Activating a commercial contract from a signed Order and activating a subscription with lines and an initial term (JTBD-CS-01, JTBD-CS-02) read partially supported. The other eight rows in that section read not supported: amending seats or quantity, recording an expansion or contraction, calculating MRR, ARR and TCV from real contract data, scheduling a renewal, creating a renewal opportunity, applying an uplift policy at renewal, cancelling or non-renewing with an audited reason, and reading a complete amendment history. Where it stops: the term was never signed, so effective date, term dates, auto-renew and notice period are operational metadata a human typed in with a required reason — and there is no scheduler, so a notice period passes without anything firing (L-04).",
+            "Delivery and service — merged, partial. Handing a won deal to delivery, tracking hours and costs, and managing a change request with impact and approval (JTBD-DS-01, JTBD-DS-06, JTBD-DS-08) read validated end to end; seven further rows read partially supported, including activating a service contract with entitlements and SLA (JTBD-DS-11) and managing support cases and escalation (JTBD-DS-12). Restricting partner access to assigned work (JTBD-DS-04) and activating billing on accepted milestones (JTBD-DS-10) read not supported. Where it stops: nothing schedules, staffs or computes percent complete; customer acceptance is testimony a user actor recorded rather than an authenticated customer's signature; the SLA clock is elapsed wall-clock minutes with no business-hours calendar and no pause; and nothing escalates, routes or notifies by itself."
+          ]
+        },
+        {
+          "heading": "Marketing, billing and ERP remain separate",
+          "body": [
+            "Marketing is a design document, not code. All 43 marketing rows in the job catalogue read not supported — audiences, consent and suppression, campaign proposals, one-shot, rolling and triggered sends, multi-step journeys, content and landing-page generation, experiments and holdouts, paid media, funnel definitions and every attribution model. docs/strategy/MARKETING_GROWTH_OPERATIONS.md opens by saying so itself: product strategy and roadmap only, nothing in it implemented, and no package under packages/marketing, packages/journeys, packages/experimentation, packages/content or packages/attribution exists. The roadmap sequences the work as track MK0 to MK7 and none of it is merged, so nothing on this site describes a marketing capability, in any tense (L-11).",
+            "Billing does not exist in any form. There is no invoice, no payment, no dunning, no tax, no usage rating, no proration and no revenue recognition anywhere in the repository, and MRR, ARR and TCV are not derived from contract data. Activating billing on accepted milestones (JTBD-DS-10) and calculating MRR, ARR and TCV from real contract data (JTBD-CS-05) both read not supported. The subscription module's own description states what it is instead: a commercial activation record, not a billing engine, with no invoice schedule, usage rating, proration, payment, renewal or cancellation state. docs/strategy/EXECUTION_ROADMAP.md lists invoicing, billing, payment, usage rating, proration, tax and FX as explicitly deferred (L-10).",
+            "ERP is not a goal either, and docs/strategy/RECOMMENDATION_MAP.md says to say so plainly rather than leave it open. The closest thing to a money figure that does exist is deliberately not one: delivery records append-only time and expense evidence costed by a versioned policy and returns a delivery contribution estimate grouped by currency, which is not a margin, not revenue and not an accounting figure — and a project carrying any recurring obligation returns no estimate at all, with a named reason (C-12)."
+          ]
+        },
+        {
+          "heading": "The boundary every build still inherits",
+          "body": [
+            "None of the above changes what the framework is. There is no authentication, tenancy or RBAC, persistence is local SQLite, there is no scheduler, and no integration adapter sends anything to anyone — so a hub composed here is a hub on one developer's machine. Real customer data does not belong in it: there is no export and no erasure path, so a data-subject access or deletion request cannot be serviced with it (L-09). Enforcing team or tenant permissions (JTBD-15) reads not supported, which is the same fact stated by the catalogue."
+          ]
+        }
+      ],
+      "boundaries": [
+        "This page describes a buildable CRM foundation, not a ready-made Customer Hub product. The commercial chain is merged in slices, and each slice keeps the boundary stated below.",
+        "Single customer view here means records written through this application's audited actions, CRUD routes and module services in one local database. It is a chain, not a profile assembled from other systems: nothing ingests, deduplicates, merges or resolves an identity.",
+        "This is not a customer data platform, and nothing here softens that refusal. The comparison page states it in full and this page inherits it; no product in that category is named, because the competitor research this site may cite carries none.",
+        "Marketing and billing do not exist as runtime code, and there is no unified customer screen. The Admin navigates by module and domain; no view, query or timeline assembles one customer's chain for a reader.",
+        "None of it is deployable. No authentication, tenancy or RBAC, SQLite only, no scheduler and no integration adapter — so a hub that works here works on one developer's machine.",
+        "Nothing here is measured against another product, and no page on this site ranks this against a named vendor. The build benchmark has not been run."
+      ],
+      "claims": ["C-06", "C-05", "C-08", "C-21", "C-09", "C-10", "C-11", "C-12", "C-16"],
+      "limitations": ["L-01", "L-04", "L-05", "L-06", "L-08", "L-09", "L-10", "L-11"],
+      "jobs": [
+        "JTBD-04", "JTBD-05b", "JTBD-03", "JTBD-CO-01", "JTBD-CO-03", "JTBD-CO-07",
+        "JTBD-CS-01", "JTBD-CS-05", "JTBD-DS-01", "JTBD-DS-10", "JTBD-DS-11", "JTBD-DS-12",
+        "JTBD-DO-02", "JTBD-DO-03", "JTBD-DO-07", "JTBD-DO-08",
+        "JTBD-MK-01", "JTBD-MK-14", "JTBD-MK-41", "JTBD-15"
+      ],
+      "docs": [
+        "docs/benchmarks/CRM_JTBD_MATRIX.md",
+        "docs/strategy/RECOMMENDATION_MAP.md",
+        "docs/strategy/CUSTOMER_REVENUE_OS_ROADMAP.md",
+        "docs/strategy/MARKETING_GROWTH_OPERATIONS.md",
+        "docs/strategy/EXECUTION_ROADMAP.md",
+        "docs/CONTRACT_ACTIVATION.md",
+        "docs/DELIVERY_HANDOVER.md",
+        "docs/SERVICE_OPERATIONS.md"
+      ],
+      "tests": [
+        "tests/jobs-json.test.js",
+        "tests/lead-conversion-e2e.test.js",
+        "tests/contracts-activation-e2e.test.js",
+        "tests/delivery-handover-e2e.test.js",
+        "tests/service-operations-e2e.test.js"
+      ],
+      "related": ["vs-a-customer-data-platform", "customer-and-revenue-os", "lead-intelligence", "quote-to-cash-cpq", "contract-and-subscription", "delivery-projects", "service-and-sla"]
     }
   ]
 }

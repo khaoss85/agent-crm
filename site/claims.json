@@ -3,11 +3,11 @@
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used.",
   "measuredAgainst": {
     "date": "2026-08-09",
-    "sha": "9958ed9",
+    "sha": "171c1a9",
     "command": "npm run verify",
-    "tests": 701,
+    "tests": 774,
     "failures": 0,
-    "note": "Re-measure and update this block before any public launch. A claims file measured against a stale SHA is a claims file that lies."
+    "note": "Re-measure and update this block before any public launch. A claims file measured against a stale SHA is a claims file that lies. The sha is the commit whose tree was actually tested, so squashing the branch that set it makes it unresolvable and site-check will refuse it — merge, or measure again."
   },
   "claims": [
     {
@@ -442,10 +442,10 @@
     },
     {
       "id": "C-20",
-      "text": "701 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
+      "text": "774 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
       "evidence": {
         "repoFacts": [
-          "npm run verify at 9958ed9: 701 passing, 0 failing",
+          "npm run verify at 171c1a9: 774 passing, 0 failing",
           ".github/workflows/ci.yml runs verify and smoke on push and pull_request"
         ],
         "docs": [
@@ -644,6 +644,46 @@
         "site",
         "readme",
         "launch"
+      ]
+    },
+    {
+      "id": "L-10",
+      "headline": "Nothing bills.",
+      "text": "No invoice, payment, tax, usage rating, proration or revenue recognition exists, and MRR, ARR and TCV are not derived from contract data.",
+      "evidence": {
+        "jtbd": "JTBD-DS-10, JTBD-CS-05",
+        "docs": [
+          "docs/strategy/EXECUTION_ROADMAP.md",
+          "docs/benchmarks/CRM_JTBD_MATRIX.md"
+        ],
+        "repoFacts": [
+          "EXECUTION_ROADMAP.md lists invoicing, billing, payment, usage rating, proration, tax and FX as explicitly deferred",
+          "packages/contracts/modules/subscription.module.json describes itself as a commercial activation record, not a billing engine, with no invoice schedule, usage rating, proration, payment, renewal or cancellation state",
+          "JTBD-DS-10 (activate billing on accepted milestones) and JTBD-CS-05 (calculate MRR, ARR and TCV from real contract data) both read 'not supported'"
+        ]
+      },
+      "surfaces": [
+        "site"
+      ]
+    },
+    {
+      "id": "L-11",
+      "headline": "Marketing is a design document, not a package.",
+      "text": "All 43 marketing jobs read 'not supported', no marketing package exists, and the strategy document says nothing in it is implemented.",
+      "evidence": {
+        "jtbd": "JTBD-MK-01",
+        "docs": [
+          "docs/strategy/MARKETING_GROWTH_OPERATIONS.md",
+          "docs/benchmarks/CRM_JTBD_MATRIX.md"
+        ],
+        "repoFacts": [
+          "MARKETING_GROWTH_OPERATIONS.md opens with 'Status: product strategy and roadmap only. Nothing in this document is implemented.'",
+          "all 43 JTBD-MK rows in docs/benchmarks/jobs.json read 'not supported'",
+          "the work is sequenced as EXECUTION_ROADMAP track MK0-MK7 and none of it is merged"
+        ]
+      },
+      "surfaces": [
+        "site"
       ]
     }
   ]

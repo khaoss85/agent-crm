@@ -78,6 +78,13 @@ Four new sources, all in `site/`, all with the same shape. Every one is read by
       "sections": [                       // the body, in order
         { "heading": "…", "body": ["paragraph", …] }
       ],
+      "recordChain": {                    // optional; only when record order is the argument
+        "title": "…",
+        "caption": "…",
+        "nodes": [
+          { "label": "…", "detail": "…", "state": "working | partial" }
+        ]
+      },
       "boundaries": ["…"],                // REQUIRED, non-empty — what it does not do
       "claims": ["C-06"],                 // ledger ids, must exist in claims.json
       "limitations": ["L-04"],            // ledger ids, must exist in claims.json
@@ -98,6 +105,12 @@ completeness is the one thing four ledger limitations contradict.
 own sentence. If a capability has nothing in the ledger to cite, the honest page says
 what the code does and cites `docs` and `tests` — it does not invent a claim, and it
 does not get a claim added to the ledger to justify a marketing sentence.
+
+**`recordChain` is optional and semantic.** It is reserved for a page whose subject is an
+ordered chain of records the framework owns; the renderer emits an `<ol>`, not an image.
+It must contain two to eight nodes, and every node states whether that slice is a validated
+path or a partial domain. A decorative process diagram, or a chain whose order carries no
+meaning, does not clear this contract.
 
 ## 4. What may not be written
 

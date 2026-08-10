@@ -57,9 +57,11 @@ Three constraints on widening, all binding:
 1. **Every widened trigger must be a build request inside a coding agent.** "I need
    a CPQ" in general chat means buy one. The trigger is the phrase plus the surface,
    and that rule does not relax as the category widens.
-2. **Service desk, ticketing and SLA are held back.** M15 Service is the next
-   milestone and is not merged. Those rows are `not supported` in the catalogue and
-   the positioning may not run ahead of them.
+2. **Service desk, ticketing and SLA stay narrowly framed.** M15 is merged as a
+   partial local Service Operations slice: coverage, entitlements, support cases,
+   elapsed-time SLA evidence and manual escalation. It is not an authenticated
+   helpdesk or contact centre: there are no channel integrations, routing or
+   automatic escalation, and the positioning may not run ahead of those boundaries.
 3. **The existing refusals stand.** "Smart CRM" / "AI CRM" is still the opposite of
    this model, "customer data platform" is still a different category, and "customer
    hub" is still only ours in the build-one reading (§9, `ORGANIC_GROWTH.md`).

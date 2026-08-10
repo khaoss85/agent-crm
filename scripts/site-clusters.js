@@ -194,6 +194,25 @@ export function buildClusterPages({ sources, ledger, jobs, brand, origin, blogDi
       }
       if (!Array.isArray(entry.sections) || entry.sections.length === 0) throw new Error(`${where}: no sections`);
 
+      if (entry.recordChain !== undefined) {
+        const chain = entry.recordChain;
+        if (!chain || typeof chain !== 'object' || Array.isArray(chain)) throw new Error(`${where}: recordChain must be an object`);
+        for (const field of ['title', 'caption']) {
+          if (!chain[field] || typeof chain[field] !== 'string') throw new Error(`${where}: recordChain is missing ${field}`);
+        }
+        if (!Array.isArray(chain.nodes) || chain.nodes.length < 2 || chain.nodes.length > 8) {
+          throw new Error(`${where}: recordChain.nodes must contain 2-8 nodes`);
+        }
+        for (const [index, node] of chain.nodes.entries()) {
+          for (const field of ['label', 'detail', 'state']) {
+            if (!node?.[field] || typeof node[field] !== 'string') throw new Error(`${where}: recordChain.nodes[${index}] is missing ${field}`);
+          }
+          if (!['working', 'partial'].includes(node.state)) {
+            throw new Error(`${where}: recordChain.nodes[${index}].state must be working or partial`);
+          }
+        }
+      }
+
       // `title` is the H1 — the sentence the page argues, and often longer than a search result
       // will render. `metaTitle` is the same page named in under 60 characters for the tab, the
       // result and the share card. It is optional only while the H1 already fits: the moment it
@@ -372,6 +391,7 @@ function spokePage({ cluster, entry, claims, limitations, jobIndex, standing, ta
       '    <section>',
       // Above the sections, deliberately. Everything below is downstream of this being read.
       boundaryBlock(entry, standing),
+      recordChain(entry),
       ...entry.sections.map((section) => [
         '      <div class="section-block">',
         `        <h2>${escapeHtml(section.heading)}</h2>`,
@@ -384,6 +404,31 @@ function spokePage({ cluster, entry, claims, limitations, jobIndex, standing, ta
       '  </div>',
     ].join('\n'),
   };
+}
+
+/**
+ * An optional, semantic record chain for pages whose argument is a sequence of owned records.
+ * It is an ordered list rather than decorative SVG: the same relationship remains readable to a
+ * crawler, a screen reader and a browser with styles disabled.
+ *
+ * @param {any} entry
+ */
+function recordChain(entry) {
+  if (!entry.recordChain) return '';
+  return [
+    '      <figure class="record-chain" aria-labelledby="record-chain-title">',
+    `        <figcaption><span class="kicker">Working record chain</span><strong id="record-chain-title">${escapeHtml(entry.recordChain.title)}</strong><span>${escapeHtml(entry.recordChain.caption)}</span></figcaption>`,
+    '        <ol>',
+    ...entry.recordChain.nodes.map((node) => [
+      `          <li data-state="${escapeHtml(node.state)}">`,
+      `            <span class="record-state">${node.state === 'working' ? 'Validated path' : 'Partial domain'}</span>`,
+      `            <strong>${escapeHtml(node.label)}</strong>`,
+      `            <small>${escapeHtml(node.detail)}</small>`,
+      '          </li>',
+    ].join('\n')),
+    '        </ol>',
+    '      </figure>',
+  ].join('\n');
 }
 
 /**
@@ -901,6 +946,8 @@ function oneLine(summary) {
 function authoredStrings(entry) {
   return [
     entry.title, entry.plainName, entry.intent, entry.summary, entry.metaDescription,
+    entry.recordChain?.title, entry.recordChain?.caption,
+    ...(entry.recordChain?.nodes ?? []).flatMap((/** @type {any} */ node) => [node.label, node.detail, node.state]),
     ...(entry.boundaries ?? []),
     ...(entry.sections ?? []).flatMap((/** @type {any} */ section) => [section.heading, ...(section.body ?? [])]),
   ].filter((value) => typeof value === 'string');

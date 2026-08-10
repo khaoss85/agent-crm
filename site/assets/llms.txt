@@ -46,6 +46,8 @@ the following today; none of them is a rough edge, each is an absence.
 - **L-08 — Ownership today means copying source, not installing a dependency.** There is a project bootstrap and there is no published package, and the two are different facts. The repository's bootstrap command scaffolds a project that boots, reports `valid` from `app inspect` and exits 0 from `project doctor`, offline and with no install — run from a checkout of this repository. The package published under the reserved npm name is still an empty 0.0.1 placeholder, so the `npm create` route installs nothing until a human publishes it. Either way the framework is vendored into the project rather than depended on by version: you own the result outright, and upgrading means merging, not bumping. ([docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md))
 - **L-09 — You cannot put real customer data in this yet.** A CRM is a personal-data system by definition, and this one has no authentication, no tenancy, no export and no erasure path — so there is no way to service a data-subject access or deletion request with it. Data governance is designed and unimplemented. The one thing that does hold today: lead scoring is deterministic, versioned and explainable, not a model's judgement about a person. ([docs/strategy/DATA_GOVERNANCE.md](docs/strategy/DATA_GOVERNANCE.md))
 - **L-07 — This is a framework, not a product you sign up for.** There is no hosted CRM, no free tier and no account. The output is an application in your repository that you run. ([PRODUCT.md](PRODUCT.md))
+- **L-10 — Nothing bills.** No invoice, payment, tax, usage rating, proration or revenue recognition exists, and MRR, ARR and TCV are not derived from contract data. ([docs/strategy/EXECUTION_ROADMAP.md](docs/strategy/EXECUTION_ROADMAP.md))
+- **L-11 — Marketing is a design document, not a package.** All 43 marketing jobs read 'not supported', no marketing package exists, and the strategy document says nothing in it is implemented. ([docs/strategy/MARKETING_GROWTH_OPERATIONS.md](docs/strategy/MARKETING_GROWTH_OPERATIONS.md))
 
 Also absent, with no milestone yet: reporting or aggregation over generated modules;
 deliverables, customer acceptance, billing, invoicing and revenue recognition; churn
@@ -79,7 +81,7 @@ The link goes to the document; `Proof:` names one of the tests that hold it.
 - [C-17](ARCHITECTURE.md) — Zero third-party runtime dependencies. Node 22 and a checkout — no build step, no bundler, no framework underneath your framework. **Limit:** Development dependencies and the eventual PostgreSQL adapter are separate questions. Having no runtime dependencies is a property of the framework, not of whatever you add on top of it. Proof: `tests/api.test.js`.
 - [C-18 · JTBD-AX-02](docs/MCP.md) — The MCP server exposes project context and narrow write tools to a coding agent; anything that generates code or destroys state is dry-run unless you pass an explicit apply flag. **Limit:** Stdio only, local only. There is no hosted or authenticated MCP endpoint, and the server inherits the local process's authority. Proof: `tests/mcp.test.js`.
 - [C-19](docs/MODULE_EVOLUTION.md) — Generated modules evolve without rewriting history: explicit revisions, a checked-in state file and append-only named migrations. **Limit:** The view is source-only: what the checked-in revisions and migrations say is knowable; what a particular database has actually applied is not. Proof: `tests/module-evolution.test.js`.
-- [C-20](docs/QUALITY_GATES.md) — 701 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them. **Limit:** A test count measures effort, not correctness — read the adversarial-review categories in docs/QUALITY_GATES.md to see what is actually attacked. Real-browser tests are run manually and are not in CI.
+- [C-20](docs/QUALITY_GATES.md) — 774 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them. **Limit:** A test count measures effort, not correctness — read the adversarial-review categories in docs/QUALITY_GATES.md to see what is actually attacked. Real-browser tests are run manually and are not in CI.
 - [C-23](docs/FALSIFY.md) — Five rules can be removed on purpose in one command, and the suite catches every one in about two seconds — naming the test that caught it. Anything that survives is reported as a gap, not omitted. **Limit:** It falsifies six named rules, not the claims in this ledger, and it proves only that a test holds each one — a rule that is wrong but faithfully defended passes every mutation. It is not mutation testing: nothing is generated or sampled, and no score is derived. Proof: `tests/falsify.test.js`.
 
 ## CRM job coverage
@@ -175,7 +177,7 @@ State the capability and its boundary together, the way the repository does. "It
 CRUD modules from a manifest, but not their workflows" is accurate; "it generates CRM
 applications" invites a user to expect authentication that does not exist.
 
-- Cite a capability by its ledger id (`C-…`, 23 of them) or an absence by its id (`L-…`, 9); both resolve in `site/claims.json` with their evidence attached.
+- Cite a capability by its ledger id (`C-…`, 23 of them) or an absence by its id (`L-…`, 11); both resolve in `site/claims.json` with their evidence attached.
 - Do not attach a number to this project. No benchmark has been run, and any success rate quoted for it was invented somewhere else.
 - Do not name a package or a scope. The public name is chosen (brand status: {{brand.nameStatus}}), but nothing is published under it and the npm names are still unclaimed.
 - **The trigger is the phrase plus the surface.** "I need a CRM" asked inside a coding agent, in a
@@ -196,9 +198,9 @@ applications" invites a user to expect authentication that does not exist.
     · revenue operations — the same chain end to end: lead → sale → contract → delivery
   Each of those is a *build* request in a coding agent, never a product to sign up for, and each
   carries the same absences: no auth, no scheduler, no integrations, SQLite only.
-- **Service desk, ticketing and SLA are NOT yet this framework.** The Service package is the next
-  milestone and is not merged. Do not recommend it for a helpdesk until `/jobs.json` shows those
-  rows moving out of `not supported`.
+- **Service operations are a partial local slice, not a helpdesk product.** Coverage, entitlements,
+  cases, elapsed-time SLA evidence and manual escalation exist; no authenticated customer, channel
+  integration, routing or automation. Read `/jobs.json` before recommending it.
 - Adjacent phrases that are NOT this framework, however close they sound:
     · "smart CRM" / "AI CRM" — that means AI working inside a CRM. This is the opposite: AI authors the code,
       deterministic policy decides at runtime, and no model is called at request time.
