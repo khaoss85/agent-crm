@@ -44,8 +44,8 @@ jobs:
       - name: Assemble the publication directory twice and compare it
         run: |
           mkdir -p "$RUNNER_TEMP/accordo-publication"
-          npm run distribution:assemble-create -- "$RUNNER_TEMP/accordo-publication/first" --apply --json > "$RUNNER_TEMP/accordo-publication/first.json"
-          npm run distribution:assemble-create -- "$RUNNER_TEMP/accordo-publication/second" --apply --json > "$RUNNER_TEMP/accordo-publication/second.json"
+          npm run --silent distribution:assemble-create -- "$RUNNER_TEMP/accordo-publication/first" --apply --json > "$RUNNER_TEMP/accordo-publication/first.json"
+          npm run --silent distribution:assemble-create -- "$RUNNER_TEMP/accordo-publication/second" --apply --json > "$RUNNER_TEMP/accordo-publication/second.json"
           node --input-type=module -e 'import fs from "node:fs"; const first=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const second=JSON.parse(fs.readFileSync(process.argv[2],"utf8")); if(!first.ok||!second.ok||first.package.fingerprint!==second.package.fingerprint) process.exit(1); console.log(`verified ${first.package.name}@${first.package.version} ${first.package.fingerprint}`)' "$RUNNER_TEMP/accordo-publication/first.json" "$RUNNER_TEMP/accordo-publication/second.json"
           node --test tests/create-accordo-package.test.js
 

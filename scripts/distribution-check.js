@@ -378,6 +378,10 @@ if (bootstrapExists) {
         if (!/^\s*workflow_dispatch:/m.test(workflow)) fail(`${stageWorkflowPath}: must remain manual-only`);
         if (!/^\s*id-token:\s*write\s*$/m.test(workflow)) fail(`${stageWorkflowPath}: trusted publishing requires id-token: write`);
         if (!/npm stage publish/.test(workflow)) fail(`${stageWorkflowPath}: must stage rather than directly publish`);
+        const jsonAssemblies = workflow.match(/npm run --silent distribution:assemble-create --[^\n]+--json\s*>/g) ?? [];
+        if (jsonAssemblies.length !== 2) {
+          fail(`${stageWorkflowPath}: both JSON assembly receipts must suppress npm's stdout banner before redirection`);
+        }
         if (/\bnpm publish\b/.test(workflow) || /NPM_TOKEN/.test(workflow)) {
           fail(`${stageWorkflowPath}: direct publish and long-lived npm tokens are forbidden`);
         }

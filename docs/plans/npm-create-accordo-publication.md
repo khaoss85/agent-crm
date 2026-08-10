@@ -209,6 +209,17 @@ tenancy or RBAC.
   `ok: true`. The built 108-page site was rendered in real headless Chrome at
   1270 px, including the changed comparison and FAQ copy, with no overflow or
   layout break. The only subsequent repository change is this receipt.
+- 2026-08-10: the candidate merged through PR #58 at main `5c8ad68`; the exact
+  main passed 807/807 tests, its GitHub Actions gates passed, and it was promoted
+  to production with the hosted Docs MCP and all 113 checked pages live.
+- 2026-08-10: the first real `create-accordo@0.1.0` staging dispatch
+  (`31362278790`) failed before npm was contacted. `npm run` wrote its command
+  banner to stdout, so the workflow's redirected file was not valid JSON and the
+  receipt parser refused it. The registry therefore remains unchanged.
+- 2026-08-10: both redirected assembly invocations now use `npm run --silent`.
+  The distribution gate requires exactly those two JSON-only invocations and a
+  regression test executes the same npm wrapper and parses stdout. Focused tests,
+  `npm run gtm:check` and the full 808-test verification pass.
 
 ## 8a. Adversarial review outcome
 
@@ -246,8 +257,10 @@ tenancy or RBAC.
 
 ## 10. Outcome and follow-up
 
-Implementation, public-copy review and adversarial review are complete; CI and
-human review remain. After merge, a human must configure npm trusted
-publishing for the exact workflow, dispatch it, inspect the staged tarball and
-approve it with 2FA. Only the resulting registry receipt authorizes changing
-`site/brand.json` to `published` or using `npm create accordo` in public copy.
+Implementation, public-copy review, the original adversarial review, merge and
+production promotion are complete. The first staging dispatch exposed and
+fail-closed on a JSON receipt bug before it contacted npm; its narrow fix is
+tested and awaiting the same review/merge discipline. After that merge, rerun
+the exact workflow, inspect the staged tarball and approve it with 2FA. Only the
+resulting registry receipt authorizes changing `site/brand.json` to `published`
+or using `npm create accordo` in public copy.

@@ -94,6 +94,23 @@ test('the private source manifest and public publication manifest cannot be conf
   assert.equal(assembly.files.some((file) => file.relativePath.startsWith('framework/docs/')), false);
 });
 
+test('the release workflow redirects JSON-only assembly output', (t) => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/stage-create-accordo.yml'), 'utf8');
+  const invocations = workflow.match(/npm run --silent distribution:assemble-create --[^\n]+--json\s*>/g) ?? [];
+  assert.equal(invocations.length, 2, 'both redirected assembly receipts must suppress the npm banner');
+
+  const workspace = scratch(t, 'accordo-package-workflow-json-');
+  const target = join(workspace, 'candidate');
+  const assembled = run('npm', [
+    'run', '--silent', 'distribution:assemble-create', '--', target, '--apply', '--json',
+  ]);
+  assert.equal(assembled.exitCode, 0, assembled.stderr);
+  const report = JSON.parse(assembled.stdout);
+  assert.equal(report.ok, true);
+  assert.equal(report.package.name, 'create-accordo');
+  assert.equal(report.package.version, '0.1.0');
+});
+
 test('public copy distinguishes the verified candidate from the live npm placeholder', () => {
   const brand = JSON.parse(readFileSync(join(repoRoot, 'site/brand.json'), 'utf8'));
   assert.equal(brand.npm.sourceScaffolds, true);
