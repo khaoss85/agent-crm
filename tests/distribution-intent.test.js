@@ -7,6 +7,7 @@ import test from 'node:test';
 import { collectDiscoverySurfaces, validateDiscoverySurfaces } from '../scripts/distribution-intent.js';
 
 const root = process.cwd();
+const githubListing = readFileSync(join(root, 'docs/marketing/GITHUB_LISTING.md'), 'utf8');
 
 /** @param {string} path */
 function json(path) {
@@ -76,4 +77,21 @@ test('ignored and prototype-shaped manifest fields cannot smuggle intent past pu
     'root package: missing the checked CDP + CRM discovery signal',
     'root package: CDP + CRM appears without the CDP boundary (not ingestion, identity resolution or segmentation)',
   ]);
+});
+
+test('the prepared GitHub description carries the whole bounded agent-native intent', () => {
+  const description = githubListing
+    .match(/\*\*Next description\*\*[\s\S]*?\n\n((?:>.*\n)+)/)?.[1]
+    ?.replace(/^> ?/gm, '')
+    .replace(/\n/g, ' ')
+    .trim() ?? '';
+
+  assert.ok(description.length > 0 && description.length <= 350, `description length: ${description.length}`);
+  assert.match(description, /agent-native CRM framework/i);
+  assert.match(description, /Claude Code, Codex and Gemini CLI/i);
+  assert.match(description, /custom CRM/i);
+  assert.match(description, /Customer Hub/i);
+  assert.match(description, /Smart CRM is policy-governed/i);
+  assert.match(description, /CDP \+ CRM means process layer—not ingestion, identity resolution or segmentation/i);
+  assert.doesNotMatch(description, /coding agents use to build/i);
 });

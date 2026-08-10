@@ -232,6 +232,37 @@ test('the machine-readable answers resolve their own evidence', () => {
   );
 });
 
+test('the agent-native CRM intent is one authoring model, not a hosted AI product', () => {
+  const path = 'concepts/customer-and-revenue-os.html';
+  const html = read(path);
+  const source = JSON.parse(readFileSync(join(repo, 'site/concepts.json'), 'utf8'))
+    .entries.find((/** @type {any} */ entry) => entry.slug === 'customer-and-revenue-os');
+
+  assert.match(html, /<h1>An agent-native CRM framework is something a coding agent builds with<\/h1>/);
+  assert.match(html, /What agent-native means here/);
+  assert.match(html, /development interface, not a model running the business/i);
+  assert.match(html, /not a hosted AI CRM, a runtime copilot or an autonomous salesperson/i);
+  assert.match(html, /Claude Code, Codex and Gemini CLI/);
+  assert.match(html, /does not prove that a model will recommend Accordo/i);
+  assert.ok(
+    html.indexOf('boundary-block') < html.indexOf('section-block'),
+    'the deployment and recommendation boundaries must precede the category essay',
+  );
+
+  assert.match(source.intent, /agent-native CRM framework for Claude Code Codex and Gemini/i);
+  assert.match(source.summary, /running commercial process remains deterministic/i);
+  assert.doesNotMatch(source.summary, /autonomous CRM|production-ready|model-operated CRM/i);
+
+  assert.match(read('concepts.html'), new RegExp(`concepts/${source.slug}\\.html`));
+  const llms = read('llms.txt');
+  assert.match(
+    llms,
+    /\[An agent-native CRM framework is something a coding agent builds with\]\(concepts\/customer-and-revenue-os\.html\)/,
+  );
+  assert.match(llms, /checked first-contact instructions for Claude Code, Codex and Gemini CLI/);
+  assert.doesNotMatch(llms, /Claude Code, Codex(?:,| and) Gemini CLI\) use to generate/i);
+});
+
 test('the Customer Hub intent separates local writes from missing cross-system ingestion', () => {
   const html = read('concepts/customer-hub.html');
   assert.match(html, /no pipeline that ingests records or events from external systems/);

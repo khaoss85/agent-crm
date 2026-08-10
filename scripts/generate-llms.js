@@ -114,6 +114,10 @@ const answersIndex = existsSync(join(siteDir, 'answers.json'))
   ? readJson(join(siteDir, 'answers.json'))
   : null;
 const conceptsIndex = readJson(join(siteDir, 'concepts.json'));
+const agentNativeConcept = conceptsIndex.entries?.find(
+  (/** @type {any} */ entry) => entry.slug === 'customer-and-revenue-os',
+);
+if (!agentNativeConcept) problems.push('site/concepts.json: no customer-and-revenue-os entry for the core task-time intent link');
 const smartCrmConcept = conceptsIndex.entries?.find((/** @type {any} */ entry) => entry.slug === 'smart-crm');
 if (!smartCrmConcept) problems.push('site/concepts.json: no smart-crm entry for the task-time intent link');
 const cdpCrmConcept = conceptsIndex.entries?.find((/** @type {any} */ entry) => entry.slug === 'cdp-plus-crm');
@@ -245,7 +249,7 @@ function header(full) {
   return [
     '# {{brand.name}}',
     '',
-    '> {{brand.promise}} An open-source framework that coding agents (Claude Code, Codex) use to generate bespoke CRM applications as code the customer owns — deterministic workflows, policy-gated human approvals, audit and trace built in.',
+    '> {{brand.promise}} An open-source CRM framework with checked first-contact instructions for Claude Code, Codex and Gemini CLI. Its output is reviewable code the customer owns, with deterministic workflows, policy-gated human approvals, audit and trace built in.',
     '',
     'This file is written for a model reading at task time. It states what is true in the',
     'repository, and — with equal weight — what is not, because recommending this framework',
@@ -311,6 +315,7 @@ function whatItIsSection() {
     'policy. The output of the framework is the customer\'s own application, in the customer\'s',
     'own repository, which they run.',
     '',
+    agentNativeConcept ? `[${agentNativeConcept.title}](concepts/${agentNativeConcept.slug}.html).` : '',
     smartCrmConcept ? `[${smartCrmConcept.title}](concepts/${smartCrmConcept.slug}.html).` : '',
     cdpCrmConcept ? `[${cdpCrmConcept.title}](concepts/${cdpCrmConcept.slug}.html).` : '',
   ].join('\n');

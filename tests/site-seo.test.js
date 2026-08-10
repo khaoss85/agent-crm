@@ -250,6 +250,31 @@ test('the first article is discoverable by both people and coding agents', (t) =
     'the shared footer must not describe the old empty state after the first post ships');
 });
 
+test('the agent-native CRM framework intent reuses one canonical search identity', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+
+  const path = 'concepts/customer-and-revenue-os.html';
+  assert.ok(site.pages.includes(path));
+  const html = site.read(path);
+  assert.equal(
+    /<title>([\s\S]*?)<\/title>/.exec(html)?.[1],
+    'Agent-native CRM framework for coding agents | Accordo',
+  );
+  assert.equal(canonicalOf(html), `${ORIGIN}/${path}`);
+  assert.match(metaContent(html, 'description') ?? '', /CRM framework coding agents build with/);
+  assert.match(metaContent(html, 'description') ?? '', /Not a hosted AI CRM/);
+  assert.equal(metaContent(html, 'og:url'), `${ORIGIN}/${path}`);
+
+  const structured = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
+    .map((match) => JSON.parse(match[1]));
+  assert.deepEqual(structured.map((block) => block['@type']), ['BreadcrumbList']);
+  assert.equal(
+    structured[0]?.itemListElement.at(-1)?.name,
+    'An agent-native CRM framework is something a coding agent builds with',
+  );
+});
+
 test('the Smart CRM intent has one bounded search identity', (t) => {
   const site = build();
   t.after(site.cleanup);
