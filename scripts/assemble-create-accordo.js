@@ -109,7 +109,7 @@ export function publicationManifest(version) {
     description: 'Create a local Accordo CRM project for coding agents: deterministic, offline, inspectable, and owned as source.',
     type: 'module',
     engines: { node: '>=22.16.0' },
-    bin: { 'create-accordo': './bin/create-accordo.js' },
+    bin: { 'create-accordo': 'bin/create-accordo.js' },
     files: ['bin', 'src', 'framework', 'README.md', 'LICENSE'],
     keywords: [
       'crm', 'crm-framework', 'coding-agent', 'codex', 'claude-code', 'gemini-cli',
