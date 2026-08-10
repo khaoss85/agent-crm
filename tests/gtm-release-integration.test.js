@@ -30,7 +30,7 @@ test('release instructions point at the integration outcome, not superseded bran
 test('the volatile project snapshot names the merged release and its live base', () => {
   const status = read('docs/PROJECT_STATUS.md');
   assert.match(status, /Generated: \*\*2026-08-10\*\*/);
-  assert.match(status, /Main SHA at generation \| `5630744`/);
+  assert.match(status, /Main SHA at generation \| `ef8487a`/);
   assert.match(status, /Tests on clean main \| \*\*808 passing, 0 failing\*\*/);
   assert.match(status, /#44 → #53 → #54 → #55 → #56 → #57 → #58/);
   assert.match(status, /GTM stack and production promotion are complete/);

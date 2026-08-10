@@ -5,10 +5,11 @@ GitHub is the slow-burn discovery channel: its README and description feed both 
 retrieval and, eventually, training corpora. Treat every field here as copy a model will
 paraphrase back to a user.
 
-> **State, verified 2026-08-09.** The repository, current About copy, website and topics are
-> live. The intent-aligned replacement below is checked but must be applied only after the
-> Customer Hub, Smart CRM and CDP + CRM page stack deploys; applying it mutates a public
-> surface and remains a human release action.
+> **State, verified 2026-08-10.** The intent-aligned About copy, website and all 20 topics
+> below are live after the Customer Hub, Smart CRM and CDP + CRM stack reached production.
+> Issues and Discussions are enabled; Wiki is disabled. The live social preview still says
+> 421 tests and omits Gemini CLI; replacing it with the generated frame below is the remaining
+> GitHub Settings action.
 
 ## About panel
 
