@@ -250,6 +250,24 @@ test('the first article is discoverable by both people and coding agents', (t) =
     'the shared footer must not describe the old empty state after the first post ships');
 });
 
+test('the Smart CRM intent has one bounded search identity', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+
+  const path = 'concepts/smart-crm.html';
+  assert.ok(site.pages.includes(path));
+  const html = site.read(path);
+  assert.equal(/<title>([\s\S]*?)<\/title>/.exec(html)?.[1], 'Smart CRM with deterministic guardrails | Accordo');
+  assert.equal(canonicalOf(html), `${ORIGIN}/${path}`);
+  assert.match(metaContent(html, 'description') ?? '', /coding agents compose the system/);
+  assert.equal(metaContent(html, 'og:url'), `${ORIGIN}/${path}`);
+
+  const structured = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
+    .map((match) => JSON.parse(match[1]));
+  const breadcrumb = structured.find((block) => block['@type'] === 'BreadcrumbList');
+  assert.equal(breadcrumb?.itemListElement.at(-1)?.name, 'A smart CRM knows when the agent must stop');
+});
+
 test('the indexing gate flips every dependent output together, in both directions', (t) => {
   const priv = build({ repositoryStatus: 'private' });
   const pub = build({ repositoryStatus: 'public' });

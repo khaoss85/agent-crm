@@ -89,7 +89,8 @@ async function boot(root, dbPath, options = {}) {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const client = new AccordoClient({ baseUrl, actor: { type: 'user', id: 'commercial-e2e' } });
-  return { app, client, close: () => new Promise((resolve) => server.close(resolve)).then(() => app.close()) };
+  const agentClient = new AccordoClient({ baseUrl, actor: { type: 'agent', id: 'bot' } });
+  return { app, client, agentClient, close: () => new Promise((resolve) => server.close(resolve)).then(() => app.close()) };
 }
 
 /** Create a core company + opportunity to hang quotes on. */
@@ -289,8 +290,9 @@ test('commercial e2e: approval boundary, revise/version-2, concurrency, fault in
   const dbPath = join(root, 'data', 'commercial2.sqlite');
   const instance = await boot(root, dbPath, { catalogTimeoutMs: 150 });
   t.after(() => instance.close().catch(() => {}));
-  const { app, client } = instance;
+  const { app, client, agentClient } = instance;
   const quotes = client.module('quote');
+  const agentQuotes = agentClient.module('quote');
   const userActor = { type: 'user', id: 'manager' };
 
   await client.request('/api/catalog/sync', { method: 'POST', body: { provider: 'fixture-saas-catalog' } });
@@ -328,7 +330,7 @@ test('commercial e2e: approval boundary, revise/version-2, concurrency, fault in
 
   // Only a human user actor may decide.
   await assert.rejects(
-    () => app.runAction({ module: 'quote', action: 'approve', recordId: quoteA, input: {}, actor: { type: 'agent', id: 'bot' } }),
+    () => agentQuotes.action(quoteA, 'approve', {}),
     (error) => error.status === 403 && error.code === 'HUMAN_APPROVAL_REQUIRED',
   );
   // Concurrent approve/reject: exactly one decision.

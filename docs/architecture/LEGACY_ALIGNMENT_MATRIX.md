@@ -74,6 +74,7 @@ horizontal capability the way the contract intends?*
 | **Module Evolution v1** (ADR-019) — a shipped record grows through a declared revision | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Managed records** — `writable: "managed"`, no public create, update or delete | `partial` — the stage fields are managed and CRUD cannot write them, but a stage is current state rather than append-only evidence | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Human-actor boundary** — the decision requires `actor.type === "user"` | `partial` — the boundary is in the approval workflow around a staged move, not in `move-stage` | `partial` — scoring and routing carry no user-actor requirement: they are deterministic computations from a published definition, not decisions | `aligned` — quote approval | `aligned` — requesting a signature | `aligned` — activation | `aligned` — every writing action |
+| **Public refusal receipt** — optional site content renders a tested request, asserted actor and machine-readable result | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ |
 | **Fingerprinted declared definitions** (ADR-015) — a declared version is content-addressed | `partial` — definitions are validated and drift refuses safely, but a pipeline carries no content-addressed version | `aligned` | `aligned` | `aligned` — provider definitions are fingerprinted | `aligned` | `aligned` |
 | **External-operation contract** (ADR-017) — intent, provider call outside every transaction, finalize, compensate | `not_applicable` | `not_applicable` | `partial` — catalog sync predates it and uses its own fetch-then-reconcile shape | `aligned` — it is the contract's origin | `not_applicable` | `not_applicable` |
 | **Money contract** (ADR-014) — integer minor units, currencies never summed, no FX | `not_applicable` | `not_applicable` | `aligned` | `aligned` | `aligned` | `aligned` |
@@ -106,6 +107,15 @@ is exactly what ADR-018's core budget rule permits in `packages/core`. Extractin
 it would be a mistake, not a backfill. It appears in this matrix because a reader
 scanning for "everything in core" will find it, and needs to be told why it is
 there.
+
+³ **The refusal receipt is a site content contract, not a domain runtime
+capability.** Pipeline, Lead Intelligence, Commercial Operations, Signature &
+Order, Contract Activation and Delivery are therefore `not_applicable`; so are
+Core CRM, the custom-package fixture, Service and documentation-only Marketing &
+Growth. Their actual human-actor behavior remains assessed by the row immediately
+above. The Smart CRM page uses Commercial's tested quote refusal as evidence, but
+that does not make the renderer a capability Commercial must adopt or other domains
+must backfill.
 
 ### Reading the shape rather than the cells
 

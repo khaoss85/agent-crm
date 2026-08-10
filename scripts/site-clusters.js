@@ -127,6 +127,15 @@ const CLUSTERS = [
  */
 const STANDING_LIMITS = ['L-01', 'L-02', 'L-04', 'L-05', 'L-03', 'L-08'];
 
+/** Closed, single-line bounds for the executable refusal receipt. */
+const REFUSAL_PROOF_FIELDS = new Map([
+  ['title', 140],
+  ['caption', 300],
+  ['request', 500],
+  ['actor', 300],
+  ['result', 160],
+]);
+
 /** Front-matter fields a blog post must declare (SITE_ARCHITECTURE.md §5). */
 export const REQUIRED_FRONT_MATTER = ['title', 'date', 'claims', 'transcript', 'editor'];
 
@@ -209,6 +218,22 @@ export function buildClusterPages({ sources, ledger, jobs, brand, origin, blogDi
           }
           if (!['working', 'partial'].includes(node.state)) {
             throw new Error(`${where}: recordChain.nodes[${index}].state must be working or partial`);
+          }
+        }
+      }
+
+      if (entry.refusalProof !== undefined) {
+        const proof = entry.refusalProof;
+        if (!proof || typeof proof !== 'object' || Array.isArray(proof)) throw new Error(`${where}: refusalProof must be an object`);
+        for (const field of Object.keys(proof)) {
+          if (!REFUSAL_PROOF_FIELDS.has(field)) throw new Error(`${where}: refusalProof has unknown field ${field}`);
+        }
+        for (const [field, max] of REFUSAL_PROOF_FIELDS) {
+          if (!proof[field] || typeof proof[field] !== 'string') throw new Error(`${where}: refusalProof is missing ${field}`);
+          if (!proof[field].trim()) throw new Error(`${where}: refusalProof.${field} must not be blank`);
+          if (proof[field].length > max) throw new Error(`${where}: refusalProof.${field} exceeds ${max} characters`);
+          if (/[\u0000-\u001f\u007f\u2028\u2029]/u.test(proof[field])) {
+            throw new Error(`${where}: refusalProof.${field} must be one line without control characters`);
           }
         }
       }
@@ -392,6 +417,7 @@ function spokePage({ cluster, entry, claims, limitations, jobIndex, standing, ta
       // Above the sections, deliberately. Everything below is downstream of this being read.
       boundaryBlock(entry, standing),
       recordChain(entry),
+      refusalProof(entry),
       ...entry.sections.map((section) => [
         '      <div class="section-block">',
         `        <h2>${escapeHtml(section.heading)}</h2>`,
@@ -404,6 +430,33 @@ function spokePage({ cluster, entry, claims, limitations, jobIndex, standing, ta
       '  </div>',
     ].join('\n'),
   };
+}
+
+/**
+ * An optional executable receipt for pages whose argument is a refusal boundary. It is deliberately
+ * fixed to request, actor and result: a free-form code sample would be decoration, while these three
+ * fields state who tried what and the machine-readable outcome that stopped it.
+ *
+ * @param {any} entry
+ */
+function refusalProof(entry) {
+  if (!entry.refusalProof) return '';
+  const proof = entry.refusalProof;
+  return [
+    '      <figure class="refusal-proof" aria-labelledby="refusal-proof-title">',
+    '        <figcaption>',
+    '          <span class="kicker">The boundary, executed</span>',
+    `          <strong id="refusal-proof-title">${escapeHtml(proof.title)}</strong>`,
+    `          <span>${escapeHtml(proof.caption)}</span>`,
+    '        </figcaption>',
+    '        <div class="code refusal">',
+    `<pre><span class="c">request</span>  ${escapeHtml(proof.request)}
+<span class="c">actor</span>    <span class="s">${escapeHtml(proof.actor)}</span>
+
+<span class="bad">${escapeHtml(proof.result)}</span></pre>`,
+    '        </div>',
+    '      </figure>',
+  ].join('\n');
 }
 
 /**
@@ -948,6 +1001,8 @@ function authoredStrings(entry) {
     entry.title, entry.plainName, entry.intent, entry.summary, entry.metaDescription,
     entry.recordChain?.title, entry.recordChain?.caption,
     ...(entry.recordChain?.nodes ?? []).flatMap((/** @type {any} */ node) => [node.label, node.detail, node.state]),
+    entry.refusalProof?.title, entry.refusalProof?.caption, entry.refusalProof?.request,
+    entry.refusalProof?.actor, entry.refusalProof?.result,
     ...(entry.boundaries ?? []),
     ...(entry.sections ?? []).flatMap((/** @type {any} */ section) => [section.heading, ...(section.body ?? [])]),
   ].filter((value) => typeof value === 'string');

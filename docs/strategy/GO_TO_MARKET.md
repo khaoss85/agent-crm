@@ -62,9 +62,13 @@ Three constraints on widening, all binding:
    elapsed-time SLA evidence and manual escalation. It is not an authenticated
    helpdesk or contact centre: there are no channel integrations, routing or
    automatic escalation, and the positioning may not run ahead of those boundaries.
-3. **The existing refusals stand.** "Smart CRM" / "AI CRM" is still the opposite of
-   this model, "customer data platform" is still a different category, and "customer
-   hub" is still only ours in the build-one reading (§9, `ORGANIC_GROWTH.md`).
+3. **The existing category refusals stand, with one narrower intent now claimed.**
+   Generic "AI CRM" still means a runtime assistant or model-governed seller and remains
+   the opposite of this model. "Smart CRM" is claimable only in the agent-built,
+   policy-governed reading published at `concepts/smart-crm.html`: the receipt is a
+   tested 403 on one approval boundary, not a universal claim that no model runs at
+   runtime. "Customer data platform" is still a different category, and "customer hub"
+   is still only ours in the build-one reading (§9, `ORGANIC_GROWTH.md`).
 
 The line that carries all of it: **it gives a coding agent a way to see, plan,
 build, check and prove — instead of just generating code.** Each internal tool has
