@@ -40,7 +40,7 @@ is who must be in the loop, not who does the typing.
 |---|---|---|---|---|---|
 | **Repository surface** (README, docs, ledger, `llms.txt`) | one change | with every merge | ~0 | agent | **Running.** Already gated by `npm run gtm:check` |
 | **`llms.txt` / `llms-full.txt` / `answers.json` / `jobs.json`** | regenerate | with every merge | ~0 | agent | **Running.** Generated, drift-checked |
-| **Long-tail capability and intent pages** (CPQ, signature→order, delivery economics, SLA, customer hub, Smart CRM) | one page | 2 / month | 2–3 h | agent drafts, human edits | **Running in checked source.** Customer Hub and Smart CRM are prepared as evidence-bound concept pages; public discovery follows their PR stack and deploy |
+| **Long-tail capability and intent pages** (CPQ, signature→order, delivery economics, SLA, customer hub, Smart CRM, CDP + CRM) | one page | 2 / month | 2–3 h | agent drafts, human edits | **Running in checked source.** Customer Hub, Smart CRM and CDP + CRM are prepared as evidence-bound concept pages; public discovery follows their PR stack and deploy |
 | **Comparison pages** (vs Twenty, vs Odoo, vs a CDP, vs building from scratch) | one page + 90-day refresh | 1 / month until 4 exist | 3–4 h | agent drafts, human verifies every competitor claim | **Running.** Four checked pages exist; named-competitor facts remain on the 90-day verification cadence |
 | **Recipes** (transcript-grounded walkthroughs) | one recipe | 2 / month | 3–4 h + a real build | agent builds, human owns the transcript | Blocked on having real transcripts to ground them |
 | **Articles** (the four pillars) | one article | 1 / month | 6–8 h | agent drafts, human is editor of record | Month 1 unblocked; months 5–6 gated on the benchmark run |

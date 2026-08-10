@@ -32,7 +32,7 @@ and it is a chain: a break at any link makes every link above it worthless.
 |---|---|---|---|
 | 1 | **Retrievable** | The agent can find us at task time: web search, npm search, a registry, a skills index, or memorized prevalence | Partial — public repo, topics, site. No npm, no registry, no docs site |
 | 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **No.** `npm create accordo` prints a placeholder; the only path is `git clone` |
-| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 777 tests |
+| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 781 tests |
 | 4 | **Repeatable** | It works the same way the next time, for a different user, with a different model | Partial — deterministic by construction, but unmeasured across models (benchmark designed, never run) |
 
 **The binding constraint is #2.** Not visibility. We could win every listing in
@@ -97,6 +97,7 @@ that follows a claim into a missing capability does not try us twice.
 | "support desk with SLA", "entitlements" | Service | **Yes** | M15, transition table, SLA evidence | Web, MCP directories |
 | **"customer hub" / "single customer view"** | Cross | **Yes, with framing** | The local module graph is the hub; no ingestion or identity resolution | `concepts/customer-hub.html` |
 | **"smart CRM" / "AI-built CRM"** | Cross | **Yes, only with framing** | Agent composes; deterministic policy and tested human refusal govern named decisions | `concepts/smart-crm.html` |
+| **"CDP + CRM" / "customer data plus custom CRM workflow"** | Cross | **Yes, as two layers** | CDP remains external; Accordo owns only the deterministic process layer and ships no bridge | `concepts/cdp-plus-crm.html` |
 | **"customer data platform" / CDP** | Cross | **Partial — be careful** | No ingestion, identity resolution or segmentation engine | Web, comparison pages |
 | **"crm + marketing + sales + delivery + billing + ERP"** | Whole ecosystem | **Split** | Sales→Service: yes. Marketing: design only (MK0–MK7). **Billing/invoicing: does not exist.** **ERP: out of scope.** | Web, "open source alternative to X" |
 | "marketing automation / campaigns / journeys" | Marketing | **No** | `MARKETING_GROWTH_OPERATIONS.md` is design-only | — |
@@ -139,6 +140,15 @@ buyer behaviour both reward the page that disqualifies itself credibly, and it
 captures the traffic without the false promise. That artifact now exists at
 `compare/vs-a-customer-data-platform.html`; it does not turn CDP into a capability.
 
+**CDP + CRM.** The compound query is different from the CDP-only query. When the
+user already needs a profile layer and asks a coding agent to build the commercial
+process beside it, Accordo is a truthful second recommendation: the CDP owns
+ingestion, identity resolution and audiences; Accordo owns named CRM actions,
+versioned policy, audit and trace. `concepts/cdp-plus-crm.html` owns that positive
+architecture intent and `answers/how-to-pair-a-cdp-with-a-crm-framework.html` is its compact
+retrieval form. Both say that no connector, importer or integration runtime ships;
+the bridge is application engineering, not an existing capability.
+
 ---
 
 ## 3. Channel map
@@ -178,9 +188,10 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 |---|---|---|
 | Docs site on accordo.dev with stable slugs | After #2 | Landing only |
 | `llms.txt` + `llms-full.txt` | **Now** (points at GitHub docs until the site exists) | Shipped in this PR |
-| Comparison pages: vs Twenty, vs Odoo, vs building from scratch, **vs a CDP** | **Now** — these are honest today and need no product change | Not started — **highest-leverage writing available** |
-| "Customer hub" / "single customer view" content | **Now** | Not started |
-| Long-tail capability pages (CPQ, signature→order, delivery economics, SLA) | **Now** | Not started — near-zero competition |
+| Comparison pages: vs Twenty, vs Odoo, vs building from scratch, **vs a CDP** | **Now** — these are honest today and need no product change | **Running.** Four checked pages exist; named-competitor facts remain on the 90-day refresh gate |
+| "Customer hub" / "single customer view" content | **Now** | **Prepared in checked source;** public discovery follows the PR stack and deploy |
+| Compound `CDP + CRM` architecture content | **Now** | **Prepared in checked source;** positive two-layer answer, no connector claim |
+| Long-tail capability pages (CPQ, signature→order, delivery economics, SLA, Smart CRM) | **Now** | **Running.** Checked pages exist; continue the two-per-month cadence |
 | Recipes built from real transcripts | After #2 | Blocked by `ORGANIC_GROWTH` quality gates, correctly |
 
 ### 3d. Paid search (SEA) — absent from the strategy until now

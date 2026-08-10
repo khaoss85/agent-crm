@@ -75,6 +75,7 @@ horizontal capability the way the contract intends?*
 | **Managed records** — `writable: "managed"`, no public create, update or delete | `partial` — the stage fields are managed and CRUD cannot write them, but a stage is current state rather than append-only evidence | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Human-actor boundary** — the decision requires `actor.type === "user"` | `partial` — the boundary is in the approval workflow around a staged move, not in `move-stage` | `partial` — scoring and routing carry no user-actor requirement: they are deterministic computations from a published definition, not decisions | `aligned` — quote approval | `aligned` — requesting a signature | `aligned` — activation | `aligned` — every writing action |
 | **Public refusal receipt** — optional site content renders a tested request, asserted actor and machine-readable result | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ |
+| **Public responsibility map** — optional site content separates exactly two layers and states the missing bridge | `not_applicable` ⁴ | `not_applicable` ⁴ | `not_applicable` ⁴ | `not_applicable` ⁴ | `not_applicable` ⁴ | `not_applicable` ⁴ |
 | **Fingerprinted declared definitions** (ADR-015) — a declared version is content-addressed | `partial` — definitions are validated and drift refuses safely, but a pipeline carries no content-addressed version | `aligned` | `aligned` | `aligned` — provider definitions are fingerprinted | `aligned` | `aligned` |
 | **External-operation contract** (ADR-017) — intent, provider call outside every transaction, finalize, compensate | `not_applicable` | `not_applicable` | `partial` — catalog sync predates it and uses its own fetch-then-reconcile shape | `aligned` — it is the contract's origin | `not_applicable` | `not_applicable` |
 | **Money contract** (ADR-014) — integer minor units, currencies never summed, no FX | `not_applicable` | `not_applicable` | `aligned` | `aligned` | `aligned` | `aligned` |
@@ -116,6 +117,12 @@ Growth. Their actual human-actor behavior remains assessed by the row immediatel
 above. The Smart CRM page uses Commercial's tested quote refusal as evidence, but
 that does not make the renderer a capability Commercial must adopt or other domains
 must backfill.
+
+⁴ **The responsibility map is also a site content contract, not a domain runtime
+capability.** Every domain is `not_applicable`, including those outside the six-column
+table. The CDP + CRM page cites Lead Intelligence and the general mutation envelope as
+evidence for the process layer; it does not add a CDP dependency, integration seam or
+new obligation to any domain package.
 
 ### Reading the shape rather than the cells
 

@@ -248,7 +248,7 @@
       "jobs": ["JTBD-LI-01", "JTBD-LI-02", "JTBD-LI-04", "JTBD-DO-01", "JTBD-DO-02", "JTBD-DO-03", "JTBD-DO-07", "JTBD-DO-08", "JTBD-CM-01", "JTBD-CM-02", "JTBD-MK-01", "JTBD-MK-02", "JTBD-MK-03", "JTBD-MK-06", "JTBD-DG-01", "JTBD-DG-03", "JTBD-DG-06", "JTBD-DG-07"],
       "docs": ["docs/strategy/DATA_GOVERNANCE.md", "docs/benchmarks/CRM_JTBD_MATRIX.md", "docs/LEAD_INTELLIGENCE.md", "docs/strategy/MARKETING_GROWTH_OPERATIONS.md"],
       "tests": ["tests/lead-intelligence-e2e.test.js"],
-      "related": ["vs-building-a-crm-from-scratch", "vs-twenty", "vs-odoo"]
+      "related": ["cdp-plus-crm", "vs-building-a-crm-from-scratch", "vs-twenty", "vs-odoo"]
     }
   ]
 }

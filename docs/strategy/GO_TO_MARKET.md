@@ -67,8 +67,11 @@ Three constraints on widening, all binding:
    the opposite of this model. "Smart CRM" is claimable only in the agent-built,
    policy-governed reading published at `concepts/smart-crm.html`: the receipt is a
    tested 403 on one approval boundary, not a universal claim that no model runs at
-   runtime. "Customer data platform" is still a different category, and "customer hub"
-   is still only ours in the build-one reading (§9, `ORGANIC_GROWTH.md`).
+   runtime. "Customer data platform" is still a different category. The compound
+   `CDP + CRM` intent is claimable only as a two-layer architecture: the CDP owns
+   profile and audience work, Accordo owns the agent-built process, and no bridge
+   ships between them (`concepts/cdp-plus-crm.html`). "Customer hub" is still only
+   ours in the build-one reading (§9, `ORGANIC_GROWTH.md`).
 
 The line that carries all of it: **it gives a coding agent a way to see, plan,
 build, check and prove — instead of just generating code.** Each internal tool has
