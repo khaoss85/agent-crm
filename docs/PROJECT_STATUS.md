@@ -14,16 +14,17 @@ Generated: **2026-08-10**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **GTM discovery and release integration**: the ordered #44 → #53 → #54 → #55 → #56 → #57 → #58 chain is merged, followed by the npm staging-receipt hardening in PR #59. It adds the Customer Hub, Smart CRM and CDP + CRM intent pages, first-contact agent metadata, the hosted read-only Docs MCP and the verified staged `create-accordo` candidate without changing their stated product limits. |
-| Main SHA at generation | `5630744` (regular merge of PR #59 / npm staging-receipt hardening) |
-| Tests on clean main | **808 passing, 0 failing** (`npm run verify` at `5630744`). |
+| Latest merged milestone | **GTM discovery and release integration**: the ordered #44 → #53 → #54 → #55 → #56 → #57 → #58 chain is merged, followed by npm staging-receipt hardening in PR #59 and canonical package-bin hardening in PR #60. It adds the Customer Hub, Smart CRM and CDP + CRM intent pages, first-contact agent metadata, the hosted read-only Docs MCP and the verified staged `create-accordo` candidate without changing their stated product limits. |
+| Main SHA at generation | `ef8487a` (regular merge of PR #60 / canonical npm bin) |
+| Tests on clean main | **808 passing, 0 failing** (`npm run verify` at `ef8487a`). |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
-| Browser smoke | Real-Chromium checks remain manual and are **not in CI**. PR #58 recorded desktop and mobile receipts for the 113-page site; the same exact main is live on `accordo.dev`, including the privacy and intent pages. |
-| CI | Exact main `5c8ad68` is green in GitHub Actions: `verify` and `public-claims` passed. |
-| Open PRs | PRs #45 and #47 are older conflicting branches with failed checks and are not part of the GTM release. The npm manifest-normalization follow-up is the only current publication fix at generation time. |
+| Browser smoke | Real-Chromium checks remain manual and are **not in CI**. PR #58 recorded desktop and mobile receipts for the 113-page site; exact main `ef8487a` is live on `accordo.dev`, including the privacy and intent pages. |
+| CI | Exact main `ef8487a` is green in GitHub Actions: `verify` and `public-claims` passed. |
+| Open PRs | PR #45 is the older Scenario Runner branch: its two `verify` jobs passed at its own head, but both public-claims jobs failed and it predates the GTM/main changes. PR #47 was closed as superseded by the equivalent temp-isolation fix already on main. |
+| Public discovery | GitHub About and all 20 intent topics are live. Smithery `khaoss85/accordo` returns 200 and exposes the three production Docs MCP tools. The GitHub social preview is live but stale at 421 tests; its generated 808-test replacement still needs a manual Settings upload. |
 | npm | `accordo@0.0.1` and `create-accordo@0.0.1` published as **empty name reservations** on 2026-08-09 — confirmed against the registry, not assumed. Neither installs anything. The `@accordo` scope is **unclaimed** (`@accordo/mcp` and `@accordo/core` return 404), which is why `site/brand.json` records `npm.status: names-reserved` and the MCP-registry submission stays blocked. **This row describes the registry and nothing in it has changed.** |
-| Project bootstrap | **`create-accordo` is real source and has a verified publication candidate**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates a bounded package directory while the source manifest stays private. Dispatch `31364606861` passed repository verification and deterministic assembly, then npm generated provenance but refused staging with `E401`; no stage or registry version exists. npm also normalized the bin path, so the follow-up makes the checked manifest canonical and proves npm installs the executable shim. **The published placeholder is untouched**, so `npm create accordo` still installs nothing. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
+| Project bootstrap | **`create-accordo` is real source and has a verified publication candidate**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates a bounded package directory while the source manifest stays private. Dispatch `31364606861` passed repository verification and deterministic assembly, then npm generated provenance but refused staging with `E401`; no stage or registry version exists. PR #60 made the checked bin path canonical and proves npm installs and executes the executable shim. **The published placeholder is untouched**, so `npm create accordo` still installs nothing. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
 
 ## Completed functional path
 

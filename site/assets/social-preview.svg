@@ -26,7 +26,7 @@
   <text class="h" x="88" y="362" font-size="63" fill="{{color.accent}}">own the CRM it builds.</text>
 
   <!-- subhead -->
-  <text class="s" x="88" y="424" font-size="23" fill="{{color.muted}}">The open-source framework Claude Code and Codex use to generate a CRM</text>
+  <text class="s" x="88" y="424" font-size="23" fill="{{color.muted}}">The framework Claude Code, Codex and Gemini CLI use to generate a CRM</text>
   <text class="s" x="88" y="458" font-size="23" fill="{{color.muted}}">as reviewable code you own — not a tenant in someone else's platform.</text>
 
   <!-- evidence strip -->

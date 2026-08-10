@@ -32,7 +32,7 @@ and it is a chain: a break at any link makes every link above it worthless.
 |---|---|---|---|
 | 1 | **Retrievable** | The agent can find us at task time: web search, npm search, a registry, a skills index, or memorized prevalence | Partial — public repo, topics, site. No npm, no registry, no docs site |
 | 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **Candidate proven, channel not live.** The assembled `create-accordo@0.1.0` tarball installs offline and leaves a verified project; `npm create accordo` still reaches the `0.0.1` placeholder until human-approved staging and a registry receipt |
-| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 807 tests measured at `0b2ce10` |
+| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 808 tests measured at `ef8487a` |
 | 4 | **Repeatable** | It works the same way the next time, for a different user, with a different model | Partial — deterministic by construction, but unmeasured across models (benchmark designed, never run) |
 
 **The binding constraint remains the live half of #2.** The candidate works; the
@@ -166,8 +166,10 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 | **Codex plugin** | `.codex-plugin/plugin.json` + self-hosted marketplace ([openai/plugins](https://github.com/openai/plugins)) | Self-hosted; no evidenced open submission to OpenAI's curated repo | **Now** | Mirror of the Claude plugin |
 | **Anthropic community marketplace** | Console form → `anthropics/claude-plugins-community` | **Gated** (form) | After #2 | Payload prepared |
 | **MCP Registry** | `server.json` + `mcp-publisher`; **requires the package published on npm first**, `mcpName` must match, namespace `io.github.khaoss85` ([quickstart](https://modelcontextprotocol.io/registry/quickstart)) | CLI + GitHub auth | After npm publish | Blocked by design, correctly |
-| **Anthropic Connectors Directory** | Hosted Docs MCP, supported auth mode, privacy policy, review | **Prepared, not submitted** | After a human promotes the endpoint | The stateless read-only transport and privacy page exist in source; a production receipt and human submission do not |
-| **ChatGPT/Codex plugin directory** | Verified developer + MCP server + policies | **Prepared, not submitted** | After a human promotes the endpoint | Same transport; verified-developer and review steps remain external |
+| **Smithery** | Publish the existing Streamable HTTP URL; Smithery scans tools/resources and creates a directory page ([docs](https://smithery.ai/docs/build/publish)) | Account + namespace | **Done** | **Live:** `khaoss85/accordo`; scan found `accordo-docs@0.1.0`, three tools and 99 resources. The public page returns 200 and names only `search_docs`, `get_capability` and `check_job` |
+| **Glama** | Directory/hosting can ingest a GitHub repository, Dockerfile or npm package ([docs](https://glama.ai/mcp/hosting)) | Account + GitHub App or package | After `@accordo/mcp` or a dedicated deployment artifact | Mapped, not listed; do not imply the hosted Docs MCP has been ingested |
+| **Anthropic Connectors Directory** | Hosted Docs MCP, supported auth mode, privacy policy, review | **Ready, not submitted** | **Now** | Production `tools/list` proves three read-only, non-destructive tools and the privacy page is live; review submission remains external |
+| **ChatGPT/Codex plugin directory** | Verified developer + MCP server + policies | **Ready, not submitted** | **Now** | Same production transport; verified-developer and review steps remain external |
 | **Claude Code plugin hints** | `<claude-code-hint>` on stderr under `CLAUDECODE=1`; **dropped unless listed in the official marketplace** | n/a | Post-traction | Correctly deferred |
 
 ### 3b. Package and code surfaces
@@ -300,8 +302,9 @@ llms.txt · Discussions · npm placeholders · comparison and intent pages.
 with provenance · deployable starter + Deploy Button · Vercel template
 submission · awesome lists · Anthropic community marketplace · docs site.
 
-**After the Docs MCP:** MCP Registry · Connectors Directory · ChatGPT/Codex
-directory.
+**After the Docs MCP:** Smithery URL listing is done; Connectors Directory and
+ChatGPT/Codex directory are ready for external review. MCP Registry and Glama's
+package path still wait for a real `@accordo/mcp` artifact.
 
 **After the benchmark runs:** comparative claims · CITATION.cff · Product Hunt ·
 Show HN · Reddit · the first paid test.
