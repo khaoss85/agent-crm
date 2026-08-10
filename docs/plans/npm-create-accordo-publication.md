@@ -220,6 +220,16 @@ tenancy or RBAC.
   The distribution gate requires exactly those two JSON-only invocations and a
   regression test executes the same npm wrapper and parses stdout. Focused tests,
   `npm run gtm:check` and the full 808-test verification pass.
+- 2026-08-10: PR #59 merged at `5630744`; dispatch `31364606861` passed all
+  repository and deterministic-assembly gates and reached `npm stage publish`.
+  npm signed and logged a provenance statement, then refused authentication with
+  `E401`. No staged or live version was created; `create-accordo@0.0.1` remains
+  the registry truth. The remaining external prerequisite is the package's exact
+  stage-only trusted-publisher relationship.
+- 2026-08-10: the same npm 11 run normalized `./bin/create-accordo.js` to its
+  canonical `bin/create-accordo.js` form with a misleading removal warning. The
+  tarball still contained the executable, but source now emits the canonical form
+  and the package test proves npm creates `node_modules/.bin/create-accordo`.
 
 ## 8a. Adversarial review outcome
 
@@ -258,9 +268,10 @@ tenancy or RBAC.
 ## 10. Outcome and follow-up
 
 Implementation, public-copy review, the original adversarial review, merge and
-production promotion are complete. The first staging dispatch exposed and
-fail-closed on a JSON receipt bug before it contacted npm; its narrow fix is
-tested and awaiting the same review/merge discipline. After that merge, rerun
-the exact workflow, inspect the staged tarball and approve it with 2FA. Only the
-resulting registry receipt authorizes changing `site/brand.json` to `published`
-or using `npm create accordo` in public copy.
+production promotion are complete. The JSON receipt fix is merged; the next
+dispatch reached npm and proved the repository path, then stopped at `E401`
+because the external trusted-publisher relationship did not authorize it. After
+the canonical-bin follow-up merges, configure that relationship for the exact
+repository, workflow, environment and stage-only action; rerun, inspect the stage
+and approve it with 2FA. Only the resulting registry receipt authorizes changing
+`site/brand.json` to `published` or using `npm create accordo` in public copy.

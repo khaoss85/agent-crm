@@ -83,6 +83,8 @@ test('the private source manifest and public publication manifest cannot be conf
   assert.equal(candidate.version, source.version);
   assert.equal(candidate.dependencies, undefined);
   assert.equal(candidate.scripts, undefined, 'installing the package executes no lifecycle script');
+  assert.deepEqual(candidate.bin, { 'create-accordo': 'bin/create-accordo.js' },
+    'the publication manifest uses npm canonical bin syntax without publish-time correction');
   assert.equal(candidate.repository.url, 'git+https://github.com/khaoss85/agent-crm.git');
   assert.deepEqual(candidate.publishConfig, { access: 'public', provenance: true });
 
@@ -181,8 +183,11 @@ test('two assemblies pack byte-identically, install offline and create a working
 
   const installedBin = join(consumer, 'node_modules/create-accordo/bin/create-accordo.js');
   assert.equal(existsSync(installedBin), true);
+  const installedShim = join(consumer, 'node_modules/.bin/create-accordo');
+  assert.equal(existsSync(installedShim), true,
+    'npm exposes the installed create command through its executable shim');
   const project = join(workspace, 'acme-crm');
-  const created = run(process.execPath, [installedBin, project, '--apply', '--json'], { cwd: consumer });
+  const created = run(installedShim, [project, '--apply', '--json'], { cwd: consumer });
   assert.equal(created.exitCode, 0, created.stderr);
   const report = JSON.parse(created.stdout);
   assert.equal(report.ok, true);

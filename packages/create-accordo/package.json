@@ -8,7 +8,7 @@
     "node": ">=22.16.0"
   },
   "bin": {
-    "create-accordo": "./bin/create-accordo.js"
+    "create-accordo": "bin/create-accordo.js"
   },
   "keywords": [
     "crm",
