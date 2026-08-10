@@ -14,16 +14,16 @@ Generated: **2026-08-10**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **Project Bootstrap** (PR #43), on top of **M16 — Renewal and expansion operations** (PR #42), **DX5 — Project Verify** (PR #41), the package extraction of **Lead Intelligence** (PR #38), and the earlier DX4/M15/M14/AX2 platform chain. The GTM intent and release candidates below are open, not merged. |
-| Main SHA at generation | `77d7719` (regular merge of PR #43 / Project Bootstrap) |
-| Tests on clean main | **772 passing, 0 failing** (`npm run verify` from the clean `77d7719` baseline recorded in `docs/plans/hosted-docs-mcp.md`) |
+| Latest merged milestone | **GTM discovery and release integration**: the ordered #44 → #53 → #54 → #55 → #56 → #57 → #58 chain is merged. It adds the Customer Hub, Smart CRM and CDP + CRM intent pages, first-contact agent metadata, the hosted read-only Docs MCP and the verified staged `create-accordo` candidate without changing their stated product limits. |
+| Main SHA at generation | `5c8ad68` (regular merge of PR #58 / GTM release integration) |
+| Tests on clean main | **807 passing, 0 failing** (`npm run verify` at `5c8ad68`); the pending staging-receipt fix raises the suite to 808. |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
-| Browser smoke | Real-Chromium checks remain manual and are **not in CI**. The GTM release candidate adds a checked privacy page to the 113-page site; its final clean-clone browser receipt belongs to PR #58, not to `main`. |
-| CI | `main` is green; PR #58 must have both `verify` runs, both `public-claims` runs and GitGuardian green at its exact head before review closes. |
-| Open PRs | **GTM release sequence:** #44 → #53 → #54 → #55 → #56 → #57 → #58. PR #58 preserves the reviewed ancestry of npm candidate #51 and Docs MCP #52, so #51/#52 are alternative direct-merge paths, not additional steps after #58. PRs #45 and #47 are older conflicting branches with failed checks and are not part of this release. |
+| Browser smoke | Real-Chromium checks remain manual and are **not in CI**. PR #58 recorded desktop and mobile receipts for the 113-page site; the same exact main is live on `accordo.dev`, including the privacy and intent pages. |
+| CI | Exact main `5c8ad68` is green in GitHub Actions: `verify` and `public-claims` passed. |
+| Open PRs | PRs #45 and #47 are older conflicting branches with failed checks and are not part of the GTM release. The staging-receipt fix is the only current npm-publication follow-up at generation time. |
 | npm | `accordo@0.0.1` and `create-accordo@0.0.1` published as **empty name reservations** on 2026-08-09 — confirmed against the registry, not assumed. Neither installs anything. The `@accordo` scope is **unclaimed** (`@accordo/mcp` and `@accordo/core` return 404), which is why `site/brand.json` records `npm.status: names-reserved` and the MCP-registry submission stays blocked. **This row describes the registry and nothing in it has changed.** |
-| Project bootstrap | **`create-accordo` is real source and has a verified publication candidate**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates a bounded package directory while the source manifest stays private. The package test proves byte-identical packs, offline tarball installation and the installed bin through generated inspect, doctor, tests and smoke. The manual OIDC workflow stages only reviewed `main`; final approval remains human. **The published placeholder is untouched**, so `npm create accordo` still installs nothing and no provenance receipt exists yet. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
+| Project bootstrap | **`create-accordo` is real source and has a verified publication candidate**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates a bounded package directory while the source manifest stays private. The first workflow dispatch on merged main failed before contacting npm because npm's command banner polluted a redirected JSON receipt; the pending fix makes both workflow invocations silent and regression-tests the exact wrapper. **The published placeholder is untouched**, so `npm create accordo` still installs nothing and no provenance receipt exists yet. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
 
 ## Completed functional path
 
@@ -99,13 +99,13 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
    workflow. No GTM branch silently changes that product order.
 2. Before any remote CRM write surface, add tenant and role boundaries; the
    authenticated Streamable HTTP project MCP and PostgreSQL adapter remain
-   separate platform work. The public Docs MCP in PR #58 is read-only framework
+   separate platform work. The production Docs MCP is read-only framework
    documentation and does not satisfy any of those production gates.
-3. The active distribution track is the ordered GTM stack #44 → #53 → #54 →
-   #55 → #56 → #57 → #58, followed by human promotion/publication receipts.
-   LA0, its hardening, the neutral helper move, the Intelligence ADRs and package
-   extraction, DX5 and M16 are already merged on `main`; they are evidence, not
-   future work.
+3. The GTM stack and production promotion are complete. The active distribution
+   task is to merge the JSON-only staging-receipt fix, rerun the manual OIDC
+   workflow, inspect the npm stage and leave final public-version approval behind
+   npm's human 2FA gate. Registry and marketplace claims remain blocked until a
+   real registry receipt exists.
 
 Two parallel tracks run alongside and are not gated by domain progress: the
 **platform track** (domain package boundary, PostgreSQL,
