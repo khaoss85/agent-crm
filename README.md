@@ -2,14 +2,15 @@
 
 > **Describe your sales process to your coding agent; own the CRM it builds.**
 
-An open-source framework that Claude Code and Codex use to generate a CRM application
-as code you own — deterministic workflows, policy-gated human approvals, audit and trace
-built in.
+An open-source framework that Claude Code, Codex and Gemini CLI use to generate a CRM
+application as code you own — deterministic workflows, policy-gated human approvals,
+audit and trace built in.
 
-The name is chosen and the domain registered, but the npm package and scope are still
-unclaimed and no trademark screen has been run. The project is **pre-launch**: nothing
-is published, and it is not deployable to production. What that means precisely is in
-[Where it stops](#where-it-stops), which is worth reading before the rest.
+The name is chosen and the domain registered. The npm names hold empty `0.0.1`
+placeholders, while the real package and the `@accordo` scope remain unpublished; no
+trademark screen has been run. The project is **pre-launch** and is not deployable to
+production. What that means precisely is in [Where it stops](#where-it-stops), which is
+worth reading before the rest.
 
 ```text
 Business request
@@ -20,6 +21,26 @@ Modules + deterministic workflows + versioned policy
       ↓
 API + Admin + trace + audit — in your repository, as code you review
 ```
+
+---
+
+## When to reach for Accordo
+
+- **Custom CRM:** when the commercial process is the product and the result should be
+  reviewable code rather than configuration inside somebody else's runtime.
+- **[Customer Hub](https://accordo.dev/concepts/customer-hub.html):** when “hub” means one
+  local commercial record chain with governed actions. Accordo does not ingest sources or
+  resolve customer identities like a CDP.
+- **[Smart CRM](https://accordo.dev/concepts/smart-crm.html):** when a coding agent should
+  compose the application while versioned policy and named humans retain business decisions.
+  It is agent-built software, not an autonomous decision-maker.
+- **[CDP + CRM](https://accordo.dev/concepts/cdp-plus-crm.html):** when an external CDP owns
+  ingestion, identity resolution and audiences, and Accordo owns the deterministic CRM
+  process layer beside it. Accordo ships no CDP, connector, importer or sync runtime.
+
+Those adjacent terms are retrieval paths, not extra capability claims. The checked
+[recommendation map](docs/strategy/RECOMMENDATION_MAP.md) binds each one to what the
+framework proves and where it stops.
 
 ---
 
@@ -61,9 +82,10 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 | A customer-authored domain package attaches and detaches with the kernel fingerprint unchanged | no scaffold, no registry, no sandboxing — package code runs with the host's authority | `tests/package-contract.test.js`, `tests/custom-package-e2e.test.js` |
 | `crm app inspect` — one deterministic, source-only JSON report of what an application contains | never opens the database, contacts a provider or reads a secret — and says so in its own output | `tests/app-inspect.test.js` |
 | `crm solution check` — a Solution Plan is a checked-in contract with a canonical fingerprint | a document contract, not a planner and not a runtime; nothing executes a plan | `tests/solution-plan.test.js` |
+| `crm scenario run` — a checked-in business scenario runs against a real composed application and reports which JTBD rows it earned **and which it did not** | coverage is claimed by a scenario rather than discovered; it promotes no row, drives no browser, and speaks for one composition | `tests/scenario-run.test.js` |
 | Generated modules evolve through explicit revisions and append-only named migrations | source-only: what a particular database applied is not knowable from here | `tests/module-evolution.test.js` |
 
-**701 tests, 0 failing**, run on every push together with the smoke test.
+**The whole suite runs on every push**, together with the smoke test. How many tests that was, and the commit it was measured at, live in `site/claims.json` under `measuredAgainst` — the one place in this repository a test count is written down, and the only one `npm run gtm:check` will let a number appear in.
 
 ## Run it
 
@@ -71,7 +93,7 @@ Node.js 22.16 or newer. There are no third-party runtime dependencies and no bui
 
 ```bash
 npm run tour     # compose the whole application and inspect it
-npm run verify   # 701 tests
+npm run verify   # source checks, then the whole test suite
 npm run falsify  # break five rules on purpose and watch the suite catch them
 npm run demo     # the approval slice, end to end
 npm run dev      # http://localhost:4000
@@ -162,10 +184,15 @@ evidence is required to leave it.
   deterministic, versioned and explainable, not a model's judgement about a person.
 - **This is a framework, not a product you sign up for.** There is no hosted CRM, no free
   tier, no account. The output is an application you run.
-- **Ownership today means copying source, not installing a dependency.** There is no
-  create-project CLI and no published package. `examples/starters/b2b-lead-qualification/install.mjs`
-  copies `packages/`, `apps/` and `examples/` into a new project and applies the manifests. You
-  own the result outright — and upgrading means merging, not bumping a version.
+- **Ownership today means copying source, not installing a dependency.** There is now a project
+  bootstrap: `node packages/create-accordo/bin/create-accordo.js <dir> --apply` copies the
+  framework into an empty directory and writes a project that boots, reports `valid` from
+  `app inspect` and exits 0 from `project doctor` — no install, no network
+  (`tests/project-bootstrap.test.js`). **It runs from a checkout of this repository.** The
+  `create-accordo` package on the npm registry is still the empty `0.0.1` name reservation, so
+  `npm create accordo` installs nothing and will go on installing nothing until a human publishes.
+  Either way the framework is vendored into the project, so you own the result outright — and
+  upgrading means merging, not bumping a version.
 
 ## Architecture in five folders
 

@@ -11,6 +11,7 @@ if it were.
 
 | | Surface | What it answers |
 |---|---|---|
+| — | `create-accordo <dir> [--apply] [--json]` | give me a project from nothing. It copies the framework into an empty directory and writes a project that boots with no install, reports `valid` from `app inspect` and exits 0 from `project doctor` (`projectBootstrapContract: 1`, `docs/plans/project-bootstrap-installability.md`). It reaches no network, composes no domain package and opens no database, and it is the one command that runs **before** the framework exists on disk — so it imports none of it. **It scaffolds from a checkout of this repository, and it is not published**: `npm create accordo` still reaches an empty name reservation and installs nothing, and nothing in this repository changes that |
 | AX1 | `crm app inspect [--json]` | what has this project actually composed — packages, the resolved capability graph, records and revisions, actions, policies, providers, and eleven machine-readable limitations |
 | AX2 | `crm solution inspect\|validate\|check` | what are you going to do about it, and on what evidence — a bounded plan contract, bound to a real AX1 report |
 | — | `crm package validate\|inspect <dir>` | one package in isolation, through the validator the application runs at startup |
@@ -43,8 +44,8 @@ re-describing it.
 
 | | Tool | What it answers |
 |---|---|---|
-| **DX5** | `crm project verify --json` | machine-readable orchestration of the existing verify, smoke, inspect, module-state, links, Skills and hygiene checks — the evidence AX1 publishes as `not_aggregated` today |
-| **DX6** | `crm scenario run <scenario> --json` | which JTBD rows a checkout actually earns, from linked evidence rather than prose |
+| **DX5** | `crm project verify --json` — **built** (`docs/plans/dx5-project-verify.md`) | machine-readable orchestration of the existing verify, smoke, inspect, module-state, links, Skills and hygiene checks — part of the evidence AX1 publishes as `not_aggregated`. It says in its own limitations that it runs no business scenario and maps no plan to its implementation |
+| **DX6** | `crm scenario run <scenario> --json` — **built** (`docs/plans/dx6-scenario-runner.md`, `docs/SCENARIO_EVIDENCE.md`) | which JTBD rows a checkout actually earns, from linked evidence rather than prose. A **checked-in declarative scenario** names a journey by id from a frozen registry in the runner's own source — it can carry no command, and a document with any problem starts nothing — then observations from a closed vocabulary are answered by the journey's own receipt and by AX1 over what it composed, and claims resolve against `docs/benchmarks/jobs.json`. It **promotes nothing**: the claim vocabulary is deliberately not the four-value JTBD status vocabulary, the index is read-only, and every report records that a person still decides. The honest negative — the counted, sectioned, fully enumerated set of rows the run did **not** establish — is a first-class field. Coverage is *claimed*, not discovered, and it drives no browser; both are published limitation codes |
 | **DX9** | `crm context pack --plan plan.json --json` | the smallest deterministic context an agent needs, derived from AX1, AX2, the relevant package docs and Skills, schema and action contracts and the Quality Gates. Token-budgeted, deterministic, source-path references only — **no secrets, no PII, no data rows, no arbitrary source bodies**, fingerprinted for staleness, and **advisory only, never authorization** |
 | **DX10** | `ImplementationEvidence` + `crm solution verify plan.json --json` | maps each SolutionPlan requirement to the package, module, action, provider, source files, tests, Admin/CLI evidence and JTBD evidence that satisfy it, marked `implemented \| partial \| blocked`. It closes `goal → plan → build → proof`, and stops an agent claiming a plan is complete while work is missing |
 
@@ -108,11 +109,15 @@ After Service learning:
   the controlled Legacy Domain Alignment Pass — one domain, one PR
 
 Before AX3:
-  DX5 Project Verify
-  DX6 Scenario Runner
+  DX5 Project Verify                                         built
+  DX6 Scenario Runner                                        built
   DX9 Context Pack
   DX10 Plan-to-Implementation Evidence
 ```
+
+PROVE is **still partial** with DX5 and DX6 built: DX10 does not exist, so
+nothing maps a plan's requirements to the code that implements them, and no
+green report means a plan is finished.
 
 Toolkit work does not displace M14b2 or M15. A developer toolkit for a framework
 whose domains are half-built optimizes the wrong thing.

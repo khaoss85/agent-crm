@@ -5,6 +5,10 @@ on:
   pull_request:
 
 jobs:
+  # Left at the default fetch-depth: 1 deliberately. Nothing under `npm run verify` or
+  # `npm run smoke` reads git history — the only git these run is `ls-files`, `status`
+  # and `diff HEAD`, all of which work in a one-commit checkout, and the provenance
+  # tests build their own fixture repositories rather than reading this one.
   verify:
     runs-on: ubuntu-latest
     steps:
@@ -22,6 +26,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The one job that reads history, because it is the one job that checks a
+          # historical fact. site/claims.json records the commit its public numbers were
+          # measured at, and scripts/measurement.js has to show that commit is an
+          # ancestor of HEAD — object existence is not provenance; a commit pushed to an
+          # unrelated branch has that too.
+          #
+          # `git merge-base --is-ancestor` needs the commits *between* the two, not just
+          # the named one, so a targeted `git fetch origin <sha>` does not help: it hands
+          # back an object with no path to HEAD and the check still cannot answer. Full
+          # history is the smallest thing that answers the question, and it is cheap here
+          # — the pack is under 3 MB.
+          #
+          # Without this, the default fetch-depth: 1 leaves no commit but HEAD, and every
+          # honest historical measurement is reported as "not a commit in this
+          # repository". That is what was failing PRs #43, #44 and #45. Removing it does
+          # not silently re-break them: the gate now recognises a shallow clone and fails
+          # with "history unavailable" instead.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22.16.0

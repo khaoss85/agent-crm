@@ -10,6 +10,7 @@ import { packageScaffoldCommand } from './package-scaffold.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
 import { projectDoctorCommand } from './project-doctor-command.js';
 import { projectVerifyCommand } from './project-verify-command.js';
+import { scenarioRunCommand } from './scenario-run-command.js';
 import { solutionCommand } from './solution-command.js';
 
 /** @param {string[]} argv */
@@ -53,6 +54,15 @@ export async function runCli(argv) {
     command = 'app:inspect';
     positional = positional.slice(1);
   }
+  // "scenario run <scenario>" answers "which JTBD rows does this checkout
+  // actually earn?" (DX6). It reads a checked-in declarative scenario document,
+  // runs the journey that document names by id — from a registry in the
+  // runner's own source, never a path the document supplies — and maps what it
+  // observed onto the JTBD index. It promotes nothing.
+  if (command === 'scenario' && positional[0] === 'run') {
+    command = 'scenario:run';
+    positional = positional.slice(1);
+  }
   // "solution inspect|validate|check <plan.json>" reads a machine-readable
   // Solution Plan (AX2). Like `app inspect`, none of it constructs the
   // application or opens a database, and none of it executes the plan.
@@ -85,6 +95,16 @@ export async function runCli(argv) {
       mode: /** @type {'inspect'|'validate'|'check'} */ (command.slice('solution:'.length)),
       json: flags.json === true,
       rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+    });
+    process.exitCode = result.exitCode;
+    return;
+  }
+
+  if (command === 'scenario:run') {
+    const result = await scenarioRunCommand({
+      scenarioRef: positional[0],
+      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+      json: flags.json === true,
     });
     process.exitCode = result.exitCode;
     return;
@@ -326,6 +346,8 @@ Usage:
   accordo db:migrate [--db path]
   accordo app inspect [--json] [--root dir]
   accordo project doctor [--json] [--root dir]
+  accordo project verify [--json] [--root dir]
+  accordo scenario run <scenario> [--json] [--root dir]
   accordo solution inspect <plan.json> [--json]
   accordo solution validate <plan.json> [--json]
   accordo solution check <plan.json> [--json] [--root dir]
@@ -406,10 +428,36 @@ about behaviour, domain correctness, database migration state, provider health
 or production readiness. Every such gap is a named limitation in the report.
 Exit codes: 0 no failures, 1 inconsistencies, 2 not a readable project.
 
+"scenario run <scenario>" answers "which JTBD rows does this checkout actually
+earn, and which does it not?" It reads a checked-in declarative scenario
+document (a bare id resolves to examples/scenarios/<id>.scenario.json), runs the
+journey that document names, inspects what the journey composed, and maps what
+it observed onto docs/benchmarks/jobs.json.
+
+It is not a second test runner: it runs no suite, grades no package and calls no
+doctor. What it produces is the mapping prose cannot give you — these rows this
+run exercised, with linked evidence, and the counted list of rows it did NOT
+establish. "Not established" means the scenario said nothing about the row,
+never that the row is unsupported.
+
+A scenario is a document, not a script. No field in the contract could hold a
+command, every string is refused if it looks like one, and the journey is chosen
+by id from a registry in the runner's own source — so there is no code path from
+document content to an invocation. A document with any problem is refused before
+anything runs.
+
+It PROMOTES NOTHING. A JTBD row is promoted by a person, on merged tests, under
+docs/QUALITY_GATES.md §3; jobs.json and the matrix are opened read-only. It
+drives no browser, contacts no provider, reaches no network, and says nothing
+about a composition other than the one its journey built. Every such gap is a
+named limitation in the report.
+Exit codes: 0 every claim established, 1 something did not hold, 2 unreadable.
+
 "solution inspect|validate|check" read a machine-readable Solution Plan (AX2).
 validate reads no project at all; check binds the plan to this project's app
 inspect report and reports PLAN_STALE when the composition has moved. None of
 them executes a plan, writes source, installs anything or opens a database.
 Package contract: docs/PACKAGE_AUTHORING.md
-Application inspection: docs/APPLICATION_INSPECTION.md — plans: docs/SOLUTION_PLAN.md`;
+Application inspection: docs/APPLICATION_INSPECTION.md — plans: docs/SOLUTION_PLAN.md
+Scenario evidence: docs/SCENARIO_EVIDENCE.md`;
 }

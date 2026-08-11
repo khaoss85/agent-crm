@@ -961,3 +961,178 @@ have their own reinterpretation problem for G1–G4 over a configured product. A
 nothing about publication: which sentences an Edition L result licenses is
 `docs/marketing/BENCHMARK_PUBLICATION.md`, deliberately a separate document with
 a separate gate.
+
+## ADR-025 — Host the existing Docs MCP through one stateless HTTP adapter
+
+**Status:** accepted for implementation. Production promotion and directory
+submission remain human decisions.
+
+**Context.** `packages/docs-mcp` already owns three read-only tools and the
+structural rule that no capability or CRM-job status leaves without its
+limitation. It runs only over stdio, which means a stranger must clone the
+repository and launch a child process before an agent can query it. The reviewed
+Anthropic/OpenAI discovery surfaces require a remote MCP endpoint, while the
+project MCP cannot be hosted safely before authentication, tenancy and RBAC.
+
+**Decision.** Add a Web `Request -> Response` adapter around
+`createDocsMcpServer`, deployed as a Node/Fluid Compute Vercel Function beside
+the existing static site. It is stateless, adds no tool and no dependency, and
+uses the same server instance contract as stdio. Modern MCP routing headers,
+Origin, content negotiation and request size are validated at the HTTP boundary;
+the body remains the source of truth. Runtime-read Markdown and ledgers are
+explicitly included in the Function bundle and ExecPlans explicitly excluded.
+
+No-auth is deliberate for this public, read-only surface. It contains only
+bytes already public on the site/repository, opens no database, calls no provider
+and persists no request. Authentication would reduce discoverability without
+protecting a non-public resource. Adding any private resource, persistence,
+telemetry or write tool reopens this decision and requires authorization before
+deployment.
+
+**Rejected:** a second SDK-based server, because its tool/claim contract could
+drift; and a persistent proxy around the stdio process, because it introduces
+process/session state that modern MCP removed and does not fit request-based
+Functions.
+
+**Consequences.** One remote URL can serve Claude, OpenAI and any conforming MCP
+client without broadening the CRM production claim. Vercel becomes a hosting
+subprocessor for ordinary HTTP/function metadata, stated on the public privacy
+page. A preview proves code and bundle; only a human may promote the endpoint or
+submit it to a directory.
+
+**Adversarial-review addendum (2026-08-09).** The canonical build may replace
+only its own ignored generated directory. A caller-selected assembler output
+must not exist, nor may its staging sibling, so a test/helper invocation cannot
+erase an occupied external directory. HTTP content negotiation counts a media
+type only when its quality is greater than zero; `text/event-stream;q=0` is a
+406, not permission to return a response the client refused. Regression tests
+hold both boundaries and also exercise the post-read body-size check against a
+lying `Content-Length`.
+## ADR-026 — The npm bootstrap is assembled from declared source and staged through trusted publishing
+
+**Status:** accepted.
+
+**Context.** `packages/create-accordo` can create a runnable project from this
+repository, but npm packages cannot include files outside their package root.
+Publishing that directory directly would therefore ship a working executable
+beside no framework source; the command would load and then correctly refuse
+with `FRAMEWORK_SOURCE_UNAVAILABLE`. Adding a `files` array does not cross the
+package-root boundary. Checking a second copy of the framework into the package
+would solve the tarball and create a permanent source-drift problem.
+
+**Decision.** The checked-in `packages/create-accordo/package.json` remains
+`private: true`. A maintainer-only, dry-run-by-default assembler creates a new
+publication directory from two explicit inputs: the bootstrap package files and
+the same declared framework inventory the bootstrap already fingerprints. The
+framework is placed under `framework/`; installed code checks that bundled
+location before retaining the repository-ancestor fallback. The assembler
+reports a versioned contract and a content fingerprint, refuses a non-empty
+target, canonicalizes parent symlinks before enforcing the outside-source
+boundary, writes through a unique staging directory and commits with one rename.
+No generated framework copy is checked in.
+
+The publication manifest is generated from an allow-list, not inherited by
+spreading the private development manifest. It has no dependencies or install
+scripts, carries the exact public repository URL required by npm provenance,
+and exposes only the `create-accordo` bin. Every allow-listed input must be a
+regular file; the assembler refuses symlinks rather than following them into a
+signed tarball. Tests pack the assembled directory
+twice, require byte-identical archives, install one into an empty npm project,
+run the installed bin and run the resulting project's inspect, doctor, tests
+and smoke. A tarball that merely contains plausible paths is not evidence.
+
+**Release boundary.** Source never publishes directly. A manually triggered
+GitHub Actions workflow on a GitHub-hosted runner assembles and re-verifies the
+candidate, then uses npm trusted publishing through OIDC. It stages rather than
+publishes the version: CI may prepare a release, but a maintainer reviews and
+approves the staged package with 2FA before it becomes public. No long-lived npm
+write token is stored. Every action in that release workflow is pinned to a full
+commit SHA because it shares the OIDC trust boundary. Trusted-publisher
+configuration on npm must name the
+exact workflow and allow staged publication; repository source cannot prove
+that external setting, so it remains a published limitation until a live
+receipt exists.
+
+**Why this is not another user-facing command.** The failure being prevented is
+a maintainer publishing an incomplete tarball, not a coding agent lacking a
+project operation. The assembler is absent from generated projects, skills,
+MCP and the `accordo` CLI. End users still learn exactly one install line after
+the registry version is verified.
+
+**Consequences.** The repository can prove a publishable artifact before the
+registry changes, while `site/brand.json` continues to say `names-reserved` and
+public copy continues to refuse `npm create accordo`. The eventual registry
+receipt, not a merge or a green pack test, is what authorizes changing that
+status. The generated application remains local-only, SQLite-only and without
+authentication, tenancy or RBAC; packaging changes none of those boundaries.
+
+## ADR-027 — A public number is measured into one provenance-checked record, never typed into copy
+
+**Status:** accepted.
+
+**Context.** `site/claims.json` publishes a `measuredAgainst` block — a commit, a date,
+a test count — and `scripts/site-check.js` is the gate that decides whether the public
+surfaces may stand. Two things about that arrangement were not holding.
+
+The first was provenance. The gate asked `git cat-file -e <sha>^{commit}`: *does an
+object with this id exist here*. That answers the wrong question twice over. A commit
+pushed to an unrelated branch exists in the same object store, so a measurement taken on
+a line of development the shipping code does not descend from passed. And under
+`actions/checkout`'s default `fetch-depth: 1`, no commit but `HEAD` has been fetched, so
+every honest historical measurement failed with *"is not a commit in this repository"* —
+about a commit that plainly is one. Three open pull requests were red for that reason and
+none of them had done anything wrong.
+
+The second was the count itself. An exact number appeared in stable public copy: the
+`C-20` claim sentence, two README lines, two published answers, a concepts page, and two
+marketing documents. Every one of them was a copy of a number that moves on every merge,
+and the gate that was supposed to bind them checked two of the eight. They drifted anyway
+— 373, 411, 701 and 793 were all being asserted in the same tree.
+
+**Decision.**
+
+1. **Ancestry, not existence.** `scripts/measurement.js` separates three outcomes with
+   three messages: the SHA is *missing* from this repository; the SHA *exists but is not
+   an ancestor* of HEAD, which is refused because object existence is not provenance; or
+   the SHA is a genuine ancestor whose *recorded facts do not match the tree it names*.
+
+2. **Fail closed when the checkout cannot know.** A shallow clone cannot tell "that
+   commit was never here" from "the connecting history was not fetched", and a tree with
+   no `.git` cannot tell anything. Both report *history unavailable* and fail, rather than
+   passing quietly the way the old code did when `git` returned nothing. The
+   `public-claims` CI job therefore checks out with `fetch-depth: 0`; a targeted fetch of
+   the single SHA would not do, because `merge-base --is-ancestor` needs the commits
+   between the two, not the named one.
+
+3. **The record carries a fingerprint of what it measured.** `measuredAgainst` gains
+   `testFiles` and `testsTree` — the count of `*.test.js` files and the git tree id of
+   `tests/` at that commit. Both are checked against the commit. This is what gives the
+   third outcome teeth: the cheapest way to make a stale ledger go green is to move the
+   SHA forward and leave the numbers alone, and that now fails. `claimsContract` moves to
+   `2` because those two fields are required.
+
+4. **One number, measured, never typed.** An exact test count may appear only in
+   `measuredAgainst`, and reaches a page through the `{{measured.tests}}` token that
+   `scripts/site-build.js` resolves — the same rule the brand name already lives under.
+   Copy that cannot carry a token states what the verification gate proves instead of how
+   many tests it ran. `scripts/site-check.js` fails on a literal count anywhere in the
+   README, the ledger's own prose, the site's JSON sources, the templates or
+   `docs/marketing/`. `node scripts/measure-suite.js --apply` writes the record from a
+   real run on a clean tree, so the number is never hand-entered.
+
+**Why not keep the count in stable copy and couple it harder (the status quo).** That was
+the status quo, and it made every merge that adds a test an eight-file edit whose only
+enforcement was on two of the eight. Coupling copies is not how copies stop drifting.
+
+**Why not generate the count into every surface.** Generation works where a build step
+already runs — the site templates and `llms.txt` do exactly this, and they keep their
+number. It does not reach a README, a marketing document or `/answers.json` served raw to
+a machine, and adding a build step to those to publish a number that measures effort
+rather than correctness buys the reader nothing. Those surfaces say what the gate proves.
+
+**What this does not decide.** Nothing about *whether* to publish a count at all: the
+number remains on the landing page and in the evidence page, resolved from the record. And
+nothing about re-measuring on every merge — a record that names its own ancestor commit
+and proves it is truthful when the suite has since moved, so drift is reported as a note
+rather than failing the build. What would be untruthful is a *sentence* quoting a stale
+number as current, and that is now impossible to write.

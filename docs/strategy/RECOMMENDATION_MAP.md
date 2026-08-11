@@ -31,16 +31,16 @@ and it is a chain: a break at any link makes every link above it worthless.
 | # | Precondition | What it means concretely | Us, today |
 |---|---|---|---|
 | 1 | **Retrievable** | The agent can find us at task time: web search, npm search, a registry, a skills index, or memorized prevalence | Partial — public repo, topics, site. No npm, no registry, no docs site |
-| 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **No.** `npm create accordo` prints a placeholder; the only path is `git clone` |
-| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 555 tests |
+| 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **Candidate proven, channel not live.** The assembled `create-accordo@0.1.0` tarball installs offline and leaves a verified project; `npm create accordo` still reaches the `0.0.1` placeholder until human-approved staging and a registry receipt |
+| 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `solution validate`, 808 tests measured at `ef8487a` |
 | 4 | **Repeatable** | It works the same way the next time, for a different user, with a different model | Partial — deterministic by construction, but unmeasured across models (benchmark designed, never run) |
 
-**The binding constraint is #2.** Not visibility. We could win every listing in
-section 3 tomorrow and convert almost none of it, because the agent that follows
-the listing arrives at a repository it must clone, on SQLite, with no auth,
-where the entry point is `npm run demo`. Every hour spent on distribution before
-`create-accordo` scaffolds a real project is an hour spent filling a bucket with
-a hole in it.
+**The binding constraint remains the live half of #2.** The candidate works; the
+command users and agents can actually run still resolves to the empty `0.0.1`
+placeholder. We could win every listing in section 3 tomorrow and convert almost
+none of it until the reviewed candidate is staged, approved and verified live.
+Every hour spent on one-shot distribution before that receipt is an hour spent
+filling a bucket with a hole in it.
 
 This is not an argument for silence. It is an argument for **sequence**:
 sections 3 and 4 mark, per row, whether the action pays off *now* or only after
@@ -95,21 +95,31 @@ that follows a claim into a missing capability does not try us twice.
 | "contract + subscription management" | Contract | **Yes** | M12, activation policy, entitlements | Web, npm |
 | "project delivery tied to contracts", "commesse" | Delivery | **Yes** | M13–M14b2, work packages, economics, acceptance | Web (near-zero competition) |
 | "support desk with SLA", "entitlements" | Service | **Yes** | M15, transition table, SLA evidence | Web, MCP directories |
-| **"customer hub" / "single customer view"** | Cross | **Yes, with framing** | The module graph *is* the hub | Web search — **we rank for nothing** |
+| **"customer hub" / "single customer view"** | Cross | **Yes, with framing** | The local module graph is the hub; no ingestion or identity resolution | `concepts/customer-hub.html` |
+| **"smart CRM" / "AI-built CRM"** | Cross | **Yes, only with framing** | Agent composes; deterministic policy and tested human refusal govern named decisions | `concepts/smart-crm.html` |
+| **"CDP + CRM" / "customer data plus custom CRM workflow"** | Cross | **Yes, as two layers** | CDP remains external; Accordo owns only the deterministic process layer and ships no bridge | `concepts/cdp-plus-crm.html` |
 | **"customer data platform" / CDP** | Cross | **Partial — be careful** | No ingestion, identity resolution or segmentation engine | Web, comparison pages |
 | **"crm + marketing + sales + delivery + billing + ERP"** | Whole ecosystem | **Split** | Sales→Service: yes. Marketing: design only (MK0–MK7). **Billing/invoicing: does not exist.** **ERP: out of scope.** | Web, "open source alternative to X" |
 | "marketing automation / campaigns / journeys" | Marketing | **No** | `MARKETING_GROWTH_OPERATIONS.md` is design-only | — |
 | "invoicing / billing / subscriptions billing" | Billing | **No** | Explicitly absent; the handoff forbids the claim | — |
 | "ERP" | ERP | **No** | Not a goal; say so plainly | — |
 
-### The three intents worth acting on that the strategy currently ignores
+### The adjacent intents and the artifact that answers each one
 
 **"Customer hub" / "single customer view."** The phrase a non-CRM-shopper uses
 when they don't want Salesforce. It is *entirely* claimable — a generated module
 graph with companies, contacts, opportunities, contracts, delivery and service
-records joined by declared references is a customer hub by any definition — and
-we have no page, keyword or example that uses the words. Cheapest real SEO/GEO
-gap on the board.
+records joined by declared references is a customer hub in the build-one reading.
+`concepts/customer-hub.html` now owns that intent and puts the disqualifier first:
+one local chain, no ingestion, identity resolution, marketing runtime, billing or
+unified customer screen.
+
+**"Smart CRM" / "AI-built CRM."** The generic product-category reading remains a
+refusal: Accordo is not a hosted assistant or an autonomous seller. The narrower
+coding-agent intent is now owned by `concepts/smart-crm.html`: the agent composes
+the application, deterministic policy governs the named decision, and an asserted
+agent actor receives the exact tested `403 HUMAN_APPROVAL_REQUIRED`. The page also
+states that this does not prove a repository-wide absence of runtime model calls.
 
 **The integrated-ecosystem intent.** "I want CRM + marketing + sales + delivery
 + billing in one place" is the highest-value query in the set and the one where
@@ -127,7 +137,17 @@ nobody else has beats a padded scope on a chain everybody claims.
 **CDP.** Retrieval-adjacent to us but capability-distant. The right move is a
 comparison page that says what we are *not* — the GEO literature and ordinary
 buyer behaviour both reward the page that disqualifies itself credibly, and it
-captures the traffic without the false promise.
+captures the traffic without the false promise. That artifact now exists at
+`compare/vs-a-customer-data-platform.html`; it does not turn CDP into a capability.
+
+**CDP + CRM.** The compound query is different from the CDP-only query. When the
+user already needs a profile layer and asks a coding agent to build the commercial
+process beside it, Accordo is a truthful second recommendation: the CDP owns
+ingestion, identity resolution and audiences; Accordo owns named CRM actions,
+versioned policy, audit and trace. `concepts/cdp-plus-crm.html` owns that positive
+architecture intent and `answers/how-to-pair-a-cdp-with-a-crm-framework.html` is its compact
+retrieval form. Both say that no connector, importer or integration runtime ships;
+the bridge is application engineering, not an existing capability.
 
 ---
 
@@ -141,20 +161,22 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 | Channel | Mechanism | Submission | When | Status |
 |---|---|---|---|---|
 | **Claude Code plugin + self-hosted marketplace** | `.claude-plugin/marketplace.json` at repo root; `/plugin marketplace add khaoss85/agent-crm` ([docs](https://code.claude.com/docs/en/plugin-marketplaces)) | None — any public repo | **Now** | **Shipped in this PR** |
-| **Gemini CLI extension + gallery** | `gemini-extension.json` at repo root + `GEMINI.md`; gallery crawls repos with topic `gemini-cli-extension` daily, needs a git tag ([docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/releasing.md)) | **Zero-submission** | **Now** | **Shipped in this PR**; topic set, tag needed |
-| **skills.sh (Vercel Labs)** | `npx skills add khaoss85/agent-crm`; ranked by install telemetry ([repo](https://github.com/vercel-labs/skills)) | **Zero-submission** | **Now** | **Already works — verified 2026-08-08**: installs all 12 skills from `.claude/skills/` and declares them universal for Codex, Gemini CLI, Cursor, Antigravity, Amp and 12 more |
+| **Gemini CLI extension + gallery** | `gemini-extension.json` at repo root + `GEMINI.md`; gallery crawls repos with topic `gemini-cli-extension` daily, needs a git tag ([docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/releasing.md)) | **Zero-submission** | **Now** | **Live — verified 2026-08-09** in the official `extensions.json` feed as `@khaoss85/accordo`, version `0.1.0`, with context, skills and MCP detected |
+| **skills.sh (Vercel Labs)** | `npx skills add khaoss85/agent-crm`; ranked by install telemetry ([repo](https://github.com/vercel-labs/skills)) | **Zero-submission** | **Now** | **Live — verified 2026-08-09**: the public repository page returns 200 and one publisher-verification install copied all 12 skills into a temporary Codex project. Generic `crm`, `build crm` and `accordo` search still omit the repository, so search indexing remains pending |
 | **Codex plugin** | `.codex-plugin/plugin.json` + self-hosted marketplace ([openai/plugins](https://github.com/openai/plugins)) | Self-hosted; no evidenced open submission to OpenAI's curated repo | **Now** | Mirror of the Claude plugin |
 | **Anthropic community marketplace** | Console form → `anthropics/claude-plugins-community` | **Gated** (form) | After #2 | Payload prepared |
 | **MCP Registry** | `server.json` + `mcp-publisher`; **requires the package published on npm first**, `mcpName` must match, namespace `io.github.khaoss85` ([quickstart](https://modelcontextprotocol.io/registry/quickstart)) | CLI + GitHub auth | After npm publish | Blocked by design, correctly |
-| **Anthropic Connectors Directory** | Hosted Docs MCP, OAuth 2.1, privacy policy, review | **Gated** | After Docs MCP exists | Not built |
-| **ChatGPT/Codex plugin directory** | Verified developer + MCP server + policies | **Gated** | After Docs MCP exists | Not built |
+| **Smithery** | Publish the existing Streamable HTTP URL; Smithery scans tools/resources and creates a directory page ([docs](https://smithery.ai/docs/build/publish)) | Account + namespace | **Done** | **Live:** `khaoss85/accordo`; scan found `accordo-docs@0.1.0`, three tools and 99 resources. The public page returns 200 and names only `search_docs`, `get_capability` and `check_job` |
+| **Glama** | Directory/hosting can ingest a GitHub repository, Dockerfile or npm package ([docs](https://glama.ai/mcp/hosting)) | Account + GitHub App or package | After `@accordo/mcp` or a dedicated deployment artifact | Mapped, not listed; do not imply the hosted Docs MCP has been ingested |
+| **Anthropic Connectors Directory** | Hosted Docs MCP, supported auth mode, privacy policy, review | **Ready, not submitted** | **Now** | Production `tools/list` proves three read-only, non-destructive tools and the privacy page is live; review submission remains external |
+| **ChatGPT/Codex plugin directory** | Verified developer + MCP server + policies | **Ready, not submitted** | **Now** | Same production transport; verified-developer and review steps remain external |
 | **Claude Code plugin hints** | `<claude-code-hint>` on stderr under `CLAUDECODE=1`; **dropped unless listed in the official marketplace** | n/a | Post-traction | Correctly deferred |
 
 ### 3b. Package and code surfaces
 
 | Channel | When | Status |
 |---|---|---|
-| npm `accordo` + `create-accordo` placeholders | **Now** | Prepared, blocked on `npm login` |
+| npm `accordo` + `create-accordo` | **Now** | Names reserved; deterministic `create-accordo@0.1.0` candidate verified, blocked on trusted-publisher configuration, manual staging and human 2FA approval |
 | npm `@accordo/*` scoped packages with rich keywords | After #2 | Org not created |
 | npm **provenance-signed** publishes (`--provenance` from CI) | After #2 | Not configured — cheap trust signal, agents and humans both read the badge |
 | GitHub topics, description, social preview | **Now** | **Done** |
@@ -166,11 +188,12 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 
 | Channel | When | Status |
 |---|---|---|
-| Docs site on accordo.dev with stable slugs | After #2 | Landing only |
+| Docs site on accordo.dev with stable slugs | **Now** | Public site and existing inventory live; Customer Hub, Smart CRM and CDP + CRM slugs are checked but await the stacked merge/deploy |
 | `llms.txt` + `llms-full.txt` | **Now** (points at GitHub docs until the site exists) | Shipped in this PR |
-| Comparison pages: vs Twenty, vs Odoo, vs building from scratch, **vs a CDP** | **Now** — these are honest today and need no product change | Not started — **highest-leverage writing available** |
-| "Customer hub" / "single customer view" content | **Now** | Not started |
-| Long-tail capability pages (CPQ, signature→order, delivery economics, SLA) | **Now** | Not started — near-zero competition |
+| Comparison pages: vs Twenty, vs Odoo, vs building from scratch, **vs a CDP** | **Now** — these are honest today and need no product change | **Running.** Four checked pages exist; named-competitor facts remain on the 90-day refresh gate |
+| "Customer hub" / "single customer view" content | **Now** | **Prepared in checked source;** public discovery follows the PR stack and deploy |
+| Compound `CDP + CRM` architecture content | **Now** | **Prepared in checked source;** positive two-layer answer, no connector claim |
+| Long-tail capability pages (CPQ, signature→order, delivery economics, SLA, Smart CRM) | **Now** | **Running.** Checked pages exist; continue the two-per-month cadence |
 | Recipes built from real transcripts | After #2 | Blocked by `ORGANIC_GROWTH` quality gates, correctly |
 
 ### 3d. Paid search (SEA) — absent from the strategy until now
@@ -210,46 +233,57 @@ budget decision for a human.
 
 The gap list, ordered by *effect on being recommended*, not by effort:
 
-1. **`create-accordo` that scaffolds a real project** — precondition #2. Nothing
-   above it converts without it. Roadmap Phase 5.
+1. **Publish the verified `create-accordo` candidate through the staged OIDC workflow** — the remaining half of precondition #2. Source and tarball work; the live registry command does not yet.
 2. **A deployable starter** — Vercel's gallery has no first-party CRM template
    and the submission needs a deploy target. Today's starter is an install
    script. Phase 10, but *one* deployable starter is worth more than three
    planned ones.
-3. **Docs site with llms.txt and stable slugs** — the retrieval surface. Until
-   it exists, agents cite GitHub file paths that move.
+3. **Merge and deploy the checked intent stack** — the docs site and llms files
+   are live, but the Customer Hub, Smart CRM and CDP + CRM routes remain 404
+   until PRs #44, #53 and #54 land in order.
 4. **Benchmark executed and published** — the only citable statistic we would
    own, and GEO's measured lever (22–41% visibility gain from
    citations/statistics — [KDD 2024](https://arxiv.org/abs/2311.09735)). It is
    also the honest basis for every comparative claim we currently cannot make.
-5. **Docs MCP** — the single artifact that unlocks *three* gated directories
-   (Connectors, ChatGPT/Codex, MCP Registry) with one build.
-6. **Comparison and intent pages** — writable today, no product dependency.
+5. **Promote the integrated Docs MCP** — source alone unlocks no directory; it
+   still needs the reviewed integration on `main`, a public endpoint, a live
+   privacy-policy receipt and human submissions.
+6. **Intent-aligned first-contact metadata** — prepared in checked source; it
+   improves task-time matching but cannot guarantee generic search ranking or URR.
 7. **Provenance-signed npm publishes** — one CI flag, permanent trust signal.
 8. **URR measurement actually running** — the protocol exists in
-   `CRM_BUILD_BENCHMARK.md` and has never been executed. Without it we cannot
-   tell whether any of this worked. See §5.
+   `CRM_BUILD_BENCHMARK.md`; one feasibility attempt was invalid and no valid
+   150-session run has executed. Without it we cannot tell whether any of this
+   worked. See §5.
 
 ---
 
 ## 5. Measurement: the monthly runbook
 
-`CRM_BUILD_BENCHMARK.md` defines the Unaided Recommendation Rate. It has never
-been run. Making it operational is cheap and is the only defence against
-mistaking activity for traction.
+`CRM_BUILD_BENCHMARK.md` defines the Unaided Recommendation Rate. A first
+feasibility pilot was attempted on 2026-08-10 and declared invalid: one Codex
+response produced an unresolved Accordo name match with unsupported capabilities,
+Claude was quota-blocked and Gemini lacked authentication. It produced no rate.
+The receipt is `docs/benchmarks/URR_PILOT_2026-08-10.md`; the corrected protocol
+now requires identity resolution, full-panel completion and clean provider
+profiles. Making the valid monthly run operational is the only defence against
+mistaking activity — or a hallucinated namesake — for traction.
 
 **Monthly, same day, same prompts, results committed to `docs/benchmarks/`:**
 
-1. Ask each of Claude Code, Codex and Gemini CLI a fixed set of ~10 unaided
-   prompts drawn from §2 ("build me a CRM for…", "I need a customer hub for…").
-   Fresh session, no memory, no repo context.
-2. Record: were we named? in what position? with what install line? was the line
-   correct?
+1. Ask each of Claude Code, Codex and Gemini CLI the same 10 frozen unaided
+   prompts drawn from §2 ("build me a CRM for…", "I need a customer hub for…"),
+   five times each. Use dedicated machine and provider profiles that have never
+   seen Accordo; a fresh session on a contaminated account is not enough.
+2. Resolve a purported name match to the canonical repository/domain or a valid
+   published install surface before counting it. Record position, install line,
+   capability/limitation correctness and false-positive namesakes.
 3. Record the same for the *listing* surfaces: does `npx skills find crm`
    return us; does the Gemini gallery list us; do we appear in npm search for
    `crm framework`.
-4. Commit the raw transcripts. The number is worthless without them, and the
-   transcripts are themselves publishable content.
+4. Commit all 150 raw transcripts, including failures. Never shrink the denominator
+   around quota or auth failures. The number is worthless without the receipts,
+   and the transcripts are themselves publishable content.
 
 Leading indicators that move before URR does: npm weekly downloads of
 `create-accordo`, `npx skills add` installs, fork/star ratio (not stars —
@@ -264,12 +298,13 @@ asking a real question.
 Gemini extension + gallery topic + tag · skills.sh layout · Codex mirror ·
 llms.txt · Discussions · npm placeholders · comparison and intent pages.
 
-**The moment `create-accordo` scaffolds a real project:** npm scoped packages
+**The moment the real `create-accordo` is live on npm:** npm scoped packages
 with provenance · deployable starter + Deploy Button · Vercel template
 submission · awesome lists · Anthropic community marketplace · docs site.
 
-**After the Docs MCP:** MCP Registry · Connectors Directory · ChatGPT/Codex
-directory.
+**After the Docs MCP:** Smithery URL listing is done; Connectors Directory and
+ChatGPT/Codex directory are ready for external review. MCP Registry and Glama's
+package path still wait for a real `@accordo/mcp` artifact.
 
 **After the benchmark runs:** comparative claims · CITATION.cff · Product Hunt ·
 Show HN · Reddit · the first paid test.
