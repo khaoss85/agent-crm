@@ -34,8 +34,9 @@ import { discoverCandidatePackages, projectKind, resolveComposedPackages } from 
  * **It never guesses a command.** A project that declares no test script gets
  * `not_applicable` with a reason, not a hopeful `npm test`.
  *
- * **PROVE is still partial after this ships.** Scenario proof (DX6) and
- * implementation evidence (DX10) do not exist. The report says so in its own
+ * **PROVE is still partial.** Scenario evidence is a separate command
+ * (`crm scenario run`, DX6) that this one deliberately does not invoke, and
+ * implementation evidence (DX10) does not exist. The report says so in its own
  * limitations rather than letting a green exit code imply completeness.
  */
 
@@ -72,11 +73,11 @@ const DECLARED_SCRIPTS = Object.freeze([
 const LIMITATIONS = Object.freeze([
   {
     code: 'BROWSER_EVIDENCE_NOT_AUTOMATED',
-    message: 'no browser is driven and no rendered page is checked. Browser and scenario proof is DX6\'s job; nothing here is evidence about the Admin as a user sees it',
+    message: 'no browser is driven and no rendered page is checked. Nothing here is evidence about the Admin as a user sees it, and `crm scenario run` does not drive one either',
   },
   {
     code: 'SCENARIO_EVIDENCE_NOT_RUN',
-    message: 'no business scenario is executed end to end. A passing suite is not the same as "this works for the customer\'s process" — that is DX6',
+    message: 'no business scenario is executed end to end. A passing suite is not the same as "this works for the customer\'s process" — that is `crm scenario run <scenario> --json`, which is a separate command and is not run from here',
   },
   {
     code: 'IMPLEMENTATION_EVIDENCE_NOT_MAPPED',
