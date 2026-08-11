@@ -15,7 +15,21 @@ import { activatedContract, boot, project } from './helpers/contracts-project.js
  * `plan-renewal` writes nothing, that a key is idempotent, that a race has one
  * winner, that a rollback leaves no orphan, that a correctness read survives
  * past the page bound, or that the rows outlive the package. Those are claims
- * about a running application, so they are made against one here.
+ * about a running application, so they are made against one here: the real CLI
+ * builds the project, the real app composes the packages, and the real HTTP
+ * routes carry the asks where the claim is about what a *client* sees.
+ *
+ * **What is deliberately not tested, and why.**
+ *
+ * - *Reads past the 500-row page bound on primary-key paths.* `termEvidence`,
+ *   `service.get` and every `sourceKey` lookup are exact single-row reads with
+ *   no page bound to exceed, so seeding 500 rows in front of them tests the
+ *   fixture and nothing else. The bound is proven where correctness genuinely
+ *   depends on a *collection* query — the baseline, the `decisionId` check and
+ *   the pending-follow-up guard — and nowhere else. **N/A, by reason.**
+ * - *FX, totals and revenue arithmetic.* There is none to test: the package
+ *   computes no cross-currency or cross-recurrence total, by design.
+ * - *A scheduler firing on a boundary.* Nothing fires; the plan is asked for.
  */
 
 const ACTOR = { type: 'user', id: 'e2e' };
@@ -106,30 +120,53 @@ test('an impossible calendar date is refused rather than rolled over into eviden
   assert.equal(leap.result.asOfDate, '2028-02-29');
 });
 
-test('a renewal decision is idempotent under a deterministic key, and a mismatch fails closed', async (t) => {
+test('a lost response can be retried: the identical ask replays, a different one is refused by field', async (t) => {
   const { root, context } = await setup(t, 'idempotency.sqlite');
-  const { app } = context;
+  const { app, client } = context;
   const { contract } = await activatedContract(root, app, { name: 'Idempotent Deal' });
+  const ask = { decision: 'pursue_renewal', reason: 'they are happy', asOf: '2027-08-01' };
+  const post = (module, action, recordId, input) =>
+    client.request(`/api/modules/${module}/records/${recordId}/actions/${action}`, { method: 'POST', body: input });
 
-  const first = await run(app, 'commercial-contract', 'record-renewal-decision', contract.id,
-    { decision: 'pursue_renewal', reason: 'they are happy', asOf: '2027-08-01' });
+  // Over the real route, because the defect is a client's: the response is lost
+  // in transit and the client retries what it believes never happened.
+  const first = await post('commercial-contract', 'record-renewal-decision', contract.id, ask);
   assert.equal(first.result.sourceKey, `renewal-decision:${contract.id}:2027-08-01`,
-    'the key is derived from the contract and the date, not from the clock');
+    'the key is (contract, calendar date) — derived from the ask, never from the clock');
 
-  const repeat = () => run(app, 'commercial-contract', 'record-renewal-decision', contract.id,
-    { decision: 'pursue_renewal', reason: 'they are happy', asOf: '2027-08-01' });
-  await assert.rejects(repeat, (error) => error.status === 409);
+  // Regression: this used to be a bare 409. The record existed, the client
+  // could not reach it, and nothing in the response said which record it was.
+  const retry = await post('commercial-contract', 'record-renewal-decision', contract.id, ask);
+  assert.equal(retry.result.id, first.result.id, 'the retry returns the record it already created');
+  assert.deepEqual(retry.result, first.result, 'and returns it unchanged, byte for byte');
+  const third = await post('commercial-contract', 'record-renewal-decision', contract.id, ask);
+  assert.equal(third.result.id, first.result.id, 'a retry is safe however many times it happens');
 
-  // A DIFFERENT decision behind the SAME key is refused rather than adopted:
-  // somebody's recorded intent is never silently overwritten.
+  // A DIFFERENT decision behind the SAME identity is refused rather than
+  // adopted, and the refusal NAMES the fields instead of making the caller diff
+  // two records to find out what it collided with.
   await assert.rejects(
-    () => run(app, 'commercial-contract', 'record-renewal-decision', contract.id,
-      { decision: 'not_renewing', reason: 'changed my mind', asOf: '2027-08-01' }),
-    (error) => error.status === 409,
+    () => post('commercial-contract', 'record-renewal-decision', contract.id,
+      { ...ask, decision: 'not_renewing', reason: 'changed my mind' }),
+    (error) => error.status === 409 && error.code === 'RENEWAL_DECISION_CONFLICT'
+      && error.details.conflictingFields.join() === 'decision,reason'
+      && error.details.existingId === first.result.id,
   );
+  // Only the reason differs: only the reason is named.
+  await assert.rejects(
+    () => post('commercial-contract', 'record-renewal-decision', contract.id, { ...ask, reason: 'a different why' }),
+    (error) => error.details.conflictingFields.join() === 'reason',
+  );
+
   const rows = app.modules.get('renewal-decision').service.listWhere({ contractId: contract.id, asOfDate: '2027-08-01' });
-  assert.equal(rows.length, 1);
+  assert.equal(rows.length, 1, 'three identical asks and two divergent ones produced exactly one row');
   assert.equal(rows[0].decision, 'pursue_renewal', 'the first decision stands');
+
+  // A genuinely different day is a genuinely different decision, never collapsed.
+  const later = await post('commercial-contract', 'record-renewal-decision', contract.id,
+    { decision: 'needs_changes', reason: 'the price has to move', asOf: '2027-08-02' });
+  assert.notEqual(later.result.id, first.result.id);
+  assert.equal(app.modules.get('renewal-decision').service.listWhere({ contractId: contract.id }).length, 2);
 });
 
 test('a follow-up key is a round number, so resolved work can come round again', async (t) => {
@@ -147,11 +184,30 @@ test('a follow-up key is a round number, so resolved work can come round again',
   assert.equal(first.result.sourceKey, `commercial-followup:${contract.id}:renewal:1`);
   assert.equal(first.result.status, 'pending_commercial_followup');
 
-  // While it is open, the same intent is not duplicated.
+  // The open ask IS the identity of the current ask, so an identical repeat
+  // replays it rather than telling a client with a lost response that nothing
+  // happened. Regression: this was a bare 409 with no path back to the record.
+  const replayed = await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+    { intent: 'renewal', summary: 'first ask' });
+  assert.equal(replayed.result.id, first.result.id);
+  assert.deepEqual(replayed.result, first.result);
+
+  // A DIFFERENT ask while one is open is refused, with the field named.
   await assert.rejects(
     () => run(app, 'commercial-contract', 'request-commercial-followup', contract.id, { intent: 'renewal', summary: 'again' }),
-    (error) => error.code === 'FOLLOWUP_ALREADY_PENDING' && error.status === 409,
+    (error) => error.code === 'FOLLOWUP_ALREADY_PENDING' && error.status === 409
+      && error.details.conflictingFields.join() === 'summary'
+      && error.details.existingId === first.result.id,
   );
+  // Citing a decision that the open ask does not cite is also a different ask.
+  const decision = (await run(app, 'commercial-contract', 'record-renewal-decision', contract.id,
+    { decision: 'pursue_renewal', reason: 'worth keeping', asOf: '2027-08-01' })).result;
+  await assert.rejects(
+    () => run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+      { intent: 'renewal', summary: 'first ask', decisionId: decision.id }),
+    (error) => error.details.conflictingFields.join() === 'decisionId',
+  );
+
   // A different intent is a different ask, and is allowed alongside it.
   const expansion = await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
     { intent: 'expansion', summary: 'more seats' });
@@ -159,11 +215,28 @@ test('a follow-up key is a round number, so resolved work can come round again',
 
   await run(app, 'commercial-followup', 'resolve-commercial-followup', first.result.id,
     { outcome: 'resolved_externally', reason: 'quote issued elsewhere' });
+  // The documented rule for new work: once the previous ask reached a terminal
+  // state, the next request opens a new round. Legitimate repeated future work
+  // is never collapsed into the ask that already closed.
   const second = await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
     { intent: 'renewal', summary: 'it came round again' });
   assert.equal(second.result.sourceKey, `commercial-followup:${contract.id}:renewal:2`,
     'the round number advances; the clock is not consulted');
   assert.equal(second.result.status, 'pending_commercial_followup');
+  assert.notEqual(second.result.id, first.result.id, 'round two is its own record, not a replay of round one');
+  // Round two replays on its own terms, and the closed round one stays closed.
+  assert.equal((await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+    { intent: 'renewal', summary: 'it came round again' })).result.id, second.result.id);
+  assert.equal(app.modules.get('commercial-followup').service.get(first.result.id).status, 'resolved_externally');
+  // A withdrawn round also releases the intent for genuinely new work.
+  await run(app, 'commercial-followup', 'resolve-commercial-followup', second.result.id,
+    { outcome: 'withdrawn', reason: 'not this year after all' });
+  const third = await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+    { intent: 'renewal', summary: 'and again the year after' });
+  assert.equal(third.result.sourceKey, `commercial-followup:${contract.id}:renewal:3`);
+  assert.equal(app.modules.get('commercial-followup').service
+    .listWhere({ contractId: contract.id, intent: 'renewal' }).length, 3,
+    'three rounds, three rows: repeated future work is evidence, not duplication');
 });
 
 test('the follow-up state model is an explicit table: terminal never regresses', async (t) => {
@@ -195,30 +268,72 @@ test('the follow-up state model is an explicit table: terminal never regresses',
   }
 });
 
-test('an amount is recorded only with the recurrence that gives it meaning', async (t) => {
+test('money evidence keeps every dimension that distinguishes one ask from another', async (t) => {
   const { root, context } = await setup(t, 'money.sqlite');
   const { app } = context;
 
-  // A baseline that collapses to exactly one kind of money: the amount travels.
+  // A baseline that collapses to exactly one kind of money: the amount travels,
+  // and it travels with the recurrence that gives it meaning.
   const mono = await activatedContract(root, app, { name: 'Mono Deal', offers: ['fixture:offer:api-monthly'] });
   const single = (await run(app, 'commercial-contract', 'request-commercial-followup', mono.contract.id,
     { intent: 'renewal', summary: 'one kind of money' })).result;
   assert.equal(single.currency, 'EUR');
   assert.ok(Number.isSafeInteger(single.baselineNetAmountCents) && single.baselineNetAmountCents > 0);
   // Regression: the row used to carry a bare amount. "EUR 171.00" is not a
-  // fact — monthly, annually and once are three different asks, and this row is
-  // what Commercial reads.
+  // fact — monthly, quarterly, annually and once are four different asks, and
+  // this row is what Commercial reads.
   assert.equal(single.baselineChargeType, 'recurring');
   assert.equal(single.baselineInterval, 'month');
+  assert.equal(single.baselineIntervalCount, 1, 'monthly is month x 1; quarterly would be month x 3');
+  assert.equal(single.baselineGroupCount, 1);
+  assert.deepEqual(JSON.parse(single.baselineGroupsJson), [{
+    currency: 'EUR', chargeType: 'recurring', interval: 'month', intervalCount: 1,
+    lineCount: 1, netAmountCents: single.baselineNetAmountCents,
+  }], 'the grouped evidence and the scalar summary say the same thing');
 
-  // A mixed baseline: no amount at all, rather than a total that is not money.
+  // A mixed baseline: no scalar amount, because there is no single kind of
+  // money — but the evidence is grouped and kept, not thrown away with it.
   const mixed = await activatedContract(root, app, { name: 'Mixed Deal' });
   const many = (await run(app, 'commercial-contract', 'request-commercial-followup', mixed.contract.id,
     { intent: 'renewal', summary: 'several kinds of money' })).result;
   assert.equal(many.baselineNetAmountCents, null, 'no grand total across recurrences');
   assert.equal(many.baselineChargeType, null);
   assert.equal(many.baselineInterval, null);
+  assert.equal(many.baselineIntervalCount, null);
   assert.equal(many.currency, 'EUR', 'a single shared currency is still honest to state');
+
+  const groups = JSON.parse(many.baselineGroupsJson);
+  assert.equal(many.baselineGroupCount, groups.length);
+  assert.ok(groups.length > 1, 'the mixed baseline really is mixed');
+  // Regression: a mixed baseline used to store three nulls and nothing else, so
+  // the money evidence a renewal conversation starts from disappeared exactly
+  // when there was most of it.
+  const plan = await run(app, 'commercial-contract', 'plan-renewal', mixed.contract.id, { asOf: '2027-08-01' });
+  assert.deepEqual(groups, plan.result.baseline.groups.map((group) => ({
+    currency: group.currency, chargeType: group.chargeType, interval: group.interval,
+    intervalCount: group.intervalCount, lineCount: group.lineCount, netAmountCents: group.netAmountCents,
+  })), 'the stored evidence is exactly what the read-only plan computes');
+
+  // No total anywhere: not across recurrence, not across currency.
+  const grand = groups.reduce((sum, group) => sum + group.netAmountCents, 0);
+  assert.equal(groups.some((group) => group.netAmountCents === grand), false);
+  assert.equal(many.baselineNetAmountCents, null);
+
+  // An annual EUR 1,200 and a one-time EUR 1,200 are the case the defect named:
+  // they must not be byte-identical rows. Both are built here from real lines.
+  const followups = app.modules.get('commercial-followup').service;
+  const seen = new Map();
+  for (const [name, offers] of [['Annual Deal', ['fixture:offer:support-annual']], ['Once Deal', ['fixture:offer:enterprise']]]) {
+    const built = await activatedContract(root, app, { name, offers });
+    const row = (await run(app, 'commercial-contract', 'request-commercial-followup', built.contract.id,
+      { intent: 'renewal', summary: 'one kind of money' })).result;
+    const shape = ['currency', 'baselineNetAmountCents', 'baselineChargeType', 'baselineInterval',
+      'baselineIntervalCount', 'baselineGroupsJson'].map((field) => row[field]).join('|');
+    seen.set(name, shape);
+    assert.equal(followups.get(row.id).baselineGroupsJson, row.baselineGroupsJson, 'and it survives a re-read');
+  }
+  assert.notEqual(seen.get('Annual Deal'), seen.get('Once Deal'),
+    'a recurring and a one-time baseline are distinguishable in what is stored');
 });
 
 test('audit, events and trace are exact, and every event name is one M16a can honour', async (t) => {
@@ -271,7 +386,9 @@ test('two application instances race one transition: one winner, and no raw SQLi
   const noRawSqlite = (results) => results.every((entry) => entry.status === 'fulfilled'
     || !/SQLITE_|database is locked/i.test(String(entry.reason.message)));
 
-  // Contradictory decisions behind one key, from two connections at once.
+  // Contradictory decisions behind one key, from two connections at once. They
+  // disagree, so exactly one may win and the loser must be told which field it
+  // collided on rather than handed a driver error.
   const decisions = await Promise.allSettled([
     run(app, 'commercial-contract', 'record-renewal-decision', contract.id,
       { decision: 'pursue_renewal', reason: 'A says keep it', asOf: '2027-08-01' }),
@@ -281,6 +398,21 @@ test('two application instances race one transition: one winner, and no raw SQLi
   assert.equal(outcome(decisions).filter((value) => value === 'ok').length, 1, 'exactly one winner');
   assert.ok(noRawSqlite(decisions), 'the loser gets a normalized conflict, never a driver error');
   assert.equal(app.modules.get('renewal-decision').service.listWhere({ contractId: contract.id, asOfDate: '2027-08-01' }).length, 1);
+
+  // Two connections sending the SAME ask is the retry case, not a conflict: one
+  // row, and whoever succeeds names it. A duplicate delivery must never be
+  // punished for arriving twice.
+  const same = { decision: 'undecided', reason: 'both sides sent the same thing', asOf: '2027-09-01' };
+  const twins = await Promise.allSettled([
+    run(app, 'commercial-contract', 'record-renewal-decision', contract.id, same),
+    run(second.app, 'commercial-contract', 'record-renewal-decision', contract.id, same),
+  ]);
+  assert.ok(noRawSqlite(twins));
+  const rows = app.modules.get('renewal-decision').service.listWhere({ contractId: contract.id, asOfDate: '2027-09-01' });
+  assert.equal(rows.length, 1, 'one row, whichever connection got there first');
+  for (const entry of twins.filter((value) => value.status === 'fulfilled')) {
+    assert.equal(entry.value.result.id, rows[0].id, 'and every winner names that same row');
+  }
 
   // The pending-follow-up guard is a read followed by a write; two instances
   // must not both pass it.
@@ -336,10 +468,29 @@ test('a failure after the write rolls everything back, and the retry produces ex
   assert.equal(rows.length, 1, 'exactly one complete result, not two and not none');
   assert.equal(rows[0].id, retry.result.id);
 
-  // The same for the transition half of the milestone.
+  // The second write: the handoff. A failure after its row exists must leave
+  // nothing behind, and the retry must produce the FIRST round again — not
+  // round two over a row that was rolled back.
+  const followups = app.modules.get('commercial-followup').service;
+  const originalFollowupCreate = followups.createManaged.bind(followups);
+  followups.createManaged = async (patch, ctx) => {
+    await originalFollowupCreate(patch, ctx);
+    throw new Error('injected failure after the follow-up row was written');
+  };
+  await assert.rejects(() => run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+    { intent: 'expansion', summary: 'more seats please' }));
+  followups.createManaged = originalFollowupCreate;
+  assert.equal(followups.listWhere({ contractId: contract.id, intent: 'expansion' }).length, 0,
+    'no orphan handoff survives the rollback');
+  const reasked = await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+    { intent: 'expansion', summary: 'more seats please' });
+  assert.equal(reasked.result.sourceKey, `commercial-followup:${contract.id}:expansion:1`,
+    'the round number counts committed rounds, so a rolled-back attempt does not consume one');
+  assert.equal(followups.listWhere({ contractId: contract.id, intent: 'expansion' }).length, 1);
+
+  // The third write: the terminal transition.
   const followup = (await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
     { intent: 'contraction', summary: 'fewer seats' })).result;
-  const followups = app.modules.get('commercial-followup').service;
   const originalApply = followups.applyManaged.bind(followups);
   followups.applyManaged = async (id, patch, ctx) => {
     await originalApply(id, patch, ctx);
@@ -472,12 +623,71 @@ test('the evidence is read-only through every generic surface, and writing needs
   const schema = await client.request('/api/schema');
   assert.equal(schema.domains.lifecycle.packageContract, 1);
   assert.deepEqual(schema.domains.lifecycle.requires,
-    [{ package: 'contracts', capability: 'contract-lifecycle-source', version: 1 }]);
+    [{ package: 'contracts', capability: 'contract-lifecycle-source', version: 2 }]);
   assert.deepEqual(schema.domains.lifecycle.provides, [], 'M16a consumes; it offers nothing yet');
   assert.deepEqual(schema.domains.lifecycle.actions, [
     'commercial-contract.plan-renewal', 'commercial-contract.record-renewal-decision',
     'commercial-contract.request-commercial-followup', 'commercial-followup.resolve-commercial-followup',
   ], 'exactly the four actions that exist — no expansion-intent action and no successor action');
+});
+
+test('a retry after a restart still replays, over rows a previous process wrote', async (t) => {
+  const root = project(t, { withLifecycle: true });
+  const dbPath = join(root, 'data', 'restart.sqlite');
+  const context = await boot(root, dbPath);
+  const { app } = context;
+  const { contract } = await activatedContract(root, app, { name: 'Restart Deal' });
+  const ask = { decision: 'pursue_renewal', reason: 'recorded before the restart', asOf: '2027-08-01' };
+  const first = (await run(app, 'commercial-contract', 'record-renewal-decision', contract.id, ask)).result;
+  const followup = (await run(app, 'commercial-contract', 'request-commercial-followup', contract.id,
+    { intent: 'renewal', summary: 'asked before the restart' })).result;
+  await context.close();
+
+  // A SEPARATE PROCESS, not a second boot in this one. Node caches ES modules
+  // by URL, so an in-process reboot re-uses the composition already loaded and
+  // proves nothing about a cold start over existing rows.
+  const probe = spawnSync(process.execPath, ['--no-warnings', '-e', `
+    const { createAccordoApp } = await import(${JSON.stringify(pathToFileURL(join(root, 'packages/app/src/index.js')).href)});
+    const app = createAccordoApp({ dbPath: ${JSON.stringify(dbPath)}, clock: () => '2026-12-01T09:00:00.000Z' });
+    const actor = { type: 'user', id: 'e2e' };
+    const decision = await app.runAction({
+      module: 'commercial-contract', action: 'record-renewal-decision',
+      recordId: ${JSON.stringify(contract.id)}, input: ${JSON.stringify(ask)}, actor,
+    });
+    const followup = await app.runAction({
+      module: 'commercial-contract', action: 'request-commercial-followup',
+      recordId: ${JSON.stringify(contract.id)}, input: { intent: 'renewal', summary: 'asked before the restart' }, actor,
+    });
+    let divergent = null;
+    try {
+      await app.runAction({
+        module: 'commercial-contract', action: 'record-renewal-decision',
+        recordId: ${JSON.stringify(contract.id)},
+        input: { decision: 'not_renewing', reason: 'a different mind', asOf: '2027-08-01' }, actor,
+      });
+    } catch (error) { divergent = { code: error.code, status: error.status, fields: error.details?.conflictingFields }; }
+    console.log(JSON.stringify({
+      decisionId: decision.result.id,
+      followupId: followup.result.id,
+      groups: followup.result.baselineGroupsJson,
+      decisions: app.modules.get('renewal-decision').service.listWhere({}).length,
+      followups: app.modules.get('commercial-followup').service.listWhere({}).length,
+      divergent,
+    }));
+    app.close();
+  `], { encoding: 'utf8', cwd: root });
+  assert.equal(probe.status, 0, probe.stderr);
+  const cold = JSON.parse(probe.stdout.trim().split('\n').at(-1));
+
+  // The clock moved and the process is new; the identity is neither, so both
+  // retries answer with the rows the previous process wrote.
+  assert.equal(cold.decisionId, first.id, 'the decision replays across a restart');
+  assert.equal(cold.followupId, followup.id, 'and so does the open handoff');
+  assert.equal(cold.groups, followup.baselineGroupsJson, 'with its money evidence intact');
+  assert.equal(cold.decisions, 1, 'and nothing was duplicated');
+  assert.equal(cold.followups, 1);
+  // A divergent retry after a restart is still refused by field, not adopted.
+  assert.deepEqual(cold.divergent, { code: 'RENEWAL_DECISION_CONFLICT', status: 409, fields: ['decision', 'reason'] });
 });
 
 test('the package detaches and reattaches, and its rows outlive it', async (t) => {

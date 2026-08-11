@@ -1,14 +1,38 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import {
   DECISIONS, FOLLOWUP_OPEN, FOLLOWUP_TERMINAL, INTENTS, LIFECYCLE_RESOURCES,
   SOURCE_CAPABILITY, createLifecyclePackage, daysToBoundary, evidenceGaps,
-  groupBaseline, requireCalendarDate, requireReason,
+  groupBaseline, replayOrConflict, requireCalendarDate, requireReason, serializeBaselineGroups,
 } from '../packages/lifecycle/src/index.js';
 import {
-  createContractLifecycleSourceCapability, LIFECYCLE_SOURCE, TERM_SOURCE_SIGNED, termIsSigned,
+  createContractLifecycleSourceCapability, declaredTermSources, LIFECYCLE_SOURCE,
+  TERM_SOURCE_SIGNED, termIsSigned, termSignedState,
 } from '../packages/contracts/src/lifecycle-capability.js';
+
+/**
+ * The `termsSource` values the contract manifest actually declares, read from
+ * the manifest itself.
+ *
+ * These tests used to feed the capability `termsSource: 'order-form'` — a value
+ * the manifest has never allowed — and then assert `signed === false`. That
+ * assertion passed for the wrong reason: it pinned the old hard-coded literal
+ * rather than the rule, so it would have gone on passing on the day a genuinely
+ * signed source was added. Everything below derives from the manifest instead.
+ */
+const CONTRACT_MANIFEST = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../packages/contracts/modules/commercial-contract.module.json', import.meta.url)), 'utf8'),
+);
+const DECLARED_TERM_SOURCES = CONTRACT_MANIFEST.fields.find((field) => field.name === 'termsSource').values;
+
+/** A contract module double that carries the manifest's own field contract. */
+const contractModuleDouble = (service, values = DECLARED_TERM_SOURCES) => ({
+  service,
+  fields: [{ name: 'termsSource', type: 'enum', values: [...values] }],
+});
 
 /**
  * M16a is mostly about **what it refuses to say**. A renewal decision is intent
@@ -25,7 +49,7 @@ test('the package declares only what it owns, and reaches Contracts only by capa
   // The contract is the project's host record here: acted on, never owned.
   assert.equal(pkg.resources.includes('commercial-contract'), false,
     'the contract belongs to Contracts; claiming it would be a collision and a lie');
-  assert.deepEqual(pkg.requires, [{ package: 'contracts', capability: 'contract-lifecycle-source', version: 1 }]);
+  assert.deepEqual(pkg.requires, [{ package: 'contracts', capability: 'contract-lifecycle-source', version: 2 }]);
   assert.deepEqual(pkg.capabilities, [], 'M16a offers nothing yet; it consumes');
   assert.deepEqual(pkg.actions.map((a) => `${a.module}.${a.name}`).sort(), [
     'commercial-contract.plan-renewal',
@@ -87,6 +111,84 @@ test('a baseline is grouped by currency and recurrence, never summed into one nu
     ['EUR|one_time|null', 'EUR|recurring|month', 'USD|recurring|year']);
 });
 
+test('interval count is part of the recurrence: quarterly is not monthly', () => {
+  // Regression. M12 spells quarterly as `interval: month, intervalCount: 3`, so
+  // grouping on `interval` alone folded EUR 400 quarterly into the same row as
+  // EUR 400 monthly and reported EUR 800 "monthly" — a three-fold overstatement
+  // of the baseline Commercial reads, produced silently, with the two follow-up
+  // rows byte-identical afterwards.
+  const groups = groupBaseline([
+    { currency: 'EUR', chargeType: 'recurring', interval: 'month', intervalCount: 1, netAmountCents: 40_000 },
+    { currency: 'EUR', chargeType: 'recurring', interval: 'month', intervalCount: 3, netAmountCents: 40_000 },
+    { currency: 'EUR', chargeType: 'recurring', interval: 'month', intervalCount: 3, netAmountCents: 10_000 },
+    { currency: 'EUR', chargeType: 'recurring', interval: 'year', intervalCount: 1, netAmountCents: 90_000 },
+  ]);
+  assert.equal(groups.length, 3, 'monthly, quarterly and annual are three kinds of money');
+  const quarterly = groups.find((g) => g.interval === 'month' && g.intervalCount === 3);
+  assert.equal(quarterly.netAmountCents, 50_000);
+  assert.equal(quarterly.lineCount, 2);
+  assert.equal(groups.find((g) => g.interval === 'month' && g.intervalCount === 1).netAmountCents, 40_000);
+
+  // A one-time charge has no recurrence at all, so neither half of the pair is
+  // invented for it — an `intervalCount: 1` there would read as "every one of
+  // something" and there is no something.
+  const [once] = groupBaseline([
+    { currency: 'EUR', chargeType: 'one_time', interval: 'month', intervalCount: 1, netAmountCents: 120_000 },
+  ]);
+  assert.equal(once.interval, null);
+  assert.equal(once.intervalCount, null);
+
+  // The defect in one line: an annual EUR 1,200 and a one-time EUR 1,200 are
+  // distinguishable in what gets stored, rather than byte-identical rows.
+  const annual = serializeBaselineGroups(groupBaseline([
+    { currency: 'EUR', chargeType: 'recurring', interval: 'year', intervalCount: 1, netAmountCents: 120_000 },
+  ]));
+  const oneTime = serializeBaselineGroups(groupBaseline([
+    { currency: 'EUR', chargeType: 'one_time', interval: null, intervalCount: null, netAmountCents: 120_000 },
+  ]));
+  assert.notEqual(annual, oneTime);
+  assert.deepEqual(JSON.parse(annual), [{
+    currency: 'EUR', chargeType: 'recurring', interval: 'year', intervalCount: 1, lineCount: 1, netAmountCents: 120_000,
+  }]);
+
+  // Grouped evidence is stable: the same baseline serializes identically, so a
+  // stored row can be compared against a recomputed one.
+  const lines = [
+    { currency: 'USD', chargeType: 'recurring', interval: 'year', intervalCount: 1, netAmountCents: 1 },
+    { currency: 'EUR', chargeType: 'one_time', interval: null, intervalCount: null, netAmountCents: 2 },
+  ];
+  assert.equal(serializeBaselineGroups(groupBaseline(lines)),
+    serializeBaselineGroups(groupBaseline([...lines].reverse())));
+  // And nothing anywhere carries a cross-recurrence or cross-currency total.
+  assert.equal(JSON.parse(serializeBaselineGroups(groupBaseline(lines))).some((g) => g.netAmountCents === 3), false);
+});
+
+test('an identical repeat replays; a different one is refused with the fields named', () => {
+  const existing = { id: 'd1', decision: 'pursue_renewal', reason: 'they are happy', contractId: 'c1' };
+  const options = { code: 'RENEWAL_DECISION_CONFLICT', what: 'A renewal decision' };
+
+  // The lost-response case: the retry gets back the record it already created.
+  assert.equal(replayOrConflict(existing, { decision: 'pursue_renewal', reason: 'they are happy' }, options), existing);
+  // Fields the caller did not submit are not compared — a derived field moving
+  // elsewhere must not turn a safe retry into a spurious conflict.
+  assert.equal(replayOrConflict(existing, {}, options), existing);
+  // Absent and null are the same submission, so an omitted optional replays.
+  assert.equal(replayOrConflict({ id: 'f1', decisionId: null }, { decisionId: undefined }, options).id, 'f1');
+
+  // A divergent repeat is refused, and says exactly which fields diverged.
+  assert.throws(
+    () => replayOrConflict(existing, { decision: 'not_renewing', reason: 'they are happy' }, options),
+    (error) => error.status === 409 && error.code === 'RENEWAL_DECISION_CONFLICT'
+      && error.details.conflictingFields.join() === 'decision'
+      && error.details.existingId === 'd1'
+      && /different decision/.test(error.message),
+  );
+  assert.throws(
+    () => replayOrConflict(existing, { decision: 'not_renewing', reason: 'changed my mind' }, options),
+    (error) => error.details.conflictingFields.join() === 'decision,reason',
+  );
+});
+
 test('a non-integer amount cannot poison a baseline', () => {
   const groups = groupBaseline([
     { currency: 'EUR', chargeType: 'recurring', interval: 'month', netAmountCents: 1_000 },
@@ -119,21 +221,24 @@ test('a human reason is required, bounded and control-character free', () => {
 test('the source capability is read-only by construction', () => {
   const capability = createContractLifecycleSourceCapability();
   assert.equal(capability.name, LIFECYCLE_SOURCE.name);
-  assert.equal(capability.version, 1);
+  assert.equal(capability.version, 2);
   assert.equal(SOURCE_CAPABILITY.capability, capability.name);
 
+  // A source the manifest really declares, and whatever the classification rule
+  // says about it — never a literal typed into the assertion.
+  const declaredSource = DECLARED_TERM_SOURCES[0];
   const rows = new Map([
     ['commercial-contract', { get: (id) => (id === 'c1' ? {
       id: 'c1', status: 'active', currency: 'EUR', customerName: 'Rossi', currentVersionId: 'v1',
       termStartDate: '2026-01-01', termEndDate: '2026-12-31', termDays: 365,
-      autoRenew: 1, renewalNoticeDays: 30, termsSource: 'order-form', termsReason: 'as ordered',
+      autoRenew: 1, renewalNoticeDays: 30, termsSource: declaredSource, termsReason: 'as ordered',
     } : null) }],
     ['contract-version', { get: () => ({ versionNumber: 2 }) }],
     ['contract-line', { listWhere: () => [] }],
     ['subscription', { listWhere: () => [] }],
     ['subscription-line', { listWhere: () => [] }],
   ]);
-  const opened = capability.create({ modules: { get: (name) => ({ service: rows.get(name) }) } });
+  const opened = capability.create({ modules: { get: (name) => contractModuleDouble(rows.get(name)) } });
 
   // Every exposed member is a read. There is no write, and no handle to write with.
   const members = Object.keys(opened).filter((key) => key !== 'capabilityContract');
@@ -143,8 +248,10 @@ test('the source capability is read-only by construction', () => {
   assert.equal(evidence.term.endDate, '2026-12-31');
   assert.equal(evidence.term.endDateIsInclusive, true);
   // The whole reason this capability exists in this shape.
-  assert.equal(evidence.term.source, 'order-form');
-  assert.equal(evidence.term.signed, false, 'activation terms are never presented as signed');
+  assert.equal(evidence.term.source, declaredSource);
+  assert.equal(evidence.term.signed, TERM_SOURCE_SIGNED[declaredSource],
+    'signed is whatever the classification rule says about the declared source, not a constant');
+  assert.equal(evidence.term.signedBasis, 'DERIVED_FROM_DECLARED_TERM_SOURCE');
   assert.match(evidence.term.provenanceNote, /OPERATIONAL metadata/);
   assert.equal(Object.isFrozen(evidence), true, 'a consumer cannot mutate the evidence it was handed');
   assert.equal(Object.isFrozen(evidence.term), true);
@@ -161,6 +268,54 @@ test('the capability refuses a caller that did not bring the modules view', () =
   const capability = createContractLifecycleSourceCapability();
   assert.throws(() => capability.create({}), /requires the caller's modules view/);
   assert.throws(() => capability.create({ modules: {} }), /requires the caller's modules view/);
+});
+
+test('a termsSource nobody classified fails closed: the capability will not open at all', () => {
+  const capability = createContractLifecycleSourceCapability();
+  const service = { get: () => null, listWhere: () => [] };
+
+  // The real composition, with the manifest's own enum: it opens.
+  assert.ok(capability.create({ modules: { get: () => contractModuleDouble(service) } }));
+
+  // A future M12 that adds a source and forgets to decide whether a term from
+  // it is signed. v1 answered `false` for it — silently, permanently, from a
+  // different package than the one that changed. v2 stops.
+  const withNewSource = [...DECLARED_TERM_SOURCES, 'countersigned-renewal-instrument'];
+  assert.throws(
+    () => capability.create({ modules: { get: () => contractModuleDouble(service, withNewSource) } }),
+    (error) => error.code === 'TERM_SOURCE_UNCLASSIFIED' && error.status === 500
+      && error.details.unclassified.includes('countersigned-renewal-instrument')
+      && /Classify it/.test(error.message),
+    'the refusal names the value and says what to do about it',
+  );
+
+  // And a module contract that declares no termsSource at all has nothing to
+  // derive from, so it is refused rather than defaulted.
+  assert.throws(
+    () => capability.create({ modules: { get: () => ({ service, fields: [] }) } }),
+    (error) => error.code === 'TERM_SOURCE_UNDECLARED',
+  );
+});
+
+test('signed is three-valued: decided, decided-false, and "nobody classified this"', () => {
+  // Every declared source is classified — enforced against the manifest, so
+  // this cannot drift.
+  assert.deepEqual(Object.keys(TERM_SOURCE_SIGNED).sort(), [...DECLARED_TERM_SOURCES].sort());
+  assert.deepEqual(declaredTermSources({ fields: [{ name: 'termsSource', values: ['a', 'b'] }] }), ['a', 'b']);
+  assert.deepEqual(declaredTermSources(null), [], 'a missing module contract declares nothing');
+
+  for (const source of DECLARED_TERM_SOURCES) {
+    assert.equal(typeof termSignedState(source), 'boolean', `${source} is decided either way`);
+    assert.equal(termSignedState(source), TERM_SOURCE_SIGNED[source]);
+  }
+  // `null` is not `false`: it is the absence of a decision, and a consumer must
+  // be able to tell them apart to report it as a gap.
+  for (const unknown of ['something-new', '', null, undefined, 42, {}, true]) {
+    assert.equal(termSignedState(unknown), null);
+    assert.equal(termIsSigned(unknown), false, 'but nothing unclassified is ever reported as signed');
+  }
+  // The map can carry `true`, so a future signed source needs no breaking change.
+  assert.equal(Object.values(TERM_SOURCE_SIGNED).every((value) => typeof value === 'boolean'), true);
 });
 
 test('the follow-up state model has an exit, and every terminal state is reachable', () => {
@@ -217,36 +372,38 @@ test('a date that matches the shape but names no real day is refused', () => {
   for (const bad of ['2027-02-30', '2027-02-29', '2027-06-31', '2027-13-01', '2027-00-10', '2027-01-32']) {
     assert.throws(() => requireCalendarDate(bad, 'asOf'), (error) => error.details?.field === 'asOf', bad);
   }
-  for (const bad of ['31/12/2027', '2027-8-1', '', undefined, null, 42, {}]) {
-    assert.throws(() => requireCalendarDate(bad, 'asOf'), /must be a calendar date/);
+  for (const bad of [
+    '31/12/2027', '2027-8-1', '', undefined, null, 42, {},
+    // A date-time is a different kind of fact and is refused as one: accepting
+    // it would let the same day arrive under two spellings and stop colliding
+    // on the key built from it.
+    '2027-08-01T00:00:00.000Z', '2027-08-01T00:00:00Z', '2027-08-01 00:00:00',
+    // Whitespace padding, in every position.
+    ' 2027-08-01', '2027-08-01 ', '\t2027-08-01', '2027-08-01\n', '20 27-08-01',
+    // Signed and expanded years, which `Date.parse` is happy to take.
+    '+2027-08-01', '-2027-08-01', '02027-08-01',
+  ]) {
+    assert.throws(() => requireCalendarDate(bad, 'asOf'),
+      (error) => error.details?.field === 'asOf', JSON.stringify(bad));
   }
+  // Real boundaries, kept: the ends of a month, a year and a leap cycle.
+  for (const good of ['2027-01-01', '2027-12-31', '2027-02-28', '2028-02-29', '2000-02-29', '2027-04-30']) {
+    assert.equal(requireCalendarDate(good, 'asOf'), good);
+  }
+  // 1900 and 2100 are not leap years; 2000 is. The rule is the calendar's, not 365.
+  for (const bad of ['1900-02-29', '2100-02-29', '2027-02-29']) {
+    assert.throws(() => requireCalendarDate(bad, 'asOf'), /not a real calendar date/, bad);
+  }
+  // Inclusive end-date arithmetic across a leap day and a year boundary.
+  assert.equal(daysToBoundary('2028-02-28', '2028-02-29'), 1);
+  assert.equal(daysToBoundary('2027-12-31', '2028-01-01'), 1);
+  assert.equal(daysToBoundary('2028-02-29', '2029-02-28'), 365);
   // And the arithmetic refuses to produce a number from a day that is not one.
   assert.equal(daysToBoundary('2027-02-30', '2027-08-31'), null);
   assert.equal(daysToBoundary('2027-08-01', '2027-02-30'), null);
   assert.equal(daysToBoundary('2027-08-01', '2027-08-31'), 30);
 });
 
-
-test('`signed` is derived from the declared term source, and every source is classified', async () => {
-  const { readFileSync } = await import('node:fs');
-  const { fileURLToPath } = await import('node:url');
-  const root = fileURLToPath(new URL('..', import.meta.url));
-  const manifest = JSON.parse(readFileSync(`${root}packages/contracts/modules/commercial-contract.module.json`, 'utf8'));
-  const declared = manifest.fields.find((field) => field.name === 'termsSource').values;
-
-  // The point of the map: the day M12 adds a source, this fails until somebody
-  // decides whether a term from it is signed. A hard-coded `false` would have
-  // gone on quietly answering for a value nobody had thought about.
-  assert.deepEqual(Object.keys(TERM_SOURCE_SIGNED).sort(), [...declared].sort(),
-    'every declared termsSource must be classified as signed or not');
-  assert.equal(termIsSigned('post-signature-operational-activation'), false,
-    'an activation term is operational metadata, never a signed renewal term');
-  // Fails closed: unknown, absent and non-string are all "not signed", because
-  // reporting an unsigned date as signed is the one failure that matters.
-  for (const unknown of ['something-new', '', null, undefined, 42, {}, true]) {
-    assert.equal(termIsSigned(unknown), false);
-  }
-});
 
 test('nothing the capability hands back is a handle a consumer could write through', () => {
   const capability = createContractLifecycleSourceCapability();
@@ -267,7 +424,7 @@ test('nothing the capability hands back is a handle a consumer could write throu
     ['subscription', { listWhere: () => [{ id: 's1' }] }],
     ['subscription-line', { listWhere: () => [{ id: 'sl1', subscriptionId: 's1', componentKey: 'seats' }] }],
   ]);
-  const opened = capability.create({ modules: { get: (name) => ({ service: rows.get(name) }) } });
+  const opened = capability.create({ modules: { get: (name) => contractModuleDouble(rows.get(name)) } });
 
   // The interface itself is frozen: a consumer cannot redefine `termEvidence`
   // to make its own package lie in its own trace.

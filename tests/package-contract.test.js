@@ -148,19 +148,23 @@ test('the first-party contracts package conforms', () => {
     definition: createContractsDomain({ policies: [b2bSaasOrderActivationV1] }),
     dir: join(repoRoot, 'packages/contracts'),
     expected: {
-      // Version 3: M15 added `service-obligations@1` and M16a added the
-      // read-only `contract-lifecycle-source@1`, both additively. Every M12
-      // resource, action and the `delivery-obligations@1` capability are
+      // Version 4: M15 added `service-obligations@1` and M16a added the
+      // read-only `contract-lifecycle-source@1`. The post-merge audit moved
+      // that one capability to @2 — it now refuses to open while any declared
+      // `termsSource` is unclassified, and reports `signed: null` rather than a
+      // confident `false` for a source nobody decided about. A capability whose
+      // answers changed shape gets a new version, so the package version moved
+      // with it. Every M12 resource, action and `delivery-obligations@1` are
       // untouched, and `packageContract: 1` did not move.
       name: 'contracts',
-      version: 3,
+      version: 4,
       resources: [
         'commercial-contract', 'contract-version', 'contract-line', 'contract-activation',
         'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
       ],
       actions: ['order.activate-contract', 'order.plan-activation'],
       requires: [],
-      provides: ['contract-lifecycle-source@1', 'delivery-obligations@1', 'service-obligations@1'],
+      provides: ['contract-lifecycle-source@2', 'delivery-obligations@1', 'service-obligations@1'],
     },
     // Contracts must reach none of the packages that consume it.
     forbiddenImports: [/from '[^']*delivery\//, /from '[^']*\/service\//, /from '[^']*\/lifecycle\//],
@@ -240,7 +244,7 @@ test('the first-party lifecycle package conforms and consumes without offering',
         'commercial-contract.request-commercial-followup',
         'commercial-followup.resolve-commercial-followup',
       ],
-      requires: ['contracts/contract-lifecycle-source@1'],
+      requires: ['contracts/contract-lifecycle-source@2'],
       provides: [],
     },
     // It reaches Contracts only through the declared capability, and never
