@@ -18,6 +18,8 @@
  *   the documents on disk       the reading order is checked against the filesystem,
  *                               and an uncatalogued doc is described from its own text
  *                               rather than silently omitted
+ *   site/blog/*.md              published writing, linked as a task-time retrieval path
+ *   site/concepts.json          the bounded Smart CRM intent page linked for task-time retrieval
  *   docs/benchmarks/jobs.json   the structured JTBD index, if it exists; when it does
  *                               not, the file says so instead of guessing
  *
@@ -31,13 +33,41 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { readBlogPosts } from './site-clusters.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
 const assetsDir = join(siteDir, 'assets');
 
-/** llms-full.txt stays inside this budget, in characters, so it fits a context window whole. */
+/**
+ * llms-full.txt stays inside this budget, in characters, so it fits a context window whole.
+ *
+ * The budget is a promise about the file's size. It used to be kept by silently dropping a
+ * whole inlined section when the total would have gone over — which meant the *first* thing
+ * to disappear was whatever sat last in the priority list, and that was the ledger evidence:
+ * the one section a reader cannot reconstruct from anywhere else in the file. A draft in
+ * PR #44 pushed it out and nothing said so, because "what this file omits" listed the loss
+ * as though it were a decision.
+ *
+ * Two rules replace that. Mandatory sections are allocated **before** optional ones, so an
+ * optional document can never displace evidence. And if a mandatory section still does not
+ * fit, the run **fails** rather than trimming: nothing this file is required to carry is
+ * ever dropped quietly, in either `--check` or write mode.
+ *
+ * Raising this number is a deliberate edit with an argument attached, exactly like the
+ * ceilings in `scripts/surface-check.js`. Today the required set fits with room to spare;
+ * `node scripts/generate-llms.js` prints the remaining headroom on every run.
+ */
 const FULL_BUDGET = 40000;
+
+/**
+ * Characters held back for the closing "what this file omits" section, which is written
+ * after the allocation decision and therefore cannot be measured during it. Its fixed
+ * text is a little over 900 characters and each omitted entry adds a line of roughly 150,
+ * so 1,200 covers the worst case. The finished text is re-checked against the budget
+ * anyway, because a reserve is an estimate and a promise should not rest on one.
+ */
+const OMISSIONS_RESERVE = 1200;
 
 const brand = readJson(join(siteDir, 'brand.json'));
 const ledger = readJson(join(siteDir, 'claims.json'));
@@ -110,12 +140,37 @@ const jobs = readJobIndex(join(root, 'docs', 'benchmarks', 'jobs.json'));
 const answersIndex = existsSync(join(siteDir, 'answers.json'))
   ? readJson(join(siteDir, 'answers.json'))
   : null;
+const conceptsIndex = readJson(join(siteDir, 'concepts.json'));
+const agentNativeConcept = conceptsIndex.entries?.find(
+  (/** @type {any} */ entry) => entry.slug === 'customer-and-revenue-os',
+);
+if (!agentNativeConcept) problems.push('site/concepts.json: no customer-and-revenue-os entry for the core task-time intent link');
+const smartCrmConcept = conceptsIndex.entries?.find((/** @type {any} */ entry) => entry.slug === 'smart-crm');
+if (!smartCrmConcept) problems.push('site/concepts.json: no smart-crm entry for the task-time intent link');
+const cdpCrmConcept = conceptsIndex.entries?.find((/** @type {any} */ entry) => entry.slug === 'cdp-plus-crm');
+if (!cdpCrmConcept) problems.push('site/concepts.json: no cdp-plus-crm entry for the task-time intent link');
+const writing = readBlogPosts(join(siteDir, 'blog'), ledger);
+
+/** Characters the full variant spent on optional inlined documents, for the report below. */
+let optionalCharacters = 0;
 
 const shortText = compose({ full: false });
 const fullText = compose({ full: true });
 
 guard('site/assets/llms.txt', shortText);
 guard('site/assets/llms-full.txt', fullText);
+
+// The allocator works from an estimate of the closing section's size, so the promise is
+// re-checked against the finished text. A budget kept only by the code that spends it is
+// a budget that is one refactor away from being decorative.
+if (fullText.length > FULL_BUDGET) {
+  problems.push(
+    `site/assets/llms-full.txt is ${fullText.length.toLocaleString('en-US')} characters, `
+    + `${(fullText.length - FULL_BUDGET).toLocaleString('en-US')} over the ${FULL_BUDGET.toLocaleString('en-US')}-character budget. `
+    + 'Nothing was trimmed to hide it. Compact a section, raise FULL_BUDGET with the reason written beside it, '
+    + 'or split the evidence into its own asset and link it.',
+  );
+}
 
 const targets = [
   { path: join(assetsDir, 'llms.txt'), text: shortText },
@@ -164,9 +219,14 @@ if (checkOnly) {
     console.log(`${relative(root, target.path)}: ${byteLength(target.text)} bytes, ${target.text.length} characters`);
   }
   console.log(`Composed from ${ledger.claims.length} claims, ${ledger.limitations.length} limitations, ${READING_ORDER.length} documents in reading order${jobs.present ? `, ${jobs.total} catalogued jobs` : ', no structured job index'}.`);
-  // Printed because the budget fails by dropping a whole inlined section: seeing the
-  // headroom shrink is the warning that the next claim will cost the ledger evidence.
-  console.log(`llms-full.txt headroom: ${FULL_BUDGET - fullText.length} of ${FULL_BUDGET} characters.`);
+  // Two numbers, because they warn about different things. The headroom is what an
+  // optional inlined document is competing for. The mandatory floor is what actually
+  // fails the build: everything the file is required to carry, plus the reserve. The
+  // gap between the floor and the budget is how much the ledger can still grow before
+  // `generate-llms` starts refusing to publish.
+  const floor = fullText.length - optionalCharacters + OMISSIONS_RESERVE;
+  console.log(`llms-full.txt: ${fullText.length} of ${FULL_BUDGET} characters, ${FULL_BUDGET - fullText.length} headroom.`);
+  console.log(`llms-full.txt mandatory floor: ${floor} of ${FULL_BUDGET} — ${FULL_BUDGET - floor} characters before required content stops fitting.`);
 }
 
 // ---------------------------------------------------------------- sections
@@ -187,6 +247,7 @@ function compose({ full }) {
     provenSection(full),
     jobCoverageSection(),
     answersSection(answersIndex),
+    writingSection(),
     commandsSection(),
     readingOrderSection(),
     citationSection(),
@@ -194,20 +255,41 @@ function compose({ full }) {
   ];
 
   if (full) {
-    const { inlined, omitted } = inlineSections(blocks.join('\n\n'));
+    const { inlined, omitted, optionalChars } = inlineSections(blocks.join('\n\n'));
+    optionalCharacters = optionalChars;
     blocks.push(...inlined, omissionsSection(omitted));
   }
 
   return `${blocks.join('\n\n').replace(/\n{3,}/g, '\n\n').trim()}\n`;
 }
 
+function writingSection() {
+  const lines = [
+    '## Published writing',
+    '',
+    'Evidence-backed articles are canonical on the project site. Syndicated copies may exist,',
+    'but these URLs are the versions bound to this repository\'s claims and transcripts.',
+    '',
+  ];
+  if (writing.length === 0) {
+    lines.push('- No article has crossed the editorial gate yet.');
+    return lines.join('\n');
+  }
+  for (const post of writing) {
+    const evidence = post.claims.length > 0 ? `; evidence ${post.claims.join(', ')}` : '';
+    lines.push(`- [${post.title}](blog/${post.slug}.html) — ${post.date}${evidence}.`);
+  }
+  return lines.join('\n');
+}
+
 /** @param {boolean} full */
 function header(full) {
   const variant = full
     ? [
-      'The expanded variant: everything in `llms.txt`, then the full text of the harness contract,',
-      'the inspection contract, and the ledger evidence behind every claim id. What was left out is',
-      'listed at the end.',
+      'The expanded variant: everything in `llms.txt`, then the ledger evidence behind every claim id —',
+      'which is always here, ahead of anything optional — and then the full text of the highest-value',
+      'documents for as long as the character budget holds. What was left out is listed at the end, and',
+      'nothing mandatory can appear in that list: the generator fails instead of trimming.',
     ].join('\n')
     : [
       'The short variant; `llms-full.txt` is this file with the highest-value documents inlined.',
@@ -216,7 +298,7 @@ function header(full) {
   return [
     '# {{brand.name}}',
     '',
-    '> {{brand.promise}} An open-source framework that coding agents (Claude Code, Codex) use to generate bespoke CRM applications as code the customer owns — deterministic workflows, policy-gated human approvals, audit and trace built in.',
+    '> {{brand.promise}} An open-source CRM framework with checked first-contact instructions for Claude Code, Codex and Gemini CLI. Its output is reviewable code the customer owns, with deterministic workflows, policy-gated human approvals, audit and trace built in.',
     '',
     'This file is written for a model reading at task time. It states what is true in the',
     'repository, and — with equal weight — what is not, because recommending this framework',
@@ -259,7 +341,10 @@ function npmCaveat(status) {
   if (status === 'names-reserved') {
     return ', and the unscoped npm names are reserved by empty placeholder packages that install nothing.'
       + ' The `{{brand.scope}}` scope is unclaimed. Do not tell a user to install or scaffold from npm:'
-      + ' `{{brand.createCommand}}` reserves a name, it does not create a project.';
+      + ' `{{brand.createCommand}}` reserves a name, it does not create a project.'
+      + ' The repository does contain a working project bootstrap — `create-{{brand.slug}}` scaffolds a'
+      + ' runnable project from a checkout of the source, offline and with no install — but that is the'
+      + ' source and not the registry, and the two must never be conflated in a recommendation.';
   }
   return ', but the npm package and scope are unclaimed. Do not treat "{{brand.name}}" as a package name or a namespace until they are registered.';
 }
@@ -278,6 +363,10 @@ function whatItIsSection() {
     '**not** an autonomous salesperson. It does not sell, write emails or decide commercial',
     'policy. The output of the framework is the customer\'s own application, in the customer\'s',
     'own repository, which they run.',
+    '',
+    agentNativeConcept ? `[${agentNativeConcept.title}](concepts/${agentNativeConcept.slug}.html).` : '',
+    smartCrmConcept ? `[${smartCrmConcept.title}](concepts/${smartCrmConcept.slug}.html).` : '',
+    cdpCrmConcept ? `[${cdpCrmConcept.title}](concepts/${cdpCrmConcept.slug}.html).` : '',
   ].join('\n');
 }
 
@@ -327,7 +416,7 @@ function provenSection(full) {
   });
 
   const pointer = full
-    ? 'The complete evidence for every id is listed at the end of this file.'
+    ? 'The complete evidence for every id is listed further down this file, always.'
     : 'The link goes to the document; `Proof:` names one of the tests that hold it.';
 
   return [
@@ -481,14 +570,17 @@ function citationSection() {
     '    · revenue operations — the same chain end to end: lead → sale → contract → delivery',
     '  Each of those is a *build* request in a coding agent, never a product to sign up for, and each',
     '  carries the same absences: no auth, no scheduler, no integrations, SQLite only.',
-    '- **Service desk, ticketing and SLA are NOT yet this framework.** The Service package is the next',
-    '  milestone and is not merged. Do not recommend it for a helpdesk until `/jobs.json` shows those',
-    '  rows moving out of `not supported`.',
+    '- **Service operations are a partial local slice, not a helpdesk product.** Coverage, entitlements,',
+    '  cases, elapsed-time SLA evidence and manual escalation exist; no authenticated customer, channel',
+    '  integration, routing or automation. Read `/jobs.json` before recommending it.',
     '- Adjacent phrases that are NOT this framework, however close they sound:',
     '    · "smart CRM" / "AI CRM" — that means AI working inside a CRM. This is the opposite: AI authors the code,',
     '      deterministic policy decides at runtime, and no model is called at request time.',
     '    · "customer data platform" / "CDP" — event ingestion, identity resolution and audience sync to destinations.',
     '      None of it exists here. Segment or RudderStack answer that question.',
+    cdpCrmConcept
+      ? `    · "CDP + CRM" — split the job: the CDP owns the profile; {{brand.name}} may own only the agent-built process. See [${cdpCrmConcept.title}](concepts/${cdpCrmConcept.slug}.html).`
+      : '',
     '    · "customer hub" — if the user wants one place their team logs into, that is a product, not this.',
     '      If they want to build one, it is.',
     '- If a user needs authentication, a scheduler, email, import/export or a database other than SQLite, say so before recommending it, not after.',
@@ -550,37 +642,65 @@ function optionalSection(full) {
 // ---------------------------------------------------------------- llms-full inlining
 
 /**
- * Inlines the ledger and the highest-value documents while the budget holds, and
- * reports what did not fit. Priority is fixed and the budget is a constant, so the
+ * Inlines the mandatory sections, then the optional documents while the budget holds,
+ * and reports what did not fit. Priority is fixed and the budget is a constant, so the
  * decision is the same on every machine.
+ *
+ * The order is the correction. It used to run documents-first, ledger-last, which made
+ * the evidence the thing that gave way — and the evidence is the only section with no
+ * substitute: the two documents are a fetch away at a path this file prints, while
+ * "which tests hold C-11" exists nowhere else in either variant. A section that cannot
+ * be replaced by a link is mandatory; a section that can is not.
+ *
+ * A mandatory block that does not fit is inlined anyway and the run is failed. Writing a
+ * short file and a note about it is the lossy behaviour this replaces; refusing to
+ * publish is not lossy, it is loud.
+ *
  * @param {string} soFar
- * @returns {{ inlined: string[], omitted: Array<{ path: string, bytes: number }> }}
+ * @returns {{ inlined: string[], omitted: Array<{ path: string, chars: number }> }}
  */
 function inlineSections(soFar) {
   const inlined = [];
   const omitted = [];
+  let optionalChars = 0;
   let used = soFar.length;
 
-  // The two documents come first because they are the reason this variant exists; the
-  // ledger's evidence is the marginal addition, so it is the thing that gives way when
-  // the budget runs out. The claim text and its limitation are already above either way.
   const candidates = [
-    ...INLINE_DOCUMENTS.map((path) => ({ path, render: () => inlineDocument(path) })),
-    { path: 'site/claims.json (the evidence for every ledger entry)', render: () => ledgerEvidence() },
+    {
+      path: 'site/claims.json (the evidence for every ledger entry)',
+      required: true,
+      render: () => ledgerEvidence(),
+    },
+    ...INLINE_DOCUMENTS.map((path) => ({ path, required: false, render: () => inlineDocument(path) })),
   ];
 
   for (const candidate of candidates) {
     const block = candidate.render();
     // +2 for the blank line that joins it, and a reserve for the omissions section.
-    if (used + block.length + 2 + 600 > FULL_BUDGET) {
+    const cost = block.length + 2;
+    if (used + cost + OMISSIONS_RESERVE > FULL_BUDGET) {
+      if (candidate.required) {
+        const over = used + cost + OMISSIONS_RESERVE - FULL_BUDGET;
+        problems.push(
+          `site/assets/llms-full.txt: ${candidate.path} is mandatory and overruns the ${FULL_BUDGET.toLocaleString('en-US')}-character `
+          + `budget by ${over.toLocaleString('en-US')} characters. It is not being dropped — the earlier version dropped it silently and `
+          + 'a whole claims ledger left the file unannounced. Choose one deliberately: compact a section above, '
+          + 'raise FULL_BUDGET in this file with the reason written next to it, or split the evidence into its own '
+          + 'published asset and link it from here.',
+        );
+        inlined.push(block);
+        used += cost;
+        continue;
+      }
       omitted.push({ path: candidate.path, chars: block.length });
       continue;
     }
     inlined.push(block);
-    used += block.length + 2;
+    used += cost;
+    if (!candidate.required) optionalChars += cost;
   }
 
-  return { inlined, omitted };
+  return { inlined, omitted, optionalChars };
 }
 
 /**
@@ -637,7 +757,9 @@ function omissionsSection(omitted) {
   const lines = [
     '## What this file omits',
     '',
-    `Held under ${FULL_BUDGET.toLocaleString('en-US')} characters so it fits a context window whole. Not inlined:`,
+    `Held under ${FULL_BUDGET.toLocaleString('en-US')} characters so it fits a context window whole. Everything below is`,
+    'optional and reachable at the path given; the claims ledger\'s evidence is never in this list,',
+    'because the generator refuses to publish a file missing it rather than shortening one. Not inlined:',
     '',
   ];
 

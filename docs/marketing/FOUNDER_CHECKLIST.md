@@ -103,7 +103,7 @@ asset-management consultancy existed and was acquired some years ago, and a musi
 use the name. Neither looked disqualifying from here, and neither is a legal opinion.
 
 If it comes back badly: `node scripts/brand-set.js <newname> --apply`. The rename is one command
-now — 389 occurrences, 139 files, 411 tests still green. That was the point of building it.
+now — 389 occurrences, 139 files, the suite still green. That was the point of building it.
 
 ---
 

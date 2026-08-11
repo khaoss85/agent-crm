@@ -20,7 +20,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 
 const root = process.cwd();
 const dist = join(root, 'site', 'dist');
@@ -99,9 +99,17 @@ try {
       url = `file://${join(dist, target.file)}`;
     }
 
+    // A desktop Chrome may already be running. A full browser binary needs explicit headless mode;
+    // without it the CLI can hand the request to that process, exit 0 and write no screenshot.
     const result = spawnSync(binary, [
+      // Playwright's headless_shell is headless by definition; a full Chromium binary is not.
+      // CHROMIUM_BIN commonly points at Google Chrome on maintainer machines.
+      ...(/headless_shell/.test(binary) ? [] : ['--headless=new']),
       '--no-sandbox',
       '--disable-gpu',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-background-networking',
       '--hide-scrollbars',
       // Let layout and any web font settle before the frame is captured.
       '--virtual-time-budget=2000',
@@ -112,8 +120,8 @@ try {
     ], { encoding: 'utf8', timeout: 60_000 });
 
     const output = join(shots, target.name);
-    if (result.status !== 0 && !existsSync(output)) {
-      console.error(`  ✗ ${target.name}: chromium exited ${result.status}`);
+    if (!existsSync(output)) {
+      console.error(`  ✗ ${target.name}: chromium exited ${result.status} without writing the screenshot`);
       process.exitCode = 1;
       continue;
     }
@@ -155,12 +163,24 @@ function findChromium() {
   for (const candidate of candidates) {
     if (candidate && existsSync(candidate)) return candidate;
   }
-  // A glob-free scan for any versioned Playwright headless shell.
-  const base = '/opt/pw-browsers';
-  if (!existsSync(base)) return null;
-  for (const entry of readDirSafe(base)) {
-    const path = join(base, entry, 'chrome-linux', 'headless_shell');
-    if (existsSync(path)) return path;
+  // A glob-free scan for the versioned Playwright headless shell on CI, Linux and macOS.
+  const bases = [
+    '/opt/pw-browsers',
+    join(homedir(), '.cache', 'ms-playwright'),
+    join(homedir(), 'Library', 'Caches', 'ms-playwright'),
+  ];
+  for (const base of bases) {
+    for (const entry of readDirSafe(base)) {
+      for (const suffix of [
+        ['chrome-linux', 'headless_shell'],
+        ['chrome-headless-shell-linux64', 'chrome-headless-shell'],
+        ['chrome-headless-shell-mac-arm64', 'chrome-headless-shell'],
+        ['chrome-headless-shell-mac-x64', 'chrome-headless-shell'],
+      ]) {
+        const path = join(base, entry, ...suffix);
+        if (existsSync(path)) return path;
+      }
+    }
   }
   return null;
 }

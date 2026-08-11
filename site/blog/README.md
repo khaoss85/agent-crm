@@ -1,15 +1,18 @@
 # site/blog
 
-**There are zero posts in this directory, and that is the current state, not an oversight.**
+**The first evidence-backed post now lives in this directory.**
 
-`docs/marketing/SITE_ARCHITECTURE.md` §5 records the decision: the blog *engine* ships and the
-blog ships empty. A post that has not been written is not content, and an editorial calendar
-rendered as if it were published is exactly the roadmap-ware the content rules forbid. The engine
-exists so that publishing the first piece is a one-file commit rather than a project.
+`docs/marketing/SITE_ARCHITECTURE.md` §5 records the original decision: the blog
+*engine* shipped empty rather than rendering an editorial calendar as published
+content. The first post crossed that gate on 2026-08-09 with a claim ledger,
+focused test transcript and named editor of record. Future entries still earn
+their URL one file and one evidence trail at a time.
 
-`scripts/site-clusters.js` reads every `*.md` in this directory (this README is skipped), renders it
-through `site/shell.html`, and lists it on `/blog.html`. With no posts, that index says there are
-zero posts rather than showing placeholders.
+`scripts/site-clusters.js` reads every `*.md` in this directory (this README is
+skipped), renders it through `site/shell.html`, and lists it on `/blog.html`.
+The empty state remains part of the renderer and is tested by building with no
+post fixtures; this repository's current index contains the real post rather
+than a placeholder.
 
 ---
 

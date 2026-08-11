@@ -65,6 +65,18 @@ providers, not where the domain lives.
 Columns are the six built domains. Read a row as: *does this domain use this
 horizontal capability the way the contract intends?*
 
+### Hosted Docs MCP transport assessment
+
+The stateless Streamable HTTP transport in `packages/docs-mcp/src/http.js` is a
+horizontal **documentation/distribution** surface, not a CRM runtime capability.
+Its status is `not_applicable` for Pipeline, Lead Intelligence, Commercial
+Operations, Signature & Order, Contract Activation and Delivery: it reads the
+repository-wide public documentation corpus and claims ledger, imports no domain
+package, opens no application/database and exposes no domain mutation. No legacy
+domain can align to it or be backfilled into it. This explicit assessment closes
+the Compatibility Backfill Rule for the transport without inventing six empty
+runtime integrations.
+
 | Horizontal capability | Pipeline | Lead Intelligence | Commercial Ops | Signature & Order | Contract Activation | Delivery |
 |---|---|---|---|---|---|---|
 | **Domain package seam** (ADR-018) — `definePackage`, declared resources, one static import | `not_applicable` ¹ | `aligned` | `needs_extraction` | `needs_extraction` | `aligned` | `aligned` |
@@ -74,6 +86,9 @@ horizontal capability the way the contract intends?*
 | **Module Evolution v1** (ADR-019) — a shipped record grows through a declared revision | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Managed records** — `writable: "managed"`, no public create, update or delete | `partial` — the stage fields are managed and CRUD cannot write them, but a stage is current state rather than append-only evidence | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Human-actor boundary** — the decision requires `actor.type === "user"` | `partial` — the boundary is in the approval workflow around a staged move, not in `move-stage` | `partial` — scoring and routing carry no user-actor requirement: they are deterministic computations from a published definition, not decisions | `aligned` — quote approval | `aligned` — requesting a signature | `aligned` — activation | `aligned` — every writing action |
+| **Public refusal receipt** — optional site content renders a tested request, asserted actor and machine-readable result | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ | `not_applicable` ³ |
+| **Public responsibility map** — optional site content separates exactly two layers and states the missing bridge | `not_applicable` ⁴ | `not_applicable` ⁴ | `not_applicable` ⁴ | `not_applicable` ⁴ | `not_applicable` ⁴ | `not_applicable` ⁴ |
+| **Public recommendation measurement identity contract** — a URR name match resolves to this framework before entering the numerator | `not_applicable` ⁵ | `not_applicable` ⁵ | `not_applicable` ⁵ | `not_applicable` ⁵ | `not_applicable` ⁵ | `not_applicable` ⁵ |
 | **Fingerprinted declared definitions** (ADR-015) — a declared version is content-addressed | `partial` — definitions are validated and drift refuses safely, but a pipeline carries no content-addressed version | `aligned` | `aligned` | `aligned` — provider definitions are fingerprinted | `aligned` | `aligned` |
 | **External-operation contract** (ADR-017) — intent, provider call outside every transaction, finalize, compensate | `not_applicable` | `not_applicable` | `partial` — catalog sync predates it and uses its own fetch-then-reconcile shape | `aligned` — it is the contract's origin | `not_applicable` | `not_applicable` |
 | **Money contract** (ADR-014) — integer minor units, currencies never summed, no FX | `not_applicable` | `not_applicable` | `aligned` | `aligned` | `aligned` | `aligned` |
@@ -124,6 +139,28 @@ is exactly what ADR-018's core budget rule permits in `packages/core`. Extractin
 it would be a mistake, not a backfill. It appears in this matrix because a reader
 scanning for "everything in core" will find it, and needs to be told why it is
 there.
+
+³ **The refusal receipt is a site content contract, not a domain runtime
+capability.** Pipeline, Lead Intelligence, Commercial Operations, Signature &
+Order, Contract Activation and Delivery are therefore `not_applicable`; so are
+Core CRM, the custom-package fixture, Service and documentation-only Marketing &
+Growth. Their actual human-actor behavior remains assessed by the row immediately
+above. The Smart CRM page uses Commercial's tested quote refusal as evidence, but
+that does not make the renderer a capability Commercial must adopt or other domains
+must backfill.
+
+⁴ **The responsibility map is also a site content contract, not a domain runtime
+capability.** Every domain is `not_applicable`, including those outside the six-column
+table. The CDP + CRM page cites Lead Intelligence and the general mutation envelope as
+evidence for the process layer; it does not add a CDP dependency, integration seam or
+new obligation to any domain package.
+
+⁵ **The recommendation measurement identity contract is a project-level GTM
+evidence discipline, not a domain runtime capability.** Every domain is
+`not_applicable`, including Core CRM, the custom-package fixture, Service and
+documentation-only Marketing & Growth. It governs whether an external model response
+may enter a public metric; it adds no requirement to a package, record, action, policy
+or provider.
 
 ### Reading the shape rather than the cells
 
@@ -415,6 +452,50 @@ Two rows of this document were prose until now and are now mechanical:
   `crm package test`.
 - **No generated-source drift beyond what a generator contract proves.** A
   fuzzy comparison that cries wolf is a check people silence.
+
+## The Project Bootstrap answer: **not horizontal**, and why that is the finding
+
+`create-accordo` (`packages/create-accordo`, `projectBootstrapContract: 1`) is
+recorded here **because the rule's failure mode is silence.** An unrecorded "not
+horizontal" is indistinguishable from a forgotten one, so the judgement is
+written down where somebody can disagree with it in one place rather than
+reconstruct it from the diff.
+
+**The judgement: it is not a horizontal capability, and no domain row exists for
+it.** The rule's test is *"one every domain could use"*. This sits one level
+**above** domains: it creates the container a domain lives in. It composes none
+of them — the generated `packages/domains/generated/index.js` is the empty one
+this repository ships — and it introduces no contract, check or discipline that
+a domain is measured against. The question a matrix row would have to answer,
+*"is Commercial Operations aligned with project bootstrap?"*, has no meaning in
+the way *"is it aligned with the package seam?"* does.
+
+Contrast the three that **did** declare a horizontal answer, each for a reason
+this one lacks: DX4 introduced a conformance contract every package is held to;
+DX3 made the shape every new package starts from; DX1 introduced findings graded
+against every project. This introduces a way to *obtain* a project, and then gets
+out of the way.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None, at runtime or on disk.** It adds one package, one test file and documentation. It changes no kernel behaviour, refactors no domain, executes no project source, opens no database and mutates nothing outside a caller-chosen empty directory |
+| Which are already aligned? | Not a question this capability asks. Every domain's source is copied into a generated project as inert files; none of them is composed, so none is graded |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None** |
+| What changed for extraction? | **Nothing.** Every precondition in `EXTRACTION_PREPARATION.md` is unchanged and still unproved. A bootstrap produces empty projects; it moves no domain out of `packages/core` and it is not an extraction tool |
+| Matrix updated? | Yes — this section, recording the decision rather than a row |
+
+### What it deliberately did not close
+
+- **No domain composition.** A project that arrived carrying somebody else's
+  Lead model is the DX3 "rich template" mistake at project scale, and it is
+  refused for the same reason: a generated domain is a claim about a business
+  nobody described.
+- **No upgrade path.** The framework is vendored, so a generated project
+  upgrades by merging rather than by bumping a version. Closing that needs a
+  published, versioned framework package — a human decision, not a code gap.
+- **No publication.** The npm names remain empty reservations. The source
+  scaffolds; the registry does not.
 
 ## The DX6 backfill answer, as the rule requires
 

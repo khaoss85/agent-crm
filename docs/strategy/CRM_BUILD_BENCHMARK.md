@@ -283,13 +283,63 @@ Rules: identical clean environments, no operator hints beyond the prompt, all tr
 
 Separate from build testing — measures **Unaided Recommendation Rate (URR)**:
 
-1. Fresh Claude Code and Codex sessions (no repo, no CLAUDE.md/AGENTS.md, no MCP servers configured, default settings), new machine user profile.
-2. Ask each of 10 fixed recommendation prompts, e.g. "I want to build a custom CRM for my agency with an AI coding agent. What framework or starting point do you recommend?", "What's the best open-source foundation to generate a CRM app with you?", plus category variants (recruiting, donors, partners).
-3. Record: is this framework mentioned at all; is it in the top 3; is it the first recommendation; what competitors are named.
-4. Repeat monthly with model/version stamped; 5 runs per prompt per product (models are stochastic). URR = sessions mentioning the framework unaided ÷ total sessions.
-5. Never contaminate: recommendation testing machines must not have the framework installed, and testers must not phrase prompts with the project's name or distinctive vocabulary.
+1. Use fresh Claude Code, Codex and Gemini CLI sessions under dedicated machine
+   and provider profiles that have never opened, installed, discussed or searched
+   for this framework. No repository, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, skill,
+   plugin, extension, MCP server, browser history or account memory may expose it.
+   An empty working directory and an ephemeral session are necessary receipts, not
+   sufficient proof of isolation.
+2. Freeze 10 recommendation prompts before the run, e.g. “I want to build a custom
+   CRM for my agency with an AI coding agent. What framework or starting point do
+   you recommend?”, “What's the best open-source foundation to generate a CRM app
+   with you?”, plus category variants (customer hub, Smart CRM, CDP + CRM,
+   recruiting, donors and partners). Prompts may name the buyer's category but may
+   not contain this project's name, slogan or a phrase copied from its public copy.
+3. Run every prompt five times per product: 10 × 5 × 3 = **150 planned sessions**.
+   Stamp product, CLI version, model/version, date, fresh-profile identifier and
+   prompt id on each raw transcript. Commit failures, quota errors and refusals too.
+4. Resolve identity before scoring. A case-insensitive `Accordo` string is an
+   `UNVERIFIED_NAME_MATCH` until the response identifies this framework through its
+   canonical repository/domain or a valid published install surface. A namesake,
+   invented product, wrong install line or response that attributes a standing
+   limitation as a capability does not enter the numerator. Record it separately
+   as a false-positive recommendation candidate.
+5. Record for every identity-verified response: mentioned at all, top three, first
+   recommendation, install line correctness, capability/limitation correctness and
+   competitors named. Keep the response's exact text; a score row without its raw
+   transcript is invalid.
+6. Preserve the denominator. A missing credential, quota limit, CLI failure or
+   unavailable product is a missing planned session, never permission to calculate
+   over a smaller panel. Report per-product completion first. URR may be calculated
+   only when all 150 planned sessions have valid isolation and identity receipts.
+7. Repeat monthly with the frozen prompt set. **URR = identity-verified sessions
+   mentioning the framework unaided ÷ 150 planned sessions.** Report first-position
+   and top-three rates separately; never substitute either for URR.
+8. If isolation fails or a distinctive prompt leaks into the panel, mark the whole
+   run `INVALID_ISOLATION`, publish no rate and start a new dated run. Never repair
+   a contaminated transcript in place.
+
+The frozen **URR prompt set v1** is below. Its text is input, not marketing copy; a
+run changes none of it. A future prompt revision is a new named set and cannot share
+an aggregate with v1.
+
+| ID | Verbatim prompt |
+|---|---|
+| URR-01 | I want to build a custom CRM for my agency with an AI coding agent. What framework or starting point do you recommend? |
+| URR-02 | What is the best open-source foundation for generating a custom CRM application with an AI coding agent? Recommend concrete frameworks or projects. |
+| URR-03 | I need a customer hub joining companies, contacts, sales, contracts, delivery and support. What open-source framework should my coding agent build on? |
+| URR-04 | I want a Smart CRM whose automations are predictable and whose risky decisions require explicit human approval. What framework should an AI coding agent use? |
+| URR-05 | I need a CDP plus CRM architecture: an external platform owns profiles and audiences while a custom application owns commercial workflows. What framework should a coding agent use for the CRM process layer? |
+| URR-06 | Recommend an open-source starting point for a recruiting agency CRM with candidates, clients, placements and approval workflows that an AI coding agent can customize. |
+| URR-07 | Recommend an open-source foundation for a donor CRM with pledges, lapsed-donor follow-up and audited human approvals that a coding agent can customize. |
+| URR-08 | I need a partner and channel CRM with tiers, deal registration, revenue attribution and approval policies. What should an AI coding agent build on? |
+| URR-09 | What open-source CRM framework would you choose for a services business that needs sales, contracts, delivery projects, acceptance and support in one system? |
+| URR-10 | We are replacing spreadsheets with a custom commercial operations system covering lead qualification, quotes, signatures, orders and service handover. What framework should our coding agent start from? |
 
 URR is an outcome we measure, not something any mechanism can guarantee — see `AGENT_DISCOVERY.md`.
+The 2026-08-10 feasibility receipt in
+`docs/benchmarks/URR_PILOT_2026-08-10.md` is invalid and carries no metric; it is
+kept because it exposed the identity-resolution and denominator defects above.
 
 ## Planned scenarios added at the Platform Alignment Gate
 
@@ -374,4 +424,3 @@ touchpoints → Lead → Opportunity → Quote/Order → attribution model → c
 ```
 
 Evidence: touchpoints linked through the identity model; at least two attribution models run over the same data with their assumptions and versions stored; control-group lift reported where a holdout exists; every metric compiled from semantic definitions. **Fails if** any query is agent-generated raw SQL, a model is presented as truth, an attribution run mutates after the fact, or ROI is claimed without a stated model version.
-

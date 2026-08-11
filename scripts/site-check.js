@@ -14,14 +14,17 @@
  *      unledgered is asserted in its place;
  *   4. no template hardcodes a brand name, domain or package scope, because none
  *      of those has been decided (docs/strategy/BRAND_REQUIREMENTS.md);
- *   5. no built page contains an overclaim this project cannot support today.
+ *   5. no built page contains an overclaim this project cannot support today;
+ *   6. the measurement every public number resolves from is traceable to a commit
+ *      this checkout descends from, and no surface types a count of its own.
  *
  * Run: npm run site:check   (site:build runs first — it fails on unresolved tokens)
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { join, relative } from 'node:path';
+
+import { inspectProvenance, findLooseTestCounts } from './measurement.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -69,10 +72,9 @@ for (const limitation of ledger.limitations) {
   }
 }
 
-// The measurement block must name the commit it was taken against.
-if (!/^[0-9a-f]{7,40}$/.test(String(ledger.measuredAgainst?.sha ?? ''))) {
-  fail('claims.json measuredAgainst.sha is not a commit SHA');
-}
+// The measurement block must name the commit it was taken against. §3c checks that the
+// commit is real, is one this checkout descends from, and carries the corpus recorded
+// beside it — three different failures that used to be one sentence.
 
 // ---------------------------------------------------------------- 3. surface coverage
 
@@ -128,22 +130,45 @@ for (const claim of ledger.claims) {
   }
 }
 
-// The test count is quoted in four places and measured in one. Nothing bound them, so the README
-// went on advertising 373 tests across two merged milestones. Every surface that states a count
-// has to state the measured one, or the ledger's own freshness discipline is decoration.
-const measuredTests = ledger.measuredAgainst?.tests;
-if (typeof measuredTests === 'number') {
-  const answersSource = existsSync(answersPath) ? readFileSync(answersPath, 'utf8') : '';
-  for (const [label, source] of [['README.md', readme], ['site/answers.json', answersSource]]) {
-    for (const match of source.matchAll(/(\d[\d,]*)\s+tests\b/g)) {
-      const quoted = Number(match[1].replace(/,/g, ''));
-      if (quoted !== measuredTests) {
-        fail(
-          `${label} says "${match[0]}" but claims.json was measured at ${measuredTests}. `
-          + 'Re-measure and update both, or the number a reader sees is not the number anyone ran.',
-        );
-      }
-    }
+// ---------------------------------------------- the test count lives in exactly one place
+//
+// The previous rule here was "every surface that quotes a count must quote the measured one".
+// It was the right instinct and the wrong shape: it made every merge that adds a test a
+// four-file edit, so the surfaces drifted anyway — README said 793, the ledger said 701,
+// the strategy notes said 373, all in the same tree. Coupling four copies is not how you
+// stop copies drifting; having one copy is.
+//
+// So a count is now a *derived* value, exactly like the brand name. Authored copy states it
+// as `{{measured.tests}}` and `scripts/site-build.js` resolves it from the measurement
+// record; copy that cannot carry a token — a README, a JSON answer served raw to a machine —
+// says what the gate proves instead of how many tests it ran. Stable public sentences stop
+// moving; the one number that does move lives in the record, which §3c makes provable.
+
+const countSurfaces = [
+  ['README.md', readme],
+  ...['answers.json', 'concepts.json', 'compare.json', 'capabilities.json', 'tools.json']
+    .map((name) => [`site/${name}`, existsSync(join(siteDir, name)) ? readFileSync(join(siteDir, name), 'utf8') : ''])
+    .filter(([, source]) => source),
+  ...collect(join(root, 'docs', 'marketing'), '.md').map((path) => [relative(root, path), readFileSync(path, 'utf8')]),
+  ...templates.map((path) => [relative(root, path), readFileSync(path, 'utf8')]),
+];
+
+// The ledger's own prose is copy too — C-20 opened with the number, which is why the claim
+// had to be rewritten on every merge. The measurement block is deliberately not scanned:
+// it is the one place the number belongs.
+countSurfaces.push(['site/claims.json (claim and limitation text)', [
+  ...ledger.claims.flatMap((/** @type {any} */ claim) => [claim.text, claim.limitation, ...(claim.evidence?.repoFacts ?? [])]),
+  ...ledger.limitations.flatMap((/** @type {any} */ limitation) => [limitation.headline, limitation.text, ...(limitation.evidence?.repoFacts ?? [])]),
+].join('\n')]);
+
+for (const [label, source] of countSurfaces) {
+  for (const { line, phrase } of findLooseTestCounts(String(source))) {
+    fail(
+      `${label}:${line}: types the literal "${phrase}". A test count is measured, not written — it is stale the `
+      + 'next time anyone adds a test. Write `{{measured.tests}}` where the build resolves tokens, or say what '
+      + 'the verification gate proves instead of how many tests it ran. The measured number lives in '
+      + 'claims.json measuredAgainst and nowhere else.',
+    );
   }
 }
 
@@ -163,23 +188,24 @@ for (const entry of [...ledger.claims, ...ledger.limitations]) {
   }
 }
 
-// ---------------------------------------------------------------- 3c. ledger freshness
+// ---------------------------------------------------------------- 3c. measurement provenance
+//
+// Every public number on this site resolves from one `measuredAgainst` block, so the block is
+// the thing that has to be provable. The old check ran `git cat-file -e <sha>` — object
+// existence — which answered the wrong question in both directions. It passed a commit pushed
+// to an unrelated branch, because that object exists in the same store; and it failed every
+// honest historical measurement under `actions/checkout`'s default `fetch-depth: 1`, where no
+// commit but HEAD has been fetched, reporting "not a commit in this repository" about a commit
+// that plainly is one. Three open pull requests were red for that reason.
+//
+// `inspectProvenance` separates them: missing, present-but-not-an-ancestor, facts that do not
+// match the named tree — and, when the checkout is shallow, refuses to answer rather than
+// guessing, because a truncated commit graph cannot tell "never here" from "not fetched".
+// See scripts/measurement.js, and .github/workflows/ci.yml which gives that job full history.
 
-const headSha = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout?.trim();
-const ledgerSha = String(ledger.measuredAgainst?.sha ?? '');
-if (headSha && ledgerSha) {
-  if (headSha.startsWith(ledgerSha)) {
-    notes.push('The ledger was measured against HEAD.');
-  } else {
-    const known = spawnSync('git', ['cat-file', '-e', `${ledgerSha}^{commit}`], { encoding: 'utf8' });
-    if (known.status !== 0) {
-      fail(`claims.json measuredAgainst.sha ${ledgerSha} is not a commit in this repository`);
-    } else {
-      const behind = spawnSync('git', ['rev-list', '--count', `${ledgerSha}..HEAD`], { encoding: 'utf8' }).stdout?.trim();
-      notes.push(`The ledger was measured ${behind} commit(s) ago at ${ledgerSha}. Re-run npm run verify and update measuredAgainst before publishing anything.`);
-    }
-  }
-}
+const provenance = inspectProvenance(ledger.measuredAgainst, { cwd: root });
+for (const failure of provenance.failures) fail(failure);
+for (const note of provenance.notes) notes.push(note);
 
 // ---------------------------------------------------------------- 4. no hardcoded brand
 

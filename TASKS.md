@@ -17,9 +17,54 @@ The first unchecked item is the default next task for Codex.
 - [ ] Add a provider adapter example for MailUp-compatible list enrollment.
 - [ ] Add tenant and role boundaries before exposing remote write tools.
 - [ ] Add Streamable HTTP transport for MCP with authorization.
+- [x] Add a separate stateless Streamable HTTP transport for the **read-only Docs MCP**. It serves public framework documentation only, accepts no customer/runtime data by design, and therefore adds no authorization surface; production promotion and directory submission remain human decisions (`docs/plans/hosted-docs-mcp.md`). This does not close the authenticated Project MCP item above.
 - [ ] Add PostgreSQL storage adapter behind the existing database contract.
 
 - [ ] **MK0 — Marketing & Growth Operations roadmap (documentation only).** Strategy (`docs/strategy/MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md`), the MK0–MK7 track in `EXECUTION_ROADMAP.md`, 43 JTBD-MK rows (all **not supported**) and five planned E2E-M benchmark scenarios. Opened as a documentation-only PR (#18) targeting `main`. **No Marketing runtime is implemented, and MK1 does not start in it.**
+- [x] **Complete the first organic-content loop.** The refusal-surface article is
+  live and self-canonical on Accordo; anonymous production checks prove HTTP 200,
+  `BlogPosting` JSON-LD, sitemap, `llms.txt` and `llms-full.txt` discovery. The
+  DEV Community and Indie Hackers adaptations are live, and DEV's public API now
+  returns the Accordo article as `canonical_url`. Hacker News and Product Hunt
+  remain intentionally unspent until the install path is real.
+- [x] **Give the core agent-native CRM category one canonical search identity.**
+  The existing Customer and Revenue OS concept now answers the external query its
+  checked intent already carried: a CRM framework that Claude Code, Codex or Gemini
+  builds with. The same first-contact page says this is a development-time authoring
+  model, not a hosted AI CRM, runtime copilot or autonomous salesperson; harness
+  manifests do not prove ranking, recommendation or build success. Publication
+  follows the reviewed intent stack and deploy.
+- [x] **Cover the Customer Hub and Smart CRM long-tail intents in checked source.**
+  Customer Hub is framed as one local commercial record chain rather than a CDP;
+  Smart CRM is framed as agent-built and policy-governed, with the tested
+  `403 HUMAN_APPROVAL_REQUIRED` receipt above the essay. Both preserve the same
+  boundaries: no authentication, SQLite only, no hosted product and no universal
+  claim that a model never runs at runtime. Publication follows the stacked PRs.
+- [x] **Cover the compound CDP + CRM intent without claiming a CDP.** The positive
+  architecture page assigns profiles and audiences to an external CDP and assigns
+  named actions, versioned policy, audit and trace to Accordo. A direct answer carries
+  the same boundary for coding-agent retrieval. No connector, importer or integration
+  runtime is implied; public discovery follows the stacked PR and deploy.
+- [x] **Carry the checked intent vocabulary into every first-contact agent surface.**
+  README, Claude, Codex, Gemini CLI, npm and MCP Registry metadata now retrieve for
+  Custom CRM, Customer Hub, Smart CRM and CDP + CRM while assigning ingestion,
+  identity resolution and segmentation away from Accordo. The existing
+  `distribution:check` command fails on drift; this adds no runtime capability,
+  connector or guarantee of ranking, indexing or recommendation.
+- [x] **Make the unaided-recommendation measurement fail closed.** The first
+  feasibility pilot is recorded as invalid rather than converted into traction:
+  a bare Accordo string with no resolved identity and unsupported RBAC cannot enter
+  the numerator, and Claude/Gemini availability failures cannot shrink the planned
+  150-session denominator. A valid URR still needs dedicated clean provider profiles,
+  all 10 × 5 × 3 raw transcripts and identity-correct recommendations.
+
+- [x] **Integrate the GTM release candidates without claim drift.** The intent
+  stack, hosted read-only Docs MCP and staged `create-accordo` candidate now
+  share one reviewed ancestry. The integration resolves their ADR-number
+  collision, preserves npm/MCP public boundaries, reconciles the 113-page site
+  inventory and remeasures the combined functional tree. The ordered stack is
+  now merged to `main` and its exact SHA is live on Vercel; npm publication and
+  directory submissions still require their own receipts.
 
 - [x] **Module Evolution v1 (ADR-019).** A generic kernel capability: a generated module gains fields, enum values and indexes through an explicit `revision`, a checked-in `module.state.json` and append-only `migrations[]`. Merged in PR #19; **the prerequisite M14 was waiting on.**
 - [x] **AX0 — Objective-driven agent experience (documentation and Agent Skills only).** The Goal-to-Solution lifecycle, the SolutionPlan design, capability-discovery guidance, the mirrored `solve-business-goal` Skill, the canonical full-funnel worked example, 10 JTBD-AX rows and the E2E-G1 benchmark gates. **No runtime code; AX1–AX5 are not implemented.**
@@ -47,6 +92,11 @@ The first unchecked item is the default next task for Codex.
   for one composition — all published limitation codes.
 
 - [x] **M15 — Service operations.** The third domain package under ADR-018 and the second that depends on another: `contracts/service-obligations@1` turns a contract's pending Service Obligations into an operational **Service Coverage** with immutable Entitlements, decided by a versioned fingerprinted activation policy that refuses rather than guesses. Support cases over an explicit five-state table, append-only case activity, elapsed-time SLA evidence and manually recorded escalation (`docs/SERVICE_OPERATIONS.md`). Implemented on an open PR awaiting the adversarial review. **It is not a second legal contract**, and it bills, sends, schedules and authenticates nothing.
+
+- [x] **Project Bootstrap — `create-accordo` becomes a real scaffold.** The rung below DX3: `accordo package scaffold` makes a package inside a project that already exists; this makes the project. `packages/create-accordo` copies the framework into an empty directory and writes a standalone project that needs no install, boots on SQLite, reports `valid` from `app inspect --json` and exits 0 from `project doctor --json` — proven end to end by `tests/project-bootstrap.test.js`, which bootstraps into a temporary directory and then runs the result, including the generated project's own tests and smoke (`docs/plans/project-bootstrap-installability.md`, `projectBootstrapContract: 1`). Dry-run by default, `--apply` to write, one atomic `rename` as the commit point, and it refuses rather than guesses: a non-empty target, a target that is not a directory, a target overlapping the framework source, and an invalid npm name — the last with a suggestion it never applies. It reaches **no network**, composes **no domain package**, opens **no database** and imports **no part of the framework**, because it is the one command that must run before the framework exists on disk. **Nothing is published**: `accordo@0.0.1` and `create-accordo@0.0.1` remain empty name reservations, so `npm create accordo` still installs nothing; `packages/create-accordo/package.json` is `private: true`, and `scripts/distribution-check.js` fails if that flag and `site/brand.json`'s registry status ever disagree. The generated project has no authentication, no tenancy and no RBAC, is SQLite-only and local-development-only, and the command publishes all of that in its own `limitations[]`.
+- [x] **Publishable `create-accordo` artifact — verified, not published.** A dry-run-by-default assembler emits a bounded public package directory outside the repository while the checked-in source manifest stays private. Two independent assemblies and `npm pack` archives are byte-identical; the focused test installs the tarball with npm offline, runs its installed bin, then proves the generated project's inspect, doctor, tests and smoke. The manual workflow uses OIDC trusted publishing and `npm stage publish`, refuses any commit other than reviewed `main`, and leaves final 2FA approval to a human (`packageAssemblyContract: 1`, `docs/plans/npm-create-accordo-publication.md`). The live registry remains the empty `0.0.1` reservation, provenance does not exist before staging, and the generated CRM is still SQLite-only, unauthenticated, untenanted and local-development-only.
+- [ ] **Complete the first npm staged-publication receipt.** The JSON-only receipt fix is merged and the next dispatch passed verification and assembly, generated provenance, then stopped at npm with `E401`; no staged or live version exists. Merge the canonical-bin follow-up, configure the package's stage-only trusted publisher for `khaoss85/agent-crm`, `stage-create-accordo.yml` and environment `npm-stage`, rerun, inspect the staged `create-accordo@0.1.0` artifact and leave public publication behind npm's human 2FA approval. Do not change registry-facing copy before the live receipt exists.
+
 ## Future platform items
 
 Recorded so they are not lost, and deliberately not bundled into a domain milestone:

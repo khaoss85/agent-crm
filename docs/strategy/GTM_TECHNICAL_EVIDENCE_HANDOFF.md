@@ -151,6 +151,17 @@ evidence does not belong in this document.
 | **Do not claim** | that it promotes or changes any JTBD status — it writes nothing, and a person decides under `docs/QUALITY_GATES.md` §3. Not that "not established" means unsupported: it means the scenario said nothing about the row. Not that coverage is discovered — it checks the rows a scenario *claims* (`COVERAGE_IS_CLAIMED_NOT_DISCOVERED`). Not that it is evidence about the Admin (`BROWSER_EVIDENCE_NOT_AUTOMATED`), about any other composition (`EVIDENCE_IS_ONE_COMPOSITION`), about a real external provider (`NO_PROVIDER_CONTACTED`), or about production readiness. It is not a sandbox (`JOURNEY_SOURCE_TRUSTED`). One scenario and one journey ship today. |
 | **Status** | implemented |
 
+### 12. Deterministic project bootstrap — **source only, never the registry**
+
+| | |
+|---|---|
+| **Technical fact** | `create-accordo <dir> --apply` copies the framework into an empty directory and writes a standalone project that needs no install, boots on SQLite, reports `valid` from `app inspect --json` and exits 0 from `project doctor --json`. It reaches no network, composes no domain package, opens no database and imports no part of the framework — it is the one command that must run before the framework exists on disk. Dry-run by default; it refuses a non-empty target, a target overlapping the framework source, and an invalid project name, the last with a suggestion it never applies. |
+| **Evidence** | `node packages/create-accordo/bin/create-accordo.js <dir> --apply --json`; `projectBootstrapContract: 1`; `tests/project-bootstrap.test.js`, which bootstraps into a temporary directory and then runs `app inspect`, `project doctor` and the generated project's own checks against the result |
+| **User value** | "Give me a project built on this framework" becomes one deterministic offline step whose output is machine-checked, instead of a copy of a source tree and a guess at a `package.json`. |
+| **Allowed positioning** | "A project can be created from nothing, offline and deterministically, and the result is verified rather than assumed — **from a checkout of the repository**." |
+| **Do not claim** | **that `npm create accordo` works.** The published `create-accordo@0.0.1` is an empty name reservation and the registry state is unchanged by a locally verified publication candidate. "create-accordo scaffolds a working project from this repository" and "the assembled candidate packs and installs offline" are true; "`npm create accordo` creates a project" stays false until a human-approved staged publish has a live registry receipt. Do not claim the generated project is production-ready, deployable, or upgradeable by a version bump, or that it models any business: the command publishes `NO_AUTHENTICATION`, `NO_TENANCY`, `NO_RBAC`, `SQLITE_ONLY`, `LOCAL_DEVELOPMENT_ONLY`, `SOURCE_IS_A_COPY_NOT_A_DEPENDENCY`, `CONFORMANCE_IS_NOT_CORRECTNESS` and `SOURCE_ORIGIN_NOT_VERIFIED` in its own output. |
+| **Status** | implemented and deterministically packaged; **not published** |
+
 ## Planned only — must never be positioned as available
 
 | Capability | Status | Note |
@@ -227,6 +238,10 @@ Every clause maps to a row above: *constraining architecture* → 7 and 8;
   document, not results
 - production-ready or cloud-ready — there is no auth, tenancy or RBAC
 - marketplace availability — no registry, no publication, no remote install
+- **that anything installs from npm** — `accordo@0.0.1` and `create-accordo@0.0.1`
+  are empty name reservations. The project bootstrap is real *source* and is
+  proven by a test; `npm create accordo` still installs nothing, and the two
+  facts must never be merged into one sentence
 
 If one of these becomes true, it becomes a new row in this table with a command
 next to it, and only then may it be said.

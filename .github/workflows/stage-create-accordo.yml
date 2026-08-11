@@ -1,0 +1,54 @@
+name: Stage create-accordo on npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type create-accordo@0.1.0 to assemble and stage this version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    environment: npm-stage
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Refuse anything except the reviewed default branch and version
+        run: |
+          test "${{ inputs.confirmation }}" = "create-accordo@0.1.0"
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Use an npm CLI that supports trusted staged publishing
+        run: npm install --global npm@11.15.0
+
+      - name: Verify repository and publication contract
+        run: |
+          npm run verify
+          npm run gtm:check
+
+      - name: Assemble the publication directory twice and compare it
+        run: |
+          mkdir -p "$RUNNER_TEMP/accordo-publication"
+          npm run --silent distribution:assemble-create -- "$RUNNER_TEMP/accordo-publication/first" --apply --json > "$RUNNER_TEMP/accordo-publication/first.json"
+          npm run --silent distribution:assemble-create -- "$RUNNER_TEMP/accordo-publication/second" --apply --json > "$RUNNER_TEMP/accordo-publication/second.json"
+          node --input-type=module -e 'import fs from "node:fs"; const first=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const second=JSON.parse(fs.readFileSync(process.argv[2],"utf8")); if(!first.ok||!second.ok||first.package.fingerprint!==second.package.fingerprint) process.exit(1); console.log(`verified ${first.package.name}@${first.package.version} ${first.package.fingerprint}`)' "$RUNNER_TEMP/accordo-publication/first.json" "$RUNNER_TEMP/accordo-publication/second.json"
+          node --test tests/create-accordo-package.test.js
+
+      - name: Stage through npm trusted publishing
+        working-directory: ${{ runner.temp }}/accordo-publication/first
+        run: npm stage publish

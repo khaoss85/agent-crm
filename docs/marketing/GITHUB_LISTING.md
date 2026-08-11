@@ -5,17 +5,21 @@ GitHub is the slow-burn discovery channel: its README and description feed both 
 retrieval and, eventually, training corpora. Treat every field here as copy a model will
 paraphrase back to a user.
 
-> **Gate.** Applying any of this mutates a public surface and requires the name and visibility
-> decisions in `PENDING_HUMAN_SUBMISSION.md`. Prepared, not applied.
+> **State, verified 2026-08-10.** The intent-aligned About copy, website and all 20 topics
+> below are live after the Customer Hub, Smart CRM and CDP + CRM stack reached production.
+> Issues and Discussions are enabled; Wiki is disabled. The social preview was refreshed on
+> 2026-08-11 with the generated frame below, which names Gemini CLI and resolves its count from
+> the measured ledger rather than carrying a typed one — the artwork it replaced went stale for
+> exactly that reason. No GitHub Settings action remains outstanding.
 
 ## About panel
 
-**Description** (GitHub truncates around 350 characters; this is 219, which survives being
-quoted in full):
+**Next description** (kept below GitHub's limit so it survives being quoted in full):
 
-> The open-source framework coding agents use to build custom CRMs. Describe your commercial
-> process to Claude Code or Codex; get a working CRM as reviewable code you own — deterministic
-> workflows, human approvals, audit and trace built in.
+> Agent-native CRM framework for Claude Code, Codex and Gemini CLI. Author custom CRM and
+> Customer Hub source with deterministic workflows, human approvals, audit and trace. Smart
+> CRM is policy-governed; CDP + CRM means process layer—not ingestion, identity resolution or
+> segmentation.
 
 **Website**: the landing page URL once a domain exists. Until then, leave empty rather than
 pointing at a placeholder.
@@ -24,27 +28,32 @@ pointing at a placeholder.
 
 ```
 crm
-framework
+crm-framework
+customer-hub
+smart-crm
+cdp-plus-crm
+open-source-crm
+coding-agents
 ai-agents
-mcp
-model-context-protocol
 claude-code
 codex
-agents-md
-code-generation
+gemini-cli-extension
+agent-skills
+mcp
+model-context-protocol
 workflow-engine
 audit-trail
+revenue-operations
+cpq
+javascript
 nodejs
-typescript
-open-source-crm
-sales-automation
 ```
 
-Rationale: the first six are how this is found by people already looking for agent tooling;
-`agents-md`, `code-generation` and `workflow-engine` are how it is found by people looking for
-the mechanism; `open-source-crm` and `sales-automation` are the category terms that have real
-query volume even though they describe us imprecisely. Fifteen is under GitHub's twenty-topic
-cap, which leaves room to add terms that prove themselves.
+Rationale: the first five carry the user vocabulary without using the isolated `cdp` topic,
+which would imply a product category Accordo does not implement. The next group names the
+agent-native mechanism and supported harnesses; the remainder names proved commercial/runtime
+surfaces. Twenty uses GitHub's topic cap deliberately, so a replacement must remove a weaker
+term rather than silently exceed it.
 
 **Social preview**: `site/dist/shots/social-preview.png`, regenerated with `npm run site:shots`.
 Upload under Settings → General → Social preview. It is 2560×1280, twice GitHub's rendered
