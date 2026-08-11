@@ -43,6 +43,15 @@ export function createHttpServer(app, options = {}) {
   const router = buildRouter(app);
 
   const server = createServer(async (request, response) => {
+    // Counted here, synchronously, before the first await: the reap decision in
+    // reapIdleConnection runs one phase later and asks this exact question.
+    // `started` never decreases, so a request that both began AND finished
+    // within that phase is still visible to the reap.
+    const counters = requestCounters(request.socket);
+    counters.started += 1;
+    counters.inFlight += 1;
+    response.once('close', () => { counters.inFlight -= 1; });
+
     try {
       const url = new URL(request.url ?? '/', 'http://localhost');
       const route = router.match(request.method ?? 'GET', url.pathname);
@@ -103,6 +112,23 @@ export function createHttpServer(app, options = {}) {
 }
 
 /**
+ * Per-socket request counters the reap reads. `inFlight` is a count rather than
+ * a flag because a pipelining client can have more than one; `started` only
+ * ever grows, which is what makes a request that began and finished inside a
+ * single loop phase still visible to a reap decision taken at the end of it.
+ */
+const REQUESTS = Symbol('accordo.requestCounters');
+
+/** @param {import('node:net').Socket} socket */
+function requestCounters(socket) {
+  const existing = /** @type {any} */ (socket)[REQUESTS];
+  if (existing) return existing;
+  const created = { started: 0, inFlight: 0 };
+  /** @type {any} */ (socket)[REQUESTS] = created;
+  return created;
+}
+
+/**
  * Reap an idle keep-alive connection without resetting a request that has
  * already arrived.
  *
@@ -119,17 +145,21 @@ export function createHttpServer(app, options = {}) {
  * Registering this listener takes the reap away from Node — its default only
  * runs when nothing handled `timeout` — so the decision is deferred by one
  * phase. `setImmediate` runs in the CHECK phase, after this iteration's POLL
- * phase, by which time anything already in the receive queue has been read and
- * `bytesRead` has moved. If it moved, a request is in flight and the connection
- * is kept: Node re-arms the keep-alive timer when that response finishes, and
- * `headersTimeout`/`requestTimeout` still bound a request that never completes.
- * If nothing arrived, the connection really is idle and is destroyed exactly as
- * before.
+ * phase, by which time a request that was already in the receive queue has been
+ * read, parsed and dispatched, and `IN_FLIGHT` says so. If a request is in
+ * flight the connection is kept, and Node re-arms the keep-alive timer when that
+ * response finishes. If none is, the connection really is idle and is destroyed
+ * exactly as before.
  *
- * Keeping it cannot become holding it open. Bytes that arrive but do not finish
- * a request refresh the socket's own idle timer, so the reap simply re-fires one
- * keep-alive window later and destroys it then — measured at exactly one window,
- * and pinned in tests/http-keep-alive-reap.test.js.
+ * The question asked here is deliberately "is a request in flight", not "did
+ * bytes arrive". Bytes are only a proxy, and a wrong one: a half-sent request
+ * head moves `bytesRead` without ever becoming a request, and keeping the
+ * connection for it means relying on Node to re-arm the keep-alive timer. Node
+ * does not do that consistently — on v22.16 the arriving bytes clear the timer
+ * (`socket.timeout` becomes 0) and the connection then lives until the
+ * `headersTimeout` sweep, ~30s rather than ~1s, while on v22.22 the timer is
+ * refreshed and the reap re-fires a window later. Counting requests removes the
+ * dependency: an incomplete head is reaped on the original deadline on both.
  *
  * This changes how a connection is reaped, never when. The residual window —
  * bytes still on the wire, not yet in the receive queue, when the socket is
@@ -138,10 +168,15 @@ export function createHttpServer(app, options = {}) {
  * @param {import('node:net').Socket} socket
  */
 function reapIdleConnection(socket) {
-  const bytesReadWhenIdle = socket.bytesRead;
+  const startedWhenIdle = requestCounters(socket).started;
   setImmediate(() => {
     if (socket.destroyed) return;
-    if (socket.bytesRead !== bytesReadWhenIdle) return;
+    const counters = requestCounters(socket);
+    // Still serving one; `requestTimeout` bounds a request that never completes.
+    if (counters.inFlight > 0) return;
+    // Or one arrived and was answered within this phase, which is the whole
+    // point: the connection is healthy again and Node has re-armed the reap.
+    if (counters.started !== startedWhenIdle) return;
     socket.destroy();
   });
 }
