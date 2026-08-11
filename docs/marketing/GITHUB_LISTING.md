@@ -7,9 +7,11 @@ paraphrase back to a user.
 
 > **State, verified 2026-08-10.** The intent-aligned About copy, website and all 20 topics
 > below are live after the Customer Hub, Smart CRM and CDP + CRM stack reached production.
-> Issues and Discussions are enabled; Wiki is disabled. The live social preview still says
-> 421 tests and omits Gemini CLI; replacing it with the generated frame below is the remaining
-> GitHub Settings action.
+> Issues and Discussions are enabled; Wiki is disabled. The live social preview still carries a
+> long-stale test count and omits Gemini CLI; replacing it with the generated frame below is the
+> remaining GitHub Settings action. The stale figure is deliberately not repeated here — ADR-027
+> allows an exact count in `measuredAgainst` and nowhere else, and a sentence quoting an outdated
+> number is exactly what that rule exists to keep out of a marketing document.
 
 ## About panel
 
