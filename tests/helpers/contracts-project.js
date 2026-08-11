@@ -169,6 +169,34 @@ export function project(t, { withDomain = true, withDelivery = false, withCustom
  */
 export const BUSINESS_NOW = '2026-09-15T10:00:00.000Z';
 
+/**
+ * The transport these suites must use, and the reason they must.
+ *
+ * A suite here runs the HTTP server and the HTTP client on ONE event loop, and
+ * blocks that loop for seconds at a time — five hundred synchronous
+ * `node:sqlite` writes between two `await`s is a five-second block. The two
+ * sides then measure that block differently: the server's keep-alive reaper is
+ * a libuv timer against wall time and fires the moment the loop is free again,
+ * while `fetch`'s connection pool keeps its idle clock on a one-second tick
+ * that simply stops while the loop is blocked. So the pool comes out of a block
+ * believing a connection is seconds younger than it is, and reuses one the
+ * server has already reaped — losing the request as ECONNRESET when the reap
+ * and the write cross, or as "other side closed" when the FIN was sent during a
+ * block and never polled.
+ *
+ * A pool cannot be kept coherent by the process that stalls it, so these
+ * clients do not keep one: `Connection: close` retires every connection with
+ * the response that used it, which is the one connection state a stalled client
+ * can never be wrong about. Everything else — routes, headers, statuses,
+ * payloads — is exercised exactly as before, against a server that keeps its
+ * real keep-alive configuration.
+ *
+ * @param {RequestInfo | URL} input @param {RequestInit} [init]
+ */
+function unpooledFetch(input, init = {}) {
+  return fetch(input, { ...init, headers: { ...init.headers, connection: 'close' } });
+}
+
 export async function boot(root, dbPath, options = {}) {
   const { clock = () => BUSINESS_NOW, ...rest } = options;
   const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
@@ -181,8 +209,8 @@ export async function boot(root, dbPath, options = {}) {
   return {
     app,
     baseUrl,
-    client: new AccordoClient({ baseUrl, actor: { type: 'user', id: 'e2e' } }),
-    agentClient: new AccordoClient({ baseUrl, actor: { type: 'agent', id: 'bot' } }),
+    client: new AccordoClient({ baseUrl, actor: { type: 'user', id: 'e2e' }, fetchImpl: unpooledFetch }),
+    agentClient: new AccordoClient({ baseUrl, actor: { type: 'agent', id: 'bot' }, fetchImpl: unpooledFetch }),
     async close() {
       await new Promise((resolve) => server.close(resolve));
       app.close();
