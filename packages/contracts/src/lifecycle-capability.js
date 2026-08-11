@@ -5,7 +5,7 @@ import { resolvedNames } from './activation.js';
 import { TERMS_SOURCE } from './dates.js';
 
 /**
- * `contract-lifecycle-source@1` — the term and commercial evidence an
+ * `contract-lifecycle-source@2` — the term and commercial evidence an
  * operational lifecycle package needs, and **nothing it could act with**.
  *
  * Contracts already offers `delivery-obligations@1` and `service-obligations@1`.
@@ -28,9 +28,18 @@ import { TERMS_SOURCE } from './dates.js';
  * its source, so a consumer physically cannot report a date without being able
  * to say where it came from — and `signed` is *derived* from that source rather
  * than asserted next to it, so the two can never disagree.
+ *
+ * **Why version 2.** v1 answered `signed` from a classification map and quietly
+ * returned `false` for anything the map did not name. That is safe for one
+ * unknown row and unsafe as a rule: the day `termsSource` gains a value nobody
+ * has classified, every contract carrying it is reported as unsigned by a
+ * package that never considered the question. v2 refuses to open at all in that
+ * state, and reports `signed: null` — *cannot say* — for a stored value outside
+ * the declared enum, rather than the confident `false` that hides it. Both are
+ * observable contract changes, so the version moved with them.
  */
 
-export const LIFECYCLE_SOURCE = Object.freeze({ name: 'contract-lifecycle-source', version: 1 });
+export const LIFECYCLE_SOURCE = Object.freeze({ name: 'contract-lifecycle-source', version: 2 });
 
 /**
  * Whether a term from each declared `termsSource` is carried by a **signed**
@@ -42,26 +51,61 @@ export const LIFECYCLE_SOURCE = Object.freeze({ name: 'contract-lifecycle-source
  * *is* signed, `termsSource` starts telling the truth on its own while a
  * literal in this file keeps saying `false` — a silent, permanent
  * under-claim that no test would notice, in a different package from the one
- * that changed.
+ * that changed. A `true` here is therefore possible, and no consumer has to
+ * change for a signed term to become expressible.
  *
- * A map instead of a list, so the failure mode is a failing test rather than a
- * wrong answer: `tests/lifecycle-renewal-operations.test.js` asserts these keys
- * are exactly the manifest's enum values, so adding a source without deciding
- * whether it is signed stops the suite.
- *
- * Unknown or absent stays `false`. The direction matters: reporting a signed
- * term as unsigned costs somebody a redundant check, while reporting an
- * unsigned date as a signed renewal term is the failure this whole package
- * exists to prevent. It fails towards the safe side, always.
+ * A map, not a list, and **exhaustiveness is enforced at runtime**, not only by
+ * a test. `create()` reads the `termsSource` enum off the live module contract
+ * and refuses to open the capability while any declared value is unclassified.
+ * A test alone is not enough here: the manifest and this map live in the same
+ * package but in different files, and the failure a test would catch on CI is
+ * the same failure that would otherwise be answered — wrongly, silently and
+ * confidently — in production.
  */
 export const TERM_SOURCE_SIGNED = Object.freeze({
   // Recorded by a human *after* signature; the signed document carries no term.
   [TERMS_SOURCE]: false,
 });
 
-/** @param {unknown} source */
+/**
+ * The signed state of a term from `source`: `true`, `false`, or **`null` when
+ * the source is not one this package has classified**.
+ *
+ * `null` is the honest answer and it is not the same as `false`. `false` says
+ * "we looked, and a term from this source is not carried by a signed
+ * instrument". `null` says "this row names a provenance nobody decided about" —
+ * which a consumer must be able to surface as a gap instead of reporting a
+ * decided fact. Consumers still receive `term.source` either way, so provenance
+ * never disappears; only the *derived* claim does.
+ *
+ * @param {unknown} source @returns {boolean | null}
+ */
+export function termSignedState(source) {
+  if (typeof source !== 'string' || !Object.hasOwn(TERM_SOURCE_SIGNED, source)) return null;
+  return TERM_SOURCE_SIGNED[source] === true;
+}
+
+/**
+ * Kept for the callers that only need the safe direction: an unclassified
+ * source is never reported as signed.
+ * @param {unknown} source
+ */
 export function termIsSigned(source) {
-  return typeof source === 'string' && TERM_SOURCE_SIGNED[source] === true;
+  return termSignedState(source) === true;
+}
+
+/**
+ * The `termsSource` values the contract module actually declares, read off the
+ * live module contract rather than re-typed here.
+ *
+ * Re-typing the enum would recreate exactly the defect this guard exists to
+ * close: two lists that agree until the day one of them moves.
+ *
+ * @param {any} contractModule
+ */
+export function declaredTermSources(contractModule) {
+  const field = (contractModule?.fields ?? []).find((entry) => entry?.name === 'termsSource');
+  return Array.isArray(field?.values) ? [...field.values] : [];
 }
 
 /** @param {Record<string, string>} [moduleNames] */
@@ -91,11 +135,40 @@ export function createContractLifecycleSourceCapability(moduleNames) {
       };
       const safeGet = (svc, id) => { try { return svc.get(id); } catch { return null; } };
 
+      // **The fail-closed gate.** Every `termsSource` the contract module
+      // declares must have been classified as signed or not before this
+      // capability will answer anything at all. Adding a value to the manifest
+      // without deciding its signed semantics stops the application here,
+      // loudly, instead of being answered `false` by a map that never heard of
+      // it. Both halves live in this package, so this is a local invariant a
+      // single PR can always satisfy.
+      let contractModule = null;
+      try { contractModule = modules.get(names.contract); } catch { contractModule = null; }
+      const declared = declaredTermSources(contractModule);
+      if (declared.length === 0) {
+        // No enum to derive from means no basis for the one claim this
+        // capability exists to make. It refuses rather than defaulting.
+        throw new AppError(
+          `${LIFECYCLE_SOURCE.name} cannot report term provenance: the "${names.contract}" module declares no `
+            + 'termsSource values, so whether a term is signed cannot be derived from anything.',
+          { code: 'TERM_SOURCE_UNDECLARED', status: 500 },
+        );
+      }
+      const unclassified = declared.filter((value) => !Object.hasOwn(TERM_SOURCE_SIGNED, value)).sort();
+      if (unclassified.length > 0) {
+        throw new AppError(
+          `${LIFECYCLE_SOURCE.name} cannot report term provenance: the ${names.contract} module declares `
+            + `termsSource ${unclassified.map((value) => `"${value}"`).join(', ')} with no decision on whether `
+            + 'a term from that source is signed. Classify it in TERM_SOURCE_SIGNED.',
+          { code: 'TERM_SOURCE_UNCLASSIFIED', status: 500, details: { unclassified } },
+        );
+      }
+
       // Frozen, like everything else it hands back: the interface a consumer
       // holds is evidence too, and a consumer that can redefine `termEvidence`
       // on it can make its own package lie in its own trace.
       return Object.freeze({
-        capabilityContract: 1,
+        capabilityContract: 2,
 
         /**
          * One contract's term evidence, or null.
@@ -135,8 +208,19 @@ export function createContractLifecycleSourceCapability(moduleNames) {
               source: contract.termsSource ?? null,
               reason: contract.termsReason ?? null,
               // Derived from the source above, never asserted independently of
-              // it: one truth, in one place. See TERM_SOURCE_SIGNED.
-              signed: termIsSigned(contract.termsSource),
+              // it: one truth, in one place. See TERM_SOURCE_SIGNED. `null`
+              // means the stored source is outside the declared enum — the
+              // capability will not invent a decision for a row whose
+              // provenance nobody classified.
+              signed: termSignedState(contract.termsSource),
+              // Why `signed` says what it says, so a consumer can tell a
+              // decided `false` apart from an absent decision without
+              // re-implementing the rule.
+              signedBasis: contract.termsSource == null
+                ? 'NO_DECLARED_TERM_SOURCE'
+                : termSignedState(contract.termsSource) === null
+                  ? 'UNCLASSIFIED_TERM_SOURCE'
+                  : 'DERIVED_FROM_DECLARED_TERM_SOURCE',
               provenanceNote:
                 'these dates are post-signature OPERATIONAL metadata recorded at activation (M12). They are not signed renewal terms, and nothing here should be reported as one',
             }),
