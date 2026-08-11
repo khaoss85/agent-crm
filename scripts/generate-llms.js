@@ -39,8 +39,35 @@ const root = process.cwd();
 const siteDir = join(root, 'site');
 const assetsDir = join(siteDir, 'assets');
 
-/** llms-full.txt stays inside this budget, in characters, so it fits a context window whole. */
+/**
+ * llms-full.txt stays inside this budget, in characters, so it fits a context window whole.
+ *
+ * The budget is a promise about the file's size. It used to be kept by silently dropping a
+ * whole inlined section when the total would have gone over — which meant the *first* thing
+ * to disappear was whatever sat last in the priority list, and that was the ledger evidence:
+ * the one section a reader cannot reconstruct from anywhere else in the file. A draft in
+ * PR #44 pushed it out and nothing said so, because "what this file omits" listed the loss
+ * as though it were a decision.
+ *
+ * Two rules replace that. Mandatory sections are allocated **before** optional ones, so an
+ * optional document can never displace evidence. And if a mandatory section still does not
+ * fit, the run **fails** rather than trimming: nothing this file is required to carry is
+ * ever dropped quietly, in either `--check` or write mode.
+ *
+ * Raising this number is a deliberate edit with an argument attached, exactly like the
+ * ceilings in `scripts/surface-check.js`. Today the required set fits with room to spare;
+ * `node scripts/generate-llms.js` prints the remaining headroom on every run.
+ */
 const FULL_BUDGET = 40000;
+
+/**
+ * Characters held back for the closing "what this file omits" section, which is written
+ * after the allocation decision and therefore cannot be measured during it. Its fixed
+ * text is a little over 900 characters and each omitted entry adds a line of roughly 150,
+ * so 1,200 covers the worst case. The finished text is re-checked against the budget
+ * anyway, because a reserve is an estimate and a promise should not rest on one.
+ */
+const OMISSIONS_RESERVE = 1200;
 
 const brand = readJson(join(siteDir, 'brand.json'));
 const ledger = readJson(join(siteDir, 'claims.json'));
@@ -124,11 +151,26 @@ const cdpCrmConcept = conceptsIndex.entries?.find((/** @type {any} */ entry) => 
 if (!cdpCrmConcept) problems.push('site/concepts.json: no cdp-plus-crm entry for the task-time intent link');
 const writing = readBlogPosts(join(siteDir, 'blog'), ledger);
 
+/** Characters the full variant spent on optional inlined documents, for the report below. */
+let optionalCharacters = 0;
+
 const shortText = compose({ full: false });
 const fullText = compose({ full: true });
 
 guard('site/assets/llms.txt', shortText);
 guard('site/assets/llms-full.txt', fullText);
+
+// The allocator works from an estimate of the closing section's size, so the promise is
+// re-checked against the finished text. A budget kept only by the code that spends it is
+// a budget that is one refactor away from being decorative.
+if (fullText.length > FULL_BUDGET) {
+  problems.push(
+    `site/assets/llms-full.txt is ${fullText.length.toLocaleString('en-US')} characters, `
+    + `${(fullText.length - FULL_BUDGET).toLocaleString('en-US')} over the ${FULL_BUDGET.toLocaleString('en-US')}-character budget. `
+    + 'Nothing was trimmed to hide it. Compact a section, raise FULL_BUDGET with the reason written beside it, '
+    + 'or split the evidence into its own asset and link it.',
+  );
+}
 
 const targets = [
   { path: join(assetsDir, 'llms.txt'), text: shortText },
@@ -177,9 +219,14 @@ if (checkOnly) {
     console.log(`${relative(root, target.path)}: ${byteLength(target.text)} bytes, ${target.text.length} characters`);
   }
   console.log(`Composed from ${ledger.claims.length} claims, ${ledger.limitations.length} limitations, ${READING_ORDER.length} documents in reading order${jobs.present ? `, ${jobs.total} catalogued jobs` : ', no structured job index'}.`);
-  // Printed because the budget fails by dropping a whole inlined section: seeing the
-  // headroom shrink is the warning that the next claim will cost the ledger evidence.
-  console.log(`llms-full.txt headroom: ${FULL_BUDGET - fullText.length} of ${FULL_BUDGET} characters.`);
+  // Two numbers, because they warn about different things. The headroom is what an
+  // optional inlined document is competing for. The mandatory floor is what actually
+  // fails the build: everything the file is required to carry, plus the reserve. The
+  // gap between the floor and the budget is how much the ledger can still grow before
+  // `generate-llms` starts refusing to publish.
+  const floor = fullText.length - optionalCharacters + OMISSIONS_RESERVE;
+  console.log(`llms-full.txt: ${fullText.length} of ${FULL_BUDGET} characters, ${FULL_BUDGET - fullText.length} headroom.`);
+  console.log(`llms-full.txt mandatory floor: ${floor} of ${FULL_BUDGET} — ${FULL_BUDGET - floor} characters before required content stops fitting.`);
 }
 
 // ---------------------------------------------------------------- sections
@@ -208,7 +255,8 @@ function compose({ full }) {
   ];
 
   if (full) {
-    const { inlined, omitted } = inlineSections(blocks.join('\n\n'));
+    const { inlined, omitted, optionalChars } = inlineSections(blocks.join('\n\n'));
+    optionalCharacters = optionalChars;
     blocks.push(...inlined, omissionsSection(omitted));
   }
 
@@ -238,9 +286,10 @@ function writingSection() {
 function header(full) {
   const variant = full
     ? [
-      'The expanded variant: everything in `llms.txt`, then the full text of the harness contract,',
-      'the inspection contract, and the ledger evidence behind every claim id. What was left out is',
-      'listed at the end.',
+      'The expanded variant: everything in `llms.txt`, then the ledger evidence behind every claim id —',
+      'which is always here, ahead of anything optional — and then the full text of the highest-value',
+      'documents for as long as the character budget holds. What was left out is listed at the end, and',
+      'nothing mandatory can appear in that list: the generator fails instead of trimming.',
     ].join('\n')
     : [
       'The short variant; `llms-full.txt` is this file with the highest-value documents inlined.',
@@ -367,7 +416,7 @@ function provenSection(full) {
   });
 
   const pointer = full
-    ? 'The complete evidence for every id is listed at the end of this file.'
+    ? 'The complete evidence for every id is listed further down this file, always.'
     : 'The link goes to the document; `Proof:` names one of the tests that hold it.';
 
   return [
@@ -593,37 +642,65 @@ function optionalSection(full) {
 // ---------------------------------------------------------------- llms-full inlining
 
 /**
- * Inlines the ledger and the highest-value documents while the budget holds, and
- * reports what did not fit. Priority is fixed and the budget is a constant, so the
+ * Inlines the mandatory sections, then the optional documents while the budget holds,
+ * and reports what did not fit. Priority is fixed and the budget is a constant, so the
  * decision is the same on every machine.
+ *
+ * The order is the correction. It used to run documents-first, ledger-last, which made
+ * the evidence the thing that gave way — and the evidence is the only section with no
+ * substitute: the two documents are a fetch away at a path this file prints, while
+ * "which tests hold C-11" exists nowhere else in either variant. A section that cannot
+ * be replaced by a link is mandatory; a section that can is not.
+ *
+ * A mandatory block that does not fit is inlined anyway and the run is failed. Writing a
+ * short file and a note about it is the lossy behaviour this replaces; refusing to
+ * publish is not lossy, it is loud.
+ *
  * @param {string} soFar
- * @returns {{ inlined: string[], omitted: Array<{ path: string, bytes: number }> }}
+ * @returns {{ inlined: string[], omitted: Array<{ path: string, chars: number }> }}
  */
 function inlineSections(soFar) {
   const inlined = [];
   const omitted = [];
+  let optionalChars = 0;
   let used = soFar.length;
 
-  // The two documents come first because they are the reason this variant exists; the
-  // ledger's evidence is the marginal addition, so it is the thing that gives way when
-  // the budget runs out. The claim text and its limitation are already above either way.
   const candidates = [
-    ...INLINE_DOCUMENTS.map((path) => ({ path, render: () => inlineDocument(path) })),
-    { path: 'site/claims.json (the evidence for every ledger entry)', render: () => ledgerEvidence() },
+    {
+      path: 'site/claims.json (the evidence for every ledger entry)',
+      required: true,
+      render: () => ledgerEvidence(),
+    },
+    ...INLINE_DOCUMENTS.map((path) => ({ path, required: false, render: () => inlineDocument(path) })),
   ];
 
   for (const candidate of candidates) {
     const block = candidate.render();
     // +2 for the blank line that joins it, and a reserve for the omissions section.
-    if (used + block.length + 2 + 600 > FULL_BUDGET) {
+    const cost = block.length + 2;
+    if (used + cost + OMISSIONS_RESERVE > FULL_BUDGET) {
+      if (candidate.required) {
+        const over = used + cost + OMISSIONS_RESERVE - FULL_BUDGET;
+        problems.push(
+          `site/assets/llms-full.txt: ${candidate.path} is mandatory and overruns the ${FULL_BUDGET.toLocaleString('en-US')}-character `
+          + `budget by ${over.toLocaleString('en-US')} characters. It is not being dropped — the earlier version dropped it silently and `
+          + 'a whole claims ledger left the file unannounced. Choose one deliberately: compact a section above, '
+          + 'raise FULL_BUDGET in this file with the reason written next to it, or split the evidence into its own '
+          + 'published asset and link it from here.',
+        );
+        inlined.push(block);
+        used += cost;
+        continue;
+      }
       omitted.push({ path: candidate.path, chars: block.length });
       continue;
     }
     inlined.push(block);
-    used += block.length + 2;
+    used += cost;
+    if (!candidate.required) optionalChars += cost;
   }
 
-  return { inlined, omitted };
+  return { inlined, omitted, optionalChars };
 }
 
 /**
@@ -680,7 +757,9 @@ function omissionsSection(omitted) {
   const lines = [
     '## What this file omits',
     '',
-    `Held under ${FULL_BUDGET.toLocaleString('en-US')} characters so it fits a context window whole. Not inlined:`,
+    `Held under ${FULL_BUDGET.toLocaleString('en-US')} characters so it fits a context window whole. Everything below is`,
+    'optional and reachable at the path given; the claims ledger\'s evidence is never in this list,',
+    'because the generator refuses to publish a file missing it rather than shortening one. Not inlined:',
     '',
   ];
 

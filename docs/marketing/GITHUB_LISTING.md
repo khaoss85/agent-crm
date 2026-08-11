@@ -7,9 +7,10 @@ paraphrase back to a user.
 
 > **State, verified 2026-08-10.** The intent-aligned About copy, website and all 20 topics
 > below are live after the Customer Hub, Smart CRM and CDP + CRM stack reached production.
-> Issues and Discussions are enabled; Wiki is disabled. The live social preview still says
-> 421 tests and omits Gemini CLI; replacing it with the generated frame below is the remaining
-> GitHub Settings action.
+> Issues and Discussions are enabled; Wiki is disabled. The social preview was refreshed on
+> 2026-08-11 with the generated frame below, which names Gemini CLI and resolves its count from
+> the measured ledger rather than carrying a typed one — the artwork it replaced went stale for
+> exactly that reason. No GitHub Settings action remains outstanding.
 
 ## About panel
 

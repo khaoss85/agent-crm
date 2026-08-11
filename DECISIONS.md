@@ -1065,3 +1065,74 @@ public copy continues to refuse `npm create accordo`. The eventual registry
 receipt, not a merge or a green pack test, is what authorizes changing that
 status. The generated application remains local-only, SQLite-only and without
 authentication, tenancy or RBAC; packaging changes none of those boundaries.
+
+## ADR-027 — A public number is measured into one provenance-checked record, never typed into copy
+
+**Status:** accepted.
+
+**Context.** `site/claims.json` publishes a `measuredAgainst` block — a commit, a date,
+a test count — and `scripts/site-check.js` is the gate that decides whether the public
+surfaces may stand. Two things about that arrangement were not holding.
+
+The first was provenance. The gate asked `git cat-file -e <sha>^{commit}`: *does an
+object with this id exist here*. That answers the wrong question twice over. A commit
+pushed to an unrelated branch exists in the same object store, so a measurement taken on
+a line of development the shipping code does not descend from passed. And under
+`actions/checkout`'s default `fetch-depth: 1`, no commit but `HEAD` has been fetched, so
+every honest historical measurement failed with *"is not a commit in this repository"* —
+about a commit that plainly is one. Three open pull requests were red for that reason and
+none of them had done anything wrong.
+
+The second was the count itself. An exact number appeared in stable public copy: the
+`C-20` claim sentence, two README lines, two published answers, a concepts page, and two
+marketing documents. Every one of them was a copy of a number that moves on every merge,
+and the gate that was supposed to bind them checked two of the eight. They drifted anyway
+— 373, 411, 701 and 793 were all being asserted in the same tree.
+
+**Decision.**
+
+1. **Ancestry, not existence.** `scripts/measurement.js` separates three outcomes with
+   three messages: the SHA is *missing* from this repository; the SHA *exists but is not
+   an ancestor* of HEAD, which is refused because object existence is not provenance; or
+   the SHA is a genuine ancestor whose *recorded facts do not match the tree it names*.
+
+2. **Fail closed when the checkout cannot know.** A shallow clone cannot tell "that
+   commit was never here" from "the connecting history was not fetched", and a tree with
+   no `.git` cannot tell anything. Both report *history unavailable* and fail, rather than
+   passing quietly the way the old code did when `git` returned nothing. The
+   `public-claims` CI job therefore checks out with `fetch-depth: 0`; a targeted fetch of
+   the single SHA would not do, because `merge-base --is-ancestor` needs the commits
+   between the two, not the named one.
+
+3. **The record carries a fingerprint of what it measured.** `measuredAgainst` gains
+   `testFiles` and `testsTree` — the count of `*.test.js` files and the git tree id of
+   `tests/` at that commit. Both are checked against the commit. This is what gives the
+   third outcome teeth: the cheapest way to make a stale ledger go green is to move the
+   SHA forward and leave the numbers alone, and that now fails. `claimsContract` moves to
+   `2` because those two fields are required.
+
+4. **One number, measured, never typed.** An exact test count may appear only in
+   `measuredAgainst`, and reaches a page through the `{{measured.tests}}` token that
+   `scripts/site-build.js` resolves — the same rule the brand name already lives under.
+   Copy that cannot carry a token states what the verification gate proves instead of how
+   many tests it ran. `scripts/site-check.js` fails on a literal count anywhere in the
+   README, the ledger's own prose, the site's JSON sources, the templates or
+   `docs/marketing/`. `node scripts/measure-suite.js --apply` writes the record from a
+   real run on a clean tree, so the number is never hand-entered.
+
+**Why not keep the count in stable copy and couple it harder (the status quo).** That was
+the status quo, and it made every merge that adds a test an eight-file edit whose only
+enforcement was on two of the eight. Coupling copies is not how copies stop drifting.
+
+**Why not generate the count into every surface.** Generation works where a build step
+already runs — the site templates and `llms.txt` do exactly this, and they keep their
+number. It does not reach a README, a marketing document or `/answers.json` served raw to
+a machine, and adding a build step to those to publish a number that measures effort
+rather than correctness buys the reader nothing. Those surfaces say what the gate proves.
+
+**What this does not decide.** Nothing about *whether* to publish a count at all: the
+number remains on the landing page and in the evidence page, resolved from the record. And
+nothing about re-measuring on every merge — a record that names its own ancestor commit
+and proves it is truthful when the suite has since moved, so drift is reported as a note
+rather than failing the build. What would be untruthful is a *sentence* quoting a stale
+number as current, and that is now impossible to write.

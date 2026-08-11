@@ -68,7 +68,7 @@
     {
       "slug": "is-there-a-benchmark-for-agent-built-crms",
       "question": "Is there a benchmark showing how often a coding agent builds a working CRM with this?",
-      "answer": "No. The build benchmark protocol is designed and published, but it has not been run, so no Successful Agent Build Rate exists and any number quoted for this project is not ours (L-03). What exists instead is a test suite: 808 tests run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them (C-20). That count measures effort, not correctness, and real-browser tests are run manually and are not in CI.",
+      "answer": "No. The build benchmark protocol is designed and published, but it has not been run, so no Successful Agent Build Rate exists and any number quoted for this project is not ours (L-03). What exists instead is a test suite that runs on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them (C-20). A test count measures effort, not correctness, and real-browser tests are run manually and are not in CI.",
       "claims": [
         "C-20"
       ],
@@ -80,7 +80,7 @@
     {
       "slug": "how-do-i-check-these-claims-myself",
       "question": "How do I check that these claims are true instead of taking them on trust?",
-      "answer": "Every claim in site/claims.json names the evidence that holds it — a test file, a document, or a named repository fact — and the limitation that travels with it, so each sentence resolves to something you can check. Run the suite — 808 tests on every push — and read docs/QUALITY_GATES.md for the adversarial-review categories, because the count itself measures effort rather than correctness (C-20). Then run falsify: five rules are removed on purpose in one command and the suite catches every one in about two seconds, naming the test that caught it, and anything that survives is reported as a gap rather than omitted (C-23). Its scope is narrow on purpose — it falsifies six named rules, not the claims in this ledger, it proves only that a test holds each rule, and a rule that is wrong but faithfully defended survives every mutation.",
+      "answer": "Every claim in site/claims.json names the evidence that holds it — a test file, a document, or a named repository fact — and the limitation that travels with it, so each sentence resolves to something you can check. Run the suite — it runs on every push — and read docs/QUALITY_GATES.md for the adversarial-review categories, because the count itself measures effort rather than correctness (C-20). Then run falsify: five rules are removed on purpose in one command and the suite catches every one in about two seconds, naming the test that caught it, and anything that survives is reported as a gap rather than omitted (C-23). Its scope is narrow on purpose — it falsifies six named rules, not the claims in this ledger, it proves only that a test holds each rule, and a rule that is wrong but faithfully defended survives every mutation.",
       "claims": [
         "C-20",
         "C-23"
