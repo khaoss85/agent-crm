@@ -6,11 +6,27 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  CATEGORIES, PROJECT_VERIFICATION_CONTRACT, STATUSES, VERIFY_DEPTH_ENV, check, declaredScripts,
-  projectVerifyCommand, redact, runStep, semanticFingerprint, summarize,
+  CATEGORIES, MAX_CAPTURED_OUTPUT, MAX_NESTED_DEPTH, MAX_NESTED_NODES, MAX_NESTED_TEXT,
+  PROJECT_VERIFICATION_CONTRACT, STATUSES, VERIFY_DEPTH_ENV, boundNested, check, declaredScripts,
+  missingScriptTargets, projectVerifyCommand, redact, runStep, semanticFingerprint, summarize,
 } from '../packages/cli/src/project-verify-command.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+
+/**
+ * A deterministic baseline for the recursion marker.
+ *
+ * `projectVerifyCommand` reads `ACCORDO_PROJECT_VERIFY_DEPTH` from the ambient
+ * environment, and this suite exercises that command directly — so running
+ * `accordo project verify` **on this repository** set the marker on the child
+ * that runs `npm run verify`, every test here saw itself as nested, and fourteen
+ * of them failed. The command was working exactly as designed; the tests were
+ * reading the environment of whoever invoked them. A unit test that cannot be
+ * run from inside the command it tests is not a property of the command.
+ *
+ * The recursion tests set the marker deliberately and restore it themselves.
+ */
+delete process.env[VERIFY_DEPTH_ENV];
 
 /**
  * DX5 answers "can you prove this project is healthy enough to hand back?", so
@@ -642,4 +658,628 @@ test('the semantic fingerprint ignores evidence noise but not decisions', () => 
   assert.equal(semanticFingerprint(base), semanticFingerprint(noisy));
   const decided = { ...base, checks: [{ ...base.checks[0], status: 'failed' }] };
   assert.notEqual(semanticFingerprint(base), semanticFingerprint(decided));
+});
+
+// ---------------------------------------------------------------------------
+// Wave 2A hardening. Each test below pins a defect that was reproduced on main
+// (09fedf4) with a probe before the fix was written.
+// ---------------------------------------------------------------------------
+
+/**
+ * REGRESSION — the composed-package stage could not fail.
+ *
+ * Selecting nothing made `packages.conformance` a `not_applicable` required
+ * check, and a `not_applicable` required check never fails a run. So the proof
+ * that selection is real is not that the checks appear: it is that **one
+ * non-conforming package turns the whole verification red**.
+ */
+test('one non-conforming composed package fails the verification', async (t) => {
+  const root = project(t);
+  const composed = ['packages/contracts', 'packages/zzz-acme-widgets'];
+  for (const path of composed) mkdirSync(join(root, path, 'src'), { recursive: true });
+
+  const failing = 'packages/zzz-acme-widgets';
+  const step = async (options) => {
+    const target = options.args[options.args.indexOf('test') + 1];
+    return target === failing
+      ? { ok: false, code: 1, signal: null, output: 'modules.applied 0/7\n', durationMs: 4, truncated: false, timedOut: false, spawnError: null }
+      : { ok: true, code: 0, signal: null, output: '', durationMs: 4, truncated: false, timedOut: false, spawnError: null };
+  };
+
+  const { exitCode, report } = await projectVerifyCommand({
+    rootDir: root,
+    doctor: doctorOk({ project: { packagesComposed: composed } }),
+    inspect: inspectOk,
+    step,
+    git: cleanGit,
+  });
+
+  assert.equal(exitCode, 1, 'a composed package that does not conform makes the run fail');
+  assert.equal(report.status, 'failed');
+  const bad = report.checks.find((c) => c.code === `packages.conformance.${failing}`);
+  assert.equal(bad.status, 'failed');
+  assert.equal(bad.required, true);
+  assert.match(bad.reason, /modules\.applied 0\/7/, 'and the package authority\'s own verdict survives into the reason');
+  assert.equal(report.checks.find((c) => c.code === 'packages.conformance.packages/contracts').status, 'passed',
+    'its neighbour is graded on its own evidence, not tarred with it');
+});
+
+/**
+ * REGRESSION — the uncomposed-package inventory disappeared exactly when it had
+ * something to say. It was emitted on `candidates.length > targets.length`, a
+ * comparison of two *counts* drawn from different sets: a project with two
+ * candidates of which one is composed, plus four composed first-party packages,
+ * has 2 candidates and 5 targets, so the inventory was silently dropped and the
+ * genuinely uncomposed package was never named. It is a set difference.
+ */
+test('an uncomposed candidate stays inventory even when composed packages outnumber candidates', async (t) => {
+  const root = project(t);
+  const firstParty = ['packages/contracts', 'packages/delivery', 'packages/lifecycle', 'packages/service'];
+  const composedCandidate = 'examples/custom-packages/partner-scorecard';
+  const uncomposed = 'examples/custom-packages/acme-territories';
+  for (const path of [...firstParty, composedCandidate, uncomposed]) {
+    mkdirSync(join(root, path, 'src'), { recursive: true });
+    writeFileSync(join(root, path, 'src', 'index.js'), 'export const x = 1;\n');
+  }
+  const composed = [...firstParty, composedCandidate];
+
+  const { report } = await projectVerifyCommand({
+    rootDir: root,
+    doctor: doctorOk({ project: { packagesComposed: composed } }),
+    inspect: inspectOk,
+    step: recordingStep([]),
+    git: cleanGit,
+  });
+
+  const inventory = report.evidence.find((e) => e.kind === 'packages');
+  assert.ok(inventory, 'five targets and two candidates still leaves one uncomposed package to name');
+  assert.deepEqual(inventory.uncomposedCandidates, [uncomposed]);
+  assert.equal(inventory.note, 'an uncomposed package is inventory, not a verification target');
+  assert.ok(
+    !report.checks.some((c) => c.code === `packages.conformance.${uncomposed}`),
+    'and inventory is not graded: an uncomposed package is not a verification target',
+  );
+});
+
+/**
+ * The selection rule is the doctor's resolved path list and existence on disk.
+ * There is no allowlist: a package with an invented name, under a directory
+ * nobody has ever seen, is graded exactly like `packages/contracts`.
+ */
+test('composed-package selection consults no name allowlist', async (t) => {
+  const root = project(t);
+  const invented = ['vendor/qux-9/pkg', 'packages/\u00e7a-marche', 'examples/custom-packages/zzz'];
+  for (const path of invented) mkdirSync(join(root, path, 'src'), { recursive: true });
+
+  const calls = [];
+  const { report } = await projectVerifyCommand({
+    rootDir: root,
+    doctor: doctorOk({ project: { packagesComposed: invented } }),
+    inspect: inspectOk,
+    step: recordingStep(calls),
+    git: cleanGit,
+  });
+  assert.deepEqual(
+    report.checks.filter((c) => c.code.startsWith('packages.conformance.')).map((c) => c.code).sort(),
+    invented.map((p) => `packages.conformance.${p}`).sort(),
+  );
+  assert.equal(calls.length, invented.length + 2, 'each package really spawned, plus verify and smoke');
+});
+
+/**
+ * REGRESSION — DX1's four plan verdicts, carried verbatim, with wording that
+ * matches the verdict. The evidence line called every graded plan
+ * "declared-current", including the *required* ones, so a reader could not tell
+ * a required plan that no longer binds from a current one — the difference
+ * between a failure and a warning.
+ */
+test('every plan verdict is carried verbatim, and named for what it is', async (t) => {
+  const root = project(t);
+  const run = async (checks) => {
+    const { report } = await projectVerifyCommand({
+      rootDir: root, doctor: doctorOk({ checks }), inspect: inspectOk, step: recordingStep([]), git: cleanGit,
+    });
+    return report.checks.find((c) => c.code === 'plans.current');
+  };
+
+  // A declared-REQUIRED plan that no longer binds: DX1 says failed, with the
+  // binding problems it found attached.
+  const required = await run([{
+    id: 'plans.docs-required-plan-json', status: 'failed',
+    evidence: { declaration: 'required', problems: ['PLAN_STALE'] },
+    reason: 'the plan no longer binds to this composition',
+  }]);
+  assert.equal(required.status, 'failed');
+  assert.match(required.evidence, /1 declared-required and no longer binding/);
+  assert.doesNotMatch(required.evidence, /declared-current/, 'a required plan is never described as current');
+
+  // A declared-CURRENT plan that no longer binds: DX1 says warning.
+  const current = await run([{
+    id: 'plans.docs-current-plan-json', status: 'warning',
+    evidence: { declaration: 'current', problems: ['PLAN_STALE'] },
+    reason: 'the plan no longer binds to this composition',
+  }]);
+  assert.equal(current.status, 'warning');
+  assert.match(current.evidence, /1 declared-current and no longer binding/);
+
+  // A MALFORMED plan: DX1 says failed and has no binding problems to attach,
+  // because it could not parse the file at all.
+  const malformed = await run([{
+    id: 'plans.docs-broken-plan-json', status: 'failed',
+    evidence: { declaration: 'undeclared' }, reason: 'Unexpected token }',
+  }]);
+  assert.equal(malformed.status, 'failed', 'broken source is broken source; nobody has to declare it');
+  assert.match(malformed.evidence, /1 malformed/);
+  assert.doesNotMatch(malformed.evidence, /no longer binding/);
+
+  // A HISTORICAL, undeclared plan: a fact, not a fault.
+  const historical = await run([{
+    id: 'plans.docs-m14b2-plan-json', status: 'not_applicable',
+    evidence: { declaration: 'undeclared', problems: ['PLAN_STALE'] },
+    reason: 'PLAN_NOT_DECLARED_CURRENT — it no longer binds to this composition, which for an undeclared plan is a fact rather than a fault',
+  }]);
+  assert.equal(historical.status, 'not_applicable');
+  assert.equal(historical.reason, 'NO_DECLARED_PLANS');
+  assert.match(historical.evidence, /1 plan\(s\) found, none declared current or required/);
+  assert.doesNotMatch(historical.evidence, /declares no plan as current/);
+
+  // And a project with no plan files at all is a different sentence again.
+  const none = await run([{ id: 'plans.current', status: 'not_applicable', reason: 'NO_SOLUTION_PLANS_FOUND' }]);
+  assert.equal(none.status, 'not_applicable');
+  assert.equal(none.reason, 'NO_SOLUTION_PLANS_FOUND');
+  assert.equal(none.evidence, 'this project has no solution plan at all');
+
+  // Mixed: the worst verdict wins, and every kind is still counted by name.
+  const mixed = await run([
+    { id: 'plans.a-plan-json', status: 'failed', evidence: { declaration: 'required', problems: ['PLAN_STALE'] } },
+    { id: 'plans.b-plan-json', status: 'warning', evidence: { declaration: 'current', problems: ['PLAN_STALE'] } },
+    { id: 'plans.c-plan-json', status: 'failed', evidence: { declaration: 'current' } },
+    { id: 'plans.d-plan-json', status: 'passed', evidence: { declaration: 'current', problems: [] } },
+  ]);
+  assert.equal(mixed.status, 'failed');
+  assert.match(mixed.evidence, /4 plan\(s\) graded/);
+  assert.match(mixed.evidence, /1 declared-required and no longer binding/);
+  assert.match(mixed.evidence, /1 declared-current and no longer binding/);
+  assert.match(mixed.evidence, /1 malformed/);
+});
+
+/**
+ * All seven worktree transitions, in one place, because the interesting
+ * property is the *difference* between two samples and a table is the only
+ * honest way to read it.
+ *
+ * `defaultGit` samples `XY<TAB>path`, so a path present in both samples with a
+ * different status is the run's doing too: a file the operator had modified and
+ * a delegate then deleted keeps its path and was otherwise invisible.
+ */
+test('all seven worktree transitions are attributed to the right party', async (t) => {
+  const root = project(t);
+  const transitions = [
+    {
+      name: 'clean to clean',
+      before: '', after: '',
+      status: 'passed', reason: null, caused: [], reverted: [], problems: [],
+    },
+    {
+      name: 'dirty to the same dirty',
+      before: ' M src/a.js\n', after: ' M src/a.js\n',
+      status: 'passed', reason: 'DIRTY_BEFORE_VERIFY', caused: [], reverted: [], problems: [],
+    },
+    {
+      name: 'dirty to an additional tracked change',
+      before: ' M src/a.js\n', after: ' M src/a.js\n M src/b.js\n',
+      status: 'warning', caused: ['src/b.js'], reverted: [], problems: ['WORKTREE_DIRTY_AFTER_VERIFY'],
+    },
+    {
+      name: 'dirty to a new untracked file',
+      before: ' M src/a.js\n', after: ' M src/a.js\n?? data/scratch.db\n',
+      status: 'warning', caused: ['data/scratch.db'], reverted: [], problems: ['WORKTREE_DIRTY_AFTER_VERIFY'],
+    },
+    {
+      name: 'clean to a tracked modification',
+      before: '', after: ' M src/a.js\n',
+      status: 'warning', caused: ['src/a.js'], reverted: [], problems: ['WORKTREE_DIRTY_AFTER_VERIFY'],
+    },
+    {
+      name: 'clean to a tracked deletion',
+      before: '', after: ' D src/a.js\n',
+      status: 'warning', caused: ['src/a.js'], reverted: [], problems: ['WORKTREE_DIRTY_AFTER_VERIFY'],
+    },
+    {
+      name: 'clean to an untracked leak',
+      before: '', after: '?? coverage/lcov.info\n',
+      status: 'warning', caused: ['coverage/lcov.info'], reverted: [], problems: ['WORKTREE_DIRTY_AFTER_VERIFY'],
+    },
+  ];
+
+  for (const transition of transitions) {
+    const tab = (sample) => sample.replace(/^(..) /gm, '$1\t');
+    const { report } = await projectVerifyCommand({
+      rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: recordingStep([]),
+      git: gitSamples(tab(transition.before), tab(transition.after)),
+    });
+    const worktree = report.checks.find((c) => c.code === 'worktree.clean');
+    assert.equal(worktree.status, transition.status, transition.name);
+    if (transition.reason !== undefined) assert.equal(worktree.reason, transition.reason, transition.name);
+    const evidence = report.evidence.find((e) => e.kind === 'worktree');
+    assert.deepEqual(evidence.changedByVerify, transition.caused, transition.name);
+    assert.deepEqual(evidence.revertedByVerify, transition.reverted, transition.name);
+    assert.deepEqual(
+      report.problems.map((p) => p.code).filter((code) => code.startsWith('WORKTREE_')),
+      transition.problems, transition.name,
+    );
+    // Whatever happened, nothing was repaired: the command runs no git that writes.
+    assert.match(
+      JSON.stringify(report),
+      /Nothing was reset, stashed or hidden|never resets, stashes or cleans|nothing changed while verifying|verification changed none of them/,
+      transition.name,
+    );
+  }
+});
+
+/**
+ * REGRESSION — a path in both samples was assumed unchanged. A file the
+ * operator had modified and a delegate then *deleted* kept its path in both,
+ * so the run reported "verification changed none of them" about a deletion it
+ * had caused.
+ */
+test('a pre-existing modification that the run turns into a deletion is still the run\'s doing', async (t) => {
+  const root = project(t);
+  const { report } = await projectVerifyCommand({
+    rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: recordingStep([]),
+    git: gitSamples(' M\tsrc/precious.js\n', ' D\tsrc/precious.js\n'),
+  });
+  const worktree = report.checks.find((c) => c.code === 'worktree.clean');
+  assert.equal(worktree.status, 'warning');
+  assert.deepEqual(report.evidence.find((e) => e.kind === 'worktree').changedByVerify, ['src/precious.js']);
+  assert.ok(report.problems.some((p) => p.code === 'WORKTREE_DIRTY_AFTER_VERIFY'));
+});
+
+/**
+ * Process completion, attacked. Every case here is a real shape a project's
+ * suite produces, and each one settles on the child's **exit** rather than on
+ * its streams closing.
+ *
+ * The residual limitation is published rather than papered over: a *detached*
+ * grandchild leaves its own process group, so stopping the group does not reach
+ * it and it outlives the step. That is `PROJECT_COMMANDS_TRUSTED` — bounded
+ * isolation, not a sandbox — and the test asserts the honest outcome (the step
+ * still settles promptly and truthfully) rather than a containment claim this
+ * command cannot make.
+ */
+test('a step settles on process exit under every leak shape', async () => {
+  const node = (source) => ({ command: process.execPath, args: ['-e', source], cwd: process.cwd(), timeoutMs: 20_000 });
+
+  // 1. an ordinary child.
+  const plain = await runStep(node('process.stdout.write("done\\n")'));
+  assert.equal(plain.ok, true);
+  assert.equal(plain.timedOut, false);
+  assert.match(plain.output, /done/);
+
+  // 2. an ordinary grandchild that outlives the parent and inherits its pipes.
+  const grandchild = await runStep(node(`
+    const { spawn } = require('node:child_process');
+    spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'inherit' }).unref();
+    process.stdout.write('parent-exiting\\n');
+    process.exit(0);
+  `));
+  assert.equal(grandchild.ok, true, 'a leaked grandchild does not fail the step');
+  assert.equal(grandchild.timedOut, false, 'and above all does not burn the timeout');
+  assert.ok(grandchild.durationMs < 15_000, `settled in ${grandchild.durationMs}ms`);
+
+  // 3. a DETACHED grandchild, in its own process group, which the group kill
+  //    cannot reach. It still must not hold the step open.
+  const detached = await runStep(node(`
+    const { spawn } = require('node:child_process');
+    const child = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { detached: true, stdio: 'inherit' });
+    child.unref();
+    process.stdout.write('detached\\n');
+  `));
+  assert.equal(detached.ok, true);
+  assert.equal(detached.timedOut, false);
+  assert.ok(detached.durationMs < 15_000, `settled in ${detached.durationMs}ms`);
+
+  // 4. a grandchild that explicitly holds the stdout pipe open forever.
+  const held = await runStep(node(`
+    const { spawn } = require('node:child_process');
+    spawn(process.execPath, ['-e', 'setTimeout(()=>{},30000)'], { stdio: ['ignore', 1, 2] }).unref();
+    process.stdout.write('holder-started\\n');
+    process.exit(0);
+  `));
+  assert.equal(held.ok, true, 'an inherited pipe that never closes is not this command\'s problem');
+  assert.equal(held.timedOut, false);
+  assert.ok(held.durationMs < 15_000, `settled in ${held.durationMs}ms`);
+
+  // 5. a genuine hang is still a timeout, and the group is stopped.
+  const hung = await runStep({ ...node('setInterval(()=>{},1000)'), timeoutMs: 400 });
+  assert.equal(hung.ok, false);
+  assert.equal(hung.timedOut, true);
+  assert.equal(hung.signal, 'SIGKILL');
+
+  // 6. a log flood is bounded, disclosed, and does not become the report.
+  const flood = await runStep(node('for (let i=0;i<200000;i++) process.stdout.write("noise-".repeat(8) + "\\n");'));
+  assert.equal(flood.truncated, true, 'a package that floods stdout is truncated, not memorised');
+  assert.ok(flood.output.length <= MAX_CAPTURED_OUTPUT, `${flood.output.length} bytes retained`);
+
+  // 7. output written immediately before exit is still collected: the drain
+  //    window exists for exactly this, and losing it would lose the diagnostic.
+  const lastWords = await runStep(node('process.stdout.write("the final line\\n"); process.exit(3);'));
+  assert.equal(lastWords.ok, false);
+  assert.equal(lastWords.code, 3);
+  assert.match(lastWords.output, /the final line/, 'what the process wrote before exiting survives the drain');
+
+  // 8. a command that cannot start is a spawn error, not a silent pass.
+  const missing = await runStep({ command: 'accordo-no-such-binary-9d3f', args: [], cwd: process.cwd(), timeoutMs: 5_000 });
+  assert.equal(missing.ok, false);
+  assert.ok(missing.spawnError, 'the reason names the start failure');
+});
+
+/**
+ * REGRESSION — a value taken from a delegated report went straight into the
+ * report and into `canonicalJson`, which recurses with no cycle guard and no
+ * depth bound. A malformed nested report therefore did not produce a bad
+ * report: it produced `RangeError: Maximum call stack size exceeded` and **no
+ * report at all**. Probed on main: both a cyclic and a 200,000-deep value crash
+ * `semanticFingerprint` outright.
+ */
+test('a malformed nested report is bounded, not allowed to generate unbounded work', async (t) => {
+  // The bound itself.
+  const cyclic = { packagesComposed: [] };
+  cyclic.self = cyclic;
+  assert.doesNotThrow(() => JSON.stringify(boundNested(cyclic)), 'a cycle is cut at the depth bound');
+
+  let deep = {};
+  let cursor = deep;
+  for (let i = 0; i < 100_000; i += 1) { cursor.next = {}; cursor = cursor.next; }
+  const flattened = boundNested(deep);
+  let levels = 0;
+  for (let cur = flattened; cur && cur.next; cur = cur.next) levels += 1;
+  assert.ok(levels < MAX_NESTED_DEPTH, `cut to ${levels} levels`);
+
+  const wide = boundNested(Array.from({ length: 10_000 }, (_, i) => i));
+  assert.ok(wide.length <= MAX_NESTED_NODES, `${wide.length} nodes kept`);
+
+  assert.equal(boundNested('x'.repeat(5_000)).length, MAX_NESTED_TEXT + '… [truncated]'.length);
+  assert.equal(boundNested(() => 1), null, 'a function is not evidence');
+  assert.equal(boundNested(Number.NaN), null, 'and a non-finite number would refuse to canonicalize');
+  const hostile = { get boom() { throw new Error('no'); }, safe: 1 };
+  assert.deepEqual(boundNested(hostile), { safe: 1 }, 'a throwing getter is skipped, not fatal');
+
+  // And end to end: a doctor whose report is hostile still yields a report.
+  const root = project(t);
+  const cyclicReport = { status: 'passed', fingerprint: 'fp', project: { packagesComposed: [] }, checks: [] };
+  cyclicReport.project.self = cyclicReport.project;
+  cyclicReport.project.packagesComposed.push('packages/contracts', 42, null, '/absolute/not/relative');
+  mkdirSync(join(root, 'packages/contracts/src'), { recursive: true });
+
+  const { report } = await projectVerifyCommand({
+    rootDir: root,
+    doctor: async () => ({ exitCode: 0, report: cyclicReport }),
+    inspect: inspectOk,
+    step: recordingStep([]),
+    git: cleanGit,
+  });
+  assert.ok(report, 'a hostile delegated report still produces a report');
+  assert.match(report.fingerprint, /^[0-9a-f]{64}$/, 'and the fingerprint is still computable');
+  assert.deepEqual(report.project.packagesComposed, ['packages/contracts'],
+    'a non-string and an absolute path are not repository-relative package paths');
+});
+
+/**
+ * REGRESSION — the depth marker is what makes the refusal deterministic, and it
+ * must increment rather than being merely present, so the code is stable
+ * whatever depth a run is discovered at.
+ */
+test('the recursion refusal is deterministic at any depth, and carries a stable code', async (t) => {
+  const root = project(t);
+  const previous = process.env[VERIFY_DEPTH_ENV];
+  t.after(() => {
+    if (previous === undefined) delete process.env[VERIFY_DEPTH_ENV];
+    else process.env[VERIFY_DEPTH_ENV] = previous;
+  });
+
+  for (const [marker, expectRefusal] of [[undefined, false], ['0', false], ['1', true], ['7', true], ['not-a-number', false]]) {
+    if (marker === undefined) delete process.env[VERIFY_DEPTH_ENV];
+    else process.env[VERIFY_DEPTH_ENV] = marker;
+    const calls = [];
+    const { exitCode, report } = await projectVerifyCommand({
+      rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: recordingStep(calls), git: cleanGit,
+    });
+    const verify = report.checks.find((c) => c.code === 'suite.verify');
+    if (expectRefusal) {
+      assert.equal(verify.status, 'failed', `marker ${marker}`);
+      assert.equal(verify.reason, 'RECURSIVE_VERIFY_REFUSED', `marker ${marker}`);
+      assert.equal(exitCode, 1, `marker ${marker}`);
+      assert.equal(calls.length, 0, `marker ${marker}: nothing is spawned, so the recursion terminates`);
+    } else {
+      assert.equal(verify.status, 'passed', `marker ${marker}`);
+      const depths = new Set(calls.map((call) => call.env[VERIFY_DEPTH_ENV]));
+      assert.deepEqual([...depths], [String(Number.parseInt(marker ?? '0', 10) || 0) === '0' ? '1' : '1'],
+        `marker ${marker}: every child is marked one deeper`);
+    }
+  }
+});
+
+/**
+ * REGRESSION, and the tour contract.
+ *
+ * `scripts/tour.js` says the project it leaves behind "proves nothing the test
+ * suite does not already prove — it makes what is proven visible", and README
+ * frames `--keep` as leaving the project *to explore*. It is a read-only
+ * inspection demo, not a runnable artifact. The defect is therefore that its
+ * generated `package.json` declares scripts it has no `scripts/` directory to
+ * satisfy: `npm run verify` exits 1 with `MODULE_NOT_FOUND` from inside Node's
+ * loader, which DX5 reported as a *suite failure* — a fact about a suite that
+ * was never there.
+ */
+test('a declared script whose entry point is absent is not applicable, and says so loudly', async (t) => {
+  const root = project(t, {
+    scripts: {
+      verify: 'npm run check && npm test',
+      check: 'node scripts/check.js',
+      test: 'node --no-warnings --test --test-reporter=spec',
+      smoke: 'node --no-warnings scripts/smoke.js',
+    },
+  });
+  const calls = [];
+  const { exitCode, report } = await projectVerifyCommand({
+    rootDir: root, doctor: doctorOk(), inspect: inspectOk, step: recordingStep(calls), git: cleanGit,
+  });
+
+  const verify = report.checks.find((c) => c.code === 'suite.verify');
+  assert.equal(verify.status, 'not_applicable', 'it is not a suite failure: the suite was never there');
+  assert.equal(verify.reason, 'SCRIPT_TARGET_MISSING');
+  assert.match(verify.evidence, /scripts\/check\.js/, 'and the absent entry point is named');
+  assert.equal(report.checks.find((c) => c.code === 'suite.smoke').reason, 'SCRIPT_TARGET_MISSING');
+  assert.equal(calls.length, 0, 'nothing was run, and nothing was guessed or substituted');
+  assert.ok(
+    report.problems.some((p) => p.code === 'DECLARED_SCRIPT_TARGET_MISSING'),
+    'not_applicable is not silence: a package.json that declares what it cannot satisfy is a named problem',
+  );
+  assert.equal(exitCode, 0, 'though it is the project\'s defect to fix, not a verification failure to invent');
+
+  // And a project whose targets are present is run exactly as before: the
+  // analysis never invents a reason to skip.
+  const healthy = project(t, { scripts: { verify: 'npm run check && npm test', check: 'node scripts/check.js', test: 'node --test' } });
+  mkdirSync(join(healthy, 'scripts'), { recursive: true });
+  writeFileSync(join(healthy, 'scripts/check.js'), '\n');
+  const ran = [];
+  const second = await projectVerifyCommand({
+    rootDir: healthy, doctor: doctorOk(), inspect: inspectOk, step: recordingStep(ran), git: cleanGit,
+  });
+  assert.equal(second.report.checks.find((c) => c.code === 'suite.verify').status, 'passed');
+  assert.ok(ran.some((call) => call.args.includes('verify')));
+});
+
+test('missingScriptTargets follows npm chains, ignores flags, and never guesses', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'dx5-targets-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'scripts'), { recursive: true });
+  writeFileSync(join(root, 'scripts/present.js'), '\n');
+
+  const scripts = {
+    chain: 'npm run a && npm run b',
+    a: 'node scripts/present.js',
+    b: 'node scripts/absent.js',
+    flagsOnly: 'node --no-warnings --test --test-reporter=spec',
+    aliased: 'npm test',
+    test: 'node scripts/absent.js',
+    notNode: 'tsc --noEmit && eslint .',
+    inline: 'node -e "console.log(1)"',
+    absolute: 'node /opt/tool/run.js',
+    selfReferential: 'npm run selfReferential',
+    piped: 'node scripts/absent.js | tee out.log',
+  };
+  const targets = (script) => missingScriptTargets({ rootDir: root, script, scripts });
+
+  assert.deepEqual(targets('chain'), ['scripts/absent.js'], 'an npm chain is followed, and only the absent half is named');
+  assert.deepEqual(targets('a'), []);
+  assert.deepEqual(targets('flagsOnly'), [], 'a script that names no file names no missing file');
+  assert.deepEqual(targets('aliased'), ['scripts/absent.js'], 'npm test is followed like npm run test');
+  assert.deepEqual(targets('notNode'), [], 'a command this does not understand is left alone, never guessed at');
+  assert.deepEqual(targets('inline'), [], 'an inline program has no entry file');
+  assert.deepEqual(targets('absolute'), [], 'an absolute path is somebody else\'s machine, not this project');
+  assert.deepEqual(targets('selfReferential'), [], 'a cyclic script chain terminates');
+  assert.deepEqual(targets('piped'), ['scripts/absent.js']);
+  assert.deepEqual(targets('nope'), [], 'an undeclared script has nothing to resolve');
+});
+
+/**
+ * REGRESSION — redaction, attacked.
+ *
+ * Two gaps were confirmed on main: a Windows absolute path contains no forward
+ * slash, so `C:\Users\alice\...` and `\\fileserver\team\...` passed through
+ * untouched by a function whose stated job is removing absolute machine paths;
+ * and the POSIX rule matched from the *second* slash of `//`, so
+ * `https://example.com/a/b/c` was published as `https:/<path>` — a URL
+ * destroyed to protect nothing.
+ */
+test('redaction removes every absolute machine path and keeps what is useful', () => {
+  const root = '/home/user/proj';
+  const removed = [
+    ['C:\\Users\\alice\\secrets\\app.js failed', '<path> failed'],
+    ['C:/Users/bob/app.js', '<path>'],
+    ['at \\\\fileserver\\team\\build\\out.log', 'at <path>'],
+    // A home or temp root leaks the operator's identity in its tail, and a
+    // space in a path is legal: `/home/jose gonzalez/app/x.js` published
+    // `gonzalez/app/x.js` under the old rule.
+    ['/home/jose gonzalez/app/x.js', '<path>'],
+    ['/Users/Jane Doe/Library/app.js', '<path>'],
+    ['/var/folders/zz/T/accordo-tour-9/pkg', '<path>'],
+    ['/usr/lib/node_modules/x/y.js', '<path>'],
+    ['file:///home/u/x/y.js', 'file://<path>'],
+    // A symlink is reported by git and by Node as two absolute paths.
+    ["ELOOP: /tmp/link/a -> /opt/real/target/a", 'ELOOP: <path> -> <path>'],
+  ];
+  for (const [input, expected] of removed) assert.equal(redact(input, root), expected, input);
+
+  const kept = [
+    'https://example.com/a/b/c',
+    'see https://docs.accordo.dev/guides/verify/plans for detail',
+    './packages/core/src/thing.js',
+    'packages/core/src/thing.js:12:3',
+    'AssertionError: expected 3 to equal 4',
+    'ok 12 - donkey: renders',
+  ];
+  for (const input of kept) assert.equal(redact(input, root), input, input);
+
+  // The project root still becomes `.`, so the useful half of every path in a
+  // real reason survives.
+  assert.equal(redact('/home/user/proj/packages/core/x.js', root), './packages/core/x.js');
+  // And prose after a path is prose, not path.
+  assert.equal(redact('/tmp/a/b failed to load', root), '<path> failed to load');
+  // Environment values keep the name and lose the value.
+  // A URL survives, but a DSN's credentials do not: no name-shaped rule catches
+  // them, because the variable is called DATABASE_URL.
+  assert.equal(redact('env: DATABASE_URL=postgres://u:hunter2@h/db', root), 'env: DATABASE_URL=postgres://<redacted>@h/db');
+  assert.equal(redact('env: DATABASE_PASSWORD=hunter2 HOME=/home/u/x', root), 'env: DATABASE_PASSWORD=<redacted> HOME=<path>');
+  // A hostile diagnostic that ships the redactor's own markers is inert text.
+  assert.equal(redact('<path> <redacted> /etc/shadow/x', root), '<path> <redacted> <path>');
+});
+
+/**
+ * REGRESSION — the reason for a failed step was the last six lines of the log,
+ * whatever they were. A delegate that reports in JSON ends in closing braces
+ * and a suite whose fixtures print ends in fixture noise, so a real run against
+ * a composed project published
+ * `exit 1: ], | "database": "created empty in a temporary copy" | },` as the
+ * reason a package failed conformance — the one field a reader looks at,
+ * carrying nothing.
+ */
+test('a failure reason is the verdict in the log, not whatever happened to be last', () => {
+  const jsonReport = [
+    '{', '  "checks": [',
+    '    { "id": "modules.applied", "status": "failed", "evidence": "0/8 of this package\'s manifests applied; refused: packages/contracts/modules/contract-line.module.json" }',
+    '  ],', '  "database": "created empty in a temporary copy and destroyed with it"', '}',
+  ].join('\n');
+  const summary = summarize(jsonReport, '/x');
+  assert.match(summary, /modules\.applied/, 'the authority\'s own verdict is what a reader needs');
+  assert.doesNotMatch(summary, /created empty in a temporary copy/, 'and not the boilerplate that happened to be last');
+
+  const noisyTail = [
+    'AssertionError: expected 1 to equal 2',
+    'fixture noise line 156', 'fixture noise line 157', 'fixture noise line 158',
+    'fixture noise line 159', 'fixture noise line 160', 'fixture noise line 161',
+  ].join('\n');
+  assert.match(summarize(noisyTail, '/x'), /AssertionError/);
+
+  // A passing test whose NAME contains a verdict word is not a verdict. The
+  // first version of this rule published
+  // `✔ a hostile name cannot smuggle content into the generated source` as the
+  // reason a suite failed.
+  const specReport = [
+    '✔ a hostile name cannot smuggle content into the generated source (81ms)',
+    '✔ a package that fails conformance is refused (4ms)',
+    '✖ the ledger states the counts the tour produced (12ms)',
+    'ℹ tests 906', 'ℹ pass 905', 'ℹ fail 1',
+  ].join('\n');
+  const chosen = summarize(specReport, '/x');
+  assert.match(chosen, /✖ the ledger states/, 'the failing line is the verdict');
+  assert.doesNotMatch(chosen, /hostile name/, 'and a passing test that merely says "cannot" is not');
+
+  // With no verdict-shaped line at all, the tail is still the best guess.
+  const featureless = Array.from({ length: 20 }, (_, i) => `step ${i} done`).join('\n');
+  assert.match(summarize(featureless, '/x'), /step 19 done/);
+  // And it stays bounded either way.
+  assert.ok(summarize(Array.from({ length: 4000 }, () => 'a failure occurred here').join('\n'), '/x').length <= 400);
 });

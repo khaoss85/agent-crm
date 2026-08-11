@@ -68,6 +68,86 @@ export const DRAIN_MS = 250;
 export const VERIFY_DEPTH_ENV = 'ACCORDO_PROJECT_VERIFY_DEPTH';
 
 /**
+ * The only depth at which this command runs a project's declared scripts.
+ *
+ * Not a tunable. A verification that verifies itself proves nothing, so there
+ * is no honest value above zero and no flag to raise it.
+ */
+export const MAX_VERIFY_DEPTH = 0;
+
+/** How deep a value taken from a delegated report may nest before it is cut. */
+export const MAX_NESTED_DEPTH = 8;
+/** How many nodes of such a value are copied before the rest is dropped. */
+export const MAX_NESTED_NODES = 512;
+/** How long any single string from a delegated report may be. */
+export const MAX_NESTED_TEXT = 512;
+
+/**
+ * A JSON-safe copy of a value that came from **somewhere else**, bounded in
+ * depth, node count and string length.
+ *
+ * Every delegate here — the doctor, AX1, a nested `project verify` — hands back
+ * a report this command then embeds and *fingerprints*, and `canonicalJson`
+ * recurses without a cycle guard. So a delegated value that is cyclic, or
+ * 200,000 levels deep, does not produce a bad report: it produces
+ * `RangeError: Maximum call stack size exceeded` and **no report at all**, which
+ * is the one outcome a command whose entire job is producing evidence must not
+ * have. A property whose getter throws does the same.
+ *
+ * The bound is the fix: cut at a depth no honest report reaches, stop after a
+ * node budget, truncate long strings, and drop anything that is not a plain
+ * JSON shape rather than letting `canonicalJson` refuse it later.
+ *
+ * @param {unknown} value @param {number} [depth] @param {{left: number}} [budget]
+ */
+export function boundNested(value, depth = 0, budget = { left: MAX_NESTED_NODES }) {
+  if (budget.left <= 0) return null;
+  budget.left -= 1;
+  if (value === null || value === undefined) return null;
+  const type = typeof value;
+  if (type === 'string') return boundText(value);
+  if (type === 'boolean') return value;
+  if (type === 'number') return Number.isFinite(value) ? value : null;
+  // A function, a symbol or a bigint cannot be canonicalized and is not
+  // evidence. Dropping it is the honest answer.
+  if (type !== 'object') return null;
+  if (depth >= MAX_NESTED_DEPTH) return null;
+  if (Array.isArray(value)) {
+    const items = [];
+    for (const item of value) {
+      if (budget.left <= 0) break;
+      items.push(boundNested(item, depth + 1, budget));
+    }
+    return items;
+  }
+  /** @type {Record<string, unknown>} */
+  const shape = {};
+  let keys;
+  try { keys = Object.keys(/** @type {any} */ (value)).sort(); } catch { return null; }
+  for (const key of keys) {
+    if (budget.left <= 0) break;
+    let held;
+    // A hostile or merely broken report can put a throwing getter here.
+    try { held = /** @type {any} */ (value)[key]; } catch { continue; }
+    shape[key] = boundNested(held, depth + 1, budget);
+  }
+  return shape;
+}
+
+/** One delegated string, bounded. Truncation is disclosed, never silent. */
+export function boundText(value) {
+  const text = typeof value === 'string' ? value : String(value ?? '');
+  return text.length > MAX_NESTED_TEXT ? `${text.slice(0, MAX_NESTED_TEXT)}… [truncated]` : text;
+}
+
+/** The subset of a delegated list that is usable as a repository-relative path. */
+function boundPathList(value) {
+  const bounded = boundNested(value ?? []);
+  if (!Array.isArray(bounded)) return [];
+  return bounded.filter((entry) => typeof entry === 'string' && entry !== '' && !isAbsolute(entry));
+}
+
+/**
  * The scripts DX5 will run **if the project declares them**, and the check each
  * one produces. The names are the framework's own conventions; a project that
  * uses different ones simply reports `not_applicable`.
@@ -122,8 +202,11 @@ export function check(entry) {
     status: entry.status,
     authority: entry.authority,
     required: entry.required ?? false,
-    evidence: entry.evidence ?? '',
-    reason: entry.reason ?? null,
+    // Both fields routinely carry text a delegate produced. Bounding them here
+    // — the one place every check is built — keeps an enormous reason out of
+    // the report without every call site remembering to.
+    evidence: boundText(entry.evidence ?? ''),
+    reason: entry.reason === null || entry.reason === undefined ? null : boundText(entry.reason),
     // Diagnostic only. Deliberately excluded from the semantic fingerprint:
     // a report that changes because the machine was busy is not comparable.
     durationMs: entry.durationMs ?? null,
@@ -238,31 +321,94 @@ export function runStep({ command, args, cwd, timeoutMs = STEP_TIMEOUT_MS, env }
  */
 export function summarize(output, rootDir) {
   const lines = String(output).split('\n').map((line) => line.trim()).filter(Boolean);
-  // The last lines are where a runner puts its verdict.
-  const tail = lines.slice(-6).join(' | ');
-  return redact(tail, rootDir).slice(0, MAX_SUMMARY);
+  // The last lines are where a runner puts its verdict — usually. A JSON
+  // report ends in closing braces, and a suite whose fixtures print ends in
+  // fixture noise, so the tail alone published
+  // `], | "database": "created empty in a temporary copy" | },` as the reason a
+  // package failed. Prefer the lines that actually carry a verdict, and fall
+  // back to the tail only when none does.
+  const strong = lines.filter((line) => STRONG_VERDICT.test(line));
+  const weak = strong.length > 0 ? strong : lines.filter((line) => WEAK_VERDICT.test(line));
+  const chosen = (weak.length > 0 ? weak : lines).slice(-6).join(' | ');
+  return redact(chosen, rootDir).slice(0, MAX_SUMMARY);
 }
+
+/**
+ * Two tiers, because one was wrong in both directions.
+ *
+ * The strong shapes cannot appear in a *passing* line: a TAP `not ok`, the spec
+ * reporter's mark and non-zero `fail` count, a thrown error, a JSON report's own
+ * `"status": "failed"`. The weak ones are ordinary words that appear in a test
+ * *name* as readily as in a verdict — `a hostile name cannot smuggle content`
+ * matched a prose rule and became the reason a suite failed — so they are used
+ * only when nothing stronger is present.
+ */
+const STRONG_VERDICT = /✖|\bnot ok\b|AssertionError|\w+Error:|"status":\s*"failed"|\brefused\b|\bfail\s+[1-9]/;
+const WEAK_VERDICT = /\b(?:fail(?:ed|ure|s|ing)?|refus(?:ed|es|al)|error|violat)/i;
+
+/**
+ * The one pass that decides what a path-shaped run of characters is.
+ *
+ * Alternation order is the whole design, and each branch is here because
+ * attacking the previous version produced a wrong answer:
+ *
+ * - **`url` is first, and is kept.** `https://example.com/a/b/c` is not machine
+ *   layout; it is usually the one actionable thing in a diagnostic. The general
+ *   absolute-path rule used to match from the *second* slash of `//` and
+ *   publish `https:/<path>` — a mangled URL that helps nobody and still leaks
+ *   nothing, the worst of both.
+ * - **`unc` and `win`.** A Windows absolute path contains no forward slash at
+ *   all, so every earlier rule ignored it: `C:\Users\alice\...` and
+ *   `\\fileserver\team\...` travelled into reports untouched. The redactor
+ *   claimed to remove absolute machine paths and removed only POSIX ones.
+ * - **`home` before `posix`.** A path may legally contain a space, and prose
+ *   legally follows a path after one, so no single rule can be right about
+ *   both. Under a *home or temp root* the tail is machine layout by
+ *   definition — `/home/jose gonzalez/app/x.js` published `gonzalez/app/x.js`
+ *   and with it the operator's name. So the continuation is consumed only when
+ *   the token after the space itself contains a separator; `/tmp/a/b failed to
+ *   load` keeps its prose.
+ * - **`posix` last**, unchanged in intent: two or more segments, and only when
+ *   what precedes the leading slash cannot make it relative.
+ */
+const PATH_SHAPES = new RegExp([
+  // Any scheme with a **non-empty authority**: `https://host/a/b`,
+  // `postgres://host/db`. The authority is what makes it a network location
+  // rather than machine layout, which is why `file:///home/u/x` — three
+  // slashes, empty authority, a local absolute path — deliberately does not
+  // match here and is redacted by the rules below.
+  '(?<url>\\b[A-Za-z][A-Za-z0-9+.-]+:\\/\\/[^\\s\'"<>\\/][^\\s\'"<>]*)',
+  '(?<unc>\\\\\\\\[^\\s\'"\\\\]+(?:\\\\[^\\s\'"\\\\]+)+)',
+  '(?<win>(?<![A-Za-z0-9])[A-Za-z]:(?:[\\\\/][^\\s\'"\\\\/]+)+)',
+  '(?<home>(?<![\\w.])\\/(?:home|Users|root|tmp|var\\/folders|var\\/tmp|private\\/var)'
+    + '(?:\\/[^\\s\'"]+)*(?:[ ][^\\s\'"]*\\/[^\\s\'"]*)*)',
+  '(?<posix>(?<![\\w.])(?:\\/[^\\s\'"/\\\\]+){2,})',
+].join('|'), 'g');
 
 /**
  * Remove this machine from a string: the project root becomes `.`, any other
  * absolute path is replaced, and anything shaped like an assignment to a
  * secret-ish name is dropped rather than echoed.
  *
+ * A project-relative path is deliberately **kept**: `./packages/core/src/thing.js`
+ * tells a reviewer where to look and says nothing about the machine, and a
+ * redactor that eats it makes every reason useless to protect nothing.
+ *
  * @param {string} text @param {string} rootDir
  */
 export function redact(text, rootDir) {
+  // The project root first, so everything under it survives as `./a/b` rather
+  // than being swallowed by one of the absolute rules below.
   let out = String(text).split(rootDir).join('.');
-  // Only genuinely ABSOLUTE paths are replaced. A project-relative path is the
-  // most useful part of a reason — "./packages/core/src/thing.js" tells a
-  // reviewer where to look — so the lookbehind keeps `./a/b` intact while still
-  // removing `/usr/lib/...` and any other machine location.
-  //
-  // A path segment is "anything that is not whitespace, a quote or a
-  // separator". The narrower `[\w.@-]` this once used stopped at the first
-  // unusual character, so `/opt/tool+1.2/lib/run.js` published `+1.2/lib/run.js`
-  // and `/home/José/app` published the operator's name — a leak, in the one
-  // function whose job is to prevent leaks.
-  out = out.replace(/(?<![\w.])(?:\/[^\s'"/\\]+){2,}/g, '<path>');
+  out = out.replace(PATH_SHAPES, (match, ...rest) => {
+    const groups = rest[rest.length - 1];
+    if (!groups || !groups.url) return '<path>';
+    // A URL is kept, but a DSN carries its credentials in the authority —
+    // `postgres://user:hunter2@host/db` is the commonest secret in a connection
+    // error, and no name-shaped rule catches it because the variable is called
+    // DATABASE_URL.
+    return match.replace(/\/\/[^/@\s]*:[^/@\s]*@/, '//<redacted>@');
+  });
   // Two rules, deliberately not one case-insensitive rule.
   //
   // Environment-variable shape is matched case-SENSITIVELY. Folding case here
@@ -281,15 +427,75 @@ export function redact(text, rootDir) {
   return out;
 }
 
-/** Which npm scripts the project declares. Never guessed. */
-export function declaredScripts(rootDir) {
+/** Every npm script the project declares, as name → command. Never guessed. */
+export function scriptCommands(rootDir) {
   try {
     const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'));
-    const scripts = pkg && typeof pkg.scripts === 'object' && pkg.scripts ? pkg.scripts : {};
-    return new Set(Object.keys(scripts));
+    return pkg && typeof pkg.scripts === 'object' && pkg.scripts ? pkg.scripts : {};
   } catch {
-    return new Set();
+    return {};
   }
+}
+
+/** Which npm scripts the project declares. Never guessed. */
+export function declaredScripts(rootDir) {
+  return new Set(Object.keys(scriptCommands(rootDir)));
+}
+
+/** npm's own aliases, so `npm test` is followed as readily as `npm run test`. */
+const NPM_ALIASES = new Set(['test', 'start', 'stop', 'restart']);
+/** Shell sequencing this reads. Anything else is left alone rather than guessed at. */
+const SCRIPT_SEPARATORS = /&&|\|\||;|\|/;
+/** The only tokens treated as a file a script would execute. */
+const SCRIPT_FILE = /\.(?:js|mjs|cjs)$/;
+/** A script chain deeper than this is not analysed; it is also not a real project. */
+const MAX_SCRIPT_CHAIN = 16;
+
+/**
+ * The repository-relative files a declared script would execute and that are
+ * **not in this project**.
+ *
+ * A declared script whose target is absent is a different fact from a script
+ * that ran and failed, and reporting the second for the first is how the
+ * tour-composed project reads: `npm run verify` exits 1 with `MODULE_NOT_FOUND`
+ * from deep inside Node's loader, which looks like a suite failure and is not
+ * one. `scripts/tour.js` says the project it leaves behind is there to make what
+ * is proven *visible* — a read-only inspection demo — and its `package.json`
+ * nonetheless declares scripts it has no `scripts/` directory to satisfy. The
+ * honest verdict is that the script is not applicable here, said out loud.
+ *
+ * This reads the declared command; it never guesses one. Only an unambiguous
+ * `node <relative>.js` target is resolved, and `npm run x` is followed into the
+ * project's own scripts — bounded, and cycle-safe.
+ *
+ * @param {{rootDir: string, script: string, scripts: Record<string, unknown>, seen?: Set<string>}} input
+ * @returns {string[]}
+ */
+export function missingScriptTargets({ rootDir, script, scripts, seen = new Set() }) {
+  if (seen.has(script) || seen.size >= MAX_SCRIPT_CHAIN) return [];
+  seen.add(script);
+  const command = scripts?.[script];
+  if (typeof command !== 'string') return [];
+  /** @type {string[]} */
+  const missing = [];
+  for (const segment of command.split(SCRIPT_SEPARATORS)) {
+    const parts = segment.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) continue;
+    if (parts[0] === 'npm') {
+      const next = parts[1] === 'run' || parts[1] === 'run-script' ? parts[2]
+        : NPM_ALIASES.has(parts[1]) ? parts[1] : null;
+      if (next) missing.push(...missingScriptTargets({ rootDir, script: next, scripts, seen }));
+      continue;
+    }
+    if (parts[0] !== 'node' && parts[0] !== process.execPath) continue;
+    // The first non-flag token is the entry point. `--test-reporter=spec` and
+    // `-e` are flags, not files, and a script that only passes flags names no
+    // target at all.
+    const target = parts.slice(1).find((token) => !token.startsWith('-'));
+    if (!target || isAbsolute(target) || !target.includes('/') || !SCRIPT_FILE.test(target)) continue;
+    if (!existsSync(join(rootDir, target))) missing.push(target);
+  }
+  return [...new Set(missing)].sort();
 }
 
 /**
@@ -316,15 +522,51 @@ export function worktreeState(rootDir, run = defaultGit) {
  * `.gitignore`d build output, which is exactly the line we want: build output
  * is not source.
  *
+ * `-z` rather than the default line format, because git *quotes and escapes* a
+ * path containing a space, a quote or a non-ASCII byte in the default one — so
+ * `src/caf\303\251.js` and `src/café.js` were two different strings depending
+ * on which sample they landed in, and a file with an awkward name could look
+ * like it had been created and deleted by the same run.
+ *
+ * Each entry keeps its two status columns. Comparing paths alone cannot see a
+ * file the operator had *modified* and a delegate then *deleted*: the path is
+ * in both samples, so the run was reported as having changed nothing at all.
+ *
  * @param {string} rootDir
  */
 function defaultGit(rootDir) {
   const inside = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: rootDir, encoding: 'utf8' });
   if (inside.status !== 0) return null;
-  const changed = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: rootDir, encoding: 'utf8' });
+  const changed = spawnSync('git', ['status', '--porcelain', '-z', '--untracked-files=all'], {
+    cwd: rootDir, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
+  });
   if (changed.status !== 0) return null;
-  // "XY path" — drop the two status columns and their separating space.
-  return (changed.stdout ?? '').split('\n').map((line) => line.slice(3)).join('\n');
+  const fields = String(changed.stdout ?? '').split('\0');
+  const entries = [];
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index];
+    if (!field) continue;
+    // "XY path". A rename or copy is followed by its source path in its own
+    // NUL-separated field, which is consumed here rather than mistaken for a
+    // second changed file.
+    const status = field.slice(0, 2);
+    if (status[0] === 'R' || status[0] === 'C') index += 1;
+    entries.push(`${status}\t${field.slice(3)}`);
+  }
+  return entries.join('\n');
+}
+
+/**
+ * One sample line as its status and its path. A line with no status column —
+ * which is what an injected sampler in a test naturally produces — is a path
+ * whose status is simply unknown, and comparing two unknowns by path is the
+ * behaviour that was there before.
+ *
+ * @param {string} line
+ */
+function sampled(line) {
+  const tab = line.indexOf('\t');
+  return tab === -1 ? { status: '', path: line } : { status: line.slice(0, tab), path: line.slice(tab + 1) };
 }
 
 /**
@@ -347,8 +589,9 @@ export async function projectVerifyCommand(options = {}) {
   // Am I already running inside a `project verify`? The marker is set on every
   // child this command spawns, so any depth below the first is recognisable.
   const outerDepth = Number.parseInt(process.env[VERIFY_DEPTH_ENV] ?? '', 10);
-  const nested = Number.isInteger(outerDepth) && outerDepth > 0;
-  const childEnv = { ...process.env, [VERIFY_DEPTH_ENV]: String((nested ? outerDepth : 0) + 1) };
+  const depth = Number.isInteger(outerDepth) && outerDepth > 0 ? outerDepth : 0;
+  const nested = depth > MAX_VERIFY_DEPTH;
+  const childEnv = { ...process.env, [VERIFY_DEPTH_ENV]: String(depth + 1) };
 
   /** @type {any[]} */
   const checks = [];
@@ -382,7 +625,7 @@ export async function projectVerifyCommand(options = {}) {
     authority: 'project-doctor',
     required: true,
     evidence: `crm project doctor: ${doctorFailed.length} failure(s), ${doctorWarned.length} warning(s)`,
-    reason: doctorFailed.length === 0 ? null : doctorFailed.map((entry) => entry.id).sort().join(', '),
+    reason: doctorFailed.length === 0 ? null : doctorFailed.map((entry) => boundText(entry.id)).sort().join(', '),
   }));
   for (const warned of doctorWarned) {
     checks.push(check({
@@ -394,7 +637,11 @@ export async function projectVerifyCommand(options = {}) {
       reason: warned.reason ?? null,
     }));
   }
-  evidence.push({ kind: 'doctor', status: doctorReport.status, fingerprint: doctorReport.fingerprint ?? null });
+  evidence.push({
+    kind: 'doctor',
+    status: boundNested(doctorReport.status),
+    fingerprint: boundNested(doctorReport.fingerprint ?? null),
+  });
 
   const blocked = doctorFailed.length > 0;
   if (blocked) {
@@ -414,7 +661,7 @@ export async function projectVerifyCommand(options = {}) {
   } else {
     const inspected = await inspect({ rootDir, json: true, capture: true });
     const report = inspected.report;
-    inspectionFingerprint = report?.inspectionFingerprint ?? null;
+    inspectionFingerprint = boundNested(report?.inspectionFingerprint ?? null);
     const problemCount = (report?.problems ?? []).length;
     checks.push(check({
       code: 'application.inspect',
@@ -423,7 +670,7 @@ export async function projectVerifyCommand(options = {}) {
       authority: 'app-inspect',
       required: true,
       evidence: report ? `${(report.packages ?? []).length} package(s), ${problemCount} problem(s)` : 'no report',
-      reason: problemCount === 0 ? null : (report.problems ?? []).map((p) => p.code).sort().join(', '),
+      reason: problemCount === 0 ? null : (report.problems ?? []).map((p) => boundText(p?.code)).sort().join(', '),
     }));
     evidence.push({ kind: 'inspection', fingerprint: inspectionFingerprint });
   }
@@ -446,6 +693,23 @@ export async function projectVerifyCommand(options = {}) {
   const gradedPlans = planChecks.filter((entry) => entry.status !== 'not_applicable');
   const failedPlans = gradedPlans.filter((entry) => entry.status === 'failed');
   const stalePlans = gradedPlans.filter((entry) => entry.status === 'warning');
+  // A malformed plan and a stale *required* plan are both `failed` to DX1, and
+  // a reader needs to be told which. DX1 attaches the binding problems it found
+  // to a plan it could parse, and cannot attach them to one it could not — so
+  // the presence of that array is the distinction, taken from the authority
+  // rather than guessed at from the message.
+  const malformedPlans = failedPlans.filter((entry) => !Array.isArray(entry.evidence?.problems));
+  const staleRequiredPlans = failedPlans.filter((entry) => Array.isArray(entry.evidence?.problems));
+  const graded = [
+    staleRequiredPlans.length > 0 ? `${staleRequiredPlans.length} declared-required and no longer binding` : null,
+    stalePlans.length > 0 ? `${stalePlans.length} declared-current and no longer binding` : null,
+    malformedPlans.length > 0 ? `${malformedPlans.length} malformed` : null,
+  ].filter(Boolean);
+  // Whether the project has plans at all is a different fact from whether it
+  // declared any, and conflating them is what produced "this project declares
+  // no plan as current" about a project whose single current plan had gone
+  // stale. `NO_SOLUTION_PLANS_FOUND` is DX1's own code for the first.
+  const noPlansAtAll = planChecks.some((entry) => entry.reason === 'NO_SOLUTION_PLANS_FOUND');
   checks.push(check({
     code: 'plans.current',
     category: 'plans',
@@ -458,10 +722,15 @@ export async function projectVerifyCommand(options = {}) {
     authority: 'solution-plan',
     required: true,
     evidence: gradedPlans.length === 0
-      ? 'this project declares no plan; an undeclared plan is graded by nobody'
-      : `${gradedPlans.length} declared plan(s) graded, ${stalePlans.length} declared-current and no longer binding`,
-    reason: gradedPlans.length === 0 ? 'NO_DECLARED_PLANS'
-      : [...failedPlans, ...stalePlans].map((e) => e.id).sort().join(', ') || null,
+      ? (noPlansAtAll
+        ? 'this project has no solution plan at all'
+        : `${planChecks.length} plan(s) found, none declared current or required; an undeclared plan is a historical document and is graded by nobody`)
+      : graded.length === 0
+        ? `${gradedPlans.length} plan(s) graded, all binding`
+        : `${gradedPlans.length} plan(s) graded: ${graded.join(', ')}`,
+    reason: gradedPlans.length === 0
+      ? (noPlansAtAll ? 'NO_SOLUTION_PLANS_FOUND' : 'NO_DECLARED_PLANS')
+      : [...failedPlans, ...stalePlans].map((e) => boundText(e.id)).sort().join(', ') || null,
   }));
 
   // ---- 4. package conformance ---------------------------------------------
@@ -477,9 +746,20 @@ export async function projectVerifyCommand(options = {}) {
   // all. Package conformance then reported `not_applicable` claiming "none
   // with local source in this project" about packages whose source was right
   // there. Use the doctor's answer instead of recomputing it wrongly.
-  const composedPaths = doctorReport.project?.packagesComposed ?? [];
+  //
+  // There is **no allowlist of package names** anywhere in this selection. Every
+  // path the doctor resolved and that exists on disk is graded, whether it is a
+  // first-party package under `packages/` or a customer-authored one under
+  // `examples/custom-packages/`.
+  const composedPaths = boundPathList(doctorReport.project?.packagesComposed);
   const candidates = discoverCandidatePackages(rootDir).map((entry) => entry.path);
   const conformanceTargets = [...composedPaths].sort().filter((path) => existsSync(join(rootDir, path)));
+  // Which candidates the project did NOT compose. Comparing the two *lengths*
+  // was wrong: a project with two candidates of which one is composed, plus
+  // four composed first-party packages, has 2 candidates and 5 targets, so the
+  // comparison said "nothing uncomposed" and the inventory evidence vanished
+  // exactly when it had something to say. It is a set difference, not a count.
+  const uncomposedCandidates = candidates.filter((path) => !conformanceTargets.includes(path)).sort();
 
   if (blocked) {
     checks.push(check({
@@ -515,17 +795,18 @@ export async function projectVerifyCommand(options = {}) {
       }));
     }
   }
-  if (candidates.length > conformanceTargets.length) {
+  if (uncomposedCandidates.length > 0) {
     evidence.push({
       kind: 'packages',
       composed: [...composedPaths].sort(),
-      uncomposedCandidates: candidates.filter((path) => !conformanceTargets.includes(path)).sort(),
+      uncomposedCandidates,
       note: 'an uncomposed package is inventory, not a verification target',
     });
   }
 
   // ---- 5. the project's own declared suites --------------------------------
-  const scripts = declaredScripts(rootDir);
+  const commands = scriptCommands(rootDir);
+  const scripts = new Set(Object.keys(commands));
   for (const { script, code, required } of DECLARED_SCRIPTS) {
     if (!scripts.has(script)) {
       checks.push(check({
@@ -552,6 +833,24 @@ export async function projectVerifyCommand(options = {}) {
         code, category: 'suite', status: 'failed', authority: 'project-script', required,
         evidence: `npm run ${script}`, reason: 'RECURSIVE_VERIFY_REFUSED',
       }));
+      continue;
+    }
+    // A script whose entry point is not in this project cannot be run, and
+    // running it anyway reports a loader error as though the suite had failed.
+    // Not applicable, said out loud — and named as a problem, because a
+    // `package.json` that declares what it cannot satisfy is a defect in the
+    // project, not a silent pass.
+    const absentTargets = missingScriptTargets({ rootDir, script, scripts: commands });
+    if (absentTargets.length > 0) {
+      checks.push(check({
+        code, category: 'suite', status: 'not_applicable', authority: 'project-script', required,
+        evidence: `npm run ${script} would execute ${absentTargets.join(', ')}, which this project does not contain`,
+        reason: 'SCRIPT_TARGET_MISSING',
+      }));
+      problems.push({
+        code: 'DECLARED_SCRIPT_TARGET_MISSING',
+        message: `this project's package.json declares a "${script}" script whose entry point (${absentTargets.join(', ')}) is not in the project, so the script cannot run. It was not attempted: a loader error from a file that was never here is not evidence about the suite. Nothing was guessed or substituted`,
+      });
       continue;
     }
     const result = await step({ command: 'npm', args: ['run', script, '--silent'], cwd: rootDir, env: childEnv });
@@ -586,16 +885,20 @@ export async function projectVerifyCommand(options = {}) {
       evidence: 'not a git checkout, so "changed while verifying" has no meaning here', reason: 'NOT_A_GIT_CHECKOUT',
     }));
   } else {
-    const before = new Set(worktreeBefore);
-    const after = new Set(worktreeAfter);
-    const caused = worktreeAfter.filter((path) => !before.has(path));
+    const before = new Map(worktreeBefore.map(sampled).map((entry) => [entry.path, entry.status]));
+    const after = new Map(worktreeAfter.map(sampled).map((entry) => [entry.path, entry.status]));
+    // A path is the run's doing when it is new, **or** when it was already dirty
+    // and the *kind* of dirty changed — a file the operator had modified and a
+    // delegate then deleted keeps its path in both samples and is otherwise
+    // invisible.
+    const caused = [...after.keys()].filter((path) => !before.has(path) || before.get(path) !== after.get(path));
     // A path that was dirty before and is clean now means something *undid* an
     // operator's uncommitted work. That is the failure the "never repaired"
     // promise is about, and until now nothing could have detected it.
-    const reverted = worktreeBefore.filter((path) => !after.has(path));
+    const reverted = [...before.keys()].filter((path) => !after.has(path));
     evidence.push({
       kind: 'worktree',
-      dirtyBeforeVerify: [...worktreeBefore],
+      dirtyBeforeVerify: [...before.keys()],
       changedByVerify: caused,
       revertedByVerify: reverted,
       note: 'sampled before and after the run; git-ignored build output is excluded by design',
@@ -604,17 +907,17 @@ export async function projectVerifyCommand(options = {}) {
     if (caused.length === 0 && reverted.length === 0) {
       checks.push(check({
         code: 'worktree.clean', category: 'worktree', status: 'passed', authority: 'git',
-        evidence: worktreeBefore.length === 0
+        evidence: before.size === 0
           ? 'the tree was clean before the run and nothing changed while verifying'
-          : `${worktreeBefore.length} path(s) were already modified before the run; verification changed none of them`,
-        reason: worktreeBefore.length === 0 ? null : 'DIRTY_BEFORE_VERIFY',
+          : `${before.size} path(s) were already modified before the run; verification changed none of them`,
+        reason: before.size === 0 ? null : 'DIRTY_BEFORE_VERIFY',
       }));
     } else {
       // Reported, never repaired. A verification command that silently resets
       // the thing it is verifying is worse than one that tells you.
       checks.push(check({
         code: 'worktree.clean', category: 'worktree', status: 'warning', authority: 'git',
-        evidence: `${caused.length} path(s) changed and ${reverted.length} reverted while verifying; ${worktreeBefore.length} were already dirty beforehand`,
+        evidence: `${caused.length} path(s) changed and ${reverted.length} reverted while verifying; ${before.size} were already dirty beforehand`,
         reason: [...caused, ...reverted].slice(0, 10).join(', '),
       }));
       if (caused.length > 0) {
