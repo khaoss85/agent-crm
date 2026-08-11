@@ -192,6 +192,40 @@ artifacts disappears. An editorial calendar is still not published content.
 - **No case studies.** They require builds that have happened.
 - **No "customers" or "used by".** There are none.
 
+## 7. The measured number, and the one place it lives
+
+Every number this site publishes about the test suite resolves from a single block in
+`site/claims.json`:
+
+```json
+"measuredAgainst": {
+  "date": "…", "sha": "…", "command": "npm run verify",
+  "tests": 0, "failures": 0,
+  "testFiles": 0,          // *.test.js files at that commit
+  "testsTree": "…"         // the git tree id of tests/ at that commit
+}
+```
+
+Two rules hold it (ADR-027), both enforced by `scripts/site-check.js`.
+
+**The commit must be one this checkout descends from.** Not "an object with that id
+exists" — that was the old check, and a commit pushed to an unrelated branch satisfies
+it. `scripts/measurement.js` runs `git merge-base --is-ancestor` and reports three
+distinct outcomes: *missing*, *not an ancestor*, or *facts that do not match the tree it
+names*. `testsTree` is what gives the third one teeth: the cheapest way to make a stale
+ledger go green is to move the SHA forward and leave the numbers, and the fingerprint
+refuses it. Where the checkout cannot know — a shallow clone, or no `.git` at all — the
+gate says *history unavailable* and fails rather than passing quietly, which is why the
+`public-claims` job checks out with `fetch-depth: 0`.
+
+**No surface may type a count.** A page states it as `{{measured.tests}}` and the build
+resolves it, exactly as it states the product name as `{{brand.name}}`. Copy that cannot
+carry a token — the README, `/answers.json` served raw to a machine, a marketing
+document — says what the verification gate proves instead of how many tests it ran. The
+scan covers the README, the ledger's own prose and repo facts, `site/*.json`, the
+templates and `docs/marketing/`. Re-measure with `node scripts/measure-suite.js --apply`,
+which refuses a dirty tree and reads the numbers out of a real run; do not edit them.
+
 ## Related
 
 `CONTENT_PILLARS.md` (what to write) · `CONTENT_PRODUCTION.md` (per-channel cadence) ·
