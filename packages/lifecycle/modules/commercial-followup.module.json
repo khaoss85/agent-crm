@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "commercial-followup",
-  "description": "A governed handoff asking Commercial to do work arising from a renewal or expansion decision. It is a request, never an instruction: it creates no quote, order or contract and mutates no signed record. It has an exit — resolved externally or withdrawn — so it can never become a dead-end terminal state.",
+  "description": "A governed handoff asking Commercial to do work arising from a renewal or expansion decision. It is a request, never an instruction: it creates no quote, order or contract and mutates no signed record. It has an exit — resolved externally or withdrawn — so it can never become a dead-end terminal state. Its commercial baseline is carried as grouped evidence (currency, charge type, interval and interval count) and never as one summed number: no total is computed across recurrences or currencies, and no FX is applied.",
   "fields": [
     { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
     { "name": "contractId", "type": "string", "index": true, "writable": "managed" },
@@ -11,6 +11,11 @@
     { "name": "summary", "type": "string", "writable": "managed" },
     { "name": "currency", "type": "string", "writable": "managed" },
     { "name": "baselineNetAmountCents", "type": "integer", "writable": "managed" },
+    { "name": "baselineChargeType", "type": "enum", "values": ["one_time", "recurring"], "writable": "managed" },
+    { "name": "baselineInterval", "type": "enum", "values": ["month", "year"], "writable": "managed" },
+    { "name": "baselineIntervalCount", "type": "integer", "writable": "managed" },
+    { "name": "baselineGroupCount", "type": "integer", "writable": "managed" },
+    { "name": "baselineGroupsJson", "type": "string", "writable": "managed" },
     { "name": "requestedBy", "type": "string", "writable": "managed" },
     { "name": "requestedAt", "type": "timestamp", "writable": "managed" },
     { "name": "resolutionReason", "type": "string", "writable": "managed" },

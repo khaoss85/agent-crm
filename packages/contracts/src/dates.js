@@ -1,6 +1,6 @@
 // @ts-check
 
-import { ValidationError } from '../../core/index.js';
+import { ValidationError, calendarDaysBetween, requireCalendarDate } from '../../core/index.js';
 
 /**
  * Commercial term boundaries are **calendar dates**, not instants.
@@ -20,7 +20,6 @@ import { ValidationError } from '../../core/index.js';
  * different kind of fact and use the framework's existing `nowIso()`.
  */
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export const MAX_TERM_DAYS = 3_650; // ten years; a bound, not a policy
 export const MAX_NOTICE_DAYS = 365;
 const MAX_REASON = 300;
@@ -41,24 +40,28 @@ export const TERMS_NOTE =
  * into July 1, so a parsed date that does not reproduce its input exactly is
  * not a real calendar date.
  *
- * @param {unknown} value @param {string} field
+ * The rule now lives once, in `packages/core`, and is re-exported here so
+ * M12's public surface is unchanged. It was independently re-implemented in
+ * four packages before that; a validator is a runtime primitive with no domain
+ * vocabulary in it, which is the ADR-018 test for what core may own.
  */
-export function requireCalendarDate(value, field) {
-  if (typeof value !== 'string' || !DATE_RE.test(value)) {
-    throw new ValidationError(`${field} must be a calendar date (YYYY-MM-DD)`, { field });
-  }
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
-    throw new ValidationError(`${field} is not a real calendar date`, { field });
-  }
-  return value;
-}
+export { requireCalendarDate };
 
-/** Whole days between two calendar dates (b − a); both must be canonical. */
+/**
+ * Whole days between two calendar dates (b − a); both must be canonical.
+ *
+ * Callers here have already validated both ends, so a `null` from the shared
+ * helper would be unreachable — it is treated as a programming error rather
+ * than folded into the arithmetic as a zero.
+ *
+ * @param {string} a @param {string} b
+ */
 export function daysBetween(a, b) {
-  const start = Date.parse(`${a}T00:00:00.000Z`);
-  const end = Date.parse(`${b}T00:00:00.000Z`);
-  return Math.round((end - start) / 86_400_000);
+  const days = calendarDaysBetween(a, b);
+  if (days === null) {
+    throw new ValidationError('daysBetween requires two canonical calendar dates', { field: 'termEndDate' });
+  }
+  return days;
 }
 
 /**
