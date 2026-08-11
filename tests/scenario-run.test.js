@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
   CLAIM_OUTCOMES, JOBS_PATH, LIMITATIONS, OBSERVATION_STATUSES, SCENARIO_RUN_CONTRACT,
-  indexComposition, loadJobsIndex, resolveScenarioArgument, scenarioRunCommand,
+  indexComposition, loadJobsIndex, planValid, resolveScenarioArgument, scenarioRunCommand,
 } from '../packages/cli/src/scenario-run-command.js';
 import { JOURNEYS, RECURSION_ENV, journeyMetrics, parseTrailingJson, runJourney } from '../packages/cli/src/scenario-journey.js';
 import { safeMessage } from '../packages/cli/src/safe-text.js';
@@ -636,4 +636,53 @@ test('the shipped scenario runs for real, and earns exactly what it claims', { t
   const published = JSON.parse(readFileSync(join(repoRoot, 'docs/benchmarks/jobs.json'), 'utf8'));
   const status = new Map(published.jobs.map((job) => [job.id, job.status]));
   assert.equal(status.get(partial.job), 'partially supported', 'the index must be untouched by the run');
+});
+
+// --- the project boundary is canonical, not lexical ---------------------------
+
+test('a cited plan that is a symlink out of the project is refused', (t) => {
+  // The guard was `resolve(root, cited).startsWith(root + sep)` — a string
+  // comparison, which a symlink walks straight through. `safeRelativePath`
+  // cannot catch it either: `docs/plans/x.json` has no `..`, no absolute prefix
+  // and no scheme. It is a perfectly well-formed relative path that reads
+  // somewhere else. ADR-026 already requires canonicalization before this
+  // boundary is enforced; this asserts the scenario runner obeys the same rule.
+  const outside = mkdtempSync(join(tmpdir(), 'accordo-scenario-outside-'));
+  const root = mkdtempSync(join(tmpdir(), 'accordo-scenario-root-'));
+  t.after(() => {
+    rmSync(outside, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const secret = join(outside, 'outside.plan.json');
+  writeFileSync(secret, JSON.stringify({ solutionPlanContract: 1, id: 'outside', goal: 'not this project' }));
+  mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
+  symlinkSync(secret, join(root, 'docs', 'plans', 'escape.json'));
+
+  const base = { step: 'plan', index: 0, kind: 'plan.valid' };
+  const result = planValid(base, { kind: 'plan.valid', plan: 'docs/plans/escape.json' }, root);
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.actual, 'refused');
+  assert.match(result.reason, /outside the project/);
+  assert.doesNotMatch(JSON.stringify(result), /not this project/, 'nothing from outside the project may reach the report');
+});
+
+test('a cited plan reached through a symlink that stays inside the project is still read', (t) => {
+  // The fix must refuse the escape, not every link. A link to a file under the
+  // same root is inside the boundary and has to keep working, or the rule
+  // becomes "no symlinks", which is a different and larger claim.
+  const root = mkdtempSync(join(tmpdir(), 'accordo-scenario-inside-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
+  mkdirSync(join(root, 'examples'), { recursive: true });
+  const real = join(root, 'examples', 'real.plan.json');
+  writeFileSync(real, JSON.stringify({ solutionPlanContract: 1, id: 'inside', goal: 'x' }));
+  symlinkSync(real, join(root, 'docs', 'plans', 'inside.json'));
+
+  const base = { step: 'plan', index: 0, kind: 'plan.valid' };
+  const result = planValid(base, { kind: 'plan.valid', plan: 'docs/plans/inside.json' }, root);
+
+  assert.notEqual(result.actual, 'refused', `an in-project link must not be refused: ${result.reason}`);
 });

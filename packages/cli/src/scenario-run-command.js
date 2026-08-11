@@ -1,7 +1,7 @@
 // @ts-check
 
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { canonicalJson, inspectionFingerprint, parseSolutionPlan, validateSolutionPlan, MAX_PLAN_BYTES } from '../../core/index.js';
@@ -659,9 +659,13 @@ function composed(base, declared, index) {
  * — nothing in this framework executes one, which is what AX2's own validator
  * enforces and what this scenario contract enforces again.
  *
+ * Exported so a test can attack the project boundary directly. Reaching it
+ * through a whole run would compose an application first, which puts minutes
+ * between the attack and its answer and hides which guard actually refused.
+ *
  * @param {any} base @param {any} declared @param {string} rootDir
  */
-function planValid(base, declared, rootDir) {
+export function planValid(base, declared, rootDir) {
   const relative = safeRelativePath(declared.plan);
   const expected = expectation(declared);
   if (relative === null) {
@@ -674,6 +678,29 @@ function planValid(base, declared, rootDir) {
   const stat = statSync(path, { throwIfNoEntry: false });
   if (!stat || !stat.isFile()) {
     return { ...base, status: 'failed', expected, actual: 'absent', reason: `no such plan file: ${relative}` };
+  }
+  // The check above is lexical, and a lexical check cannot see a symlink: a cited
+  // path with no `..` in it, resolving under the root by string comparison, still
+  // reads whatever it points at. ADR-026 already settled this for the publication
+  // assembler — canonicalize, then enforce the boundary — and the same rule has to
+  // hold here, because "it is read as a document and never executed" is a claim
+  // about *which* document, not only about not running it.
+  let realPath;
+  let realRoot;
+  try {
+    realPath = realpathSync(path);
+    realRoot = realpathSync(rootDir);
+  } catch (error) {
+    return { ...base, status: 'failed', expected, actual: 'unreadable', reason: safeMessage(error, rootDir) };
+  }
+  if (!(realPath === realRoot || realPath.startsWith(realRoot + sep))) {
+    return {
+      ...base,
+      status: 'failed',
+      expected,
+      actual: 'refused',
+      reason: 'the cited path is a link that resolves outside the project',
+    };
   }
   if (stat.size > MAX_PLAN_BYTES) {
     return { ...base, status: 'failed', expected, actual: 'too large', reason: `a solution plan must be at most ${MAX_PLAN_BYTES} bytes` };

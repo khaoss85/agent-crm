@@ -270,6 +270,17 @@ POSIX path with no `..` segment, no absolute prefix, no null byte and no
 backslash, resolved under the project root and refused if it escapes — and it is
 only ever *read and validated as a document*, never executed.
 
+**Adversarial-review correction (2026-08-11).** The escape check was lexical:
+`resolve(root, cited).startsWith(root + sep)`, a string comparison a symlink
+walks straight through. `safeRelativePath` could not catch it either, because
+the cited value is a perfectly well-formed relative path — the link is in the
+filesystem, not in the string. Confirmed by probe: a link under `docs/plans/`
+pointing at a file outside the checkout passed both guards and was read. The
+boundary is now enforced on `realpathSync` of both the cited path and the root,
+which is the rule ADR-026 already states for the publication assembler. Two
+regression tests hold it in both directions: an escaping link is refused with
+nothing of its content in the report, and an in-project link is still read.
+
 ---
 
 ## 7. Not reproducing the six DX5 defects

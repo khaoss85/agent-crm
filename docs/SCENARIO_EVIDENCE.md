@@ -104,7 +104,13 @@ refuses the same thing, in three independent layers:
    interpreter or an environment variable. The single field that names a file —
    a Solution Plan citation — is read and validated as a document, never
    executed, and is refused if it is absolute, contains `..`, uses a backslash
-   or a URL scheme, or resolves outside the project.
+   or a URL scheme, or resolves outside the project. "Outside the project" is
+   decided on the **canonical** path, not the written one: a lexical check
+   cannot see a symlink, and `docs/plans/x.json` can be a well-formed relative
+   path that reads somewhere else entirely. ADR-026 settled this for the
+   publication assembler; the same rule holds here. A link that stays inside the
+   project is still followed — the boundary is where the bytes are, not whether
+   a link was used to reach them.
 
 **A document with any problem never starts a journey.** The refusal costs
 nothing and happens first.
