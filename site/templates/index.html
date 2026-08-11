@@ -3,7 +3,7 @@
 <head>
 {{include:head.html}}
   <title>{{brand.name}} — the framework coding agents build CRMs with</title>
-  <meta name="description" content="{{brand.promise}} An open-source framework Claude Code and Codex use to generate a CRM as code you own: deterministic workflows, human approvals, audit and trace." />
+  <meta name="description" content="{{brand.promise}} An open-source framework Claude Code, Codex and Gemini CLI use to generate a CRM as code you own: deterministic workflows, human approvals, audit and trace." />
 {{page.seo}}
 </head>
 <body>
@@ -300,8 +300,9 @@ npm run tour
         <p><strong>If the vendor disappears tomorrow, what are you left with?</strong></p>
         <p>
           With a CRM platform you configure: a runtime you now have to operate, and customization
-          expressed as metadata inside someone else's database. With this: an application in your
-          repository, in a language your team reads, with a dependency you could delete.
+          expressed as metadata inside someone else's database. With this: an application and its
+          framework source in your repository, in a language your team reads, with no hosted
+          {{brand.name}} runtime underneath it. You own that source; you do not get to stop maintaining it.
         </p>
       </blockquote>
 
@@ -337,7 +338,7 @@ npm run tour
               <td>How you get the code <span class="muted">(today)</span></td>
               <td>You do not — you configure a running platform</td>
               <td>You write it</td>
-              <td><strong>You copy the source into your project.</strong> There is no create-project CLI; the two names held on npm are empty reservations that install nothing</td>
+              <td><strong>The verified project bootstrap copies the source into your project.</strong> A deterministic <span class="mono">0.1.0</span> publication candidate exists; the live npm name is still an empty <span class="mono">0.0.1</span> reservation that installs nothing</td>
             </tr>
             <tr>
               <td>Process semantics</td>
@@ -489,23 +490,25 @@ npm run crm -- solution check my-plan.json
       <details>
         <summary>&ldquo;Own the CRM it builds&rdquo; — owned how, exactly?</summary>
         <p>
-          Today: by copying the source into your project. The one working installer copies the
-          framework packages and the app into a new directory, applies the module manifests, and
-          leaves you with a repository that has no runtime dependency on us. That is real ownership,
-          and it is <em>not</em> the same thing as <span class="mono">npm create</span> plus a
-          versioned dependency — which is what the roadmap says and what does not exist yet. The
-          practical consequence is that upgrading means merging rather than bumping a version. We
-          would rather you learn that here than after you have built on it.
+          Today: by copying the source into your project. The project bootstrap copies the
+          framework packages and the app into a new directory and leaves you with a repository
+          that needs no hosted {{brand.name}} runtime. A deterministic <span class="mono">0.1.0</span>
+          publication candidate has passed pack, offline install, inspect, doctor, tests and smoke,
+          but it is not on the registry: the live <span class="mono">npm create</span> route still
+          reaches an empty <span class="mono">0.0.1</span> placeholder. Either path vendors the
+          framework source rather than adding a versioned dependency, so upgrading means merging
+          source rather than bumping a version. We would rather you learn that here than after you
+          have built on it.
         </p>
       </details>
 
       <details>
         <summary>What happens if this project is abandoned?</summary>
         <p>
-          You keep a working application, in your repository, with no third-party runtime
-          dependencies and a database file you can open with any SQLite client. That is a deliberate
-          design constraint rather than a reassurance: the framework is a dependency you could delete
-          and still ship.
+          You keep the application and the framework source it vendors in your repository, with no
+          hosted {{brand.name}} runtime to keep paying for or contacting and a database file you can open
+          with any SQLite client. You must still maintain that source: deleting the copied framework
+          breaks the application, and ownership does not make maintenance disappear.
         </p>
       </details>
     </section>

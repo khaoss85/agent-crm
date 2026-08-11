@@ -2,7 +2,7 @@
   "name": "accordo",
   "version": "0.1.0",
   "private": true,
-  "description": "Agent-native CRM framework: CRM modules, deterministic workflows, MCP, CLI, trace and audit.",
+  "description": "Agent-native framework for custom CRM, Customer Hub and policy-governed Smart CRM code. For CDP + CRM, Accordo is the process layer, not ingestion, identity resolution or segmentation.",
   "type": "module",
   "engines": {
     "node": ">=22.16.0"
@@ -27,6 +27,7 @@
     "site:build": "node scripts/site-build.js",
     "site:check": "npm run site:build && node scripts/site-check.js",
     "distribution:check": "node scripts/distribution-check.js",
+    "distribution:assemble-create": "node scripts/assemble-create-accordo.js",
     "gtm:check": "npm run site:check && node scripts/generate-llms.js --check && npm run distribution:check && npm run surface:check",
     "site:shots": "npm run site:build && node scripts/site-shots.js",
     "tour": "node --no-warnings scripts/tour.js",
@@ -38,6 +39,10 @@
   },
   "keywords": [
     "crm",
+    "customer-hub",
+    "smart-crm",
+    "cdp-plus-crm",
+    "customer-data-platform",
     "mcp",
     "agents",
     "codex",

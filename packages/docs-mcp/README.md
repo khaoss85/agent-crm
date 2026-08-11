@@ -101,6 +101,37 @@ Client configuration:
 }
 ```
 
+## Remote Streamable HTTP transport
+
+The same server can be exposed through the stateless Web handler in
+`src/http.js`. The repository's Vercel entry point is `POST /api/mcp`; it adds no
+tool, claim source or server implementation of its own. A deployed client uses:
+
+```bash
+claude mcp add --transport http accordo-docs https://accordo.dev/api/mcp
+```
+
+```json
+{
+  "mcpServers": {
+    "accordo-docs": {
+      "type": "http",
+      "url": "https://accordo.dev/api/mcp"
+    }
+  }
+}
+```
+
+That production URL is an intended deployment contract, not proof that the
+current deployment serves it. Verify it with a live `tools/list` receipt before
+publishing either snippet as an install instruction.
+
+The handler supports stateless MCP `2026-07-28` and the legacy protocol shapes
+already negotiated by `server.js`. It validates `Origin`, content negotiation,
+the 1 MiB body bound and modern routing headers before the JSON-RPC request can
+reach a tool. It stores no request body and logs only method, HTTP status and
+duration. The public privacy boundary lives at `/privacy.html`.
+
 There is no environment variable to set and no database path to supply. The server
 resolves its documentation root from its own location.
 
@@ -113,7 +144,9 @@ This server is *prepared* for the Anthropic Connectors Directory and equivalent
 listings — it serves documentation rather than customer records, so it needs none
 of the CRM's auth or tenancy, and it can be reviewed without a production spine.
 
-Nothing here submits it anywhere. The public name is chosen and the domain registered,
+Nothing here submits it anywhere. A preview deployment may prove the transport,
+but promotion to the production domain and every directory submission remain
+human decisions. The public name is chosen and the domain registered,
 but the npm package and scope are still unclaimed and no trademark screen has been run
 (`site/brand.json`) — nothing is published to a registry, and
 every external submission is a human decision

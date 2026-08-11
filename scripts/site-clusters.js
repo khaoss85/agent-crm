@@ -35,8 +35,9 @@
  * HTML somebody then has to trace back to the sentence that produced it. Two lists is the cost; an
  * author who can find the sentence is the return. It caught one on its first run.
  *
- * The blog engine ships and the blog ships empty (SITE_ARCHITECTURE.md §5). The front-matter gate is
- * mechanical, so publishing the first piece is a one-file commit rather than a project.
+ * The blog engine originally shipped empty (SITE_ARCHITECTURE.md §5). Its
+ * front-matter gate is mechanical, so each real piece remains a one-file,
+ * evidence-bound publication rather than a placeholder or an editorial plan.
  */
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -76,9 +77,9 @@ const CLUSTERS = [
     title: 'Agent tools: what a coding agent can run in this checkout',
     lede:
       `<p>Each page names the command, quotes what it printed in this repository, and states what its report
-      does not prove. <strong>Nothing here is installable.</strong> There is no create-project CLI and no
-      published package: the two names on the registry are empty reservations, so ownership means copying
-      source and upgrading means merging (<span class="mono">site/brand.json</span>, L-08). The MCP server is
+      does not prove. <strong>Nothing here installs from npm.</strong> The project bootstrap scaffolds a working project
+      from a checkout of this repository; the two names on the registry are still empty reservations, so
+      ownership means copying source and upgrading means merging (<span class="mono">site/brand.json</span>, L-08). The MCP server is
       stdio and local only, and it inherits the authority of the process that starts it.</p>`,
     description:
       'Inspect, plan, diagnose, scaffold, conformance-test, quality gates, falsify, install: the commands a coding agent runs here, each with what it does not prove.',
@@ -125,6 +126,28 @@ const CLUSTERS = [
  * not installable.
  */
 const STANDING_LIMITS = ['L-01', 'L-02', 'L-04', 'L-05', 'L-03', 'L-08'];
+
+/** Closed, single-line bounds for the executable refusal receipt. */
+const REFUSAL_PROOF_FIELDS = new Map([
+  ['title', 140],
+  ['caption', 300],
+  ['request', 500],
+  ['actor', 300],
+  ['result', 160],
+]);
+
+/** Closed bounds for a two-layer responsibility map. */
+const RESPONSIBILITY_MAP_FIELDS = new Map([
+  ['title', 140],
+  ['caption', 300],
+  ['bridge', 240],
+]);
+const RESPONSIBILITY_LAYER_FIELDS = new Map([
+  ['label', 80],
+  ['name', 140],
+  ['doesNotOwn', 240],
+]);
+const RESPONSIBILITY_OWN_ITEM_MAX = 160;
 
 /** Front-matter fields a blog post must declare (SITE_ARCHITECTURE.md §5). */
 export const REQUIRED_FRONT_MATTER = ['title', 'date', 'claims', 'transcript', 'editor'];
@@ -192,6 +215,78 @@ export function buildClusterPages({ sources, ledger, jobs, brand, origin, blogDi
         if (!entry[field] || typeof entry[field] !== 'string') throw new Error(`${where}: missing ${field}`);
       }
       if (!Array.isArray(entry.sections) || entry.sections.length === 0) throw new Error(`${where}: no sections`);
+
+      if (entry.recordChain !== undefined) {
+        const chain = entry.recordChain;
+        if (!chain || typeof chain !== 'object' || Array.isArray(chain)) throw new Error(`${where}: recordChain must be an object`);
+        for (const field of ['title', 'caption']) {
+          if (!chain[field] || typeof chain[field] !== 'string') throw new Error(`${where}: recordChain is missing ${field}`);
+        }
+        if (!Array.isArray(chain.nodes) || chain.nodes.length < 2 || chain.nodes.length > 8) {
+          throw new Error(`${where}: recordChain.nodes must contain 2-8 nodes`);
+        }
+        for (const [index, node] of chain.nodes.entries()) {
+          for (const field of ['label', 'detail', 'state']) {
+            if (!node?.[field] || typeof node[field] !== 'string') throw new Error(`${where}: recordChain.nodes[${index}] is missing ${field}`);
+          }
+          if (!['working', 'partial'].includes(node.state)) {
+            throw new Error(`${where}: recordChain.nodes[${index}].state must be working or partial`);
+          }
+        }
+      }
+
+      if (entry.refusalProof !== undefined) {
+        const proof = entry.refusalProof;
+        if (!proof || typeof proof !== 'object' || Array.isArray(proof)) throw new Error(`${where}: refusalProof must be an object`);
+        for (const field of Object.keys(proof)) {
+          if (!REFUSAL_PROOF_FIELDS.has(field)) throw new Error(`${where}: refusalProof has unknown field ${field}`);
+        }
+        for (const [field, max] of REFUSAL_PROOF_FIELDS) {
+          if (!proof[field] || typeof proof[field] !== 'string') throw new Error(`${where}: refusalProof is missing ${field}`);
+          if (!proof[field].trim()) throw new Error(`${where}: refusalProof.${field} must not be blank`);
+          if (proof[field].length > max) throw new Error(`${where}: refusalProof.${field} exceeds ${max} characters`);
+          if (/[\u0000-\u001f\u007f\u2028\u2029]/u.test(proof[field])) {
+            throw new Error(`${where}: refusalProof.${field} must be one line without control characters`);
+          }
+        }
+      }
+
+      if (entry.responsibilityMap !== undefined) {
+        const map = entry.responsibilityMap;
+        if (!map || typeof map !== 'object' || Array.isArray(map)) throw new Error(`${where}: responsibilityMap must be an object`);
+        const allowed = new Set([...RESPONSIBILITY_MAP_FIELDS.keys(), 'layers']);
+        for (const field of Object.keys(map)) {
+          if (!allowed.has(field)) throw new Error(`${where}: responsibilityMap has unknown field ${field}`);
+        }
+        for (const [field, max] of RESPONSIBILITY_MAP_FIELDS) {
+          assertResponsibilityText(map[field], max, `${where}: responsibilityMap.${field}`);
+        }
+        if (!Array.isArray(map.layers) || map.layers.length !== 2) {
+          throw new Error(`${where}: responsibilityMap.layers must contain exactly 2 layers`);
+        }
+        for (const [index, layer] of map.layers.entries()) {
+          if (!layer || typeof layer !== 'object' || Array.isArray(layer)) {
+            throw new Error(`${where}: responsibilityMap.layers[${index}] must be an object`);
+          }
+          const layerAllowed = new Set([...RESPONSIBILITY_LAYER_FIELDS.keys(), 'owns']);
+          for (const field of Object.keys(layer)) {
+            if (!layerAllowed.has(field)) throw new Error(`${where}: responsibilityMap.layers[${index}] has unknown field ${field}`);
+          }
+          for (const [field, max] of RESPONSIBILITY_LAYER_FIELDS) {
+            assertResponsibilityText(layer[field], max, `${where}: responsibilityMap.layers[${index}].${field}`);
+          }
+          if (!Array.isArray(layer.owns) || layer.owns.length !== 3) {
+            throw new Error(`${where}: responsibilityMap.layers[${index}].owns must contain exactly 3 items`);
+          }
+          for (const [itemIndex, item] of layer.owns.entries()) {
+            assertResponsibilityText(
+              item,
+              RESPONSIBILITY_OWN_ITEM_MAX,
+              `${where}: responsibilityMap.layers[${index}].owns[${itemIndex}]`,
+            );
+          }
+        }
+      }
 
       // `title` is the H1 — the sentence the page argues, and often longer than a search result
       // will render. `metaTitle` is the same page named in under 60 characters for the tab, the
@@ -371,6 +466,9 @@ function spokePage({ cluster, entry, claims, limitations, jobIndex, standing, ta
       '    <section>',
       // Above the sections, deliberately. Everything below is downstream of this being read.
       boundaryBlock(entry, standing),
+      responsibilityMap(entry),
+      recordChain(entry),
+      refusalProof(entry),
       ...entry.sections.map((section) => [
         '      <div class="section-block">',
         `        <h2>${escapeHtml(section.heading)}</h2>`,
@@ -383,6 +481,93 @@ function spokePage({ cluster, entry, claims, limitations, jobIndex, standing, ta
       '  </div>',
     ].join('\n'),
   };
+}
+
+/**
+ * A semantic two-layer map for a page whose argument is division of responsibility. The fixed
+ * two-column shape is intentional: a generic card collection would not say which system owns
+ * which question, and could silently grow into a feature grid.
+ *
+ * @param {any} entry
+ */
+function responsibilityMap(entry) {
+  if (!entry.responsibilityMap) return '';
+  const map = entry.responsibilityMap;
+  return [
+    '      <figure class="responsibility-map" aria-labelledby="responsibility-map-title">',
+    '        <figcaption>',
+    '          <span class="kicker">Two layers, two questions</span>',
+    `          <strong id="responsibility-map-title">${escapeHtml(map.title)}</strong>`,
+    `          <span>${escapeHtml(map.caption)}</span>`,
+    '        </figcaption>',
+    '        <div class="responsibility-layers">',
+    ...map.layers.map((layer) => [
+      '          <article class="responsibility-layer">',
+      `            <span class="responsibility-label">${escapeHtml(layer.label)}</span>`,
+      `            <h3>${escapeHtml(layer.name)}</h3>`,
+      '            <strong class="responsibility-subhead">Owns</strong>',
+      '            <ul>',
+      ...layer.owns.map((item) => `              <li>${escapeHtml(item)}</li>`),
+      '            </ul>',
+      `            <p><strong>Does not own here:</strong> ${escapeHtml(layer.doesNotOwn)}</p>`,
+      '          </article>',
+    ].join('\n')),
+    '        </div>',
+    `        <p class="responsibility-bridge"><strong>Bridge:</strong> ${escapeHtml(map.bridge)}</p>`,
+    '      </figure>',
+  ].join('\n');
+}
+
+/**
+ * An optional executable receipt for pages whose argument is a refusal boundary. It is deliberately
+ * fixed to request, actor and result: a free-form code sample would be decoration, while these three
+ * fields state who tried what and the machine-readable outcome that stopped it.
+ *
+ * @param {any} entry
+ */
+function refusalProof(entry) {
+  if (!entry.refusalProof) return '';
+  const proof = entry.refusalProof;
+  return [
+    '      <figure class="refusal-proof" aria-labelledby="refusal-proof-title">',
+    '        <figcaption>',
+    '          <span class="kicker">The boundary, executed</span>',
+    `          <strong id="refusal-proof-title">${escapeHtml(proof.title)}</strong>`,
+    `          <span>${escapeHtml(proof.caption)}</span>`,
+    '        </figcaption>',
+    '        <div class="code refusal">',
+    `<pre><span class="c">request</span>  ${escapeHtml(proof.request)}
+<span class="c">actor</span>    <span class="s">${escapeHtml(proof.actor)}</span>
+
+<span class="bad">${escapeHtml(proof.result)}</span></pre>`,
+    '        </div>',
+    '      </figure>',
+  ].join('\n');
+}
+
+/**
+ * An optional, semantic record chain for pages whose argument is a sequence of owned records.
+ * It is an ordered list rather than decorative SVG: the same relationship remains readable to a
+ * crawler, a screen reader and a browser with styles disabled.
+ *
+ * @param {any} entry
+ */
+function recordChain(entry) {
+  if (!entry.recordChain) return '';
+  return [
+    '      <figure class="record-chain" aria-labelledby="record-chain-title">',
+    `        <figcaption><span class="kicker">Working record chain</span><strong id="record-chain-title">${escapeHtml(entry.recordChain.title)}</strong><span>${escapeHtml(entry.recordChain.caption)}</span></figcaption>`,
+    '        <ol>',
+    ...entry.recordChain.nodes.map((node) => [
+      `          <li data-state="${escapeHtml(node.state)}">`,
+      `            <span class="record-state">${node.state === 'working' ? 'Validated path' : 'Partial domain'}</span>`,
+      `            <strong>${escapeHtml(node.label)}</strong>`,
+      `            <small>${escapeHtml(node.detail)}</small>`,
+      '          </li>',
+    ].join('\n')),
+    '        </ol>',
+    '      </figure>',
+  ].join('\n');
 }
 
 /**
@@ -708,7 +893,9 @@ function blogPages({ posts, claims, standing, brand, origin }) {
       breadcrumbs([['Home', '{{page.root}}index.html'], ['Writing', null]]),
       '    <header class="cluster-hero">',
       '      <p class="eyebrow">Writing</p>',
-      '      <h1>The engine ships; the blog ships empty.</h1>',
+      posts.length === 0
+        ? '      <h1>The engine ships; the blog ships empty.</h1>'
+        : '      <h1>Writing grounded in evidence.</h1>',
       posts.length === 0
         ? `      <p><strong>There are zero posts.</strong> Nothing has been written, so nothing is listed —
         no placeholders, no editorial calendar rendered as if it were published. A post that has not been
@@ -756,6 +943,20 @@ function blogPages({ posts, claims, standing, brand, origin }) {
       description: truncate(post.summary, 300),
       jsonLd: [
         breadcrumbList(origin, [['Home', '/'], ['Writing', '/blog.html'], [post.title, `/blog/${post.slug}.html`]]),
+        {
+          '@context': 'https://schema.org',
+          '@type': 'BlogPosting',
+          headline: post.title,
+          description: post.summary,
+          datePublished: post.date,
+          dateModified: post.date,
+          author: { '@type': 'Person', name: post.editor },
+          editor: { '@type': 'Person', name: post.editor },
+          mainEntityOfPage: { '@type': 'WebPage', '@id': `${origin}/blog/${post.slug}.html` },
+          url: `${origin}/blog/${post.slug}.html`,
+          isPartOf: { '@type': 'Blog', name: `Writing — ${brand.name.value}`, url: `${origin}/blog.html` },
+          keywords: post.claims,
+        },
       ],
       body: [
         '  <div class="shell">',
@@ -884,9 +1085,26 @@ function oneLine(summary) {
 function authoredStrings(entry) {
   return [
     entry.title, entry.plainName, entry.intent, entry.summary, entry.metaDescription,
+    entry.recordChain?.title, entry.recordChain?.caption,
+    ...(entry.recordChain?.nodes ?? []).flatMap((/** @type {any} */ node) => [node.label, node.detail, node.state]),
+    entry.refusalProof?.title, entry.refusalProof?.caption, entry.refusalProof?.request,
+    entry.refusalProof?.actor, entry.refusalProof?.result,
+    entry.responsibilityMap?.title, entry.responsibilityMap?.caption, entry.responsibilityMap?.bridge,
+    ...(entry.responsibilityMap?.layers ?? []).flatMap((/** @type {any} */ layer) => [
+      layer.label, layer.name, ...(layer.owns ?? []), layer.doesNotOwn,
+    ]),
     ...(entry.boundaries ?? []),
     ...(entry.sections ?? []).flatMap((/** @type {any} */ section) => [section.heading, ...(section.body ?? [])]),
   ].filter((value) => typeof value === 'string');
+}
+
+/** @param {unknown} value @param {number} max @param {string} where */
+function assertResponsibilityText(value, max, where) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${where} must not be blank`);
+  if (value.length > max) throw new Error(`${where} exceeds ${max} characters`);
+  if (/[\u0000-\u001f\u007f\u2028\u2029]/u.test(value)) {
+    throw new Error(`${where} must be one line without control characters`);
+  }
 }
 
 /**

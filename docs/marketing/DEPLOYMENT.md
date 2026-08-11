@@ -5,6 +5,9 @@ click. Nothing here has been executed — the site is built and configured, not 
 
 ## What is configured
 
+`vercel.json` is a closed-schema deployment document, not a place for JSON
+pseudo-comments: Vercel rejects unknown top-level keys before the build starts.
+
 `vercel.json` at the repository root is the whole deployment. Vercel reads it, runs
 `npm run site:build`, and serves `site/dist`. There is no framework to detect, no bundler and no
 install step of consequence — the build is one dependency-free Node script.

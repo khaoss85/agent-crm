@@ -14,8 +14,8 @@ questions, and states its own boundary. That is the hub-and-spoke model — a pi
 page for a topic, ten to twenty spokes each owning one sub-question, every spoke
 linking back to its pillar with descriptive anchor text.
 
-We already had two clusters and did not call them that: `jobs.html` over 68 job pages,
-and `answers.html` over 14 answer pages. Both are generated from a structured source
+We already had two clusters and did not call them that: `jobs.html` over 60 job pages,
+and `answers.html` over 15 answer pages. Both are generated from a structured source
 with evidence attached to every row. **That is the pattern; the rest of the site is
 built the same way, or it is not built.**
 
@@ -31,10 +31,10 @@ with evidence paths, and pages are a rendering of it.
 |---|---|---|---|
 | **Capabilities** | `capabilities.html` | 6 | "can it do *my* commercial process?" |
 | **Agent tools** | `tools.html` | 8 | "what can my coding agent actually do here?" |
-| **Concepts** | `concepts.html` | 5 | "why is it built this way?" |
+| **Concepts** | `concepts.html` | 8 | "why is it built this way?" |
 | **Compare** | `compare.html` | 4 | "why this and not that?" |
-| **Jobs** *(exists)* | `jobs.html` | 68 | "is this specific job supported?" |
-| **Answers** *(exists)* | `answers.html` | 14 | a direct question, directly answered |
+| **Jobs** *(exists)* | `jobs.html` | 60 | "is this specific job supported?" |
+| **Answers** *(exists)* | `answers.html` | 15 | a direct question, directly answered |
 
 **Capabilities is the commercial entry point and Jobs is its evidence.** A visitor
 searching "quote approval workflow" lands on a capability page; the JTBD rows that prove
@@ -78,6 +78,33 @@ Four new sources, all in `site/`, all with the same shape. Every one is read by
       "sections": [                       // the body, in order
         { "heading": "…", "body": ["paragraph", …] }
       ],
+      "recordChain": {                    // optional; only when record order is the argument
+        "title": "…",
+        "caption": "…",
+        "nodes": [
+          { "label": "…", "detail": "…", "state": "working | partial" }
+        ]
+      },
+      "refusalProof": {                   // optional; only when a tested refusal is the argument
+        "title": "…",
+        "caption": "…",
+        "request": "POST …",
+        "actor": "{ type: … }",
+        "result": "403 …"
+      },
+      "responsibilityMap": {              // optional; only when two layers divide one job
+        "title": "…",
+        "caption": "…",
+        "bridge": "…",                   // says whether the connection actually exists
+        "layers": [                       // exactly two
+          {
+            "label": "Profile layer",
+            "name": "…",
+            "owns": ["…", "…", "…"],   // exactly three bounded responsibilities
+            "doesNotOwn": "…"
+          }
+        ]
+      },
       "boundaries": ["…"],                // REQUIRED, non-empty — what it does not do
       "claims": ["C-06"],                 // ledger ids, must exist in claims.json
       "limitations": ["L-04"],            // ledger ids, must exist in claims.json
@@ -98,6 +125,29 @@ completeness is the one thing four ledger limitations contradict.
 own sentence. If a capability has nothing in the ledger to cite, the honest page says
 what the code does and cites `docs` and `tests` — it does not invent a claim, and it
 does not get a claim added to the ledger to justify a marketing sentence.
+
+**`recordChain` is optional and semantic.** It is reserved for a page whose subject is an
+ordered chain of records the framework owns; the renderer emits an `<ol>`, not an image.
+It must contain two to eight nodes, and every node states whether that slice is a validated
+path or a partial domain. A decorative process diagram, or a chain whose order carries no
+meaning, does not clear this contract.
+
+**`refusalProof` is optional and semantic.** It is reserved for a page whose argument is a
+tested server refusal. The shape is deliberately closed: request, asserted actor and
+machine-readable result, plus a title and a caption that name the proof's scope. The
+renderer escapes every authored field and places the receipt after the mandatory boundary
+but before the essay. Every field is non-blank, single-line and bounded (`title` 140,
+`caption` 300, `request` 500, `actor` 300, `result` 160 characters); unknown fields fail
+the build. A sample response that no test asserts, or a generic code panel used only for
+visual emphasis, does not clear this contract.
+
+**`responsibilityMap` is optional and semantic.** It is reserved for a page whose argument is
+that exactly two systems or layers answer different questions. The shape is deliberately fixed:
+two layers, three owned responsibilities per layer, one explicit non-responsibility per layer and
+one bridge sentence. Every string is non-blank, single-line, bounded and escaped; unknown fields
+fail the build. The bridge sentence must say whether the connection exists — a connector line that
+silently implies an integration does not clear this contract. The CDP + CRM page uses the map to
+separate profile ownership from process ownership while stating that Accordo ships no connector.
 
 ## 4. What may not be written
 
@@ -121,17 +171,18 @@ Above the floor, three rules that no regex enforces:
 
 ## 5. The blog
 
-The blog **engine** ships; the blog ships empty.
+The blog **engine** originally shipped empty. The first post now ships from
+`site/blog/if-a-coding-agent-builds-your-crm-what-should-it-refuse-to-do.md`.
 
 `site/blog/*.md` renders through the same shell, with front-matter that must declare
 the claim ids the piece uses, the transcript it is grounded in, and the named human
 editor of record — the six gates in `docs/strategy/ORGANIC_GROWTH.md` §11, made
 mechanical. `scripts/site-clusters.js` fails the build on a post missing any of them.
 
-There are zero posts, and the index page says so rather than showing placeholders. A
-post that has not been written is not content, and an editorial calendar rendered as if
-it were published is exactly the roadmap-ware the content rules forbid. The engine
-exists so that publishing the first piece is a one-file commit rather than a project.
+The renderer still has an honest zero-post state rather than showing
+placeholders. This repository has crossed that state once: the first post names
+its claims, transcript and editor, and the build refuses it if any of those
+artifacts disappears. An editorial calendar is still not published content.
 
 ## 6. What is deliberately absent
 
@@ -140,6 +191,40 @@ exists so that publishing the first piece is a one-file commit rather than a pro
   is a decision nobody has taken (`PENDING_HUMAN_SUBMISSION.md` §4).
 - **No case studies.** They require builds that have happened.
 - **No "customers" or "used by".** There are none.
+
+## 7. The measured number, and the one place it lives
+
+Every number this site publishes about the test suite resolves from a single block in
+`site/claims.json`:
+
+```json
+"measuredAgainst": {
+  "date": "…", "sha": "…", "command": "npm run verify",
+  "tests": 0, "failures": 0,
+  "testFiles": 0,          // *.test.js files at that commit
+  "testsTree": "…"         // the git tree id of tests/ at that commit
+}
+```
+
+Two rules hold it (ADR-027), both enforced by `scripts/site-check.js`.
+
+**The commit must be one this checkout descends from.** Not "an object with that id
+exists" — that was the old check, and a commit pushed to an unrelated branch satisfies
+it. `scripts/measurement.js` runs `git merge-base --is-ancestor` and reports three
+distinct outcomes: *missing*, *not an ancestor*, or *facts that do not match the tree it
+names*. `testsTree` is what gives the third one teeth: the cheapest way to make a stale
+ledger go green is to move the SHA forward and leave the numbers, and the fingerprint
+refuses it. Where the checkout cannot know — a shallow clone, or no `.git` at all — the
+gate says *history unavailable* and fails rather than passing quietly, which is why the
+`public-claims` job checks out with `fetch-depth: 0`.
+
+**No surface may type a count.** A page states it as `{{measured.tests}}` and the build
+resolves it, exactly as it states the product name as `{{brand.name}}`. Copy that cannot
+carry a token — the README, `/answers.json` served raw to a machine, a marketing
+document — says what the verification gate proves instead of how many tests it ran. The
+scan covers the README, the ledger's own prose and repo facts, `site/*.json`, the
+templates and `docs/marketing/`. Re-measure with `node scripts/measure-suite.js --apply`,
+which refuses a dirty tree and reads the numbers out of a real run; do not edit them.
 
 ## Related
 

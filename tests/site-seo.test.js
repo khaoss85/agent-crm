@@ -27,6 +27,15 @@ const builder = join(repo, 'scripts/site-build.js');
 const brand = JSON.parse(readFileSync(join(repo, 'site/brand.json'), 'utf8'));
 const ORIGIN = `https://${brand.domain.value}`;
 
+test('the Vercel config contains no comment pseudo-field that deployment rejects', () => {
+  const config = JSON.parse(readFileSync(join(repo, 'vercel.json'), 'utf8'));
+  assert.equal(
+    Object.hasOwn(config, '$comment'),
+    false,
+    'Vercel validates vercel.json against a closed schema and rejects the otherwise harmless $comment field',
+  );
+});
+
 /**
  * Build the site into a throwaway root, optionally with brand.json edited first. The builder reads
  * `process.cwd()`, so a copied tree is all it takes — no flag, no injection point, and the real
@@ -213,6 +222,99 @@ test('the sitemap lists exactly the pages that were built', (t) => {
   }
 });
 
+test('the first article is discoverable by both people and coding agents', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+  const slug = 'if-a-coding-agent-builds-your-crm-what-should-it-refuse-to-do';
+  const title = 'If a coding agent builds your CRM, what should it refuse to do?';
+
+  assert.ok(site.pages.includes(`blog/${slug}.html`), 'the canonical article was built');
+  const index = site.read('blog.html');
+  assert.match(index, new RegExp(`href="blog/${slug}\\.html"`));
+  assert.match(index, /<h1>Writing grounded in evidence\.<\/h1>/);
+  assert.doesNotMatch(index, /<h1>The engine ships; the blog ships empty\.<\/h1>/,
+    'the populated index must not keep presenting the original empty state');
+  const article = site.read(`blog/${slug}.html`);
+  const structured = [...article.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
+    .map((match) => JSON.parse(match[1]));
+  const posting = structured.find((block) => block['@type'] === 'BlogPosting');
+  assert.ok(posting, 'the canonical article identifies itself as a BlogPosting');
+  assert.equal(posting.headline, title);
+  assert.equal(posting.datePublished, '2026-08-09');
+  assert.equal(posting.author?.name, 'Daniele Pelleri');
+  assert.equal(posting.url, `${ORIGIN}/blog/${slug}.html`);
+  const llmsEntry = `[${title}](blog/${slug}.html)`;
+  assert.ok(site.read('llms.txt').includes(llmsEntry), 'the short retrieval surface links the canonical article');
+  assert.ok(site.read('llms-full.txt').includes(llmsEntry), 'the full retrieval surface links the canonical article');
+  assert.doesNotMatch(readFileSync(join(repo, 'site/partials/footer.html'), 'utf8'), /zero posts/i,
+    'the shared footer must not describe the old empty state after the first post ships');
+});
+
+test('the agent-native CRM framework intent reuses one canonical search identity', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+
+  const path = 'concepts/customer-and-revenue-os.html';
+  assert.ok(site.pages.includes(path));
+  const html = site.read(path);
+  assert.equal(
+    /<title>([\s\S]*?)<\/title>/.exec(html)?.[1],
+    'Agent-native CRM framework for coding agents | Accordo',
+  );
+  assert.equal(canonicalOf(html), `${ORIGIN}/${path}`);
+  assert.match(metaContent(html, 'description') ?? '', /CRM framework coding agents build with/);
+  assert.match(metaContent(html, 'description') ?? '', /Not a hosted AI CRM/);
+  assert.equal(metaContent(html, 'og:url'), `${ORIGIN}/${path}`);
+
+  const structured = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
+    .map((match) => JSON.parse(match[1]));
+  assert.deepEqual(structured.map((block) => block['@type']), ['BreadcrumbList']);
+  assert.equal(
+    structured[0]?.itemListElement.at(-1)?.name,
+    'An agent-native CRM framework is something a coding agent builds with',
+  );
+});
+
+test('the Smart CRM intent has one bounded search identity', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+
+  const path = 'concepts/smart-crm.html';
+  assert.ok(site.pages.includes(path));
+  const html = site.read(path);
+  assert.equal(/<title>([\s\S]*?)<\/title>/.exec(html)?.[1], 'Smart CRM with deterministic guardrails | Accordo');
+  assert.equal(canonicalOf(html), `${ORIGIN}/${path}`);
+  assert.match(metaContent(html, 'description') ?? '', /coding agents compose the system/);
+  assert.equal(metaContent(html, 'og:url'), `${ORIGIN}/${path}`);
+
+  const structured = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
+    .map((match) => JSON.parse(match[1]));
+  assert.deepEqual(structured.map((block) => block['@type']), ['BreadcrumbList']);
+  const breadcrumb = structured.find((block) => block['@type'] === 'BreadcrumbList');
+  assert.equal(breadcrumb?.itemListElement.at(-1)?.name, 'A smart CRM knows when the agent must stop');
+});
+
+test('the CDP + CRM intent has one bounded search identity', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+
+  const path = 'concepts/cdp-plus-crm.html';
+  assert.ok(site.pages.includes(path));
+  const html = site.read(path);
+  assert.equal(/<title>([\s\S]*?)<\/title>/.exec(html)?.[1], 'CDP + CRM: profile beside process | Accordo');
+  assert.equal(canonicalOf(html), `${ORIGIN}/${path}`);
+  assert.match(metaContent(html, 'description') ?? '', /Pair a CDP profile layer/);
+  assert.equal(metaContent(html, 'og:url'), `${ORIGIN}/${path}`);
+
+  const structured = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
+    .map((match) => JSON.parse(match[1]));
+  const breadcrumb = structured.find((block) => block['@type'] === 'BreadcrumbList');
+  assert.equal(
+    breadcrumb?.itemListElement.at(-1)?.name,
+    'CDP + CRM works when profile and process stay separate',
+  );
+});
+
 test('the indexing gate flips every dependent output together, in both directions', (t) => {
   const priv = build({ repositoryStatus: 'private' });
   const pub = build({ repositoryStatus: 'public' });
@@ -287,4 +389,23 @@ test('the build receipt is not published', (t) => {
     'a build receipt nothing reads was being served with no content type and no cache policy',
   );
   assert.ok(existsSync(join(site.root, 'site/.used-claims.json')), 'it should still be written, just not into the output');
+});
+
+test('the screenshot harness drives a full Chrome binary headlessly and verifies the artifact', () => {
+  const source = readFileSync(join(repo, 'scripts/site-shots.js'), 'utf8');
+  assert.match(
+    source,
+    /headless_shell.*--headless=new/s,
+    'a full Chrome binary is not the headless shell; it needs an explicit headless mode',
+  );
+  assert.match(
+    source,
+    /Library.*Caches.*ms-playwright/s,
+    'macOS stores Playwright browsers outside the Linux-only cache this harness first searched',
+  );
+  assert.match(
+    source,
+    /if \(!existsSync\(output\)\)/,
+    'the harness must verify the artifact, not treat exit 0 as proof that Chrome wrote it',
+  );
 });

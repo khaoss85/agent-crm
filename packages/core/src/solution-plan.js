@@ -153,8 +153,13 @@ const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u2028\
 /**
  * Shapes that turn a described step into a runnable one. A plan that carries a
  * command has stopped being a plan, whatever the field is called.
+ *
+ * Exported because a second checked-in document contract — the DX6 scenario —
+ * refuses exactly the same thing for exactly the same reason. A second copy of a
+ * refusal is a second place for it to be fixed only once, which is the argument
+ * `packages/cli/src/safe-text.js` already makes about scrubbing.
  */
-const EXECUTABLE_SHAPES = [
+export const EXECUTABLE_SHAPES = [
   { name: 'shell command', re: /(^|\s)(?:sudo|rm|curl|wget|chmod|chown|eval|exec|npm|npx|node|git|ssh|scp|bash|sh|zsh|python3?)\s+[-\w./]/ },
   { name: 'command substitution', re: /\$\(|`[^`]*`|\$\{[^}]*\}/ },
   { name: 'shell chaining', re: /(?:&&|\|\||;\s*\w+\s+-|\|\s*(?:sh|bash|zsh|node|python3?)\b)/ },

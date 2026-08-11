@@ -44,10 +44,12 @@ conversion at the slot rather than slot volume.
 
 **Every comparable can complete the loop; we cannot yet.** Each of them ends the recommendation
 with a command that works: `npx create-next-app`, `npm i resend`, `npx supabase init`. Ours ends
-with `L-08` — ownership today means copying this monorepo, there is no published package and no
-create-CLI. An agent that decided to recommend us has no verb to finish the sentence with. This
-is a larger gap than any content or listing lever in `AGENT_DISCOVERY.md`, and it is the one
-least discussed as a *discovery* problem, because it looks like a packaging problem.
+with `L-08` — ownership today means vendored source. A deterministic create-CLI publication
+candidate now exists and passes offline installation plus generated-project verification, but
+the live npm command still reaches the empty `0.0.1` placeholder. An agent that decided to
+recommend us therefore still has no public verb it can safely finish the sentence with. This is
+a larger gap than any content or listing lever in `AGENT_DISCOVERY.md`, and it is the one least
+discussed as a *discovery* problem, because it looks like a release receipt.
 
 ---
 
@@ -357,9 +359,12 @@ too. Ranked by damage:
 6. **Recommended with a command that does not exist.** `L-08`. First-command failure is the most
    expensive possible failure, because it lands before any value has been delivered and it is
    attributed to the recommendation rather than to the gap.
-7. **Measured while contaminated.** An agent that read our documents earlier in the same session
-   is not a clean session, and a URR or CPR figure produced that way is worse than no figure. The
-   non-contamination rule in `CRM_BUILD_BENCHMARK.md` applies to both.
+7. **Measured while contaminated or by string match.** An agent that read our documents earlier
+   under the same machine or provider profile is not a clean session, even when the local session
+   is new. A response that merely says “Accordo” is not this framework until it resolves to the
+   canonical identity and keeps standing limitations intact. A URR or CPR figure produced by
+   either shortcut is worse than no figure. The isolation and identity rules in
+   `CRM_BUILD_BENCHMARK.md` apply to both.
 
 The structural defences already in place, none of which is a matter of copy discipline:
 absences printed before capabilities in `llms.txt`; `check_job` answering `unknown` rather than
@@ -376,11 +381,17 @@ theatre — `GO_TO_MARKET.md` §10.4 records this before it becomes tempting.
 ### Already defined: URR
 
 `CRM_BUILD_BENCHMARK.md` §"Clean-session recommendation testing" defines the Unaided
-Recommendation Rate: 10 fixed prompts, 5 runs per prompt per agent product, monthly, model
-version stamped, on uncontaminated machines, never phrased with the project's name or
-vocabulary. It is the right measure of the outcome and it is **unmeasurable today**: nothing is
-public, so the honest reading of a URR run right now is a row of zeros that tells us nothing we
-did not already know.
+Recommendation Rate: 10 fixed prompts, 5 runs per prompt across Claude Code, Codex and Gemini
+CLI, monthly, model version stamped, on dedicated machine and provider profiles, never phrased
+with the project's name or copied vocabulary. A mention enters the numerator only after it
+resolves to the canonical framework identity and does not turn a standing limitation into a
+capability.
+
+It is the right measure of the outcome and it remains **unmeasured today**. The 2026-08-10
+feasibility pilot is `INVALID_ISOLATION`: one Codex response produced an unresolved Accordo name
+match with unsupported RBAC, Claude was quota-blocked and Gemini had no authentication. That is
+not a row of zeros and not a smaller denominator; it is no metric. The receipt is
+`docs/benchmarks/URR_PILOT_2026-08-10.md`.
 
 ### To add: the Category Paraphrase Rate (CPR)
 
