@@ -31,9 +31,19 @@ renewal.
 **It consumes a declared capability and imports nothing.** Contracts today
 offers `delivery-obligations@1` and `service-obligations@1`; neither exposes
 term or line evidence. So Contracts gains a **minimal, read-only**
-`contract-lifecycle-source@1`: the contract's identity, its term with
+`contract-lifecycle-source@2`: the contract's identity, its term with
 provenance, its current version, its lines and its subscription lines — and no
 write path of any kind. No kernel lifecycle code, no private import.
+
+The capability moved to `@2` in the post-merge audit. At `@1` it answered
+`signed: false` for any `termsSource` its classification map did not name — safe
+for one odd row, unsafe as a rule, because the day M12 gains a source nobody has
+classified every contract carrying it is reported as unsigned by a package that
+never considered the question. At `@2` it reads the declared enum off the live
+module contract and **refuses to open** while any value is unclassified, and
+reports `signed: null` with `signedBasis: 'UNCLASSIFIED_TERM_SOURCE'` for a
+stored value outside that enum. Both are observable changes to what a consumer
+is told, so the version moved with them and `contracts` went to `version: 4`.
 
 ## The truth problem this milestone must not create
 
@@ -73,12 +83,46 @@ The follow-up state model has an exit, learned from Delivery's handover:
 `pending_commercial_followup → resolved_externally | withdrawn`, each requiring
 a human reason. No dead-end terminal state.
 
-Both records are keyed deterministically, from state and never from the clock:
-`renewal-decision:<contractId>:<asOf>` — one decision per contract per day, and
-a second one that day is a 409 rather than an overwrite — and
-`commercial-followup:<contractId>:<intent>:<round>`, whose round number lets
-resolved work come round again while an open follow-up of the same intent is
-still refused.
+### Business identity, and the retry that used to be punished
+
+Both records are keyed deterministically, from the ask and never from the clock:
+`renewal-decision:<contractId>:<asOf>` — the identity is (contract, calendar
+date) — and `commercial-followup:<contractId>:<intent>:<round>`, whose round
+number advances only when the previous round reaches a terminal state.
+
+The post-merge audit found that a deterministic key was only half the story. A
+client whose *response* was lost retried the identical ask and got a `409`, so
+from where it stood the work had never happened and there was no path back to
+the record it had just created. Both writes now **replay**: an identical repeat
+returns the existing record unchanged, and a repeat that differs is refused
+`409` naming the diverging fields in `details.conflictingFields` — recorded
+intent is never silently overwritten. Only the caller's own inputs are compared,
+so a derived field moving elsewhere cannot turn a safe retry into a spurious
+conflict. Legitimate repeated future work is never collapsed: the round number
+still advances once the previous ask is `resolved_externally` or `withdrawn`.
+
+### Calendar dates
+
+`asOf` is validated by the framework's one round-trip calendar-date authority,
+now in `packages/core/src/validation.js`. Shape alone is not the check:
+`2027-02-30` matches `YYYY-MM-DD` and JavaScript rolls it to March 2, so a
+record would store a date nobody could have decided on beside a `daysToBoundary`
+measured from a different day — and against a real database two contradicting
+decisions would both persist for the same real day, defeating this package's own
+"one decision per contract per date" promise. Date-time strings,
+whitespace-padded dates and expanded years are refused for the same reason: one
+day must have exactly one spelling, or the key built from it identifies nothing.
+
+### Money evidence
+
+The baseline is grouped by currency, charge type, interval **and interval
+count** — M12 spells quarterly as `month x 3`, and grouping on `interval` alone
+folded quarterly into monthly and overstated the baseline threefold, silently.
+The scalar summary on a follow-up is recorded only where the baseline collapses
+to exactly one kind of money; the grouped evidence (`baselineGroupsJson`,
+`baselineGroupCount`) is recorded always, because a mixed baseline previously
+stored three nulls and lost its money evidence exactly when there was most of
+it. No total is computed across recurrence or currency, and there is no FX.
 
 ## What it must never do
 
@@ -90,9 +134,19 @@ FX · synthesize a successor.
 ## Evidence
 
 Package conformance (DX4) · AX1 visibility and AX2 citability · absence /
-detach / reattach with rows preserved · exact reads past the 500 bound ·
-atomicity, idempotency and concurrency on every write with fault injection ·
-exact audit, event and trace counts · truthful event names.
+detach / reattach with rows preserved, **in separate processes** · exact reads
+past the 500 bound *where correctness uses a collection query* · atomicity,
+idempotent replay, divergent refusal and two-connection concurrency on every
+write, with fault injection on all three · restart with old data · exact audit,
+event and trace counts · truthful event names.
+
+**Stated N/A, with the reason.** Reads past the 500-row page bound are *not*
+tested on primary-key paths — `termEvidence`, `service.get` and every
+`sourceKey` lookup are exact single-row reads with no page bound to exceed, so
+seeding 500 rows in front of them would test the fixture and nothing else. The
+bound is proven on the three paths where correctness genuinely depends on a
+collection query: the baseline, the `decisionId` check and the pending-follow-up
+guard.
 
 **Where it lives.** `tests/lifecycle-renewal-operations.test.js` holds the
 arithmetic, the wording and the capability boundary;
