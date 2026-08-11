@@ -172,6 +172,61 @@ DX5 **does not** `git reset`, stash, clean or checkout anything, and holds no
 code that could. A verification command that silently repairs the thing it is
 verifying is worse than one that reports the problem.
 
+## Post-merge hardening (Wave 2A)
+
+Six defects were reproduced against `main` with a probe **before** any code
+changed, and each is now pinned by a regression test in
+`tests/project-verify.test.js`.
+
+1. **Composed-package selection never selected anything.** The doctor publishes
+   `project.packagesComposed` as resolved *paths*; DX5 fed those into
+   `resolveComposedPackages`, which selects by directory *basename*, so
+   `packages/contracts` was compared against `contracts` and the intersection was
+   empty for every project that composes anything. The stage reported
+   `not_applicable` — which, being a required check, cannot fail a run — so it was
+   invisible. It now uses the path the doctor already resolved, and the proof is
+   that one non-conforming package makes the whole verification fail. There is no
+   name allowlist anywhere in the selection. Uncomposed candidates stay inventory,
+   compared as a **set difference** rather than by count.
+2. **Plan verdicts.** DX1's four gradings are carried verbatim — required stale
+   `failed`, current stale `warning`, historical `not_applicable`, malformed
+   `failed` — and the evidence line names each kind instead of calling every
+   graded plan "declared-current".
+3. **Dirty-worktree attribution.** Both samples cover tracked changes and
+   untracked files, entries keep their status columns (`-z`, so an awkward path is
+   one string in both samples), and a path whose *status* changed is the run's
+   doing too. Nothing is ever reset, stashed or cleaned.
+4. **Process completion** settles on the child's `exit`. The same gap was found
+   one layer down in `child-report.js`, which settled on exit but never released
+   the inherited pipes — an open stream is a ref'd handle, so `crm package test`
+   produced its report in 300ms and then could not exit at all, and the DX5 step
+   that spawns it burned its full timeout on a package that had already conformed.
+5. **Recursion** is refused with `RECURSIVE_VERIFY_REFUSED` at any depth above
+   `MAX_VERIFY_DEPTH`, and every value taken from a delegated report is bounded in
+   depth, node count and string length before it is embedded or fingerprinted —
+   `canonicalJson` recurses with no cycle guard, so a malformed nested report used
+   to produce no report at all.
+6. **Redaction** keeps repository-relative paths and URLs, and removes POSIX
+   absolute paths, Windows drive and UNC paths, home and temp roots including the
+   tail after a space, and credentials in a DSN authority.
+
+### The declared script whose target is absent
+
+A project may declare a script it cannot run. `scripts/tour.js` says the project
+it leaves behind "proves nothing the test suite does not already prove — it makes
+what is proven visible", and README frames `--keep` as leaving it *to explore*:
+it is a read-only inspection demo, not a runnable artifact. Its generated
+`package.json` nonetheless declares `verify` and `smoke`, and the installer copies
+no `scripts/` directory, so both exit 1 with `MODULE_NOT_FOUND` from inside Node's
+loader — which DX5 reported as a *suite failure*, a fact about a suite that was
+never there.
+
+DX5 now reads the declared command (it never guesses one), follows `npm run`
+chains within the project's own scripts, and reports `not_applicable` with
+`SCRIPT_TARGET_MISSING` naming the absent entry point, plus a
+`DECLARED_SCRIPT_TARGET_MISSING` problem. That is not silence: it is the project's
+defect, stated. Fixing the installer is not DX5's work and is not done here.
+
 ## Out of scope, deliberately
 
 DX10's requirement→implementation mapping. This command reports what passed,
