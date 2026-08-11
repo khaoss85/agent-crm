@@ -8,21 +8,23 @@ this file.
 > **Update this file in the same PR as every milestone merge.** A status file
 > that lags is worse than no status file.
 
-Generated: **2026-08-09**.
+Generated: **2026-08-10**.
 
 ## Snapshot
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **DX4 — Package Conformance Kit** (`crm package test`), on top of **M15 — Service operations** and its package-scoped Service Admin, on top of **M14b2 — Delivery change, deliverables and acceptance** and the Agent Tool Surface / Legacy Alignment strategy docs, on top of **AX2 — Machine-readable Solution Plans**, **M14b1 — Delivery economics**, **AX1 — Deterministic application inspection**, **M14a — Delivery execution** (ADR-019 addendum 1), **Module Evolution v1** (ADR-019) and **M13** (ADR-018 + addenda 1–4) |
-| Main SHA at generation | `845cd3d` (merge of PR #30 / DX1; PR #29 / DX3 merged as `05fafbd`) |
-| Tests on clean main | **555 passing, 0 failing** (`npm run verify` from a fresh clone of `845cd3d`) |
+| Latest merged milestone | **GTM discovery and release integration**: the ordered #44 → #53 → #54 → #55 → #56 → #57 → #58 chain is merged, followed by npm staging-receipt hardening in PR #59 and canonical package-bin hardening in PR #60. It adds the Customer Hub, Smart CRM and CDP + CRM intent pages, first-contact agent metadata, the hosted read-only Docs MCP and the verified staged `create-accordo` candidate without changing their stated product limits. |
+| Main SHA at generation | `ef8487a` (regular merge of PR #60 / canonical npm bin) |
+| Tests on clean main | **808 passing, 0 failing** (`npm run verify` at `ef8487a`). |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
-| Browser smoke | 37/37 in real Chromium on the M14a branch, plus 22 further checks for the M14b2 section as its pre-merge gate, both run manually — **not in CI** |
-| CI | `verify` ×2 + GitGuardian green |
-| Open PRs | **Go-to-market** (`claude/go-to-market-strategy-gkr4bz`): `origin/main` merged in on 2026-08-09. The claims ledger and its gate, the generated public site with SEO/AEO surfaces, every distribution manifest, the launch packet, the Edition L benchmark harness (ADR-024), the falsification kit and the surface budget. Open and unmerged. |
-| npm | `accordo@0.0.1` and `create-accordo@0.0.1` published as **empty name reservations** on 2026-08-09 — confirmed against the registry, not assumed. Neither installs anything. The `@accordo` scope is **unclaimed** (`@accordo/mcp` and `@accordo/core` return 404), which is why `site/brand.json` records `npm.status: names-reserved` and the MCP-registry submission stays blocked. |
+| Browser smoke | Real-Chromium checks remain manual and are **not in CI**. PR #58 recorded desktop and mobile receipts for the 113-page site; exact main `ef8487a` is live on `accordo.dev`, including the privacy and intent pages. |
+| CI | Exact main `ef8487a` is green in GitHub Actions: `verify` and `public-claims` passed. |
+| Open PRs | PR #45 is the older Scenario Runner branch: its two `verify` jobs passed at its own head, but both public-claims jobs failed and it predates the GTM/main changes. PR #47 was closed as superseded by the equivalent temp-isolation fix already on main. |
+| Public discovery | GitHub About and all 20 intent topics are live. Smithery `khaoss85/accordo` returns 200 and exposes the three production Docs MCP tools. The GitHub social preview is live but stale at 421 tests; its generated 808-test replacement still needs a manual Settings upload. |
+| npm | `accordo@0.0.1` and `create-accordo@0.0.1` published as **empty name reservations** on 2026-08-09 — confirmed against the registry, not assumed. Neither installs anything. The `@accordo` scope is **unclaimed** (`@accordo/mcp` and `@accordo/core` return 404), which is why `site/brand.json` records `npm.status: names-reserved` and the MCP-registry submission stays blocked. **This row describes the registry and nothing in it has changed.** |
+| Project bootstrap | **`create-accordo` is real source and has a verified publication candidate**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates a bounded package directory while the source manifest stays private. Dispatch `31364606861` passed repository verification and deterministic assembly, then npm generated provenance but refused staging with `E401`; no stage or registry version exists. PR #60 made the checked bin path canonical and proves npm installs and executes the executable shim. **The published placeholder is untouched**, so `npm create accordo` still installs nothing. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
 
 ## Completed functional path
 
@@ -93,20 +95,21 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **LA0 — Legacy Characterization Harness** — implemented on an open PR,
-   unmerged: `legacyCharacterizationContract: 1`, a checked-in baseline of Lead
-   Intelligence's externally observable behaviour, and twelve mutations proving
-   the suite can fail (`docs/plans/la0-legacy-characterization.md`). **No legacy
-   domain extraction has begun**, and the Accordo public-brand and GTM work is a
-   separate track that is neither merged nor approved here.
-2. Then, in the order `docs/architecture/EXTRACTION_PREPARATION.md` recommends:
-   resolve LA0's **two defect candidates**, the mechanical **neutral-helper
-   move**, the two **architecture ADRs** (`app.intelligence` and the definition
-   registry, both a human's), then the **Lead Intelligence extraction** and its
-   review, then **DX2** and last **M16 Analytics Studio** — `EXECUTION_ROADMAP.md`.
+1. The default product task remains the first unchecked item in `TASKS.md`:
+   first-class Activity and Task modules with a reusable automatic follow-up
+   workflow. No GTM branch silently changes that product order.
+2. Before any remote CRM write surface, add tenant and role boundaries; the
+   authenticated Streamable HTTP project MCP and PostgreSQL adapter remain
+   separate platform work. The production Docs MCP is read-only framework
+   documentation and does not satisfy any of those production gates.
+3. The GTM stack and production promotion are complete. The active distribution
+   task is to configure the `create-accordo` trusted publisher on npm for
+   `khaoss85/agent-crm`, `stage-create-accordo.yml`, environment `npm-stage` and
+   stage-only permission; then rerun, inspect and approve with human 2FA.
+   Registry and marketplace claims remain blocked until a real receipt exists.
 
 Two parallel tracks run alongside and are not gated by domain progress: the
-**platform track** (domain package boundary, create-project CLI, PostgreSQL,
+**platform track** (domain package boundary, PostgreSQL,
 auth/tenancy/RBAC, Jobs & durable outbox, Integration Runtime, Data Governance,
 Design-to-CRM, Cloud), the **Marketing & Growth track** (MK0–MK7 — design only;
 `MARKETING_GROWTH_OPERATIONS.md`) and the cross-cutting **Agent Experience
@@ -120,7 +123,7 @@ AX3–AX5 are not implemented; `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequenci
 | Limitation | Consequence today | Tracked |
 |---|---|---|
 | The generated Admin renders **every** action a module declares and does not filter by the record's current state | a delivery record offers buttons its state cannot take; the server refuses them with a `409` naming the allowed moves, and the schema already publishes per-action `from`/`to` metadata a client can filter on | `TASKS.md` → Future platform items |
-| JTBD and quality-gate evidence live in Markdown | no machine can aggregate them; a coding agent must read prose | `TASKS.md` |
+| JTBD and quality-gate evidence live in Markdown | **partly closed.** `crm scenario run <scenario> --json` (DX6) now maps one real business journey onto the JTBD index and publishes both what it established and the counted list of rows it did **not** — but coverage is *claimed* by a scenario rather than discovered, one scenario ships, quality-gate status is still prose, and nothing promotes a row: a person does, on merged tests | `docs/SCENARIO_EVIDENCE.md`, `TASKS.md` |
 | Source-only view of module evolution | the checked-in revision and migration list are knowable; what a particular database applied is not | `TASKS.md` |
 
 ## Production blockers
@@ -148,11 +151,13 @@ pipelines; Lead Intelligence; Commercial Operations; Signature and Order;
 Contract activation and subscriptions; the public domain-package contract, the
 delivery handover and delivery execution; deterministic application inspection
 (AX1); delivery economics (M14b1); delivery change, deliverables and acceptance
-evidence (M14b2); machine-readable Solution Plans (AX2); MCP server; CLI.
+evidence (M14b2); machine-readable Solution Plans (AX2); the project bootstrap
+(`create-accordo`, source only — nothing is published); MCP server; CLI.
 
 **Documentation only (no code):** renewal, billing and everything downstream of
 activation; Service; Analytics Studio; Integration Runtime; Jobs & durable outbox;
-Data Governance; Design-to-CRM; Accordo Cloud; create-project CLI;
+Data Governance; Design-to-CRM; Accordo Cloud; a **published** npm package
+(the bootstrap exists in source; the registry names are empty reservations);
 PostgreSQL; auth/tenancy/RBAC; Marketing & Growth (MK0–MK7); the Agent
 Experience track beyond AX0; benchmark execution.
 

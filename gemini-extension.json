@@ -1,7 +1,7 @@
 {
   "name": "accordo",
   "version": "0.1.0",
-  "description": "Accordo — the open-source framework coding agents use to build custom CRMs: domain modules, deterministic workflows, human approvals, audit and trace.",
+  "description": "Accordo builds custom CRMs and Customer Hubs as code. Smart CRM stays policy-governed; for CDP + CRM, Accordo is the process layer, not ingestion, identity resolution or segmentation.",
   "contextFileName": "GEMINI.md",
   "mcpServers": {
     "accordo": {

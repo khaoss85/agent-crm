@@ -15,12 +15,13 @@ Written against `HEAD` on 2026-08-07 with 373 tests passing. Volatile facts live
 This project does not have a credibility problem or a quality problem. It has a **reachability
 problem** and a **mechanism problem**.
 
-- **Reachability**: no public name, no published package, no public repository. Nothing
-  compounds, because none of the channels that accrue prevalence have started.
-- **Mechanism**: the public promise is *"own the CRM it builds"*, and the only shipping install
-  path copies this monorepo. That is real ownership and it is not the `npm create` plus
-  versioned-dependency story the roadmap describes. The gap is now stated as `L-08` on every
-  surface rather than papered over.
+- **Reachability**: the name, repository, site and agent manifests are public, but generic search
+  still does not surface Accordo and the live npm command remains an empty placeholder. The
+  compounding channels have started; the main conversion path has not.
+- **Mechanism**: the public promise is *"own the CRM it builds"*. Source bootstrap works and a
+  deterministic `create-accordo@0.1.0` publication candidate packs, installs and verifies from a
+  clean project, but it is not on the registry. Ownership still means vendored source rather
+  than a versioned dependency, and the gap remains `L-08` on every surface.
 
 So the strategy is:
 
@@ -57,12 +58,21 @@ Three constraints on widening, all binding:
 1. **Every widened trigger must be a build request inside a coding agent.** "I need
    a CPQ" in general chat means buy one. The trigger is the phrase plus the surface,
    and that rule does not relax as the category widens.
-2. **Service desk, ticketing and SLA are held back.** M15 Service is the next
-   milestone and is not merged. Those rows are `not supported` in the catalogue and
-   the positioning may not run ahead of them.
-3. **The existing refusals stand.** "Smart CRM" / "AI CRM" is still the opposite of
-   this model, "customer data platform" is still a different category, and "customer
-   hub" is still only ours in the build-one reading (§9, `ORGANIC_GROWTH.md`).
+2. **Service desk, ticketing and SLA stay narrowly framed.** M15 is merged as a
+   partial local Service Operations slice: coverage, entitlements, support cases,
+   elapsed-time SLA evidence and manual escalation. It is not an authenticated
+   helpdesk or contact centre: there are no channel integrations, routing or
+   automatic escalation, and the positioning may not run ahead of those boundaries.
+3. **The existing category refusals stand, with one narrower intent now claimed.**
+   Generic "AI CRM" still means a runtime assistant or model-governed seller and remains
+   the opposite of this model. "Smart CRM" is claimable only in the agent-built,
+   policy-governed reading published at `concepts/smart-crm.html`: the receipt is a
+   tested 403 on one approval boundary, not a universal claim that no model runs at
+   runtime. "Customer data platform" is still a different category. The compound
+   `CDP + CRM` intent is claimable only as a two-layer architecture: the CDP owns
+   profile and audience work, Accordo owns the agent-built process, and no bridge
+   ships between them (`concepts/cdp-plus-crm.html`). "Customer hub" is still only
+   ours in the build-one reading (§9, `ORGANIC_GROWTH.md`).
 
 The line that carries all of it: **it gives a coding agent a way to see, plan,
 build, check and prove — instead of just generating code.** Each internal tool has
@@ -173,8 +183,8 @@ Sourcing, caveats and the places the alternative genuinely wins are maintained i
 | Brand tokens — name, domain, npm scope, licence, palette | `site/brand.json` | ✅ |
 | Landing page and evidence page, built from the ledger, `noindex` | `site/templates/`, `npm run site:build` | ✅ |
 | Claims gate — evidence exists, limitation present, three surfaces enforced, brand leaks, eleven overclaim patterns, ledger freshness | `scripts/site-check.js` | ✅ |
-| Distribution manifests for Claude, Codex and the MCP registry, validated, unpublished | `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/`, `server.json` | ✅ |
-| Manifest gate — paths resolve, reserved names refused, names agree across manifests, skill frontmatter matches its directory, skill portability reported | `scripts/distribution-check.js` | ✅ |
+| Distribution manifests for Claude, Codex, Gemini CLI, npm and the MCP registry, validated; real npm packages and registry entry remain unpublished | `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/`, `gemini-extension.json`, `package.json`, `packages/create-accordo/package.json`, `server.json` | ✅ |
+| Manifest gate — paths resolve, reserved names are refused, names agree, skill portability is reported, and every first-contact surface carries Custom CRM, Customer Hub, Smart CRM and bounded CDP + CRM intent | `scripts/distribution-check.js`, `tests/distribution-intent.test.js` | ✅ |
 | README rewritten against what the tests prove, with limits before capabilities | `README.md` | ✅ |
 | Security posture stated rather than implied | `SECURITY.md` | ✅ |
 | Social preview and page captures generated from the same ledger | `npm run site:shots` | ✅ |
@@ -264,20 +274,20 @@ marketplaces and registries, **(c)** the in-session agent surface.
 
 | Channel | Layer | Artifact required | State | Gate |
 |---|---|---|---|---|
-| GitHub repository | a/b | README, SECURITY, issue and PR templates, description, topics, social preview, release notes | Mostly built; `docs/marketing/GITHUB_LISTING.md` holds the metadata | Name, visibility |
+| GitHub repository | a/b | README, SECURITY, issue and PR templates, description, topics, social preview, release notes | Live. Intent-aligned README and next About/topics copy are checked in the intent PR; apply the public metadata only after its page stack deploys | Merge/deploy, then human metadata update |
 | Self-hosted Claude marketplace | b | `.claude-plugin/marketplace.json` + plugin | **Live on merge.** Portability contract shipped: 11 of 12 skills published, `adversarial-review` held back as `tier: repository` | — |
 | Self-hosted Codex marketplace | b | `.codex-plugin/`, `.agents/plugins/marketplace.json` | **Live on merge.** Mirror parity 12/12, held by `tests/skill-parity.test.js` | — |
-| Gemini CLI extension + gallery | b | `gemini-extension.json` + `GEMINI.md` at the repository root, topic `gemini-cli-extension`, and one git tag | **Built.** Manifest, context file and topic are in place; the gallery crawls daily | `git tag v0.1.0` — a human step |
+| Gemini CLI extension + gallery | b | `gemini-extension.json` + `GEMINI.md` at the repository root, topic `gemini-cli-extension`, and one git tag | **Live.** The official gallery feed listed `@khaoss85/accordo` at version `0.1.0` on 2026-08-09 and detected its context, skills and MCP surfaces | — |
 | Anthropic community marketplace | b | The same manifests, via the Console form | Ready | **Human submission**, and it should point at something installable first — the create-CLI |
 | MCP registry | b | `server.json` + a published npm package | `server.json` ready; `@accordo/mcp` returns 404, so the entry would resolve to nothing | Publish `@accordo/mcp` → human |
-| npm | a/b | Per-package manifests, rich keywords, provenance-signed publish | `accordo` and `create-accordo` **reserved** as empty 0.0.1 placeholders (2026-08-09); the `@accordo` scope is unclaimed and the real packages do not exist | The create-CLI, then an npm org (web-only) |
-| `npm create <name>` | b/c | `packages/create/` | Does not exist | Name, Phase 5 |
-| skills.sh | b/c | Nothing — it already walks `.claude/skills` and `.agents/skills` | Satisfied | Visibility |
+| npm | a/b | Per-package manifests, rich keywords, provenance-signed publish | `accordo` and `create-accordo` remain empty 0.0.1 reservations; a deterministic `create-accordo@0.1.0` candidate now packs and installs offline but is not on the registry; the `@accordo` scope is unclaimed | Configure the exact trusted publisher, stage from reviewed `main`, inspect and approve with 2FA; then an npm org for scoped packages |
+| `npm create <name>` | b/c | A real create package | Candidate verified end to end; live command still reaches the placeholder | Human-approved staged publish and live receipt |
+| skills.sh | b/c | Nothing — it already walks `.claude/skills` and `.agents/skills` | **Live.** Public repository page and 12-skill Codex install verified 2026-08-09 | Generic search indexing: pending |
 | llms.txt / retrieval | a | Generated from the ledger, with a drift gate | **Built** — `llms.txt`, `llms-full.txt`, `jobs.json`, `answers.json`, sitemap, robots and JSON-LD, all generated and drift-checked | Deploy |
 | **In-session agent surface** | **c** | AGENTS.md, CLAUDE.md, skills ×2 harnesses, MCP config ×2, `app inspect`, harness compatibility | **Strongest layer** | **None — fully ours** |
 | Show HN | launch | `LAUNCH_PACKET.md` §2 | Written | Human posts |
 | Product Hunt | launch | `LAUNCH_PACKET.md` §3 | Written | Human posts, once, on the benchmark |
-| Anthropic Connectors Directory, OpenAI plugin directory | b | A **hosted Docs MCP** — not the project runtime — plus an endpoint, an auth mode and a privacy policy | Does not exist | **`packages/docs-mcp` (Phase 8) + hosting + a privacy policy.** *Not* the production spine: a documentation MCP serves docs, not customer records, so it needs none of the CRM's auth, tenancy or RBAC. `AGENT_DISCOVERY.md` says this twice, and treating these as spine-blocked closes the only two reviewed directories reachable before Phase 6 |
+| Anthropic Connectors Directory, OpenAI plugin directory | b | A **hosted Docs MCP** — not the project runtime — plus an endpoint, an auth mode and a privacy policy | Transport and privacy page implemented; production endpoint and submissions unverified | **Human promotion + live protocol receipt + submission review.** *Not* the production spine: this read-only documentation MCP serves public docs, not customer records, and imports no CRM runtime. Its no-auth mode is safe only while that boundary holds |
 | Vercel template gallery, deploy buttons, hosted demo | b | A template with a working deploy and a live demo URL | Cannot be met honestly | **Production spine** — these assert deployability |
 | Discord / Slack | — | — | Deliberately not done | Reconsider at two consecutive months of 20+ substantive Discussions threads **and** a named human on call |
 
@@ -303,7 +313,8 @@ only remaining blockers are the five human decisions:
    binary and the database filename, so a repository-wide assertion could only ever be satisfied
    by renaming the codebase — and an assertion that cannot pass gets quietly weakened, which is
    the failure mode §10.4 warns about.
-8. `npm run distribution:check` exits 0. **Enforced today.**
+8. `npm run distribution:check` exits 0, including the intent and CDP-boundary
+   contract on every first-contact manifest. **Enforced today.**
 9. Skill parity is 11/11, asserted by `tests/skill-parity.test.js`. **Enforced today.**
 10. The composed example's `app inspect` golden snapshot matches current output **and its
     `packages`, `capabilities`, `resources`, `actions`, `policies` and `providers` are all

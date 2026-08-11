@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+{{include:head.html}}
+  <title>Privacy — the {{brand.name}} Docs MCP data boundary</title>
+  <meta name="description" content="What the {{brand.name}} documentation MCP receives, what its application code stores, what infrastructure may log, and the boundary between public framework documentation and customer data." />
+{{page.seo}}
+</head>
+<body>
+{{include:nav.html}}
+
+<main id="main">
+  <div class="shell">
+    <header class="hero">
+      <p class="eyebrow">Privacy · Docs MCP</p>
+      <h1>Public documentation in; no customer records out.</h1>
+      <p class="lede">
+        The {{brand.name}} Docs MCP is a read-only knowledge surface for this framework. It serves the
+        same public documentation, capability ledger and CRM job catalogue already available on
+        this site and in the public repository. It is separate from the project MCP and cannot
+        open an application database or change CRM state.
+      </p>
+    </header>
+
+    <aside class="boundary-block" data-limits aria-labelledby="privacy-boundary-h">
+      <h2 id="privacy-boundary-h">Where this endpoint stops</h2>
+      <ul class="boundary-list">
+        <li>It cannot open an application database, contact a CRM provider or change CRM state.</li>
+        <li>It does not need personal data, credentials or customer records. Do not put them in a documentation query.</li>
+        <li>Its code stores no request, but Vercel may retain ordinary infrastructure and security metadata under the hosting account.</li>
+      </ul>
+    </aside>
+  </div>
+
+  <div class="narrow">
+    <section aria-labelledby="received-h">
+      <h2 id="received-h">What a request contains</h2>
+      <p>
+        A client sends a JSON-RPC method and, for a tool call, a documentation query, capability
+        identifier or CRM job question. Normal HTTP metadata also reaches the hosting platform,
+        including an IP address, user agent, request time and routing headers. Do not put customer
+        records, credentials, secrets or other personal data into a documentation query: the
+        server neither needs nor asks for them.
+      </p>
+
+      <h2 id="storage-h">What the {{brand.name}} application code stores</h2>
+      <p>
+        Nothing. The Docs MCP has no database, account, cookie, analytics SDK or write tool. Its
+        application code processes a request in memory and returns public documentation. It does
+        not intentionally persist request bodies, tool arguments, document excerpts or client
+        metadata. Operational logs record only the HTTP method, response status and duration; they
+        do not record the request body or query.
+      </p>
+
+      <h2 id="hosting-h">Hosting and retention boundary</h2>
+      <p>
+        The endpoint runs on Vercel. Vercel may process and retain ordinary infrastructure,
+        security and function-log metadata under its own service terms and published privacy
+        policy at <span class="mono">vercel.com/legal/privacy-policy</span>. {{brand.name}} does not add
+        a separate telemetry or advertising system, does not sell request data and does not use
+        Docs MCP requests to train a model. Infrastructure retention is controlled by the hosting
+        account and platform, not by the read-only MCP code.
+      </p>
+
+      <h2 id="sharing-h">Sharing and subprocessors</h2>
+      <p>
+        The application code calls no third-party API while answering. Request traffic is handled
+        by Vercel as the hosting provider. No CRM provider, model provider, enrichment provider or
+        customer system is contacted by a Docs MCP tool call.
+      </p>
+
+      <h2 id="controls-h">Your controls</h2>
+      <p>
+        You can use the same documentation without the remote MCP through
+        <a href="{{page.root}}llms.txt">llms.txt</a>,
+        <a href="{{page.root}}llms-full.txt">llms-full.txt</a>, the
+        <a href="{{page.root}}evidence.html">claims ledger</a> and the public repository. Remove
+        the MCP endpoint from your client to stop sending it requests. For a question or deletion
+        request concerning hosting logs, open a private security report through the repository's
+        <a href="{{brand.repository}}/security/policy">security policy</a>; the maintainer can
+        determine what the hosting account actually retains rather than promising deletion of data
+        the application never stored.
+      </p>
+
+      <h2 id="changes-h">Changes to this notice</h2>
+      <p>
+        This notice is versioned with the source. A change that adds authentication, persistence,
+        telemetry, a non-public resource or a write tool must update this page and pass review
+        before deployment. Last substantive update: 9 August 2026.
+      </p>
+    </section>
+  </div>
+</main>
+
+{{include:footer.html}}
+</body>
+</html>

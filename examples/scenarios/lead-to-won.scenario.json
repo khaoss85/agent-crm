@@ -1,0 +1,251 @@
+{
+  "scenarioContract": 1,
+  "id": "lead-to-won",
+  "title": "Lead to won, and everything the won deal sets in motion",
+  "summary": "One B2B revenue process, driven end to end against a real composed application: capture three leads, qualify and disqualify them, convert the qualified ones into a shared Company with Contacts and Opportunities, walk one Opportunity to Won and one to Lost, enrich and score and route three more leads, sync a catalog and build quotes with a human discount approval, take an approved quote version through signature into one immutable Order, activate that Order into a commercial contract with a subscription and pending obligations, and hand the delivery obligations to a delivery project. Each step names the JTBD rows it exercises; every other row in the index is reported as not established.",
+  "journey": "b2b-lead-qualification",
+  "steps": [
+    {
+      "id": "compose",
+      "narrative": "The checked-in starter installer composes an application from manifests through the real module factory and drives the whole journey in process, asserting each guarantee as it goes. Every claim below cites this step, so a journey that does not complete establishes nothing.",
+      "observe": [
+        { "kind": "journey.completed" }
+      ]
+    },
+    {
+      "id": "capture",
+      "narrative": "Leads are captured into the starter's Lead record and land in status new.",
+      "observe": [
+        { "kind": "module.present", "module": "lead" },
+        { "kind": "journey.count", "metric": "leads", "atLeast": 3 }
+      ]
+    },
+    {
+      "id": "qualify",
+      "narrative": "Qualification and disqualification happen through actions, never through generic CRUD, and a qualification opens exactly one follow-up task.",
+      "observe": [
+        { "kind": "action.present", "action": "lead.qualify" },
+        { "kind": "action.present", "action": "lead.disqualify" },
+        { "kind": "module.present", "module": "task" },
+        { "kind": "journey.count", "metric": "tasks", "equals": 2 }
+      ]
+    },
+    {
+      "id": "convert",
+      "narrative": "Two qualified leads convert into one shared Company, two Contacts and two Opportunities entering Discovery.",
+      "observe": [
+        { "kind": "action.present", "action": "lead.convert" },
+        { "kind": "module.present", "module": "company" },
+        { "kind": "module.present", "module": "contact" },
+        { "kind": "module.present", "module": "opportunity" },
+        { "kind": "journey.count", "metric": "companies", "equals": 1 },
+        { "kind": "journey.count", "metric": "contacts", "equals": 2 },
+        { "kind": "journey.count", "metric": "opportunities", "equals": 2 }
+      ]
+    },
+    {
+      "id": "pipeline",
+      "narrative": "One Opportunity is walked to Won and the other to Lost through the pipeline, and the terminal stages lock.",
+      "observe": [
+        { "kind": "action.present", "action": "opportunity.move-stage" },
+        { "kind": "journey.count", "metric": "won", "equals": 1 },
+        { "kind": "journey.count", "metric": "lost", "equals": 1 }
+      ]
+    },
+    {
+      "id": "enrich",
+      "narrative": "Leads are enriched through the provider contract against a deterministic checked-in fixture, and each enrichment is kept as an immutable snapshot with its provenance.",
+      "observe": [
+        { "kind": "package.composed", "package": "intelligence" },
+        { "kind": "capability.available", "capability": "intelligence", "version": 1 },
+        { "kind": "action.present", "action": "lead.enrich" },
+        { "kind": "resource.present", "resource": "enrichment-snapshot" }
+      ]
+    },
+    {
+      "id": "score",
+      "narrative": "Scoring runs from a versioned model and records per-rule contributions, so the number can be explained rather than trusted.",
+      "observe": [
+        { "kind": "action.present", "action": "lead.score" },
+        { "kind": "resource.present", "resource": "score-run" },
+        { "kind": "resource.present", "resource": "score-contribution" }
+      ]
+    },
+    {
+      "id": "route",
+      "narrative": "Routing runs under a published, versioned policy and keeps the per-target evaluation evidence and the assignment history.",
+      "observe": [
+        { "kind": "action.present", "action": "lead.route" },
+        { "kind": "resource.present", "resource": "routing-run" },
+        { "kind": "resource.present", "resource": "route-evaluation" },
+        { "kind": "resource.present", "resource": "assignment" }
+      ]
+    },
+    {
+      "id": "quote",
+      "narrative": "A composite fixture catalog syncs idempotently, and an Opportunity produces server-priced quote lines that snapshot into an immutable Quote Version.",
+      "observe": [
+        { "kind": "module.present", "module": "price-book" },
+        { "kind": "module.present", "module": "offer" },
+        { "kind": "module.present", "module": "quote-version" },
+        { "kind": "action.present", "action": "opportunity.create-quote" },
+        { "kind": "action.present", "action": "quote.add-line" },
+        { "kind": "action.present", "action": "quote.submit" }
+      ]
+    },
+    {
+      "id": "discount",
+      "narrative": "One quote auto-approves under the deterministic discount policy; the other goes through a human decision with reject, revise and a second version.",
+      "observe": [
+        { "kind": "module.present", "module": "quote-approval" },
+        { "kind": "action.present", "action": "quote.approve" },
+        { "kind": "action.present", "action": "quote.reject" },
+        { "kind": "action.present", "action": "quote.revise" }
+      ]
+    },
+    {
+      "id": "order",
+      "narrative": "An approved Quote Version is sent for signature as a human actor, a forged webhook is refused, and a verified completion produces signed-artifact evidence and exactly one immutable Order.",
+      "observe": [
+        { "kind": "action.present", "action": "quote.request-signature" },
+        { "kind": "module.present", "module": "signature-envelope" },
+        { "kind": "module.present", "module": "signed-artifact" },
+        { "kind": "module.present", "module": "order" },
+        { "kind": "module.present", "module": "order-line" }
+      ]
+    },
+    {
+      "id": "activate",
+      "narrative": "The signed Order is activated, through the optional contracts package, into one commercial contract with an immutable version, contract lines classified on two explicit axes, a subscription and pending obligations.",
+      "observe": [
+        { "kind": "package.composed", "package": "contracts" },
+        { "kind": "action.present", "action": "order.activate-contract" },
+        { "kind": "resource.present", "resource": "commercial-contract" },
+        { "kind": "resource.present", "resource": "contract-version" },
+        { "kind": "resource.present", "resource": "subscription" },
+        { "kind": "resource.present", "resource": "delivery-obligation" },
+        { "kind": "policy.present", "policy": "b2b-saas-order-activation" }
+      ]
+    },
+    {
+      "id": "handover",
+      "narrative": "The contract's pending delivery obligations are handed to a second domain package, which reaches the first only through a declared capability, producing a planned delivery project with work packages and milestones.",
+      "observe": [
+        { "kind": "package.composed", "package": "delivery" },
+        { "kind": "capability.available", "capability": "delivery-obligations", "version": 1 },
+        { "kind": "action.present", "action": "commercial-contract.plan-delivery-handover" },
+        { "kind": "action.present", "action": "commercial-contract.create-delivery-handover" },
+        { "kind": "resource.present", "resource": "delivery-project" },
+        { "kind": "resource.present", "resource": "delivery-work-package" },
+        { "kind": "resource.present", "resource": "delivery-milestone" },
+        { "kind": "policy.present", "policy": "b2b-delivery-handover", "version": 1 }
+      ]
+    },
+    {
+      "id": "custom-package",
+      "narrative": "A customer-authored package rates the delivery partner, attached with no kernel change and reachable over the same generic surfaces as any other package.",
+      "observe": [
+        { "kind": "package.composed", "package": "partner-scorecard" },
+        { "kind": "resource.present", "resource": "partner-scorecard" },
+        { "kind": "action.present", "action": "delivery-partner-engagement.rate-partner" },
+        { "kind": "policy.present", "policy": "standard-partner-rating", "version": 1 }
+      ]
+    },
+    {
+      "id": "discover",
+      "narrative": "The composed application describes itself: the installed packages, the resolved capability graph and the registered versioned policies are all readable from source without opening a database or contacting a provider.",
+      "observe": [
+        { "kind": "package.composed", "package": "contracts" },
+        { "kind": "package.composed", "package": "delivery" },
+        { "kind": "package.composed", "package": "intelligence" },
+        { "kind": "capability.available", "capability": "service-obligations", "version": 1 },
+        { "kind": "capability.available", "capability": "delivery-economics", "version": 1 },
+        { "kind": "policy.present", "policy": "b2b-delivery-cost", "version": 1 }
+      ]
+    },
+    {
+      "id": "plan",
+      "narrative": "The goal this scenario is the evidence run for is itself a checked-in Solution Plan, read and validated as a document. No claim cites this step: a valid plan is context, not evidence that a job works.",
+      "observe": [
+        { "kind": "plan.valid", "plan": "examples/solution-plans/lead-to-won.plan.json" }
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "job": "JTBD-04",
+      "steps": ["compose", "capture"],
+      "note": "the journey captures leads into the starter Lead record. It says nothing about capture from a web form, an inbox or an imported file."
+    },
+    {
+      "job": "JTBD-05",
+      "steps": ["compose", "qualify"],
+      "note": "qualify and disqualify run as actions with their task side effect. Admin behaviour is not observed here."
+    },
+    {
+      "job": "JTBD-05b",
+      "steps": ["compose", "convert"],
+      "note": "conversion produces one shared Company rather than a duplicate per lead. Merge, dedupe and reparenting are outside this run."
+    },
+    {
+      "job": "JTBD-03",
+      "steps": ["compose", "pipeline"],
+      "note": "one code-first pipeline, walked to both terminal stages. Forecasting, probability and stage analytics are not exercised."
+    },
+    {
+      "job": "JTBD-LI-01",
+      "steps": ["compose", "enrich"],
+      "note": "the provider is a deterministic checked-in fixture behind the real provider contract. No paid external provider is contacted, and this run is not evidence that one works."
+    },
+    {
+      "job": "JTBD-LI-02",
+      "steps": ["compose", "score"],
+      "note": "one versioned model with recorded per-rule contributions. Model quality is not assessed by anything here."
+    },
+    {
+      "job": "JTBD-LI-04",
+      "steps": ["compose", "route"],
+      "note": "one published routing policy with its evaluation and assignment evidence. Capacity behaviour under concurrency is proven by the suite, not by this run."
+    },
+    {
+      "job": "JTBD-CO-01",
+      "steps": ["compose", "quote"],
+      "note": "composite offers, server-priced lines and an immutable quote version. Metered usage, taxes, FX and proration are outside the row's own wording and outside this run."
+    },
+    {
+      "job": "JTBD-CO-03",
+      "steps": ["compose", "discount"],
+      "note": "a deterministic versioned discount policy with a human decision recorded. No approval is authenticated: there is no auth, tenancy or RBAC in this framework."
+    },
+    {
+      "job": "JTBD-CO-07",
+      "steps": ["compose", "order"],
+      "note": "a verified signature completion produces exactly one immutable Order. Fulfilment, billing, invoicing and amendment do not exist."
+    },
+    {
+      "job": "JTBD-CS-01",
+      "steps": ["compose", "activate"],
+      "note": "the row is recorded as partially supported, and this run does not change that: the term is post-signature operational metadata because the signed document carries no dates. What this run shows is the activation itself."
+    },
+    {
+      "job": "JTBD-DS-01",
+      "steps": ["compose", "handover"],
+      "note": "the handover plans the delivery project and marks exactly the delivery obligations handed over. It hands the work over; executing it is a different row."
+    },
+    {
+      "job": "JTBD-PK-01",
+      "steps": ["compose", "custom-package"],
+      "note": "a customer-authored package composed into a real application and driven. The kernel-fingerprint proof of no kernel change is the suite's, not this run's."
+    },
+    {
+      "job": "JTBD-PK-02",
+      "steps": ["compose", "handover"],
+      "note": "delivery reaches contracts only through the declared capability delivery-obligations@1, resolved in this composition."
+    },
+    {
+      "job": "JTBD-AX-01",
+      "steps": ["discover"],
+      "note": "the packages, the resolved capability graph and the registered policies are read from checked-in source. No database is opened and no provider is contacted."
+    }
+  ]
+}

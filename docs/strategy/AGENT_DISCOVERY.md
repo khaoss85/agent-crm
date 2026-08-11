@@ -42,6 +42,11 @@ Verified August 8, 2026 against the CLI's own documentation.
 ### GitHub (a/b)
 
 - Precise repo description + topics; README written knowing models paraphrase it; starters as separate template-flagged repos; GitHub Discussions for RFCs. GitHub content feeds both task-time retrieval and eventual training corpora — the slow-burn (a) channel. Measure fork/usage ratios, not stars (category stars are inflation-prone — see COMPETITOR_MAP).
+- First-contact copy is a checked contract, not freehand campaign copy:
+  `npm run distribution:check` requires Custom CRM, Customer Hub, Smart CRM and
+  CDP + CRM signals on the README and every install/registry manifest. The same
+  artifact must keep the CDP boundary; this improves retrieval vocabulary but
+  does not turn Accordo into a CDP or guarantee recommendation.
 
 ### npm (a/b)
 
@@ -55,7 +60,7 @@ Verified August 8, 2026 against the CLI's own documentation.
 
 ### Anthropic marketplaces and connector directory (b)
 
-- **Connectors Directory** ([claude.ai/directory](https://claude.ai/directory)): submit the hosted **Docs MCP** as a reviewed connector once it exists (requirements per corroborated accounts: streamable HTTP, OAuth 2.1 + PKCE or no-auth, tool annotations, privacy policy, review portal — primary docs pages were not directly fetchable; re-verify at submission time). Connectors flow into Claude Code too.
+- **Connectors Directory** ([claude.ai/directory](https://claude.ai/directory)): submit the hosted **Docs MCP** as a reviewed connector after a human promotes and verifies it. The source now has stateless Streamable HTTP, read-only annotations and a privacy page; no-auth is the chosen mode because it serves only already-public documentation and imports no CRM runtime. Re-verify the review form at submission time. Claude Code itself documents HTTP as the recommended remote transport and accepts `streamable-http` as its config alias.
 - **MCP Registry** ([registry.modelcontextprotocol.io](https://github.com/modelcontextprotocol/registry)): publish `server.json` via `mcp-publisher` under our GitHub namespace. Still in preview; feeds subregistries, guarantees no assistant UI placement — list anyway, it's nearly free.
 - **Desktop extensions (.mcpb)**: low priority; remote connectors supersede for reach.
 

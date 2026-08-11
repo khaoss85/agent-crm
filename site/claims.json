@@ -1,13 +1,15 @@
 {
-  "claimsContract": 1,
-  "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used.",
+  "claimsContract": 2,
+  "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used. Contract 2 (ADR-027): measuredAgainst additionally requires testFiles and testsTree, and no claim, limitation or repoFact may type an exact test count — the one number lives in measuredAgainst and reaches a page as {{measured.tests}}.",
   "measuredAgainst": {
-    "date": "2026-08-09",
-    "sha": "9958ed9",
+    "date": "2026-08-11",
+    "sha": "e0601de",
     "command": "npm run verify",
-    "tests": 701,
+    "tests": 881,
     "failures": 0,
-    "note": "Re-measure and update this block before any public launch. A claims file measured against a stale SHA is a claims file that lies."
+    "testFiles": 88,
+    "testsTree": "aa7286a64544aa9bff709326d2deccbd5d962e90",
+    "note": "Written by `node scripts/measure-suite.js --apply` from a real run on a clean tree. Never edit these numbers by hand: scripts/site-check.js verifies sha, testsTree and testFiles against the commit, so a record moved forward without a re-run fails the build."
   },
   "claims": [
     {
@@ -228,7 +230,7 @@
           "docs/DELIVERY_HANDOVER.md"
         ]
       },
-      "limitation": "It hands work over and runs it through human-driven transitions. Nothing schedules, staffs, computes percent complete or bills. Deliverables and recorded customer acceptance exist as of M14b2, and acceptance there is evidence a user actor recorded \u2014 never an authenticated customer, a legal signature or authorization to bill.",
+      "limitation": "It hands work over and runs it through human-driven transitions. Nothing schedules, staffs, computes percent complete or bills. Deliverables and recorded customer acceptance exist as of M14b2, and acceptance there is evidence a user actor recorded — never an authenticated customer, a legal signature or authorization to bill.",
       "surfaces": [
         "site",
         "readme"
@@ -442,11 +444,11 @@
     },
     {
       "id": "C-20",
-      "text": "701 tests, run on every push, covering happy paths and the policy boundaries that matter — hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
+      "text": "The verification gate runs on every push — source checks and then the whole test suite — covering happy paths and the policy boundaries that matter: hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
       "evidence": {
         "repoFacts": [
-          "npm run verify at 9958ed9: 701 passing, 0 failing",
-          ".github/workflows/ci.yml runs verify and smoke on push and pull_request"
+          "measuredAgainst in this file records the run: npm run verify, green, at the commit named there, with a fingerprint of the tests/ tree it was taken over",
+          ".github/workflows/ci.yml runs verify and smoke on push and pull_request, and runs the public-claims gate over full history so the measurement can be traced"
         ],
         "docs": [
           "docs/QUALITY_GATES.md"
@@ -583,16 +585,20 @@
     {
       "id": "L-08",
       "headline": "Ownership today means copying source, not installing a dependency.",
-      "text": "There is no create-project CLI and no published package. The one working installer copies packages/, apps/ and examples/ into a new project — you own the result outright, but the ergonomics of `npm create` and a versioned framework dependency do not exist yet. Until they do, upgrading means merging, not bumping.",
+      "text": "There is a project bootstrap and there is no published package, and the two are different facts. The repository's bootstrap command scaffolds a project that boots, reports `valid` from `app inspect` and exits 0 from `project doctor`, offline and with no install — run from a checkout of this repository. The package published under the reserved npm name is still an empty 0.0.1 placeholder, so the `npm create` route installs nothing until a human publishes it. Either way the framework is vendored into the project rather than depended on by version: you own the result outright, and upgrading means merging, not bumping.",
       "evidence": {
+        "tests": [
+          "tests/project-bootstrap.test.js"
+        ],
         "docs": [
           "docs/PROJECT_STATUS.md",
-          "examples/starters/b2b-lead-qualification/install.mjs"
+          "docs/plans/project-bootstrap-installability.md"
         ],
         "repoFacts": [
-          "examples/starters/b2b-lead-qualification/install.mjs copies packages, apps, examples and package.json into a temporary project",
-          "the create-project CLI is EXECUTION_ROADMAP Phase 5 and is not implemented",
-          "no npm package is published"
+          "the project bootstrap writes a project from an empty directory, dry-run unless --apply",
+          "tests/project-bootstrap.test.js bootstraps into a temporary directory and then runs app inspect, project doctor and the generated project's own checks against the result",
+          "site/brand.json records the registry status and the source status as two separate fields, and scripts/distribution-check.js fails if either disagrees with the tree",
+          "the published 0.0.1 tarball is an empty name reservation and this repository publishes nothing"
         ]
       },
       "surfaces": [
@@ -640,6 +646,46 @@
         "site",
         "readme",
         "launch"
+      ]
+    },
+    {
+      "id": "L-10",
+      "headline": "Nothing bills.",
+      "text": "No invoice, payment, tax, usage rating, proration or revenue recognition exists, and MRR, ARR and TCV are not derived from contract data.",
+      "evidence": {
+        "jtbd": "JTBD-DS-10, JTBD-CS-05",
+        "docs": [
+          "docs/strategy/EXECUTION_ROADMAP.md",
+          "docs/benchmarks/CRM_JTBD_MATRIX.md"
+        ],
+        "repoFacts": [
+          "EXECUTION_ROADMAP.md lists invoicing, billing, payment, usage rating, proration, tax and FX as explicitly deferred",
+          "packages/contracts/modules/subscription.module.json describes itself as a commercial activation record, not a billing engine, with no invoice schedule, usage rating, proration, payment, renewal or cancellation state",
+          "JTBD-DS-10 (activate billing on accepted milestones) and JTBD-CS-05 (calculate MRR, ARR and TCV from real contract data) both read 'not supported'"
+        ]
+      },
+      "surfaces": [
+        "site"
+      ]
+    },
+    {
+      "id": "L-11",
+      "headline": "Marketing is a design document, not a package.",
+      "text": "All 43 marketing jobs read 'not supported', no marketing package exists, and the strategy document says nothing in it is implemented.",
+      "evidence": {
+        "jtbd": "JTBD-MK-01",
+        "docs": [
+          "docs/strategy/MARKETING_GROWTH_OPERATIONS.md",
+          "docs/benchmarks/CRM_JTBD_MATRIX.md"
+        ],
+        "repoFacts": [
+          "MARKETING_GROWTH_OPERATIONS.md opens with 'Status: product strategy and roadmap only. Nothing in this document is implemented.'",
+          "all 43 JTBD-MK rows in docs/benchmarks/jobs.json read 'not supported'",
+          "the work is sequenced as EXECUTION_ROADMAP track MK0-MK7 and none of it is merged"
+        ]
+      },
+      "surfaces": [
+        "site"
       ]
     }
   ]

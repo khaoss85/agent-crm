@@ -18,6 +18,7 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { collectDiscoverySurfaces, validateDiscoverySurfaces } from './distribution-intent.js';
 
 const root = process.cwd();
 const failures = [];
@@ -34,6 +35,9 @@ const manifests = [
   { path: '.codex-plugin/plugin.json', pathFields: ['skills', 'mcpServers'] },
   { path: '.codex-plugin/mcp.json', pathFields: [] },
   { path: '.agents/plugins/marketplace.json', pathFields: [] },
+  { path: 'gemini-extension.json', pathFields: [] },
+  { path: 'package.json', pathFields: [] },
+  { path: 'packages/create-accordo/package.json', pathFields: [] },
   { path: 'server.json', pathFields: [] },
 ];
 
@@ -121,6 +125,31 @@ if (serverJson && !/^[a-z0-9.-]+\/[a-z0-9-]+$/.test(serverJson.name ?? '')) {
   fail('server.json: name must be reverse-DNS namespace/identifier, e.g. io.github.<owner>/<server>');
 }
 
+// ---------------------------------------------------------------- intent discovery
+
+/**
+ * A coding agent usually sees one short picker, registry, package or repository
+ * description before it sees the site. If that surface says only "CRM", the
+ * checked Customer Hub, Smart CRM and CDP + CRM pages cannot help retrieval.
+ *
+ * The CDP signal is deliberately inseparable from its boundary. Accordo owns the
+ * deterministic process layer beside a CDP; it does not ship ingestion, identity
+ * resolution or segmentation. This gate checks copy, not product capability.
+ */
+const discoverySurfaces = collectDiscoverySurfaces({
+  readme: readFileSync(join(root, 'README.md'), 'utf8'),
+  claudePlugin,
+  claudeMarketplace,
+  codexPlugin: loaded.get('.codex-plugin/plugin.json'),
+  geminiExtension: loaded.get('gemini-extension.json'),
+  rootPackage: loaded.get('package.json'),
+  createPackage: loaded.get('packages/create-accordo/package.json'),
+  serverJson,
+  goalSkillDescription: readFileSync(join(root, 'skills/solve-business-goal/SKILL.md'), 'utf8')
+    .match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? '',
+});
+for (const failure of validateDiscoverySurfaces(discoverySurfaces)) fail(failure);
+
 // ---------------------------------------------------------------- skills are loadable
 
 for (const directory of ['.claude/skills', '.agents/skills']) {
@@ -162,9 +191,17 @@ for (const directory of ['.claude/skills', '.agents/skills']) {
  * ARCHITECTURE.md, DECISIONS.md, docs/*.md, packages/*. Inside this repository or
  * a project built by copying it, those paths resolve. Installed into an unrelated
  * project they do not, and the skill degrades into confident instructions about
- * files that are not there. Until the create-project CLI emits those documents
- * into a customer's own repository (EXECUTION_ROADMAP Phase 5, not implemented),
- * every repo-bound skill is a listing we should not publish.
+ * files that are not there.
+ *
+ * The project bootstrap (`packages/create-accordo`) now emits a customer's own
+ * repository, and it ships **this** bundle into it — which is why every entry
+ * here declares a `tier` and a `degradesTo`. What it deliberately does **not**
+ * emit is this repository's Markdown: `docs/SKILL_PACKAGING.md` decides that no
+ * ARCHITECTURE.md, DECISIONS.md or `docs/` file travels into a generated
+ * project, and the bootstrap's own test asserts their absence. So a
+ * `tier: repository` skill is still a listing we should not publish: the
+ * bootstrap did not close that gap, it made the boundary the bundle has to
+ * respect concrete.
  */
 const PUBLISHED = 'skills';
 const publishedSkills = existsSync(join(root, PUBLISHED))
@@ -255,6 +292,116 @@ if (asserted.length) {
     );
   } else {
     notes.push(`${asserted.length} manifest(s) carry license "${brand.license.value}", which brand.json records as ${brand.license.status}. Confirm it before publishing — a manifest's licence field is an assertion to a marketplace, not a description of the working tree.`);
+  }
+}
+
+// ---------------------------------------------------------------- the source/registry wall
+
+/**
+ * The one distinction this repository is most likely to lose by accident.
+ *
+ * `create-accordo` is real source and a deterministic publication candidate.
+ * The package **published** under that name is still the empty `0.0.1`
+ * placeholder, so `npm create accordo` reaches the placeholder rather than the
+ * assembled candidate.
+ *
+ * Two true sentences and one false one, and the false one is the comfortable one:
+ *
+ *   true   create-accordo scaffolds a working project from this repository
+ *   true   npm create accordo installs nothing
+ *   FALSE  npm create accordo creates a project
+ *
+ * So the wall is mechanical rather than remembered. While the registry status is
+ * anything short of `published`, the package manifest must carry `private: true`
+ * — npm refuses to publish a private package, so the repository cannot drift
+ * into a publishable state without somebody editing the brand token in the same
+ * commit and having to think about what they are asserting.
+ */
+const bootstrapManifestPath = 'packages/create-accordo/package.json';
+const bootstrapBinPath = 'packages/create-accordo/bin/create-accordo.js';
+const assemblyPath = 'scripts/assemble-create-accordo.js';
+const packageReadmePath = 'packages/create-accordo/README.package.md';
+const packageTestPath = 'tests/create-accordo-package.test.js';
+const stageWorkflowPath = '.github/workflows/stage-create-accordo.yml';
+const bootstrapExists = existsSync(join(root, bootstrapBinPath));
+
+if (bootstrapExists !== Boolean(brand.npm.sourceScaffolds)) {
+  fail(
+    `site/brand.json records npm.sourceScaffolds: ${Boolean(brand.npm.sourceScaffolds)}, but `
+    + `${bootstrapBinPath} ${bootstrapExists ? 'exists' : 'does not exist'}. That field is what a `
+    + 'document reads to tell "the source scaffolds" from "the published package scaffolds", and '
+    + 'the two must never be inferred from each other.',
+  );
+}
+
+if (bootstrapExists) {
+  let bootstrapManifest = null;
+  try {
+    bootstrapManifest = JSON.parse(readFileSync(join(root, bootstrapManifestPath), 'utf8'));
+  } catch (error) {
+    fail(`${bootstrapManifestPath}: could not be read — ${error.message}`);
+  }
+  if (bootstrapManifest) {
+    if (bootstrapManifest.name !== 'create-accordo') {
+      fail(`${bootstrapManifestPath}: name is "${bootstrapManifest.name}", but the reserved npm name is "create-accordo"`);
+    }
+    if (bootstrapManifest.type !== 'module') {
+      fail(`${bootstrapManifestPath}: needs "type": "module" — without it every .js file beneath packages/create-accordo is treated as CommonJS`);
+    }
+    if (typeof bootstrapManifest.bin?.['create-accordo'] !== 'string') {
+      fail(`${bootstrapManifestPath}: declares no create-accordo bin, so \`npm create accordo\` would have nothing to run even once published`);
+    }
+    if (brand.npm.status !== 'published' && bootstrapManifest.private !== true) {
+      fail(
+        `${bootstrapManifestPath} is not private, but site/brand.json records npm.status as `
+        + `"${brand.npm.status}". Publishing is a human decision (MASTER_PLAN.md §10.4): while the `
+        + 'registry holds only a name reservation, this manifest stays `private: true` so that no '
+        + 'accidental publish turns the placeholder into something that installs.',
+      );
+    }
+    if (brand.npm.status === 'published' && bootstrapManifest.private === true) {
+      fail(
+        `site/brand.json says npm.status is "published", but ${bootstrapManifestPath} is still `
+        + '`private: true` — npm cannot have published it. One of the two is wrong, and a status '
+        + 'field that outruns the package is how a document starts claiming `npm create accordo` works.',
+      );
+    }
+  }
+
+  if (brand.npm.status !== 'published') {
+    if (brand.npm.publicationCandidate === 'verified-unpublished') {
+      for (const path of [assemblyPath, packageReadmePath, packageTestPath, stageWorkflowPath]) {
+        if (!existsSync(join(root, path))) fail(`site/brand.json records a verified publication candidate, but ${path} is missing`);
+      }
+      if (existsSync(join(root, stageWorkflowPath))) {
+        const workflow = readFileSync(join(root, stageWorkflowPath), 'utf8');
+        if (!/^\s*workflow_dispatch:/m.test(workflow)) fail(`${stageWorkflowPath}: must remain manual-only`);
+        if (!/^\s*id-token:\s*write\s*$/m.test(workflow)) fail(`${stageWorkflowPath}: trusted publishing requires id-token: write`);
+        if (!/npm stage publish/.test(workflow)) fail(`${stageWorkflowPath}: must stage rather than directly publish`);
+        const jsonAssemblies = workflow.match(/npm run --silent distribution:assemble-create --[^\n]+--json\s*>/g) ?? [];
+        if (jsonAssemblies.length !== 2) {
+          fail(`${stageWorkflowPath}: both JSON assembly receipts must suppress npm's stdout banner before redirection`);
+        }
+        if (/\bnpm publish\b/.test(workflow) || /NPM_TOKEN/.test(workflow)) {
+          fail(`${stageWorkflowPath}: direct publish and long-lived npm tokens are forbidden`);
+        }
+        const actionReferences = [...workflow.matchAll(/^\s*- uses:\s*([^\s#]+)/gm)].map((match) => match[1]);
+        for (const reference of actionReferences) {
+          if (!/@[0-9a-f]{40}$/.test(reference)) {
+            fail(`${stageWorkflowPath}: ${reference} is not pinned to a full commit SHA; release actions share the OIDC trust boundary`);
+          }
+        }
+      }
+    } else {
+      fail('site/brand.json: npm.publicationCandidate must say verified-unpublished while the registry is only a name reservation');
+    }
+    notes.push(
+      'create-accordo scaffolds a working project FROM THIS REPOSITORY (packages/create-accordo), '
+      + 'and its deterministic publication candidate packs, installs offline and creates a working project. '
+      + `The published \`${brand.npm.createCommand ?? 'npm create accordo'}\` `
+      + 'still reaches an empty 0.0.1 placeholder and installs nothing. Both sentences are true; only '
+      + 'the first may be claimed of this repository. Registry publication remains a human-approved staged action.',
+    );
   }
 }
 
