@@ -216,7 +216,15 @@ test('runtime corpus assembly is deterministic and excludes every ExecPlan', (t)
   assert.ok(first.files.includes('docs/benchmarks/jobs.json'));
   assert.ok(first.files.every((path) => !path.startsWith('docs/plans/')));
   assert.equal(existsSync(join(firstDir, 'docs', 'plans')), false);
-  assert.equal(JSON.parse(readFileSync(join(firstDir, 'site', 'claims.json'), 'utf8')).claimsContract, 1);
+
+  // What this proves is that the copied ledger is the repository's ledger, not that the
+  // contract happens to be at any particular version. Pinning the literal made ADR-027's
+  // bump to contract 2 look like an assembly defect, which is the wrong failure: the
+  // assembler had copied the file faithfully.
+  assert.equal(
+    JSON.parse(readFileSync(join(firstDir, 'site', 'claims.json'), 'utf8')).claimsContract,
+    JSON.parse(readFileSync(join(process.cwd(), 'site', 'claims.json'), 'utf8')).claimsContract,
+  );
 });
 
 test('runtime corpus assembly never replaces a caller-selected path', (t) => {
