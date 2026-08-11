@@ -114,6 +114,25 @@ export function runReportingChild({
       clearTimeout(timer);
       if (insist) clearTimeout(insist);
       if (drain) clearTimeout(drain);
+      // Let go of the pipes, and of the child handle.
+      //
+      // Settling on `exit` is only half the fix. A grandchild the package
+      // spawned inherits fd 1, 2 and 3 and holds them for as long as it lives,
+      // so these readable streams stay open — and an open stream is a *ref'd*
+      // libuv handle. The promise resolved in 300ms and the caller's own
+      // process then could not exit at all: `crm package test` printed its
+      // report and hung, and DX5's package-conformance step, which spawns
+      // exactly that command, burned its full fifteen-minute timeout and
+      // reported a passing package as a timeout.
+      //
+      // A pipe an unrelated process is holding open is not ours to wait on.
+      // That is what PROCESS_ISOLATION_BOUNDED already says; this makes it true.
+      try {
+        for (const stream of [child.stdio[REPORT_FD], child.stdout, child.stderr]) {
+          /** @type {any} */ (stream)?.destroy?.();
+        }
+        child.unref?.();
+      } catch { /* already gone */ }
       const noise = streams.noise.chunks.join('')
         + (streams.noise.exceeded ? `\n… truncated at ${maxNoiseBytes} bytes\n` : '');
 
