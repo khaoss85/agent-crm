@@ -78,6 +78,12 @@ export {
   optionalEnum,
   requiredIsoDate,
   optionalIsoDate,
+  // The one round-trip calendar-date authority. A calendar date is not an
+  // instant, and `Date.parse` alone accepts days that never existed, so every
+  // package that stores `YYYY-MM-DD` asks the same question of the same code.
+  isCalendarDate,
+  requireCalendarDate,
+  calendarDaysBetween,
 } from './src/validation.js';
 
 // AX2 — machine-readable Solution Plans. A document contract and its validator:
