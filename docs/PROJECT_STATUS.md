@@ -27,7 +27,7 @@ Generated: **2026-08-12**.
 | Fact | Value |
 |---|---|
 | Latest merged milestone | **The coding-agent DX wave**, merged in this order: PR #64 (CI keep-alive), PR #65 (**M16a** — renewal & expansion operations, the fourth domain package), PR #66 (**DX5** — `project verify`) and PR #67 (**DX6** — a second scenario). DX6 now ships **two** checked-in scenarios and two journeys over two different compositions — a sales funnel on the wall clock, and a service SLA/escalation story on an injected, stepped clock — which moved the **report** contract to `scenarioRunContract: 2` while the **document** contract stayed at `1`. The rule that came out of it is ADR-029. |
-| Measured at | `ad6b636` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
+| Measured at | `ef5512c` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
 | Tests | Measured, never typed. `npm run verify` is green on a clean tree at the commit above; **how many** tests that was lives in `site/claims.json` `measuredAgainst` and in no other file (ADR-027). |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
