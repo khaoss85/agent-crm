@@ -374,6 +374,19 @@ test('a journey publishes its own limitations, and cannot subtract a global one'
   for (const entry of JOURNEYS['service-sla-escalation'].limitations) {
     assert.equal(lead.has(entry.code), false, `${entry.code} is claimed by both journeys`);
   }
+  // …and no journey may shadow a global code either. Two entries with one code
+  // and two messages is a report that contradicts itself, and the reader has no
+  // way to tell which one the run meant.
+  const globalCodes = new Set(LIMITATIONS.map((entry) => entry.code));
+  for (const journey of Object.values(JOURNEYS)) {
+    for (const entry of journey.limitations) {
+      assert.equal(globalCodes.has(entry.code), false, `${entry.code} shadows a global limitation`);
+    }
+    // Every journey declares a clock and at least one limitation of its own:
+    // a journey that says nothing about itself is one nobody checked.
+    assert.ok(journey.clock?.mode, 'every journey declares its clock');
+    assert.ok(journey.limitations.length > 0, 'every journey declares what it does not prove');
+  }
 });
 
 test('a scenario cannot declare its own limitations, and a shorter list is refused as an unknown field', async (t) => {

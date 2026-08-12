@@ -272,9 +272,12 @@ nothing to check.
 | `b2b-lead-qualification` | `JOURNEY_CLOCK_IS_WALL_CLOCK`, `ENRICHMENT_PROVIDER_IS_A_FIXTURE` |
 | `service-sla-escalation` | `SLA_IS_ELAPSED_TIME_NOT_A_CONTRACTUAL_JUDGEMENT`, `NOTHING_WAS_NOTIFIED_OR_ROUTED`, `ESCALATION_IS_MANUALLY_RECORDED`, `SERVICE_COVERAGE_IS_NOT_A_CONTRACT` |
 
-No code appears in both lists. A limitation true of both journeys belongs in the
-global set; a limitation true of neither is noise that teaches a reader to skip
-the ones that matter.
+No code appears in more than one list — not in both journeys, and not shadowing a
+global one. A limitation true of both journeys belongs in the global set; a
+limitation true of neither is noise that teaches a reader to skip the ones that
+matter; and one code with two messages is a report that contradicts itself. All
+three are test-pinned, as is the rule that every registered journey declares a
+clock and at least one limitation of its own.
 
 ## Two worked runs
 
