@@ -230,7 +230,7 @@ Ordered by how much each one removes a reason not to launch. Every item names it
 
 | 1.3 | **Skill portability contract** — `requires` frontmatter per skill declaring the repository surface it needs, and a packaging document stating that today's honest target is this repository and projects built from it | `docs/SKILL_PACKAGING.md` |
 | 1.4 | **Split the plugin** into skills-only (no MCP server) and full, so the safe half can list without carrying a server that resolves to nothing outside a checkout | `.claude-plugin/`, `.codex-plugin/` |
-| 1.5 | **Regenerate `PROJECT_STATUS.md`** and automate it — it currently reports a stale SHA, 352 tests and AX2 as an open PR | `scripts/status.js` |
+| 1.5 | **Regenerate `PROJECT_STATUS.md`** and automate it — **partly done.** The file no longer owns a SHA or a count of its own: it cites `site/claims.json` `measuredAgainst`, and `npm run gtm:check` fails when the two disagree or when any document under `docs/` types a count. Full regeneration from `git rev-parse` and the GitHub API is still deferred (`docs/PROJECT_STATUS.md` → "Future automation") | `scripts/measurement.js`, `scripts/site-check.js` |
 | 1.6 | **Loopback lock** — refuse a non-loopback bind without an explicit acknowledgement flag, and print the production posture on every `serve` | `packages/cli/`, a refusal test, a new ledger claim |
 | 1.7 | **Production readiness ledger as a page** — per blocker: what breaks today, what you would have to build yourself, where it is tracked, and what you *can* legitimately do with this now | `site/readiness.json`, `site/templates/readiness.html` |
 | 1.8 | **Threat model** — what the system defends against and what it explicitly does not | `docs/THREAT_MODEL.md` |

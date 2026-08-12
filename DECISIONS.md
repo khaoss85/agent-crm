@@ -1137,6 +1137,82 @@ and proves it is truthful when the suite has since moved, so drift is reported a
 rather than failing the build. What would be untruthful is a *sentence* quoting a stale
 number as current, and that is now impossible to write.
 
+### ADR-027 addendum 1 — the same rule, turned on the repository's own status file
+
+**Status:** accepted.
+
+**Context.** ADR-027 stopped a *public* number drifting and left the *internal* one
+alone. `docs/PROJECT_STATUS.md` kept a `Main SHA at generation` row and a
+`Tests on clean main` row — a second measurement of the fact the ledger already owned,
+hand-typed, in the one file `AGENTS.md` §12 orders every agent to read for what is true
+today. A test pinned both literals in place, so the only way to update the document was
+to update the test, and across four milestones nobody did. The most-trusted document in
+the repository was also its most confidently wrong one.
+
+Then the failure ADR-027 was written to close happened anyway, one level up. A branch
+re-measured `site/claims.json` honestly; the merge that brought it to `main` resolved the
+`measuredAgainst` conflict in favour of `main`'s older block. The re-measurement was
+destroyed by a merge rather than by an edit, and the ledger ran a whole wave behind the
+suite with every gate green. Nothing was broken: the recorded commit really was an
+ancestor, and its recorded facts really did match the tree it named. Provenance was
+intact. What was missing was any *second party* to the fact — anything else in the
+repository that had to agree with it.
+
+**Decision.**
+
+1. **The status file cites; it does not measure.** `docs/PROJECT_STATUS.md` states no test
+   count at all, and carries exactly one `Measured at` row repeating
+   `site/claims.json` `measuredAgainst.sha`. `inspectStatusMeasurement`
+   (`scripts/measurement.js`) fails the build when the two strings differ, when the row is
+   missing, or when there is more than one of it.
+
+2. **The loose-count scan covers `docs/`.** ADR-027 §4 scanned the README, the ledger's
+   own prose, the site's JSON sources, the templates and `docs/marketing/`. It now scans
+   every document under `docs/`, plus `AGENTS.md` and `TASKS.md`, minus one short named
+   list — `DATED_HISTORY` — of documents whose numbers are *stamps* rather than *claims*:
+   `docs/plans/` (an ExecPlan records what a run measured, at a commit it names),
+   `docs/RENAME_SURFACE.md` (a dated experiment's observed result) and the two strategy
+   documents that open with "Written against `HEAD` on <date> with N tests passing".
+   Rewriting those would be falsifying history to satisfy a linter. The list is short on
+   purpose: a new document is scanned by default, and adding to it is a reviewable edit
+   with an argument attached.
+
+3. **Two false positives had to be fixed before the widening was possible.** `\b` matches
+   inside a hyphenated identifier and after a currency symbol, so "the ADR-018 test for
+   what core owns" read as a count of 18 and "a €500 test on conversion" as a count of 500.
+   A measured count is never written immediately after a hyphen or a currency symbol, so
+   both prefixes are excluded. Each is pinned by a fixture in
+   `tests/repository-truth.test.js`, because a gate nobody has watched fail is a gate
+   nobody should trust.
+
+4. **No second mechanism, and no new command.** Both rules live in
+   `scripts/measurement.js` beside the provenance check and run inside
+   `npm run gtm:check`. There is no `accordo status`, no new namespace, and nothing added
+   to `npm run surface:check`'s budget. Neither rule reads prose: one compares two literal
+   strings, the other matches a numeric pattern. A status file can be wrong in every other
+   row and still pass — documentation truthfulness stays a human review category
+   (`docs/QUALITY_GATES.md` §2 and §6).
+
+**Why not regenerate `PROJECT_STATUS.md` from `git` and the GitHub API.** Because the
+honest half of that file is prose a generator cannot write — which limitation is closed,
+what a receipt actually describes, why a row is stale — and a generator that emits the
+easy rows encourages a reader to trust the hard ones. The tool is still worth building and
+is still recorded as deferred in `docs/PROJECT_STATUS.md` → "Future automation". This
+addendum takes only the part that is a mechanical fact: two strings that must be equal.
+
+**Why not fail the build when the test corpus moves after a measurement.** That would
+block every pull request that adds a test until it re-ran an eleven-minute suite, and the
+existing behaviour is already correct: a record that names its own ancestor commit is
+truthful even when the suite has since moved, so the drift is a note. What must not exist
+is a *sentence* quoting a stale number as current — and after this addendum there is
+nowhere under `docs/` left to write one.
+
+**What this does not decide.** Nothing about the *rest* of `PROJECT_STATUS.md`. The merged
+milestone, the open-PR row and the CI row are still reconciled by a person — the final
+integrator of a wave, under `docs/QUALITY_GATES.md` §1.11 — and a robust mechanical check
+on them would need a source of truth this repository does not have offline. That residual
+is named in `docs/QUALITY_GATES.md` §6 rather than left implicit.
+
 ## ADR-028 — Calendar-date validation is a core runtime primitive; a capability whose answers change shape gets a new version
 
 **Status:** accepted.

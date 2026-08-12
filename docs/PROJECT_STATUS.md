@@ -1,28 +1,40 @@
 # Project status
 
 The single operational snapshot of the repository. Volatile facts — merged
-milestone, main SHA, test count, open PRs, next task — live **here and nowhere
-else**; `docs/strategy/MASTER_PLAN.md` holds the stable vision and links to
-this file.
+milestone, the commit the public numbers were measured at, open PRs, next task —
+live **here and nowhere else**; `docs/strategy/MASTER_PLAN.md` holds the stable
+vision and links to this file.
 
 > **Update this file in the same PR as every milestone merge.** A status file
 > that lags is worse than no status file.
 
-Generated: **2026-08-10**.
+**This file measures nothing of its own, and states no test count.** The count
+is measured, never typed: it lives in `site/claims.json` under `measuredAgainst`,
+written by `node scripts/measure-suite.js --apply` from a real green run on a
+clean tree (ADR-027, `scripts/measure-suite.js`). The `Measured at` row below
+*cites* that record's commit, and `npm run gtm:check` fails when the two
+disagree. That binding exists because they did disagree, silently: a branch
+re-measured the ledger, a merge resolved the conflict in favour of the older
+side, and every gate stayed green while the published numbers ran a wave behind
+the suite. This file used to own a second SHA and a second count of its own, and
+a test pinned both in place — which is how a status file becomes the most
+confidently wrong document in a repository.
+
+Generated: **2026-08-12**.
 
 ## Snapshot
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **GTM discovery and release integration**: the ordered #44 → #53 → #54 → #55 → #56 → #57 → #58 chain is merged, followed by npm staging-receipt hardening in PR #59 and canonical package-bin hardening in PR #60. It adds the Customer Hub, Smart CRM and CDP + CRM intent pages, first-contact agent metadata, the hosted read-only Docs MCP and the verified staged `create-accordo` candidate without changing their stated product limits. |
-| Main SHA at generation | `ef8487a` (regular merge of PR #60 / canonical npm bin) |
-| Tests on clean main | **808 passing, 0 failing** (`npm run verify` at `ef8487a`). |
+| Latest merged milestone | **The coding-agent DX wave**, merged in this order: PR #64 (CI keep-alive), PR #65 (**M16a** — renewal & expansion operations, the fourth domain package), PR #66 (**DX5** — `project verify`) and PR #67 (**DX6** — a second scenario). DX6 now ships **two** checked-in scenarios and two journeys over two different compositions — a sales funnel on the wall clock, and a service SLA/escalation story on an injected, stepped clock — which moved the **report** contract to `scenarioRunContract: 2` while the **document** contract stayed at `1`. The rule that came out of it is ADR-029. |
+| Measured at | `ad6b636` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
+| Tests | Measured, never typed. `npm run verify` is green on a clean tree at the commit above; **how many** tests that was lives in `site/claims.json` `measuredAgainst` and in no other file (ADR-027). |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
-| Browser smoke | Real-Chromium checks remain manual and are **not in CI**. PR #58 recorded desktop and mobile receipts for the 113-page site; exact main `ef8487a` is live on `accordo.dev`, including the privacy and intent pages. |
-| CI | Exact main `ef8487a` is green in GitHub Actions: `verify` and `public-claims` passed. |
-| Open PRs | PR #45 is the older Scenario Runner branch: its two `verify` jobs passed at its own head, but both public-claims jobs failed and it predates the GTM/main changes. PR #47 was closed as superseded by the equivalent temp-isolation fix already on main. |
-| Public discovery | GitHub About and all 20 intent topics are live. Smithery `khaoss85/accordo` returns 200 and exposes the three production Docs MCP tools. The GitHub social preview is live but stale at 421 tests; its generated 808-test replacement still needs a manual Settings upload. |
+| Browser smoke | Real-Chromium checks remain manual and are **not in CI** (`docs/ADMIN_SMOKE.md`). PR #58 recorded desktop and mobile receipts against main `ef8487a`; nothing since has re-run them, so that receipt describes `ef8487a` and not the current head. |
+| CI | Main `211f309` is green in GitHub Actions: the `verify` and `public-claims` jobs both concluded `success`. |
+| Open PRs | **None.** PR #45, the older Scenario Runner branch, merged as `4a89474`; PR #47 was closed as superseded by the equivalent temp-isolation fix already on main. |
+| Public discovery | GitHub About and all 20 intent topics are live. Smithery `khaoss85/accordo` returns 200 and exposes the three production Docs MCP tools. The GitHub social preview is live and **stale**: it was rendered from a much older measurement and its replacement still needs a manual Settings upload, which is a human step no branch can take. |
 | npm | `accordo@0.0.1` and `create-accordo@0.0.1` published as **empty name reservations** on 2026-08-09 — confirmed against the registry, not assumed. Neither installs anything. The `@accordo` scope is **unclaimed** (`@accordo/mcp` and `@accordo/core` return 404), which is why `site/brand.json` records `npm.status: names-reserved` and the MCP-registry submission stays blocked. **This row describes the registry and nothing in it has changed.** |
 | Project bootstrap | **`create-accordo` is real source and has a verified publication candidate**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates a bounded package directory while the source manifest stays private. Dispatch `31364606861` passed repository verification and deterministic assembly, then npm generated provenance but refused staging with `E401`; no stage or registry version exists. PR #60 made the checked bin path canonical and proves npm installs and executes the executable shim. **The published placeholder is untouched**, so `npm create accordo` still installs nothing. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
 
@@ -92,6 +104,10 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 | DX4 | Package Conformance Kit: `crm package test`, generic, composed and booted, never special-cased by name | ADR-018 |
 | DX3 | Package Scaffold: `crm package scaffold`, a two-file empty-but-conforming package, dry-run by default | ADR-018 |
 | DX1 | Project Doctor: `crm project doctor`, deterministic source diagnostics in ~155 ms, every finding naming an existing authority | ADR-018, ADR-019, ADR-020 |
+| LA0 | Legacy Characterization Harness: a domain's externally observable behaviour frozen, replayed and required to be identical — the extraction gate | — |
+| M16a | Renewal & expansion operations: the fourth domain package, the second to consume another through a declared capability. It records intent and hands off — it renews, cancels, signs, prices, invoices and schedules nothing | ADR-028 |
+| DX5 | Project Verify: `crm project verify --json`, the authorities that already decide, orchestrated behind a blocking doctor preflight, with conformance executed for every composed package and dirty-mutation detection that never cleans | — |
+| DX6 | Scenario Evidence: `crm scenario run <scenario> --json`, `scenarioRunContract: 2`. Two checked-in scenarios over two compositions and two clocks; it promotes no JTBD row and publishes the counted list of rows a run did **not** establish | ADR-029 |
 
 ## Next planned development
 
@@ -151,21 +167,31 @@ pipelines; Lead Intelligence; Commercial Operations; Signature and Order;
 Contract activation and subscriptions; the public domain-package contract, the
 delivery handover and delivery execution; deterministic application inspection
 (AX1); delivery economics (M14b1); delivery change, deliverables and acceptance
-evidence (M14b2); machine-readable Solution Plans (AX2); the project bootstrap
+evidence (M14b2); machine-readable Solution Plans (AX2); **Service operations
+(M15)**; **renewal & expansion operations (M16a) — recorded intent and a
+hand-off, nothing that renews, cancels, signs, prices or schedules**; the coding-agent
+DX rungs **DX1, DX3, DX4, DX5, DX6 and LA0**; the project bootstrap
 (`create-accordo`, source only — nothing is published); MCP server; CLI.
 
-**Documentation only (no code):** renewal, billing and everything downstream of
-activation; Service; Analytics Studio; Integration Runtime; Jobs & durable outbox;
-Data Governance; Design-to-CRM; Accordo Cloud; a **published** npm package
-(the bootstrap exists in source; the registry names are empty reservations);
-PostgreSQL; auth/tenancy/RBAC; Marketing & Growth (MK0–MK7); the Agent
-Experience track beyond AX0; benchmark execution.
+**Documentation only (no code):** billing, invoicing, revenue recognition and
+everything else downstream of activation; renewal *execution* and amendment
+(M16b — M16a records the intent and stops); Analytics Studio; Integration Runtime;
+Jobs & durable outbox; Data Governance; Design-to-CRM; Accordo Cloud; a
+**published** npm package (the bootstrap exists in source; the registry names are
+empty reservations); PostgreSQL; auth/tenancy/RBAC; Marketing & Growth (MK0–MK7);
+the Agent Experience track beyond AX2; DX2, DX9 and DX10; benchmark execution.
 
 ## Keeping this file honest
 
 - Update it in the milestone merge PR, not afterwards.
 - Every number must come from a clean-clone run, not from memory.
 - If a fact is stale, delete it rather than guess.
+- **The `Measured at` row is checked, not trusted.** `npm run gtm:check` fails
+  when its SHA is not the one in `site/claims.json` `measuredAgainst`, and fails
+  again if any document under `docs/` types a test count instead of citing the
+  ledger. That is the whole of the automation: two literal comparisons, no
+  natural-language inference and no new command
+  (`scripts/measurement.js`, `tests/repository-truth.test.js`).
 - **Future automation (not built, and deliberately not written in this PR):** a
   `npm run status` command could regenerate the snapshot table from `git
   rev-parse`, the test reporter's summary and the GitHub API, and CI could fail

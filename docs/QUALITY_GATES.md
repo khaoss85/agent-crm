@@ -17,6 +17,7 @@ policy, so it stops depending on the length of a one-off prompt. Agents:
 8. **No secrets or artifacts.** No `.env`, database, log, build output, browser profile, webhook capture, signed file, generated starter output or `node_modules` in the tree.
 9. **Compatibility Backfill Rule.** A PR that introduces or changes a **horizontal** capability — one every domain could use — records every existing domain's status against it in `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, using `aligned | partial | deferred | not_applicable | needs_extraction` with a one-line reason, and names the closing milestone for anything `deferred`. **Declaring the gap is mandatory; closing it in the same PR is not** — retrofitting five domains inside a feature PR is how a feature PR stops being reviewable. A capability only the newest domain has, that nobody wrote down, is a fork rather than a platform. A missing row is a review blocker in the same way a missing test is.
 10. **Human merge.** An agent never merges its own milestone PR without an explicit instruction, and never squashes a milestone: regular merge commits keep the history readable.
+11. **Parallel agents, and the integrator pass.** When more than one coding agent works a wave, the rules live in `AGENTS.md` → *Parallel coding agents* and are not duplicated here: separate sibling worktrees **outside** the repository, one branch owner per worktree, and one final integrator that reconciles the shared-truth files every branch touched. The integrator pass is a gate, not a courtesy — a merge that resolves a conflict inside a *measured* record discards a measurement without failing anything, which is how `site/claims.json` came to run a whole wave behind the suite with every check green.
 
 ## 2. Adversarial review categories
 
@@ -82,3 +83,37 @@ implementation
 
 A milestone that skipped the review is unreviewed, not finished — and the PR
 body must say so rather than imply otherwise.
+
+## 6. Repository truth: what is checked mechanically, and what is not
+
+Documentation truthfulness (§2) is a review category, and a review category is a
+person. Two of its failures happen without anyone lying, so they are checked by a
+script inside `npm run gtm:check` instead (`scripts/measurement.js`,
+`scripts/site-check.js`, driven by `tests/repository-truth.test.js`):
+
+| Checked | How |
+|---|---|
+| `docs/PROJECT_STATUS.md` names the commit the public numbers were measured at | its `Measured at` row must equal `site/claims.json` `measuredAgainst.sha`, as a literal string |
+| no document types a test count | the loose-count scan covers `site/`, `README.md` and now **every document under `docs/`**, except a short, named list of dated-history files |
+
+Both are deliberately narrow, and the boundaries are as much of the gate as the
+rules:
+
+- **Neither reads prose.** One compares two strings; the other matches a numeric
+  pattern. Nothing infers whether a sentence is true, so a status file can be
+  wrong in every other row and still pass. §2's documentation-truthfulness
+  category is still the only thing that reads meaning, and it is still a person.
+- **Neither is a new agent-facing command.** There is no `accordo status`, no new
+  namespace, and nothing added to the surface budget (`npm run surface:check`).
+- **Neither leaves this repository.** A generated project has no status file and
+  no ledger.
+- **A moved corpus is still advisory.** When `tests/` changes after a
+  measurement, the gate *notes* that the recorded count describes an older commit
+  and does not fail. Failing there would block every PR that adds a test until it
+  re-ran the suite, which is a worse outcome than a note. Re-measure before
+  publishing: `node scripts/measure-suite.js --apply` on a clean tree.
+- **Residual, stated rather than hidden:** a robust check that the *rest* of
+  `PROJECT_STATUS.md` is current — the milestone row, the open-PR row, the CI row
+  — needs a source of truth this repository does not have offline. It stays the
+  integrator's job under §1.11, and `docs/PROJECT_STATUS.md` → "Future
+  automation" records the tool that would close it.

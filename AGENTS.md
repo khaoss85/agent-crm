@@ -17,10 +17,34 @@ This repository is an agent-native CRM framework. Preserve the separation betwee
 9. **Domain-package work requires the `build-custom-domain-package` skill** (`.claude/skills/build-custom-domain-package/SKILL.md`, mirrored at `.agents/skills/build-custom-domain-package/SKILL.md`) and `docs/PACKAGE_AUTHORING.md`. A package imports only `packages/core/index.js`, reaches another package only through a declared capability, and is registered by one static import in `packages/domains/generated/index.js`. A single custom object is a module, not a package.
 10. Follow `docs/QUALITY_GATES.md` for every feature PR, and **use the `adversarial-review` skill for any milestone review or pre-merge review task** (`.claude/skills/adversarial-review/SKILL.md`, mirrored at `.agents/skills/adversarial-review/SKILL.md`). A milestone that skipped the review is unreviewed, not finished.
 11. Respect the core budget rule (ADR-018): **new domain-specific business behavior does not go into `packages/core`** unless it is first proven to be a reusable runtime capability. A PR that adds a domain concept to core must say which runtime capability it is and why a domain package cannot own it.
-12. Read `docs/PROJECT_STATUS.md` for what is true in the repository today — merged milestone, main SHA, test count, open PRs, production blockers — and update it in the same PR as a milestone merge. Do not put volatile status in `MASTER_PLAN.md`.
+12. Read `docs/PROJECT_STATUS.md` for what is true in the repository today — merged milestone, the commit the public numbers were measured at, open PRs, production blockers — and update it in the same PR as a milestone merge. Do not put volatile status in `MASTER_PLAN.md`. **It carries no test count**: a count is measured into `site/claims.json` `measuredAgainst` by `node scripts/measure-suite.js --apply` and cited from there (ADR-027). Typing one into any document under `docs/` fails `npm run gtm:check`.
 13. To learn what an application actually has, run `npm run crm -- app inspect --json` rather than assembling it from source and prose (`docs/APPLICATION_INSPECTION.md`). Read `valid`, then `problems[]`, then `limitations[]` — every limitation is a hard boundary on what you may claim. It reads checked-in source only: it opens no database, contacts no provider, and reports no runtime or authorization state.
 14. **Compatibility Backfill Rule.** When you add or change a *horizontal* capability — one every domain could use, such as the package seam, a declared capability contract, module evolution, an evidence discipline or an agent-facing surface — record every existing domain's status against it in `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` in the same PR, using `aligned | partial | deferred | not_applicable | needs_extraction` with a one-line reason. Declaring the gap is required; closing it in the same PR is not. Do **not** refactor a legacy domain to close a row: extraction is sequenced work (`docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`), not something a feature PR does on the way past.
 15. A Solution Plan is a **checked file with a contract**, not prose with headings (`docs/SOLUTION_PLAN.md`). Write it, record the `app inspect` report it was written against, and run `npm run crm -- solution check <plan.json>` before writing code and again before the review — a plan bound to a composition that has since moved reports `PLAN_STALE`. A plan never carries a command: nothing in this framework executes one, and the validator refuses it.
+16. **Parallel coding agents (§16 below).** Each agent works in its own sibling worktree **outside** the repository, owns exactly one branch, and one final integrator reconciles the shared truth.
+
+## Parallel coding agents
+
+Several agents may work on one milestone at once. Three rules, because breaking
+any of them has already cost this repository a wave of published numbers:
+
+1. **One worktree per agent, outside the repository.** `git worktree add
+   ../<repo>-worktrees/<name>` — a sibling directory, never a path inside the
+   checkout, so no agent's build output, temporary database or generated site
+   lands in another agent's tree.
+2. **One branch owner per worktree.** The agent that owns a branch is the only
+   one that commits to it. An agent that needs another agent's change waits for
+   the merge or rebases onto it; it does not reach into a worktree it does not own.
+3. **One final integrator reconciles shared truth.** Every wave ends with a
+   single pass over the files every branch touches — `docs/PROJECT_STATUS.md`,
+   `site/claims.json`, the JTBD matrix, the roadmaps — because a merge that
+   resolves a conflict in a *measured record* silently discards a measurement.
+   That is not hypothetical: a branch re-measured `site/claims.json`, the merge
+   kept main's older block, and the ledger ran a whole wave behind the suite with
+   every gate green. `npm run gtm:check` now fails on that particular drift
+   (`scripts/measurement.js`), and the integrator pass is what catches the rest.
+
+Sequenced in `docs/QUALITY_GATES.md` §1.11.
 
 ## Coding conventions
 

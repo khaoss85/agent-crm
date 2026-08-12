@@ -16,7 +16,7 @@ worth reading before the rest.
 Business request
       ↓  "Renewals of €50,000 or more need a manager's sign-off."
 Claude Code / Codex
-      ↓  reads AGENTS.md · 11 skills · MCP · `crm app inspect`
+      ↓  reads AGENTS.md · 12 skills · MCP · `crm app inspect`
 Modules + deterministic workflows + versioned policy
       ↓
 API + Admin + trace + audit — in your repository, as code you review
@@ -79,7 +79,8 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 | Order activation into Contract, immutable version, Subscription and pending obligations | nothing bills, renews, amends or cancels; there is no scheduler | `tests/contracts-activation-e2e.test.js` |
 | Delivery handover into a project with work packages, milestones and an optional partner; human-driven execution | nothing schedules, staffs, accepts or bills; deliverables do not exist as objects | `tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e.test.js` |
 | Append-only time and expense evidence, costed by a versioned policy, with a reproducible contribution estimate | deliberately not a margin: no revenue recognition, no COGS, no ARR/MRR, no FX | `tests/delivery-economics-e2e.test.js` |
-| A customer-authored domain package attaches and detaches with the kernel fingerprint unchanged | no scaffold, no registry, no sandboxing — package code runs with the host's authority | `tests/package-contract.test.js`, `tests/custom-package-e2e.test.js` |
+| A customer-authored domain package attaches and detaches with the kernel fingerprint unchanged | the scaffold that starts one writes an empty package and nothing else; no registry, no publication, no sandboxing — package code runs with the host's authority | `tests/package-contract.test.js`, `tests/custom-package-e2e.test.js` |
+| `accordo package scaffold <name>` — a minimal, empty, conforming local package, written atomically, dry-run by default | it invents no business logic, composes nothing, verifies no global identity uniqueness and installs or publishes nothing | `tests/package-scaffold.test.js`, `tests/package-test-command.test.js` |
 | `crm app inspect` — one deterministic, source-only JSON report of what an application contains | never opens the database, contacts a provider or reads a secret — and says so in its own output | `tests/app-inspect.test.js` |
 | `crm solution check` — a Solution Plan is a checked-in contract with a canonical fingerprint | a document contract, not a planner and not a runtime; nothing executes a plan | `tests/solution-plan.test.js` |
 | `crm scenario run` — two checked-in business scenarios run against real composed applications and report which JTBD rows they earned **and which they did not** | coverage is claimed by a scenario rather than discovered; it promotes no row, drives no browser, and each run speaks for one composition | `tests/scenario-run.test.js` |

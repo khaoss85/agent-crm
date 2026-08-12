@@ -10,7 +10,7 @@ The open-source, agent-native CRM framework: Claude Code and Codex use it to gen
 
 ## 2. Current status
 
-**Volatile status lives in `docs/PROJECT_STATUS.md`** — merged milestone, main SHA, test count, open PRs, next task and production blockers. It is updated in every milestone merge PR; this file deliberately no longer carries numbers that go stale.
+**Volatile status lives in `docs/PROJECT_STATUS.md`** — merged milestone, the commit the public numbers were measured at, open PRs, next task and production blockers. The test count is not there either: it is measured into `site/claims.json` `measuredAgainst` and cited from there (ADR-027). It is updated in every milestone merge PR; this file deliberately no longer carries numbers that go stale.
 
 Stable facts: milestones **M0–M11 are merged and proven in-repo** — the vertical from lead capture through enrichment, scoring, routing, qualification, conversion, pipeline, composite quoting, discount approval, verified signature evidence and an immutable Order (ADR-001…ADR-017). Working title `accordo`; **no public name chosen**. The repository license is currently **MIT**; final pre-launch confirmation is a pending human decision. The benchmark is designed and **not yet executed**.
 
