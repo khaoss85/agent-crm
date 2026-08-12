@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { PackageRegistry, definePackage, validatePackageDefinition } from '../packages/core/index.js';
 import { createContractsDomain } from '../packages/contracts/src/index.js';
 import { createDeliveryPackage } from '../packages/delivery/src/index.js';
+import { createLifecyclePackage } from '../packages/lifecycle/src/index.js';
 import { createPartnerScorecardPackage } from '../examples/custom-packages/partner-scorecard/src/index.js';
 import { b2bSaasOrderActivationV1 } from '../examples/starters/b2b-lead-qualification/contracts.js';
 import { b2bDeliveryHandoverV1 } from '../examples/starters/b2b-lead-qualification/delivery.js';
@@ -147,19 +148,23 @@ test('the first-party contracts package conforms', () => {
     definition: createContractsDomain({ policies: [b2bSaasOrderActivationV1] }),
     dir: join(repoRoot, 'packages/contracts'),
     expected: {
-      // Version 3: M15 added `service-obligations@1` and M16a added the
-      // read-only `contract-lifecycle-source@1`, both additively. Every M12
-      // resource, action and the `delivery-obligations@1` capability are
+      // Version 4: M15 added `service-obligations@1` and M16a added the
+      // read-only `contract-lifecycle-source@1`. The post-merge audit moved
+      // that one capability to @2 — it now refuses to open while any declared
+      // `termsSource` is unclassified, and reports `signed: null` rather than a
+      // confident `false` for a source nobody decided about. A capability whose
+      // answers changed shape gets a new version, so the package version moved
+      // with it. Every M12 resource, action and `delivery-obligations@1` are
       // untouched, and `packageContract: 1` did not move.
       name: 'contracts',
-      version: 3,
+      version: 4,
       resources: [
         'commercial-contract', 'contract-version', 'contract-line', 'contract-activation',
         'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
       ],
       actions: ['order.activate-contract', 'order.plan-activation'],
       requires: [],
-      provides: ['contract-lifecycle-source@1', 'delivery-obligations@1', 'service-obligations@1'],
+      provides: ['contract-lifecycle-source@2', 'delivery-obligations@1', 'service-obligations@1'],
     },
     // Contracts must reach none of the packages that consume it.
     forbiddenImports: [/from '[^']*delivery\//, /from '[^']*\/service\//, /from '[^']*\/lifecycle\//],
@@ -216,6 +221,35 @@ test('the first-party delivery package conforms and depends only through a capab
       ],
     },
     forbiddenImports: [/from '[^']*contracts\//],
+  });
+});
+
+test('the first-party lifecycle package conforms and consumes without offering', () => {
+  // M16a shipped without this. Every other first-party package answers the
+  // conformance questions here, and a package that quietly stops conforming has
+  // to fail somewhere.
+  assertPackageConforms({
+    definition: createLifecyclePackage(),
+    dir: join(repoRoot, 'packages/lifecycle'),
+    expected: {
+      name: 'lifecycle',
+      version: 1,
+      resources: ['renewal-decision', 'commercial-followup'],
+      // Exactly what ships. `record-expansion-intent` and `record-successor`
+      // were described in the plan and never built; expansion and contraction
+      // are intents on the follow-up, and no successor is modelled at all.
+      actions: [
+        'commercial-contract.plan-renewal',
+        'commercial-contract.record-renewal-decision',
+        'commercial-contract.request-commercial-followup',
+        'commercial-followup.resolve-commercial-followup',
+      ],
+      requires: ['contracts/contract-lifecycle-source@2'],
+      provides: [],
+    },
+    // It reaches Contracts only through the declared capability, and never
+    // through the sibling packages that consume the same host record.
+    forbiddenImports: [/from '[^']*contracts\//, /from '[^']*delivery\//, /from '[^']*\/service\//],
   });
 });
 

@@ -56,7 +56,11 @@ export function createContractsDomain(options = {}) {
   return definePackage({
     packageContract: 1,
     name: CONTRACTS_DOMAIN,
-    version: 3,
+    // 4: `contract-lifecycle-source` moved to @2. It now refuses to open while
+    // any declared `termsSource` is unclassified, and reports `signed: null`
+    // instead of a confident `false` for a source nobody decided about — both
+    // observable changes to what a consumer is told, so the version moved.
+    version: 4,
     label: 'Contracts and subscriptions',
     description: 'Activates a signed immutable Order into a commercial contract, a subscription and pending delivery/service obligations.',
     resources: [...CONTRACTS_RESOURCES],
@@ -65,9 +69,10 @@ export function createContractsDomain(options = {}) {
     capabilities: [
       createDeliveryObligationsCapability(options.modules),
       createServiceObligationsCapability(options.modules),
-      // Additive again: the two obligation capabilities are untouched, and the
-      // package now also offers the term evidence an operational lifecycle
-      // package needs — read-only, provenance attached (M16a).
+      // The two obligation capabilities are untouched. This one offers the
+      // term evidence an operational lifecycle package needs — read-only, with
+      // provenance attached and its signed state DERIVED from that provenance
+      // rather than asserted beside it (M16a).
       createContractLifecycleSourceCapability(options.modules),
     ],
     actions: buildContractActions(options.modules),

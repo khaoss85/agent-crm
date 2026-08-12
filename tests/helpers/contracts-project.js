@@ -75,13 +75,23 @@ export const SERVICE_MODULES = [
   'support-case', 'support-case-activity', 'service-sla-evaluation', 'service-escalation',
 ];
 
+/** The Lifecycle package's own record modules (M16a). */
+export const LIFECYCLE_MANIFESTS = ['renewal-decision.module.json', 'commercial-followup.module.json'];
+export const LIFECYCLE_MODULES = ['renewal-decision', 'commercial-followup'];
+
 /**
  * @param {import('node:test').TestContext} t
  * @param {{withDomain?: boolean}} [options] `withDomain: false` builds the same
  *   project **without** the contracts package, which is how domain isolation is
  *   proven rather than asserted.
  */
-export function project(t, { withDomain = true, withDelivery = false, withCustomPackage = false, withService = false } = {}) {
+export function project(t, {
+  withDomain = true, withDelivery = false, withCustomPackage = false, withService = false,
+  // M16a. `withLifecycleTables` applies the record modules WITHOUT composing the
+  // package, which is how the absence/detach case is built: the rows must
+  // survive a composition that no longer names the package.
+  withLifecycle = false, withLifecycleTables = withLifecycle,
+} = {}) {
   const root = mkdtempSync(join(tmpdir(), 'accordo-contracts-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
@@ -100,6 +110,7 @@ export function project(t, { withDomain = true, withDelivery = false, withCustom
   if (withDomain) for (const manifest of DOMAIN_MANIFESTS) apply(join(root, 'packages/contracts/modules', manifest));
   if (withDelivery) for (const manifest of DELIVERY_MANIFESTS) apply(join(root, 'packages/delivery/modules', manifest));
   if (withService) for (const manifest of SERVICE_MANIFESTS) apply(join(root, 'packages/service/modules', manifest));
+  if (withLifecycleTables) for (const manifest of LIFECYCLE_MANIFESTS) apply(join(root, 'packages/lifecycle/modules', manifest));
   if (withCustomPackage) apply(join(root, 'examples/custom-packages/partner-scorecard/modules/partner-scorecard.module.json'));
 
   writeFileSync(
@@ -146,6 +157,7 @@ export function project(t, { withDomain = true, withDelivery = false, withCustom
           "import { createServicePackage } from '../../service/src/index.js';",
           "import { b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1 } from '../../../examples/starters/b2b-lead-qualification/service.js';",
         ] : []),
+        ...(withLifecycle ? ["import { createLifecyclePackage } from '../../lifecycle/src/index.js';"] : []),
         ...(withCustomPackage ? [
           "import { createPartnerScorecardPackage } from '../../../examples/custom-packages/partner-scorecard/src/index.js';",
         ] : []),
@@ -153,6 +165,7 @@ export function project(t, { withDomain = true, withDelivery = false, withCustom
         '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
         ...(withDelivery ? ['  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1], costPolicies: [b2bDeliveryCostV1] }),'] : []),
         ...(withService ? ['  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1] }),'] : []),
+        ...(withLifecycle ? ['  createLifecyclePackage(),'] : []),
         ...(withCustomPackage ? ['  createPartnerScorecardPackage(),'] : []),
         '];',
         '',

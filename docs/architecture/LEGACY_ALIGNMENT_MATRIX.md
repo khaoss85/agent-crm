@@ -338,6 +338,31 @@ Three practical consequences:
 3. A reviewer may reject a PR for a missing row the same way they reject a
    missing test — and `docs/QUALITY_GATES.md` §1 now says so.
 
+## The M16a hardening backfill answer, as the rule requires
+
+The M16a post-merge hardening introduced one horizontal change: a **shared
+calendar-date authority** in `packages/core/src/validation.js`
+(`isCalendarDate`, `requireCalendarDate`, `calendarDaysBetween`). A calendar
+date is a different kind of fact from an instant, `Date.parse` alone accepts
+days that never existed, and the round-trip rule that refuses them had been
+independently re-implemented in **four** packages. A validator carries no domain
+vocabulary and is a runtime primitive, which is the ADR-018 test for what core
+may own.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | Every domain that stores a `YYYY-MM-DD` value: **Contract Activation**, **Delivery**, **Service** and **Lifecycle**. Pipeline, Lead Intelligence, Commercial Ops and Signature & Order store no calendar date and are `not_applicable` |
+| Which are already aligned? | **Contract Activation** and **Lifecycle** — both now delegate to the core authority; `packages/contracts/src/dates.js` re-exports it so M12's public surface is unchanged |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **Delivery** (`packages/delivery/src/dates.js`) and **Service** (`calendarDate` in `packages/service/src/service-actions.js`) keep their own copies of the identical round-trip rule. They are `partial`: the rule they apply is the same rule and no behaviour differs today, but it is a second and third implementation of it. Declared here, not closed here — extraction and consolidation of a legacy implementation is sequenced work, not something a defect-fix PR does on the way past |
+| Was the matrix updated? | Yes — the row below, and this section |
+
+| Horizontal capability | Pipeline | Lead Intelligence | Commercial Ops | Signature & Order | Contract Activation | Delivery |
+|---|---|---|---|---|---|---|
+| **Shared calendar-date authority** — one round-trip validator for `YYYY-MM-DD`, refusing days that never existed | `not_applicable` — stores no calendar date | `not_applicable` — same | `not_applicable` — same | `not_applicable` — same | `aligned` — delegates to `packages/core` and re-exports it | `partial` — keeps an identical private copy in `src/dates.js` |
+
+Service is `partial` for the same reason as Delivery; Lifecycle is `aligned`.
+
 ## The M15 backfill answer, as the rule requires
 
 M15 introduced one horizontal change: a **second capability on an existing

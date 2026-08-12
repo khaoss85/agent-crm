@@ -1136,3 +1136,73 @@ nothing about re-measuring on every merge — a record that names its own ancest
 and proves it is truthful when the suite has since moved, so drift is reported as a note
 rather than failing the build. What would be untruthful is a *sentence* quoting a stale
 number as current, and that is now impossible to write.
+
+## ADR-028 — Calendar-date validation is a core runtime primitive; a capability whose answers change shape gets a new version
+
+**Status:** accepted.
+
+**Context.** Two things surfaced in the M16a post-merge audit, and they are the same
+thing seen twice: a rule that is *stated in more than one place* eventually disagrees
+with itself, and a rule that is *implied* eventually answers a question nobody asked it.
+
+The first was calendar dates. A commercial term boundary, a delivery window, a coverage
+start and a renewal `asOf` are all `YYYY-MM-DD`, and none of them is an instant.
+`Date.parse('2027-02-30T00:00:00.000Z')` does not fail — JavaScript rolls it to March 2 —
+so shape alone accepts days that never existed. The round-trip rule that refuses them was
+correct, and had been independently re-implemented in **four** packages: `contracts`,
+`delivery`, `service` and `lifecycle`. Where a package applied it partially, the damage
+was not cosmetic: M16a stored an `asOfDate` naming a day nobody could have decided
+anything on, beside a `daysToBoundary` measured from a *different* day, and against a real
+database two contradicting decisions persisted for the same real day under two keys —
+defeating that package's own "one decision per contract per date" promise.
+
+The second was term provenance. `contract-lifecycle-source@1` answered `signed` from a
+classification map and returned `false` for any `termsSource` the map did not name. That
+is safe for one odd row and unsafe as a rule: the day M12 gains a source nobody has
+classified, every contract carrying it is reported as unsigned — silently, permanently,
+by a package that never considered the question, in a different file from the one that
+changed.
+
+**Decision.**
+
+1. **`packages/core/src/validation.js` owns the calendar-date rule.** `isCalendarDate`,
+   `requireCalendarDate` and `calendarDaysBetween` sit beside the validators the kernel's
+   own services already use. Under ADR-018 this is a *runtime capability*, not domain
+   behaviour: it carries no domain vocabulary, decides no commercial question, and four
+   independent re-implementations are the proof of reuse that ADR-018 asks for.
+   `packages/contracts/src/dates.js` re-exports it, so M12's public surface does not move.
+
+2. **One day has exactly one spelling.** Date-time strings, whitespace-padded dates,
+   single-digit months and expanded or signed years are refused, not normalized. A key
+   built from a date is only trustworthy if the same day cannot arrive under two byte
+   sequences and stop colliding.
+
+3. **Derived provenance fails closed, and is versioned when it changes.**
+   `contract-lifecycle-source` moves to `@2` (and `contracts` to `version: 4`). It reads
+   the `termsSource` enum off the live module contract and **refuses to open** while any
+   declared value is unclassified, rather than answering for it; and it reports
+   `signed: null` with `signedBasis: 'UNCLASSIFIED_TERM_SOURCE'` for a *stored* value
+   outside that enum, because an absent decision is not the same fact as a decided
+   `false`. The classification map can carry `true`, so a genuinely signed source needs no
+   breaking change. Both are observable changes to what a consumer is told, so the version
+   moved with them.
+
+**Why not leave the date rule duplicated.** Four copies that agree today is the state
+every drift starts from, and this one had already drifted: the copy in `lifecycle` was
+shape-only when the milestone merged. The cost of the duplication was not the lines, it
+was that no reader could tell which copy was authoritative.
+
+**Why not enforce exhaustive classification with a test alone.** A test was already
+written and it is kept. But the manifest and the map live in the same package and in
+different files, and the failure a test catches on CI is precisely the failure that would
+otherwise be *answered* — wrongly, silently, confidently — in production. The runtime
+refusal is a local invariant a single PR can always satisfy, because both halves are
+owned by `packages/contracts`.
+
+**What this does not decide.** `delivery` and `service` still carry their own copies of
+the identical round-trip rule. They are recorded as `partial` in
+`docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` under the Compatibility Backfill Rule:
+declaring the gap is required, closing it is sequenced work and not something a
+defect-fix PR does on the way past. Nothing here changes what a term *means*, and nothing
+here makes a signed renewal term exist — M12 still records operational activation
+metadata, and M16a still reports it as such.
