@@ -38,6 +38,22 @@ import { discoverCandidatePackages, projectKind } from './project-doctor-checks.
  * (`crm scenario run`, DX6) that this one deliberately does not invoke, and
  * implementation evidence (DX10) does not exist. The report says so in its own
  * limitations rather than letting a green exit code imply completeness.
+ *
+ * That separation was re-examined when DX6 gained a second scenario, and it
+ * stands. The alternative considered was a bounded applicability contract —
+ * scenarios declaring themselves `required` or `current`, the way plans do — so
+ * this command could run the declared ones. It was refused for now, on this
+ * command's own rules: each scenario composes a *whole application* of its own,
+ * so the cost is minutes per scenario and grows with every one a project adds;
+ * a new declaration vocabulary is a new agent-facing contract, and the DX
+ * Simplicity Gate asks which failure mode it prevents, not which capability it
+ * adds; and the failure mode it would prevent — "somebody forgot to run the
+ * scenario" — is already named, in machine-readable form, by
+ * `SCENARIO_EVIDENCE_NOT_RUN` in this report. A limitation a caller can switch
+ * on is a weaker thing than a hidden multi-minute expansion is a cost. What
+ * would change the answer is a scenario *registry* with declared applicability
+ * that exists for reasons other than this command, or DX10 arriving and making
+ * a single final proof genuinely complete.
  */
 
 export const PROJECT_VERIFICATION_CONTRACT = 1;
@@ -169,7 +185,7 @@ const LIMITATIONS = Object.freeze([
   },
   {
     code: 'SCENARIO_EVIDENCE_NOT_RUN',
-    message: 'no business scenario is executed end to end. A passing suite is not the same as "this works for the customer\'s process" — that is `crm scenario run <scenario> --json`, which is a separate command and is not run from here',
+    message: 'no business scenario is executed end to end. A passing suite is not the same as "this works for the customer\'s process" — that is `crm scenario run <scenario> --json`, which is a separate command and is not run from here. Two scenarios ship in examples/scenarios/, each composing a whole application of its own; running every one of them from here would add unbounded minutes to every verification, so which scenarios matter stays an explicit choice',
   },
   {
     code: 'IMPLEMENTATION_EVIDENCE_NOT_MAPPED',

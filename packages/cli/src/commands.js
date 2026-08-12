@@ -444,7 +444,14 @@ A scenario is a document, not a script. No field in the contract could hold a
 command, every string is refused if it looks like one, and the journey is chosen
 by id from a registry in the runner's own source — so there is no code path from
 document content to an invocation. A document with any problem is refused before
-anything runs.
+anything runs. The journey's CLOCK and the journey's own limitations come from
+that same registry, never from the document: a document that could name the
+instant could name the one where a missed deadline stops being missed.
+
+Two scenarios ship, over two deliberately different compositions:
+  lead-to-won             a sales funnel, on the wall clock, six packages
+  service-sla-escalation  a support case, its first-response SLA boundary and an
+                          escalation, on an injected stepped clock, two packages
 
 It PROMOTES NOTHING. A JTBD row is promoted by a person, on merged tests, under
 docs/QUALITY_GATES.md §3; jobs.json and the matrix are opened read-only. It

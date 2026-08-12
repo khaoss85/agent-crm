@@ -1206,3 +1206,95 @@ declaring the gap is required, closing it is sequenced work and not something a
 defect-fix PR does on the way past. Nothing here changes what a term *means*, and nothing
 here makes a signed renewal term exist — M12 still records operational activation
 metadata, and M16a still reports it as such.
+
+## ADR-029 — A contract is not a contract until a second consumer has used it, and a consumer-specific bound belongs where the consumer is declared
+
+**Status:** accepted.
+
+**Context.** DX6 shipped `scenarioRunContract: 1` with exactly one scenario:
+`lead-to-won`, a sales funnel over the checked-in B2B starter. Its own PR body
+recorded the single-consumer limitation, and that was honest — but a contract
+validated by one consumer is not a validated contract. It is a shape fitted to
+that consumer, wearing a version number, and the parts of it that are accidents
+of the first consumer are indistinguishable from the parts that are principles.
+
+Writing a second, deliberately unlike consumer —
+`examples/scenarios/service-sla-escalation.scenario.json` over
+`examples/journeys/service-sla-escalation/journey.mjs` — separated them in three
+places, and each one had read as a principle:
+
+1. **"Journey evidence is numeric."** `journeyMetrics` took the receipt's numeric
+   keys and its comment gave the reason: prose in the evidence would move the
+   fingerprint every time somebody improved a sentence. True, and it silently
+   fixed the *type* of every future answer. A sales funnel is countable in every
+   part that matters — three leads, one won. A support process is not:
+   `slaEvaluations: 2` is equally true of a run that recorded the wrong answer
+   twice, and what the business is judged on is *which state* — `at_risk` versus
+   `breached` — and *whether* anything was notified.
+2. **"A report does not need to say what time it is."** Nothing in the funnel is
+   a function of the current instant, so the omission cost nothing and was
+   invisible. An SLA state is a function of the clock and of nothing else:
+   `evaluateSla()` reads `now()` and exposes no `at` parameter. A report saying
+   `firstResponseState: breached` without saying which clock produced it is not
+   evidence; it is a number with a story attached.
+3. **"Limitations are global."** With one journey every limitation was true of
+   every run, so a single list was correct by coincidence. With two, half of any
+   merged list is false of whichever run a reader has in front of them — "no
+   business-hours calendar" means nothing for a lead funnel, "no external
+   enrichment provider" means nothing for a support case — and an obviously
+   irrelevant disclaimer teaches a reader to skip the ones that are not.
+
+**Decision.**
+
+1. **The observation vocabulary gains `journey.fact`**, and journey evidence has
+   two channels: `journey.count` for how many, `journey.fact` for which. A fact
+   is a boolean or a single lower-case token of at most 64 characters, so the
+   original rule holds — a prose summary has spaces, capitals and length and is
+   excluded by construction rather than by a maintained denylist — while the
+   state names the domains already use are admitted. It changes nothing about
+   the three-layer refusal: the kind is a closed-vocabulary entry with a closed
+   argument grammar, and a command in a fact value is refused twice, by the
+   grammar and by `EXECUTABLE_SHAPES`.
+
+2. **A consumer-specific bound is declared where the consumer is declared.** The
+   journey's **clock** and the journey's **own limitations** live in the frozen
+   registry in the runner's source, and are published in the report. They are
+   deliberately not scenario fields. A document that could choose the instant
+   could choose the instant at which the breach disappears; a document that could
+   write its own limitations could write a shorter list. Both are cases of the
+   same rule: **the thing being measured does not get to declare the bounds of
+   the measurement.** Limitations therefore carry a `scope` — `global` for what
+   is true of every run, `journey` for what the journey declares — and a journey
+   may add to what a run does not prove, never subtract.
+
+3. **The report contract moves to 2; the document contract stays at 1.** Every
+   v1 scenario still validates, because a vocabulary gained an entry rather than
+   changing one. The report gained fields and every fingerprint moved with them,
+   and a consumer diffing fingerprints across that boundary is told rather than
+   left to discover it.
+
+**Why not a `requires` block on the scenario.** Service needs the `contracts`
+package and `contracts/service-obligations@1`. It states that as
+`package.composed` and `capability.available` *observations that must pass*,
+answered by AX1 and failing closed. A prerequisites block would say the same
+thing a second way — which the DX Simplicity Gate refuses on its own — and worse:
+a precondition invites "skip if unmet", which converts a failure into silence.
+
+**Why not a record-graph query.** "The escalation cites the SLA evaluation it
+rests on" is a link between two records. The journey — trusted, checked-in
+source — asserts it and publishes one boolean. A traversal syntax over records is
+exactly the slope `docs/CODER_TOOLING_ROADMAP.md` refuses when it says a format
+that can describe execution invites a runtime.
+
+**Why not a negation operator.** "Nobody was notified" is published as
+`escalationNotified = false` and observed as `false`. An `absent:` or `not:`
+operator would let a run earn safety evidence by never attempting the operation;
+the service journey attempts every refusal it reports.
+
+**What this does not decide.** It says nothing about the *other* contracts in
+this repository that have exactly one consumer today. The rule is stated here so
+that a future contract's second consumer is treated as validation work rather
+than as an increment, but no other contract is audited by this ADR. Coverage
+remains *claimed* rather than discovered (`COVERAGE_IS_CLAIMED_NOT_DISCOVERED`),
+two scenarios are not broad coverage, and PROVE stays partial because DX10 does
+not exist.

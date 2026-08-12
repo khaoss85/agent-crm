@@ -21,20 +21,114 @@ import { join } from 'node:path';
  */
 
 /**
+ * How a journey reads the time, which is part of what its evidence *means*.
+ *
+ * The first version of this registry had no such field, because the first
+ * journey is a sales funnel and nothing in it is a function of the clock. The
+ * second one is Service, where an SLA state is *only* a function of the clock
+ * (`packages/service/src/service-actions.js` `evaluateSla()` reads `now()` and
+ * exposes no `at` parameter) — and a report that says `firstResponseState:
+ * breached` without saying which clock produced it is not evidence, it is a
+ * number with a story attached.
+ *
+ * So the clock is declared **here**, in the runner's own frozen source, and
+ * published in every report. It is deliberately **not** a scenario field: a
+ * document that could choose the instant could choose the instant at which the
+ * breach disappears, and a scenario that can pick its own answer proves
+ * nothing.
+ */
+export const JOURNEY_CLOCKS = Object.freeze({
+  wall: Object.freeze({
+    mode: 'wall-clock',
+    describes: 'the journey runs on the real system clock. Nothing it asserts is a function of the '
+      + 'current instant, so the evidence is the same whenever it runs — but it can never witness a '
+      + 'time boundary, because reaching one would mean waiting for it',
+  }),
+  injected: Object.freeze({
+    mode: 'injected-fixed',
+    describes: 'the journey composes the application with an injected UTC clock (createAccordoApp({ clock }), '
+      + 'packages/core/src/time.js) and steps it to named instants declared in its own checked-in source. A '
+      + 'time boundary is therefore observed exactly rather than approached. The instants are constants in '
+      + 'the journey, never values a scenario document supplies',
+  }),
+});
+
+/**
  * Every journey DX6 knows how to run.
  *
- * There is one, deliberately: the starter installer CI already runs on every
- * push. Reusing it means DX6 introduces no second, weaker authority on what the
- * CRM does — the installer's own in-process assertions stay the strong claim,
- * and DX6 adds the mapping nobody has.
+ * Two rules held when this registry had one entry, and both survive a second
+ * consumer:
+ *
+ * - a journey is **checked-in repository source**, selected by id, so no
+ *   document value ever becomes an invocation;
+ * - a journey is a *stronger* authority than DX6, not a weaker one: its own
+ *   in-process assertions are the claim, and DX6 adds the mapping nobody has.
+ *
+ * What the second entry added is `clock` and `limitations`. A journey knows
+ * things about itself that are false of the other one — Service has no
+ * business-hours calendar and notifies nobody; the sales funnel has neither
+ * concept — and publishing those globally would attach a Service disclaimer to
+ * a Lead run and a Lead disclaimer to a Service run. Both are lies, in opposite
+ * directions, and a limitation nobody believes is worse than none.
  */
 export const JOURNEYS = Object.freeze({
   'b2b-lead-qualification': Object.freeze({
     installer: 'examples/starters/b2b-lead-qualification/install.mjs',
+    clock: JOURNEY_CLOCKS.wall,
     describes: 'the checked-in B2B lead-qualification starter installer: it composes an application '
       + 'from manifests through the real module factory and drives capture → qualify → convert → '
       + 'pipeline → enrich/score/route → catalog → quote → approval → signature → order → contract '
       + 'activation → delivery handover in process, asserting each guarantee as it goes',
+    limitations: Object.freeze([
+      Object.freeze({
+        code: 'JOURNEY_CLOCK_IS_WALL_CLOCK',
+        message: 'this journey runs on the real system clock and asserts nothing that depends on the current '
+          + 'instant. It is not evidence about time-dependent behaviour, and it cannot observe a time boundary',
+      }),
+      Object.freeze({
+        code: 'ENRICHMENT_PROVIDER_IS_A_FIXTURE',
+        message: 'enrichment runs against a deterministic checked-in fixture behind the real provider contract. '
+          + 'No paid external enrichment provider is contacted, and nothing here says one works',
+      }),
+    ]),
+  }),
+  'service-sla-escalation': Object.freeze({
+    installer: 'examples/journeys/service-sla-escalation/journey.mjs',
+    clock: JOURNEY_CLOCKS.injected,
+    describes: 'the checked-in service-operations journey: it composes an application holding the contracts '
+      + 'and service packages and nothing else, sells one annual-support subscription through catalog → quote → '
+      + 'discount policy → signature → immutable order → contract activation, activates the resulting pending '
+      + 'service obligation into an operational ServiceCoverage with an immutable Entitlement under a '
+      + 'fingerprinted versioned policy, then opens one support case on the injected clock and observes its '
+      + 'first-response SLA at the due instant and one millisecond later, records the breach as immutable '
+      + 'evidence, records a human escalation citing it, and resolves and closes the case over the declared '
+      + 'transition table — asserting each guarantee, and each refusal, as it goes',
+    limitations: Object.freeze([
+      Object.freeze({
+        code: 'SLA_IS_ELAPSED_TIME_NOT_A_CONTRACTUAL_JUDGEMENT',
+        message: 'the SLA is elapsed wall-clock minutes from openedAt against the injected clock. There is no '
+          + 'business-hours calendar, no holiday table, no timezone interpretation and no paused clock — '
+          + 'waiting_customer does not stop it. A recorded evaluation is what the clock said at a stated instant, '
+          + 'and never a contractual or legal determination that anybody breached anything',
+      }),
+      Object.freeze({
+        code: 'NOTHING_WAS_NOTIFIED_OR_ROUTED',
+        message: 'no email, chat, telephony or contact-centre provider exists. A first response notifies nobody, '
+          + 'an escalation routes to nobody and pages nobody, and a target is a label. Each of those is published '
+          + 'as false by the journey and observed as false, rather than left unsaid',
+      }),
+      Object.freeze({
+        code: 'ESCALATION_IS_MANUALLY_RECORDED',
+        message: 'escalation is a human recording that a case was escalated. There is no scheduler, no automatic '
+          + 'escalation rule and no role enforcement, so nothing escalates on its own',
+      }),
+      Object.freeze({
+        code: 'SERVICE_COVERAGE_IS_NOT_A_CONTRACT',
+        message: 'a ServiceCoverage is operational: nobody signed it, it has no envelope, signer or artifact, and '
+          + 'it neither amends nor replaces the Commercial Contract it was activated from. No billing, invoicing, '
+          + 'renewal, contract amendment or customer portal exists',
+      }),
+    ]),
   }),
 });
 
@@ -285,4 +379,51 @@ export function journeyMetrics(receipt) {
     if (typeof value === 'number' && Number.isFinite(value)) metrics[key] = value;
   }
   return metrics;
+}
+
+/** The longest a receipt value may be and still be a fact rather than prose. */
+export const MAX_FACT_VALUE = 64;
+/**
+ * A stated outcome, not a sentence: one lower-case token. It matches the state
+ * names the domain already uses (`at_risk`, `breached`, `met`, `on_track`,
+ * `closed`, `active`) and the two boolean spellings, and matches nothing a
+ * person would write to be read.
+ */
+export const FACT_VALUE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * The **stated facts** a journey reported about itself, in canonical order.
+ *
+ * This is the field the first consumer never needed. A sales funnel is
+ * countable — three leads, one won, two contacts — so `journeyMetrics` was
+ * enough, and "numbers only" read like a principle rather than the accident it
+ * was. Service is not countable in the parts that matter: the load-bearing
+ * facts are *which state* the SLA was in at the boundary (`at_risk` versus
+ * `breached`, one millisecond apart) and *whether* anything was notified,
+ * routed or billed. `slaEvaluations: 2` is true of a run that recorded the
+ * wrong answer twice.
+ *
+ * The rule that keeps prose out is unchanged in spirit and tightened in
+ * practice: a fact is a **boolean**, or a string that is a single lower-case
+ * token no longer than `MAX_FACT_VALUE`. A summary sentence has spaces, capital
+ * letters and length, so it is excluded by construction rather than by a
+ * denylist somebody has to maintain. Booleans are published as `true`/`false`
+ * so that one closed grammar covers every fact and a document never has to
+ * carry a JSON type.
+ *
+ * @param {any} receipt
+ * @returns {Record<string, string>}
+ */
+export function journeyFacts(receipt) {
+  /** @type {Record<string, string>} */
+  const facts = {};
+  if (!receipt || typeof receipt !== 'object') return facts;
+  for (const key of Object.keys(receipt).sort()) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    const value = receipt[key];
+    if (typeof value === 'boolean') { facts[key] = value ? 'true' : 'false'; continue; }
+    if (typeof value !== 'string' || value.length > MAX_FACT_VALUE) continue;
+    if (FACT_VALUE.test(value)) facts[key] = value;
+  }
+  return facts;
 }

@@ -11,7 +11,7 @@ import {
   MAX_SCENARIO_BYTES, OBSERVATION_KINDS, parseScenarioDocument, safeRelativePath,
   scenarioFingerprint, validateScenarioDocument,
 } from './scenario-document.js';
-import { JOURNEYS, RECURSION_ENV, journeyById, journeyMetrics, runJourney } from './scenario-journey.js';
+import { JOURNEYS, RECURSION_ENV, journeyById, journeyFacts, journeyMetrics, runJourney } from './scenario-journey.js';
 
 /**
  * `crm scenario run <scenario> [--json] [--root <dir>]` — DX6.
@@ -53,9 +53,39 @@ import { JOURNEYS, RECURSION_ENV, journeyById, journeyMetrics, runJourney } from
  * timestamp, no temporary path and no random value enters the report at all** —
  * not merely the fingerprint. Two runs of an unchanged checkout produce
  * byte-identical documents.
+ *
+ * ## What a second consumer changed (contract 2)
+ *
+ * Contract 1 was validated by exactly one scenario, and a generic contract with
+ * one consumer is not generic, it is a shape fitted to that consumer.
+ * `examples/scenarios/service-sla-escalation.scenario.json` is the second, and
+ * it is deliberately unlike the first: Service has a state machine, real clock
+ * semantics and evidence records, where Lead has a funnel. Three things had to
+ * change, and each is a thing contract 1 got wrong rather than merely lacked:
+ *
+ * 1. **Journey evidence was numeric only.** `journey.count` can say a run
+ *    recorded two SLA evaluations; it cannot say either of them said the right
+ *    thing. `journey.fact` observes a *stated outcome* — `at_risk`, `breached`,
+ *    `false` — which is what a support process is actually judged on.
+ * 2. **The report never said which clock produced the evidence.** Nothing in
+ *    the sales funnel is a function of the current instant, so nobody noticed.
+ *    An SLA state is a function of nothing else. `journey.clock` is published
+ *    from the frozen registry — never from the document, because a document
+ *    that could choose the instant could choose the one where the breach
+ *    disappears.
+ * 3. **Limitations were global, and half of them were false.** "No
+ *    business-hours calendar" is meaningless for a lead funnel; "no external
+ *    enrichment provider" is meaningless for a support case. Limitations now
+ *    carry a `scope`, and a journey declares its own in the registry.
+ *
+ * The document contract (`scenarioContract`) stayed at 1: every v1 scenario is
+ * still valid, because a vocabulary gained an entry rather than changing one.
+ * The **report** contract moved to 2, because the report gained fields and every
+ * fingerprint moved with them, and a consumer diffing fingerprints across that
+ * boundary deserves to be told rather than to discover it.
  */
 
-export const SCENARIO_RUN_CONTRACT = 1;
+export const SCENARIO_RUN_CONTRACT = 2;
 
 /** Every status an observation may carry. Closed vocabulary. */
 export const OBSERVATION_STATUSES = Object.freeze(['passed', 'failed', 'skipped', 'not_applicable']);
@@ -80,9 +110,17 @@ export const SCENARIO_DIR = 'examples/scenarios';
 export const SCENARIO_SUFFIX = '.scenario.json';
 
 /**
- * What this command does **not** prove. Published with every report, passing or
- * failing, because a green exit code that quietly means less than a reader
- * assumes is the failure mode this whole family of commands exists to avoid.
+ * What this command does **not** prove, **whichever** journey ran. Published
+ * with every report, passing or failing, because a green exit code that quietly
+ * means less than a reader assumes is the failure mode this whole family of
+ * commands exists to avoid.
+ *
+ * These are `scope: 'global'` in the report. A journey's own limitations —
+ * declared in the frozen registry, never in the document — arrive as
+ * `scope: 'journey'` beside them. Contract 1 had only this list, and it was
+ * fine while one journey existed: with two, half of any merged list is false of
+ * whichever run you are reading, and a disclaimer that is obviously irrelevant
+ * teaches a reader to skip the ones that are not.
  */
 export const LIMITATIONS = Object.freeze([
   {
@@ -126,6 +164,26 @@ export const LIMITATIONS = Object.freeze([
       + 'capacity or operational readiness',
   },
 ]);
+
+/**
+ * The limitations of one run: the global ones, then the ones the journey that
+ * actually ran declares about itself.
+ *
+ * Global first, then the journey's, each in its own declaration order — both
+ * lists are frozen constants, so the result is canonical without a sort. The
+ * journey's come from the registry rather than from the scenario document: a
+ * document that could write its own limitations could write a **shorter** set,
+ * and every incentive points that way.
+ *
+ * @param {any} chosen a journey registry entry, or null
+ */
+export function limitationsFor(chosen) {
+  const own = Array.isArray(chosen?.limitations) ? chosen.limitations : [];
+  return [
+    ...LIMITATIONS.map((entry) => ({ scope: 'global', code: entry.code, message: entry.message })),
+    ...own.map((entry) => ({ scope: 'journey', code: entry.code, message: entry.message })),
+  ];
+}
 
 /**
  * Resolve the command's one argument.
@@ -495,6 +553,12 @@ export async function scenarioRunCommand({
         id: scenario.journey,
         source: chosen?.installer ?? null,
         describes: chosen?.describes ?? null,
+        // Which clock produced this evidence. Taken from the frozen registry,
+        // never from the document: an SLA state *is* a function of the clock,
+        // and a report that omits it is a number with a story attached.
+        clock: chosen?.clock
+          ? { mode: chosen.clock.mode, describes: chosen.clock.describes }
+          : { mode: null, describes: null },
         completed: journeyResult?.ok === true,
         exit: journeyResult === null
           ? { code: null, signal: null, timedOut: false, truncated: false, started: false }
@@ -504,6 +568,7 @@ export async function scenarioRunCommand({
             started: true,
           },
         metrics: journeyMetrics(journeyResult?.receipt),
+        facts: journeyFacts(journeyResult?.receipt),
       },
       composition,
       steps: scenario.steps.map((step) => ({
@@ -535,7 +600,7 @@ export async function scenarioRunCommand({
         wrote: [],
       },
       problems: [...problems].sort((a, b) => (a.code === b.code ? (a.path < b.path ? -1 : 1) : a.code < b.code ? -1 : 1)),
-      limitations: [...LIMITATIONS],
+      limitations: limitationsFor(chosen),
       fingerprint: '',
     };
     report.fingerprint = semanticFingerprint(report);
@@ -579,6 +644,22 @@ function evaluate({ declared, code, step, refused, journeyResult, compositionRea
       };
     }
     if (!journeyResult.ok) return skip('SCENARIO_JOURNEY_FAILED');
+    if (declared.kind === 'journey.fact') {
+      const facts = journeyFacts(journeyResult.receipt);
+      if (!Object.prototype.hasOwnProperty.call(facts, declared.fact)) {
+        return {
+          ...base, status: 'failed', expected: expectation(declared), actual: 'not reported',
+          reason: `the journey reported no stated fact "${declared.fact}"; it reported ${Object.keys(facts).join(', ') || 'none'}. `
+            + 'A fact nobody reported is a claim nobody made, so it fails rather than passing vacuously',
+        };
+      }
+      const stated = facts[declared.fact];
+      return {
+        ...base, status: stated === declared.is ? 'passed' : 'failed',
+        expected: expectation(declared), actual: `${declared.fact} = ${stated}`,
+        reason: stated === declared.is ? null : 'the journey stated a different outcome',
+      };
+    }
     const metrics = journeyMetrics(journeyResult.receipt);
     if (!Object.prototype.hasOwnProperty.call(metrics, declared.metric)) {
       return {
@@ -774,7 +855,12 @@ export function semanticFingerprint(report) {
     status: report.status,
     journey: {
       id: report.journey.id, completed: report.journey.completed,
+      // The clock mode is part of what the run decided, not decoration: the same
+      // observations mean different things measured against a stepped clock and
+      // against the wall clock.
+      clock: report.journey.clock?.mode ?? null,
       metrics: report.journey.metrics,
+      facts: report.journey.facts,
     },
     composition: {
       compositionFingerprint: report.composition.compositionFingerprint,
@@ -802,7 +888,9 @@ function emitRefusal({ json, out, problems, scenarioPath }) {
     scenario: { path: scenarioPath },
     status: 'failed',
     problems: [...problems].sort((a, b) => (a.code === b.code ? (a.path < b.path ? -1 : 1) : a.code < b.code ? -1 : 1)),
-    limitations: [...LIMITATIONS],
+    // Global only: the document was refused before a journey was chosen, so
+    // there is no journey whose own limitations could honestly be published.
+    limitations: limitationsFor(null),
     note: 'the document was refused, so no journey was started and nothing was executed',
   };
   if (json) out(`${JSON.stringify(document, null, 2)}\n`);
@@ -819,6 +907,7 @@ function render(report) {
   lines.push(`Accordo scenario run (contract ${report.scenarioRunContract})`);
   lines.push(`scenario: ${report.scenario.id} — ${report.scenario.title}`);
   lines.push(`journey:  ${report.journey.id} — ${report.journey.completed ? 'completed' : 'did not complete'}`);
+  lines.push(`clock:    ${report.journey.clock?.mode ?? 'unknown'}`);
   lines.push(`status:   ${report.status}`);
   lines.push('');
   for (const step of report.steps) {
@@ -851,7 +940,7 @@ function render(report) {
   lines.push('this promotes nothing: a JTBD row is promoted by a person, on merged tests (docs/QUALITY_GATES.md §3).');
   lines.push('');
   lines.push('not proven here:');
-  for (const limitation of report.limitations) lines.push(`  ${limitation.code}`);
+  for (const limitation of report.limitations) lines.push(`  ${limitation.scope.padEnd(7)} ${limitation.code}`);
   lines.push('');
   return lines.join('\n');
 }

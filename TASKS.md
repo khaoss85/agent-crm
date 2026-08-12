@@ -91,6 +91,23 @@ The first unchecked item is the default next task for Codex.
   Coverage is claimed rather than discovered, it drives no browser, and it speaks
   for one composition — all published limitation codes.
 
+- [x] **DX6 — a second business consumer of the scenario contract.**
+  `examples/scenarios/service-sla-escalation.scenario.json` over a second
+  checked-in journey, `examples/journeys/service-sla-escalation/journey.mjs`
+  (`docs/plans/dx6-second-scenario.md`). Deliberately unlike the first: Service is
+  package-native, has a declared state machine and real clock semantics, and the
+  journey composes **contracts + service and nothing else** on an **injected,
+  stepped clock** — so the first-response SLA boundary is observed exactly, `at_risk`
+  at the due instant and `breached` one millisecond later, which no wall-clock run
+  can reach. Serving it changed the contract in three places: journey evidence
+  gained stated **facts** beside numeric counts, the report publishes **which clock**
+  produced the evidence, and limitations gained a **scope** so a journey declares its
+  own. `scenarioRunContract: 2`; the document contract stayed at 1, because every
+  v1 scenario still validates. It adds no command, script or env field: `journey.fact`
+  is a closed vocabulary entry with a one-token grammar, refused twice — by grammar
+  and by `EXECUTABLE_SHAPES`. It promotes nothing; both service rows it claims stay
+  *partially supported*. **PROVE is stronger and still partial**: DX10 does not exist.
+
 - [x] **M15 — Service operations.** The third domain package under ADR-018 and the second that depends on another: `contracts/service-obligations@1` turns a contract's pending Service Obligations into an operational **Service Coverage** with immutable Entitlements, decided by a versioned fingerprinted activation policy that refuses rather than guesses. Support cases over an explicit five-state table, append-only case activity, elapsed-time SLA evidence and manually recorded escalation (`docs/SERVICE_OPERATIONS.md`). Implemented on an open PR awaiting the adversarial review. **It is not a second legal contract**, and it bills, sends, schedules and authenticates nothing.
 
 - [x] **M16a — Renewal & expansion operations.** The fourth domain package under ADR-018 and the second consumer of another: `contracts/contract-lifecycle-source@2` gives it a contract's term evidence with its provenance, its version, its lines and its subscription lines, and no write path at all. Four actions ship and these are all of them — `plan-renewal` (reads, writes nothing), `record-renewal-decision`, `request-commercial-followup`, `resolve-commercial-followup` (`packages/lifecycle/README.md`, `docs/plans/m16a-renewal-expansion-operations.md`). **It records intent and hands off.** It renews nothing, cancels nothing, ends nothing, signs nothing, prices nothing, invoices nothing, schedules nothing and recognises no churn; `record-successor` and `record-expansion-intent` were described in an early draft and **never built**, and no successor is linked anywhere. The post-merge hardening fixed four defects reproduced on main: an `asOf` validated by shape alone accepted `2027-02-30` and rolled it into evidence; a deterministic key with no replay path answered a client's lost-response retry with a 409 instead of the record it had already created; a baseline grouped on `interval` alone folded quarterly into monthly and a mixed baseline stored no money evidence at all; and the capability answered `signed: false` for a `termsSource` nobody had classified (ADR-028). Amendment execution is **M16b** and stays deferred until Commercial and Signature are reachable through capabilities.
@@ -111,9 +128,10 @@ Recorded so they are not lost, and deliberately not bundled into a domain milest
   (`crm scenario run <scenario> --json`, `docs/SCENARIO_EVIDENCE.md`) runs a real
   business journey against a composed application and publishes, per JTBD row,
   what one run established and the counted, enumerated set it did **not** —
-  `scenarioRunContract: 1`, byte-identical between runs. What remains: coverage is
-  *claimed* by a scenario rather than discovered, one scenario and one journey
-  ship, Service is `deferred` in the alignment matrix, quality-gate status is
+  `scenarioRunContract: 2`, byte-identical between runs, now with **two** scenarios
+  and two journeys over two different compositions. What remains: coverage is
+  *claimed* by a scenario rather than discovered, five of 149 rows are claimed by
+  the second scenario and 144 reported as not established, quality-gate status is
   still prose, and no browser is driven. AX1 still references the JTBD documents
   by path and parses no prose, and **nothing promotes a row**: a person does, on
   merged tests (`docs/QUALITY_GATES.md` §3). Targeted at AX3.
