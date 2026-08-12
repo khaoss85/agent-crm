@@ -75,9 +75,12 @@ is deliberately tiny:
   `GET /api/modules/:module`. Nothing else is filterable, so a routed filter can
   never become a table scan.
 - **Equality on one scalar**, at most 200 characters, never repeated, at most
-  four filters combined. There is no `IN`, no range, no `OR`, no ordering
-  control and no offset. This narrows a page; it is not a query language, and
-  making it one would be a different decision.
+  four filters combined. There is no `IN`, no range, no `OR`, no full-text or
+  substring match, no join across modules, no ordering control and no offset.
+  This narrows a page; it is not a query language, and making it one would be a
+  different decision. Accepted on exactly those terms and no wider: the human
+  decision approving this addendum named range, `OR`, full text, join and
+  arbitrary sort as explicitly **not** authorised by it.
 - **The page is still a page.** `limit` keeps its 1–500 bound and its
   `created_at DESC, id` ordering. A filtered read is still a *display* read.
 - **Refusal over a silent wrong answer.** Every violation is a `400`. A module

@@ -776,7 +776,7 @@
       "id": "JTBD-DO-08",
       "section": "Data operations (no milestone assigned)",
       "status": "partially supported",
-      "summary": "Work v1 (ADR-030) adds an append-only Activity timeline per subject, with a closed four-entry vocabulary, rendered oldest-first in the Admin — tests/work-operations-e2e.test.js, tests/admin-work.test.js. It is not unified: it covers only what Work itself recorded, Service's support-case-activity stays domain-specific, Delivery history is separate, and no email, call, meeting or audit row appears on it",
+      "summary": "Work v1 (ADR-030) adds an append-only Activity timeline per subject, with a closed four-entry vocabulary, rendered oldest-first in the Admin — tests/work-operations-e2e.test.js, tests/admin-work.test.js. It is not a unified customer timeline: it covers only what Work itself recorded, Service's support-case-activity stays domain-specific, Delivery history is not aggregated, marketing and communications do not exist at all, and no email, call, meeting or audit row appears on it. Confirmed *partially supported* by human decision on that wording; no other row is promoted by inheritance from it",
       "tests": [
         "tests/admin-work.test.js",
         "tests/work-operations-e2e.test.js"

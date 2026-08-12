@@ -359,7 +359,7 @@ The everyday jobs that decide whether a CRM is usable at all. **None is implemen
 | JTBD-DO-05 | Bulk update a set of records | **not supported** | every mutation is single-record |
 | JTBD-DO-06 | Save and share a filtered view | **not supported** | no saved-view primitive |
 | JTBD-DO-07 | Search across modules | **not supported** | no global search; exact indexed lookups are per-module |
-| JTBD-DO-08 | See a unified activity timeline for a record | **partially supported** | Work v1 (ADR-030) adds an append-only Activity timeline per **subject**, with a closed four-entry vocabulary, rendered oldest-first in the Admin — `tests/work-operations-e2e.test.js`, `tests/admin-work.test.js`. It is **not unified**: it covers only what Work itself recorded, Service's `support-case-activity` stays domain-specific, Delivery history is separate, and no email, call, meeting or audit row appears on it |
+| JTBD-DO-08 | See a unified activity timeline for a record | **partially supported** | Work v1 (ADR-030) adds an append-only Activity timeline per **subject**, with a closed four-entry vocabulary, rendered oldest-first in the Admin — `tests/work-operations-e2e.test.js`, `tests/admin-work.test.js`. It is **not a unified customer timeline**: it covers only what Work itself recorded, Service's `support-case-activity` stays domain-specific, Delivery history is not aggregated, marketing and communications do not exist at all, and no email, call, meeting or audit row appears on it. Confirmed *partially supported* by human decision on that wording; no other row is promoted by inheritance from it |
 | JTBD-DO-09 | Attach notes or files to a record | **not supported** | no note or attachment primitive |
 
 ### Communications (no milestone assigned)
