@@ -89,6 +89,10 @@
   ],
   "limitations": [
     {
+      "code": "NO_SCENARIO_COMPOSES_THIS_APPLICATION",
+      "message": "this plan is bound to the repository root, which composes no domain package, and every shipped scenario composes a starter into a directory of its own. So the scenario observations cited for the starter-installation criterion were observed in a different application than this plan was written against, and they are refused as EVIDENCE_COMPOSITION_MISMATCH rather than counted. The citations are kept so the gap is machine-visible instead of quietly absent: nothing in this repository can currently give this plan a behavioural authority"
+    },
+    {
       "code": "PLAN_IS_DESIGN_WORK_NOT_MERGED_WORK",
       "message": "this plan describes work that has not been done. Four of its six requirements are blocked or manual, and the two that verify are the ones about the repository the plan was written in rather than about the change it proposes. A green line here would be the defect"
     }

@@ -705,6 +705,19 @@ function resolveReference({ ref, bound, inspection, verifyReport, scenarioReport
         return fail('EVIDENCE_AUTHORITY_UNAVAILABLE', 'no report',
           `the scenario "${ref.scenario}" produced no report in this run`);
       }
+      // **One requirement, one application.** A scenario report is a receipt
+      // about the application that scenario composed, and that need not be the
+      // application this plan was written against — in this repository it
+      // usually is not, because the root composes no domain package and every
+      // scenario composes a starter. Reading a fact observed in application B
+      // as proof of a requirement of a plan bound to application A is the
+      // mixing that makes a green line meaningless, so the identities must
+      // match before the observation is worth anything.
+      const observedComposition = report.composition?.compositionFingerprint ?? null;
+      if (bound.fingerprint !== null && observedComposition !== bound.fingerprint) {
+        return fail('EVIDENCE_COMPOSITION_MISMATCH', short(observedComposition),
+          `"${ref.scenario}" composed application ${short(observedComposition)} and this plan is bound to ${short(bound.fingerprint)}. A run of a different application is not evidence about this one, however well it went`);
+      }
       const observed = (report.observations ?? []).find((row) => row.code === ref.observation) ?? null;
       if (observed === null) {
         return fail('EVIDENCE_REFERENCE_UNRESOLVED', 'absent',

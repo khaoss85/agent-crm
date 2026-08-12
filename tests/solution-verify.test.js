@@ -1098,3 +1098,88 @@ test('every declared status is one of the closed set, and unverifiable is in it'
   assert.equal(new Set(REQUIREMENT_STATUSES).size, REQUIREMENT_STATUSES.length);
   assert.equal(REQUIREMENT_STATUSES.includes('warning'), false);
 });
+
+// ---------------------------------------------------------------------------
+// B12 — composition isolation. One invocation may run several authorities, and
+// they do not all describe the same application. A fact observed in one is not
+// evidence about another, however well the run went.
+// ---------------------------------------------------------------------------
+
+/** A scenario delegate where each id composes whatever application it is given. */
+function multiCompositionScenario(byId) {
+  return async (options) => ({
+    exitCode: 0,
+    report: {
+      scenarioRunContract: 2, scenario: { id: options.scenarioRef }, status: 'passed',
+      fingerprint: 's'.repeat(64),
+      composition: {
+        inspected: true, valid: true,
+        compositionFingerprint: byId[options.scenarioRef] ?? COMPOSITION_FP,
+        packages: [], problems: [],
+      },
+      observations: OBSERVATIONS, problems: [], limitations: [],
+    },
+  });
+}
+
+test('an observation from a scenario that composed another application proves nothing', async (t) => {
+  const plan = planDocument();
+  const ids = requirementIds(plan);
+  const evidence = evidenceDocument(plan);
+  // Every observation passes, the code exists, the `expects` string matches —
+  // and it was observed in a different application.
+  evidence.requirements[0].evidence = [
+    { kind: 'scenario.observation', scenario: 'other', observation: 'run.02', expects: 'journey.fact fact=thingHappened is=true' },
+  ];
+  const { exitCode, report } = await run(demo(t, { plan, evidence }), {
+    verify: verifyStub(CONFORMING_CHECKS),
+    scenario: multiCompositionScenario({ other: 'f'.repeat(64) }),
+  });
+  assert.equal(report.binding.boundTo, 'project');
+  assert.equal(statusOf(report, ids['the application does the thing']), 'unevidenced');
+  assert.ok(codes(report).includes('EVIDENCE_COMPOSITION_MISMATCH'));
+  assert.notEqual(exitCode, 0);
+});
+
+test('one requirement may not mix an application fact from A with an observation from B', async (t) => {
+  const plan = planDocument();
+  const ids = requirementIds(plan);
+  const evidence = evidenceDocument(plan);
+  evidence.requirements[1].evidence = [
+    { kind: 'application.fact', fact: 'module.present', name: 'widget' },
+    { kind: 'scenario.observation', scenario: 'other', observation: 'shape.01', expects: 'action.present action=widget.do' },
+  ];
+  const { report } = await run(demo(t, { plan, evidence }), {
+    verify: verifyStub(CONFORMING_CHECKS),
+    scenario: multiCompositionScenario({ other: 'f'.repeat(64) }),
+  });
+  assert.equal(statusOf(report, ids['the record gains a field']), 'unevidenced',
+    'a resolving AX1 fact does not carry a reference from another application over the line');
+  assert.ok(codes(report).includes('EVIDENCE_COMPOSITION_MISMATCH'));
+});
+
+test('the same observation code in two compositions is two different facts', async (t) => {
+  // `run.02` exists in both, publishes the same `expected` string and passes in
+  // both. Only the one whose composition matches the binding is evidence.
+  const plan = planDocument();
+  const ids = requirementIds(plan);
+  const evidence = evidenceDocument(plan);
+  evidence.requirements[0].evidence = [
+    { kind: 'scenario.observation', scenario: 'demo', observation: 'run.02', expects: 'journey.fact fact=thingHappened is=true' },
+  ];
+  const matching = await run(demo(t, { plan, evidence }), {
+    verify: verifyStub(CONFORMING_CHECKS),
+    scenario: multiCompositionScenario({ demo: COMPOSITION_FP, other: 'f'.repeat(64) }),
+  });
+  assert.equal(statusOf(matching.report, ids['the application does the thing']), 'verified');
+
+  const mixed = evidenceDocument(plan);
+  mixed.requirements[0].evidence = [
+    { kind: 'scenario.observation', scenario: 'other', observation: 'run.02', expects: 'journey.fact fact=thingHappened is=true' },
+  ];
+  const crossed = await run(demo(t, { plan, evidence: mixed }), {
+    verify: verifyStub(CONFORMING_CHECKS),
+    scenario: multiCompositionScenario({ demo: COMPOSITION_FP, other: 'f'.repeat(64) }),
+  });
+  assert.equal(statusOf(crossed.report, ids['the application does the thing']), 'unevidenced');
+});
