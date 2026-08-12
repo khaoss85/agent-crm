@@ -434,7 +434,8 @@ test('a requirement the evidence never mentions is reported, not skipped', async
 test('evidence about a requirement the plan does not have is refused', async (t) => {
   const plan = planDocument();
   const evidence = evidenceDocument(plan);
-  evidence.requirements.push({ requirementId: 'check:000000000000', category: 'structural', evidence: [] });
+  // A well-formed id of the derived width that this plan simply does not have.
+  evidence.requirements.push({ requirementId: `check:${'0'.repeat(32)}`, category: 'structural', evidence: [] });
   const { report, exitCode } = await run(demo(t, { plan, evidence }), { verify: verifyStub(CONFORMING_CHECKS) });
   assert.ok(codes(report).includes('EVIDENCE_REQUIREMENT_UNKNOWN'));
   assert.equal(exitCode, 1);
@@ -643,8 +644,9 @@ test('a plan whose composition only a scenario produced binds through that scena
   // application actually was.
   assert.equal(statusOf(report, ids['the application does the thing']), 'verified');
   // The application fact cannot be answered: the only full AX1 report describes
-  // a different composition.
-  assert.equal(statusOf(report, ids['the record gains a field']), 'unevidenced');
+  // a different composition. That is an authority this run does not have, not
+  // an author who wrote no evidence, and the two must not share a word.
+  assert.equal(statusOf(report, ids['the record gains a field']), 'unverifiable');
   assert.ok(codes(report).includes('EVIDENCE_AUTHORITY_UNAVAILABLE'));
 });
 
@@ -675,7 +677,8 @@ test('a scenario that produced no report resolves nothing, and nothing is assume
     scenario: scenarioStub(OBSERVATIONS, { missing: ['demo'] }),
   });
   assert.ok(codes(report).includes('VERIFICATION_AUTHORITY_FAILED'));
-  assert.equal(statusOf(report, ids['the application does the thing']), 'unevidenced');
+  // The scenario did not run, so this says nothing about the work.
+  assert.equal(statusOf(report, ids['the application does the thing']), 'unverifiable');
 });
 
 test('a document referencing more scenarios than the bound allows is refused, not run', async (t) => {
@@ -782,13 +785,37 @@ test('a document outside the project is refused before it is read', async (t) =>
   assert.equal(result.exitCode, 2);
 });
 
-test('an invalid plan is reported as PLAN_INVALID and nothing is graded as proven', async (t) => {
+test('an invalid plan is PLAN_INVALID, and nothing is run and nothing is graded', async (t) => {
+  // A plan that failed validation is `solution check`'s answer, not this one's.
+  // Grading requirements derived from a document that did not validate would
+  // publish rows a reader would act on, so it refuses before any authority runs.
   const plan = planDocument({ steps: [{ id: 'step.x', decisionId: 'd.missing', description: 'x', requiresCapabilities: [], approvals: [], verifies: [] }] });
   const root = demo(t, { plan, evidence: evidenceDocument(planDocument()) });
-  const { report, exitCode } = await run(root, { verify: verifyStub(CONFORMING_CHECKS) });
-  assert.ok(codes(report).includes('PLAN_INVALID'));
-  assert.equal(report.requirements.every((row) => row.status === 'stale'), true);
-  assert.equal(exitCode, 1);
+  const calls = [];
+  const { report, exitCode, stdout } = await run(root, { verify: verifyStub(CONFORMING_CHECKS, { calls }) });
+  assert.equal(exitCode, 2);
+  assert.equal(report, null, 'no requirement carries a status when the plan is invalid');
+  assert.deepEqual(calls, [], 'no authority is run against an invalid plan');
+  const emitted = JSON.parse(stdout);
+  assert.ok(emitted.problems.some((problem) => problem.code === 'PLAN_INVALID'));
+  assert.deepEqual(emitted.requirements, []);
+});
+
+test('an invalid evidence document runs no authority either', async (t) => {
+  const plan = planDocument();
+  const evidence = evidenceDocument(plan);
+  evidence.requirements[0].somethingNobodyDeclared = true;
+  const calls = [];
+  const scenarioCalls = [];
+  const { exitCode, report, stdout } = await run(demo(t, { plan, evidence }), {
+    verify: verifyStub(CONFORMING_CHECKS, { calls }),
+    scenario: scenarioStub(OBSERVATIONS, { calls: scenarioCalls }),
+  });
+  assert.equal(exitCode, 2);
+  assert.equal(report, null);
+  assert.deepEqual(calls, [], 'project verify is not spent on a document already known to be invalid');
+  assert.deepEqual(scenarioCalls, []);
+  assert.ok(JSON.parse(stdout).problems.some((problem) => problem.code === 'EVIDENCE_FIELD_UNKNOWN'));
 });
 
 // ---------------------------------------------------------------------------
@@ -1012,4 +1039,62 @@ test('a step the plan gives no decision type falls to the untyped floor, not to 
     'behavioural', 'an unrecognised decision type is untyped, not permissive');
   assert.equal(effectiveRequirementCategory({ declared: null, kind: 'acceptance-check', decisionType: null }).enforced,
     'behavioural', 'no declared category at all is still the floor');
+});
+
+// ---------------------------------------------------------------------------
+// B11 — the report distinguishes a blocked requirement, a broken authority and
+// an unreadable document. Collapsing the second into the first answers "why is
+// this not proven?" with a business reason when the true answer is that the
+// machine did not run.
+// ---------------------------------------------------------------------------
+
+test('an authority that did not run is never reported as an author-declared block', async (t) => {
+  const plan = planDocument();
+  const ids = requirementIds(plan);
+  const evidence = evidenceDocument(plan);
+  const row = evidence.requirements.find((entry) => entry.requirementId === ids['the journey completes']);
+  row.blocked = { reason: 'the business decided not to ship this' };
+
+  const { exitCode, report } = await run(demo(t, { plan, evidence }), {
+    verify: verifyStub(CONFORMING_CHECKS),
+    scenario: scenarioStub(OBSERVATIONS, { missing: ['demo'] }),
+  });
+  const graded = report.requirements.find((entry) => entry.requirementId === ids['the journey completes']);
+  assert.equal(graded.status, 'unverifiable', 'a broken authority is not a blocked requirement');
+  assert.match(graded.reason, /did not run/);
+  // The author's claim survives as context, and is not the verdict.
+  assert.deepEqual(graded.declaredDowngrade, { kind: 'blocked', reason: 'the business decided not to ship this' });
+  assert.ok(codes(report).includes('VERIFICATION_AUTHORITY_FAILED'));
+  assert.equal(report.counts.blocked, 0, 'nothing is counted as a business block');
+  assert.ok(report.counts.unverifiable >= 1);
+  assert.equal(exitCode, 1);
+});
+
+test('a business block is still a business block when every authority ran', async (t) => {
+  const plan = planDocument();
+  const ids = requirementIds(plan);
+  const evidence = evidenceDocument(plan);
+  const row = evidence.requirements.find((entry) => entry.requirementId === ids['the journey completes']);
+  row.blocked = { reason: 'the customer withdrew the requirement' };
+  const { report } = await run(demo(t, { plan, evidence }), { verify: verifyStub(CONFORMING_CHECKS) });
+  const graded = report.requirements.find((entry) => entry.requirementId === ids['the journey completes']);
+  assert.equal(graded.status, 'blocked');
+  assert.equal(graded.reason, 'the customer withdrew the requirement');
+  assert.equal(report.counts.unverifiable, 0);
+});
+
+test('an unreadable or invalid document never reaches a requirement status at all', async (t) => {
+  // The third thing: not a blocked requirement, not a broken authority, but a
+  // document that cannot be read. Exit 2, and no report to misread.
+  const plan = planDocument();
+  const root = demo(t, { plan, evidence: { implementationEvidenceContract: 1, nonsense: true } });
+  const { exitCode, report } = await run(root, { verify: verifyStub(CONFORMING_CHECKS) });
+  assert.equal(exitCode, 2);
+  assert.equal(report, null, 'an invalid document produces no requirement rows to read a status off');
+});
+
+test('every declared status is one of the closed set, and unverifiable is in it', () => {
+  assert.ok(REQUIREMENT_STATUSES.includes('unverifiable'));
+  assert.equal(new Set(REQUIREMENT_STATUSES).size, REQUIREMENT_STATUSES.length);
+  assert.equal(REQUIREMENT_STATUSES.includes('warning'), false);
 });

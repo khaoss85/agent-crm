@@ -58,9 +58,25 @@ import { scenarioRunCommand } from './scenario-run-command.js';
 
 export const SOLUTION_VERIFICATION_CONTRACT = 1;
 
-/** Every status a requirement may carry. Closed, and none of them is "warning". */
+/**
+ * Every status a requirement may carry. Closed, and none of them is "warning".
+ *
+ * Three different things must never share one word, because a reader acts on
+ * each of them differently:
+ *
+ * - `blocked` — **the business requirement is blocked.** An author said so and
+ *   gave a reason. It is a statement about the work, and a person decides it.
+ * - `unverifiable` — **the verification authority did not run.** `project
+ *   verify` produced no receipt, or a cited scenario produced no report. This
+ *   says nothing about the work at all: it is a broken machine, and the fix is
+ *   to run it again, not to plan anything. It outranks `blocked`, because an
+ *   author's downgrade must never be able to stand in front of an
+ *   infrastructure failure and answer for it.
+ * - a **document** that could not be read or is invalid never reaches a
+ *   requirement status at all: it is exit 2 with no report.
+ */
 export const REQUIREMENT_STATUSES = Object.freeze([
-  'verified', 'partial', 'blocked', 'unevidenced', 'unverified', 'stale',
+  'verified', 'partial', 'blocked', 'unverifiable', 'unevidenced', 'unverified', 'stale',
 ]);
 
 /**
@@ -123,9 +139,21 @@ export async function solutionVerifyCommand({
 
   const planResult = validateSolutionPlan(planInput);
   const evidenceResult = validateImplementationEvidence(evidenceInput);
-  if (planResult.plan === null || evidenceResult.evidence === null) {
-    err(`${planResult.plan === null ? 'The plan' : 'The evidence document'} could not be normalized at all, `
-      + 'so nothing was verified and no authority was run.\n');
+
+  // **An invalid document starts no authority.** It used to be only a document
+  // that could not be normalized *at all* that stopped here; one that merely
+  // carried an unknown key, an unknown vocabulary term or a reason-less
+  // downgrade normalized to something and then ran the whole fan-out against
+  // it — up to thirteen minutes of `project verify` spent on a document already
+  // known to be invalid, and, worse, a report full of per-requirement statuses
+  // that a reader would act on. "The requirement is blocked", "the authority
+  // broke" and "the document is invalid" are three different answers, and the
+  // third one is not a status a requirement may carry: it is exit 2 and no
+  // requirement rows at all.
+  if (!planResult.valid || !evidenceResult.valid) {
+    const which = !planResult.valid && !evidenceResult.valid ? 'The plan and the evidence document are'
+      : !planResult.valid ? 'The plan is' : 'The evidence document is';
+    err(`${which} invalid, so nothing was verified and no authority was run.\n`);
     emit({ json, out, report: unreadableReport({ planPath: planSource.relative, evidencePath: evidenceSource.relative,
       problems: [...prefix(planResult.problems, 'PLAN_INVALID'), ...evidenceResult.problems] }) });
     return { exitCode: 2, report: null };
@@ -438,6 +466,10 @@ function grade({ requirement, declaration, stale, bound, inspection, verifyRepor
     enforcedCategory: null,
     status: 'unevidenced',
     reason: '',
+    // An author's downgrade, kept as context whatever the status turns out to
+    // be. When an authority failed, the status is about the machine and this is
+    // the only place the author's claim survives — unread as a verdict.
+    declaredDowngrade: null,
     evidence: [],
   };
 
@@ -471,11 +503,31 @@ function grade({ requirement, declaration, stale, bound, inspection, verifyRepor
   const resolved = declaration.evidence.map((ref) => resolveReference({
     ref, bound, inspection, verifyReport, scenarioReports, root, requirementId: requirement.requirementId, problems,
   }));
-  const row = { ...base, enforcedCategory: effective, evidence: resolved };
+  const declaredDowngrade = declaration.blocked !== null
+    ? { kind: 'blocked', reason: bound_(declaration.blocked.reason) }
+    : declaration.partial !== null
+      ? { kind: 'partial', reason: bound_(declaration.partial.reason) }
+      : null;
+  const row = { ...base, enforcedCategory: effective, declaredDowngrade, evidence: resolved };
 
   if (stale) {
     return { ...row, status: 'stale', reason: 'the plan, its composition or its fingerprint moved after this evidence was gathered' };
   }
+
+  // An authority that did not run outranks everything an author wrote. Grading
+  // this `blocked` would answer "why is this not proven?" with the author's
+  // business reason when the true answer is that the machine did not run — and
+  // that is the one substitution this report must never make. The author's
+  // downgrade is kept beside it as context, not as the verdict.
+  const unavailable = resolved.filter((entry) => entry.problem === 'EVIDENCE_AUTHORITY_UNAVAILABLE');
+  if (unavailable.length > 0) {
+    return {
+      ...row,
+      status: 'unverifiable',
+      reason: `an authority this requirement depends on did not run in this invocation: ${unavailable.map((entry) => entry.kind).sort().join(', ')}. Nothing here is a statement about the work${declaredDowngrade ? `, including the "${declaredDowngrade.kind}" the document declares` : ''}`,
+    };
+  }
+
   if (declaration.blocked !== null) {
     return { ...row, status: 'blocked', reason: bound_(declaration.blocked.reason) };
   }
@@ -809,7 +861,8 @@ export function semanticFingerprint(report) {
     counts: report.counts,
     requirements: report.requirements.map((row) => ({
       requirementId: row.requirementId, kind: row.kind, category: row.category,
-      enforcedCategory: row.enforcedCategory, status: row.status,
+      enforcedCategory: row.enforcedCategory, declaredDowngrade: row.declaredDowngrade,
+      status: row.status,
       evidence: row.evidence.map((entry) => ({ kind: entry.kind, resolved: entry.resolved, problem: entry.problem })),
     })),
     problems: report.problems.map((entry) => entry.code).sort(),
@@ -846,7 +899,8 @@ function emit({ json, out, report }) {
 }
 
 const MARK = Object.freeze({
-  verified: 'ok', partial: 'PART', blocked: 'BLOCK', unevidenced: 'NONE', unverified: 'MANUAL', stale: 'STALE',
+  verified: 'ok', partial: 'PART', blocked: 'BLOCK', unverifiable: 'BROKEN',
+  unevidenced: 'NONE', unverified: 'MANUAL', stale: 'STALE',
 });
 
 function render(report) {
