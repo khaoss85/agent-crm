@@ -1,0 +1,98 @@
+{
+  "implementationEvidenceContract": 1,
+  "plan": "examples/solution-plans/verifier-fixture-exit-zero.plan.json",
+  "planFingerprint": "d9d1828533a0dae6e55f7680aeae4164379352a5f531dd77c58441efd6f03a6e",
+  "applicationInspectionFingerprint": "4c203a89be16368a68a3077541cb4abd2de697006eb01d2e9f2e6b5b1566f764",
+  "requirements": [
+    {
+      "requirementId": "step:step.activate-coverage-from-what-was-bought",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "activate-coverage.07",
+          "expects": "journey.count equals=1 metric=serviceCoverages"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "activate-coverage.08",
+          "expects": "journey.count equals=1 metric=serviceEntitlements"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "activate-coverage.11",
+          "expects": "journey.fact fact=amendedCommercialRecord is=false"
+        }
+      ]
+    },
+    {
+      "requirementId": "step:step.run-a-case-through-its-transition-table",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "close-the-case.02",
+          "expects": "journey.fact fact=closeFromInProgressRefused is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "close-the-case.03",
+          "expects": "journey.fact fact=caseFinalStatus is=closed"
+        }
+      ]
+    },
+    {
+      "requirementId": "check:a2a4a5515735c6ba9bd0e5d3d03398f5",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "activate-coverage.07",
+          "expects": "journey.count equals=1 metric=serviceCoverages"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "activate-coverage.08",
+          "expects": "journey.count equals=1 metric=serviceEntitlements"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "activate-coverage.11",
+          "expects": "journey.fact fact=amendedCommercialRecord is=false"
+        }
+      ]
+    },
+    {
+      "requirementId": "check:94cf49703b3e58bea2836f3ad266a51d",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "close-the-case.02",
+          "expects": "journey.fact fact=closeFromInProgressRefused is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "close-the-case.03",
+          "expects": "journey.fact fact=caseFinalStatus is=closed"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    {
+      "code": "FIXTURE_NOT_A_PRODUCT_CLAIM",
+      "message": "This document belongs to a verifier fixture. It exists so the exit-0 arm of solution verify is exercised end to end by the real command, and it claims no product coverage and no business outcome. The two real plans in this repository both exit 1, and that is the true state of both."
+    }
+  ]
+}

@@ -875,7 +875,7 @@ test('the two checked-in evidence documents reference only observations their sc
     )));
     scenarios.set(id, codesInScenario);
   }
-  for (const name of ['lead-to-won', 'activate-support-and-manage-cases']) {
+  for (const name of ['lead-to-won', 'activate-support-and-manage-cases', 'verifier-fixture-exit-zero']) {
     const document = JSON.parse(readFileSync(
       join(repoRoot, 'examples/implementation-evidence', `${name}.evidence.json`), 'utf8',
     ));
@@ -891,7 +891,7 @@ test('the two checked-in evidence documents reference only observations their sc
 });
 
 test('every source artifact the checked-in documents cite is present with exactly that hash', () => {
-  for (const name of ['lead-to-won', 'activate-support-and-manage-cases']) {
+  for (const name of ['lead-to-won', 'activate-support-and-manage-cases', 'verifier-fixture-exit-zero']) {
     const document = JSON.parse(readFileSync(
       join(repoRoot, 'examples/implementation-evidence', `${name}.evidence.json`), 'utf8',
     ));
@@ -1182,4 +1182,55 @@ test('the same observation code in two compositions is two different facts', asy
     scenario: multiCompositionScenario({ demo: COMPOSITION_FP, other: 'f'.repeat(64) }),
   });
   assert.equal(statusOf(crossed.report, ids['the application does the thing']), 'unevidenced');
+});
+
+// ---------------------------------------------------------------------------
+// B14 — one end-to-end proof that valid, complete evidence reaches exit 0.
+//
+// Every exit-0 test above injects its delegates. A verifier that has only ever
+// exited 1 through the real command is a verifier whose exit-0 arm nobody has
+// run, so one checked-in fixture drives the whole command: a real plan, a real
+// evidence document, the real AX1 report and a real scenario run.
+//
+// It is a **fixture**, and it says so in its own limitations and in its file
+// name. It claims no product coverage and no business outcome. The two real
+// plans in this repository still exit 1, which is the true state of both.
+// ---------------------------------------------------------------------------
+
+test('the checked-in verifier fixture reaches exit 0 through the real command', async () => {
+  const plan = 'examples/solution-plans/verifier-fixture-exit-zero.plan.json';
+  const evidence = 'examples/implementation-evidence/verifier-fixture-exit-zero.evidence.json';
+  let stdout = '';
+  const started = Date.now();
+  const { exitCode, report } = await solutionVerifyCommand({
+    planPath: plan, evidencePath: evidence, rootDir: repoRoot, json: true,
+    out: (text) => { stdout += text; }, err: () => {}, env: {},
+  });
+  const elapsed = Date.now() - started;
+
+  assert.equal(exitCode, 0, `the fixture must be fully machine-verified: ${JSON.stringify(report?.problems ?? stdout.slice(0, 400))}`);
+  assert.equal(report.status, 'verified');
+  assert.deepEqual(report.problems, []);
+  assert.deepEqual(report.unproven, []);
+  assert.equal(report.counts.verified, report.counts.total);
+  assert.ok(report.counts.total >= 4);
+  assert.equal(report.binding.boundTo, 'scenario:service-sla-escalation');
+
+  // Nothing here is manual, blocked, partial or unverifiable, and every
+  // requirement is graded behavioural — the floor, not a weaker label.
+  for (const row of report.requirements) {
+    assert.equal(row.status, 'verified');
+    assert.equal(row.enforcedCategory, 'behavioural');
+    assert.equal(row.declaredDowngrade, null);
+  }
+
+  // B18: AX1 once, one scenario, and `project verify` not at all, because
+  // nothing in the document cites it. The whole invocation is seconds.
+  const ran = report.authorities.filter((row) => row.ran).map((row) => row.kind).sort();
+  assert.deepEqual(ran, ['application-inspection', 'scenario']);
+  assert.equal(report.authorities.filter((row) => row.kind === 'scenario' && row.ran).length, 1);
+  assert.ok(elapsed < 120_000, `the fixture ran in ${elapsed}ms`);
+
+  // And it promotes nothing, exactly like every other report.
+  assert.equal(report.promotion.performed, false);
 });
