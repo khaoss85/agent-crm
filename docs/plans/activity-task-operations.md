@@ -62,10 +62,26 @@ reason to move a business model into core*. Contracts is consumed by Delivery,
 Service and Lifecycle and is still a package.
 
 One thing genuinely does belong to the kernel and is already there: the
-capability seam itself (`PackageRegistry.capability`). Work v1 needs no addition
-to it, and adds none. **`packages/core` is unchanged by this milestone** —
-`git diff --stat` on `packages/core` is empty, which is the mechanical form of
-the ADR-018 argument.
+capability seam itself (`PackageRegistry.capability`).
+
+**Corrected by REVIEW-70 (ADR-030 addendum 1).** This section originally claimed
+`packages/core` was untouched and pointed at an empty `git diff --stat` as the
+mechanical form of the ADR-018 argument. The review found two things the kernel
+genuinely owed a package, and `packages/core` now carries exactly two changes,
+both **generic** — neither names Work or any other package:
+
+- `PackageRegistry.capability()` hands the consumer identity it has already
+  resolved to the provider's `create(context)`, so a provider that records
+  provenance binds the name the registry proved instead of one the caller
+  retypes in a payload;
+- `normalizeActor` / `SYSTEM_ACTOR` are exported from the public kernel surface,
+  because a package that cannot reach the canonical actor authority writes its
+  own and drifts from the audit row beside it — which is exactly what happened.
+
+The substantive claim is unchanged and is the one that matters: there is **no
+Work engine in the kernel** — no record, action, capability, table or name
+belonging to this domain anywhere in `packages/core` — and deleting
+`packages/work` still deletes the domain.
 
 ### Option B — a package-native domain (**chosen**)
 
@@ -364,17 +380,35 @@ identity:
 | Lifecycle commercial follow-up | `lifecycle-commercial-followup:<followupId>` |
 | Service escalation | `service-escalation:<escalationId>` |
 
-Neither contains `now()`. That defect was fixed in M16a and the rule is enforced
-here as well as documented: `assertNoClockInSourceKey` refuses a key containing
-an ISO-8601 instant or a 13-digit epoch, so a key that identifies nothing is
-refused at the boundary rather than discovered as duplicate rows.
+Neither contains `now()`: each is derived from a **committed record id**.
+
+**Corrected by REVIEW-70 (ADR-030 addendum 1).** This plan originally enforced
+that with a validator refusing any ISO-8601 instant or any run of 13+ digits in a
+key. That regex is gone. It is not a property of a moving key, only of some
+strings that resemble one, and it refused real business identities: 13-digit
+customer numbers, provider event ids, 16-digit order numbers, and business events
+whose *scheduled* instant is deliberately part of their identity and is stable
+under every retry. Carrying M16a's one-domain bug fix forward as a universal
+restriction on a **generic** capability was the wrong trade.
+
+The guarantee now lives where the identity does. Work refuses only what it can
+actually judge — structurally invalid syntax and unbounded length — and each of
+the three keys above is proven stable under retry at two different clock instants
+in `tests/work-source-key-stability.test.js`.
 
 - **same key + same payload** → the existing task and its creation activity are
   returned, `replayed: true`, no second row, no second audit event. This is the
   lost-response retry, and it is tested as one.
 - **same key + divergent payload** → `409 WORK_FOLLOW_UP_CONFLICT` **naming the
   fields that differ** in `details.conflictingFields`. Recorded work is never
-  silently overwritten.
+  silently overwritten. The comparison is the **whole** semantic identity —
+  `title`, `dueAt`, `subjectResource`, `subjectId`, `subjectOwner`,
+  `subjectOwnerPackage`, `sourcePackage`, `sourceAction`. REVIEW-70 found it
+  reading only the first four, so a key could be replayed under a different
+  subject owner or a different source package and be answered "already done"
+  while the row said otherwise. `subjectLabel` is the one deliberate exclusion:
+  the contract declares it a display snapshot, so a replay that differs only by a
+  renamed subject is honoured and the stored snapshot is not rewritten.
 - **a new business round** creates a new task under an explicit new identity —
   Lifecycle's key contains the follow-up record's id, and a second round is a
   second follow-up record, so genuinely repeated work is never collapsed.
@@ -385,6 +419,14 @@ refused at the boundary rather than discovered as duplicate rows.
   after the activity insert, after the caller's own managed write, and after the
   audit write: no partial Task/Activity pair, no fake success audit, an honest
   failed trace, and a safe retry that produces exactly one complete result.
+- **The transaction the pair depends on is verified** (REVIEW-70). Every claim
+  above holds *inside* a transaction, and outside one none of them did: each
+  managed write commits on its own savepoint, so a fault between the two left a
+  committed Task with no Activity. Confirmed by injecting exactly that fault with
+  no transaction open. `createFollowUp` now proves an open transaction on the
+  module service's own connection before the first write and refuses `500
+  WORK_TRANSACTION_REQUIRED` otherwise — the fault-injection claims are therefore
+  claims about the only state the package can now be called in.
 - **Two-connection races** — two applications on one database file, both
   qualifying the same lead and both requesting the same follow-up: one winner,
   the loser replays the winner's row, and no raw SQLite text reaches a client.

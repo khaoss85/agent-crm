@@ -1527,3 +1527,129 @@ migrate Service's `support-case-activity`, which stays domain-specific, and it
 does not unify Delivery's history. It claims **no `M`-number**: `M16` is
 Analytics Studio (planned) and taking `M17` would assert a position in a sequence
 this horizontal capability does not have.
+
+### ADR-030 addendum 1 — what the adversarial review changed, and what it corrected in this record
+
+**Status:** accepted, from the pre-merge review of PR #70 (REVIEW-70). Each item
+below was confirmed with a runnable probe against a real composed application
+*before* anything was changed, and each is now held by a regression test.
+
+1. **The transactional guarantee is verified, not assumed.** Decision 6 above
+   says the capability writes inside the caller's transaction. It did — when the
+   caller happened to be in one. Called outside a transaction, each managed write
+   commits on its own `SAVEPOINT`, so injecting a fault into the Activity write
+   left a **committed Task with no Activity**: the half pair this ADR says the
+   package never produces. `createFollowUp` now checks the module service's own
+   connection before the first write and refuses `500
+   WORK_TRANSACTION_REQUIRED` when no transaction is open. Fail-closed by
+   construction: there is no way to opt out of the check.
+
+2. **Semantic identity is the whole stored fact, not four fields of it.**
+   Decision 9's replay comparison read `title`, `dueAt`, `subjectResource` and
+   `subjectId` only. So one source key could be replayed with a different
+   **subject owner**, **owning package**, **source package** or **source
+   action** and be answered "already done" while the row said something else —
+   a Service escalation could reuse a Lifecycle key and be handed Lifecycle's
+   task, with Lifecycle's provenance, as its own. All eight semantic fields are
+   compared and each divergent one is named in the 409. **`subjectLabel` is
+   deliberately excluded** and is the *only* exclusion: the contract already
+   states it is a display snapshot taken at creation and never refreshed, so a
+   replay whose only difference is a renamed subject describes the same work and
+   is honoured — the stored snapshot is not rewritten.
+
+3. **Provenance is bound at capability resolution, and the limit of that is
+   stated.** `source.package` was free caller text: any declared consumer could
+   store any other package's name as the origin of work it opened, and the row
+   read as authoritative forever. `PackageRegistry.capability()` already
+   resolves and verifies the consumer against that package's own `requires`, so
+   it now passes that identity to the provider — generically, knowing nothing
+   about Work — and Work binds it: a request asserting anything else is refused
+   `403 WORK_SOURCE_PACKAGE_MISMATCH`, and a direct host caller may assert only
+   `host`. **This is not authentication and is not claimed to be.** The registry
+   cannot tell which package's code is executing (ADR-018 addendum 4: the
+   consumer name is asserted by the caller), so the floor moves from "any package
+   name a caller types" to "a package that also declared this capability". That
+   is a real narrowing, not a boundary, and it is published as
+   `metadata().capability.bindingLimitation`. `source.action` and
+   `subject.ownerPackage` stay caller-asserted, because the registry knows
+   neither which action is calling nor who owns a subject that may belong to a
+   third package.
+
+4. **An impossible `dueAt` is refused, not rolled over.** `optionalIsoDate` is
+   `Date.parse` underneath, which does not validate a calendar day: `2027-02-30`
+   was stored as `2027-03-02` and `2027-04-31` as `2027-05-01`, silently, as
+   evidence, with nothing on the row saying the date had been invented. This is
+   precisely the class ADR-028 added `isCalendarDate` for, shipped again. Work
+   validates the calendar-day part of any ISO form it is given against that same
+   round-trip authority and refuses `400` otherwise. (The wider question — that
+   `optionalIsoDate` itself accepts impossible days for *every* caller in the
+   framework — is a real finding beyond this milestone's scope and is named as a
+   follow-up rather than fixed here.)
+
+5. **Actor identity is the kernel's, byte for byte.** Work normalized its own
+   actor and truncated the id to 200 characters. Truncation of an identity is
+   not a bound, it is a **merge**: two distinct people sharing a 200-character
+   prefix became one string on the Task and on every Activity, while the audit
+   row written by the same transaction carried the full id — two records of one
+   write disagreeing about who did it, both looking authoritative. `normalizeActor`
+   is now exported from the public kernel surface and Work calls it, so there is
+   nothing left to drift.
+
+6. **The clock heuristic in a source key is removed.** Decision 9 refused any
+   ISO instant and any run of 13 or more digits. That is not a property of a
+   moving key, only of some strings that resemble one, and it refused real
+   business identities: 13-digit customer numbers, provider event ids, 16-digit
+   order numbers, and business events whose *scheduled* instant is deliberately
+   part of their identity and is stable under every retry. A **generic**
+   capability cannot infer a caller's business identity from a regex, and
+   carrying M16a's one-domain bug fix forward as a universal restriction was the
+   wrong trade. Work now refuses only what it can actually judge — structurally
+   invalid syntax and unbounded length. The guarantee moved to where the identity
+   is: every consumer derives its key from a committed record id, and
+   `tests/work-source-key-stability.test.js` runs each one at two clock instants
+   and asserts the key does not move.
+
+7. **Two smaller corrections.** A unique-constraint race was recognised from the
+   error *message* (`/already exists|unique constraint/i`), so any other 409
+   whose sentence contained those words could be answered with a replay; it now
+   matches the kernel's typed `ConflictError` and explicitly excludes a transient
+   busy conflict. And the timeline comparator used `localeCompare` with no locale
+   argument, making a repository-deterministic order depend on the host's ICU
+   collation, the Node ICU build and `LANG` — ICU is not code-point order, it
+   treats `-` and `_` as variable punctuation and orders case the other way
+   round, so two readers of the same rows could see two lists. It is code-point
+   lexical now.
+
+8. **The legacy adoption is atomic as well as idempotent.** Decision 10 promised
+   idempotence and delivered it, but adopted row by row: a run killed halfway
+   left a database neither in the old shape nor the new, with a reported
+   `adopted` count nobody could trust. The whole adoption now runs in one
+   transaction.
+
+**Correction to decision 1.** That decision states "**`packages/core` is
+unchanged by this milestone**" as the mechanical form of the no-core-Work-engine
+argument. That is no longer literally true and this record must not keep saying
+it is. `packages/core` now carries exactly two changes, both **generic** and
+neither naming Work or any package:
+
+- `PackageRegistry.capability()` passes the consumer identity it has already
+  resolved to the provider's `create(context)`, overwriting any `consumer` a
+  caller put in the context;
+- `normalizeActor` / `SYSTEM_ACTOR` are exported from the public kernel surface,
+  because a package that cannot reach the canonical actor authority will write
+  its own and drift from the audit log beside it.
+
+The substantive claim of decision 1 stands unchanged: there is **no Work engine
+in the kernel**, no record, action, capability, table or name belonging to this
+domain anywhere in `packages/core`, and removing `packages/work` still removes
+the domain entirely.
+
+**What the review did not change.** The three architectural positions this ADR
+takes all survived the attacks: a **package-native Work domain** (the kernel
+still needs no notion of a task, and the two core changes above are capability
+plumbing and an actor helper, neither of which is Work); an **opaque subject
+envelope** (the alternative is a generic resolver no second consumer needs, and
+the unenforceable-foreign-key limitation is published rather than papered over);
+and **curated Activity rather than an audit projection** (the event bus still
+dispatches after commit, so a projection would still either escape the
+originating transaction or need a Jobs/Outbox that does not exist).

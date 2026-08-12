@@ -222,9 +222,10 @@ test('two identities sharing a 200-character prefix stay two identities, and mat
 
 test('the published contract states what is bound and what is still asserted', () => {
   const meta = createWorkPackage().metadata();
-  assert.match(meta.capability.sourcePackageIsBound, /NOT caller text/);
+  assert.match(meta.capability.sourcePackageIsBound, /no longer free caller text/);
   assert.match(meta.capability.sourcePackageIsBound, /WORK_SOURCE_PACKAGE_MISMATCH/);
   assert.match(meta.capability.stillAsserted, /source\.action and subject\.ownerPackage remain caller-asserted/);
-  assert.match(meta.capability.stillAsserted, /neither is authentication/);
+  assert.match(meta.capability.bindingLimitation, /NOT authentication/);
+  assert.match(meta.capability.bindingLimitation, /cannot tell which package's code is executing/);
   assert.match(meta.capability.transaction, /WORK_TRANSACTION_REQUIRED/);
 });

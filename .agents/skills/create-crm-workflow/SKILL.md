@@ -31,8 +31,12 @@ If the repository documents this skill names are absent, you are in a project bu
    must now do something", that is one shared model: `work-task` and
    `work-activity`, opened through the `work` package's declared capability
    `work/follow-up@1` **inside your own transaction**, keyed by a business
-   identity that never contains a clock. Check `capabilities[]` in the
-   inspection report for it. A second per-domain task table is the divergence
+   identity that never contains a clock — **that last part is yours to
+   guarantee**: Work refuses invalid syntax, not a key that looks like a
+   timestamp, so derive it from a committed record id and prove it with a retry
+   test of your own. It will also refuse to write at all if you call it outside
+   a transaction, rather than risk a task without its activity. Check
+   `capabilities[]` in the inspection report for it. A second per-domain task table is the divergence
    Work v1 exists to stop (`docs/WORK_TASKS.md`, ADR-030 as background where the
    project carries them). Two things it is **not**: it schedules nothing —
    `dueAt` is evidence and no clock moves a status — and it notifies and assigns

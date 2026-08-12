@@ -339,9 +339,11 @@ export function createWorkPackage(options = {}) {
           hostLimitation:
             'HOST_ACTIONS_CANNOT_DECLARE_CAPABILITIES — PackageRegistry.capability() resolves consumer against registered packages, so a host application action cannot open this capability. The host composes the same exported creator directly from project source; it is the same code, not a second path',
           sourcePackageIsBound:
-            'source.package is NOT caller text. The registry hands the consumer identity it resolved to the provider, and that identity is what is stored; a consumer asserting a different package is refused 403 WORK_SOURCE_PACKAGE_MISMATCH. A direct host caller has no package identity and may only assert "host"',
+            'source.package is no longer free caller text repeated in the payload: the registry hands the consumer identity it resolved to the provider, that identity is what is stored, and a request asserting anything else is refused 403 WORK_SOURCE_PACKAGE_MISMATCH. A direct host caller has no package identity and may only assert "host"',
+          bindingLimitation:
+            'NOT authentication, and it is not claimed to be. PackageRegistry.capability() checks that the named consumer is a registered package which itself declared work/follow-up@1 — it cannot tell which package\'s code is executing (ADR-018 addendum 4: the consumer name is asserted by the caller). So the floor this raises is from "any package name at all" to "a package that also declared this capability", which is a real narrowing and not a boundary. Trusted checked-in source remains the security model',
           stillAsserted:
-            'source.action and subject.ownerPackage remain caller-asserted: the registry knows who is calling, not which of that package\'s actions is calling, and the subject may legitimately be owned by a third package. Trusted checked-in source is the security model for those two, and neither is authentication',
+            'source.action and subject.ownerPackage remain caller-asserted with no registry knowledge behind them: the registry does not know which of a package\'s actions is calling, and a subject may legitimately be owned by a third package',
         },
         humanApproval:
           'complete, cancel and add-note require actor.type === "user"; an agent actor is refused 403 HUMAN_APPROVAL_REQUIRED. A human-actor boundary, not RBAC and not authentication',

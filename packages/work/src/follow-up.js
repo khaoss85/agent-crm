@@ -266,6 +266,15 @@ function validateSource(value) {
  * that asserts a different package is refused rather than quietly corrected, so
  * a consumer that believes it is somebody else finds out.
  *
+ * **What this is not.** It is not authentication. The registry checks that the
+ * named consumer is a registered package which itself declared
+ * `work/follow-up@1`; it cannot tell which package's *code* is running (ADR-018
+ * addendum 4 states plainly that the consumer name is asserted by the caller).
+ * So the floor moves from "any package name a caller types" to "a package that
+ * also declared this capability" — a real narrowing, not a boundary, and
+ * published as such in `metadata().capability.bindingLimitation`. Building a
+ * generic authentication system is explicitly out of scope for Work v1.
+ *
  * When it is absent, the caller is the **host** — the project's own action
  * code, which imports {@link createFollowUp} directly because a host
  * application action is not a registered package and cannot open a capability

@@ -140,22 +140,41 @@ work.findBySourceKey('my-package-thing:123');    // exact read, or null
 
 Because the capability is created with **your** `modules` handle, both rows are
 written inside **your** transaction. If your action fails afterwards, the task
-and its activity roll back with your own writes.
+and its activity roll back with your own writes — and that is *checked*: a call
+that cannot prove an open transaction on the same connection is refused `500
+WORK_TRANSACTION_REQUIRED` before the first write, so no half pair can exist
+(ADR-030 addendum 1).
+
+`source.package` is bound to the consumer identity the registry resolved, not
+read from your request body: asserting a different one is `403
+WORK_SOURCE_PACKAGE_MISMATCH`. It is a narrowing, not authentication — see
+`metadata().capability.bindingLimitation`.
 
 ### Idempotency
 
 - **Same key, same payload** → the existing task and its creation activity,
   `replayed: true`. That is the lost-response retry, and it is safe however many
   times it happens.
-- **Same key, different title, due date or subject** → `409
-  WORK_FOLLOW_UP_CONFLICT`, `details.conflictingFields` naming what differs.
-  Recorded work is never silently overwritten.
+- **Same key, any different semantic field** → `409 WORK_FOLLOW_UP_CONFLICT`,
+  `details.conflictingFields` naming each one. The semantic identity is `title`,
+  `dueAt`, `subjectResource`, `subjectId`, `subjectOwner`, `subjectOwnerPackage`,
+  `sourcePackage` and `sourceAction`. Recorded work is never silently
+  overwritten, and it is never handed to a different package under the same key.
+- **Same key, only a different `subject.label`** → replayed. The label is the one
+  field the contract declares a non-authoritative display snapshot, and the
+  stored one is not refreshed.
 - **A new business round** → a new key, and a new task. Repeated work is never
   collapsed.
-- **A key containing a clock is refused at the boundary** — an ISO-8601 instant
-  or a 13-digit epoch. A key that moves every millisecond identifies nothing, and
-  every retry would open a second task. (M16a fixed this exact defect once
-  already; here it is refused rather than discovered.)
+- **There is no clock heuristic on a key.** An earlier cut refused any ISO
+  instant and any run of 13+ digits, which also refused 13-digit customer
+  numbers, provider event ids, 16-digit order numbers and business events whose
+  scheduled instant is genuinely their identity. A generic capability cannot tell
+  a moving key from a stable one by looking at it. **You** own a stable business
+  identity — derive it from a committed record id, never from `now()`, and prove
+  it with your own retry test, as every consumer here does in
+  `tests/work-source-key-stability.test.js`.
+- **An impossible `dueAt` is refused**, never rolled over: `2027-02-30` is a `400`
+  rather than a row quietly stored as 2027-03-02.
 - **`MANUAL_NOTES_ARE_NOT_IDEMPOTENT`** — a note carries no key, because two
   identical notes are two statements.
 

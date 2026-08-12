@@ -169,15 +169,45 @@ written inside **your** transaction: if your action fails afterwards, the task
 and its activity roll back with your own writes. It returns a frozen object with
 two methods and hands out no service, table or query handle.
 
+That guarantee is **verified, not assumed**. Called with no transaction open —
+from a script, from a `prepare` phase, from a consumer that forgot — each managed
+write would commit on its own savepoint and a fault between them would leave a
+task with no activity. So a call that cannot prove an open transaction on the
+same connection is refused `500 WORK_TRANSACTION_REQUIRED` before the first
+write. There is no way to opt out of the check (ADR-030 addendum 1).
+
+`source.package` is **not** taken from your request body. The registry hands the
+consumer identity it resolved — against your own declared `requires` — to this
+capability, and that is what is stored; a request asserting a different package
+is refused `403 WORK_SOURCE_PACKAGE_MISMATCH`. This is a narrowing, not
+authentication: the registry cannot tell which package's *code* is running, so it
+raises the floor from "any package name" to "a package that also declared this
+capability" and says so in `metadata().capability.bindingLimitation`.
+`source.action` and `subject.ownerPackage` are still yours to assert.
+
 ### Idempotency
 
 | Case | Answer |
 |---|---|
 | same key, same payload | the existing task and its creation activity, `replayed: true` |
-| same key, different title / due date / subject | `409 WORK_FOLLOW_UP_CONFLICT`, `details.conflictingFields` |
+| same key, any different semantic field | `409 WORK_FOLLOW_UP_CONFLICT`, `details.conflictingFields` naming each one |
+| same key, only a different `subject.label` | replayed — the label is a documented display snapshot, and the stored one is not rewritten |
 | a new business round | a new key, and a new task — repeated work is never collapsed |
-| a key containing an instant or a 13-digit epoch | refused at the boundary |
+| an impossible `dueAt` (`2027-02-30`) | `400` — refused, never rolled over to the next real day |
 | a manual note | `MANUAL_NOTES_ARE_NOT_IDEMPOTENT` — two identical notes are two statements |
+
+The **semantic identity** is `title`, `dueAt`, `subjectResource`, `subjectId`,
+`subjectOwner`, `subjectOwnerPackage`, `sourcePackage` and `sourceAction` — every
+stored fact except `subjectLabel`, which is the one field the contract declares
+non-authoritative.
+
+**There is no clock heuristic on a source key.** An earlier cut refused any ISO
+instant and any run of 13+ digits; that refused 13-digit customer numbers,
+provider event ids, 16-digit order numbers and business events whose scheduled
+instant is genuinely part of their identity. A generic capability cannot tell a
+moving key from a stable one by looking at it, so it does not try: **you** own a
+stable business identity, derive it from a committed record id, and prove it with
+your own retry test.
 
 ### The host application is not a package
 
