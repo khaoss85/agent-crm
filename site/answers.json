@@ -156,7 +156,7 @@
     {
       "slug": "does-it-run-scheduled-work-or-reminders",
       "question": "Does it send renewal reminders or run anything on a schedule?",
-      "answer": "No. There is no scheduler, no task engine and no reminders: one follow-up Task is created inside lead qualification, and there is no recurring work, no delayed workflow and no queue (L-04). This reaches into the contract lifecycle — auto-renew dates and notice periods are recorded on an activated contract and never fire (C-10). Lead capture, scoring, routing, qualification and conversion happen through explicit actions that something calls, each one atomic and audited (C-06), not on a timer.",
+      "answer": "No. There is no scheduler and no reminders: follow-up Tasks and an Activity timeline are one shared model that a person moves by hand, a due date changes no state, and there is no recurring work, no delayed workflow and no queue (L-04). This reaches into the contract lifecycle — auto-renew dates and notice periods are recorded on an activated contract and never fire (C-10). Lead capture, scoring, routing, qualification and conversion happen through explicit actions that something calls, each one atomic and audited (C-06), not on a timer.",
       "claims": [
         "C-10",
         "C-06"
@@ -164,7 +164,7 @@
       "limitations": [
         "L-04"
       ],
-      "snippet": "No. There is no scheduler, no task engine and no reminders. Auto-renew dates are recorded on an activated contract and never fire — nothing runs on a timer."
+      "snippet": "No. There is no scheduler and no reminders, and a due date moves nothing. Auto-renew dates are recorded on an activated contract and never fire — nothing runs on a timer."
     },
     {
       "slug": "how-to-pair-a-cdp-with-a-crm-framework",

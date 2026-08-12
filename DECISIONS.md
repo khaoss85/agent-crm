@@ -1374,3 +1374,154 @@ than as an increment, but no other contract is audited by this ADR. Coverage
 remains *claimed* rather than discovered (`COVERAGE_IS_CLAIMED_NOT_DISCOVERED`),
 two scenarios are not broad coverage, and PROVE stays partial because DX10 does
 not exist.
+
+## ADR-030 — Follow-up work is a package-native domain with an opaque subject envelope, and Activity is curated evidence rather than a projection of the audit log
+
+**Status:** accepted.
+
+**Context.** `TASKS.md` carried one unfinished item from Milestone 6: *"Add
+Activity and a first-class Task module with a general automatic follow-up
+workflow."* What existed was a bespoke slice — the B2B starter's own `task`
+module, table `tasks`, with `title`, `status` in `open`/`done`, `dueAt`, a
+**required** `leadId` reference and a unique `sourceKey`, every field publicly
+writable — created inside `lead.qualify`.
+
+Three things were wrong with it, and only the third is about code:
+
+1. **The subject was a Lead, structurally.** A task that cannot exist without a
+   `leadId` cannot be a follow-up on a contract, a support case or anything else.
+   The next domain that needed one would have written a second table.
+2. **It was not evidence.** `POST /api/modules/task/records` could forge a
+   follow-up with any `sourceKey`, and `PATCH` could rewrite the key the runtime
+   had written. There was no boundary at all.
+3. **`open`/`done` is not a lifecycle.** No transition table, no cancellation, no
+   actor, no record of who closed it or when.
+
+The failure mode this ADR is really about is the first one: *silent divergence of
+one concept across domains*. It had already started, and the second occurrence
+would not have been compatible with the first.
+
+**Decision.**
+
+1. **A package, not core.** `packages/work` — `work@1` — owns `work-task` and
+   `work-activity`, three human actions and one declared capability. ADR-018
+   admits domain behaviour into `packages/core` only when it is a *runtime
+   capability the kernel needs*, and the kernel needs no notion of a task: the
+   module registry, action runtime, audit, trace and event bus all work today
+   without one. **`packages/core` is unchanged by this milestone**, which is the
+   mechanical form of that argument. The counter-argument — "two domains consume
+   it" — is exactly what ADR-018 refuses; Contracts is consumed by three packages
+   and is still a package.
+
+   Named `work` after comparing the alternatives against the surface actually
+   built: `tasks` and `activities` each describe half of it; `engagement` would
+   promise a channel that does not exist; `work-management` would promise
+   planning, capacity and scheduling, and would collide semantically with
+   Delivery's shipped work packages and milestones.
+
+2. **The subject is an opaque envelope, and the limitation is published.**
+   `subjectResource`, `subjectId`, `subjectOwner` (`host` | `package`),
+   `subjectOwnerPackage`, an optional `subjectLabel` display snapshot, plus
+   `sourcePackage` and `sourceAction`. SQLite cannot enforce a foreign key whose
+   target table varies per row, and this package does not pretend it can
+   (`SUBJECT_REFERENCE_NOT_ENFORCED`). What makes the envelope trustworthy is
+   **who wrote it**: the domain action that owns the source record, running on
+   that record, inside the transaction that is about to commit. There is no
+   generic resolver and no service locator — a resolver would be justified only
+   if two real consumers needed identical resolution behaviour, and neither does.
+   `subjectOwner` preserves the Package Contract's distinction between a
+   host/project-owned record dependency and a foreign package-owned one.
+
+3. **An explicit transition table, and no reopen.** `open → completed`,
+   `open → cancelled`, both terminal. `open → completed` is direct because an
+   `in_progress` state would change no read, no action and no refusal in this
+   milestone — a state that changes nothing is decoration, and decoration in a
+   state machine is a future migration. Reopening is not "un-completing": it
+   needs a second lifecycle, and the honest answer for a repeated business round
+   is a new task under a new source key, which the idempotency rule already
+   supports.
+
+4. **`dueAt` is evidence only.** No clock-driven state change, no overdue
+   mutation, no timer, no scheduler. A read-only `due`/`overdue` may be computed
+   at an **injected** instant and never writes. Proven by stepping an injected
+   clock a year past a due date and re-reading the row byte-identical.
+
+5. **Activity is curated user-facing evidence, not a projection of audit.** A
+   closed four-entry vocabulary — `task_created`, `task_completed`,
+   `task_cancelled`, `note` — written **inside the transaction of the action that
+   caused it**. Audit and trace remain the exhaustive technical record; Activity
+   is the semantic one a person reads. **There is no asynchronous projection
+   engine, and there could not be one here:** the event bus dispatches after
+   commit (ADR-012), so a projection would either escape the originating
+   transaction or need Jobs/Outbox, which does not exist.
+
+6. **One creator, reached two ways, with the asymmetry stated.** Consuming
+   *packages* open `work/follow-up@1` through `domains.capability(...)`, which is
+   created with the caller's `modules` handle and therefore writes inside the
+   caller's transaction. The **host application cannot**:
+   `PackageRegistry.capability({ consumer })` resolves `consumer` against
+   registered packages, and a host action in project source is not one. Relaxing
+   that check was rejected — the declaration check is the entire value of the
+   seam, and weakening it for convenience would make every future
+   `CAPABILITY_NOT_DECLARED` a suggestion. Instead the project composes the
+   package's exported `createFollowUp` directly, exactly as
+   `packages/domains/generated/index.js` composes the package itself. It is the
+   same code the capability closes over: one implementation, two callers, no
+   fallback (`HOST_ACTIONS_CANNOT_DECLARE_CAPABILITIES`).
+
+7. **Consumers opt in; `requires` stays hard.** `createLifecyclePackage({
+   followUp: true })` and `createServicePackage({ …, followUp: true })` add the
+   declared requirement. Declaring it unconditionally would stop every existing
+   composition booting until it also composed `work` — a silent break for every
+   shipped database. Opting in is explicit, and a project that opts in *without*
+   composing `work` is refused **at startup** with the unmet edge named, never at
+   runtime inside a transaction. `work` requires nothing, so no composition of
+   these packages can cycle.
+
+8. **No versioned policy in v1, by decision.** A policy earns its fingerprint
+   when two consumers share a rule. These two share none: Lead qualification
+   wants a person's name and a caller-supplied due date; Lifecycle wants an
+   intent and no date at all. A workflow DSL is refused outright. If a third
+   consumer arrives needing a shared rule it becomes a code-first, synchronous,
+   deterministic, fingerprinted policy with its identity on the record — the same
+   contract every other policy here uses — and not before.
+
+9. **Idempotency is the caller's business identity, and a clock in a key is
+   refused at the boundary.** Same key and same payload replays the existing task
+   and its creation activity; a divergent payload is `409
+   WORK_FOLLOW_UP_CONFLICT` naming the fields; a new business round uses a new
+   key. A key containing an ISO-8601 instant or a 13-digit epoch is **refused**
+   rather than accepted and later discovered as duplicate rows — this is the M16a
+   defect (ADR-028), turned from a review finding into a validator.
+
+10. **The bespoke slice is migrated forward, and the old table is never
+    touched.** Adoption was attempted first: Module Evolution (ADR-019) is
+    additive and forward-only, so a required `REFERENCES leads(id)` cannot be
+    relaxed into a generic subject. `tasks` is therefore not renamed, not altered
+    and not dropped — an existing starter database still opens and every
+    historical row is still readable — and `packages/work/src/legacy-tasks.js`
+    adopts rows forward: dry-run by default, idempotent on `legacy-task:<id>`,
+    `done → completed`, `leadId → subject { resource: 'lead', owner: 'host' }`,
+    and a row it cannot map is **refused and named** rather than guessed. It is a
+    function, not a command, so it adds nothing to the agent surface budget.
+
+**Consequences.**
+
+- One Task model, one Activity model, one queue, one lifecycle, for every domain
+  that wants follow-up work — instead of a table per domain.
+- Two packages now carry an optional dependency they did not have. A composition
+  that does not opt in is byte-identical to before.
+- Work becomes a package every future domain may depend on, so its version
+  discipline matters: `follow-up@1` is frozen on two consumers plus the host
+  path, and a change in what it *answers* is a new version, per ADR-029.
+- The starter's `task` module is gone. Every test that pinned its shape moved to
+  the new records; the list is in `docs/plans/activity-task-operations.md` §1.
+
+**What this does not decide.** It says nothing about a scheduler, reminders,
+calendar sync, notifications, assignment, RBAC, recurring work, attachments or a
+unified cross-domain timeline — all of which stay **not supported**, are listed
+in `metadata().notModeled`, and are asserted as absent by the suite. It does not
+migrate Service's `support-case-activity`, which stays domain-specific, and it
+does not unify Delivery's history. It claims **no `M`-number**: `M16` is
+Analytics Studio (planned) and taking `M17` would assert a position in a sequence
+this horizontal capability does not have.

@@ -268,6 +268,7 @@ elements.closeTrace.addEventListener('click', () => elements.traceDetail.classLi
 import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
 import { createQuoteView } from './admin-quotes.js';
+import { createWorkView } from './admin-work.js';
 import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
 
 const dashboardView = document.querySelector('#view-dashboard');
@@ -293,6 +294,15 @@ const pipelineBoard = createPipelineBoard({
 // forms cannot browse a price book, so this focused view owns that experience
 // while every mutation still goes through the same server actions.
 const quoteView = createQuoteView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  navigate: (hash) => { window.location.hash = hash; },
+});
+
+// Work (ADR-030): the package-scoped task queue and its activity timeline. The
+// section renders only while the server publishes the work package.
+const workView = createWorkView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
@@ -327,6 +337,14 @@ async function populateNav() {
       link.textContent = 'Quotes';
       generatedNav.appendChild(link);
     }
+    // Work (ADR-030): one nav link when the project composes the work package.
+    if (schema?.domains?.work?.workContract === 1) {
+      const link = document.createElement('a');
+      link.setAttribute('href', '#/work');
+      link.setAttribute('data-nav', 'work');
+      link.textContent = 'Work';
+      generatedNav.appendChild(link);
+    }
     // Pipeline boards (ADR-014): one nav link per registered pipeline, from
     // the same schema payload, canonical names only.
     if (schema?.pipelineContract === 1 && Array.isArray(schema.pipelines)) {
@@ -355,7 +373,8 @@ async function route() {
     const active = !onDashboard && (
       link.getAttribute('href') === `#/modules/${target.moduleName}` ||
       (target.view === 'pipeline' && link.getAttribute('href') === `#/pipelines/${target.pipelineName}`) ||
-      ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes')
+      ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes') ||
+      ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work')
     );
     link.classList.toggle('active', active);
   }
@@ -378,6 +397,8 @@ async function route() {
     else if (target.view === 'pipeline') await pipelineBoard.renderBoard(target.pipelineName);
     else if (target.view === 'quotes') await quoteView.renderQuoteList();
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
+    else if (target.view === 'work') await workView.renderQueue();
+    else if (target.view === 'work-task') await workView.renderTask(target.taskId);
   } catch (error) {
     toast(error.message, true);
   }

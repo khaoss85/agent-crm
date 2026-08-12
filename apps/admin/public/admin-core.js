@@ -279,6 +279,17 @@ export function parseModuleRoute(hash) {
     if (quoteId === null || quoteId === '' || quoteId.includes('/')) return { view: 'invalid' };
     return { view: 'quote-detail', quoteId };
   }
+  // Work routes: #/work and #/work/<id> (Work v1, ADR-030). Same canonical
+  // discipline as every other route above; anything else is invalid, not a
+  // lookup, so a hostile hash never becomes a request path.
+  if (rawParts.length && rawParts[0] === 'work') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length === 1) return { view: 'work' };
+    if (rawParts.length !== 2) return { view: 'invalid' };
+    const taskId = safeDecode(rawParts[1]);
+    if (taskId === null || taskId === '' || taskId.includes('/')) return { view: 'invalid' };
+    return { view: 'work-task', taskId };
+  }
   if (rawParts.length === 0 || rawParts[0] !== 'modules') return { view: 'dashboard' };
   // An internal empty segment (e.g. "modules//new") is malformed, not a lookup.
   if (rawParts.some((part) => part === '')) return { view: 'invalid' };

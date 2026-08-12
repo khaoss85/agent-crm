@@ -540,8 +540,8 @@
     },
     {
       "id": "L-04",
-      "headline": "No scheduler, no task engine, no reminders.",
-      "text": "One follow-up Task is created inside lead qualification. There is no recurring work, no delayed workflow, no queue — so nothing fires on a renewal notice period either.",
+      "headline": "No scheduler, no reminders, nothing on a timer.",
+      "text": "Follow-up Tasks and an Activity timeline are one shared model that a person moves by hand: a due date changes no state. There is no recurring work, no delayed workflow, no queue — so nothing fires on a renewal notice period either.",
       "evidence": {
         "jtbd": "JTBD-07, JTBD-10",
         "docs": [

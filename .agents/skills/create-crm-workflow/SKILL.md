@@ -27,6 +27,17 @@ If the repository documents this skill names are absent, you are in a project bu
    runtime already gives you one atomic transaction, events released only after
    commit, and a trace. Use a workflow for a multi-record or multi-step process,
    or when a human approval gate is involved.
+0b. **Do not write a task table.** If the step you are adding means "a person
+   must now do something", that is one shared model: `work-task` and
+   `work-activity`, opened through the `work` package's declared capability
+   `work/follow-up@1` **inside your own transaction**, keyed by a business
+   identity that never contains a clock. Check `capabilities[]` in the
+   inspection report for it. A second per-domain task table is the divergence
+   Work v1 exists to stop (`docs/WORK_TASKS.md`, ADR-030 as background where the
+   project carries them). Two things it is **not**: it schedules nothing —
+   `dueAt` is evidence and no clock moves a status — and it notifies and assigns
+   nobody. If the business event does not actually imply human work, create no
+   task.
 1. Read the workflow engine and an existing workflow in this project's own
    source (`packages/workflows/src/engine.js` here). The engine is the contract;
    copy an existing workflow's shape rather than inventing one.

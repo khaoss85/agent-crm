@@ -7,18 +7,22 @@ import {
   actorId, activationPolicy, activitySequence, addMinutes, boundedText, bySourceKey,
   calendarDate, callerActivityKey, computeActivation, coverageIn, evaluateSla,
   obligationsCapability, oneOf, readOverrides, recordActivity, requireHuman,
-  requireSameRecord, serviceNames, trusted,
-  MAX_KEY, MAX_LABEL, MAX_REF,
+  requireSameRecord, serviceNames, trusted, workFollowUpCapability, workFollowUpKey,
+  SERVICE_PACKAGE, MAX_KEY, MAX_LABEL, MAX_REF,
 } from './service-actions.js';
 
 /**
  * Every action the Service package contributes.
  *
- * @param {{modules?: Record<string, string>, policies?: any[]}} [options]
+ * @param {{modules?: Record<string, string>, policies?: any[], followUp?: boolean}} [options]
+ *   `followUp: true` makes `record-escalation` a consumer of
+ *   `work/follow-up@1` (Work v1, ADR-030): recording an escalation also opens
+ *   exactly one work task on that escalation, in the same transaction.
  */
 export function buildServiceActions(options = {}) {
   const names = serviceNames(options.modules);
   const policies = options.policies ?? [];
+  const followUpEnabled = options.followUp === true;
 
   return [
     {
@@ -578,7 +582,7 @@ export function buildServiceActions(options = {}) {
         { name: 'evidenceRef', type: 'string', required: false },
       ],
       /** @param {any} ctx */
-      async execute({ record, input, modules, actor, now, step }) {
+      async execute({ record, input, modules, domains, actor, now, step }) {
         requireHuman(actor, 'Recording an escalation');
         const escalations = trusted(modules, names.escalation);
         const activities = trusted(modules, names.caseActivity);
@@ -615,6 +619,30 @@ export function buildServiceActions(options = {}) {
           type: 'escalation', body: reason, evidenceRef,
           actor, now, key: `escalation:${escalationKey}`,
         });
+        if (followUpEnabled) {
+          // Same transaction, the caller's own `modules` handle: if this
+          // throws, the escalation and its case activity roll back with it.
+          // Note what it still does NOT do -- `routed: false, notified: false`
+          // below stays true. A work item is somebody being able to see the
+          // work, not somebody being told about it.
+          const work = workFollowUpCapability({ domains, modules, actor, now });
+          await work.createFollowUp({
+            sourceKey: workFollowUpKey(created.id),
+            title: `Handle ${level} escalation on case ${record.caseNumber ?? record.id}`,
+            // No due date. The SLA already carries the only time evidence in
+            // this domain, and a second, invented deadline beside it would be
+            // read as a commitment nobody made.
+            dueAt: null,
+            subject: {
+              resource: names.escalation,
+              id: created.id,
+              owner: 'package',
+              ownerPackage: SERVICE_PACKAGE,
+              label: `${level} escalation`,
+            },
+            source: { package: SERVICE_PACKAGE, action: 'record-escalation' },
+          });
+        }
         step('service.case.escalation-recorded', { id: created.id, level });
         return { escalation: created, created: true, routed: false, notified: false };
       },

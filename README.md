@@ -173,8 +173,10 @@ evidence is required to leave it.
   percentage attributed to this project is fabricated —
   [`docs/strategy/CRM_BUILD_BENCHMARK.md`](docs/strategy/CRM_BUILD_BENCHMARK.md) is the
   protocol, not a result.
-- **No scheduler, no task engine, no reminders.** One follow-up Task is created inside lead
-  qualification; nothing recurring exists, so renewal notice periods are recorded and never fire.
+- **No scheduler and no reminders.** Follow-up Tasks and an Activity timeline exist as one
+  shared model (`docs/WORK_TASKS.md`) and a person moves every one of them: a due date changes
+  no state, nothing recurring exists, nothing is assigned or notified, and renewal notice
+  periods are recorded and never fire.
 - **No email, calendar or marketing integrations.** A notification provider contract exists;
   no adapter sends anything to anyone.
 - **No import, export, dedupe, merge, bulk edit, saved views or global search.** Table stakes

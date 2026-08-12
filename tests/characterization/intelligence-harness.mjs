@@ -31,7 +31,8 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 /** Records Lead Intelligence owns today, plus the host records it acts on. */
 export const INTELLIGENCE_MODULES = Object.freeze([
   'lead.module.json',
-  'task.module.json',
+  '../../../packages/work/modules/work-task.module.json',
+  '../../../packages/work/modules/work-activity.module.json',
   'enrichment-snapshot.module.json',
   'behavioral-signal.module.json',
   'score-run.module.json',
@@ -168,7 +169,8 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/intelligence/modules/route-evaluation.module.json',
   'packages/intelligence/modules/assignment.module.json',
   'examples/starters/b2b-lead-qualification/lead.module.json',
-  'examples/starters/b2b-lead-qualification/task.module.json',
+  'packages/work/modules/work-task.module.json',
+  'packages/work/modules/work-activity.module.json',
 ]);
 
 /**
@@ -253,7 +255,14 @@ export function characterizationProject(t, { enrichTimeoutMs, name = 'accordo-la
   const starter = join(root, 'examples/starters/b2b-lead-qualification');
   const packaged = join(root, 'packages/intelligence/modules');
   for (const manifest of INTELLIGENCE_MODULES) {
-    const from = ['lead.module.json', 'task.module.json'].includes(manifest) ? starter : packaged;
+    const from = [
+    'lead.module.json',
+    // Work v1 (ADR-030): the starter's bespoke `task` module is gone and its
+    // follow-up now lives in the work package's records. Relative to the
+    // starter directory, so the existing join(starter, manifest) still holds.
+    '../../../packages/work/modules/work-task.module.json',
+    '../../../packages/work/modules/work-activity.module.json',
+  ].includes(manifest) ? starter : packaged;
     const applied = cli(root, ['module', 'create', join(from, manifest), '--apply']);
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
   }

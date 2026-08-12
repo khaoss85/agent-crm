@@ -342,6 +342,50 @@ Three practical consequences:
 3. A reviewer may reject a PR for a missing row the same way they reject a
    missing test — and `docs/QUALITY_GATES.md` §1 now says so.
 
+## The Work v1 backfill answer, as the rule requires
+
+Work v1 (ADR-030) introduces a **horizontal** capability: `work/follow-up@1`, a
+shared Task and Activity model any domain could consume, plus the *opaque subject
+envelope* those records carry. Every domain could open a follow-up, so every
+domain gets a row — and the honest answer for most of them is that they should
+not.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | Potentially all of them. In practice three business events actually imply human work today: Lead qualification (host), Lifecycle's commercial follow-up, Service escalation. |
+| Which are already aligned? | **Core CRM (Lead)** through the host path, **Lifecycle** and **Service** through the declared capability — all three opt in explicitly |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None, and that is the finding.** A domain does not become non-conforming by *not* opening a task. Creating a follow-up where the business event does not imply human work would be worse than the gap: it would put rows in somebody's queue that nobody asked for. Contract Activation, Delivery, Commercial Ops, Signature & Order, Pipeline and Lead Intelligence are `not_applicable` for exactly that reason, each stated below |
+| Was the matrix updated? | Yes — the two rows below, this section, and the three domains outside the six-column table |
+
+| Horizontal capability | Pipeline | Lead Intelligence | Commercial Ops | Signature & Order | Contract Activation | Delivery |
+|---|---|---|---|---|---|---|
+| **Shared follow-up capability** (`work/follow-up@1`) — human work arising from a business event is one model, not a table per domain | `not_applicable` — a stage move is state, not an ask of a person; the board is where the work is seen | `not_applicable` — scoring and routing are deterministic computations, and routing a lead to a target is not a task somebody accepted | `not_applicable` — a quote approval is already a governed human decision with its own record; a task beside it would be a second queue for one ask | `not_applicable` — a signature request is an *external* party's action, not internal work, and a provider event is not a person | `partial` — activation raises pending delivery and service obligations, which are the domain's own explicit handoff records. A follow-up task on an unhandled obligation is a plausible future consumer and is deliberately **not** built here | `deferred` — M14b2's `delivery-commercial-change` already hands off through Lifecycle, which now opens the task. Consuming the capability a second time from Delivery would create two tasks for one human ask; revisit with M16b |
+| **Opaque subject envelope** — a record referenced across a seam carries resource, id, owner and provenance rather than a typed foreign key | `not_applicable` — no cross-domain reference | `aligned` by construction — Intelligence acts on the host `lead` and claims no ownership of it | `not_applicable` | `not_applicable` | `partial` — `contract-activation` stores typed ids to records it owns, which is correct; the envelope applies only where the target table varies | `partial` — same reason: `deliveryProjectId` and friends are typed and correct within one package |
+
+### The three domains outside the six-column table
+
+| Domain | Status against Work v1 |
+|---|---|
+| **Core CRM (Sales) / Lead** | `aligned` — `lead.qualify` opens exactly one follow-up with a host-owned subject, through the exported creator rather than the capability, because `PackageRegistry.capability({ consumer })` resolves against *registered packages* and a host action is not one. Published as `HOST_ACTIONS_CANNOT_DECLARE_CAPABILITIES`; it is the same code, not a second path |
+| **Service** | `aligned` — `record-escalation` opens one task through `work/follow-up@1` when composed with `followUp: true`. **`support-case-activity` stays domain-specific and is not migrated.** It is a support-case-scoped log with its own visibility model, its own types (`customer_reply`, `internal_note`, `transition`) and its own sequence; folding it into Work's four-entry vocabulary would either lose those distinctions or force Work's vocabulary open, and an open vocabulary is not a curated timeline. Two timelines that mean different things are honest; one that means both is not |
+| **Lifecycle** | `aligned` — `request-commercial-followup` opens one task through the capability when composed with `followUp: true`. The subject is package-owned and the envelope says so |
+| **Custom-package fixture** (`partner-scorecard`) | `not_applicable` — it rates a partner from a policy. Nothing about a rating is an ask of a person, and adding one to demonstrate the seam would be a fixture pretending to be a business |
+| **Marketing & Growth** | `not_applicable` — **task and journey work remains unimplemented.** `MARKETING_GROWTH_OPERATIONS.md` and `CAMPAIGNS_JOURNEYS.md` plan campaign tasks and durable journey steps; none of it exists, MK4 is hard-blocked on `JOBS_AND_OUTBOX.md`, and a journey step is a *scheduled* thing, which Work v1 explicitly is not. No Marketing row can be assessed and none is claimed |
+
+### What Work v1 deliberately did not close
+
+- **Delivery history is not unified.** Delivery's change requests, plan
+  revisions, deliverables and acceptance evidence remain its own records with
+  their own semantics. Work v1 adds no cross-domain reader and no aggregation:
+  `JTBD-DO-08` is *partially supported* for a **subject** timeline, and the row
+  says in the same breath that it is not unified.
+- **No existing domain-specific activity record is migrated.** Service's
+  `support-case-activity` is the named case; the rule is general.
+- **Nothing is scheduled.** The `deferred` cell above is about a *consumer*, not
+  about a timer. There is no scheduler in this repository and Work v1 does not
+  bring one.
+
 ## The M16a hardening backfill answer, as the rule requires
 
 The M16a post-merge hardening introduced one horizontal change: a **shared

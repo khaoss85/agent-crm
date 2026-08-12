@@ -47,7 +47,7 @@
           "heading": "What the catalogue says about the widened area",
           "body": [
             "The job catalogue covers 149 jobs across CRM, marketing, analytics, data operations, governance, commercial, contract, delivery and packaging. Of those, 23 are validated end to end, 30 are partially supported and 96 are not supported. That distribution is the reason this page argues about architecture and not about coverage.",
-            "A wider label describes what the framework is able to be pointed at, not what it already does. Reading the same absence list four ways does not shorten it: there is no authentication, tenancy or RBAC (L-01), no scheduler or task engine (L-04), no email, calendar or marketing adapter (L-05), and persistence is SQLite (L-02). MRR, ARR and TCV are deliberately not derived because contract term and normalization policy are not modelled (JTBD-CS-05), and there is no semantic metric layer at all (JTBD-AN-01)."
+            "A wider label describes what the framework is able to be pointed at, not what it already does. Reading the same absence list four ways does not shorten it: there is no authentication, tenancy or RBAC (L-01), no scheduler, queue or reminders (L-04), no email, calendar or marketing adapter (L-05), and persistence is SQLite (L-02). MRR, ARR and TCV are deliberately not derived because contract term and normalization policy are not modelled (JTBD-CS-05), and there is no semantic metric layer at all (JTBD-AN-01)."
           ]
         },
         {
