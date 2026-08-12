@@ -182,7 +182,10 @@ action is declared" — as evidence that the application does anything.
 Where the plan itself carries the information, a **floor** applies and the
 declared category cannot go under it: a step whose decision type is `configure`,
 `extend`, `provider` or `create-package` changes what the application does, so
-`structural` is refused (`EVIDENCE_CATEGORY_BELOW_FLOOR`); a step whose decision
+`structural` is refused (`EVIDENCE_CATEGORY_BELOW_FLOOR`) **and the requirement
+is graded against the floor rather than the label** — reporting the violation
+while still grading the weaker claim would let the label decide the outcome,
+which is the one thing a declared category must never do. A step whose decision
 is `evolve` has a floor of `structural`. Acceptance checks carry no floor — the
 plan says nothing about the nature of a criterion — so their category is
 declared, recorded verbatim in the report, and bounded by the published
@@ -326,15 +329,18 @@ $ npm run crm -- solution verify examples/solution-plans/lead-to-won.plan.json \
 ```
 
 The lead plan is the one this repository declares **current**. It binds to the
-project. Two requirements are `verified`, one is `partial`, one is `unverified`
-(a person has to read a screen), and **two are `blocked`** — the work they
-describe is not built, and one of them is blocked on a premise that does not
-hold: the opportunity record carries no manifest revision in this composition,
-so there is no revision to bump.
+project. **One** requirement is `verified` — the full suite passes, evidenced by
+DX5's `suite.verify` check. One is `partial`: the starter journey composes into
+a temporary directory of its own, which is not evidence that a person installing
+it into their own empty project gets the same result. One is `unverified`,
+because a person has to read a screen. And **three are `blocked`**: two describe
+work that is simply not built, and the third is blocked on a premise that does
+not hold — the opportunity record carries no manifest revision in this
+composition at all, so there is no revision to bump through the module factory.
 
 That second report is the point of the whole rung. `solution check` exits 0 on
 that plan, `project doctor` grades it `passed`, `project verify` is green and
-both scenarios pass — and four of six requirements are not implemented. Nothing
+both scenarios pass — and five of its six requirements are not proven. Nothing
 in this repository could name that before.
 
 ## PROVE is still partial

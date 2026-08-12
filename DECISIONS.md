@@ -1478,8 +1478,12 @@ Four consequences worth stating, because each was a live alternative:
    `MANUAL_EVIDENCE_IS_NOT_PROOF`. Refusing it outright would make the browser
    requirement *vanish* from the document, and a gap that is stated is part of
    the deliverable while a gap that is omitted is a claim.
-4. **The behavioural rule is keyed on the observation's kind, read from DX6's
-   report.** `file exists` never satisfies a behavioural requirement, and neither
+4. **A step's decision type is a floor on its category, and the floor is what
+   the sufficiency rule is applied against** — not merely reported. A
+   `configure` step declared `structural` is graded as behavioural, because a
+   violation that still grades the weaker claim lets the label decide the
+   outcome. **The behavioural rule itself is keyed on the observation's kind,
+   read from DX6's report.** `file exists` never satisfies a behavioural requirement, and neither
    does `action.present` — "the action is declared" is not "the application does
    this". An author cannot relabel one as the other, because the kind does not
    come from the document. Symmetrically, a purely structural requirement needs

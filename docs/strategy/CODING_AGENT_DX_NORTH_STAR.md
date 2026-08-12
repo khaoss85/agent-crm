@@ -147,7 +147,7 @@ wrong. Each row names the failure first.
 | claiming a checkout supports a business job because a test filename sits next to that row in a Markdown table, with no way to state what a run did *not* establish | DX6 Scenario Runner | implemented, two consumers |
 | shipping a generic contract validated by exactly one consumer, so its accidental assumptions read as principles | a second, deliberately unlike consumer — `examples/scenarios/service-sla-escalation.scenario.json` | implemented for DX6; unaddressed for every other contract |
 | reporting a plan complete while work is missing | DX10 Implementation Evidence | implemented, two plan consumers |
-| a rung passing while the plan it was meant to prove is unbuilt — `solution check` exits 0, the doctor passes, `project verify` is green, both scenarios pass, and four of six requirements of the declared-current plan are not implemented | DX10, which is the only thing that could name it | implemented, and its first real answer is that gap |
+| a rung passing while the plan it was meant to prove is unbuilt — `solution check` exits 0, the doctor passes, `project verify` is green, both scenarios pass, and five of the six requirements of the declared-current plan are not proven | DX10, which is the only thing that could name it | implemented, and its first real answer is that gap |
 | exhausting context on a project it cannot summarize | DX9 Context Pack | **future** |
 
 ---

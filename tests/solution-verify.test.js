@@ -365,8 +365,11 @@ test('a step whose decision changes behaviour cannot be evidenced as structural'
   evidence.requirements[0].evidence = [{ kind: 'application.fact', fact: 'module.present', name: 'widget' }];
   const { report } = await run(demo(t, { plan, evidence }), { verify: verifyStub(CONFORMING_CHECKS) });
   assert.ok(codes(report).includes('EVIDENCE_CATEGORY_BELOW_FLOOR'));
-  assert.equal(statusOf(report, ids['the application does the thing']), 'verified',
-    'the floor is a published problem about the claim, not a silent regrade of the fact');
+  // The floor is not merely reported — it is what the sufficiency rule is
+  // applied against. Grading the weaker claim would let the label decide the
+  // outcome, which is the one thing a declared category must never do.
+  assert.equal(statusOf(report, ids['the application does the thing']), 'unevidenced');
+  assert.ok(codes(report).includes('EVIDENCE_INSUFFICIENT_FOR_CATEGORY'));
   assert.equal(report.status, 'incomplete');
 });
 

@@ -448,13 +448,18 @@ function grade({ requirement, declaration, stale, bound, inspection, verifyRepor
   }
 
   // A step's decision type is a fact about the plan, not a claim by the evidence
-  // author, so it is a floor the declared category cannot go under.
+  // author, so it is a **floor** the declared category cannot go under — and the
+  // floor is what the sufficiency rule is applied against. Reporting the
+  // violation while still grading the weaker claim would let the label decide
+  // the outcome, which is the one thing the category must never do.
   const floor = requirement.decisionType ? CATEGORY_FLOOR[requirement.decisionType] ?? null : null;
+  let effective = declaration.category;
   if (floor === 'behavioural' && declaration.category !== 'behavioural' && declaration.category !== 'manual') {
     problems.push({
       code: 'EVIDENCE_CATEGORY_BELOW_FLOOR', path: `evidence.requirements.${requirement.requirementId}.category`,
-      message: `this step's decision is "${requirement.decisionType}", which changes what the application does, so it cannot be evidenced as "${declaration.category}". A behavioural requirement needs a run`,
+      message: `this step's decision is "${requirement.decisionType}", which changes what the application does, so it cannot be evidenced as "${declaration.category}". It is graded as behavioural, and a behavioural requirement needs a run`,
     });
+    effective = 'behavioural';
   }
 
   const resolved = declaration.evidence.map((ref) => resolveReference({
@@ -487,7 +492,7 @@ function grade({ requirement, declaration, stale, bound, inspection, verifyRepor
     };
   }
 
-  const sufficiency = sufficient({ category: declaration.category, resolved, scenarioReports });
+  const sufficiency = sufficient({ category: effective, resolved, scenarioReports });
   if (!sufficiency.ok) {
     problems.push({
       code: sufficiency.code, path: `evidence.requirements.${requirement.requirementId}.evidence`,

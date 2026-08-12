@@ -43,8 +43,9 @@ read at all.
 repository today: `examples/solution-plans/lead-to-won.plan.json` is the one
 plan `package.json` declares **current**, `crm solution check` exits 0 on it,
 `crm project doctor` grades it `passed`, `crm project verify` is green and both
-scenarios pass — and four of its six requirements are not implemented. Every
-existing authority is satisfied and the plan is not built. That gap is the
+scenarios pass — and five of its six requirements are not proven: three
+`blocked`, one `unverified` because a person has to read a screen, and one
+`partial`. Every existing authority is satisfied and the plan is not built. That gap is the
 failure mode, and nothing in the repository could name it before this command.
 
 **2. Why are existing primitives insufficient?** Each was tried first:
