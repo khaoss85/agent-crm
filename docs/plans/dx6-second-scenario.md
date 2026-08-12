@@ -261,7 +261,7 @@ final proof genuinely complete.
 2. Established the blocking fact: `evaluateSla()` reads `now()` and the actions expose no `at`, so the SLA boundary is unreachable on a wall clock. That decided "second journey" over "second scenario on the existing journey".
 3. Wrote the journey; it passed on its second run (one wrong result key). 5.2 s, against 11.1 s for the starter journey.
 4. Added `journey.fact`, `journey.clock` and limitation scopes; bumped the report contract to 2, left the document contract at 1.
-5. Wrote the scenario; it passed on its first full run — 51 observations, five claims, 144 rows reported as not established.
+5. Wrote the scenario; it passed on its first full run. As shipped: eleven steps, 52 observations all passing, five claims established, 144 rows reported as not established.
 6. Nine new tests. Full suite green on the local Node and on the CI-pinned 22.16.0.
 7. Mutations, both layers, both scenarios; determinism and safety re-runs; then the public-evidence documents.
 
