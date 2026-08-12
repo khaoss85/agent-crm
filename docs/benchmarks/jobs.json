@@ -134,7 +134,9 @@
         "tests/lead-qualification-e2e.test.js",
         "tests/work-operations-e2e.test.js",
         "tests/work-operations-evidence.test.js",
-        "tests/work-package-absence.test.js"
+        "tests/work-package-absence.test.js",
+        "tests/work-provenance-and-actor.test.js",
+        "tests/work-source-key-stability.test.js"
       ],
       "title": "Schedule next actions / follow-ups"
     },
@@ -390,10 +392,12 @@
       "id": "JTBD-CM-04",
       "section": "Communications (no milestone assigned)",
       "status": "partially supported",
-      "summary": "tracked, never scheduled. Work v1 (ADR-030): one reusable Task and Activity model with an explicit transition table, consumed by Lead qualification, Lifecycle's commercial follow-up and Service escalation, each opening exactly one task under a deterministic business key inside its own transaction — tests/work-operations-e2e.test.js, tests/work-operations-evidence.test.js. Scheduling is still absent: no scheduler, no reminder, no notification and no assignment, and dueAt changes no state — the same limit JTBD-07 states",
+      "summary": "tracked, never scheduled. Work v1 (ADR-030): one reusable Task and Activity model with an explicit transition table, consumed by Lead qualification, Lifecycle's commercial follow-up and Service escalation, each opening exactly one task under a deterministic business key inside its own transaction, and refusing to write at all when that transaction is not there — tests/work-operations-e2e.test.js, tests/work-operations-evidence.test.js, tests/work-provenance-and-actor.test.js, tests/work-source-key-stability.test.js. Scheduling is still absent: no scheduler, no reminder, no notification and no assignment, and dueAt changes no state — the same limit JTBD-07 states",
       "tests": [
         "tests/work-operations-e2e.test.js",
-        "tests/work-operations-evidence.test.js"
+        "tests/work-operations-evidence.test.js",
+        "tests/work-provenance-and-actor.test.js",
+        "tests/work-source-key-stability.test.js"
       ],
       "title": "Schedule and track a follow-up"
     },
