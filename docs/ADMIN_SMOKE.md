@@ -1,6 +1,6 @@
 # Admin manual browser smoke checklist
 
-Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. They do **not** drive a real browser in CI. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium, and re-run at each milestone: 37 automated checks at Milestone 14a, all passing, covering the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation, delivery-handover and delivery-execution cases; 22 **further** checks for the Milestone 14b2 Delivery Change & Acceptance section, all passing; and 24 **further** checks for the Milestone 15 Service operations section, all passing. Each block is additive and scoped to its own section — the 24 do not re-run or replace the 22, and neither re-runs the 37, which were last exercised on the Milestone 14a branch. Re-run this checklist in a real browser before releasing changes that touch `apps/admin/public/`.
+Automated tests cover the Admin at the DOM/integration level (real server + real fetch + a fake document) and run in CI. **They do not drive a real browser, and neither does CI: no workflow in `.github/workflows/` launches one.** `npm run smoke` is an in-process application smoke, not a browser smoke. Every "validated in real Chromium" block below was driven **outside CI**, by hand or by a throwaway script, and is only as current as its stated commit. During the Milestone 4 adversarial review this exact flow was additionally validated once in real Chromium, and re-run at each milestone: 37 automated checks at Milestone 14a, all passing, covering the XSS-as-text, malformed-hash, composite-pricing, signature/order, contract-activation, delivery-handover and delivery-execution cases; 22 **further** checks for the Milestone 14b2 Delivery Change & Acceptance section, all passing; 24 **further** checks for the Milestone 15 Service operations section, all passing; and 30 **further** checks for the Work v1 section (ADR-030), all passing. Each block is additive and scoped to its own section — the 30 do not re-run or replace the 24, the 24 do not re-run the 22, and none re-runs the 37, which were last exercised on the Milestone 14a branch. Re-run the block for any section you touch before releasing changes to `apps/admin/public/`.
 
 ## Setup
 
@@ -237,3 +237,48 @@ over, start the project and its work packages, then open the quote detail route
 20. The frozen scope renders from storage and says it is never rebuilt.
 21. No failed resource or unexpected API response during the run.
 22. No uncaught JavaScript error during the run.
+
+## Work — tasks and activity evidence (Work v1, ADR-030)
+
+**Work-specific, scripted, and outside CI. 30 checks, all passing** — driven in real Chromium (**Chrome/141.0.7390.37**) at `184e543` on Node **22.16.0**, serially, twice, on an idle machine (load average 0.15–0.82 on 4 cores), with identical results both runs.
+
+**Browser automation is still manual.** The run was scripted rather than hand-driven — a zero-dependency Chrome DevTools Protocol driver over Node's built-in `WebSocket` — but **that script is not checked in and no CI job launches a browser**, so this remains a gate a human must re-run by hand. Landing the driver under `tests/browser/` and wiring it to a job with a preinstalled Chromium is the only thing that would change that sentence. (Playwright happens to be installed globally on the current build machine but is not a dependency of this repository, and the previous milestones' drivers imported it by absolute path — which is why their browser evidence stopped being reproducible the moment the machine changed.) Nothing here re-runs or replaces the 37 / 22 / 24 checks above.
+
+The section is **package-scoped, not package-owned**: the framework has no seam for a package to contribute an Admin extension — AX1 publishes that as `ADMIN_EXTENSIONS_UNSUPPORTED` — so `apps/admin/public/admin-work.js` lives in the Admin app and renders only while `/api/schema` publishes `domains.work`.
+
+**The first pass of this matrix, at `c3c39c5`, found one defect the fake-DOM tests could not, and it is fixed here.** `renderTask` read `GET /api/modules/work-activity/records?limit=100` — the newest 100 activity rows across **every** subject — and filtered by subject **in the browser**. Once about a hundred activities existed anywhere, an older subject's entries were absent from a page they were never selected into, and the timeline rendered **"Nothing recorded yet."** for a task that demonstrably had a `task_created` entry, with **"Showing at most 100 entries. A display bound of this screen, never a bound on what exists."** printed directly beneath it. Both statements were false at once, and the second was the dangerous kind of false because it read as a disclosure. The fix is **ADR-008 addendum 2**, a new shared surface — `GET /api/modules/:module/records?filter.<field>=<value>`, equality on a single scalar, index-backed fields only (`filterableFields` = indexed and unique fields plus `id`), ≤200 characters, unrepeated, ≤4 combined, still bounded 1–500, every violation a 400, and a module generated before the addendum **refused rather than answered unfiltered**. `listWhere` stays in-process and unrouted. The client-side predicate is retained as defence in depth, so a server that ignored the filter still could not draw another subject's rows. The empty state now reads "Nothing recorded yet **on this subject**", and the truncation notice names the subject, the direction and the missing end.
+
+Setup: compose a project with the `work` package, apply `work-task.module.json` and `work-activity.module.json`, seed tasks in `open`, `completed` and `cancelled` states plus one legacy-migrated row and one row carrying hostile text, then open `#/work`. Checks 26–30 additionally need a project whose activity table exceeds 100 rows, with a subject whose entries are older than that page.
+
+1. The **Work** nav link and the `#/work` queue appear only while `/api/schema` publishes `domains.work`.
+2. With the package **not** composed, there is no nav link, no panel, and the screen reads "This application does not have the work package."
+3. The queue renders live data: every server record is a row, and the open/closed counts match the server.
+4. The detail view shows the immutable source and subject evidence, with the label marked as a snapshot.
+5. **`#/work/<id>` is refresh-safe** — a deep link and a reload restore the same view; the hash survives.
+6. **Complete** moves an open task and re-renders to completion evidence and a `task_completed` entry.
+7. **Cancel** requires a reason, moves the task, and records the reason as the closing note.
+8. A **terminal** task offers **zero** controls, and says the server would refuse one.
+9. A manual note is recorded, with both the "reaches nobody" and "two notes are two notes" disclosures.
+10. A note on a **terminal** task is accepted — allowed by design — and changes no status.
+11. A **legacy migrated** row renders: `done` maps to `completed` with an honest `Completed: — at —` rather than invented evidence; a migrated `open` row stays open and is movable.
+12. Hostile text renders character-for-character: `<script>`, `<b>`, `${7*7}` and backtick templates are all literal, in the queue and the detail.
+13. That text injects **no** node — no `script`, `img`, `b` or `iframe`, no `onerror` — and raises **no dialog**.
+14. A due date is a plain instant under an "evidence only" header; an **overdue** task stays open and gets no urgency wording, class or ARIA role.
+15. **No assignment, reminder, calendar or notification control exists anywhere**, and the absence is stated, with all 23 `notModeled` items enumerated on screen.
+16. A refusal is **visible**, and the user's typed input survives it — including a neighbouring input — and nothing is written.
+17. Double-submit is prevented: the control disables in flight, and three clicks produce one state change.
+18. Under real network latency, a superseded render is discarded rather than drawn over a newer one.
+19. The queue's display bound is **disclosed** when it bites: 141 tasks exist, 100 render, the screen says so.
+20. Every control has an accessible name and takes keyboard focus, and every text input carries a durable `aria-label` — **not** a placeholder, which vanishes the moment the user types.
+21. No failed resource, no 5xx, no uncaught JavaScript error, no console error and no dialog across the run — including from the new filter query string.
+22. Six malformed `#/work` hashes each render "That module route is not valid."; a trailing slash canonicalises to the queue, exactly as `#/quotes/` and `#/modules/<name>/` do; an absent id is an explained failure, not a crash.
+23. The timeline is subject-scoped, oldest-first, and states that it is not the audit log and that nothing on it was sent.
+24. The package's own limitation text and every `notModeled` item render verbatim on both views.
+25. A failed load is explained on screen and its **Retry** actually recovers the queue.
+26. **The regression guard.** A task's timeline renders its own entries with far more than 100 activities in the table — the case that previously read "Nothing recorded yet."
+27. The narrowing happens **on the server**: the wire response is already scoped to the subject, not filtered afterwards in the browser.
+28. A filter on a **non-filterable** field is refused with a `400` that names the field and says a filter must be index-backed — **never answered with unfiltered rows**. Empty, repeated, over-length, over-combined and unknown-field filters are all refused the same way.
+29. A module generated **before** the addendum is refused with a `400` naming the cause, never answered unfiltered; an unfiltered read of that same module still works, so the refusal is scoped to the filter.
+30. A subject genuinely **past** the bound renders 100 entries and discloses that the subject has more than 100, that these are the most recent, that the list is drawn oldest-first and therefore starts in the middle, and that earlier entries exist and are not shown.
+
+Report any step that fails; do not mark the Work section browser-validated unless all 30 pass.
