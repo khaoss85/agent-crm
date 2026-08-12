@@ -22,9 +22,14 @@
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
-import { inspectProvenance, findLooseTestCounts } from './measurement.js';
+import {
+  inspectProvenance,
+  findLooseTestCounts,
+  inspectStatusMeasurement,
+  scansForLooseCounts,
+} from './measurement.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -149,8 +154,20 @@ const countSurfaces = [
   ...['answers.json', 'concepts.json', 'compare.json', 'capabilities.json', 'tools.json']
     .map((name) => [`site/${name}`, existsSync(join(siteDir, name)) ? readFileSync(join(siteDir, name), 'utf8') : ''])
     .filter(([, source]) => source),
-  ...collect(join(root, 'docs', 'marketing'), '.md').map((path) => [relative(root, path), readFileSync(path, 'utf8')]),
+  // Every document under docs/, not only docs/marketing/. The site surfaces were already
+  // broad; docs/ was the hole, and it was the expensive one — docs/PROJECT_STATUS.md is the
+  // file AGENTS.md orders every agent to trust, and it typed a stale count for months with
+  // nothing watching. `scansForLooseCounts` exempts a short, named list of dated-history
+  // documents whose numbers are stamps rather than claims (scripts/measurement.js).
+  ...collect(join(root, 'docs'), '.md')
+    .map((path) => relative(root, path).split(sep).join('/'))
+    .filter((path) => scansForLooseCounts(path))
+    .map((path) => [path, readFileSync(join(root, path), 'utf8')]),
   ...templates.map((path) => [relative(root, path), readFileSync(path, 'utf8')]),
+  // The two other root documents an agent is told to read as current truth.
+  ...['AGENTS.md', 'TASKS.md']
+    .filter((name) => existsSync(join(root, name)))
+    .map((name) => [name, readFileSync(join(root, name), 'utf8')]),
 ];
 
 // The ledger's own prose is copy too — C-20 opened with the number, which is why the claim
@@ -206,6 +223,25 @@ for (const entry of [...ledger.claims, ...ledger.limitations]) {
 const provenance = inspectProvenance(ledger.measuredAgainst, { cwd: root });
 for (const failure of provenance.failures) fail(failure);
 for (const note of provenance.notes) notes.push(note);
+
+// ---------------------------------------------------------------- 3d. the status file cites the ledger
+//
+// `docs/PROJECT_STATUS.md` is the narrative half of the same fact, and AGENTS.md §12 orders
+// every agent to read it for what is true today. It used to own a SHA and a test count of its
+// own; both went stale, and a test pinned them there, so the most-trusted document in the
+// repository was also the most confidently wrong one. It now states no count and *cites* the
+// ledger's commit, and this is the string comparison that keeps the citation honest. Narrow on
+// purpose: it reads one table row and no prose. docs/QUALITY_GATES.md §6 states what it does
+// not check.
+
+const statusPath = join(root, 'docs', 'PROJECT_STATUS.md');
+if (existsSync(statusPath)) {
+  for (const failure of inspectStatusMeasurement(readFileSync(statusPath, 'utf8'), ledger.measuredAgainst)) {
+    fail(failure);
+  }
+} else {
+  fail('docs/PROJECT_STATUS.md is missing — AGENTS.md tells every agent to read it for what is true today.');
+}
 
 // ---------------------------------------------------------------- 4. no hardcoded brand
 

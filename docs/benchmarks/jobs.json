@@ -1,10 +1,10 @@
 {
   "counts": {
-    "not supported": 97,
+    "not supported": 96,
     "partially supported": 30,
     "technically supported": 0,
     "total": 149,
-    "validated end to end": 22
+    "validated end to end": 23
   },
   "generatedFrom": "docs/benchmarks/CRM_JTBD_MATRIX.md",
   "jobs": [
@@ -884,7 +884,7 @@
       "id": "JTBD-DS-11",
       "section": "Delivery & Service (handover at M13, execution at M14a, economics at M14b1, and change, deliverables and acceptance at M14b2 — all merged; docs/DELIVERY_HANDOVER.md, docs/DELIVERY_ECONOMICS.md, docs/DELIVERY_CHANGE_ACCEPTANCE.md)",
       "status": "partially supported",
-      "summary": "M15 (open PR): a contract's pending Service Obligations are activated by a human into an operational Service Coverage with immutable Entitlements, under a versioned fingerprinted activation policy that refuses rather than guesses when it cannot classify an obligation. SLA targets exist as elapsed wall-clock minutes with recorded evaluations that state the instant and inputs they used, and a package-scoped Admin section drives the whole path — tests/service-operations-e2e.test.js, tests/admin-service.test.js, 24 real-Chromium checks in docs/ADMIN_SMOKE.md, and tests/service-operations-upgrade.test.js for a shipped M12 project adopting it over live obligations. Partial, and narrowly so: a Coverage is *not* a signed contract (nobody signed it, it has no envelope, signer or artifact, and it amends no commercial record), there is no business-hours or holiday calendar, no paused clock, no contractual or legal SLA judgement, no renewal and no billing. The adversarial review narrowed it further before this row was written: the case-evidence keys had to be namespaced and given an occurrence ordinal before the ordinary in_progress ↔ waiting_customer loop could be walked twice at all",
+      "summary": "M15 (merged): a contract's pending Service Obligations are activated by a human into an operational Service Coverage with immutable Entitlements, under a versioned fingerprinted activation policy that refuses rather than guesses when it cannot classify an obligation. SLA targets exist as elapsed wall-clock minutes with recorded evaluations that state the instant and inputs they used, and a package-scoped Admin section drives the whole path — tests/service-operations-e2e.test.js, tests/admin-service.test.js, 24 real-Chromium checks in docs/ADMIN_SMOKE.md, and tests/service-operations-upgrade.test.js for a shipped M12 project adopting it over live obligations. Partial, and narrowly so: a Coverage is *not* a signed contract (nobody signed it, it has no envelope, signer or artifact, and it amends no commercial record), there is no business-hours or holiday calendar, no paused clock, no contractual or legal SLA judgement, no renewal and no billing. The adversarial review narrowed it further before this row was written: the case-evidence keys had to be namespaced and given an occurrence ordinal before the ordinary in_progress ↔ waiting_customer loop could be walked twice at all",
       "tests": [
         "tests/admin-service.test.js",
         "tests/service-operations-e2e.test.js",
@@ -897,7 +897,7 @@
       "id": "JTBD-DS-12",
       "section": "Delivery & Service (handover at M13, execution at M14a, economics at M14b1, and change, deliverables and acceptance at M14b2 — all merged; docs/DELIVERY_HANDOVER.md, docs/DELIVERY_ECONOMICS.md, docs/DELIVERY_CHANGE_ACCEPTANCE.md)",
       "status": "partially supported",
-      "summary": "M15 (open PR): a Support Case recorded against an entitlement over an explicit five-state transition table, with append-only Case Activity, a first response stamped exactly once, and manually recorded Escalation evidence. Entitlement is enforced server-side — an uncovered category, an uncovered priority, an out-of-date coverage or a full open-case limit is refused, and exceeding a limit bills nothing. Not a contact centre: no customer is authenticated, no email, chat, WhatsApp or telephony channel exists, nothing is routed, assigned or escalated automatically, and no attachment is stored",
+      "summary": "M15 (merged): a Support Case recorded against an entitlement over an explicit five-state transition table, with append-only Case Activity, a first response stamped exactly once, and manually recorded Escalation evidence. Entitlement is enforced server-side — an uncovered category, an uncovered priority, an out-of-date coverage or a full open-case limit is refused, and exceeding a limit bills nothing. Not a contact centre: no customer is authenticated, no email, chat, WhatsApp or telephony channel exists, nothing is routed, assigned or escalated automatically, and no attachment is stored",
       "tests": [],
       "title": "Manage support cases and escalation"
     },
@@ -1418,12 +1418,17 @@
       "title": "Remove a package without losing its data"
     },
     {
-      "docs": [],
+      "docs": [
+        "docs/plans/dx3-package-scaffold.md"
+      ],
       "id": "JTBD-PK-05",
       "section": "Package developer (Custom Package Authoring v1, M13)",
-      "status": "not supported",
-      "summary": "crm package new deliberately deferred until a third package settles the file shape",
-      "tests": [],
+      "status": "validated end to end",
+      "summary": "accordo package scaffold <name> --apply creates, atomically, a minimal, empty local package — two files, an identity and five empty declarations — dry-run by default, and the result passes package validate, package inspect and package test with no manual edit (tests/package-scaffold.test.js → \"freshly scaffolded output passes validate, inspect and test with no manual edit\"; tests/package-test-command.test.js; docs/plans/dx3-package-scaffold.md). In the same breath, each published as its own limitation code: it invents no business logic — no record, action, policy, provider, capability, Admin section, Solution Plan or MCP tool (NO_DOMAIN_SEMANTICS); it performs no automatic composition — the one import into packages/domains/generated/index.js stays a human's deliberate edit (NO_COMPOSITION); it does no global identity-uniqueness verification — only the target directory is checked, and a duplicate identity is refused later by the registry at startup (IDENTITY_UNIQUENESS_NOT_CHECKED); and it does no remote installation or publication — nothing is downloaded, installed, signed, published or registered anywhere (NO_INSTALL_OR_PUBLISH). Conformance is not correctness: the output satisfies the framework contract and models no domain (CONFORMANCE_IS_NOT_CORRECTNESS)",
+      "tests": [
+        "tests/package-scaffold.test.js",
+        "tests/package-test-command.test.js"
+      ],
       "title": "Scaffold a new package from a template"
     },
     {

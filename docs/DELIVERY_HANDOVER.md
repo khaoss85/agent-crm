@@ -6,8 +6,8 @@ plan, and an optional third-party partner engagement.
 
 **Milestone 13 plans and records a handover. It does not execute delivery**:
 nothing there starts, progresses or completes, and a Delivery Project is
-created `pending_kickoff`. **Milestone 14a** — implemented, on an open PR —
-gives it that lifecycle: eight human-driven transitions over an explicit
+created `pending_kickoff`. **Milestone 14a** — merged — gives it that
+lifecycle: eight human-driven transitions over an explicit
 table. Even then, nothing schedules, staffs, costs, bills, accepts or grants
 anyone access, and nothing moves on a clock.
 

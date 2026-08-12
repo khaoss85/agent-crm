@@ -3,12 +3,12 @@
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used. Contract 2 (ADR-027): measuredAgainst additionally requires testFiles and testsTree, and no claim, limitation or repoFact may type an exact test count — the one number lives in measuredAgainst and reaches a page as {{measured.tests}}.",
   "measuredAgainst": {
     "date": "2026-08-12",
-    "sha": "ad6b636",
+    "sha": "ef5512c",
     "command": "npm run verify",
-    "tests": 936,
+    "tests": 949,
     "failures": 0,
-    "testFiles": 89,
-    "testsTree": "1a0a6e2d4866bf188fe76eb7d7b75ceb756ec7af",
+    "testFiles": 90,
+    "testsTree": "f2563beaa4b1ea50e48c2b78e4cc54ed13bf8914",
     "note": "Written by `node scripts/measure-suite.js --apply` from a real run on a clean tree. Never edit these numbers by hand: scripts/site-check.js verifies sha, testsTree and testFiles against the commit, so a record moved forward without a re-run fails the build."
   },
   "claims": [
@@ -268,7 +268,7 @@
           "docs/PACKAGE_AUTHORING.md"
         ]
       },
-      "limitation": "No scaffold, no registry, no marketplace, and no sandboxing — package code runs with the host process's authority. Detaching leaves its data behind; there is no uninstall.",
+      "limitation": "The scaffold that starts one writes an empty package and nothing else: no business logic, no composition, no global identity-uniqueness check. There is no registry, no marketplace, no publication and no sandboxing — package code runs with the host process's authority. Detaching leaves its data behind; there is no uninstall.",
       "surfaces": [
         "site",
         "readme"

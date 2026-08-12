@@ -46,7 +46,7 @@
         {
           "heading": "What the catalogue says about the widened area",
           "body": [
-            "The job catalogue covers 149 jobs across CRM, marketing, analytics, data operations, governance, commercial, contract, delivery and packaging. Of those, 22 are validated end to end, 29 are partially supported and 98 are not supported. That distribution is the reason this page argues about architecture and not about coverage.",
+            "The job catalogue covers 149 jobs across CRM, marketing, analytics, data operations, governance, commercial, contract, delivery and packaging. Of those, 23 are validated end to end, 30 are partially supported and 96 are not supported. That distribution is the reason this page argues about architecture and not about coverage.",
             "A wider label describes what the framework is able to be pointed at, not what it already does. Reading the same absence list four ways does not shorten it: there is no authentication, tenancy or RBAC (L-01), no scheduler or task engine (L-04), no email, calendar or marketing adapter (L-05), and persistence is SQLite (L-02). MRR, ARR and TCV are deliberately not derived because contract term and normalization policy are not modelled (JTBD-CS-05), and there is no semantic metric layer at all (JTBD-AN-01)."
           ]
         },
@@ -355,7 +355,7 @@
         {
           "heading": "What the document is not",
           "body": [
-            "Not a roadmap — other documents sequence work; this one decides whether work should exist. Not permission to build the rails it lists as future: of the thirteen rails in the table, six are marked future, including skill mirror reconciliation, project verify, the scenario runner, the context pack, implementation evidence and MCP parity. Every entry is either implemented and verifiable by a command, or future and marked as such, with nothing in between.",
+            "Not a roadmap — other documents sequence work; this one decides whether work should exist. Not permission to build the rails it lists as future: of the fourteen rails in the table, four are marked future — skill mirror sync (DX2), the context pack (DX9), implementation evidence (DX10) and MCP parity (DX13). Project Verify and the Scenario Runner were on that list and have since shipped, which is why the table carries a status per row rather than a section heading. Every entry is either implemented and verifiable by a command, or future and marked as such, with nothing in between.",
             "Not marketing either. Positioning claims live elsewhere and are bounded by evidence and by an explicit list of things not to claim. The reason this page exists on a public site is narrower than a manifesto: the rule is only binding if a reviewer can cite it, and a rule with an exit code can be cited by someone who does not work here."
           ]
         }
@@ -365,7 +365,7 @@
         "It measures the surface an agent must read before starting — not capability, not code quality, not whether the primitive was worth building.",
         "Three of the four measures sit on their ceiling today, so the next agent-facing command has to remove something rather than be added.",
         "The budget is a count plus two description checks. It cannot detect a well-named command that answers the wrong question.",
-        "Six of the thirteen rails in the document are marked future, including project verify, the scenario runner and implementation evidence. None of them may be described as available.",
+        "Four of the fourteen rails in the document are marked future — skill mirror sync, the context pack, implementation evidence and MCP parity. None of those four may be described as available. Project Verify and the Scenario Runner are implemented and may be described as such; PROVE is still only partial, because implementation evidence (DX10) does not exist.",
         "No number here comes from a benchmark of agent build success. That run has not happened, and any such figure quoted for this project is not ours.",
         "Portability is a target held by contracts, not a measured result across harnesses. The practical test — could a different agent, given only the CLI and the JSON, do this correctly — is applied in review, not by a script."
       ],

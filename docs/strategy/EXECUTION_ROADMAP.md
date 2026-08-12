@@ -145,13 +145,39 @@ Each milestone below follows the standard per-phase format.
 - **Acceptance:** margin math proven against fixtures (integer minor units, no float); acceptance/billable state unreachable via CRUD; change approval boundary-tested (agent actor rejected); scope versions preserve history.
 - **Agent executes:** everything code; **human approves:** merges, change approvals and acceptance decisions by design.
 
-### M15 — Service Operations & Customer Success
+### M15 — Service Operations & Customer Success — **merged**
 
+- **What shipped, and what did not.** A contract's pending Service Obligations
+  activate into an operational **Service Coverage** with immutable Entitlements
+  under a versioned fingerprinted policy; Support Cases run over an explicit
+  five-state transition table with append-only activity, a first response stamped
+  once, elapsed-time SLA evidence and manually recorded escalation
+  (`docs/SERVICE_OPERATIONS.md`, `TASKS.md`). **Not** delivered from the
+  deliverables below: the renewal/upsell signal back to the pipeline (it needs the
+  scheduler), and the `configure-service-contract` / `build-support-sla` skills —
+  one `build-service-operations` skill covers the path instead. A Coverage is not
+  a second legal contract, there is no business-hours calendar, and nothing bills,
+  renews, schedules or authenticates.
 - **Outcome:** post-go-live obligations are contractual records with deterministic SLAs and governed support.
 - **Deliverables:** ServiceContract/Entitlement/SLA (SLA targets versioned like policies); SupportCase/ServiceRequest/Incident/Escalation; CS handover assignment; renewal/upsell signal connection back to the pipeline; skills `configure-service-contract`, `build-support-sla`.
 - **Dependencies:** M14 (acceptance/billing precede service activation). Renewal *signals* additionally need the scheduler (`JOBS_AND_OUTBOX.md`).
 - **Acceptance:** SLA evaluation is deterministic and reproducible per version; escalation approval points human-only; a contract nearing expiry emits a deterministic renewal signal consumed by the sales side.
 - **Agent executes:** everything code; **human approves:** merges, SLA commitments to real customers.
+
+### M16a — Renewal & expansion operations — **merged**
+
+- **Outcome:** a contract's term evidence is read through a declared capability and
+  a human's renewal or expansion **intent is recorded**, with a reason.
+- **Delivered:** the fourth domain package, the second to consume another and the
+  first to offer no capability of its own; four actions and no more —
+  `plan-renewal` (reads, writes nothing), `record-renewal-decision`,
+  `request-commercial-followup`, `resolve-commercial-followup` (ADR-028,
+  `docs/plans/m16a-renewal-expansion-operations.md`).
+- **Deliberately not delivered:** it renews nothing, cancels nothing, ends nothing,
+  signs nothing, prices nothing, invoices nothing, schedules nothing and
+  recognises no churn. It moves **only** JTBD-CS-09 to *partially supported*, and
+  only its non-renew half. Amendment execution is **M16b** and stays deferred
+  until Commercial and Signature are reachable through capabilities.
 
 ### M16 — Analytics Studio v1
 
@@ -260,10 +286,10 @@ M14b was scoped as economics, change requests, deliverables and acceptance —
 four models with four different invariants, and not one reviewable PR. It ships
 as two:
 
-- **M14b1 — Delivery economics** (open PR): the cost policy, append-only time
+- **M14b1 — Delivery economics** (merged): the cost policy, append-only time
   and expense evidence, the immutable versioned plan, the reproducible
   contribution estimate and the `delivery-economics@1` capability.
-- **M14b2 — Change, deliverables and acceptance** (not started): governed
+- **M14b2 — Change, deliverables and acceptance** (merged): governed
   non-commercial replans, the commercial-change handoff, deliverable evidence
   and recorded customer acceptance. Scope intact; deferred, not dropped.
 

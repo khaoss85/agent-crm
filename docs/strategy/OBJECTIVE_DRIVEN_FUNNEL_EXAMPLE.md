@@ -37,7 +37,7 @@ If the user had not supplied a metric, the agent asks for one instead of choosin
 | Contract activation and subscriptions (M12) | **merged** |
 | Delivery handover (M13) | **merged** |
 | Custom package authoring, `definePackage`, capabilities (M13) | **merged** |
-| Module evolution (ADR-019) | **open PR** |
+| Module evolution (ADR-019) | **merged** |
 | Marketing packages — campaigns, audiences, journeys | **not implemented** (MK track, design only) |
 | Analytics Studio — semantic metrics, safe query compilation | **not implemented** (M16, design only) |
 | Attribution and identity/touchpoint model | **not implemented** (MK7, and it needs an identity model that does not exist) |

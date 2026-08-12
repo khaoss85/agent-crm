@@ -282,6 +282,14 @@ function checkFacts(git, sha, record, failures) {
  * ungrouped "1024 tests" is caught too: this suite is a few milestones from four digits,
  * and a gate that only refuses the separator someone happened to type is not a gate.
  *
+ * Two prefixes are excluded, and they are the reason widening this scan to `docs/` was
+ * possible at all. `\b` alone matches inside a hyphenated identifier and after a currency
+ * symbol, so "the ADR-018 test for what core owns" read as "018 test" and "a €500 test on
+ * conversion" read as "500 test" — two false positives in the first two documents the wider
+ * scan touched. A measured count is never written immediately after a hyphen or a currency
+ * symbol, so refusing those two prefixes costs the gate nothing and buys it a whole
+ * directory. Both are pinned in `tests/repository-truth.test.js`.
+ *
  * @param {string} source
  * @returns {Array<{ line: number, phrase: string }>} the offending phrases, in order
  */
@@ -293,9 +301,104 @@ export function findLooseTestCounts(source) {
     const stripped = lines[index].replace(/\{\{[^}]+\}\}/g, '');
     // Grouped form first so "1,024" is taken whole; the plain alternative then covers any
     // length. Neither can end on a separator, so a "`C-13`, tests/…" citation is not a count.
-    for (const match of stripped.matchAll(/\b(?:\d{1,3}(?:,\d{3})+|\d+)\s+(?:passing\s+|failing\s+)?tests?\b/gi)) {
+    for (const match of stripped.matchAll(/(?<![\w\-€$£¥])(?:\d{1,3}(?:,\d{3})+|\d+)\s+(?:passing\s+|failing\s+)?tests?\b/gi)) {
       found.push({ line: index + 1, phrase: match[0] });
     }
   }
   return found;
+}
+
+/**
+ * Where the measured commit may be repeated, and where a count may not.
+ *
+ * `site/claims.json` is the one measurement record. `docs/PROJECT_STATUS.md` is the one
+ * narrative status file, and `AGENTS.md` §12 *orders* every agent to trust it — which makes
+ * it the most expensive file in the repository to leave stale. It carried a second SHA and a
+ * second test count of its own for months, both hand-typed, both wrong, and a test pinned
+ * them in place so no gate could notice.
+ *
+ * The fix is not a second provenance mechanism. The status file states no count and *cites*
+ * the ledger's commit, and this binds the two strings so they cannot drift apart quietly. It
+ * is deliberately a literal comparison of one table row: no natural-language inference, and
+ * no opinion about whether the prose around it is true.
+ *
+ * @param {string} statusSource contents of docs/PROJECT_STATUS.md
+ * @param {Record<string, any> | undefined} measuredAgainst the ledger's block
+ * @returns {string[]} reasons the gate must fail
+ */
+export function inspectStatusMeasurement(statusSource, measuredAgainst) {
+  /** @type {string[]} */
+  const failures = [];
+  const recorded = String(measuredAgainst?.sha ?? '');
+  const source = String(statusSource ?? '');
+
+  if (!/^[0-9a-f]{7,40}$/.test(recorded)) {
+    failures.push(
+      'docs/PROJECT_STATUS.md cannot be bound to a measurement: claims.json measuredAgainst.sha is not a commit '
+      + 'SHA. Run `node scripts/measure-suite.js --apply` on a clean tree.',
+    );
+    return failures;
+  }
+
+  const rows = [...source.matchAll(/^\|\s*Measured at\s*\|\s*`([0-9a-f]{7,40})`/gm)];
+  if (rows.length === 0) {
+    failures.push(
+      'docs/PROJECT_STATUS.md has no `| Measured at | `<sha>` |` row. AGENTS.md tells every agent to trust that '
+      + 'file for what is true today, so it has to name the commit the public numbers were measured at — '
+      + `${recorded}, from site/claims.json measuredAgainst.`,
+    );
+    return failures;
+  }
+  if (rows.length > 1) {
+    failures.push(
+      `docs/PROJECT_STATUS.md states ${rows.length} "Measured at" rows. Two measurements in one status file is the `
+      + 'drift this binding exists to stop; keep one.',
+    );
+  }
+
+  for (const row of rows) {
+    if (row[1] !== recorded) {
+      failures.push(
+        `docs/PROJECT_STATUS.md says it was measured at ${row[1]}, but site/claims.json measuredAgainst.sha is `
+        + `${recorded}. The status file measures nothing of its own — it cites the ledger. Re-run `
+        + '`node scripts/measure-suite.js --apply` and copy the recorded sha into the row, or fix the row.',
+      );
+    }
+  }
+
+  return failures;
+}
+
+/**
+ * Documents whose test counts are dated history rather than a current claim.
+ *
+ * Widening the loose-count scan from `site/` to `docs/` is the point — `docs/PROJECT_STATUS.md`
+ * typed a count for months with no gate over it. But `docs/` also holds records of runs that
+ * happened, and rewriting those would be falsifying history to satisfy a linter. Each entry
+ * below holds numbers that are *stamped*, not *claimed*, and each says why.
+ *
+ * The list is deliberately short. A new document is scanned by default; adding to this list is
+ * a reviewable edit with an argument attached, exactly like raising a surface ceiling.
+ */
+export const DATED_HISTORY = [
+  // An ExecPlan records what a run measured while the work was in progress, at a commit the
+  // plan names. It is this project's laboratory notebook and is never read as current status.
+  'docs/plans/',
+  // A dated rename experiment. "388 tests, 387 pass, 1 fail" is that trial's observed result,
+  // and the whole document is the trial's record.
+  'docs/RENAME_SURFACE.md',
+  // Both open with "Written against `HEAD` on <date> with N tests passing" — a provenance stamp
+  // that tells a reader how old the analysis is. Removing the number removes the stamp.
+  'docs/strategy/AGENT_RECOMMENDATION.md',
+  'docs/strategy/GO_TO_MARKET.md',
+];
+
+/**
+ * Whether a repository-relative path is scanned for typed test counts.
+ * A directory entry matches by prefix; a file entry matches exactly, so a neighbouring
+ * filename cannot inherit an exemption.
+ * @param {string} path repository-relative, POSIX separators
+ */
+export function scansForLooseCounts(path) {
+  return !DATED_HISTORY.some((entry) => (entry.endsWith('/') ? path.startsWith(entry) : path === entry));
 }

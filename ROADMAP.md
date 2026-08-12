@@ -1,32 +1,33 @@
 # Roadmap
 
-## Milestone 0 — vertical slice (implemented)
+This file is a **pointer, not a ledger.** It used to carry a four-milestone plan
+written at Milestone 0, and most of that plan has since shipped under different
+identifiers — so a reader could find the same capability described as *planned*
+here and as *merged* three documents away. Nothing in this repository may read as
+both implemented and planned, so the lists live in one place each:
 
-- CRM primitives: Company, Contact, Opportunity, Approval.
-- Renewal approval workflow.
-- API, Admin, CLI, MCP, trace, audit and tests.
+| Question | File |
+|---|---|
+| What is merged today, and at which commit? | `docs/PROJECT_STATUS.md` |
+| What is the next product task? | `TASKS.md` |
+| How are the milestones sequenced, and what depends on what? | `docs/strategy/EXECUTION_ROADMAP.md` |
+| Which coding-agent surfaces exist, and which do not? | `docs/CODER_TOOLING_ROADMAP.md` |
+| Which business jobs does the framework actually earn? | `docs/benchmarks/CRM_JTBD_MATRIX.md` |
+| Category, positioning, distribution, launch, metrics | `docs/strategy/MASTER_PLAN.md` |
 
-## Milestone 1 — framework ergonomics
+## The shape, in one paragraph
 
-- Declarative module schema and migration generation.
-- Plugin manifest and module discovery.
-- Generated Admin forms and SDK types.
-- Streamable HTTP MCP transport.
+The **domain** track has shipped the commercial chain end to end — lead capture
+through intelligence, pipeline, quotes, signature, order, contract activation,
+delivery handover, execution, economics, change and acceptance; service
+operations; and renewal & expansion as recorded intent that renews nothing. The
+**coding-agent DX** track has shipped application inspection, Solution Plans,
+Project Doctor, Package Scaffold, Package Conformance, Legacy Characterization,
+Project Verify and Scenario Evidence; skill-mirror sync (DX2), the context pack
+(DX9) and implementation evidence (DX10) do not exist. The **production spine** —
+authentication, tenancy, RBAC, PostgreSQL, a scheduler, a durable outbox and
+secret management — has shipped **nothing**, and gates everything that would act
+on real customer data.
 
-## Milestone 2 — commercial automation
-
-- Activity, Task and Pipeline modules.
-- Provider adapters for email and calendar.
-- Durable delayed workflows and retries.
-- Role-based permissions and tenant isolation.
-
-## Milestone 3 — production platform
-
-- PostgreSQL adapter.
-- OpenTelemetry exporter.
-- Deployment provider and Cloud CLI commands.
-- Versioned plugin registry and project templates.
-
-## Strategic roadmap
-
-This file tracks engineering milestones. The full phased product strategy — positioning, distribution, launch, metrics — is in `docs/strategy/MASTER_PLAN.md` and `docs/strategy/EXECUTION_ROADMAP.md`.
+Each of those three sentences is checkable in `docs/PROJECT_STATUS.md`, which is
+updated in the same PR as every milestone merge.

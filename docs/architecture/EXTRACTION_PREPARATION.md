@@ -471,9 +471,9 @@ blockers are now small, measured and mostly decisions rather than unknowns.
 
 ### Recommended next PR sequence
 
-1. **LA0 review and merge** — it is open and unmerged; the extraction cannot be
-   proved without it.
-2. **Resolve the two defect candidates** — done in an open PR. `value` is
+1. **LA0 review and merge** — done; the extraction could not have been proved
+   without it.
+2. **Resolve the two defect candidates** — done, and merged. `value` is
    bounded to this domain's own `MAX_TEXT` (500) and refused when it carries a
    control character or a line break. The reviewed regeneration moved **exactly
    five observations**, all `hostile-input.record-signal.*`, and one source
