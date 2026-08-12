@@ -493,3 +493,117 @@ test('both checked-in evidence documents are valid and address requirements thei
     assert.equal(evidence.requirements.length, derived.size, `${evidenceName} covers every requirement`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Strict plain data. These documents are "function-free by contract", and that
+// was a property of the reader rather than of the contract: read from a live
+// object, a getter on a field the validator touched was author code the
+// validator ran, and a Proxy could answer one value to validation and another
+// to the fingerprint. `toPlainData` is the shared gate, stated once next to
+// EXECUTABLE_SHAPES and canonicalJson.
+// ---------------------------------------------------------------------------
+
+class NotADocument { constructor() { this.requirementId = 'step:a'; } }
+
+test('a getter is refused rather than invoked', () => {
+  let ran = false;
+  const hostile = document({
+    requirements: [{
+      requirementId: 'step:a', category: 'structural', evidence: [],
+      get blocked() { ran = true; return { reason: 'a downgrade nobody wrote' }; },
+    }],
+  });
+  const result = validateImplementationEvidence(hostile);
+  assert.equal(ran, false, 'the validator must not execute anything an author wrote');
+  assert.equal(result.valid, false);
+  assert.ok(codesOf(result.problems).includes('EVIDENCE_FIELD_INVALID'));
+  assert.match(result.problems[0].message, /accessor/);
+});
+
+test('a value that is not plain data is refused, one refusal per shape', () => {
+  const shapes = {
+    date: new Date(), map: new Map(), set: new Set(), regexp: /x/,
+    classInstance: new NotADocument(), fn: () => 'x', symbol: Symbol('s'),
+    bigint: 10n, infinity: Infinity, nan: NaN,
+  };
+  for (const [name, value] of Object.entries(shapes)) {
+    const result = validateImplementationEvidence(document({ plan: value }));
+    assert.equal(result.valid, false, `${name} is not a document`);
+    assert.equal(result.evidence, null, `${name} produces no normalized document at all`);
+  }
+});
+
+test('an object whose fields come from its prototype is not what it says it is', () => {
+  const inherited = Object.create({ category: 'structural' });
+  inherited.requirementId = 'step:a';
+  inherited.evidence = [];
+  const result = validateImplementationEvidence(document({ requirements: [inherited] }));
+  assert.equal(result.valid, false, 'a field read off the prototype chain is not in the document');
+});
+
+test('a symbol key is refused rather than silently dropped', () => {
+  const row = { requirementId: 'step:a', category: 'structural', evidence: [] };
+  row[Symbol('hidden')] = 'something no reader will see';
+  assert.equal(validateImplementationEvidence(document({ requirements: [row] })).valid, false);
+});
+
+test('a cycle is a refusal with a path, never a stack overflow', () => {
+  const row = { requirementId: 'step:a', category: 'structural', evidence: [] };
+  row.itself = row;
+  const result = validateImplementationEvidence(document({ requirements: [row] }));
+  assert.equal(result.valid, false);
+  assert.match(result.problems[0].message, /cycle/);
+});
+
+test('every value is read exactly once, so a Proxy cannot answer two questions differently', () => {
+  // The attack this closes: a Proxy that returns a weak category to the
+  // validator and a different one to whatever reads the document next. It is
+  // read once into a plain copy, so there is only ever one answer to disagree
+  // with.
+  // A `get` trap is never reached at all: the copy is taken from own property
+  // descriptors, so the only thing a Proxy can present is the data its target
+  // actually holds.
+  let gets = 0;
+  const lyingGet = new Proxy({ requirementId: 'step:a', category: 'behavioural', evidence: [] }, {
+    get(target, key) {
+      if (key === 'category') { gets += 1; return 'structural'; }
+      return Reflect.get(target, key);
+    },
+  });
+  const first = validateImplementationEvidence(document({ requirements: [lyingGet] }));
+  assert.equal(first.valid, true, JSON.stringify(first.problems));
+  assert.equal(first.evidence.requirements[0].category, 'behavioural', 'the target\'s own data, not the trap\'s answer');
+  assert.equal(gets, 0, 'a get trap is never invoked');
+
+  // A `getOwnPropertyDescriptor` trap that answers differently each time is
+  // consulted exactly once, so the validated document and the fingerprinted
+  // document are the same document.
+  let descriptors = 0;
+  const drifting = new Proxy({ requirementId: 'step:a', category: 'behavioural', evidence: [] }, {
+    getOwnPropertyDescriptor(target, key) {
+      if (key === 'category') {
+        descriptors += 1;
+        return { value: descriptors === 1 ? 'behavioural' : 'structural', enumerable: true, configurable: true, writable: true };
+      }
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+  });
+  const second = validateImplementationEvidence(document({ requirements: [drifting] }));
+  assert.equal(second.valid, true, JSON.stringify(second.problems));
+  assert.equal(descriptors, 1, 'category is read exactly once');
+  assert.equal(second.evidence.requirements[0].category, 'behavioural', 'the first and only answer is the document');
+  // And the fingerprint describes that same copy, not a second reading of it.
+  assert.equal(second.evidence.fingerprint, fingerprintEvidence(second.evidence));
+});
+
+test('prototype pollution through a document is refused and pollutes nothing', () => {
+  for (const key of ['__proto__', 'constructor', 'prototype']) {
+    const raw = JSON.parse(`{"${key}": {"polluted": true}}`);
+    const result = validateImplementationEvidence(document(raw));
+    assert.equal(result.valid, false, `${key} is refused`);
+  }
+  const nested = JSON.parse('{"requirementId":"step:a","category":"structural","evidence":[],"__proto__":{"polluted":true}}');
+  assert.equal(validateImplementationEvidence(document({ requirements: [nested] })).valid, false);
+  assert.equal(({}).polluted, undefined, 'nothing was polluted');
+  assert.equal(Object.prototype.polluted, undefined);
+});

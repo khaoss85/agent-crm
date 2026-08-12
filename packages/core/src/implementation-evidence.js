@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto';
 import { ValidationError } from './errors.js';
-import { EXECUTABLE_SHAPES, canonicalJson } from './solution-plan.js';
+import { EXECUTABLE_SHAPES, canonicalJson, toPlainData } from './solution-plan.js';
 
 /**
  * Implementation Evidence (DX10) — the checked-in half.
@@ -329,7 +329,22 @@ function digest(value, path, problems) {
 export function validateImplementationEvidence(input) {
   /** @type {EvidenceProblem[]} */
   const problems = [];
-  const raw = object(input, 'evidence', problems, {
+
+  // Plain data first, once, before any field is read for meaning. A getter is
+  // author-supplied code and this contract is function-free, so it is refused
+  // rather than invoked; a Proxy is read exactly once so validation and the
+  // fingerprint cannot describe two different documents. See `toPlainData`.
+  /** @type {unknown} */
+  let plain;
+  try {
+    plain = toPlainData(input, 'evidence');
+  } catch (error) {
+    report(problems, 'EVIDENCE_FIELD_INVALID', 'evidence',
+      error instanceof Error ? error.message : String(error));
+    return { valid: false, evidence: null, problems };
+  }
+
+  const raw = object(plain, 'evidence', problems, {
     allowed: ['implementationEvidenceContract', 'plan', 'planFingerprint',
       'applicationInspectionFingerprint', 'requirements', 'limitations'],
   });

@@ -279,6 +279,99 @@ function object(value, path, problems, { required = true, allowed = null } = {})
 }
 
 /**
+ * The strict plain-data gate the checked-in contracts share.
+ *
+ * A Solution Plan, a scenario and an implementation-evidence document are all
+ * **function-free by contract**, and each is normally read from JSON text, where
+ * that is true for free. The exported validators are not restricted to that
+ * path: they are public core API, a future MCP tool would hand them an object,
+ * and a test hands them literals. Against a live object "function-free" was a
+ * property of the *reader*, not of the contract — a getter on a field the
+ * validator reads is author-supplied code that the validator runs, and a Proxy
+ * can answer a different value each time it is read, so the document that was
+ * validated and the document that was fingerprinted need not be the same one.
+ *
+ * So a document is converted to plain data **once**, before any field is read
+ * for meaning, and everything downstream reads the copy:
+ *
+ * - an accessor property is refused rather than invoked — nothing here executes
+ *   anything an author wrote, which is the sentence the three contracts make;
+ * - a non-plain prototype is refused, which takes `Date`, `Map`, `Set`,
+ *   `RegExp`, a class instance and an object whose meaning comes from its
+ *   prototype chain with it;
+ * - a symbol key, a function, a symbol and a `BigInt` are refused, because none
+ *   of them survives JSON and a value that vanishes on the way to disk is a
+ *   value a reader and a writer disagree about;
+ * - a non-finite number is refused for the same reason (`JSON.stringify` turns
+ *   it into `null`);
+ * - a cycle is refused with a path rather than overflowing the stack;
+ * - every value is read exactly once, so a Proxy cannot answer validation and
+ *   fingerprinting differently.
+ *
+ * This is the same judgement `canonicalJson` in `signature-operations.js` makes
+ * about a document about to be signed, and the same one `assertPlainMetadata`
+ * makes about a package's `metadata()`. It is stated once here, next to
+ * `EXECUTABLE_SHAPES` and `canonicalJson`, because this is the module the three
+ * document contracts already share.
+ *
+ * @param {unknown} value @param {string} [path] @param {Set<object>} [ancestors]
+ * @returns {any} a plain-data copy
+ */
+export function toPlainData(value, path = 'document', ancestors = new Set()) {
+  if (value === null) return null;
+  const type = typeof value;
+  if (type === 'string' || type === 'boolean') return value;
+  if (type === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new ValidationError(`${path} must be a finite number; ${String(value)} does not survive JSON`);
+    }
+    return value;
+  }
+  if (type === 'undefined') return undefined;
+  if (type !== 'object') {
+    throw new ValidationError(`${path} must be plain data; a ${type} is not JSON and would be lost or refused on the way to disk`);
+  }
+
+  if (ancestors.has(/** @type {object} */ (value))) {
+    throw new ValidationError(`${path} is a cycle; a checked-in document is a tree, and a cycle has no canonical bytes`);
+  }
+  const nested = new Set(ancestors);
+  nested.add(/** @type {object} */ (value));
+
+  if (Array.isArray(value)) {
+    return value.map((item, index) => toPlainData(item, `${path}[${index}]`, nested));
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new ValidationError(`${path} must be plain data; a class instance, Date, Map, Set or RegExp is not a document, and an object whose fields come from its prototype is not what it says it is`);
+  }
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    throw new ValidationError(`${path} carries a symbol key, which no reader of this document will ever see`);
+  }
+
+  // One snapshot of every own descriptor. `Object.keys` would consult each
+  // descriptor once for enumerability and the read below would consult it
+  // again, and two reads is exactly the gap a Proxy answers differently in.
+  const descriptors = Object.getOwnPropertyDescriptors(/** @type {any} */ (value));
+
+  // A null prototype so `__proto__` can only ever be an ordinary own key here;
+  // the contract's own reserved-key refusal is what reports it.
+  const plain = Object.create(null);
+  for (const key of Object.keys(descriptors)) {
+    const descriptor = descriptors[key];
+    if (!descriptor.enumerable) continue;
+    if (typeof descriptor.get === 'function' || typeof descriptor.set === 'function') {
+      throw new ValidationError(`${path}.${key} is an accessor. These documents are function-free by contract, so a getter is refused rather than invoked`);
+    }
+    const converted = toPlainData(descriptor.value, `${path}.${key}`, nested);
+    if (converted === undefined) continue;
+    Object.defineProperty(plain, key, { value: converted, enumerable: true, writable: true, configurable: true });
+  }
+  return plain;
+}
+
+/**
  * Canonical JSON: keys sorted at every depth, so a fingerprint depends on what
  * the plan says and not on how its author's editor ordered the keys.
  * @param {unknown} value

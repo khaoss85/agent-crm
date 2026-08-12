@@ -109,6 +109,7 @@ export {
   EXECUTABLE_SHAPES,
   MAX_PLAN_BYTES,
   canonicalJson,
+  toPlainData,
   fingerprintPlan,
   inspectionFingerprint,
   validateSolutionPlan,
