@@ -218,7 +218,7 @@ test('two connections racing one source key: one winner, the loser replays, no r
 
   // The loser's retry of the SAME business identity, straight at the creator,
   // resolves to the winner's row rather than to a second one.
-  const replay = await createFollowUp(
+  const replay = await appB.database.transactionAsync(() => createFollowUp(
     { modules: appB.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' },
     {
       sourceKey: `lead-qualified:${lead.id}`,
@@ -227,7 +227,7 @@ test('two connections racing one source key: one winner, the loser replays, no r
       subject: { resource: 'lead', id: lead.id, owner: 'host' },
       source: { package: 'host', action: 'qualify' },
     },
-  );
+  ));
   assert.equal(replay.replayed, true);
   assert.equal(appB.modules.get('work-task').service.listWhere({ subjectId: lead.id }).length, 1);
 });
@@ -273,28 +273,28 @@ test('the correctness reads are exact past 500 rows: source key, subject timelin
 
   // Creating a follow-up under a key buried 600 rows deep replays it rather
   // than opening a second one.
-  const replay = await createFollowUp(
+  const replay = await app.database.transactionAsync(() => createFollowUp(
     { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' },
     {
       sourceKey: 'seed:0', title: 'Seed 0', dueAt: null,
       subject: { resource: 'lead', id: subjectId, owner: 'host' },
       source: { package: 'host', action: 'qualify' },
     },
-  );
+  ));
   assert.equal(replay.replayed, true);
   assert.equal(tasks.countWhere({ sourceKey: 'seed:0' }), 1);
   assert.equal(tasks.countWhere({ subjectResource: 'lead', subjectId }), 600, 'no 601st row');
 
   // …and a divergent payload behind that same buried key is still a named 409.
   await assert.rejects(
-    () => createFollowUp(
+    () => app.database.transactionAsync(() => createFollowUp(
       { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' },
       {
         sourceKey: 'seed:0', title: 'Something else', dueAt: null,
         subject: { resource: 'lead', id: subjectId, owner: 'host' },
         source: { package: 'host', action: 'qualify' },
       },
-    ),
+    )),
     (error) => error.code === 'WORK_FOLLOW_UP_CONFLICT' && error.details.conflictingFields.includes('title'),
   );
 });
@@ -314,6 +314,9 @@ test('hostile input stays inert data or is refused, across every field', async (
   const { context } = await leadProject(t, 'hostile.sqlite');
   const { app } = context;
   const ctx = { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' };
+  // REVIEW-70: every follow-up must be created inside the caller's transaction,
+  // so these hostile probes run exactly where a real consumer would.
+  const create = (request) => app.database.transactionAsync(() => createFollowUp(ctx, request));
   const base = {
     sourceKey: 'hostile:1', title: 'ok',
     subject: { resource: 'lead', id: 'l1', owner: 'host' },
@@ -335,9 +338,12 @@ test('hostile input stays inert data or is refused, across every field', async (
       ['sourceAction', { ...base, sourceKey: `a${index}`, source: { package: 'host', action: value } }],
     ]) {
       try {
-        await createFollowUp(ctx, request);
+        await create(request);
       } catch (error) {
-        assert.equal(error.status, 400, `${label} ${value}: refused, never accepted half-way`);
+        // 400 for a value outside the grammar; 403 for a `source.package` that
+        // is syntactically fine but is not the identity the registry bound
+        // (REVIEW-70). Never a partial write, and never interpretation.
+        assert.ok([400, 403].includes(error.status), `${label} ${value}: refused ${error.status} ${error.code}`);
       }
       assert.equal({}.polluted, undefined, `${label} ${value}: no prototype was polluted`);
       assert.equal(Object.prototype.toString.call({}), '[object Object]');
@@ -349,7 +355,7 @@ test('hostile input stays inert data or is refused, across every field', async (
       subject: { resource: 'lead', id: `id${index}`, owner: 'host', label: value },
     };
     try {
-      const created = await createFollowUp(ctx, request);
+      const created = await create(request);
       assert.equal(created.task.title, value.trim(), 'stored verbatim as data');
       assert.equal(Object.prototype.hasOwnProperty.call({}, value), false, 'no prototype was polluted');
       assert.equal({}.polluted, undefined);

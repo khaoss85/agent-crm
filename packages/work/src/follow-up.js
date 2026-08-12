@@ -1,6 +1,8 @@
 // @ts-check
 
-import { AppError, ValidationError, optionalIsoDate } from '../../core/index.js';
+import {
+  AppError, ConflictError, ValidationError, isCalendarDate, normalizeActor, optionalIsoDate,
+} from '../../core/index.js';
 
 /**
  * **Follow-up creation — the one implementation.**
@@ -60,19 +62,31 @@ const PACKAGE_RE = /^[a-z][a-z0-9-]*$/;
 const SOURCE_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9:._@/-]*$/;
 
 /**
- * A key that moves identifies nothing.
+ * **Why there is no clock heuristic here, and where the guarantee lives instead.**
  *
- * M16a fixed exactly this defect once already: a deterministic key that carried
- * `now()` made every retry a new business fact, so a lost response became a
- * duplicate record rather than a replay. It is cheap to refuse at the boundary
- * and expensive to find later, so it is refused here — an ISO-8601 *instant*
- * (a date with a time on it) or a run of 13+ digits, which is what an epoch
- * millisecond timestamp looks like.
+ * A key that moves identifies nothing, and M16a shipped exactly that defect
+ * once: a deterministic key that carried `now()` made every retry a new
+ * business fact. The first cut of this package answered it with a regex that
+ * refused any ISO instant and any run of 13 or more digits. That regex is
+ * **gone**, because it was a one-domain bug fix promoted into a universal false
+ * restriction, and it refused real business identities:
  *
- * A bare calendar date is deliberately allowed: `renewal-decision:<id>:
- * 2027-01-31` is a real business identity, and M16a uses that shape.
+ *   - `customer:1234567890123` — a 13-digit external customer number;
+ *   - `stripe-evt:1712345678901` — a provider event id;
+ *   - `order:9876543210987654` — a 16-digit order number;
+ *   - `meeting:2027-01-31T14:00` — a business event whose *scheduled* instant is
+ *     deliberately part of its identity and is stable under every retry.
+ *
+ * None of those moves between two calls, which is the only property that
+ * matters, and none is distinguishable from a clock by looking at the string.
+ * Work is a **generic** capability: it cannot infer a caller's business
+ * identity, so it does not pretend to. It refuses what it can actually judge —
+ * structurally invalid syntax and unbounded length — and the stability of the
+ * identity stays with the caller who owns it, proven by that caller's own retry
+ * test. Every consumer in this repository has one, in
+ * `tests/work-source-key-stability.test.js`, and every key is derived from a
+ * committed record id rather than from a clock.
  */
-const CLOCK_IN_KEY_RE = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}|\d{13,}/;
 
 /** @param {unknown} value @param {string} field @param {number} max */
 function safeText(value, field, max) {
@@ -92,15 +106,24 @@ function optionalSafeText(value, field, max) {
   return safeText(value, field, max);
 }
 
-/** The framework's three actor types, normalized without reaching into a private module. */
+/**
+ * The framework's actor authority, and **only** that.
+ *
+ * This used to be a local re-implementation that also did
+ * `id.trim().slice(0, 200)`. Truncation is not a bound, it is a **merge**: two
+ * distinct identities that share their first 200 characters became one string,
+ * so `openedById`, `completedBy` and every Activity `actorId` would name a
+ * person who may not have done it — while the audit row written by the same
+ * transaction, through the kernel's own `normalizeActor`, still carried the
+ * full id. Two records of one write disagreeing about who did it is the worst
+ * kind of evidence defect, because both look authoritative.
+ *
+ * So Work no longer normalizes its own actor: it calls the same public helper
+ * the audit log calls, and stores exactly what audit stores. There is nothing
+ * left here to drift.
+ */
 export function normalizeWorkActor(actor) {
-  const candidate = /** @type {any} */ (actor);
-  const type = candidate?.type;
-  const id = candidate?.id;
-  if ((type === 'user' || type === 'agent' || type === 'system') && typeof id === 'string' && id.trim() !== '') {
-    return { type, id: id.trim().slice(0, MAX_ID) };
-  }
-  return { type: 'system', id: 'accordo' };
+  return normalizeActor(actor);
 }
 
 /**
@@ -176,6 +199,38 @@ export function validateSubject(value) {
   };
 }
 
+/**
+ * A `dueAt` that names a day which never existed is refused, not rolled over.
+ *
+ * `optionalIsoDate` is `Date.parse` underneath, and `Date.parse` does not
+ * validate a calendar day: it rolls it. `2027-02-30` becomes `2027-03-02` and
+ * `2027-04-31` becomes `2027-05-01`, silently, so a caller that asked for an
+ * impossible date got a *different, plausible* one stored as evidence — the
+ * exact class of defect ADR-028 added `isCalendarDate` for after it shipped in
+ * M16a. A due date nobody chose is worse than a refusal, because nothing about
+ * the stored row says it was invented.
+ *
+ * The check is the framework's one round-trip authority, applied to the
+ * calendar-day part of whatever ISO form the caller sent: a date, a date with a
+ * time, an offset form, all of them. The time part is left to `optionalIsoDate`
+ * as before, and the value is still stored canonically in UTC.
+ *
+ * @param {unknown} value @param {string} field
+ */
+function optionalRealIsoDate(value, field) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'string') {
+    const day = /^(\d{4}-\d{2}-\d{2})/.exec(value.trim());
+    if (day && !isCalendarDate(day[1])) {
+      throw new ValidationError(
+        `${field} is not a real calendar date: ${day[1]} never existed, and it would otherwise be stored as the day it rolls over to`,
+        { field },
+      );
+    }
+  }
+  return optionalIsoDate(value, field);
+}
+
 /** Where a follow-up came from. Caller-asserted, exactly like a capability's `consumer`. */
 function validateSource(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -193,6 +248,52 @@ function validateSource(value) {
   return { package: pkg, action };
 }
 
+/**
+ * **Bind provenance to the identity the registry proved, not to caller text.**
+ *
+ * `source.package` is stored as evidence of which package opened a piece of
+ * work, and it used to be nothing but a string the caller typed. Every checked-
+ * in consumer typed the truth, but the *record* could not tell: the Service
+ * package could write `source.package: 'lifecycle'` on an escalation's task,
+ * Lifecycle could write `'host'`, and both would read back as authoritative
+ * provenance for the rest of the row's life. Redundant caller text that nobody
+ * can check is not evidence.
+ *
+ * The registry already resolves and verifies the consumer at
+ * `PackageRegistry.capability()` — against that package's own declared
+ * `requires` — so from Work v1 it hands that identity to the provider, and this
+ * is where it lands. When it is present it **is** the provenance: a request
+ * that asserts a different package is refused rather than quietly corrected, so
+ * a consumer that believes it is somebody else finds out.
+ *
+ * When it is absent, the caller is the **host** — the project's own action
+ * code, which imports {@link createFollowUp} directly because a host
+ * application action is not a registered package and cannot open a capability
+ * (see `metadata().capability.hostLimitation`). A host caller may only assert
+ * `host`: it has no package identity to claim, and claiming one would be the
+ * same spoof from the other direction.
+ *
+ * `subject.ownerPackage` is a different fact and stays caller-asserted: it
+ * describes who owns the *subject*, which is legitimately a third package, so
+ * the consumer's identity cannot bind it. That limitation is published in
+ * `metadata()` rather than papered over.
+ *
+ * @param {{package: string, action: string}} source
+ * @param {unknown} consumer the registry-resolved consumer, or undefined
+ */
+function bindSourcePackage(source, consumer) {
+  const bound = typeof consumer === 'string' && consumer !== '' ? consumer : 'host';
+  if (source.package !== bound) {
+    throw new AppError(
+      `A follow-up opened by "${bound}" may not record source.package "${source.package}": provenance is bound to the `
+        + `${consumer ? 'package the registry resolved as the consumer of work/follow-up@1' : 'host, because no package consumer opened this capability'}, `
+        + 'not to the request body.',
+      { code: 'WORK_SOURCE_PACKAGE_MISMATCH', status: 403, details: { asserted: source.package, bound } },
+    );
+  }
+  return { package: bound, action: source.action };
+}
+
 /** @param {unknown} request */
 export function validateFollowUpRequest(request) {
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
@@ -203,19 +304,13 @@ export function validateFollowUpRequest(request) {
   if (!SOURCE_KEY_RE.test(sourceKey)) {
     throw new ValidationError('sourceKey must be a canonical business identity', { field: 'sourceKey' });
   }
-  if (CLOCK_IN_KEY_RE.test(sourceKey)) {
-    throw new ValidationError(
-      'sourceKey must not contain a timestamp: a key that moves every millisecond identifies nothing, '
-        + 'and every retry would create a second task',
-      { field: 'sourceKey' },
-    );
-  }
   return {
     sourceKey,
     title: safeText(value.title, 'title', MAX_TITLE),
     // Evidence only. Nothing schedules on it, nothing fires from it, and no
-    // clock changes a status because of it.
-    dueAt: optionalIsoDate(value.dueAt, 'dueAt') ?? null,
+    // clock changes a status because of it — but it must still be a day that
+    // existed.
+    dueAt: optionalRealIsoDate(value.dueAt, 'dueAt') ?? null,
     subject: validateSubject(value.subject),
     source: validateSource(value.source),
   };
@@ -227,8 +322,54 @@ export function validateFollowUpRequest(request) {
  * @param {unknown} error
  */
 export function isUniqueConflict(error) {
-  return error instanceof AppError && error.status === 409
-    && /already exists|unique constraint/i.test(String(error.message));
+  // Not the error *text*. The kernel raises a typed `ConflictError` for a
+  // violated unique constraint, and matching `/already exists/` on the message
+  // instead meant any other 409 whose sentence happened to contain those two
+  // words — a pending approval, a second envelope, a busy-database retry —
+  // could be read as "the unique index picked a winner" and answered with a
+  // replay. The type is what the framework publishes, so the type is what is
+  // checked; a transient busy conflict is explicitly not one of these.
+  if (!(error instanceof ConflictError)) return false;
+  return /** @type {any} */ (error).details?.transient !== true;
+}
+
+/**
+ * **Fail closed when the promised transaction is not there.**
+ *
+ * This package's whole guarantee is that a Task and its creation Activity are
+ * one atomic pair, and the only thing that makes them one is the caller's
+ * enclosing transaction. Called *outside* one — from a script, from a
+ * `prepare` phase, from a future consumer that forgot — each managed write
+ * commits on its own SAVEPOINT, and a failure between them leaves a committed
+ * Task with no Activity: the half pair the README says this package never
+ * produces. It was reachable, and it produced one (probe: inject a fault into
+ * the activity write with no transaction open, and the task survives).
+ *
+ * So the transactional context is verified rather than assumed. The handle is
+ * the module service's own database — the same connection the write will go
+ * to, so this cannot be satisfied by a caller passing a *different*
+ * transaction's handle — and a context that cannot prove an open transaction is
+ * refused before the first write.
+ *
+ * @param {any} tasks
+ */
+function requireCallerTransaction(tasks) {
+  const raw = tasks?.database?.raw;
+  if (!raw || typeof raw.isTransaction !== 'boolean') {
+    throw new AppError(
+      'A follow-up cannot prove it is running inside the caller\'s transaction, so it refuses to write a task '
+        + 'whose activity might not commit with it.',
+      { code: 'WORK_TRANSACTION_REQUIRED', status: 500 },
+    );
+  }
+  if (!raw.isTransaction) {
+    throw new AppError(
+      'work/follow-up@1 must be called inside the caller\'s transaction: it writes a task and its creation activity '
+        + 'as one pair, and outside a transaction a failure between them would leave the task without the activity. '
+        + 'Call it from a package action\'s execute, or from inside database.transactionAsync.',
+      { code: 'WORK_TRANSACTION_REQUIRED', status: 500 },
+    );
+  }
 }
 
 /**
@@ -268,24 +409,50 @@ function services(context) {
  * Create exactly one follow-up Task and its `task_created` Activity, inside the
  * caller's transaction.
  *
- * @param {{modules: any, actor?: unknown, now?: () => string}} context the
- *   caller's own runtime handles — `modules` is what makes this the caller's
- *   transaction rather than a second connection.
+ * @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string}} context
+ *   the caller's own runtime handles — `modules` is what makes this the
+ *   caller's transaction rather than a second connection. `consumer` is set by
+ *   `PackageRegistry.capability()` and is never supplied by a caller.
  * @param {unknown} request
  * @returns {Promise<{task: any, activity: any, replayed: boolean}>}
  */
 export async function createFollowUp(context, request) {
   const { tasks, activities } = services(context);
+  requireCallerTransaction(tasks);
   const now = typeof context.now === 'function' ? context.now : () => new Date().toISOString();
   const actor = context.actor;
   const who = normalizeWorkActor(actor);
   const input = validateFollowUpRequest(request);
+  const source = bindSourcePackage(input.source, context.consumer);
 
+  /**
+   * **The semantic identity of a follow-up**, and the whole of it.
+   *
+   * A source key is a promise that two calls describe the *same* piece of work.
+   * This comparison is what enforces that promise, so everything that changes
+   * what the work IS belongs in it. The first cut compared four fields —
+   * title, dueAt and the subject's resource and id — which meant the same key
+   * could be replayed with a different **subject owner**, a different **owning
+   * package**, a different **source package** or a different **source action**,
+   * and be answered "yes, already done" while the stored row said something
+   * else entirely. A Service escalation could reuse a Lifecycle key and be
+   * handed Lifecycle's task, with Lifecycle's provenance, as if it were its own.
+   *
+   * `subjectLabel` is deliberately **not** here: the contract states it is a
+   * display snapshot taken at creation and never refreshed, so a caller whose
+   * only difference is a renamed company is describing the same work with a
+   * newer label, and replaying it is correct. That is the single documented
+   * non-authoritative field; every other stored fact is identity.
+   */
   const submitted = {
     title: input.title,
     dueAt: input.dueAt,
     subjectResource: input.subject.resource,
     subjectId: input.subject.id,
+    subjectOwner: input.subject.owner,
+    subjectOwnerPackage: input.subject.ownerPackage,
+    sourcePackage: source.package,
+    sourceAction: source.action,
   };
 
   /** @param {any} task */
@@ -308,16 +475,11 @@ export async function createFollowUp(context, request) {
   try {
     task = await tasks.createManaged({
       sourceKey: input.sourceKey,
-      title: input.title,
       status: TASK_OPEN,
-      dueAt: input.dueAt,
-      subjectResource: input.subject.resource,
-      subjectId: input.subject.id,
-      subjectOwner: input.subject.owner,
-      subjectOwnerPackage: input.subject.ownerPackage,
+      // Every semantic field, from the one object the replay comparison reads,
+      // so the two can never describe different rows.
+      ...submitted,
       subjectLabel: input.subject.label,
-      sourcePackage: input.source.package,
-      sourceAction: input.source.action,
       openedByType: who.type,
       openedById: who.id,
       openedAt,
@@ -344,7 +506,7 @@ export async function createFollowUp(context, request) {
     taskId: task.id,
     body: null,
     occurredAt: openedAt,
-    source: input.source,
+    source,
   });
 
   return { task, activity, replayed: false };
@@ -396,16 +558,32 @@ export async function recordActivity({ activities, actor }, entry) {
  * `TIMELINE_ORDER_TIES_ARE_ARBITRARY` rather than presented as a sequence
  * somebody could reason about.
  *
+ * **Lexical, never `localeCompare`.** The first cut compared with
+ * `localeCompare` and no locale argument, which asks the host's ICU collation
+ * — a property of the machine, the Node build (full-icu versus small-icu) and
+ * the `LANG` the process happened to inherit. ICU collation is not code-point
+ * order: it treats `-` and `_` as variable punctuation and orders case the
+ * other way round, so `x_1` sorts before `x-1` in every locale while code
+ * points say the opposite, and `da-DK` puts `aa` after `ab`. Two readers of the
+ * same rows on two machines could therefore see two orders — which is exactly
+ * the thing this function exists to prevent. Code-point comparison is the same
+ * everywhere and needs no ICU at all.
+ *
  * @param {any[]} rows
  */
 export function sortTimeline(rows) {
-  return [...rows].sort((a, b) => {
-    const byOccurred = String(a.occurredAt ?? '').localeCompare(String(b.occurredAt ?? ''));
-    if (byOccurred !== 0) return byOccurred;
-    const byCreated = String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? ''));
-    if (byCreated !== 0) return byCreated;
-    return String(a.id ?? '').localeCompare(String(b.id ?? ''));
-  });
+  /** @param {unknown} a @param {unknown} b */
+  const lexical = (a, b) => {
+    const left = String(a ?? '');
+    const right = String(b ?? '');
+    if (left < right) return -1;
+    return left > right ? 1 : 0;
+  };
+  return [...rows].sort((a, b) => (
+    lexical(a.occurredAt, b.occurredAt)
+    || lexical(a.createdAt, b.createdAt)
+    || lexical(a.id, b.id)
+  ));
 }
 
 export const bounds = Object.freeze({

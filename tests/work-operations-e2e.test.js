@@ -370,22 +370,29 @@ test('same key and same payload replays; a divergent payload is refused by field
     subject: { resource: 'lead', id: lead.id, owner: 'host' },
     source: { package: 'host', action: 'qualify' },
   };
+  // REVIEW-70: this call used to be made with no transaction open at all, which
+  // is precisely what the package must refuse — see the transaction test below.
+  // Every direct call here now runs inside one, exactly as a consumer's action
+  // does.
   const context1 = { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' };
-  const first = await createFollowUp(context1, request);
+  const tx = (fn) => app.database.transactionAsync(fn);
+  const first = await tx(() => createFollowUp(context1, request));
   assert.equal(first.replayed, false);
 
   // The lost-response retry: byte-identical ask, and the client gets back the
-  // record it could not see it had already created.
-  const replay = await createFollowUp(context1, request);
+  // record it could not see it had already created — the task AND its creation
+  // activity, not just the task.
+  const replay = await tx(() => createFollowUp(context1, request));
   assert.equal(replay.replayed, true);
   assert.equal(replay.task.id, first.task.id);
   assert.equal(replay.activity.id, first.activity.id);
+  assert.equal(replay.activity.kind, 'task_created');
   assert.equal(app.modules.get('work-task').service.list().length, 1);
   assert.equal(app.modules.get('work-activity').service.list().length, 1);
 
   // A different ask under the same key is refused, NAMING the fields.
   await assert.rejects(
-    () => createFollowUp(context1, { ...request, title: 'Something else entirely', dueAt: '2026-09-01T09:00:00.000Z' }),
+    () => tx(() => createFollowUp(context1, { ...request, title: 'Something else entirely', dueAt: '2026-09-01T09:00:00.000Z' })),
     (error) => {
       assert.equal(error.status, 409);
       assert.equal(error.code, 'WORK_FOLLOW_UP_CONFLICT');
@@ -395,10 +402,89 @@ test('same key and same payload replays; a divergent payload is refused by field
     },
   );
   assert.equal(app.modules.get('work-task').service.list().length, 1, 'a refusal writes nothing');
+
+  // REVIEW-70 regression. The comparison used to read FOUR fields — title,
+  // dueAt and the subject's resource and id — so a replay could carry a
+  // different subject owner, a different owning package, a different source
+  // package or a different source action and still be answered "already done",
+  // handing the caller a row that says something else. Every semantic field is
+  // compared, and each one is named on its own.
+  for (const [field, divergent] of [
+    ['subjectOwner', { subject: { resource: 'lead', id: lead.id, owner: 'package', ownerPackage: 'lifecycle' } }],
+    ['subjectId', { subject: { resource: 'lead', id: 'some-other-lead', owner: 'host' } }],
+    ['subjectResource', { subject: { resource: 'company', id: lead.id, owner: 'host' } }],
+    ['sourceAction', { source: { package: 'host', action: 'convert' } }],
+  ]) {
+    await assert.rejects(
+      () => tx(() => createFollowUp(context1, { ...request, ...divergent })),
+      (error) => {
+        assert.equal(error.code, 'WORK_FOLLOW_UP_CONFLICT', field);
+        assert.ok(error.details.conflictingFields.includes(field),
+          `${field} must be named: got ${JSON.stringify(error.details.conflictingFields)}`);
+        return true;
+      },
+      field,
+    );
+  }
+
+  // The ONE documented non-authoritative field: a display label taken at
+  // creation. A caller whose only difference is a renamed subject is describing
+  // the same work, so it replays — and the stored snapshot is not rewritten.
+  const relabelled = await tx(() => createFollowUp(context1, {
+    ...request, subject: { ...request.subject, label: 'Retry Client SpA (renamed)' },
+  }));
+  assert.equal(relabelled.replayed, true);
+  assert.equal(relabelled.task.id, first.task.id);
+  assert.equal(relabelled.task.subjectLabel, first.task.subjectLabel, 'a snapshot is never refreshed');
+  assert.equal(app.modules.get('work-task').service.list().length, 1);
 });
 
-test('a source key carrying a clock is refused at the boundary', async (t) => {
-  const { context } = await leadProject(t, 'clock-key.sqlite');
+// ---------------------------------------------------------------------------
+// REVIEW-70: the transactional context is verified, not assumed
+// ---------------------------------------------------------------------------
+
+test('a follow-up outside the caller transaction is refused, so no half pair can exist', async (t) => {
+  const { context } = await leadProject(t, 'no-transaction.sqlite');
+  const { app } = context;
+  const { createFollowUp } = await import('../packages/work/src/index.js');
+  const ctx = { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' };
+  const request = {
+    sourceKey: 'orphan:1', title: 'Follow up', dueAt: null,
+    subject: { resource: 'lead', id: 'l1', owner: 'host' },
+    source: { package: 'host', action: 'qualify' },
+  };
+
+  // Called with no transaction open, each managed write commits on its own
+  // savepoint: a fault between them left a committed task with no activity —
+  // the half pair this package says it never produces. It is refused before the
+  // first write instead.
+  assert.equal(app.database.raw.isTransaction, false);
+  await assert.rejects(
+    () => createFollowUp(ctx, request),
+    (error) => error.code === 'WORK_TRANSACTION_REQUIRED' && error.status === 500,
+  );
+  assert.equal(app.modules.get('work-task').service.list().length, 0, 'the refusal writes nothing');
+
+  // Inside a transaction it works, and a fault after the task write takes the
+  // task down with it rather than leaving it behind.
+  const activities = app.modules.get('work-activity').service;
+  const realCreate = activities.createManaged.bind(activities);
+  activities.createManaged = async () => { throw new Error('injected fault after the task write'); };
+  await assert.rejects(
+    () => app.database.transactionAsync(() => createFollowUp(ctx, { ...request, sourceKey: 'orphan:2' })),
+    /injected fault/,
+  );
+  activities.createManaged = realCreate;
+  assert.equal(app.modules.get('work-task').service.list().length, 0, 'no task survives its missing activity');
+  assert.equal(activities.list().length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// REVIEW-70: the source key is the caller's business identity, not a regex
+// ---------------------------------------------------------------------------
+
+test('a real business identity is accepted whatever digits it contains, and bad syntax is refused', async (t) => {
+  const { context } = await leadProject(t, 'source-key.sqlite');
   const { app } = context;
   const { createFollowUp } = await import('../packages/work/src/index.js');
   const ctx = { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' };
@@ -406,20 +492,78 @@ test('a source key carrying a clock is refused at the boundary', async (t) => {
     title: 'x', subject: { resource: 'lead', id: 'l1', owner: 'host' },
     source: { package: 'host', action: 'qualify' },
   };
-  // This is the M16a defect, refused rather than discovered later as duplicates.
-  for (const sourceKey of [
-    'follow-up:2026-08-12T09:00:00.000Z', 'follow-up:1786000000000', 'x:2026-08-12T09:00',
-  ]) {
+  const tx = (fn) => app.database.transactionAsync(fn);
+
+  // These were ALL refused by the first cut's clock regex, and every one of
+  // them is a stable business identity that never moves between two retries.
+  // A generic capability cannot tell a clock from a customer number, so it does
+  // not try: this is the false-positive set the regex cost us.
+  const legitimate = [
+    'customer:1234567890123',        // a 13-digit external customer number
+    'stripe-evt:1712345678901',      // a provider event id
+    'order:9876543210987654',        // a 16-digit order number
+    'phone:3933312345678',           // an E.164-ish identity
+    'meeting:2027-01-31T14:00',      // a business event whose scheduled instant IS its identity
+    'renewal-decision:c1:2027-01-31', // a date-only business round
+  ];
+  for (const sourceKey of legitimate) {
+    const created = await tx(() => createFollowUp(ctx, { ...base, sourceKey }));
+    assert.equal(created.task.sourceKey, sourceKey, sourceKey);
+    // And it is genuinely stable: the identical ask replays rather than opening
+    // a second task, which is the property the regex was standing in for.
+    const again = await tx(() => createFollowUp(ctx, { ...base, sourceKey }));
+    assert.equal(again.replayed, true, sourceKey);
+    assert.equal(again.task.id, created.task.id, sourceKey);
+  }
+  assert.equal(app.modules.get('work-task').service.list().length, legitimate.length);
+
+  // Structural syntax is still the boundary, and it is the whole boundary.
+  for (const sourceKey of ['', '   ', ':leading-colon', 'has space', 'ctrlchar', 'x'.repeat(201)]) {
     await assert.rejects(
-      () => createFollowUp(ctx, { ...base, sourceKey }),
-      (error) => error.status === 400 && /timestamp/.test(error.message),
-      sourceKey,
+      () => tx(() => createFollowUp(ctx, { ...base, sourceKey })),
+      (error) => error.status === 400,
+      JSON.stringify(sourceKey),
     );
   }
-  // A bare calendar date is a real business identity and stays legal.
-  const ok = await createFollowUp(ctx, { ...base, sourceKey: 'follow-up:l1:2026-08-12' });
-  assert.equal(ok.task.sourceKey, 'follow-up:l1:2026-08-12');
-  assert.equal(app.modules.get('work-task').service.list().length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// REVIEW-70: dueAt must name a day that existed
+// ---------------------------------------------------------------------------
+
+test('an impossible due date is refused rather than rolled over to a plausible one', async (t) => {
+  const { context } = await leadProject(t, 'due-at.sqlite');
+  const { app } = context;
+  const { createFollowUp } = await import('../packages/work/src/index.js');
+  const ctx = { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' };
+  const base = {
+    sourceKey: 'due:1', title: 'x', subject: { resource: 'lead', id: 'l1', owner: 'host' },
+    source: { package: 'host', action: 'qualify' },
+  };
+  const tx = (fn) => app.database.transactionAsync(fn);
+
+  // `Date.parse` rolls these to 2027-03-02 and 2027-05-01. Storing a date the
+  // caller never chose, as evidence, with nothing on the row saying it was
+  // invented, is the ADR-028 defect — refused here (ADR-030 addendum 1).
+  for (const dueAt of ['2027-02-30', '2027-02-30T10:00:00.000Z', '2027-04-31', '2025-02-29']) {
+    await assert.rejects(
+      () => tx(() => createFollowUp(ctx, { ...base, dueAt })),
+      (error) => error.status === 400 && /real calendar date/.test(error.message),
+      dueAt,
+    );
+  }
+  assert.equal(app.modules.get('work-task').service.list().length, 0);
+
+  // Real days, in every ISO form, are stored canonically as before.
+  const real = [
+    ['2027-02-28', '2027-02-28T00:00:00.000Z'],
+    ['2024-02-29', '2024-02-29T00:00:00.000Z'],
+    ['2027-03-01T09:30:00+02:00', '2027-03-01T07:30:00.000Z'],
+  ];
+  for (const [index, [dueAt, stored]] of real.entries()) {
+    const created = await tx(() => createFollowUp(ctx, { ...base, sourceKey: `due:real:${index}`, dueAt }));
+    assert.equal(created.task.dueAt, stored, dueAt);
+  }
 });
 
 // ---------------------------------------------------------------------------

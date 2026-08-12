@@ -31,6 +31,9 @@ import { TASK_MODULE, normalizeWorkActor } from './follow-up.js';
  *     is not a mutation, and there is no service left to read through.
  *   - It is **dry-run by default**. `{ apply: true }` writes; anything else
  *     returns the plan and touches nothing.
+ *   - It is **atomic**: the whole adoption runs in one transaction, so a run
+ *     that is killed halfway leaves the database exactly as it found it rather
+ *     than half-forward with a reported count nobody can trust.
  *   - It is **idempotent**: every adopted row is keyed `legacy-task:<id>`, so a
  *     second run adopts nothing twice. The legacy `sourceKey` is *reported* but
  *     not reused, because the new key namespace belongs to the caller's business
@@ -122,32 +125,40 @@ export async function migrateLegacyTasks(context, options = {}) {
   const actor = context.actor;
   const who = normalizeWorkActor(actor);
   const now = typeof context.now === 'function' ? context.now : () => new Date().toISOString();
-  for (const entry of pending) {
-    await service.createManaged({
-      sourceKey: entry.sourceKey,
-      title: typeof entry.row.title === 'string' && entry.row.title.trim() !== '' ? entry.row.title : 'Follow up',
-      status: entry.status,
-      dueAt: entry.row.due_at ?? null,
-      subjectResource,
-      subjectId: String(entry.row.lead_id),
-      subjectOwner: 'host',
-      subjectOwnerPackage: null,
-      subjectLabel: null,
-      sourcePackage: 'host',
-      sourceAction: 'qualify',
-      openedByType: who.type,
-      openedById: who.id,
-      openedAt: entry.row.created_at ?? now(),
-      // A migrated `done` task carries no completion actor or instant, because
-      // the legacy row recorded neither. Inventing one would be inventing
-      // evidence; an absent value is the honest answer.
-      completedBy: null,
-      completedAt: null,
-      cancelledBy: null,
-      cancelledAt: null,
-      closingReason: null,
-    }, { actor });
-    report.adopted += 1;
-  }
+  // **One transaction for the whole adoption.** Row-at-a-time it was merely
+  // idempotent: a crash halfway left a database that was neither the old shape
+  // nor the new one, and an operator reading `adopted` from a killed run had no
+  // way to know how far it got. Atomic *and* idempotent means a run adopted
+  // everything it planned or nothing at all, and re-running after any failure
+  // is always safe.
+  await database.transactionAsync(async () => {
+    for (const entry of pending) {
+      await service.createManaged({
+        sourceKey: entry.sourceKey,
+        title: typeof entry.row.title === 'string' && entry.row.title.trim() !== '' ? entry.row.title : 'Follow up',
+        status: entry.status,
+        dueAt: entry.row.due_at ?? null,
+        subjectResource,
+        subjectId: String(entry.row.lead_id),
+        subjectOwner: 'host',
+        subjectOwnerPackage: null,
+        subjectLabel: null,
+        sourcePackage: 'host',
+        sourceAction: 'qualify',
+        openedByType: who.type,
+        openedById: who.id,
+        openedAt: entry.row.created_at ?? now(),
+        // A migrated `done` task carries no completion actor or instant, because
+        // the legacy row recorded neither. Inventing one would be inventing
+        // evidence; an absent value is the honest answer.
+        completedBy: null,
+        completedAt: null,
+        cancelledBy: null,
+        cancelledAt: null,
+        closingReason: null,
+      }, { actor });
+      report.adopted += 1;
+    }
+  });
   return Object.freeze(report);
 }

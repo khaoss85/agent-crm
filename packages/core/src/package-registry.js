@@ -363,7 +363,10 @@ export class PackageRegistry {
    *
    * `context` carries the caller's runtime handles (its `modules` view), so the
    * capability reads and writes inside the caller's transaction while the
-   * provider keeps its services and tables private.
+   * provider keeps its services and tables private. The registry adds one key
+   * of its own, `consumer`: the resolved consumer identity, so a provider that
+   * records provenance binds the name the registry proved rather than one the
+   * caller retypes in a payload.
    *
    * @param {{consumer: string, capability: string, version: number, context?: any}} request
    */
@@ -391,7 +394,14 @@ export class PackageRegistry {
         { code: 'CAPABILITY_PROVIDER_MISMATCH', status: 500 },
       );
     }
-    const value = offered.entry.create(context);
+    // The registry knows who is asking — it just proved it against the
+    // consumer's own `requires`. Handing that identity to the provider means a
+    // provider that records provenance can bind it to the package the registry
+    // resolved, instead of trusting a name the caller repeats in its payload.
+    // `consumer` always wins: a context that carries its own is overwritten, so
+    // this cannot be spoofed by the caller either. Generic — the registry knows
+    // nothing about what any provider does with it.
+    const value = offered.entry.create({ ...context, consumer });
     if (!value || typeof value !== 'object') {
       throw new AppError(`Capability ${capability}@${version} did not return an interface`, {
         code: 'CAPABILITY_INVALID', status: 500,

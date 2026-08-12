@@ -237,7 +237,15 @@ export function createFollowUpCapability(moduleNames) {
     version: FOLLOW_UP_CAPABILITY.version,
     description:
       'Create exactly one deterministic follow-up task and its creation activity inside the caller\'s transaction, keyed by a business identity the caller supplies.',
-    /** @param {{modules: any, actor?: unknown, now?: () => string}} context */
+    /**
+     * @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string}} context
+     *   `consumer` is added by `PackageRegistry.capability()` from the identity
+     *   it resolved and verified against that package's own declared
+     *   `requires`. It **is** the provenance this capability records: a request
+     *   asserting a different `source.package` is refused 403
+     *   `WORK_SOURCE_PACKAGE_MISMATCH`, so a declared consumer cannot store
+     *   another package's name on work it opened.
+     */
     create(context) {
       const scoped = {
         ...context,
@@ -302,7 +310,7 @@ export function createWorkPackage(options = {}) {
           reopen:
             'not supported in v1. A repeated business round is a new task under a new source key; un-completing work would need a second lifecycle nothing here has',
           dueAt:
-            'evidence only. Nothing schedules on it, nothing fires from it, and no clock changes a status because of it. A read-only due/overdue may be computed at an injected instant and never writes',
+            'evidence only. Nothing schedules on it, nothing fires from it, and no clock changes a status because of it. A read-only due/overdue may be computed at an injected instant and never writes. It must still name a day that existed: an impossible date is refused rather than rolled over to the next real one (ADR-028)',
           assignment:
             'there is no assignee field. This package does not model assignment, ownership or routing, and nothing here is secure assignment',
         },
@@ -310,7 +318,7 @@ export function createWorkPackage(options = {}) {
           kinds: [...ACTIVITY_KINDS],
           appendOnly: 'no action in this package updates or deletes an activity, and the module has no public write path',
           order:
-            'a timeline is read oldest-first by occurredAt. TIMELINE_ORDER_TIES_ARE_ARBITRARY — entries recorded at the same instant have no business order and are broken by created stamp then id, purely so two readers see the same list',
+            'a timeline is read oldest-first by occurredAt, compared by code point and never by host locale collation, so the order does not depend on the machine, the ICU build or LANG. TIMELINE_ORDER_TIES_ARE_ARBITRARY — entries recorded at the same instant have no business order and are broken by created stamp then id, purely so two readers see the same list',
           versusAudit:
             'audit and trace stay the technical record of every write; this is the curated user-facing one with a closed vocabulary. Nothing projects one into the other, and there is no asynchronous projection engine',
           content:
@@ -326,19 +334,28 @@ export function createWorkPackage(options = {}) {
         },
         capability: {
           name: `${FOLLOW_UP_CAPABILITY.capability}@${FOLLOW_UP_CAPABILITY.version}`,
-          transaction: 'created with the caller\'s modules handle, so both rows commit or roll back with the caller\'s own writes',
+          transaction:
+            'created with the caller\'s modules handle, so both rows commit or roll back with the caller\'s own writes. Verified rather than assumed: a call that cannot prove an open transaction on that connection is refused 500 WORK_TRANSACTION_REQUIRED before the first write, so no half pair can be produced by calling it from a script or outside an action',
           hostLimitation:
             'HOST_ACTIONS_CANNOT_DECLARE_CAPABILITIES — PackageRegistry.capability() resolves consumer against registered packages, so a host application action cannot open this capability. The host composes the same exported creator directly from project source; it is the same code, not a second path',
-          provenanceIsAsserted:
-            'source.package and source.action are asserted by the caller, exactly like a capability consumer name. Trusted checked-in source is the security model',
+          sourcePackageIsBound:
+            'source.package is NOT caller text. The registry hands the consumer identity it resolved to the provider, and that identity is what is stored; a consumer asserting a different package is refused 403 WORK_SOURCE_PACKAGE_MISMATCH. A direct host caller has no package identity and may only assert "host"',
+          stillAsserted:
+            'source.action and subject.ownerPackage remain caller-asserted: the registry knows who is calling, not which of that package\'s actions is calling, and the subject may legitimately be owned by a third package. Trusted checked-in source is the security model for those two, and neither is authentication',
         },
         humanApproval:
           'complete, cancel and add-note require actor.type === "user"; an agent actor is refused 403 HUMAN_APPROVAL_REQUIRED. A human-actor boundary, not RBAC and not authentication',
         idempotency: {
           followUp:
-            'the caller supplies a business source key. Same key and same payload returns the existing task and its creation activity; same key with a different title, due date or subject is refused 409 WORK_FOLLOW_UP_CONFLICT naming the fields that differ. A new business round uses a new key and creates a new task',
+            'the caller supplies a business source key. Same key and same payload returns the existing task and its creation activity; same key with any different semantic field is refused 409 WORK_FOLLOW_UP_CONFLICT naming the fields that differ. A new business round uses a new key and creates a new task',
+          semanticIdentity: [
+            'title', 'dueAt', 'subjectResource', 'subjectId', 'subjectOwner', 'subjectOwnerPackage',
+            'sourcePackage', 'sourceAction',
+          ],
+          presentationSnapshot:
+            'subjectLabel only. It is a display snapshot taken at creation, stated as non-authoritative, so a replay whose ONLY difference is a renamed subject is honoured rather than refused. Every other stored fact is identity',
           clock:
-            'a source key containing an ISO-8601 instant or a 13-digit epoch is refused at the boundary: a key that moves every millisecond identifies nothing',
+            'Work applies NO clock heuristic to a source key: it cannot tell a moving key from a stable 13-digit customer id, a provider event id or a business event whose scheduled instant is part of its identity, and refusing those was a false restriction. Key stability is the caller\'s guarantee, derived from a committed record id and proven by that consumer\'s own retry test',
           notes: 'MANUAL_NOTES_ARE_NOT_IDEMPOTENT — a note carries no key, because two identical notes are two statements',
         },
         wording: {
