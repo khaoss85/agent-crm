@@ -7,12 +7,13 @@ import { fileURLToPath } from 'node:url';
 import {
   APPLICATION_FACTS, CATEGORY_FLOOR, COMPOSITION_OBSERVATION_KINDS, EVIDENCE_KINDS,
   EVIDENCE_LIMITATIONS, EVIDENCE_PROBLEM_CODES, IMPLEMENTATION_EVIDENCE_CONTRACT,
-  MAX_EVIDENCE_BYTES, MAX_REFS_PER_REQUIREMENT, MAX_REQUIREMENTS, REQUIREMENT_CATEGORIES,
+  MAX_EVIDENCE_BYTES, MAX_REFS_PER_REQUIREMENT, MAX_REQUIREMENTS, MAX_TEXT, REQUIREMENT_CATEGORIES,
   RUNTIME_OBSERVATION_KINDS, SUFFICIENCY, fingerprintEvidence, implementationEvidenceVocabulary,
   parseImplementationEvidence, validateImplementationEvidence,
 } from '../packages/core/src/implementation-evidence.js';
 import {
-  REQUIREMENT_DIGEST_LENGTH, REQUIREMENT_KINDS, planRequirements, validateSolutionPlan,
+  EXECUTABLE_SHAPES, REQUIREMENT_DIGEST_LENGTH, REQUIREMENT_KINDS, planRequirements,
+  validateSolutionPlan,
 } from '../packages/core/src/solution-plan.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -130,7 +131,7 @@ test('unknown keys are refused at every level, never dropped', () => {
   }
 });
 
-test('executable content is refused in every string, by the same shapes the plan and the scenario use', () => {
+test('executable content is refused in every pointer, by the same shapes the plan and the scenario use', () => {
   const payloads = [
     'run npm test -- --watch',
     'the value is $(whoami)',
@@ -139,14 +140,70 @@ test('executable content is refused in every string, by the same shapes the plan
     '<script>alert(1)</script>',
   ];
   for (const payload of payloads) {
+    // `expects` is a pointer: it is the verbatim string an authority published,
+    // compared for equality. An executable shape there is never legitimate.
     const { problems } = validateImplementationEvidence(document({
       requirements: [{
-        requirementId: 'step:step.one', category: 'manual',
-        evidence: [{ kind: 'manual', describes: payload }],
+        requirementId: 'step:step.one', category: 'behavioural',
+        evidence: [{ kind: 'scenario.observation', scenario: 'demo', observation: 'run.01', expects: payload }],
       }],
     }));
     assert.ok(codesOf(problems).includes('EVIDENCE_EXECUTABLE_CONTENT'), `refused: ${payload}`);
   }
+});
+
+test('the executable-text scan is defence in depth, and says so rather than claiming to be a parser', () => {
+  // Both directions, measured. The scan is a regex over English: it misses
+  // plenty and refuses plenty of ordinary prose. What makes this document safe
+  // to read is its *shape* — no command, script, effect or env field exists in
+  // it, and nothing in this repository executes a string that came out of one.
+  const missed = [
+    'perl -e "system(1)"', 'ruby -e puts', 'make install', 'docker run -it alpine',
+    'powershell -Command Get-Process', 'cmd.exe /c dir', 'kubectl delete pod',
+    'source ~/.bashrc', '. ./setup.sh', '\u202Eexec /bin/sh\u202C',
+  ];
+  const caught = missed.filter((payload) => EXECUTABLE_SHAPES.some((shape) => shape.re.test(payload)));
+  assert.deepEqual(caught, [], 'the scan misses these, which is why it is not the boundary');
+  assert.ok(EVIDENCE_LIMITATIONS.some((row) => row.code === 'EXECUTABLE_TEXT_SCAN_IS_NOT_A_PARSER'),
+    'the limit is published rather than implied');
+
+  // And the shape is: none of these fields exists at any level of the contract.
+  for (const field of ['command', 'script', 'effect', 'env', 'run', 'exec', 'shell']) {
+    const { problems } = validateImplementationEvidence(document({ [field]: 'anything at all' }));
+    assert.ok(codesOf(problems).includes('EVIDENCE_FIELD_UNKNOWN'), `${field} is not part of this contract`);
+  }
+});
+
+test('an author\'s prose may name a command, a URL or a backtick and stay usable', () => {
+  // The refusal used to apply to every string, which made the most natural
+  // explanations in this repository unwritable and pushed an author towards a
+  // vaguer reason. A vaguer reason for a blocked requirement is the worse
+  // outcome: a shell-shaped reason is inert, and an empty one hides a gap.
+  const prose = [
+    '`npm run verify` does not cover this, so nothing here proves it',
+    'a person opens https://example.test/board and reads the column',
+    'the price must render as `${amount}` text, never as markup',
+    '`rm -rf` is never run by this framework, which is why there is nothing to observe',
+    'the check is passed && the doctor is green, and neither says anything about this',
+  ];
+  for (const reason of prose) {
+    const blocked = validateImplementationEvidence(document({
+      requirements: [{ requirementId: 'step:a', category: 'behavioural', evidence: [], blocked: { reason } }],
+    }));
+    assert.equal(blocked.valid, true, `a blocked reason may say: ${reason} -- ${JSON.stringify(blocked.problems)}`);
+
+    const manual = validateImplementationEvidence(document({
+      requirements: [{ requirementId: 'step:a', category: 'manual', evidence: [{ kind: 'manual', describes: reason }] }],
+    }));
+    assert.equal(manual.valid, true, `a manual description may say: ${reason}`);
+  }
+  // Control characters and the bounds still apply to prose.
+  assert.equal(validateImplementationEvidence(document({
+    requirements: [{ requirementId: 'step:a', category: 'behavioural', evidence: [], blocked: { reason: 'a\u0000b' } }],
+  })).valid, false, 'a control character is still refused');
+  assert.equal(validateImplementationEvidence(document({
+    requirements: [{ requirementId: 'step:a', category: 'behavioural', evidence: [], blocked: { reason: 'x'.repeat(MAX_TEXT + 1) } }],
+  })).valid, false, 'the bound is still a refusal');
 });
 
 test('a path is repository-relative and stays inside the project', () => {

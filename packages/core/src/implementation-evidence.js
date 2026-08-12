@@ -26,12 +26,15 @@ import { EXECUTABLE_SHAPES, canonicalJson, toPlainData } from './solution-plan.j
  * design. An author may always say "this is less proven than it looks"; no
  * author may say "this is more proven than the evidence shows".
  *
- * Like a Solution Plan and a scenario, it is **function-free by contract**:
- * there is no command, script, env or effect field anywhere in the shape,
- * unknown keys are refused rather than ignored, every string and list is
- * bounded, and every string is additionally matched against the *same exported*
- * `EXECUTABLE_SHAPES` the other two contracts use — one refusal, one place to
- * fix it.
+ * Like a Solution Plan and a scenario, it is **function-free by contract**, and
+ * the contract is the *shape*: there is no command, script, env, effect or
+ * path-to-execute field anywhere in it, unknown keys are refused rather than
+ * ignored, every string and list is bounded, and nothing in this repository
+ * executes a string that came out of one. Pointer fields are additionally
+ * matched against the *same exported* `EXECUTABLE_SHAPES` the other two
+ * contracts use — one refusal, one place to fix it — but that scan is a regex
+ * over English and is **defence in depth, not the boundary**; see `text()` and
+ * `EXECUTABLE_TEXT_SCAN_IS_NOT_A_PARSER`.
  */
 
 export const IMPLEMENTATION_EVIDENCE_CONTRACT = 1;
@@ -181,6 +184,10 @@ export const EVIDENCE_LIMITATIONS = Object.freeze([
     message: 'nothing here contacts a provider, reads a database, deploys, or observes a live or external system. There is no auth, tenancy or RBAC in this framework, and no deployment or operational readiness is assessed',
   },
   {
+    code: 'EXECUTABLE_TEXT_SCAN_IS_NOT_A_PARSER',
+    message: 'this document is safe to read because of its shape — it has no command, script, effect or env field, and nothing executes a string from it. The additional scan for executable-looking text is a regex over English and is defence in depth only: it does not make any string safe to execute. It misses perl, ruby, make, docker, powershell, cmd, kubectl, `source`, `.`, a bidi override and full-width text, and it refuses ordinary prose that merely names a command, a URL or a backtick. It is applied to pointers, never to an author\'s prose',
+  },
+  {
     code: 'VERIFICATION_SOURCE_TRUSTED',
     message: 'the scenarios and declared suites this command delegates to are checked-in repository source running with the operator\'s authority. Child processes are bounded in time, output and process group — that is isolation, not a sandbox',
   },
@@ -199,8 +206,35 @@ function report(problems, code, path, message) {
   problems.push({ code, path, message });
 }
 
-/** A bounded string with no control characters and no executable shape. */
-function text(value, path, problems, { max = MAX_TEXT, required = true } = {}) {
+/**
+ * A bounded string with no control characters, and — for a **pointer** — no
+ * executable shape.
+ *
+ * **Where the boundary actually is.** This document is safe to read because of
+ * its *shape*: there is no command, script, effect, env or path-to-execute field
+ * anywhere in `implementationEvidenceContract 1`, nothing in this repository
+ * executes a string that came out of one, and every field is either a closed
+ * vocabulary, an identifier, a digest, a repository path or prose. The
+ * `EXECUTABLE_SHAPES` scan is **defence in depth on top of that**, and it is a
+ * regex over English: it is not a parser, it does not make any string safe to
+ * execute, and nothing may be built on the assumption that it did. Its measured
+ * limits are published as `EXECUTABLE_TEXT_SCAN_IS_NOT_A_PARSER`.
+ *
+ * So it is applied where an executable shape is never legitimate — an
+ * identifier, a check code, a scenario id, a repository path, and the verbatim
+ * `expects` string an authority published — and **not** to the three free-prose
+ * fields (`blocked.reason`, `partial.reason`, `manual.describes`) or to an
+ * author's limitation message. Those carry no pointer semantics, are compared
+ * to nothing, resolve to nothing and are echoed only into JSON. Scanning them
+ * bought no safety and refused the exact sentences this contract exists to
+ * elicit: "`npm run verify` does not cover it", "a person opens
+ * https://example.test/board and reads the column", "the price must render as
+ * `${amount}` text, not as markup" and "`rm -rf` is never run here" were all
+ * refused, which pushes an author towards a vaguer reason for a blocked
+ * requirement. A vaguer reason is a worse outcome than a shell-shaped one,
+ * because a shell-shaped one is inert.
+ */
+function text(value, path, problems, { max = MAX_TEXT, required = true, prose = false } = {}) {
   if (value === undefined || value === null) {
     if (required) report(problems, 'EVIDENCE_FIELD_INVALID', path, 'is required');
     return null;
@@ -221,11 +255,13 @@ function text(value, path, problems, { max = MAX_TEXT, required = true } = {}) {
     report(problems, 'EVIDENCE_FIELD_INVALID', path, 'must not contain control characters');
     return null;
   }
-  for (const shape of EXECUTABLE_SHAPES) {
-    if (shape.re.test(value)) {
-      report(problems, 'EVIDENCE_EXECUTABLE_CONTENT', path,
-        `must not contain ${shape.name}. An evidence document names where to look; it never carries something to run`);
-      return null;
+  if (!prose) {
+    for (const shape of EXECUTABLE_SHAPES) {
+      if (shape.re.test(value)) {
+        report(problems, 'EVIDENCE_EXECUTABLE_CONTENT', path,
+          `must not contain ${shape.name}. An evidence document names where to look; it never carries something to run`);
+        return null;
+      }
     }
   }
   return value;
@@ -432,7 +468,7 @@ function downgrade(value, path, problems, missingCode) {
   if (value === undefined || value === null) return null;
   const row = object(value, path, problems, { allowed: ['reason'] });
   if (row === null) return null;
-  const reason = text(row.reason, `${path}.reason`, problems, { required: false });
+  const reason = text(row.reason, `${path}.reason`, problems, { required: false, prose: true });
   if (reason === null) {
     report(problems, missingCode, `${path}.reason`,
       'is required. A downgrade with no reason is a requirement abandoned quietly, which is the outcome this contract exists to make visible');
@@ -498,7 +534,7 @@ const REFERENCE_SHAPES = Object.freeze({
   manual: (entry, path, problems) => {
     const row = object(entry, path, problems, { allowed: ['kind', 'describes'] });
     if (row === null) return null;
-    return { describes: text(row.describes, `${path}.describes`, problems) ?? '' };
+    return { describes: text(row.describes, `${path}.describes`, problems, { prose: true }) ?? '' };
   },
   'package.conformance': (entry, path, problems) => {
     const row = object(entry, path, problems, { allowed: ['kind', 'package'] });
@@ -572,7 +608,7 @@ function normalizeLimitations(value, problems) {
         report(problems, 'EVIDENCE_FIELD_INVALID', `${path}.code`,
           'must be an upper-case code, so a limitation can be switched on rather than read');
       }
-      return { code: code ?? '', message: text(row.message, `${path}.message`, problems) ?? '' };
+      return { code: code ?? '', message: text(row.message, `${path}.message`, problems, { prose: true }) ?? '' };
     })
     .filter(Boolean)
     .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
