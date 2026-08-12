@@ -21,6 +21,48 @@ crm project verify   can we PROVE the project is healthy?          expensive
 crm scenario run     which business jobs does this checkout earn?  this
 ```
 
+## Two consumers, and what the second one changed
+
+A generic contract validated by exactly one consumer is not generic. It is a
+shape fitted to that consumer, wearing a version number.
+
+`scenarioRunContract: 1` shipped with one scenario — `lead-to-won`, a sales
+funnel. The second one, `service-sla-escalation`, was written specifically to be
+*unlike* it: Service is package-native, has a declared state machine, real clock
+semantics and immutable evidence records, and its load-bearing outcomes are
+states rather than counts. Three things broke, and each was something contract 1
+had got wrong rather than merely lacked.
+
+| What contract 1 did | Why nobody noticed | What contract 2 does |
+|---|---|---|
+| journey evidence was **numeric only** (`journey.count`) | a funnel is countable in every part that matters — three leads, one won | `journey.fact` observes a **stated outcome**: `at_risk`, `breached`, `false`. `slaEvaluations: 2` is equally true of a run that recorded the wrong answer twice |
+| the report never said **which clock** produced the evidence | nothing in a funnel is a function of the current instant | `journey.clock` is published from the frozen registry. An SLA state is a function of the clock and of nothing else |
+| `limitations[]` was a **single global list** | with one journey, every limitation was true of every run | limitations carry a `scope`, and a journey declares its own. "No business-hours calendar" is meaningless for a lead funnel; "no external enrichment provider" is meaningless for a support case |
+
+Four things did **not** change, and the second consumer is the reason we can say
+so rather than assume it:
+
+- **the document contract stayed at `scenarioContract: 1`.** A vocabulary gained
+  an entry; nothing existing changed meaning, and every v1 scenario still
+  validates. The **report** contract moved to `2`, because the report gained
+  fields and every fingerprint moved with them — a consumer diffing fingerprints
+  across that boundary deserves to be told rather than to discover it.
+- **no `requires` block.** Service needs the contracts package and the
+  capability `contracts/service-obligations@1`, and it states that as
+  `package.composed` and `capability.available` *observations that must pass* —
+  answered by AX1, failing closed. A prerequisites block would be a second way
+  to say the same thing, and worse: a precondition invites "skip if unmet",
+  which turns a failure into silence.
+- **no record-graph query.** "The escalation cites the SLA evaluation it was
+  raised on" is a link between two records, and the contract does not learn to
+  traverse them. The journey — trusted, checked-in source — asserts the link and
+  publishes it as one fact. A query language over records is exactly the slope
+  that ends in an executable format.
+- **no negation operator.** "Nobody was notified" is published as
+  `escalationNotified = false` and observed as `false`, not as an assertion that
+  something is absent. A run can earn an absence by never attempting the
+  operation; the service journey attempts every refusal it reports.
+
 ## What it is not
 
 **It is not a second test runner.** It runs no suite, grades no package and
@@ -74,10 +116,11 @@ there; anything with a path separator is treated as an explicit path.
 ```
 
 - **`journey`** names, by id, the thing the runner executes. Ids resolve against
-  a frozen registry in the runner's own source — today one entry, the checked-in
-  B2B lead-qualification starter installer that CI already runs on every push.
-  Reusing it means DX6 introduces no second, weaker authority on what the CRM
-  does: the installer's in-process assertions stay the strong claim.
+  a frozen registry in the runner's own source — today two entries, both
+  checked-in repository source that CI runs. A journey is a *stronger* authority
+  than DX6, never a weaker one: its own in-process assertions are the claim, and
+  DX6 adds the mapping nobody has. The registry, not the document, also declares
+  the journey's **clock** and the journey's **own limitations**.
 - **`steps`** are the business narrative, in order. Each declares observations.
 - **`claims`** map JTBD ids, resolved against `jobs.json`, to the steps that are
   their evidence. A claim is `established` only when *every* observation in
@@ -125,6 +168,7 @@ Closed, and owned by the runner rather than the document — the same discipline
 |---|---|---|
 | `journey.completed` | journey | the journey ran to completion and reported success |
 | `journey.count` | journey | a numeric metric the journey reported (`atLeast` or `equals`, exactly one) |
+| `journey.fact` | journey | a **stated outcome** the journey reported (`fact` and `is`), compared exactly |
 | `package.composed` | `app inspect` | the composed application includes this domain package |
 | `resource.present` | `app inspect` | a domain package in this composition owns this resource |
 | `module.present` | `app inspect` | the composition has this record module (a project's own, or package-owned) |
@@ -136,11 +180,44 @@ Closed, and owned by the runner rather than the document — the same discipline
 Composition facts are taken **verbatim** from the AX1 report. Nothing an
 upstream authority already resolved is recomputed here.
 
+**Which authority answers what** is the line the second consumer made explicit.
+`app inspect` answers *what this application is* — read from checked-in source,
+opening no database and contacting no provider. The journey answers *what
+happened when it ran* — the only channel for a runtime fact, because AX1 by
+construction cannot see one. `journey.count` and `journey.fact` are that channel:
+counts for how many, facts for which. Audit, event and trace facts belong there
+too, as counts the journey publishes about the application it drove
+(`auditEvents`, `workflowRuns`); the contract does **not** grow an authority that
+opens the journey's database, because a second reader of runtime state is a
+second thing to keep honest.
+
+### `journey.fact`, and the rule that keeps prose out
+
+A fact is a **boolean**, or a string that is one lower-case token of at most 64
+characters (`/^[a-z][a-z0-9_]{0,63}$/`). Booleans are published as `true` /
+`false`, so one closed grammar covers every fact and a document never carries a
+JSON type. A summary sentence has spaces, capitals and length, so it is excluded
+*by construction* rather than by a denylist somebody has to maintain — and a
+shell command, a URL, a path and a command substitution are all refused twice,
+once by that grammar and once by `EXECUTABLE_SHAPES`.
+
+```json
+{ "kind": "journey.fact", "fact": "firstResponseStateAtDueInstant", "is": "at_risk" }
+{ "kind": "journey.fact", "fact": "escalationNotified", "is": "false" }
+```
+
 ## The report
 
-`scenarioRunContract: 1`, canonically ordered, with `scenario`, `status`,
+`scenarioRunContract: 2`, canonically ordered, with `scenario`, `status`,
 `counts`, `journey`, `composition`, `steps`, `observations`, `jtbd`,
 `promotion`, `problems`, `limitations` and a semantic `fingerprint`.
+
+`journey` carries `clock` (`wall-clock` or `injected-fixed`, from the registry),
+`metrics` and `facts`. `limitations` entries carry `scope`: `global` for what is
+true of every run, `journey` for what the journey that ran declares about
+itself. A journey may **add** to what a run does not prove; it may never
+subtract, and a scenario document may do neither — there is no field in the
+shape that could hold a limitation.
 
 ```text
 exit 0   the scenario ran and every claim is established
@@ -175,7 +252,7 @@ does not exist, a metric the journey never reported, a capability that is
 declared but unresolved — each fails the run rather than passing by having
 nothing to check.
 
-### What it does not prove — published on every run
+### What it does not prove — global, published on every run
 
 | Code | Means |
 |---|---|
@@ -188,36 +265,116 @@ nothing to check.
 | `NO_PROVIDER_CONTACTED` | offline by construction; every provider in the journey is a checked-in fixture |
 | `PRODUCTION_READINESS_NOT_ASSESSED` | no auth, tenancy or RBAC exists, and nothing here assesses deployment or operational readiness |
 
-## A worked run
+### What the journey does not prove — journey-scoped
+
+| Journey | Codes |
+|---|---|
+| `b2b-lead-qualification` | `JOURNEY_CLOCK_IS_WALL_CLOCK`, `ENRICHMENT_PROVIDER_IS_A_FIXTURE` |
+| `service-sla-escalation` | `SLA_IS_ELAPSED_TIME_NOT_A_CONTRACTUAL_JUDGEMENT`, `NOTHING_WAS_NOTIFIED_OR_ROUTED`, `ESCALATION_IS_MANUALLY_RECORDED`, `SERVICE_COVERAGE_IS_NOT_A_CONTRACT` |
+
+No code appears in more than one list — not in both journeys, and not shadowing a
+global one. A limitation true of both journeys belongs in the global set; a
+limitation true of neither is noise that teaches a reader to skip the ones that
+matter; and one code with two messages is a report that contradicts itself. All
+three are test-pinned, as is the rule that every registered journey declares a
+clock and at least one limitation of its own.
+
+## Two worked runs
 
 ```console
 $ npm run crm -- scenario run lead-to-won --json
 ```
 
-The shipped scenario runs the B2B starter journey and claims fifteen rows across
-capture, qualification, conversion, pipeline, enrichment, scoring, routing,
-quoting, discount approval, signature and order, contract activation, delivery
-handover, custom-package authoring, cross-package capability and application
-discovery. It reports **fifteen established** and **one hundred and thirty-four
-not established**, sectioned.
+The first scenario runs the B2B starter journey on the **wall clock** and claims
+fifteen rows across capture, qualification, conversion, pipeline, enrichment,
+scoring, routing, quoting, discount approval, signature and order, contract
+activation, delivery handover, custom-package authoring, cross-package capability
+and application discovery. It reports **fifteen established** and **one hundred
+and thirty-four not established**, sectioned, over a composition of six packages.
 
 One of the fifteen — `JTBD-CS-01`, contract activation — is recorded as
 *partially supported*, and stays that way. The run shows the activation
 happening; the row's missing part (a pre-signature term snapshot) is not
 something a run can supply, and only a person may move a status.
 
+```console
+$ npm run crm -- scenario run service-sla-escalation --json
+```
+
+The second runs the service journey on an **injected, stepped clock**, over a
+composition of **two** packages — `contracts` and `service`, and nothing else,
+which is what "Service reaches contracts only through a declared capability"
+looks like when it is demonstrated instead of asserted. It claims five rows and
+reports **five established** and **one hundred and forty-four not established**.
+
+Its centre is three instants:
+
+```text
+openedAt                     2026-09-15T11:00:00.000Z
+firstResponseDueAt           2026-09-15T15:00:00.000Z   openedAt + 240 minutes
+  evaluated at the due instant        firstResponseState = at_risk
+  evaluated one millisecond later     firstResponseState = breached
+```
+
+That boundary is the reason the journey injects a clock. `evaluateSla()` reads
+`now()` and exposes no `at` parameter, so on the wall clock the boundary is four
+hours away and no run can ever reach it. A regression turning `now > due` into
+`now >= due` changes a business outcome and nothing else, and this is the only
+run in the repository that fails on it.
+
+Both service rows it claims — `JTBD-DS-11` and `JTBD-DS-12` — are recorded as
+*partially supported* and stay that way. What the run shows is real; what it does
+not show is published in the journey's own limitations, including that **nothing
+was notified, routed or billed** — each of those a fact the journey states as
+`false` and the scenario observes as `false`, because a refusal a run could earn
+by never attempting the operation is worth nothing.
+
 ## Adding a scenario
 
 Write `examples/scenarios/<id>.scenario.json`, claim only rows the journey
 genuinely exercises, and run it. No code changes. A *new journey* does need a
 registry entry in `packages/cli/src/scenario-journey.js`, deliberately: that is
-the boundary that keeps a document from naming something to run.
+the boundary that keeps a document from naming something to run. A new journey
+also declares its **clock** and its **own limitations** there, for the same
+reason — a document that could choose the instant could choose the one where the
+breach disappears, and a document that could write its own limitations could
+write a shorter list.
+
+## Relationship to `crm project verify` (DX5)
+
+`crm project verify` **does not run scenarios**, and that was re-examined when
+the second one landed. It stays a separate, explicit command, and DX5 keeps
+publishing `SCENARIO_EVIDENCE_NOT_RUN`.
+
+The alternative considered was a bounded applicability contract — scenarios
+declaring themselves `required` or `current`, the way Solution Plans do, so DX5
+could run the declared ones. It is refused for now:
+
+- each scenario composes a **whole application** of its own, so the cost is
+  minutes per scenario and grows with every one a project adds. Making the
+  cheap-to-reason-about command silently multi-minute is the opposite of what
+  it is for;
+- a declaration vocabulary is a new agent-facing contract, and the DX Simplicity
+  Gate asks which *failure mode* it prevents rather than which capability it
+  adds;
+- the failure mode it would prevent — "somebody forgot to run the scenario" — is
+  already named in machine-readable form by `SCENARIO_EVIDENCE_NOT_RUN`, which a
+  caller can switch on today.
+
+What would change the answer: a scenario registry with declared applicability
+that exists for reasons other than DX5, or DX10 arriving and making a single
+final proof genuinely complete.
 
 ## Related
 
+`DECISIONS.md` ADR-029 (why a second consumer is validation work, and why a
+consumer-specific bound is declared where the consumer is) ·
 `docs/QUALITY_GATES.md` (§3, the status vocabulary and who may change it) ·
 `docs/benchmarks/CRM_JTBD_MATRIX.md` · `docs/APPLICATION_INSPECTION.md` (AX1) ·
 `docs/SOLUTION_PLAN.md` (AX2) · `docs/CODER_TOOLING_ROADMAP.md` ·
 `docs/plans/dx6-scenario-runner.md` (the ExecPlan, with the eight DX Simplicity
-Gate answers) · `tests/scenario-document.test.js` ·
-`tests/scenario-run.test.js`.
+Gate answers) · `docs/plans/dx6-second-scenario.md` (the second consumer, and
+what it changed) · `docs/SERVICE_OPERATIONS.md` (what Service does and,
+crucially, does not do) · `tests/scenario-document.test.js` ·
+`tests/scenario-run.test.js` ·
+`examples/journeys/service-sla-escalation/journey.mjs`.

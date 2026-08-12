@@ -9,7 +9,9 @@ import {
   CLAIM_OUTCOMES, JOBS_PATH, LIMITATIONS, OBSERVATION_STATUSES, SCENARIO_RUN_CONTRACT,
   indexComposition, loadJobsIndex, planValid, resolveScenarioArgument, scenarioRunCommand,
 } from '../packages/cli/src/scenario-run-command.js';
-import { JOURNEYS, RECURSION_ENV, journeyMetrics, parseTrailingJson, runJourney } from '../packages/cli/src/scenario-journey.js';
+import {
+  JOURNEYS, MAX_FACT_VALUE, RECURSION_ENV, journeyFacts, journeyMetrics, parseTrailingJson, runJourney,
+} from '../packages/cli/src/scenario-journey.js';
 import { safeMessage } from '../packages/cli/src/safe-text.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -151,7 +153,16 @@ test('a passing run still publishes what it does not prove, and promotes nothing
   ]) {
     assert.ok(codes.includes(required), `${required} must be published even on a pass`);
   }
-  assert.deepEqual(codes, LIMITATIONS.map((limitation) => limitation.code));
+  // Global first, then the journey's own. A journey may add to what a run does
+  // not prove; it may never subtract, and a document may do neither.
+  assert.deepEqual(
+    report.limitations.filter((limitation) => limitation.scope === 'global').map((limitation) => limitation.code),
+    LIMITATIONS.map((limitation) => limitation.code),
+  );
+  assert.deepEqual(
+    report.limitations.filter((limitation) => limitation.scope === 'journey').map((limitation) => limitation.code),
+    JOURNEYS['b2b-lead-qualification'].limitations.map((limitation) => limitation.code),
+  );
 
   assert.equal(report.promotion.performed, false);
   assert.equal(report.promotion.authority, 'human');
@@ -260,6 +271,140 @@ test('a metric the journey never reported fails loudly instead of passing vacuou
   assert.equal(observation.status, 'failed');
   assert.equal(observation.actual, 'not reported');
   assert.match(observation.reason, /no numeric metric "invoices"/);
+});
+
+// --- what the SECOND consumer changed -----------------------------------------
+//
+// A generic contract validated by one consumer is a shape fitted to that
+// consumer. These are the three things contract 1 got wrong, each found by
+// making the runner serve a Service scenario instead of a sales funnel.
+
+test('a stated fact the journey reported is observed exactly, not counted', async (t) => {
+  // `journey.count` can say a run recorded two SLA evaluations. It cannot say
+  // either of them said the right thing, and "two" is equally true of a run that
+  // recorded the wrong answer twice.
+  const root = project(t, scenario({
+    steps: [{
+      id: 'compose',
+      narrative: 'n',
+      observe: [
+        { kind: 'journey.completed' },
+        { kind: 'journey.fact', fact: 'slaState', is: 'breached' },
+        { kind: 'journey.fact', fact: 'notified', is: 'false' },
+      ],
+    }],
+    claims: [{ job: 'JTBD-04', steps: ['compose'], note: 'n' }],
+  }));
+  const { exitCode, report } = await run(root, {
+    journey: recordingJourney([], {
+      receipt: { ok: true, slaState: 'breached', notified: false, summary: 'A sentence a person reads.' },
+    }),
+  });
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(report.jtbd.established, ['JTBD-04']);
+  assert.equal(report.observations.find((entry) => entry.code === 'compose.02').actual, 'slaState = breached');
+  // A boolean is published as a token, so one closed grammar covers every fact
+  // and a document never has to carry a JSON type.
+  assert.equal(report.observations.find((entry) => entry.code === 'compose.03').actual, 'notified = false');
+  // Prose stays out of the evidence: a summary would move the fingerprint every
+  // time somebody improved a sentence.
+  assert.equal('summary' in report.journey.facts, false);
+});
+
+test('a fact the journey stated differently fails, and a fact nobody stated fails harder', async (t) => {
+  const root = project(t, scenario({
+    steps: [
+      { id: 'wrong', narrative: 'n', observe: [{ kind: 'journey.fact', fact: 'slaState', is: 'met' }] },
+      { id: 'absent', narrative: 'n', observe: [{ kind: 'journey.fact', fact: 'refunded', is: 'true' }] },
+    ],
+    claims: [{ job: 'JTBD-04', steps: ['wrong'], note: 'n' }, { job: 'JTBD-05', steps: ['absent'], note: 'n' }],
+  }));
+  const { exitCode, report } = await run(root, {
+    journey: recordingJourney([], { receipt: { ok: true, slaState: 'breached' } }),
+  });
+
+  assert.equal(exitCode, 1);
+  assert.deepEqual(report.jtbd.established, []);
+  const wrong = report.observations.find((entry) => entry.code === 'wrong.01');
+  assert.equal(wrong.status, 'failed');
+  assert.equal(wrong.actual, 'slaState = breached');
+  assert.match(wrong.reason, /stated a different outcome/);
+  const absent = report.observations.find((entry) => entry.code === 'absent.01');
+  assert.equal(absent.status, 'failed');
+  assert.equal(absent.actual, 'not reported');
+  assert.match(absent.reason, /no stated fact "refunded"/);
+});
+
+test('the report says which clock produced the evidence, and the document cannot choose it', async (t) => {
+  // An SLA state is a function of the clock and of nothing else, so a report that
+  // omits the clock is a number with a story attached. It comes from the frozen
+  // registry: a document that could name the instant could name the one where the
+  // breach disappears.
+  const root = project(t, scenario({
+    steps: [{ id: 'compose', narrative: 'n', observe: [{ kind: 'journey.completed' }, { kind: 'journey.fact', fact: 'clock', is: 'stepped' }] }],
+    claims: [{ job: 'JTBD-04', steps: ['compose'], note: 'n' }],
+  }));
+  const { report } = await run(root, { journey: recordingJourney([], { receipt: { ok: true, clock: 'stepped' } }) });
+
+  assert.equal(report.journey.clock.mode, JOURNEYS['b2b-lead-qualification'].clock.mode);
+  assert.equal(report.journey.clock.mode, 'wall-clock');
+  assert.ok(report.journey.clock.describes.length > 0);
+  // And the registry has one journey that steps a clock and one that does not,
+  // because a clock field with one value proves nothing.
+  assert.deepEqual(
+    [...new Set(Object.values(JOURNEYS).map((entry) => entry.clock.mode))].sort(),
+    ['injected-fixed', 'wall-clock'],
+  );
+});
+
+test('a journey publishes its own limitations, and cannot subtract a global one', async (t) => {
+  const root = project(t);
+  const { report } = await run(root, { journey: recordingJourney([]) });
+
+  const globals = report.limitations.filter((entry) => entry.scope === 'global').map((entry) => entry.code);
+  const own = report.limitations.filter((entry) => entry.scope === 'journey').map((entry) => entry.code);
+  assert.deepEqual(globals, LIMITATIONS.map((entry) => entry.code));
+  assert.deepEqual(own, JOURNEYS['b2b-lead-qualification'].limitations.map((entry) => entry.code));
+  assert.equal(report.limitations.length, globals.length + own.length);
+  // The two registered journeys must not publish the same journey-scoped codes:
+  // a limitation true of both belongs in the global list, and one true of
+  // neither is noise a reader learns to skip.
+  const lead = new Set(JOURNEYS['b2b-lead-qualification'].limitations.map((entry) => entry.code));
+  for (const entry of JOURNEYS['service-sla-escalation'].limitations) {
+    assert.equal(lead.has(entry.code), false, `${entry.code} is claimed by both journeys`);
+  }
+  // …and no journey may shadow a global code either. Two entries with one code
+  // and two messages is a report that contradicts itself, and the reader has no
+  // way to tell which one the run meant.
+  const globalCodes = new Set(LIMITATIONS.map((entry) => entry.code));
+  for (const journey of Object.values(JOURNEYS)) {
+    for (const entry of journey.limitations) {
+      assert.equal(globalCodes.has(entry.code), false, `${entry.code} shadows a global limitation`);
+    }
+    // Every journey declares a clock and at least one limitation of its own:
+    // a journey that says nothing about itself is one nobody checked.
+    assert.ok(journey.clock?.mode, 'every journey declares its clock');
+    assert.ok(journey.limitations.length > 0, 'every journey declares what it does not prove');
+  }
+});
+
+test('a scenario cannot declare its own limitations, and a shorter list is refused as an unknown field', async (t) => {
+  // Every incentive points at a document writing itself a weaker disclaimer, so
+  // the shape has no field that could hold one.
+  const calls = [];
+  const root = project(t, { ...scenario(), limitations: [] });
+  const { exitCode, report } = await run(root, { journey: recordingJourney(calls) });
+  assert.equal(exitCode, 1);
+  assert.ok(report.problems.some((problem) => problem.code === 'SCENARIO_FIELD_UNKNOWN'
+    && problem.path === 'scenario.limitations'));
+  assert.equal(calls.length, 0, 'a document with a problem never starts a journey');
+  // The refusal still publishes the full list, scoped. Nothing a document says
+  // can shorten it: the only place a limitation comes from is checked-in source.
+  assert.deepEqual(
+    report.limitations.filter((entry) => entry.scope === 'global').map((entry) => entry.code),
+    LIMITATIONS.map((entry) => entry.code),
+  );
 });
 
 test('a claim for a row the index does not have is unresolved and fails closed', async (t) => {
@@ -544,6 +689,27 @@ test('a receipt is the last balanced JSON document, and only numbers become evid
   assert.deepEqual(journeyMetrics(JSON.parse('{"__proto__":1,"leads":2}')), { leads: 2 });
 });
 
+test('a stated fact is a token or a boolean; a sentence is not, and neither is a number', () => {
+  // The rule that keeps prose out is structural, not a denylist somebody has to
+  // maintain: a summary has spaces, capitals and length, so it is excluded by
+  // construction. Numbers stay in `metrics`, so the two channels never overlap.
+  assert.deepEqual(
+    journeyFacts({
+      slaState: 'breached', notified: false, escalated: true, leads: 3,
+      summary: 'A whole sentence, which a person reads.',
+      shouty: 'Breached', spaced: 'at risk', dashed: 'at-risk',
+      long: 'a'.repeat(MAX_FACT_VALUE + 1), nested: { a: 1 },
+    }),
+    { escalated: 'true', notified: 'false', slaState: 'breached' },
+  );
+  assert.deepEqual(journeyFacts(JSON.parse('{"__proto__":"x","state":"closed"}')), { state: 'closed' });
+  assert.deepEqual(journeyFacts(null), {});
+  // Nothing that reads as a command can survive the grammar either.
+  for (const hostile of ['npm test', '$(id)', 'a;b', 'http://x', '../etc']) {
+    assert.deepEqual(journeyFacts({ f: hostile }), {}, hostile);
+  }
+});
+
 // --- DX5 defect 2: never recompute what an authority already resolved --------------
 
 test('composition facts are taken verbatim from the AX1 report', async () => {
@@ -636,6 +802,79 @@ test('the shipped scenario runs for real, and earns exactly what it claims', { t
   const published = JSON.parse(readFileSync(join(repoRoot, 'docs/benchmarks/jobs.json'), 'utf8'));
   const status = new Map(published.jobs.map((job) => [job.id, job.status]));
   assert.equal(status.get(partial.job), 'partially supported', 'the index must be untouched by the run');
+});
+
+test('the second shipped scenario runs for real, on a stepped clock', { timeout: 600_000 }, async () => {
+  const { exitCode, report } = await scenarioRunCommand({
+    scenarioRef: 'service-sla-escalation', rootDir: repoRoot, out: () => {}, err: () => {},
+  });
+
+  assert.equal(exitCode, 0, `the shipped service scenario must pass: ${JSON.stringify(report?.problems)}`);
+  assert.equal(report.status, 'passed');
+  assert.equal(report.journey.completed, true);
+  assert.equal(report.composition.valid, true);
+
+  // The boundary this journey exists for: the same unanswered case, one
+  // millisecond apart, is not-yet-late and then late. A wall-clock journey can
+  // never witness it, which is why the clock is a registry fact and is published.
+  assert.equal(report.journey.clock.mode, 'injected-fixed');
+  assert.equal(report.journey.facts.firstResponseStateAtDueInstant, 'at_risk');
+  assert.equal(report.journey.facts.firstResponseStateOneMsLater, 'breached');
+
+  // And the claims a support tool must never make, published as facts and
+  // observed as false rather than left unsaid.
+  for (const claim of ['escalationRouted', 'escalationNotified', 'firstResponseNotificationSent', 'caseBilled']) {
+    assert.equal(report.journey.facts[claim], 'false', claim);
+  }
+
+  // A materially different composition from the first scenario's: two packages,
+  // not six. `EVIDENCE_IS_ONE_COMPOSITION` has always claimed this mattered and
+  // nothing until now showed two.
+  assert.deepEqual(report.composition.packages, ['contracts', 'service']);
+  assert.ok(report.limitations.some((entry) => entry.scope === 'journey'
+    && entry.code === 'SLA_IS_ELAPSED_TIME_NOT_A_CONTRACTUAL_JUDGEMENT'));
+
+  // It promotes nothing either: both service rows are recorded as partially
+  // supported and stay that way.
+  assert.equal(report.promotion.performed, false);
+  const published = JSON.parse(readFileSync(join(repoRoot, 'docs/benchmarks/jobs.json'), 'utf8'));
+  const status = new Map(published.jobs.map((job) => [job.id, job.status]));
+  for (const row of ['JTBD-DS-11', 'JTBD-DS-12']) {
+    assert.equal(report.jtbd.claims.find((claim) => claim.job === row).outcome, 'established');
+    assert.equal(status.get(row), 'partially supported', `${row} must be untouched by the run`);
+  }
+});
+
+test('the two shipped scenarios agree on the contract and disagree on everything else', { timeout: 900_000 }, async () => {
+  // The point of a second consumer: if the two runs were the same shape, the
+  // contract would still be validated by one.
+  const runs = [];
+  for (const id of ['lead-to-won', 'service-sla-escalation']) {
+    const { report } = await scenarioRunCommand({ scenarioRef: id, rootDir: repoRoot, out: () => {}, err: () => {} });
+    runs.push(report);
+  }
+  const [lead, service] = runs;
+
+  assert.equal(lead.scenarioRunContract, service.scenarioRunContract);
+  assert.notEqual(lead.journey.clock.mode, service.journey.clock.mode);
+  assert.notEqual(lead.composition.compositionFingerprint, service.composition.compositionFingerprint);
+  assert.notEqual(lead.fingerprint, service.fingerprint);
+  assert.notDeepEqual(lead.composition.packages, service.composition.packages);
+
+  // The lead journey is countable and the service journey is not: the first
+  // earns its rows on numbers, the second on stated outcomes. That asymmetry is
+  // the whole reason `journey.fact` exists.
+  const kinds = (report) => new Set(report.observations.map((entry) => entry.kind));
+  assert.equal(kinds(lead).has('journey.count'), true);
+  assert.equal(kinds(lead).has('journey.fact'), false);
+  assert.equal(kinds(service).has('journey.fact'), true);
+
+  // Neither run's established rows are a superset of the other's: two consumers,
+  // two slices of the matrix.
+  const leadRows = new Set(lead.jtbd.established);
+  const serviceRows = new Set(service.jtbd.established);
+  assert.ok([...serviceRows].some((row) => !leadRows.has(row)), 'the service run earns rows the lead run does not');
+  assert.ok([...leadRows].some((row) => !serviceRows.has(row)), 'and the other way round');
 });
 
 // --- the project boundary is canonical, not lexical ---------------------------

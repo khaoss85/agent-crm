@@ -1,0 +1,154 @@
+{
+  "scenarioContract": 1,
+  "id": "service-sla-escalation",
+  "title": "A support case misses its first-response target, and a human escalates on the evidence",
+  "summary": "One operational support process, driven end to end against a real composed application holding the contracts and service packages and nothing else. A signed order activates into a commercial contract raising one pending service obligation; a human turns that obligation into an operational ServiceCoverage with an immutable Entitlement under a fingerprinted versioned policy, refusing an ambiguous classification and an agent actor rather than defaulting either; a covered support case is opened on an injected clock and its first-response SLA is observed at the due instant and one millisecond later; the missed target is recorded as immutable evidence about a stated instant, explicitly not a contractual determination; a human records an escalation citing that evidence, which routes to nobody and notifies nobody; and the case resolves and closes over the declared transition table while no commercial row moves. Each step names the JTBD rows it exercises; every other row in the index is reported as not established.",
+  "journey": "service-sla-escalation",
+  "steps": [
+    {
+      "id": "compose",
+      "narrative": "The checked-in service journey composes an application from manifests through the real module factory and drives the whole process in one application, asserting each guarantee and each refusal as it goes. Every claim below cites this step, so a journey that does not complete establishes nothing.",
+      "observe": [
+        { "kind": "journey.completed" }
+      ]
+    },
+    {
+      "id": "compose-narrowly",
+      "narrative": "The composition is contracts plus service and nothing else. Service imports nothing from contracts and reaches it only through the declared capability, so an application without the delivery package, without intelligence and without a Lead module is the honest demonstration of that boundary rather than an assertion about it.",
+      "observe": [
+        { "kind": "package.composed", "package": "contracts" },
+        { "kind": "package.composed", "package": "service" },
+        { "kind": "capability.available", "capability": "service-obligations", "version": 1 },
+        { "kind": "resource.present", "resource": "service-obligation" }
+      ]
+    },
+    {
+      "id": "activate-coverage",
+      "narrative": "The contract's one pending service obligation becomes an operational ServiceCoverage with an immutable Entitlement, under a versioned activation policy whose version is fingerprinted. A ServiceCoverage is not a second contract: nobody signed it, and the activation amends no commercial record.",
+      "observe": [
+        { "kind": "action.present", "action": "commercial-contract.plan-service-activation" },
+        { "kind": "action.present", "action": "commercial-contract.activate-service" },
+        { "kind": "resource.present", "resource": "service-coverage" },
+        { "kind": "resource.present", "resource": "service-entitlement" },
+        { "kind": "resource.present", "resource": "service-activation-run" },
+        { "kind": "policy.present", "policy": "b2b-service-activation", "version": 1 },
+        { "kind": "journey.count", "metric": "serviceCoverages", "equals": 1 },
+        { "kind": "journey.count", "metric": "serviceEntitlements", "equals": 1 },
+        { "kind": "journey.count", "metric": "serviceActivationRuns", "equals": 1 },
+        { "kind": "journey.fact", "fact": "coverageStatus", "is": "active" },
+        { "kind": "journey.fact", "fact": "amendedCommercialRecord", "is": "false" }
+      ]
+    },
+    {
+      "id": "refuse-the-guess",
+      "narrative": "The two refusals that make activation a decision rather than a default: a policy that cannot classify the obligation answers ambiguous and refuses instead of picking a support tier nobody sold, and an agent actor is refused outright. A support tier arrived at by defaulting is a promise nobody in the business made.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "ambiguousActivationRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "agentActivationRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "uncoveredCategoryRefused", "is": "true" }
+      ]
+    },
+    {
+      "id": "open-case",
+      "narrative": "A covered support case is opened against the entitlement, and its two elapsed-time targets are computed from the injected clock: first response at openedAt plus 240 minutes, resolution at openedAt plus 2880 minutes, exactly.",
+      "observe": [
+        { "kind": "action.present", "action": "service-entitlement.record-service-case" },
+        { "kind": "resource.present", "resource": "support-case" },
+        { "kind": "resource.present", "resource": "support-case-activity" },
+        { "kind": "journey.count", "metric": "supportCases", "equals": 1 }
+      ]
+    },
+    {
+      "id": "sla-boundary",
+      "narrative": "The boundary itself, which is the whole reason this journey injects a clock. The same unanswered case is evaluated at its first-response due instant and one millisecond later: at the due instant the target is not yet missed, and one millisecond later it is. A wall-clock run can never witness this, and a regression in the comparison at that instant changes a business outcome and nothing else.",
+      "observe": [
+        { "kind": "action.present", "action": "support-case.preview-sla" },
+        { "kind": "journey.fact", "fact": "firstResponseStateAtDueInstant", "is": "at_risk" },
+        { "kind": "journey.fact", "fact": "firstResponseStateOneMsLater", "is": "breached" }
+      ]
+    },
+    {
+      "id": "record-evidence",
+      "narrative": "A late first response is recorded, and with it the SLA evaluation that says so: an immutable record of what the clock said at a stated instant, with the inputs it used. Its basis states in its own text that there is no business-hours calendar and no paused clock, and the action reports that it determined no contractual breach.",
+      "observe": [
+        { "kind": "action.present", "action": "support-case.record-first-response" },
+        { "kind": "action.present", "action": "support-case.record-sla-evaluation" },
+        { "kind": "resource.present", "resource": "service-sla-evaluation" },
+        { "kind": "journey.count", "metric": "slaEvaluations", "atLeast": 2 },
+        { "kind": "journey.fact", "fact": "recordedFirstResponseState", "is": "breached" },
+        { "kind": "journey.fact", "fact": "recordedResolutionState", "is": "met" },
+        { "kind": "journey.fact", "fact": "slaBasisStatesNoBusinessHours", "is": "true" },
+        { "kind": "journey.fact", "fact": "contractualBreachDetermined", "is": "false" },
+        { "kind": "journey.fact", "fact": "secondFirstResponseRefused", "is": "true" }
+      ]
+    },
+    {
+      "id": "escalate",
+      "narrative": "A human records the escalation, citing the evaluation it rests on, so the two records are one story rather than two coincidences. Nothing was routed and nobody was notified: there is no scheduler, no automatic escalation rule and no notification, provider or contact centre anywhere in this framework, and the run publishes each of those as false rather than leaving it unsaid.",
+      "observe": [
+        { "kind": "action.present", "action": "support-case.record-escalation" },
+        { "kind": "resource.present", "resource": "service-escalation" },
+        { "kind": "journey.count", "metric": "escalations", "equals": 1 },
+        { "kind": "journey.fact", "fact": "escalationCitesSlaEvaluation", "is": "true" },
+        { "kind": "journey.fact", "fact": "escalationRouted", "is": "false" },
+        { "kind": "journey.fact", "fact": "escalationNotified", "is": "false" },
+        { "kind": "journey.fact", "fact": "firstResponseNotificationSent", "is": "false" }
+      ]
+    },
+    {
+      "id": "close-the-case",
+      "narrative": "The case moves only over the declared transition table: closing straight from in_progress is refused, and the case reaches closed through resolved. Resolution is not customer acceptance and nothing bills, because neither acceptance nor billing exists here.",
+      "observe": [
+        { "kind": "action.present", "action": "support-case.transition-case" },
+        { "kind": "journey.fact", "fact": "closeFromInProgressRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "caseFinalStatus", "is": "closed" },
+        { "kind": "journey.fact", "fact": "customerAcceptedOnResolve", "is": "false" },
+        { "kind": "journey.fact", "fact": "caseBilled", "is": "false" }
+      ]
+    },
+    {
+      "id": "nothing-commercial-moved",
+      "narrative": "Every write above was audited and traced, and after all of it the commercial record is byte-identical to what the sale left behind: no Quote, Order, Contract or Subscription moved, and no billing, invoicing, renewal or amendment module exists to move.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "commercialRecordUnchanged", "is": "true" },
+        { "kind": "journey.count", "metric": "commercialContracts", "equals": 1 },
+        { "kind": "journey.count", "metric": "auditEvents", "atLeast": 100 },
+        { "kind": "journey.count", "metric": "workflowRuns", "atLeast": 20 }
+      ]
+    },
+    {
+      "id": "plan",
+      "narrative": "The goal this scenario is the evidence run for is itself a checked-in Solution Plan, read and validated as a document. It is never executed: nothing in this framework executes a plan, and the citation is refused outright if it is absolute, contains a parent segment, uses a backslash or a URL scheme, or resolves — on its canonical path, not its written one — outside the project. No claim cites this step: a valid plan is context, not evidence that a job works.",
+      "observe": [
+        { "kind": "plan.valid", "plan": "examples/solution-plans/activate-support-and-manage-cases.plan.json" }
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "job": "JTBD-DS-11",
+      "steps": ["compose", "compose-narrowly", "activate-coverage", "refuse-the-guess", "open-case"],
+      "note": "the row is recorded as partially supported and this run does not change that. What it shows is a real pending service obligation becoming an operational coverage with an immutable entitlement and elapsed-time targets, under a fingerprinted versioned policy that refuses to guess. What it does not show, because none of it exists: a signed service contract, an authenticated customer portal, RBAC, billing eligibility, or a business-hours calendar behind the targets."
+    },
+    {
+      "job": "JTBD-DS-12",
+      "steps": ["compose", "open-case", "sla-boundary", "record-evidence", "escalate", "close-the-case"],
+      "note": "the row is recorded as partially supported and this run does not change that. What it shows is a case driven over a declared transition table with an exactly observed SLA boundary, immutable evaluation evidence and a human-recorded escalation that cites it. What it does not show, because none of it exists: any channel a customer could actually use, automatic escalation, notification of any kind, a knowledge base or a contact centre."
+    },
+    {
+      "job": "JTBD-PK-02",
+      "steps": ["compose", "compose-narrowly"],
+      "note": "service reaches contracts only through the declared capability contracts/service-obligations@1, resolved in a composition that holds those two packages and no others. The same row is claimed by the lead-to-won scenario over a different capability and a different pair of packages; two independent compositions is the point."
+    },
+    {
+      "job": "JTBD-PK-04",
+      "steps": ["compose", "compose-narrowly"],
+      "note": "the row is recorded as partially supported and this run does not change that. This composition omits the delivery, intelligence, lifecycle and customer packages the other scenario composes, and everything here still works — which is the removability claim seen from the other side. It is not evidence about removing a package from a project that already has its data, which is what the row's own wording asks for."
+    },
+    {
+      "job": "JTBD-AX-06",
+      "steps": ["refuse-the-guess", "escalate", "close-the-case"],
+      "note": "unavailable capability reported honestly, as a positive fact rather than as silence: the run publishes that nothing was routed, nobody was notified, nothing was billed and no customer accepted anything, and each is observed. A refusal that a run could earn by never attempting the operation would be worthless, so each refusal is recorded by attempting it."
+    }
+  ]
+}

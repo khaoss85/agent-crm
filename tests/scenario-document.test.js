@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -190,6 +190,30 @@ test('an observation argument is checked against its own grammar', () => {
   assert.deepEqual(observe({ kind: 'action.present', action: 'lead.qualify' }), []);
 });
 
+// --- the argument the second consumer needed ----------------------------------
+
+test('a stated fact takes one lower-case token, and nothing that reads as a sentence or a command', () => {
+  const observe = (entry) => codes({ ...base(), steps: [{ id: 'first', narrative: 'n', observe: [entry] }] });
+  assert.deepEqual(observe({ kind: 'journey.fact', fact: 'slaState', is: 'breached' }), []);
+  assert.deepEqual(observe({ kind: 'journey.fact', fact: 'notified', is: 'false' }), []);
+  // Both arguments are required: a fact with no expected value observes nothing,
+  // and a value with no fact names nothing.
+  assert.deepEqual(observe({ kind: 'journey.fact', fact: 'slaState' }), ['SCENARIO_FIELD_INVALID']);
+  assert.deepEqual(observe({ kind: 'journey.fact', is: 'breached' }), ['SCENARIO_FIELD_INVALID']);
+  // The value grammar is one token, so a sentence, a capital, a number and a
+  // path are refused — and a command is refused twice, by grammar and by shape.
+  assert.deepEqual(observe({ kind: 'journey.fact', fact: 'slaState', is: 'at risk' }), ['SCENARIO_FIELD_INVALID']);
+  assert.deepEqual(observe({ kind: 'journey.fact', fact: 'slaState', is: 'Breached' }), ['SCENARIO_FIELD_INVALID']);
+  assert.deepEqual(observe({ kind: 'journey.fact', fact: 'slaState', is: 3 }), ['SCENARIO_FIELD_INVALID']);
+  assert.deepEqual(observe({ kind: 'journey.fact', fact: 'slaState', is: '../etc/passwd' }), ['SCENARIO_FIELD_INVALID']);
+  assert.ok(observe({ kind: 'journey.fact', fact: 'slaState', is: '$(id)' }).includes('SCENARIO_EXECUTABLE_CONTENT'));
+  // And the kind's own key allow-list still holds: nothing else may ride along.
+  assert.deepEqual(
+    observe({ kind: 'journey.fact', fact: 'slaState', is: 'breached', shell: 'sh' }),
+    ['SCENARIO_FIELD_UNKNOWN'],
+  );
+});
+
 // --- citations fail closed ----------------------------------------------------
 
 test('a claim that cites a step the scenario does not declare is refused', () => {
@@ -243,26 +267,34 @@ test('every code this module can report is in the published list', () => {
 
 // --- the shipped scenario ------------------------------------------------------
 
-test('the shipped scenario is a valid document, and carries nothing runnable', () => {
-  const source = readFileSync(new URL('../examples/scenarios/lead-to-won.scenario.json', import.meta.url), 'utf8');
-  const parsed = parseScenarioDocument(source);
-  assert.equal(parsed.raw, parsed.raw && parsed.raw);
-  const result = validateScenarioDocument(parsed.raw);
-  assert.deepEqual(result.problems, [], 'the shipped scenario must validate');
-  assert.equal(result.valid, true);
-  // Every claim cites a declared step, and every observation uses a declared kind.
-  const stepIds = new Set(result.scenario.steps.map((step) => step.id));
-  for (const claim of result.scenario.claims) {
-    assert.ok(claim.steps.length > 0, `${claim.job} must cite a step`);
-    for (const id of claim.steps) assert.ok(stepIds.has(id), `${claim.job} cites ${id}`);
-  }
-  for (const step of result.scenario.steps) {
-    for (const observation of step.observe) {
-      assert.ok(Object.prototype.hasOwnProperty.call(OBSERVATION_KINDS, observation.kind), observation.kind);
+test('every shipped scenario is a valid document, and carries nothing runnable', () => {
+  const shipped = readdirSync(new URL('../examples/scenarios/', import.meta.url)).sort();
+  assert.deepEqual(shipped, ['lead-to-won.scenario.json', 'service-sla-escalation.scenario.json'],
+    'a contract validated by exactly one consumer is not validated');
+
+  for (const file of shipped) {
+    const source = readFileSync(new URL(`../examples/scenarios/${file}`, import.meta.url), 'utf8');
+    const parsed = parseScenarioDocument(source);
+    assert.deepEqual(parsed.problems, [], file);
+    const result = validateScenarioDocument(parsed.raw);
+    assert.deepEqual(result.problems, [], `${file} must validate`);
+    assert.equal(result.valid, true);
+    // Every claim cites a declared step, and every observation uses a declared kind.
+    const stepIds = new Set(result.scenario.steps.map((step) => step.id));
+    for (const claim of result.scenario.claims) {
+      assert.ok(claim.steps.length > 0, `${claim.job} must cite a step`);
+      for (const id of claim.steps) assert.ok(stepIds.has(id), `${claim.job} cites ${id}`);
     }
+    for (const step of result.scenario.steps) {
+      for (const observation of step.observe) {
+        assert.ok(Object.prototype.hasOwnProperty.call(OBSERVATION_KINDS, observation.kind), observation.kind);
+      }
+    }
+    // The whole document, serialized, contains nothing an executable-shape refusal
+    // would accept — belt and braces over the field-by-field check.
+    assert.ok(!source.includes('"command"'), file);
+    assert.ok(!source.includes('"script"'), file);
+    assert.ok(!source.includes('"env"'), file);
+    assert.ok(!source.includes(repoRoot), `${file} must not carry a machine path`);
   }
-  // The whole document, serialized, contains nothing an executable-shape refusal
-  // would accept — belt and braces over the field-by-field check.
-  assert.ok(!source.includes('"command"'));
-  assert.ok(!source.includes(repoRoot), 'a checked-in document must not carry a machine path');
 });

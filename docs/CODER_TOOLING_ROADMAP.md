@@ -45,7 +45,7 @@ re-describing it.
 | | Tool | What it answers |
 |---|---|---|
 | **DX5** | `crm project verify --json` — **built** (`docs/plans/dx5-project-verify.md`) | machine-readable orchestration of the authorities that already decide: the doctor as a blocking preflight, AX1, the doctor's own plan verdicts, **package conformance executed for every composed package with local source**, and the project's **declared** verify and smoke scripts — part of the evidence AX1 publishes as `not_aggregated`. It samples the worktree before and after so it can say which paths *the run itself* changed, and it repairs none of them. A declared script whose entry point is not in the project is `not_applicable` with the missing file named, never a loader error reported as a suite failure. It says in its own limitations that it runs no business scenario and maps no plan to its implementation |
-| **DX6** | `crm scenario run <scenario> --json` — **built** (`docs/plans/dx6-scenario-runner.md`, `docs/SCENARIO_EVIDENCE.md`) | which JTBD rows a checkout actually earns, from linked evidence rather than prose. A **checked-in declarative scenario** names a journey by id from a frozen registry in the runner's own source — it can carry no command, and a document with any problem starts nothing — then observations from a closed vocabulary are answered by the journey's own receipt and by AX1 over what it composed, and claims resolve against `docs/benchmarks/jobs.json`. It **promotes nothing**: the claim vocabulary is deliberately not the four-value JTBD status vocabulary, the index is read-only, and every report records that a person still decides. The honest negative — the counted, sectioned, fully enumerated set of rows the run did **not** establish — is a first-class field. Coverage is *claimed*, not discovered, and it drives no browser; both are published limitation codes |
+| **DX6** | `crm scenario run <scenario> --json` — **built** (`docs/plans/dx6-scenario-runner.md`, `docs/SCENARIO_EVIDENCE.md`) | which JTBD rows a checkout actually earns, from linked evidence rather than prose. A **checked-in declarative scenario** names a journey by id from a frozen registry in the runner's own source — it can carry no command, and a document with any problem starts nothing — then observations from a closed vocabulary are answered by the journey's own receipt and by AX1 over what it composed, and claims resolve against `docs/benchmarks/jobs.json`. It **promotes nothing**: the claim vocabulary is deliberately not the four-value JTBD status vocabulary, the index is read-only, and every report records that a person still decides. The honest negative — the counted, sectioned, fully enumerated set of rows the run did **not** establish — is a first-class field. Coverage is *claimed*, not discovered, and it drives no browser; both are published limitation codes. **Two consumers ship**, and the second is what makes the contract a contract rather than a shape fitted to the first: a service case → SLA evaluation → escalation story, on an **injected, stepped clock**, over a two-package composition. Serving it changed three things — journey evidence gained stated **facts** beside numeric counts (a count cannot say whether the SLA said the right thing), the report now publishes **which clock** produced the evidence (an SLA state is a function of the clock and of nothing else), and limitations gained a **scope** so a journey declares its own instead of every run carrying every disclaimer. The report contract moved to 2; the document contract stayed at 1, because every v1 scenario still validates (`docs/plans/dx6-second-scenario.md`) |
 | **DX9** | `crm context pack --plan plan.json --json` | the smallest deterministic context an agent needs, derived from AX1, AX2, the relevant package docs and Skills, schema and action contracts and the Quality Gates. Token-budgeted, deterministic, source-path references only — **no secrets, no PII, no data rows, no arbitrary source bodies**, fingerprinted for staleness, and **advisory only, never authorization** |
 | **DX10** | `ImplementationEvidence` + `crm solution verify plan.json --json` | maps each SolutionPlan requirement to the package, module, action, provider, source files, tests, Admin/CLI evidence and JTBD evidence that satisfy it, marked `implemented \| partial \| blocked`. It closes `goal → plan → build → proof`, and stops an agent claiming a plan is complete while work is missing |
 
@@ -110,14 +110,20 @@ After Service learning:
 
 Before AX3:
   DX5 Project Verify                                         built
-  DX6 Scenario Runner                                        built
+  DX6 Scenario Runner                                        built — two consumers
   DX9 Context Pack
   DX10 Plan-to-Implementation Evidence
 ```
 
 PROVE is **still partial** with DX5 and DX6 built: DX10 does not exist, so
 nothing maps a plan's requirements to the code that implements them, and no
-green report means a plan is finished.
+green report means a plan is finished. A second scenario makes the evidence
+**stronger and broader**, not complete — it is five more claimed rows out of 149,
+and coverage is still claimed rather than discovered. DX6 also stays a separate
+command from DX5: each scenario composes a whole application, so folding them
+into Project Verify would make the final proof silently multi-minute and
+unbounded in a project with many. DX5 keeps publishing
+`SCENARIO_EVIDENCE_NOT_RUN` instead.
 
 Toolkit work does not displace M14b2 or M15. A developer toolkit for a framework
 whose domains are half-built optimizes the wrong thing.

@@ -118,12 +118,16 @@ runtime integrations.
 
 **Scenario evidence for the domains outside the six-column table.** Core CRM
 (Sales) is `aligned` — JTBD-04, JTBD-05 and JTBD-05b are claimed and established
-by the shipped scenario. The custom-package fixture is `aligned` — JTBD-PK-01 and
-JTBD-PK-02. **Service is `deferred`**: its package is composed in the journey's
-application and appears in the composition evidence, but no step observes it and
-no claim cites it, so the scenario establishes nothing about it. A service
-scenario is the next one to write, and needs no code. Marketing & Growth is
-`not_applicable` — documentation only.
+by the `lead-to-won` scenario. The custom-package fixture is `aligned` —
+JTBD-PK-01 and JTBD-PK-02. **Service is now `aligned`**: it was `deferred`
+because its package composed into the journey's application while nothing
+observed it, and `examples/scenarios/service-sla-escalation.scenario.json` closes
+that — JTBD-DS-11 and JTBD-DS-12 are claimed and established over a **second**
+journey with an injected clock, and both rows stay *partially supported* because
+a run promotes nothing. Closing it needed no milestone, but it did need one code
+change nobody predicted: the observation vocabulary had no way to state a
+*non-numeric outcome*, which is what a support process is judged on. Marketing &
+Growth is `not_applicable` — documentation only.
 
 ³ **`partial` on scenario evidence** means the shipped scenario reaches the
 domain and claims part of it, not all of it. The journey drives the signature
@@ -548,8 +552,25 @@ evidence is something every domain could have, and this matrix already carries a
   is reported as **not established**, exactly like a row nothing touched.
 - **It drives no browser**, so nothing here is evidence about the Admin as a user
   sees it — the same `BROWSER_EVIDENCE_NOT_AUTOMATED` gap DX5 publishes.
-- **It speaks for one composition only** (`EVIDENCE_IS_ONE_COMPOSITION`), and one
-  journey and one scenario ship today.
+- **It speaks for one composition only** (`EVIDENCE_IS_ONE_COMPOSITION`). **Two**
+  journeys and two scenarios ship today, over two genuinely different
+  compositions — six packages and two — which is what makes that limitation
+  demonstrated rather than merely stated.
+
+### The second-consumer backfill answer
+
+A follow-up made the same horizontal capability serve a second, deliberately
+unlike consumer (`docs/plans/dx6-second-scenario.md`). The rule applies again.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None at runtime.** It adds one checked-in journey under `examples/journeys/`, one scenario document, one observation kind, one registry field for the clock and one for journey-scoped limitations. No kernel behaviour, no domain source and no manifest changed — the service journey drives the Service package's existing public actions exactly as `docs/SERVICE_OPERATIONS.md` describes them |
+| Which are already aligned? | Service moves `deferred` → `aligned`. Contract Activation stays `partial`: the service journey activates a contract on its way to a service obligation, but claims nothing about the activation itself — that claim belongs to `lead-to-won` |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **The scenario contract itself did**, which is the finding. `journey.count` could not express "the SLA said `breached`", so `journey.fact` was added; the report could not say which clock produced a time-dependent answer, so `journey.clock` was added; and one global limitations list was half false of whichever run you read, so limitations gained a `scope`. Domains needed nothing |
+| What is `deferred` now, and closed by what | **Lifecycle (M16a)** and **Delivery execution, economics, change and acceptance (M14a/M14b1/M14b2)**: real runtimes that no scenario claims. Closed by writing scenarios; neither needs a code change unless it needs a clock. **Marketing, Analytics and Communications stay `not_applicable`** — they have no runtime, so no scenario can honestly claim their rows |
+| What changed for extraction? | Nothing |
+| Matrix updated? | Yes — the Service row above, and this section |
 
 ## The LA0 backfill answer, as the rule requires
 

@@ -93,6 +93,22 @@ export const OBSERVATION_KINDS = Object.freeze({
     oneOf: [['atLeast', 'equals']],
     describes: 'a numeric metric the journey itself reported',
   },
+  // Added by the second consumer. The first journey is a sales funnel, which is
+  // countable in every part that matters; Service is not. "The SLA said breached
+  // at the boundary", "nobody was notified", "the escalation cites the
+  // evaluation" are *states*, and `journey.count` could only ever say how many
+  // of something there were — which is equally true of a run that recorded the
+  // wrong answer. The value grammar is a single lower-case token, so a fact can
+  // hold a state name or a boolean and can hold nothing that reads as prose or
+  // as a command.
+  'journey.fact': {
+    authority: 'journey',
+    args: { fact: 'metric', is: 'fact-value' },
+    required: ['fact', 'is'],
+    oneOf: [],
+    describes: 'a stated outcome the journey itself reported — a state name or a boolean, never a count. '
+      + 'It is compared exactly, and a fact the journey never reported fails rather than passing vacuously',
+  },
   'package.composed': {
     authority: 'app-inspect',
     args: { package: 'name' },
@@ -166,6 +182,11 @@ const GRAMMAR = Object.freeze({
   name: /^[a-z0-9][a-z0-9._-]{0,63}$/,
   'qualified-name': /^[a-z0-9][a-z0-9-]{0,63}\.[a-z0-9][a-z0-9-]{0,63}$/,
   metric: /^[a-zA-Z][a-zA-Z0-9]{0,63}$/,
+  // A stated outcome, not a sentence: one lower-case token. It covers the state
+  // names the domains already use (`at_risk`, `breached`, `met`, `on_track`,
+  // `active`, `closed`) and the two boolean spellings, and it covers nothing
+  // with a space, a slash, a dollar or a semicolon in it.
+  'fact-value': /^[a-z][a-z0-9_]{0,63}$/,
   job: /^[A-Z][A-Za-z0-9]{0,15}(?:-[A-Za-z0-9]{1,15}){1,3}$/,
 });
 

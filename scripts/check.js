@@ -6,7 +6,11 @@ import { spawnSync } from 'node:child_process';
 
 const root = process.cwd();
 const ignored = new Set(['.git', 'node_modules', 'data']);
-const files = walk(root).filter((file) => file.endsWith('.js'));
+// `.mjs` too. The starter installer and the scenario journeys are checked-in
+// executable source that CI runs, and nothing was syntax-checking them: a typo
+// in one surfaced as a journey that "did not complete", minutes later, with the
+// diagnostic buried in a child's last line.
+const files = walk(root).filter((file) => file.endsWith('.js') || file.endsWith('.mjs'));
 const failures = [];
 
 for (const file of files) {
