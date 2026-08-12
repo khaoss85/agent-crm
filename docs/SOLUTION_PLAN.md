@@ -10,6 +10,21 @@ npm run crm -- solution validate <plan.json>          # the contract alone; read
 npm run crm -- solution check    <plan.json>          # validate, then bind to this project's AX1 report
 ```
 
+A fourth verb answers the *next* question and is documented separately, because
+conflating the two is the mistake this contract exists to prevent:
+
+```bash
+npm run crm -- solution verify <plan.json> --evidence <evidence.json>   # DX10
+```
+
+```text
+solution check    is this PLAN valid, and still true of this application?
+solution verify   does this IMPLEMENTATION satisfy the plan's requirements?
+```
+
+`check` can exit 0 on a plan nobody has built a line of — that is a fact about
+the document, not a defect. `docs/IMPLEMENTATION_EVIDENCE.md` covers the rest.
+
 The canonical example is
 [`examples/solution-plans/lead-to-won.plan.json`](../examples/solution-plans/lead-to-won.plan.json).
 
@@ -227,6 +242,28 @@ An absolute path, a `..` escape, a path claimed twice, or any field carrying
 file content is refused — an artifact holding source is the executable-content
 boundary in a different costume.
 
+## Requirement identity, derived rather than declared
+
+`decisions[]`, `steps[]` and every evidence entry already carry stable, unique,
+duplicate-refused ids. `acceptance.checks[]` is an array of **bare strings**, and
+DX10 needs to address one. It does so **without changing this contract**: a
+requirement id is derived, not stored.
+
+```text
+step:<stepId>        the id its author already wrote
+check:<12 hex>       the first 12 hex of sha256 over the acceptance-check statement
+```
+
+Nothing here gains a field, a rule or a byte of fingerprint, so every plan
+already checked in became addressable with no migration and no rewrite. The ids
+are published by `inspect`, `validate` and `check` under a top-level
+`requirements` key — **outside** the `plan` object, so no fingerprint moves.
+Rewording a criterion changes its id, which is the point: evidence recorded
+against the old wording must not carry silently to a criterion nobody
+re-examined. Two identical statements collide and are refused
+(`PLAN_REQUIREMENT_DUPLICATE`). An **artifact is not a requirement** and neither
+is a JTBD row — ADR-030 says why.
+
 ## Bounds
 
 A plan is at most 1 MiB, a text field 2 000 characters, an identifier 120, a
@@ -251,5 +288,7 @@ fingerprint — computed over the normalized document — would not cover it.
 `tests/solution-plan.test.js`, `packages/core/src/solution-plan.js`,
 `packages/cli/src/solution-command.js`,
 `examples/solution-plans/lead-to-won.plan.json`,
-`docs/plans/ax2-machine-readable-solution-plans.md`. Agent instructions:
+`docs/plans/ax2-machine-readable-solution-plans.md`,
+`docs/IMPLEMENTATION_EVIDENCE.md` (DX10, and ADR-030 for requirement identity).
+Agent instructions:
 `.claude/skills/solve-business-goal/SKILL.md` and its `.agents/` mirror.

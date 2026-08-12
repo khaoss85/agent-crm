@@ -106,7 +106,25 @@ The first unchecked item is the default next task for Codex.
   v1 scenario still validates. It adds no command, script or env field: `journey.fact`
   is a closed vocabulary entry with a one-token grammar, refused twice — by grammar
   and by `EXECUTABLE_SHAPES`. It promotes nothing; both service rows it claims stay
-  *partially supported*. **PROVE is stronger and still partial**: DX10 does not exist.
+  *partially supported*. **PROVE is stronger and still partial** (see DX10 below).
+
+- [x] **DX10 — Implementation evidence (platform).**
+  `crm solution verify <plan.json> --evidence <evidence.json> --json`
+  (`docs/IMPLEMENTATION_EVIDENCE.md`, `docs/plans/dx10-implementation-evidence.md`,
+  ADR-030). For every requirement in a checked-in Solution Plan, what evidence
+  proves it is implemented, partial or blocked. A requirement is a plan step or an
+  acceptance check, addressed by an id **derived** from the plan — no change to
+  `solutionPlanContract: 1`, no plan fingerprint moved, no historical plan
+  rewritten. `implementationEvidenceContract: 1` declares *where to look* and has
+  **no status field anywhere**; `solutionVerificationContract: 1` decides, from
+  AX1, the plan binding, `project verify` and each explicitly referenced scenario,
+  all run in the same invocation. `file exists` can never satisfy a behavioural
+  requirement and neither can `the action is declared`; a purely structural one
+  needs no scenario. **Manual evidence is accepted and can never be proof** — it
+  forbids exit 0 on its own. No write mode, no `--fix`, no generation command, no
+  `test` evidence kind, and it promotes nothing. Two checked-in evidence documents
+  ship against two real plans and **both exit 1**, which is the true state of both
+  plans. **PROVE stays partial, and DX10 is no longer the reason.**
 
 - [x] **M15 — Service operations.** The third domain package under ADR-018 and the second that depends on another: `contracts/service-obligations@1` turns a contract's pending Service Obligations into an operational **Service Coverage** with immutable Entitlements, decided by a versioned fingerprinted activation policy that refuses rather than guesses. Support cases over an explicit five-state table, append-only case activity, elapsed-time SLA evidence and manually recorded escalation (`docs/SERVICE_OPERATIONS.md`). Merged, with its adversarial review complete. **It is not a second legal contract**, and it bills, sends, schedules and authenticates nothing.
 
@@ -123,7 +141,7 @@ Recorded so they are not lost, and deliberately not bundled into a domain milest
 - [ ] **Generic Admin action availability.** The generated Admin renders every action a module declares and does not filter by the record's current state, so actions invalid for that state are still offered. The server is authoritative and refuses them with a `409` naming the allowed moves, and the schema already exposes per-action `from`/`to` metadata — a future generic Admin enhancement should hide or disable what the current state cannot take. A package-scoped Admin section (M14b2) may use state-aware controls before that lands.
 - [ ] **Agent tool surface (policy written, nothing built).** `docs/architecture/AGENT_TOOL_SURFACE.md` separates what the harnesses officially document (with retrieval dates) from what follows for this framework and from a proposed four-tier exposure policy. It is the contract **DX13 — Project MCP parity** would be built against, and it records that no source found supports a universal per-model tool-count limit. **No tool runtime, MCP runtime or harness adapter is implemented by it**, and no tool it lists exists.
 - [ ] **Legacy Domain Alignment Pass (assessed, not started).** `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` records every built domain's status against every horizontal capability, using `aligned | partial | deferred | not_applicable | needs_extraction`. Lead Intelligence, Commercial Operations and Signature & Order are `needs_extraction` on the package-seam rows; Pipeline is correctly in core as a reusable runtime capability. The sequencing is unchanged and binding: **M14b2 (merged) → M15 Service → review the M15 learnings → DX4 conformance → one controlled extraction, one domain, one PR.** Lead Intelligence is the working hypothesis for that first extraction, with the evidence that must exist first written down. **No domain is refactored, and nothing here authorizes starting.**
-- [ ] **Close the four gaps an external review isolated** — **two are closed.** DX5 Project Verify and DX6 Scenario Runner are merged. Still open, in its order: DX9 Context Pack (the agent reads only what this goal needs), DX10 Implementation Evidence (prove which parts of a Solution Plan were built), and the Legacy Alignment pass (no exceptions to the ladder). PROVE stays partial until DX10 exists. The review scored the architecture near 9/10 and the goal-first experience 7.5–8; these four are the difference. Its standing recommendation — **do not add new abstractions without demonstrated need** — is enforced by `npm run surface:check`, which budgets the surface an agent must understand — goal entry points, skills, always-on tools and distinct commands, each against a ceiling with a written reason. Run it for the current reading rather than quoting one here (`docs/strategy/EXTERNAL_REVIEW.md`).
+- [ ] **Close the four gaps an external review isolated** — **three are closed.** DX5 Project Verify, DX6 Scenario Runner and DX10 Implementation Evidence are built. Still open, in its order: DX9 Context Pack (the agent reads only what this goal needs) and the Legacy Alignment pass (no exceptions to the ladder). PROVE stays partial, and DX10 is no longer the reason: no checked-in plan verifies today, a manual requirement stays unverified whatever else passes, and coverage is still claimed rather than discovered. The review scored the architecture near 9/10 and the goal-first experience 7.5–8; these four are the difference. Its standing recommendation — **do not add new abstractions without demonstrated need** — is enforced by `npm run surface:check`, which budgets the surface an agent must understand — goal entry points, skills, always-on tools and distinct commands, each against a ceiling with a written reason. Run it for the current reading rather than quoting one here (`docs/strategy/EXTERNAL_REVIEW.md`).
 - [ ] **Machine-readable JTBD and quality-gate evidence.** **Partly done.** DX6
   (`crm scenario run <scenario> --json`, `docs/SCENARIO_EVIDENCE.md`) runs a real
   business journey against a composed application and publishes, per JTBD row,

@@ -572,6 +572,35 @@ unlike consumer (`docs/plans/dx6-second-scenario.md`). The rule applies again.
 | What changed for extraction? | Nothing |
 | Matrix updated? | Yes — the Service row above, and this section |
 
+## The DX10 backfill answer, as the rule requires
+
+DX10 (`crm solution verify`) is a **read-only agent surface over authorities that
+already decide**, not a capability a domain implements. The rule still applies,
+and the answer is the finding: **there is no per-domain status to record**, so
+the gap is declared rather than assumed.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None, at runtime or in source.** DX10 adds one CLI command, one core contract module, two checked-in evidence documents and two test files. It changes no kernel behaviour, refactors no domain, adds no capability, and writes nothing anywhere — it has no write mode, no `--fix` and no generation mode. Two changes sit outside its own files, both additive: `planRequirements()` in `packages/core/src/solution-plan.js` derives requirement identity **without touching `solutionPlanContract: 1`** — no field, no rule, and not one byte of any plan's fingerprint — and `worktreeState`/`sampled`/`defaultGit` are now **exported** from `packages/cli/src/project-verify-command.js` so the dirty-state semantics are imported rather than copied. No behaviour changed |
+| Is it horizontal? | **No, and that is the row.** A domain does not "support DX10" or fail to. What a domain can have is a *plan* with an evidence document beside it, and that is a checked-in JSON file per plan, not a per-domain capability. The matrix would carry the same value in every cell |
+| Which are already aligned? | Not applicable. The two shipped consumers are **plans**, not domains: `lead-to-won` (declared current, bound to this project) and `activate-support-and-manage-cases` (bound through the service scenario, which composes the application it was written against) |
+| Which need metadata only? | **None.** A plan gets requirement ids for free the moment DX10 ships — derived, no migration, no rewrite of any historical plan |
+| Which need a code backfill? | **None.** A new *evidence kind* would need one, deliberately: that boundary is what keeps a document from naming a new thing to trust |
+| What is `deferred`, and closed by what | Nothing per domain. What is genuinely open is **plan coverage**: only two of the three checked-in plans have an evidence document, and `govern-delivery-change` has none because no shipped scenario composes the application it was written against. Closed by a delivery scenario, which needs no code change unless it needs a clock |
+| What changed for extraction? | Nothing. DX10 measures plans, not seams. It is neutral on the three `needs_extraction` domains and adds no blocker |
+| Matrix updated? | Yes — this section, which records that the capability is not horizontal and why |
+
+### What DX10 deliberately did not close
+
+- **It promotes nothing** — no JTBD row, no plan status, no document. `promotion.performed` is `false` on every report.
+- **It discovers no requirement.** It reports the requirements *a plan wrote down*
+  (`COVERAGE_IS_THE_PLAN_ONLY`). A requirement no plan states cannot be caught here.
+- **It drives no browser**, contacts no provider, opens no database, and observes
+  no deployed or external system — the same gaps DX5 and DX6 publish, published
+  again here rather than assumed to carry over.
+- **It does not make PROVE complete.** Both shipped consumers exit 1. That is the
+  true state of both plans, and a green exit here would be the defect.
+
 ## The LA0 backfill answer, as the rule requires
 
 LA0 (the Lead Intelligence characterization harness) is **not** a horizontal

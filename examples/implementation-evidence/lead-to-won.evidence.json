@@ -1,0 +1,80 @@
+{
+  "implementationEvidenceContract": 1,
+  "plan": "examples/solution-plans/lead-to-won.plan.json",
+  "planFingerprint": "8f3cbd9678449878695e4b23e06fa6f65b0b04f617a34e35c65a6069a1f4e1c5",
+  "applicationInspectionFingerprint": "649add637888a422d3f1a992b13149f9437f464bd262c273606a0e4bf3a424ac",
+  "requirements": [
+    {
+      "requirementId": "step:step.publish-dwell-view",
+      "category": "behavioural",
+      "evidence": [],
+      "blocked": {
+        "reason": "no per-stage median dwell column exists on the opportunity board in this checkout, and no scenario observes one. There is no authority to cite, and pointing at the board's source file would only prove the file has these bytes"
+      }
+    },
+    {
+      "requirementId": "step:step.add-stall-reason",
+      "category": "structural",
+      "evidence": [],
+      "blocked": {
+        "reason": "the opportunity record carries no manifest revision in this application at all: app inspect reports it as a core record, not an ADR-019 managed module, so a bounded stall-reason field cannot be added at a new revision here. The plan's premise about this record does not hold in this composition"
+      }
+    },
+    {
+      "requirementId": "check:af9d6ee5ccc4",
+      "category": "project-health",
+      "evidence": [
+        { "kind": "project.verification", "check": "suite.verify", "expect": "passed" },
+        { "kind": "project.verification", "check": "structure.doctor", "expect": "passed" },
+        { "kind": "project.verification", "check": "application.inspect", "expect": "passed" }
+      ]
+    },
+    {
+      "requirementId": "check:94439cfe3fe3",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "lead-to-won",
+          "observation": "compose.01",
+          "expects": "the journey completes and reports success"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "lead-to-won",
+          "observation": "capture.02",
+          "expects": "journey.count atLeast=3 metric=leads"
+        }
+      ],
+      "partial": {
+        "reason": "the journey composes the starter into a temporary directory of its own and drives it. It is not evidence that a person installing the starter into their own empty project gets the same result, because nothing here installs into a project a person owns"
+      }
+    },
+    {
+      "requirementId": "check:c56c0abf1035",
+      "category": "manual",
+      "evidence": [
+        {
+          "kind": "manual",
+          "describes": "a person opens the opportunity board in a browser and reads whether the data-quality caveat is rendered beside the dwell column. No browser is driven anywhere in this repository, so nothing automated can answer it"
+        }
+      ]
+    },
+    {
+      "requirementId": "check:f3c222d2bfe2",
+      "category": "structural",
+      "evidence": [
+        { "kind": "application.fact", "fact": "module.present", "name": "opportunity" }
+      ],
+      "blocked": {
+        "reason": "the record is present and carries no manifest revision, so there is no module-factory state file to check in and no revision bump to apply. This requirement is blocked on the record becoming an ADR-019 managed module, which is work no evidence document can substitute for"
+      }
+    }
+  ],
+  "limitations": [
+    {
+      "code": "PLAN_IS_DESIGN_WORK_NOT_MERGED_WORK",
+      "message": "this plan describes work that has not been done. Four of its six requirements are blocked or manual, and the two that verify are the ones about the repository the plan was written in rather than about the change it proposes. A green line here would be the defect"
+    }
+  ]
+}

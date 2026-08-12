@@ -19,6 +19,7 @@ crm solution check   is this plan still compatible?                a document
 crm project doctor   what is stale in the source?                  cheap
 crm project verify   can we PROVE the project is healthy?          expensive
 crm scenario run     which business jobs does this checkout earn?  this
+crm solution verify  is the plan actually finished?                DX10, which runs this
 ```
 
 ## Two consumers, and what the second one changed
@@ -362,8 +363,13 @@ could run the declared ones. It is refused for now:
   caller can switch on today.
 
 What would change the answer: a scenario registry with declared applicability
-that exists for reasons other than DX5, or DX10 arriving and making a single
-final proof genuinely complete.
+that exists for reasons other than DX5. DX10 has since arrived, and it did **not**
+change the answer — it made the relationship explicit in the other direction.
+`crm solution verify` runs Project Verify and each **explicitly referenced**
+scenario, once each, because an evidence document names exactly the scenarios its
+requirements rest on. That is the applicability declaration the alternative
+wanted, and it lives where the *consumer* is declared rather than inside the
+scenario, for the reason ADR-029 already gives.
 
 ## Related
 
@@ -374,7 +380,8 @@ consumer-specific bound is declared where the consumer is) ·
 `docs/SOLUTION_PLAN.md` (AX2) · `docs/CODER_TOOLING_ROADMAP.md` ·
 `docs/plans/dx6-scenario-runner.md` (the ExecPlan, with the eight DX Simplicity
 Gate answers) · `docs/plans/dx6-second-scenario.md` (the second consumer, and
-what it changed) · `docs/SERVICE_OPERATIONS.md` (what Service does and,
+what it changed) · `docs/IMPLEMENTATION_EVIDENCE.md` (DX10, which cites a
+scenario observation as requirement-level evidence) · `docs/SERVICE_OPERATIONS.md` (what Service does and,
 crucially, does not do) · `tests/scenario-document.test.js` ·
 `tests/scenario-run.test.js` ·
 `examples/journeys/service-sla-escalation/journey.mjs`.

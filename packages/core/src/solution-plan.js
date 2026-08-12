@@ -129,6 +129,7 @@ export const PLAN_PROBLEM_CODES = Object.freeze([
   'PLAN_EXECUTABLE_CONTENT',
   'PLAN_CITATION_UNRESOLVED',
   'PLAN_DUPLICATE_ID',
+  'PLAN_REQUIREMENT_DUPLICATE',
   'PLAN_APPROVAL_MISSING',
   'PLAN_DECISION_NOT_A_STEP',
   'PLAN_DECISION_UNKNOWN',
@@ -948,6 +949,104 @@ function normalizeLimitations(value, problems, { hasProviderDecision = false } =
 }
 
 /**
+ * The kinds of plan entry that are a **requirement** — something that must be
+ * true before the plan is implemented. Closed, and deliberately short.
+ *
+ * A *step* is the work; an *acceptance check* is the criterion. Two things that
+ * look like candidates are excluded on purpose:
+ *
+ * - **an artifact is not a requirement.** `acceptance.artifacts[]` names a place
+ *   a step intends to produce a file. Treating that path as a requirement is
+ *   "the file exists, therefore it is done" wearing a contract, which is the
+ *   inference this whole family of commands refuses.
+ * - **a JTBD row is not a requirement.** It is DX6's unit, its status is a
+ *   person's decision under `docs/QUALITY_GATES.md` §3, and nothing here
+ *   promotes one.
+ */
+export const REQUIREMENT_KINDS = Object.freeze(['step', 'acceptance-check']);
+
+/** How many hex characters of the statement digest name an acceptance check. */
+export const REQUIREMENT_DIGEST_LENGTH = 12;
+
+/**
+ * Every requirement in a plan, with a **derived** stable identifier.
+ *
+ * `steps[].id` already exists and is already unique, so a step requirement
+ * reuses it rather than minting a second name for the same thing:
+ * `step:<stepId>`. An acceptance check is a bare string with no identifier at
+ * all, so its id is content-addressed: `check:<first 12 hex of sha256>` over the
+ * statement.
+ *
+ * **Why derived rather than a new field.** Widening `acceptance.checks[]` to
+ * accept `{id, statement}` would be a change to `solutionPlanContract: 1`: new
+ * validation, a new normalized shape, and a fingerprint that means one thing for
+ * new plans and another for old ones. Deriving adds *nothing* to the contract —
+ * not a field, not a rule, not a byte of any plan's fingerprint — and every plan
+ * already checked in becomes addressable with no migration and no rewrite. That
+ * is the smallest additive change that exists.
+ *
+ * The cost is deliberate and is the behaviour we want: **rewording an acceptance
+ * criterion changes its requirement id**, so evidence recorded against the old
+ * wording reads as unevidenced rather than silently carrying over to a criterion
+ * nobody re-examined.
+ *
+ * Two identical statements in one plan would collide, so the collision is
+ * refused rather than resolved: one requirement must not stand for two.
+ *
+ * Reads a plan **already normalized by `validateSolutionPlan`**.
+ *
+ * @param {any} plan
+ * @returns {{requirements: {requirementId: string, kind: string, statement: string,
+ *   stepId: string|null, decisionId: string|null, decisionType: string|null,
+ *   position: number}[], problems: PlanProblem[]}}
+ */
+export function planRequirements(plan) {
+  /** @type {PlanProblem[]} */
+  const problems = [];
+  /** @type {any[]} */
+  const requirements = [];
+  /** @type {Map<string, string>} */
+  const seen = new Map();
+
+  const add = (row, path) => {
+    const previous = seen.get(row.requirementId);
+    if (previous !== undefined) {
+      report(problems, 'PLAN_REQUIREMENT_DUPLICATE', path,
+        `"${row.requirementId}" is already the requirement id of ${previous}. Two requirements that cannot be told apart cannot carry separate evidence`);
+      return;
+    }
+    seen.set(row.requirementId, path);
+    requirements.push({ ...row, position: requirements.length });
+  };
+
+  for (const step of plan?.steps ?? []) {
+    add({
+      requirementId: `step:${step.id}`,
+      kind: 'step',
+      statement: step.description ?? '',
+      stepId: step.id,
+      decisionId: step.decisionId === '' ? null : step.decisionId ?? null,
+      decisionType: step.decisionType === '' ? null : step.decisionType ?? null,
+    }, `plan.steps[${step.position}]`);
+  }
+
+  const checks = plan?.acceptance?.checks ?? [];
+  for (const [index, statement] of checks.entries()) {
+    const digest = createHash('sha256').update(String(statement)).digest('hex').slice(0, REQUIREMENT_DIGEST_LENGTH);
+    add({
+      requirementId: `check:${digest}`,
+      kind: 'acceptance-check',
+      statement: String(statement),
+      stepId: null,
+      decisionId: null,
+      decisionType: null,
+    }, `plan.acceptance.checks[${index}]`);
+  }
+
+  return { requirements, problems };
+}
+
+/**
  * Bind a validated plan to a real AX1 report.
  *
  * A composition that has moved since the plan was written produces `PLAN_STALE`
@@ -1086,6 +1185,18 @@ export function solutionPlanVocabulary() {
       Object.entries(CITATION_SOURCES).map(([category, sources]) => [category, [...sources]]),
     ),
     artifactKinds: [...ARTIFACT_KINDS],
+    // Requirement identity is **derived**, never declared, so it adds nothing to
+    // this contract and moves no plan's fingerprint. Published because a reader
+    // that has to guess an identifier will guess a different one.
+    requirements: {
+      kinds: [...REQUIREMENT_KINDS],
+      rule: 'a requirement is a step or an acceptance check. A step reuses the id its author already wrote (`step:<stepId>`); an acceptance check has no id in this contract, so it is content-addressed (`check:<first 12 hex of sha256 of the statement>`)',
+      notRequirements: [
+        'an acceptance artifact — a declared file path is a place, not proof that the work behind it happened',
+        'a JTBD row — its status is a person\'s decision under docs/QUALITY_GATES.md §3',
+      ],
+      digestLength: REQUIREMENT_DIGEST_LENGTH,
+    },
     inspectionContract: INSPECTION_CONTRACT,
     approvalCodes: [...APPROVAL_CODES],
     requiredApprovals: { ...REQUIRED_APPROVALS },

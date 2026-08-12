@@ -12,6 +12,7 @@ import { projectDoctorCommand } from './project-doctor-command.js';
 import { projectVerifyCommand } from './project-verify-command.js';
 import { scenarioRunCommand } from './scenario-run-command.js';
 import { solutionCommand } from './solution-command.js';
+import { solutionVerifyCommand } from './solution-verify-command.js';
 
 /** @param {string[]} argv */
 export async function runCli(argv) {
@@ -70,6 +71,15 @@ export async function runCli(argv) {
     command = `solution:${positional[0]}`;
     positional = positional.slice(1);
   }
+  // "solution verify <plan.json> --evidence <evidence.json>" answers the next
+  // question, and the distinction from `check` is never blurred: `check` asks
+  // whether the *plan* is valid and still true of this application; `verify`
+  // asks whether the *implementation* satisfies its requirements (DX10). It has
+  // no write mode, no --fix and no generation mode.
+  if (command === 'solution' && positional[0] === 'verify') {
+    command = 'solution:verify';
+    positional = positional.slice(1);
+  }
   const dbPath = typeof flags.db === 'string' ? resolve(flags.db) : undefined;
 
   // Help is not a database operation. It used to fall through to the branch
@@ -93,6 +103,17 @@ export async function runCli(argv) {
     const result = await solutionCommand({
       planPath: positional[0],
       mode: /** @type {'inspect'|'validate'|'check'} */ (command.slice('solution:'.length)),
+      json: flags.json === true,
+      rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
+    });
+    process.exitCode = result.exitCode;
+    return;
+  }
+
+  if (command === 'solution:verify') {
+    const result = await solutionVerifyCommand({
+      planPath: positional[0],
+      evidencePath: typeof flags.evidence === 'string' ? flags.evidence : '',
       json: flags.json === true,
       rootDir: typeof flags.root === 'string' ? flags.root : process.cwd(),
     });
@@ -351,6 +372,7 @@ Usage:
   accordo solution inspect <plan.json> [--json]
   accordo solution validate <plan.json> [--json]
   accordo solution check <plan.json> [--json] [--root dir]
+  accordo solution verify <plan.json> --evidence <evidence.json> [--json] [--root dir]
   accordo workflow:list [--db path]
   accordo trace:list [--limit 20] [--db path]
   accordo module:plan <manifest.json> [--root path] [--json]
@@ -464,7 +486,23 @@ Exit codes: 0 every claim established, 1 something did not hold, 2 unreadable.
 validate reads no project at all; check binds the plan to this project's app
 inspect report and reports PLAN_STALE when the composition has moved. None of
 them executes a plan, writes source, installs anything or opens a database.
+
+"solution verify <plan.json> --evidence <evidence.json>" answers the question
+the others cannot: for every requirement in this plan, what implementation
+evidence proves it is implemented, partial or blocked (DX10)? Keep the two
+verbs apart — check asks whether the PLAN is valid and still true of this
+application; verify asks whether the IMPLEMENTATION satisfies it.
+The evidence document declares where to look and can carry no status, no
+command and no script. This command obtains the current facts from authorities
+that already decide: app inspect once, the plan binding derived from that one
+report, project verify at most once and only when something references it, and
+each referenced scenario exactly once. It writes nothing, has no --fix and no
+write mode, promotes no JTBD row, and never treats a file existing as evidence
+that anything behaves correctly.
+Exit codes: 0 every required requirement is machine-verified, 1 readable but
+incomplete, stale, partial, blocked or manual, 2 unreadable.
 Package contract: docs/PACKAGE_AUTHORING.md
 Application inspection: docs/APPLICATION_INSPECTION.md — plans: docs/SOLUTION_PLAN.md
-Scenario evidence: docs/SCENARIO_EVIDENCE.md`;
+Scenario evidence: docs/SCENARIO_EVIDENCE.md
+Implementation evidence: docs/IMPLEMENTATION_EVIDENCE.md`;
 }

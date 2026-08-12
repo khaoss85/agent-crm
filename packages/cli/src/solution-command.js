@@ -3,7 +3,8 @@
 import { readFileSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import {
-  MAX_PLAN_BYTES, bindSolutionPlan, parseSolutionPlan, solutionPlanVocabulary, validateSolutionPlan,
+  MAX_PLAN_BYTES, bindSolutionPlan, parseSolutionPlan, planRequirements, solutionPlanVocabulary,
+  validateSolutionPlan,
 } from '../../core/src/solution-plan.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
 
@@ -121,6 +122,13 @@ function emit({ json, plan, problems, current, mode, out, inspectionFingerprint 
       // which is exactly what makes it evidence of drift.
       ...(inspectionFingerprint === null ? {} : { inspectionFingerprint }),
       plan,
+      // The plan's requirements, with the identifier `crm solution verify`
+      // addresses them by. **Derived, never declared**: a step reuses the id its
+      // author already wrote, an acceptance check is content-addressed, and it
+      // is published *outside* `plan` so no plan's fingerprint moves. An
+      // evidence author has to obtain these somewhere, and guessing produces a
+      // different guess every time.
+      requirements: planRequirements(plan).requirements,
       problems,
       vocabulary: solutionPlanVocabulary(),
     }, null, 2)}\n`);

@@ -1374,3 +1374,140 @@ than as an increment, but no other contract is audited by this ADR. Coverage
 remains *claimed* rather than discovered (`COVERAGE_IS_CLAIMED_NOT_DISCOVERED`),
 two scenarios are not broad coverage, and PROVE stays partial because DX10 does
 not exist.
+
+## ADR-030 — Requirement identity is derived from the plan, and an evidence document may point at proof but never declare it
+
+**Status:** accepted.
+
+**Context.** DX5 proves a project is healthy. DX6 proves which business jobs a
+checkout earns. AX2 proves a plan is a valid document still true of an
+application. None of them can answer the question a coding agent is actually
+asked at the end of a piece of work — *is the plan finished* — and this
+repository has a worked demonstration of the gap rather than a hypothetical one:
+`examples/solution-plans/lead-to-won.plan.json` is the one plan `package.json`
+declares **current**, `crm solution check` exits 0 on it, `crm project doctor`
+grades it `passed`, `crm project verify` is green, both scenarios pass, and four
+of its six requirements are not implemented. Every authority in the repository is
+satisfied and the plan is not built.
+
+Closing that needs two things this repository did not have, and each is a
+decision rather than a mechanism.
+
+**The first: a requirement needs an identity, and one of the two kinds has none.**
+A plan already carries stable, unique, duplicate-refused ids for
+`decisions[].id`, `steps[].id` and every `evidence.<category>[].id`, plus a
+plan-wide `fingerprint` and a derived `application.inspectionFingerprint`.
+`acceptance.checks[]` is an array of **bare strings**. So the inventory is one
+gap, not a missing identity model, and the temptation was to fill it by widening
+the contract.
+
+Two options, compared rather than assumed:
+
+| | Explicit — accept `{id, statement}` in `acceptance.checks[]` | Derived — content-address the statement |
+|---|---|---|
+| change to `solutionPlanContract: 1` | a new accepted shape, new validation, a new normalized form | **none at all** |
+| plans already checked in | keep working, gain no id, need editing to get one | **addressable immediately, unedited** |
+| plan fingerprints | a new shape means new plans hash differently from old ones for the same words | **not one byte moves** |
+| migration | every historical plan eventually rewritten, or two forms forever | **none needed** |
+| rewording a criterion | the id survives, and the evidence silently survives with it | the id changes, and the evidence must be re-examined |
+| reordering the list | survives | survives — content-addressed, not positional |
+
+**Decision 1. Requirement identity is derived, and adds nothing to the Solution
+Plan contract.** A requirement is a plan **step** or an **acceptance check**.
+A step reuses the id its author already wrote — `step:<stepId>` — because
+minting a second name for a thing that already has one is how a repository ends
+up with two identifier systems. An acceptance check is
+`check:<first 12 hex of sha256 over its statement>`. `planRequirements()` lives
+in `packages/core/src/solution-plan.js` beside the plan it describes, is
+published by `solution inspect|validate|check --json` **outside** the `plan`
+object so no fingerprint moves, and is pinned by a test asserting that every
+checked-in plan still hashes to the value in its own file.
+
+The one real cost is accepted deliberately: **rewording an acceptance criterion
+changes its requirement id**, so evidence recorded against the old wording reads
+as unevidenced rather than carrying over to a criterion nobody re-examined. Two
+identical statements in one plan collide, and the collision is refused
+(`PLAN_REQUIREMENT_DUPLICATE`) rather than resolved — one requirement must not
+stand for two.
+
+An **artifact is not a requirement**, and neither is a JTBD row. `artifacts[]`
+names a place a step intends to produce a file; treating a declared path as a
+requirement is "the file exists, therefore it is done" wearing a contract, which
+is the inference this rung exists to refuse. A JTBD row is DX6's unit and a
+person's decision under `docs/QUALITY_GATES.md` §3.
+
+**The second: who gets to say a requirement is met.** Three shapes were
+considered.
+
+*Source and git heuristics* — match changed paths against the plan's declared
+artifacts, match test filenames against requirement text. **Rejected as a
+complete solution**: an empty file at the declared path scores identically to a
+working one, a rename scores zero while the behaviour is present, and a test
+*file* existing says nothing about whether that test ran. It survives as one
+evidence kind, content-hashed, with a hard rule attached.
+
+*An agent-authored checklist* — a status per requirement with a prose
+justification. **Rejected**: it reproduces the self-report, which is the failure
+mode. A green checklist written by the agent that wrote the code, read by
+nobody holding independent facts, is indistinguishable from an honest one.
+
+**Decision 2. A checked-in evidence document declares *where to look*; a
+deterministic verifier decides *what is true*, from authorities that ran in the
+same invocation.** `implementationEvidenceContract: 1` has **no status field
+anywhere**. A requirement carries a category and a list of pointers. The only
+shapes an author may add are **downgrades** — `blocked` and `partial`, each with
+a mandatory reason, mutually exclusive, and unable to raise a status. An author
+may always say "this is less proven than it looks"; no author may say "this is
+more proven than the evidence shows". The document, like a Solution Plan and a
+scenario, is function-free by contract and refuses executable content through
+the same exported `EXECUTABLE_SHAPES`.
+
+Four consequences worth stating, because each was a live alternative:
+
+1. **There is no `test` evidence kind.** A test name is exactly the arbitrary
+   string the contract refuses: no authority here publishes which tests ran, so
+   citing one would be a claim dressed as a citation. `project.verification` on
+   `suite.verify` says the true, weaker thing.
+2. **There are no evidence-to-evidence citations.** An entry names an authority
+   and a fact, so a conclusion is not expressible as a premise and there is no
+   graph to keep acyclic. AX2 needed a citation DAG because its entries derive
+   from each other; recreating one here would be complexity with no failure
+   behind it.
+3. **Manual evidence is accepted and can never be proof.** A manual-only
+   requirement is `unverified`, forces a non-zero exit on its own, and publishes
+   `MANUAL_EVIDENCE_IS_NOT_PROOF`. Refusing it outright would make the browser
+   requirement *vanish* from the document, and a gap that is stated is part of
+   the deliverable while a gap that is omitted is a claim.
+4. **The behavioural rule is keyed on the observation's kind, read from DX6's
+   report.** `file exists` never satisfies a behavioural requirement, and neither
+   does `action.present` — "the action is declared" is not "the application does
+   this". An author cannot relabel one as the other, because the kind does not
+   come from the document. Symmetrically, a purely structural requirement needs
+   no scenario: a record either is in the composition or is not, and requiring a
+   run to prove a schema would be the mirror error.
+
+**Decision 3. A plan's composition binding may be answered by a scenario, and it
+is derived rather than declared.** AX2's `inspectionFingerprint` names the
+application a plan was written against. In a project that is the project; in a
+*framework* repository whose root composes no domain package, the application a
+plan describes is the one a starter composes, and the only authority that
+produces that digest is DX6, which publishes it as
+`composition.compositionFingerprint`. So `solution verify` resolves the pinned
+digest against the authorities that actually ran — AX1 at the root first, then
+exactly one explicitly referenced scenario — and names which one answered. When
+the binding is a scenario, an `application.fact` reference is **refused**: the
+only full AX1 report in hand describes a different application, and answering a
+question with the wrong application's facts is the failure the rule prevents.
+
+**Exit 0 is forbidden while manual evidence remains required**, and a partial
+plan is never "verified with warnings": `partial`, `blocked`, `unevidenced`,
+`stale` and `unverified` each force exit 1 on their own.
+
+**What this does not decide.** It does not promote PROVE. DX10 exists and no
+checked-in plan in this repository is fully machine-verifiable, so nothing here
+exits 0 today; promoting the story because the command exists is the move this
+rung was built to stop. The condition is now machine-checkable rather than
+rhetorical: a checked-in, declared-current plan whose `solution verify` exits 0.
+It also decides nothing about MCP — `docs/architecture/AGENT_TOOL_SURFACE.md`
+maps `solution.verify` under the deferred Solution namespace as policy, and DX13
+remains unbuilt.

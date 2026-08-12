@@ -106,5 +106,30 @@ export {
   validateSolutionPlan,
   bindSolutionPlan,
   parseSolutionPlan,
+  planRequirements,
   solutionPlanVocabulary,
+  REQUIREMENT_KINDS,
+  REQUIREMENT_DIGEST_LENGTH,
 } from './src/solution-plan.js';
+
+// ---- implementation evidence (DX10) ----
+// The checked-in half of `crm solution verify`: a bounded, function-free
+// document that says *where to look* for the proof of each plan requirement,
+// and cannot say what the proof concluded.
+export {
+  IMPLEMENTATION_EVIDENCE_CONTRACT,
+  EVIDENCE_KINDS,
+  EVIDENCE_PROBLEM_CODES,
+  EVIDENCE_LIMITATIONS,
+  REQUIREMENT_CATEGORIES,
+  APPLICATION_FACTS,
+  SUFFICIENCY,
+  CATEGORY_FLOOR,
+  COMPOSITION_OBSERVATION_KINDS,
+  RUNTIME_OBSERVATION_KINDS,
+  MAX_EVIDENCE_BYTES,
+  fingerprintEvidence,
+  parseImplementationEvidence,
+  validateImplementationEvidence,
+  implementationEvidenceVocabulary,
+} from './src/implementation-evidence.js';

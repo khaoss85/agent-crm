@@ -36,8 +36,10 @@ import { discoverCandidatePackages, projectKind } from './project-doctor-checks.
  *
  * **PROVE is still partial.** Scenario evidence is a separate command
  * (`crm scenario run`, DX6) that this one deliberately does not invoke, and
- * implementation evidence (DX10) does not exist. The report says so in its own
- * limitations rather than letting a green exit code imply completeness.
+ * requirement-level implementation evidence is another (`crm solution verify`,
+ * DX10) that runs *this* command rather than the other way round. The report
+ * says so in its own limitations rather than letting a green exit code imply
+ * completeness.
  *
  * That separation was re-examined when DX6 gained a second scenario, and it
  * stands. The alternative considered was a bounded applicability contract —
@@ -189,7 +191,7 @@ const LIMITATIONS = Object.freeze([
   },
   {
     code: 'IMPLEMENTATION_EVIDENCE_NOT_MAPPED',
-    message: 'nothing here maps a plan\'s requirements to the code that implements them, so a green report never means a plan is finished. That is DX10',
+    message: 'nothing here maps a plan\'s requirements to the code that implements them, so a green report never means a plan is finished. That is `crm solution verify <plan.json> --evidence <evidence.json> --json` (DX10), which is a separate command and is not run from here — it references this receipt rather than the other way round',
   },
   {
     code: 'PROJECT_COMMANDS_TRUSTED',
@@ -550,7 +552,7 @@ export function worktreeState(rootDir, run = defaultGit) {
  *
  * @param {string} rootDir
  */
-function defaultGit(rootDir) {
+export function defaultGit(rootDir) {
   const inside = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: rootDir, encoding: 'utf8' });
   if (inside.status !== 0) return null;
   const changed = spawnSync('git', ['status', '--porcelain', '-z', '--untracked-files=all'], {
@@ -580,7 +582,7 @@ function defaultGit(rootDir) {
  *
  * @param {string} line
  */
-function sampled(line) {
+export function sampled(line) {
   const tab = line.indexOf('\t');
   return tab === -1 ? { status: '', path: line } : { status: line.slice(0, tab), path: line.slice(tab + 1) };
 }
