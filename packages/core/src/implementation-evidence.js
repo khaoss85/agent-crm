@@ -161,8 +161,12 @@ export const EVIDENCE_LIMITATIONS = Object.freeze([
     message: 'a source artifact evidences that a named file has exactly these bytes. It is never proof that anything behaves correctly, and on its own it satisfies no requirement in any category',
   },
   {
-    code: 'REQUIREMENT_CATEGORY_IS_DECLARED',
-    message: 'the category of an acceptance-check requirement is declared by the evidence author, because the plan says nothing about the nature of a criterion. The authority each category requires is not declared and cannot be widened by an author; a step\'s category is additionally floored by its decision type',
+    code: 'REQUIREMENT_CATEGORY_CANNOT_WEAKEN_PROOF',
+    message: 'an evidence author declares a category, and a declared category can only require more proof or downgrade the result — never less. A requirement the plan does not authoritatively type, which is every acceptance check under solutionPlanContract 1, is graded as behavioural and needs an authority that ran. The report publishes the declared category and the enforced one side by side',
+  },
+  {
+    code: 'ACCEPTANCE_CHECKS_ARE_UNTYPED',
+    message: 'solutionPlanContract 1 stores an acceptance check as a bare string, so the plan cannot say whether a criterion is behavioural, structural or about project health. The conservative floor that follows will report a genuinely structural or health-shaped criterion as unevidenced rather than verified. That is a false negative by construction, and it is preferred to the false positive an author-chosen category produces',
   },
   {
     code: 'COVERAGE_IS_THE_PLAN_ONLY',
@@ -371,9 +375,9 @@ function normalizeRequirements(value, problems) {
 
     const requirementId = text(row.requirementId, `${path}.requirementId`, problems, { max: MAX_IDENTIFIER });
     if (requirementId !== null) {
-      if (!/^(?:step:[a-z0-9][a-z0-9._-]*|check:[0-9a-f]{12})$/i.test(requirementId)) {
+      if (!/^(?:step:[a-z0-9][a-z0-9._-]*|check:[0-9a-f]{32})$/i.test(requirementId)) {
         report(problems, 'EVIDENCE_FIELD_INVALID', `${path}.requirementId`,
-          'must be a requirement id this plan derives: "step:<stepId>" or "check:<12 hex>". Run `solution check <plan.json> --json` and read `requirements`');
+          'must be a requirement id this plan derives: "step:<stepId>" or "check:<32 hex>". Run `solution check <plan.json> --json` and read `requirements`');
       } else if (seen.has(requirementId)) {
         report(problems, 'EVIDENCE_DUPLICATE_REQUIREMENT', `${path}.requirementId`,
           `"${requirementId}" appears more than once; one requirement carries one evidence list, not two that a reader must merge`);
@@ -643,9 +647,10 @@ export const SUFFICIENCY = Object.freeze({
  * a record to a new manifest revision is structural, and requiring a scenario
  * for it would be requiring a run to prove a schema.
  *
- * Acceptance checks carry no floor: the plan says nothing about the nature of a
- * criterion, so the category is declared, recorded verbatim in the report, and
- * bounded by `REQUIREMENT_CATEGORY_IS_DECLARED`.
+ * Only these decision types are *authoritative* about a requirement's nature.
+ * Everything else — an acceptance check, or a step whose decision type the plan
+ * does not carry — is **untyped**, and an untyped requirement falls to
+ * `UNTYPED_CATEGORY_FLOOR`, not to whatever its author declared.
  */
 export const CATEGORY_FLOOR = Object.freeze({
   configure: 'behavioural',
@@ -654,6 +659,102 @@ export const CATEGORY_FLOOR = Object.freeze({
   'create-package': 'behavioural',
   evolve: 'structural',
 });
+
+/**
+ * The floor under a requirement the plan does not authoritatively type.
+ *
+ * **This is the fix for the category exploit, and it is the reason the category
+ * cannot decide the outcome.** In the first cut of this contract, an acceptance
+ * check's category was taken at face value from the evidence document, which
+ * handed the author the choice of which authority had to answer:
+ *
+ * ```text
+ * a behavioural acceptance statement  ("escalation routes to the on-call queue")
+ *   → the author labels it "structural"
+ *   → cites application.fact action.present / package.composed / a source hash
+ *   → the verifier reports VERIFIED, having run nothing
+ * ```
+ *
+ * A limitation paragraph does not fix that: it documents it. The invariant an
+ * evidence contract has to hold is that **an author must never be able to raise
+ * a requirement's verification status by choosing a weaker category**, and the
+ * only way to hold it without a category the *plan* carries is to assume the
+ * strongest ordinary one. So an untyped requirement is graded `behavioural`:
+ * it needs a runtime observation from a run that happened.
+ *
+ * A declared category is still read, still recorded verbatim in the report, and
+ * still able to move the grade — in exactly one direction. It may **raise** the
+ * required authority (`CATEGORY_STRENGTH`), and `manual` may **downgrade the
+ * result** to `unverified`, which is never a pass. It may never lower the
+ * required authority below the floor.
+ *
+ * The cost is stated rather than hidden: an acceptance check that is genuinely
+ * about project health — "the full verification suite passes" — can no longer
+ * be *verified* by citing `project.verification`, because nothing in
+ * `solutionPlanContract: 1` distinguishes that criterion from a behavioural one.
+ * It grades `unevidenced` with a reason. The way to recover it is a plan
+ * contract in which an acceptance check carries its own type, which is recorded
+ * as a future option in ADR-031 rather than taken here: widening
+ * `solutionPlanContract: 1` to make a verifier greener is the move this rung
+ * exists to refuse.
+ */
+export const UNTYPED_CATEGORY_FLOOR = 'behavioural';
+
+/**
+ * How much proof each category *requires*, as a total order. Higher demands
+ * more, so a declared category is honoured only when it is at least as strong
+ * as the floor the plan puts under the requirement.
+ *
+ * `structural` and `package-architecture` sit together at the bottom because
+ * both are answered by reading source: AX1's composition and DX4/DX5's
+ * conformance grade. `project-health` is above them because DX5 must actually
+ * run the declared suite. `behavioural` is above that because a journey must
+ * drive the application itself. `manual` is at the top because it can never
+ * resolve to a pass at all — declaring it is always a downgrade.
+ */
+export const CATEGORY_STRENGTH = Object.freeze({
+  structural: 1,
+  'package-architecture': 1,
+  'project-health': 2,
+  behavioural: 3,
+  manual: 4,
+});
+
+/**
+ * The category a requirement is **graded** under, given what the plan says
+ * about it and what the evidence author declared. Pure, total and deterministic:
+ * it reads no file, runs no authority and looks at no evidence.
+ *
+ * @param {{declared: string|null, kind: string, decisionType: string|null}} input
+ * @returns {{declared: string|null, floor: string, enforced: string, floored: boolean,
+ *   authoritative: boolean, reason: string}}
+ */
+export function effectiveRequirementCategory({ declared, kind, decisionType }) {
+  const typed = kind === 'step' && typeof decisionType === 'string'
+    && Object.prototype.hasOwnProperty.call(CATEGORY_FLOOR, decisionType);
+  const floor = typed ? CATEGORY_FLOOR[decisionType] : UNTYPED_CATEGORY_FLOOR;
+
+  const declaredStrength = declared !== null && Object.prototype.hasOwnProperty.call(CATEGORY_STRENGTH, declared)
+    ? CATEGORY_STRENGTH[declared]
+    : null;
+  const floorStrength = CATEGORY_STRENGTH[floor];
+
+  if (declaredStrength !== null && declaredStrength >= floorStrength) {
+    return {
+      declared, floor, enforced: declared, floored: false, authoritative: typed, reason: '',
+    };
+  }
+  return {
+    declared,
+    floor,
+    enforced: floor,
+    floored: true,
+    authoritative: typed,
+    reason: typed
+      ? `this step's decision is "${decisionType}", which changes what the application does, so it cannot be evidenced as "${declared}". It is graded as "${floor}"`
+      : `${kind === 'step' ? 'this step carries no decision type' : 'an acceptance check carries no type in solutionPlanContract 1'}, so nothing in the plan says this requirement is only "${declared}". A category an author picks may require more proof, never less: it is graded as "${floor}", which needs an authority that ran`,
+  };
+}
 
 /** The vocabulary itself, published so a reader never has to infer it. */
 export function implementationEvidenceVocabulary() {
@@ -667,6 +768,8 @@ export function implementationEvidenceVocabulary() {
       satisfiedBy: [...rule.satisfiedBy], insufficient: rule.insufficient, rationale: rule.rationale,
     }])),
     categoryFloor: { ...CATEGORY_FLOOR },
+    untypedCategoryFloor: UNTYPED_CATEGORY_FLOOR,
+    categoryStrength: { ...CATEGORY_STRENGTH },
     observationKinds: {
       composition: [...COMPOSITION_OBSERVATION_KINDS],
       runtime: [...RUNTIME_OBSERVATION_KINDS],
@@ -684,6 +787,7 @@ export function implementationEvidenceVocabulary() {
     },
     notModeled: [
       'a declared status — status is derived from evidence, never asserted',
+      'a category that lowers the authority a requirement needs — a declared category may only raise it, or downgrade the result',
       'a test name — no authority publishes which tests ran',
       'an evidence-to-evidence citation — an entry names an authority, so there is no graph to keep acyclic',
       'a command, script, path to execute, environment variable or effect',

@@ -8,8 +8,9 @@ import {
   parseSolutionPlan, planRequirements, validateSolutionPlan,
 } from '../../core/src/solution-plan.js';
 import {
-  CATEGORY_FLOOR, COMPOSITION_OBSERVATION_KINDS, EVIDENCE_LIMITATIONS, MAX_EVIDENCE_BYTES,
-  RUNTIME_OBSERVATION_KINDS, SUFFICIENCY, implementationEvidenceVocabulary,
+  COMPOSITION_OBSERVATION_KINDS, EVIDENCE_LIMITATIONS, MAX_EVIDENCE_BYTES,
+  RUNTIME_OBSERVATION_KINDS, SUFFICIENCY, effectiveRequirementCategory,
+  implementationEvidenceVocabulary,
   parseImplementationEvidence, validateImplementationEvidence,
 } from '../../core/src/implementation-evidence.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
@@ -434,6 +435,7 @@ function grade({ requirement, declaration, stale, bound, inspection, verifyRepor
     kind: requirement.kind,
     statement: bound_(requirement.statement),
     category: declaration?.category ?? null,
+    enforcedCategory: null,
     status: 'unevidenced',
     reason: '',
     evidence: [],
@@ -447,25 +449,29 @@ function grade({ requirement, declaration, stale, bound, inspection, verifyRepor
     return { ...base, status: stale ? 'stale' : 'unevidenced', reason: 'the evidence document does not mention this requirement' };
   }
 
-  // A step's decision type is a fact about the plan, not a claim by the evidence
-  // author, so it is a **floor** the declared category cannot go under — and the
-  // floor is what the sufficiency rule is applied against. Reporting the
-  // violation while still grading the weaker claim would let the label decide
-  // the outcome, which is the one thing the category must never do.
-  const floor = requirement.decisionType ? CATEGORY_FLOOR[requirement.decisionType] ?? null : null;
-  let effective = declaration.category;
-  if (floor === 'behavioural' && declaration.category !== 'behavioural' && declaration.category !== 'manual') {
+  // What the requirement is graded as. The plan decides the floor; the evidence
+  // author may only raise it, or downgrade the result by declaring `manual`.
+  // Grading the weaker claim while merely *reporting* the violation would let
+  // the label decide the outcome, which is the one thing a category must never
+  // do — so the enforced category is what the sufficiency rule is applied
+  // against, and both categories are published side by side.
+  const category = effectiveRequirementCategory({
+    declared: declaration.category === '' ? null : declaration.category,
+    kind: requirement.kind,
+    decisionType: requirement.decisionType,
+  });
+  const effective = category.enforced;
+  if (category.floored) {
     problems.push({
       code: 'EVIDENCE_CATEGORY_BELOW_FLOOR', path: `evidence.requirements.${requirement.requirementId}.category`,
-      message: `this step's decision is "${requirement.decisionType}", which changes what the application does, so it cannot be evidenced as "${declaration.category}". It is graded as behavioural, and a behavioural requirement needs a run`,
+      message: category.reason,
     });
-    effective = 'behavioural';
   }
 
   const resolved = declaration.evidence.map((ref) => resolveReference({
     ref, bound, inspection, verifyReport, scenarioReports, root, requirementId: requirement.requirementId, problems,
   }));
-  const row = { ...base, evidence: resolved };
+  const row = { ...base, enforcedCategory: effective, evidence: resolved };
 
   if (stale) {
     return { ...row, status: 'stale', reason: 'the plan, its composition or its fingerprint moved after this evidence was gathered' };
@@ -473,7 +479,7 @@ function grade({ requirement, declaration, stale, bound, inspection, verifyRepor
   if (declaration.blocked !== null) {
     return { ...row, status: 'blocked', reason: bound_(declaration.blocked.reason) };
   }
-  if (declaration.category === 'manual') {
+  if (effective === 'manual') {
     const hasManual = resolved.some((entry) => entry.kind === 'manual');
     return hasManual
       ? { ...row, status: 'unverified', reason: 'manual evidence only; nothing here proves it, and it is recorded so the gap is stated rather than omitted' }
@@ -802,7 +808,8 @@ export function semanticFingerprint(report) {
     binding: report.binding,
     counts: report.counts,
     requirements: report.requirements.map((row) => ({
-      requirementId: row.requirementId, kind: row.kind, category: row.category, status: row.status,
+      requirementId: row.requirementId, kind: row.kind, category: row.category,
+      enforcedCategory: row.enforcedCategory, status: row.status,
       evidence: row.evidence.map((entry) => ({ kind: entry.kind, resolved: entry.resolved, problem: entry.problem })),
     })),
     problems: report.problems.map((entry) => entry.code).sort(),
@@ -851,7 +858,12 @@ function render(report) {
   lines.push(`status:   ${report.status}`);
   lines.push('');
   for (const row of report.requirements) {
-    lines.push(`  ${MARK[row.status].padEnd(6)} ${row.requirementId}${row.category ? `  [${row.category}]` : ''}`);
+    // Both categories, because the difference between them is the whole point:
+    // the second is the one the sufficiency rule was applied against.
+    const label = row.enforcedCategory && row.enforcedCategory !== row.category
+      ? `  [${row.category || 'none'} → graded ${row.enforcedCategory}]`
+      : row.category ? `  [${row.category}]` : '';
+    lines.push(`  ${MARK[row.status].padEnd(6)} ${row.requirementId}${label}`);
     if (row.reason) lines.push(`         ${row.reason}`);
   }
   lines.push('');

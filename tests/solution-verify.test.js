@@ -13,6 +13,7 @@ import {
 import {
   fingerprintPlan, inspectionFingerprint, planRequirements, validateSolutionPlan,
 } from '../packages/core/src/solution-plan.js';
+import { effectiveRequirementCategory } from '../packages/core/src/implementation-evidence.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -265,13 +266,18 @@ test('a fully evidenced plan with one manual requirement is incomplete, and exit
   const { exitCode, report } = await run(root, { verify: verifyStub(CONFORMING_CHECKS) });
 
   assert.equal(report.solutionVerificationContract, SOLUTION_VERIFICATION_CONTRACT);
+  // Steps are typed by the plan, so both are graded as the plan says.
   assert.equal(statusOf(report, ids['the application does the thing']), 'verified');
   assert.equal(statusOf(report, ids['the record gains a field']), 'verified');
-  assert.equal(statusOf(report, ids['the suite passes']), 'verified');
+  // An acceptance check is untyped, so it is graded behavioural whatever its
+  // author declared. This fixture declares two of them as the weaker categories
+  // and both are refused — that is the exploit, closed (ADR-031).
+  assert.equal(statusOf(report, ids['the suite passes']), 'unevidenced');
+  assert.equal(statusOf(report, ids['the package conforms']), 'unevidenced');
+  assert.ok(codes(report).includes('EVIDENCE_CATEGORY_BELOW_FLOOR'));
+  // Declared behavioural, evidenced by a runtime observation: verified.
   assert.equal(statusOf(report, ids['the journey completes']), 'verified');
-  assert.equal(statusOf(report, ids['the package conforms']), 'verified');
-  // The manual one is the whole point: five of six are machine-verified and the
-  // command still refuses to exit 0.
+  // The manual one is the whole point: the command still refuses to exit 0.
   assert.equal(statusOf(report, ids['a person reads the screen']), 'unverified');
   assert.equal(report.status, 'incomplete');
   assert.equal(exitCode, 1, 'exit 0 is forbidden while manual evidence remains required');
@@ -281,7 +287,7 @@ test('a fully evidenced plan with one manual requirement is incomplete, and exit
 
 test('exit 0 happens only when every requirement is machine-verified', async (t) => {
   const plan = planDocument({
-    acceptance: { checks: ['the suite passes'], jtbdRows: [], artifacts: [] },
+    acceptance: { checks: ['the journey completes'], jtbdRows: [], artifacts: [] },
     steps: [{ id: 'step.behave', decisionId: 'd.configure', description: 'the application does the thing', requiresCapabilities: [], approvals: [], verifies: [] }],
     decisions: [{ id: 'd.configure', type: 'configure', target: 'app.thing', rationale: 'it exists already' }],
   });
@@ -297,8 +303,11 @@ test('exit 0 happens only when every requirement is machine-verified', async (t)
         evidence: [{ kind: 'scenario.observation', scenario: 'demo', observation: 'run.02', expects: 'journey.fact fact=thingHappened is=true' }],
       },
       {
-        requirementId: ids['the suite passes'], category: 'project-health',
-        evidence: [{ kind: 'project.verification', check: 'suite.verify', expect: 'passed' }],
+        // An acceptance check is untyped, so exit 0 is only reachable through a
+        // runtime observation from a run that happened. Citing `suite.verify`
+        // here is exactly the shape the floor refuses.
+        requirementId: ids['the journey completes'], category: 'behavioural',
+        evidence: [{ kind: 'scenario.observation', scenario: 'demo', observation: 'run.01', expects: 'the journey completes and reports success' }],
       },
     ],
     limitations: [],
@@ -545,7 +554,7 @@ test('a capability and an action are cited by identity, and a fact that is not t
   assert.equal(absent.report.binding.boundTo, 'project', 'the composition still matches');
   assert.ok(codes(absent.report).includes('EVIDENCE_FACT_ABSENT'));
   assert.equal(statusOf(absent.report, ids['the record gains a field']), 'unevidenced');
-  assert.equal(statusOf(absent.report, ids['the suite passes']), 'verified', 'only the citing requirement fails');
+  assert.equal(statusOf(absent.report, ids['the journey completes']), 'verified', 'only the citing requirement fails');
 });
 
 test('a capability that actually disappeared moves the composition digest, and the plan goes stale', async (t) => {
@@ -867,4 +876,140 @@ test('every source artifact the checked-in documents cite is present with exactl
       }
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// The category exploit (ADR-031). An evidence author declares a category, and
+// that category used to select which authority had to answer. The exploit was:
+//
+//   a behavioural acceptance statement → label it "structural"
+//   → cite source.artifact / action.present / package.composed
+//   → the verifier reports VERIFIED, having run nothing
+//
+// These are mutation tests, not description: each takes the *same* behavioural
+// acceptance statement and tries every weaker category and every static
+// authority against it. None may reach `verified`, and none may reach exit 0.
+// ---------------------------------------------------------------------------
+
+/** A one-check plan whose criterion is unambiguously about what the app does. */
+function behaviouralCheckPlan() {
+  return planDocument({
+    steps: [],
+    decisions: [{ id: 'd.configure', type: 'configure', target: 'app.thing', rationale: 'it exists already' }],
+    acceptance: { checks: ['the application does the thing when a person asks it to'], jtbdRows: [], artifacts: [] },
+  });
+}
+
+function exploitEvidence(plan, category, refs) {
+  const ids = requirementIds(plan);
+  const { plan: normalized } = validateSolutionPlan(plan);
+  return {
+    implementationEvidenceContract: 1,
+    plan: 'plans/demo.plan.json',
+    planFingerprint: fingerprintPlan(normalized),
+    applicationInspectionFingerprint: normalized.application.inspectionFingerprint,
+    requirements: [{
+      requirementId: ids['the application does the thing when a person asks it to'],
+      category,
+      evidence: refs,
+    }],
+    limitations: [],
+  };
+}
+
+test('a behavioural criterion relabelled as a weaker category cannot reach verified or exit 0', async (t) => {
+  const plan = behaviouralCheckPlan();
+  const ids = requirementIds(plan);
+  const id = ids['the application does the thing when a person asks it to'];
+
+  /** Every static authority an author could reach for, and every weaker label. */
+  const staticRefs = {
+    'action.present': [{ kind: 'application.fact', fact: 'action.present', name: 'widget.do' }],
+    'package.composed': [{ kind: 'application.fact', fact: 'package.composed', name: 'packages/widget' }],
+    'module.present': [{ kind: 'application.fact', fact: 'module.present', name: 'widget' }],
+    'package.conformance': [{ kind: 'package.conformance', package: 'packages/widget' }],
+    'project.verification': [{ kind: 'project.verification', check: 'suite.verify', expect: 'passed' }],
+    'composition observation': [{ kind: 'scenario.observation', scenario: 'demo', observation: 'shape.01', expects: 'action.present action=widget.do' }],
+  };
+
+  for (const category of ['structural', 'package-architecture', 'project-health']) {
+    for (const [label, refs] of Object.entries(staticRefs)) {
+      const evidence = exploitEvidence(plan, category, refs);
+      const root = demo(t, { plan, evidence });
+      const { exitCode, report } = await run(root, { verify: verifyStub(CONFORMING_CHECKS) });
+      const status = statusOf(report, id);
+      assert.notEqual(status, 'verified', `${category} + ${label} must not verify a behavioural criterion`);
+      assert.notEqual(exitCode, 0, `${category} + ${label} must not exit 0`);
+      assert.equal(report.status, 'incomplete');
+      assert.ok(codes(report).includes('EVIDENCE_CATEGORY_BELOW_FLOOR'),
+        `${category} + ${label} names the floor it violated`);
+      // The declared category is still published verbatim beside the enforced
+      // one: the fix hides nothing the author wrote.
+      const row = report.requirements.find((entry) => entry.requirementId === id);
+      assert.equal(row.category, category);
+      assert.equal(row.enforcedCategory, 'behavioural');
+    }
+  }
+});
+
+test('the same criterion verifies only through an authority that ran', async (t) => {
+  const plan = behaviouralCheckPlan();
+  const ids = requirementIds(plan);
+  const id = ids['the application does the thing when a person asks it to'];
+  const evidence = exploitEvidence(plan, 'behavioural', [
+    { kind: 'scenario.observation', scenario: 'demo', observation: 'run.02', expects: 'journey.fact fact=thingHappened is=true' },
+  ]);
+  const { exitCode, report } = await run(demo(t, { plan, evidence }), { verify: verifyStub(CONFORMING_CHECKS) });
+  assert.equal(statusOf(report, id), 'verified');
+  assert.equal(report.requirements.find((row) => row.requirementId === id).enforcedCategory, 'behavioural');
+  assert.deepEqual(codes(report).filter((code) => code === 'EVIDENCE_CATEGORY_BELOW_FLOOR'), []);
+  assert.equal(exitCode, 0);
+});
+
+test('declaring manual only ever lowers the result, and never raises it', async (t) => {
+  const plan = behaviouralCheckPlan();
+  const ids = requirementIds(plan);
+  const id = ids['the application does the thing when a person asks it to'];
+  // Real, resolving, runtime machine evidence — and a manual label on top.
+  const evidence = exploitEvidence(plan, 'manual', [
+    { kind: 'manual', describes: 'a person watched it happen' },
+    { kind: 'scenario.observation', scenario: 'demo', observation: 'run.02', expects: 'journey.fact fact=thingHappened is=true' },
+  ]);
+  const { exitCode, report } = await run(demo(t, { plan, evidence }), { verify: verifyStub(CONFORMING_CHECKS) });
+  assert.equal(statusOf(report, id), 'unverified', 'manual is a downgrade, so it wins over the machine evidence');
+  assert.equal(exitCode, 1);
+});
+
+test('a step keeps the floor its own decision type puts under it', async (t) => {
+  // `evolve` floors at structural, so a structural label is honoured — the plan
+  // said so, not the author. `configure` floors at behavioural, so it is not.
+  const plan = planDocument();
+  const ids = requirementIds(plan);
+  const evidence = evidenceDocument(plan);
+  evidence.requirements[0].category = 'structural';
+  evidence.requirements[0].evidence = [{ kind: 'application.fact', fact: 'action.present', name: 'widget.do' }];
+  const { report } = await run(demo(t, { plan, evidence }), { verify: verifyStub(CONFORMING_CHECKS) });
+  assert.equal(statusOf(report, ids['the application does the thing']), 'unevidenced', 'configure floors at behavioural');
+  assert.equal(statusOf(report, ids['the record gains a field']), 'verified', 'evolve floors at structural');
+});
+
+test('a step the plan gives no decision type falls to the untyped floor, not to its label', async (t) => {
+  // The plan is authoritative only where it actually says something. A step
+  // with no resolvable decision type says nothing about its own nature, so it
+  // is treated exactly like an acceptance check rather than trusted.
+  const plan = planDocument({
+    decisions: [{ id: 'd.configure', type: 'configure', target: 'app.thing', rationale: 'it exists already' }],
+    steps: [{ id: 'step.behave', decisionId: 'd.configure', description: 'the application does the thing', requiresCapabilities: [], approvals: [], verifies: [] }],
+    acceptance: { checks: ['the journey completes'], jtbdRows: [], artifacts: [] },
+  });
+  const { requirements } = planRequirements(validateSolutionPlan(plan).plan);
+  const step = requirements.find((row) => row.kind === 'step');
+  assert.equal(effectiveRequirementCategory({ declared: 'structural', kind: 'step', decisionType: step.decisionType }).enforced,
+    'behavioural');
+  assert.equal(effectiveRequirementCategory({ declared: 'structural', kind: 'step', decisionType: null }).enforced,
+    'behavioural', 'no decision type is not a licence to grade structural');
+  assert.equal(effectiveRequirementCategory({ declared: 'structural', kind: 'step', decisionType: 'not-a-real-type' }).enforced,
+    'behavioural', 'an unrecognised decision type is untyped, not permissive');
+  assert.equal(effectiveRequirementCategory({ declared: null, kind: 'acceptance-check', decisionType: null }).enforced,
+    'behavioural', 'no declared category at all is still the floor');
 });

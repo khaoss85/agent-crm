@@ -171,16 +171,24 @@ test('a fingerprint field takes a digest, never a label', () => {
 });
 
 test('a requirement id must be a shape the plan can derive', () => {
-  for (const id of ['step.one', 'check:zzz', 'artifact:packages/x.js', 'JTBD-04', 'check:abc']) {
+  // 'check:0123456789ab' is the *old* 12-hex width: 48 bits is brute-forceable
+  // to a chosen collision, so it is refused now rather than accepted (ADR-031).
+  for (const id of ['step.one', 'check:zzz', 'artifact:packages/x.js', 'JTBD-04', 'check:abc',
+    'check:0123456789ab']) {
     const { problems } = validateImplementationEvidence(document({
       requirements: [{ requirementId: id, category: 'structural', evidence: [] }],
     }));
     assert.ok(codesOf(problems).includes('EVIDENCE_FIELD_INVALID'), `refused: ${id}`);
   }
   const ok = validateImplementationEvidence(document({
-    requirements: [{ requirementId: 'check:0123456789ab', category: 'structural', evidence: [] }],
+    requirements: [{ requirementId: 'check:0123456789ab0123456789ab0123456789', category: 'structural', evidence: [] }],
   }));
-  assert.equal(ok.valid, true, JSON.stringify(ok.problems));
+  assert.equal(ok.valid, false, 'a 34-hex id is not the derived width either');
+  const right = validateImplementationEvidence(document({
+    requirements: [{ requirementId: `check:${'0'.repeat(REQUIREMENT_DIGEST_LENGTH)}`, category: 'structural', evidence: [] }],
+  }));
+  assert.equal(right.valid, true, JSON.stringify(right.problems));
+  assert.equal(REQUIREMENT_DIGEST_LENGTH, 32, 'the derived width is 128 bits');
 });
 
 test('a requirement appears once, and an identical reference is not two facts', () => {
@@ -341,9 +349,14 @@ test('every limitation is published with a code a caller can switch on', () => {
   assert.equal(new Set(codes).size, codes.length, 'one code, one message');
   for (const required of ['MANUAL_EVIDENCE_IS_NOT_PROOF', 'SOURCE_IS_STRUCTURAL_ONLY',
     'BROWSER_EVIDENCE_NOT_AUTOMATED', 'PRODUCTION_EVIDENCE_ABSENT', 'VERIFICATION_SOURCE_TRUSTED',
-    'EVIDENCE_IS_NOT_A_PLAN_RUNTIME', 'REQUIREMENT_CATEGORY_IS_DECLARED', 'COVERAGE_IS_THE_PLAN_ONLY']) {
+    'EVIDENCE_IS_NOT_A_PLAN_RUNTIME', 'REQUIREMENT_CATEGORY_CANNOT_WEAKEN_PROOF',
+    'ACCEPTANCE_CHECKS_ARE_UNTYPED', 'COVERAGE_IS_THE_PLAN_ONLY']) {
     assert.ok(codes.includes(required), `${required} is published on every report`);
   }
+  // The old wording *described* the category exploit as a bound rather than
+  // closing it. It must not come back: a limitation paragraph is not a fix.
+  assert.equal(codes.includes('REQUIREMENT_CATEGORY_IS_DECLARED'), false,
+    'the declared-category limitation is replaced by an enforced floor, not restated');
 });
 
 // ---------------------------------------------------------------------------
@@ -365,10 +378,10 @@ test('a requirement is a step or an acceptance check, and nothing else in the pl
   assert.deepEqual(requirements.map((row) => row.requirementId), [
     'step:step.publish-dwell-view',
     'step:step.add-stall-reason',
-    'check:af9d6ee5ccc4',
-    'check:94439cfe3fe3',
-    'check:c56c0abf1035',
-    'check:f3c222d2bfe2',
+    'check:af9d6ee5ccc4314af1f61399e21ccbc0',
+    'check:94439cfe3fe33f4135c30846fe2a3509',
+    'check:c56c0abf1035400e1568df1509006b1f',
+    'check:f3c222d2bfe28d7e8f7a3f7cc99198ac',
   ]);
   assert.equal(requirements.length, leadToWon.steps.length + leadToWon.acceptance.checks.length);
   // An artifact is a *place*, not a requirement — treating a declared path as
@@ -413,7 +426,7 @@ test('a step reuses the id its author wrote; an acceptance check is content-addr
     },
   }).plan;
   const changed = planRequirements(reworded).requirements.map((row) => row.requirementId);
-  assert.equal(changed.includes('check:f3c222d2bfe2'), false);
+  assert.equal(changed.includes('check:f3c222d2bfe28d7e8f7a3f7cc99198ac'), false);
 
   for (const row of before.filter((entry) => entry.kind === 'acceptance-check')) {
     assert.match(row.requirementId, new RegExp(`^check:[0-9a-f]{${REQUIREMENT_DIGEST_LENGTH}}$`));

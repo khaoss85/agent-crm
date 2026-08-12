@@ -21,16 +21,28 @@
       }
     },
     {
-      "requirementId": "check:af9d6ee5ccc4",
+      "requirementId": "check:af9d6ee5ccc4314af1f61399e21ccbc0",
       "category": "project-health",
       "evidence": [
-        { "kind": "project.verification", "check": "suite.verify", "expect": "passed" },
-        { "kind": "project.verification", "check": "structure.doctor", "expect": "passed" },
-        { "kind": "project.verification", "check": "application.inspect", "expect": "passed" }
+        {
+          "kind": "project.verification",
+          "check": "suite.verify",
+          "expect": "passed"
+        },
+        {
+          "kind": "project.verification",
+          "check": "structure.doctor",
+          "expect": "passed"
+        },
+        {
+          "kind": "project.verification",
+          "check": "application.inspect",
+          "expect": "passed"
+        }
       ]
     },
     {
-      "requirementId": "check:94439cfe3fe3",
+      "requirementId": "check:94439cfe3fe33f4135c30846fe2a3509",
       "category": "behavioural",
       "evidence": [
         {
@@ -51,7 +63,7 @@
       }
     },
     {
-      "requirementId": "check:c56c0abf1035",
+      "requirementId": "check:c56c0abf1035400e1568df1509006b1f",
       "category": "manual",
       "evidence": [
         {
@@ -61,10 +73,14 @@
       ]
     },
     {
-      "requirementId": "check:f3c222d2bfe2",
+      "requirementId": "check:f3c222d2bfe28d7e8f7a3f7cc99198ac",
       "category": "structural",
       "evidence": [
-        { "kind": "application.fact", "fact": "module.present", "name": "opportunity" }
+        {
+          "kind": "application.fact",
+          "fact": "module.present",
+          "name": "opportunity"
+        }
       ],
       "blocked": {
         "reason": "the record is present and carries no manifest revision, so there is no module-factory state file to check in and no revision bump to apply. This requirement is blocked on the record becoming an ADR-019 managed module, which is work no evidence document can substitute for"

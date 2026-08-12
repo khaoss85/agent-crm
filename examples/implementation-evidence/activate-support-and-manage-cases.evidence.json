@@ -23,7 +23,7 @@
         {
           "kind": "source.artifact",
           "path": "packages/service/src/index.js",
-          "sha256": "d2033f3fbff139bab2675086aa5fa540fd3d7bab431c1c20c557fd3bb4402f34"
+          "sha256": "10d416e2d054c48ea3cd6bdaad4c96db0e312a26dff980d41c42f075321c5082"
         }
       ]
     },
@@ -122,7 +122,7 @@
       ]
     },
     {
-      "requirementId": "check:7b8962e91123",
+      "requirementId": "check:7b8962e911232bd9a6fb2ceef0618e35",
       "category": "behavioural",
       "evidence": [
         {
@@ -143,7 +143,7 @@
       }
     },
     {
-      "requirementId": "check:92bb70c70d8c",
+      "requirementId": "check:92bb70c70d8c320216b3cc4df4d81696",
       "category": "behavioural",
       "evidence": [
         {
@@ -164,7 +164,7 @@
       }
     },
     {
-      "requirementId": "check:9a4371dbee79",
+      "requirementId": "check:9a4371dbee79c74d27157ffcf3d6b3c6",
       "category": "behavioural",
       "evidence": [
         {
@@ -182,7 +182,7 @@
       ]
     },
     {
-      "requirementId": "check:d3f8cb1e979d",
+      "requirementId": "check:d3f8cb1e979db450c58c1719406f661e",
       "category": "behavioural",
       "evidence": [
         {
@@ -197,7 +197,7 @@
       }
     },
     {
-      "requirementId": "check:fe5e7cfbce3a",
+      "requirementId": "check:fe5e7cfbce3abdd7033630dfad41a85d",
       "category": "behavioural",
       "evidence": [
         {
@@ -220,11 +220,11 @@
         }
       ],
       "partial": {
-        "reason": "\"never claims to be current\" is observed: the evaluation states its basis and states that no contractual breach was determined. \"Names the instant it used\" is not — the run publishes the state an evaluation recorded, not the timestamp field it recorded it against"
+        "reason": "\"never claims to be current\" is observed: the evaluation states its basis and states that no contractual breach was determined. \"Names the instant it used\" is not \u2014 the run publishes the state an evaluation recorded, not the timestamp field it recorded it against"
       }
     },
     {
-      "requirementId": "check:905912f60da4",
+      "requirementId": "check:905912f60da4ffd158c0c2f52da0a442",
       "category": "behavioural",
       "evidence": [
         {
@@ -262,7 +262,7 @@
   "limitations": [
     {
       "code": "PLAN_TARGETS_A_STARTER_NOT_THIS_REPOSITORY",
-      "message": "this plan was written against the application the b2b starter composes, which is not the composition this repository's own root has. The digest it pins is reproduced here by the service scenario, which composes exactly that application — so every fact about it is cited where it was observed, and no application fact is cited from this repository's AX1 report"
+      "message": "this plan was written against the application the b2b starter composes, which is not the composition this repository's own root has. The digest it pins is reproduced here by the service scenario, which composes exactly that application \u2014 so every fact about it is cited where it was observed, and no application fact is cited from this repository's AX1 report"
     },
     {
       "code": "SERVICE_COVERAGE_IS_NOT_A_CONTRACT",

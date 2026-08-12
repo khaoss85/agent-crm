@@ -965,8 +965,37 @@ function normalizeLimitations(value, problems, { hasProviderDecision = false } =
  */
 export const REQUIREMENT_KINDS = Object.freeze(['step', 'acceptance-check']);
 
-/** How many hex characters of the statement digest name an acceptance check. */
-export const REQUIREMENT_DIGEST_LENGTH = 12;
+/**
+ * How many hex characters of the statement digest name an acceptance check.
+ *
+ * **32 hex = 128 bits.** The first cut of this contract used 12 hex = 48 bits,
+ * argued from birthday chance among the ~200 rows one plan may carry. That is
+ * the wrong threat model. The wording of an acceptance check is authored by a
+ * coding agent, and an agent that can propose wording can *search* wording, so
+ * the bound that matters is a **deliberate** collision, not an accidental one:
+ *
+ * - **birthday, self-chosen pair** — ~2^24 (~1.7e7) hashes, well under a second
+ *   on one core. This one is already refused downstream: two requirements with
+ *   one id is `PLAN_REQUIREMENT_DUPLICATE`.
+ * - **chosen target — land a new criterion on an id somebody else's evidence
+ *   already names** — ~2^48 (~2.8e14) hashes at 48 bits. That is hours on one
+ *   commodity GPU and days on a CPU; it is not a theoretical bound, it is an
+ *   afternoon. It is also the dangerous one, because it makes an unevidenced
+ *   criterion resolve against evidence written for a different criterion.
+ *
+ * At 128 bits the chosen-target search is ~2^128, which is the bound SHA-256's
+ * own second-preimage resistance rests on, and the birthday search is ~2^64 —
+ * both out of reach of an author who can only pick words.
+ *
+ * The cost of the wider id is a longer string in a checked-in document, and
+ * nothing outside this repository consumes these identifiers yet, so this is
+ * the cheapest moment the change will ever have.
+ *
+ * Both properties that made the derivation worth having are unchanged:
+ * rewording a criterion still changes its id, and two identical criteria still
+ * collide and are still refused.
+ */
+export const REQUIREMENT_DIGEST_LENGTH = 32;
 
 /**
  * Every requirement in a plan, with a **derived** stable identifier.
@@ -974,7 +1003,7 @@ export const REQUIREMENT_DIGEST_LENGTH = 12;
  * `steps[].id` already exists and is already unique, so a step requirement
  * reuses it rather than minting a second name for the same thing:
  * `step:<stepId>`. An acceptance check is a bare string with no identifier at
- * all, so its id is content-addressed: `check:<first 12 hex of sha256>` over the
+ * all, so its id is content-addressed: `check:<first 32 hex of sha256>` over the
  * statement.
  *
  * **Why derived rather than a new field.** Widening `acceptance.checks[]` to
@@ -1190,7 +1219,7 @@ export function solutionPlanVocabulary() {
     // that has to guess an identifier will guess a different one.
     requirements: {
       kinds: [...REQUIREMENT_KINDS],
-      rule: 'a requirement is a step or an acceptance check. A step reuses the id its author already wrote (`step:<stepId>`); an acceptance check has no id in this contract, so it is content-addressed (`check:<first 12 hex of sha256 of the statement>`)',
+      rule: 'a requirement is a step or an acceptance check. A step reuses the id its author already wrote (`step:<stepId>`); an acceptance check has no id in this contract, so it is content-addressed (`check:<first 32 hex of sha256 of the statement>`)',
       notRequirements: [
         'an acceptance artifact — a declared file path is a place, not proof that the work behind it happened',
         'a JTBD row — its status is a person\'s decision under docs/QUALITY_GATES.md §3',
