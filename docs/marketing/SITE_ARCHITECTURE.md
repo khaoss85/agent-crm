@@ -14,7 +14,7 @@ questions, and states its own boundary. That is the hub-and-spoke model — a pi
 page for a topic, ten to twenty spokes each owning one sub-question, every spoke
 linking back to its pillar with descriptive anchor text.
 
-We already had two clusters and did not call them that: `jobs.html` over 63 job pages,
+We already had two clusters and did not call them that: `jobs.html` over 66 job pages,
 and `answers.html` over 15 answer pages. Both are generated from a structured source
 with evidence attached to every row. **That is the pattern; the rest of the site is
 built the same way, or it is not built.**

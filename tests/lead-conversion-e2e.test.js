@@ -27,7 +27,14 @@ test.before(async () => {
     cpSync(join(repoRoot, entry), join(projectRoot, entry), { recursive: true });
   }
   const starter = join(projectRoot, 'examples/starters/b2b-lead-qualification');
-  for (const manifest of ['lead.module.json', 'task.module.json']) {
+  for (const manifest of [
+    'lead.module.json',
+    // Work v1 (ADR-030): the starter's bespoke `task` module is gone and its
+    // follow-up now lives in the work package's records. Relative to the
+    // starter directory, so the existing join(starter, manifest) still holds.
+    '../../../packages/work/modules/work-task.module.json',
+    '../../../packages/work/modules/work-activity.module.json',
+  ]) {
     const result = spawnSync(
       process.execPath,
       ['--no-warnings', join(projectRoot, 'packages/cli/bin/accordo.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', projectRoot],

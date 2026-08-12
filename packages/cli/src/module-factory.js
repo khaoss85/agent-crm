@@ -782,9 +782,17 @@ ${insertValues}
   list(filters = {}) {
     const requested = Number.isInteger(filters.limit) ? /** @type {number} */ (filters.limit) : 100;
     const limit = Math.min(Math.max(requested, 1), 500);
+    // A where narrows the page *in the database*, and it is the only honest way
+    // to page a collection that belongs to one parent: filtering the newest N
+    // rows of the whole table in a client shows an empty list for a parent whose
+    // rows are older than that page, while the page bound beside it says the
+    // bound was about the screen. Same declared-field grammar as listWhere;
+    // still a bounded DISPLAY read, so the ordering and the 1..500 bound are
+    // unchanged and a correctness decision still belongs to listWhere.
+    const where = this.#where(filters.where ?? {});
     return this.database.raw.prepare(\`
-      SELECT * FROM ${manifest.table} ORDER BY created_at DESC, id LIMIT ?
-    \`).all(limit).map(map${names.pascal}Row);
+      SELECT * FROM ${manifest.table}\${where.clause} ORDER BY created_at DESC, id LIMIT ?
+    \`).all(...where.params, limit).map(map${names.pascal}Row);
   }
 
   // Exact-match correctness queries (ADR-015): unlike the paged list(), these
@@ -937,6 +945,7 @@ function indexTemplate(manifest, names, referenceTargets = {}) {
   // client can create or edit rows — records exist only via trusted actions.
   const isReadOnly = manifest.fields.length > 0 && manifest.fields.every((field) => field.writable === 'managed');
   const capabilities = isReadOnly ? ['get', 'list'] : ['create', 'get', 'list', 'update'];
+  const filterableFields = ['id', ...manifest.fields.filter((field) => field.index === true || field.unique === true).map((field) => field.name)];
   const fieldNames = ['id', ...manifest.fields.map((field) => field.name), 'createdAt', 'updatedAt'];
   const fieldMetadata = manifest.fields.map((field) => {
     if (field.type === 'reference') {
@@ -993,6 +1002,12 @@ export const ${names.camel}ModuleDefinition = Object.freeze({
   manifestVersion: ${manifest.manifestVersion},
   table: ${JSON.stringify(manifest.table)},
   capabilities: Object.freeze(${JSON.stringify(capabilities)}),
+  // Fields a client may narrow a collection read by, over HTTP (ADR-008
+  // addendum 2). Deliberately only the INDEXED and UNIQUE ones plus id: a
+  // routed filter must be index-backed, so no client can turn a page request
+  // into a table scan. Its absence on an older generated module is what lets
+  // the route refuse a filter instead of silently answering unfiltered.
+  filterableFields: Object.freeze(${JSON.stringify(filterableFields)}),
   fields: Object.freeze([
 ${fieldMetadataLines}
   ]),

@@ -24,7 +24,16 @@ test.before(async () => {
     cpSync(join(repoRoot, entry), join(projectRoot, entry), { recursive: true });
   }
   const starter = join(projectRoot, 'examples/starters/b2b-lead-qualification');
-  for (const manifest of ['lead.module.json', 'task.module.json']) {
+  for (const manifest of [
+    'lead.module.json',
+    // Work v1 (ADR-030): the starter's bespoke `task` module is gone and its
+    // follow-up now lives in the work package's records. Relative to the
+    // starter directory, so the existing join(starter, manifest) still holds.
+    '../../../packages/work/modules/work-task.module.json',
+    '../../../packages/work/modules/work-activity.module.json',
+    // A plain, publicly writable second module for the generic-path fixture.
+    '../../modules/scratch-note.module.json',
+  ]) {
     const result = spawnSync(
       process.execPath,
       ['--no-warnings', join(projectRoot, 'packages/cli/bin/accordo.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', projectRoot],
@@ -33,25 +42,27 @@ test.before(async () => {
     assert.equal(result.status, 0, result.stderr);
   }
   // The starter's two actions, plus a second, non-Lead action that proves the
-  // registry/runtime/HTTP path is generic: task.complete uses a different
+  // registry/runtime/HTTP path is generic: `note.archive` uses a different
   // module, no input, and only PUBLIC service methods (no managed fields).
+  // It deliberately does NOT use a Work record: those are evidence records with
+  // no public write path at all, which is a different thing to prove.
   writeFileSync(
     join(projectRoot, 'packages/actions/generated/index.js'),
     [
       "import { qualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/qualify.js';",
       "import { disqualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/disqualify.js';",
-      'export const completeTask = {',
-      "  module: 'task',",
-      "  name: 'complete',",
-      "  label: 'Complete task',",
+      'export const archiveNote = {',
+      "  module: 'scratch-note',",
+      "  name: 'archive',",
+      "  label: 'Archive note',",
       '  actionContract: 1,',
       "  stateField: 'status',",
       "  fromStates: ['open'],",
       '  async execute({ record, actor, modules }) {',
-      "    return modules.get('task').service.update(record.id, { status: 'done' }, { actor });",
+      "    return modules.get('scratch-note').service.update(record.id, { status: 'archived' }, { actor });",
       '  },',
       '};',
-      'export const generatedActions = [qualifyLead, disqualifyLead, completeTask];',
+      'export const generatedActions = [qualifyLead, disqualifyLead, archiveNote];',
       '',
     ].join('\n'),
   );
@@ -76,7 +87,7 @@ test('a post-commit subscriber failure is NOT a business failure: success + fail
   const lead = await capture(app);
   const delivered = [];
   app.events.subscribe('lead.updated', () => delivered.push('lead.updated'));
-  app.events.subscribe('task.created', () => { throw new Error('subscriber exploded'); });
+  app.events.subscribe('work-task.created', () => { throw new Error('subscriber exploded'); });
 
   const result = await app.runAction({
     module: 'lead', action: 'qualify', recordId: lead.id,
@@ -87,7 +98,7 @@ test('a post-commit subscriber failure is NOT a business failure: success + fail
   // a committed write because a subscriber failed.
   assert.equal(result.ok, true);
   assert.equal(app.modules.get('lead').service.get(lead.id).status, 'qualified');
-  assert.equal(app.modules.get('task').service.list().length, 1);
+  assert.equal(app.modules.get('work-task').service.list().length, 1);
   // Events before the failing one were delivered; the failure is observable in
   // the trace as a failed events.dispatch span on a COMPLETED run.
   assert.deepEqual(delivered, ['lead.updated']);
@@ -131,23 +142,26 @@ test('two independent connections, concurrent qualify: one success, one clean 40
 
   // Exactly one transition, one task, one set of success audits.
   assert.equal(appA.modules.get('lead').service.get(lead.id).status, 'qualified');
-  const tasks = appA.modules.get('task').service.list().filter((task) => task.leadId === lead.id);
+  const tasks = appA.modules.get('work-task').service.list().filter((task) => task.subjectId === lead.id);
   assert.equal(tasks.length, 1);
+  assert.equal(appA.modules.get('work-activity').service.listWhere({ taskId: tasks[0].id }).length, 1,
+    'one task, one creation activity — never a half pair across two connections');
   const leadAudits = appA.audit.list({ entityType: 'lead', entityId: lead.id }).map((a) => a.action);
   assert.deepEqual(leadAudits.sort(), ['lead.created', 'lead.updated']);
-  assert.equal(appA.audit.list({ entityType: 'task' }).length, 1);
+  assert.equal(appA.audit.list({ entityType: 'work-task' }).length, 1);
+  assert.equal(appA.audit.list({ entityType: 'work-activity' }).length, 1);
 
   // A retry after the winner does not duplicate anything.
   await assert.rejects(
     () => appB.runAction({ module: 'lead', action: 'qualify', recordId: lead.id, input: { dueAt: '2026-09-01T09:00:00Z' }, actor }),
     (error) => error.status === 409 && error.code === 'INVALID_STATE',
   );
-  assert.equal(appA.modules.get('task').service.list().filter((task) => task.leadId === lead.id).length, 1);
+  assert.equal(appA.modules.get('work-task').service.list().filter((task) => task.subjectId === lead.id).length, 1);
 
   // Restart (fresh connection): one task persisted.
   const appC = createAccordoApp({ dbPath });
   t.after(() => appC.close());
-  assert.equal(appC.modules.get('task').service.list().filter((task) => task.leadId === lead.id).length, 1);
+  assert.equal(appC.modules.get('work-task').service.list().filter((task) => task.subjectId === lead.id).length, 1);
 });
 
 test('COMMIT failure is a business failure: no partial state, no events, failed trace', async (t) => {
@@ -174,7 +188,8 @@ test('COMMIT failure is a business failure: no partial state, no events, failed 
     /injected commit failure/,
   );
   assert.equal(app.modules.get('lead').service.get(lead.id).status, 'new', 'status rolled back');
-  assert.equal(app.modules.get('task').service.list().length, 0, 'no task committed');
+  assert.equal(app.modules.get('work-task').service.list().length, 0, 'no task committed');
+  assert.equal(app.modules.get('work-activity').service.list().length, 0, 'and no orphan activity');
   assert.deepEqual(events, [], 'no events escaped');
   assert.equal(app.audit.list({ entityType: 'lead', entityId: lead.id }).map((a) => a.action).filter((a) => a === 'lead.updated').length, 0);
   const run = app.database.raw.prepare("SELECT status FROM workflow_runs WHERE workflow_name = 'lead.qualify'").get();
@@ -199,7 +214,7 @@ test('corrupted historical state fails safely: actions reject, nothing compounds
     (error) => error.status === 409 && error.code === 'INVALID_STATE',
   );
   assert.equal(app.audit.list({ entityType: 'lead' }).length, auditBefore, 'no audit from rejected actions');
-  assert.equal(app.modules.get('task').service.list().length, 0);
+  assert.equal(app.modules.get('work-task').service.list().length, 0);
 });
 
 test('an action invoking another action fails closed with a clear error', async (t) => {
@@ -221,7 +236,7 @@ test('an action invoking another action fails closed with a clear error', async 
   );
   // Everything rolled back; the lead is untouched and still qualifiable.
   assert.equal(app.modules.get('lead').service.get(lead.id).status, 'new');
-  assert.equal(app.modules.get('task').service.list().length, 0);
+  assert.equal(app.modules.get('work-task').service.list().length, 0);
   const after = await app.runAction({ module: 'lead', action: 'qualify', recordId: lead.id, input: { dueAt: '2026-08-12T09:00:00Z' }, actor });
   assert.equal(after.ok, true);
 });
@@ -235,21 +250,19 @@ test('the action framework is generic: a non-Lead, no-input action runs through 
   t.after(async () => { await new Promise((resolve) => server.close(resolve)); app.close(); });
   const client = new AccordoClient({ baseUrl: `http://127.0.0.1:${server.address().port}`, actor });
 
-  const lead = await client.module('lead').create({ firstName: 'G', lastName: 'F', email: 'gf@x.example' });
-  await client.module('lead').action(lead.id, 'qualify', { dueAt: '2026-08-12T09:00:00Z' });
-  const task = (await client.module('task').list()).items[0];
-  assert.equal(task.status, 'open');
+  const note = await client.module('scratch-note').create({ title: 'Second module', status: 'open' });
+  assert.equal(note.status, 'open');
 
-  // Schema advertises the task action; the SDK runs it with no input.
+  // Schema advertises the note action; the SDK runs it with no input.
   const schema = await client.schema();
-  const taskMeta = schema.generatedModules.find((m) => m.name === 'task');
-  assert.deepEqual(taskMeta.actions.map((a) => a.name), ['complete']);
-  const done = await client.module('task').action(task.id, 'complete');
+  const noteMeta = schema.generatedModules.find((m) => m.name === 'scratch-note');
+  assert.deepEqual(noteMeta.actions.map((a) => a.name), ['archive']);
+  const done = await client.module('scratch-note').action(note.id, 'archive');
   assert.equal(done.ok, true);
-  assert.equal((await client.module('task').get(task.id)).status, 'done');
+  assert.equal((await client.module('scratch-note').get(note.id)).status, 'archived');
   // fromStates is enforced for the second fixture too.
   await assert.rejects(
-    () => client.module('task').action(task.id, 'complete'),
+    () => client.module('scratch-note').action(note.id, 'archive'),
     (error) => error.status === 409 && error.code === 'INVALID_STATE',
   );
 });

@@ -79,6 +79,10 @@ export const SERVICE_MODULES = [
 export const LIFECYCLE_MANIFESTS = ['renewal-decision.module.json', 'commercial-followup.module.json'];
 export const LIFECYCLE_MODULES = ['renewal-decision', 'commercial-followup'];
 
+/** The Work package's own record modules (Work v1, ADR-030). */
+export const WORK_MANIFESTS = ['work-task.module.json', 'work-activity.module.json'];
+export const WORK_MODULES = ['work-task', 'work-activity'];
+
 /**
  * @param {import('node:test').TestContext} t
  * @param {{withDomain?: boolean}} [options] `withDomain: false` builds the same
@@ -91,6 +95,12 @@ export function project(t, {
   // package, which is how the absence/detach case is built: the rows must
   // survive a composition that no longer names the package.
   withLifecycle = false, withLifecycleTables = withLifecycle,
+  // Work v1. `withWorkTables` applies the record modules WITHOUT composing the
+  // package, which is how absence/detach is built: the rows must survive a
+  // composition that no longer names the package. `followUp` opts Lifecycle and
+  // Service into consuming `work/follow-up@1` — it is opt-in exactly because a
+  // hard `requires` would stop every other composition here from booting.
+  withWork = false, withWorkTables = withWork, followUp = false,
 } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'accordo-contracts-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -111,6 +121,7 @@ export function project(t, {
   if (withDelivery) for (const manifest of DELIVERY_MANIFESTS) apply(join(root, 'packages/delivery/modules', manifest));
   if (withService) for (const manifest of SERVICE_MANIFESTS) apply(join(root, 'packages/service/modules', manifest));
   if (withLifecycleTables) for (const manifest of LIFECYCLE_MANIFESTS) apply(join(root, 'packages/lifecycle/modules', manifest));
+  if (withWorkTables) for (const manifest of WORK_MANIFESTS) apply(join(root, 'packages/work/modules', manifest));
   if (withCustomPackage) apply(join(root, 'examples/custom-packages/partner-scorecard/modules/partner-scorecard.module.json'));
 
   writeFileSync(
@@ -158,14 +169,16 @@ export function project(t, {
           "import { b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1 } from '../../../examples/starters/b2b-lead-qualification/service.js';",
         ] : []),
         ...(withLifecycle ? ["import { createLifecyclePackage } from '../../lifecycle/src/index.js';"] : []),
+        ...(withWork ? ["import { createWorkPackage } from '../../work/src/index.js';"] : []),
         ...(withCustomPackage ? [
           "import { createPartnerScorecardPackage } from '../../../examples/custom-packages/partner-scorecard/src/index.js';",
         ] : []),
         'export const generatedDomains = [',
         '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
         ...(withDelivery ? ['  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1], costPolicies: [b2bDeliveryCostV1] }),'] : []),
-        ...(withService ? ['  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1] }),'] : []),
-        ...(withLifecycle ? ['  createLifecyclePackage(),'] : []),
+        ...(withService ? [`  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1]${followUp ? ', followUp: true' : ''} }),`] : []),
+        ...(withLifecycle ? [`  createLifecyclePackage(${followUp ? '{ followUp: true }' : ''}),`] : []),
+        ...(withWork ? ['  createWorkPackage(),'] : []),
         ...(withCustomPackage ? ['  createPartnerScorecardPackage(),'] : []),
         '];',
         '',

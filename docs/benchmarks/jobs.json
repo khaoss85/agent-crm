@@ -1,7 +1,7 @@
 {
   "counts": {
-    "not supported": 96,
-    "partially supported": 30,
+    "not supported": 95,
+    "partially supported": 31,
     "technically supported": 0,
     "total": 149,
     "validated end to end": 23
@@ -123,13 +123,20 @@
       "title": "Manage a custom object with an approval rule"
     },
     {
-      "docs": [],
+      "docs": [
+        "docs/WORK_TASKS.md"
+      ],
       "id": "JTBD-07",
       "section": "CRM JTBD validation matrix",
       "status": "partially supported",
-      "summary": "narrowly: the first follow-up Task is created as part of Lead qualification (Milestone 6). There is still no reusable task engine, no scheduling/delayed-workflow primitive, no reminders, no queues, no recurring work.",
+      "summary": "the *tracking* half is now reusable and the *scheduling* half still does not exist. Work v1 (ADR-030) replaced the bespoke Lead slice with one package-native Task and Activity model that three business events consume, over an explicit transition table with a human-actor boundary. Nothing is scheduled: there is no scheduler, no delayed-workflow primitive, no reminder, no queue, no recurring work, and dueAt is evidence that changes no state — the word *schedule* in this row's title is still unsupported.",
       "tests": [
-        "tests/lead-qualification-e2e.test.js"
+        "tests/lead-qualification-e2e.test.js",
+        "tests/work-operations-e2e.test.js",
+        "tests/work-operations-evidence.test.js",
+        "tests/work-package-absence.test.js",
+        "tests/work-provenance-and-actor.test.js",
+        "tests/work-source-key-stability.test.js"
       ],
       "title": "Schedule next actions / follow-ups"
     },
@@ -379,7 +386,7 @@
       "id": "JTBD-CM-03",
       "section": "Communications (no milestone assigned)",
       "status": "not supported",
-      "summary": "no Activity model",
+      "summary": "Work v1 adds a free-text note on a subject timeline, and that is all: there is no meeting, call, participant, duration, direction or outcome model, no calendar and no telephony. A note is not a logged call",
       "tests": [],
       "title": "Log meetings and calls"
     },
@@ -388,8 +395,13 @@
       "id": "JTBD-CM-04",
       "section": "Communications (no milestone assigned)",
       "status": "partially supported",
-      "summary": "qualification creates exactly one follow-up Task with a deterministic source key (M6); there is no scheduler, reminder or task engine — the same limit JTBD-07 states",
-      "tests": [],
+      "summary": "tracked, never scheduled. Work v1 (ADR-030): one reusable Task and Activity model with an explicit transition table, consumed by Lead qualification, Lifecycle's commercial follow-up and Service escalation, each opening exactly one task under a deterministic business key inside its own transaction, and refusing to write at all when that transaction is not there — tests/work-operations-e2e.test.js, tests/work-operations-evidence.test.js, tests/work-provenance-and-actor.test.js, tests/work-source-key-stability.test.js. Scheduling is still absent: no scheduler, no reminder, no notification and no assignment, and dueAt changes no state — the same limit JTBD-07 states",
+      "tests": [
+        "tests/work-operations-e2e.test.js",
+        "tests/work-operations-evidence.test.js",
+        "tests/work-provenance-and-actor.test.js",
+        "tests/work-source-key-stability.test.js"
+      ],
       "title": "Schedule and track a follow-up"
     },
     {
@@ -766,9 +778,12 @@
       "docs": [],
       "id": "JTBD-DO-08",
       "section": "Data operations (no milestone assigned)",
-      "status": "not supported",
-      "summary": "audit and trace exist per record but there is no Activity model or timeline view",
-      "tests": [],
+      "status": "partially supported",
+      "summary": "Work v1 (ADR-030) adds an append-only Activity timeline per subject, with a closed four-entry vocabulary, rendered oldest-first in the Admin — tests/work-operations-e2e.test.js, tests/admin-work.test.js. It is not a unified customer timeline: it covers only what Work itself recorded, Service's support-case-activity stays domain-specific, Delivery history is not aggregated, marketing and communications do not exist at all, and no email, call, meeting or audit row appears on it. Confirmed *partially supported* by human decision on that wording; no other row is promoted by inheritance from it",
+      "tests": [
+        "tests/admin-work.test.js",
+        "tests/work-operations-e2e.test.js"
+      ],
       "title": "See a unified activity timeline for a record"
     },
     {

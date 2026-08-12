@@ -1,0 +1,9 @@
+{
+  "manifestVersion": 1,
+  "name": "scratch-note",
+  "description": "A throwaway fixture module for tests that need a SECOND, ordinary, publicly writable module with a status field. It exists so the generic action path can be proven against something that is not the Lead and not a Work evidence record — Work records are read-only in public on purpose, which is a different property and is proven separately.",
+  "fields": [
+    { "name": "title", "type": "string", "required": true },
+    { "name": "status", "type": "enum", "values": ["open", "archived"] }
+  ]
+}

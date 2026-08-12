@@ -43,6 +43,14 @@ export { withTimeout } from './src/timeout.js';
 // One ISO-8601 clock, so a package never stamps a record from its own.
 export { nowIso } from './src/time.js';
 
+// ---- the canonical actor authority ----
+// The SAME normalization the audit log applies, so a package's stored actor and
+// the audit record of the same write are the same identity. A package that
+// rolls its own drifts from the evidence beside it, and a package that bounds
+// an id the kernel does not bound can merge two people into one row. Generic:
+// nothing here knows about any package.
+export { normalizeActor, SYSTEM_ACTOR } from './src/actor.js';
+
 // ---- declared-definition fingerprints (ADR-015) ----
 // A package that publishes versioned policies uses the same mechanism every
 // first-party definition uses: declared JSON-safe config, canonical source.

@@ -109,7 +109,7 @@ normalized shape, and a fingerprint meaning one thing for new plans and another
 for old ones. Deriving adds **nothing** to that contract — not a field, not a
 rule, not a byte of any plan's fingerprint — and every plan already checked in
 became addressable the moment DX10 shipped, with **no migration and no
-rewrite**. ADR-030 records the comparison.
+rewrite**. ADR-031 records the comparison.
 
 The cost is deliberate and is the behaviour we want: **rewording an acceptance
 criterion changes its requirement id**, so evidence recorded against the old
@@ -375,7 +375,7 @@ boundary that keeps a document from naming a new thing to trust.
 
 ## Related
 
-`DECISIONS.md` ADR-030 (derived requirement identity, and why the evidence
+`DECISIONS.md` ADR-031 (derived requirement identity, and why the evidence
 document cannot declare a status) · `docs/SOLUTION_PLAN.md` (AX2) ·
 `docs/APPLICATION_INSPECTION.md` (AX1) · `docs/QUALITY_GATES.md` ·
 `docs/SCENARIO_EVIDENCE.md` (DX6) · `docs/CODER_TOOLING_ROADMAP.md` ·

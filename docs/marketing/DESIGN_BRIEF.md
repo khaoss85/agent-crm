@@ -109,7 +109,7 @@ be a visual element — chips, a grid, a marquee of honesty:
 
 **Nobody else publishes their own blind spots.** That is the brand.
 
-## 5. Page inventory — 116 pages, six clusters
+## 5. Page inventory — 119 pages, six clusters
 
 Hub-and-spoke: each pillar page links down to its spokes, each spoke links back up.
 

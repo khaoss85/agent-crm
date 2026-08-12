@@ -9,8 +9,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
 /**
- * Build a clean throwaway project, apply the Lead then Task modules through the
- * real CLI/factory, and register the starter's qualify/disqualify actions.
+ * Build a clean throwaway project, apply the Lead then the Work records through
+ * the real CLI/factory, and register the starter's qualify/disqualify actions.
+ *
+ * Work v1 (ADR-030): the starter's bespoke `task` module is gone. Its follow-up
+ * is now a `work-task` with its `work-activity`, opened through the work
+ * package's one follow-up creator inside the same transaction.
  */
 function project(t) {
   const root = mkdtempSync(join(tmpdir(), 'accordo-lead-'));
@@ -20,7 +24,12 @@ function project(t) {
   }
   const starter = join(root, 'examples/starters/b2b-lead-qualification');
   assert.equal(cli(root, ['module', 'create', join(starter, 'lead.module.json'), '--apply']).status, 0, 'apply lead');
-  assert.equal(cli(root, ['module', 'create', join(starter, 'task.module.json'), '--apply']).status, 0, 'apply task');
+  for (const manifest of ['work-task.module.json', 'work-activity.module.json']) {
+    assert.equal(
+      cli(root, ['module', 'create', join(root, 'packages/work/modules', manifest), '--apply']).status,
+      0, `apply ${manifest}`,
+    );
+  }
   writeFileSync(
     join(root, 'packages/actions/generated/index.js'),
     [
@@ -70,7 +79,8 @@ test('lead qualification end to end: qualify, disqualify, atomicity, idempotency
   let app = instance.app;
   const client = instance.client;
   const leads = client.module('lead');
-  const tasks = client.module('task');
+  const tasks = client.module('work-task');
+  const activities = client.module('work-activity');
 
   // Schema advertises the actions and the managed-field write policy.
   const schema = await client.schema();
@@ -86,7 +96,23 @@ test('lead qualification end to end: qualify, disqualify, atomicity, idempotency
 
   // Events become visible only after commit; count dispatches to prove it.
   const events = [];
-  for (const name of ['lead.updated', 'task.created']) app.events.subscribe(name, () => events.push(name));
+  for (const name of ['lead.updated', 'work-task.created', 'work-activity.created']) {
+    app.events.subscribe(name, () => events.push(name));
+  }
+
+  // The follow-up records are evidence: read-only in public, so no client can
+  // forge one or rewrite the source key the runtime wrote.
+  const taskMeta = schema.generatedModules.find((m) => m.name === 'work-task');
+  assert.deepEqual(taskMeta.capabilities, ['get', 'list']);
+  const activityMeta = schema.generatedModules.find((m) => m.name === 'work-activity');
+  assert.deepEqual(activityMeta.capabilities, ['get', 'list']);
+  for (const module of ['work-task', 'work-activity']) {
+    await assert.rejects(
+      () => client.request(`/api/modules/${module}/records`, { method: 'POST', body: JSON.stringify({}) }),
+      (error) => error.status === 404 || error.status === 405,
+      `${module} refuses a public create even with an empty body`,
+    );
+  }
 
   // Capture.
   const lead = await leads.create({ firstName: 'Dana', lastName: 'Rossi', email: 'dana@acme.example', source: 'referral' });
@@ -102,11 +128,25 @@ test('lead qualification end to end: qualify, disqualify, atomicity, idempotency
   assert.equal(fresh.status, 'qualified');
   assert.ok(fresh.qualifiedAt);
   assert.equal(fresh.disqualificationReason, null);
-  const leadTasks = (await tasks.list()).items.filter((task) => task.leadId === lead.id);
+  const leadTasks = (await tasks.list()).items.filter((task) => task.subjectId === lead.id);
   assert.equal(leadTasks.length, 1);
-  assert.equal(leadTasks[0].sourceKey, `qualify:${lead.id}`);
+  assert.equal(leadTasks[0].sourceKey, `lead-qualified:${lead.id}`);
   assert.equal(leadTasks[0].status, 'open');
-  assert.deepEqual(events, ['lead.updated', 'task.created'], 'both events dispatched, after the commit');
+  assert.equal(leadTasks[0].subjectResource, 'lead');
+  assert.equal(leadTasks[0].subjectOwner, 'host', 'a Lead is the project\'s record, not a package\'s');
+  assert.equal(leadTasks[0].subjectOwnerPackage, null);
+  assert.equal(leadTasks[0].sourcePackage, 'host');
+  assert.equal(leadTasks[0].sourceAction, 'qualify');
+  assert.equal(leadTasks[0].dueAt, '2026-08-12T09:00:00.000Z');
+  assert.equal(leadTasks[0].completedBy, null);
+  // The creation activity is written in the same transaction, once.
+  const leadActivity = (await activities.list()).items.filter((row) => row.subjectId === lead.id);
+  assert.equal(leadActivity.length, 1);
+  assert.equal(leadActivity[0].kind, 'task_created');
+  assert.equal(leadActivity[0].taskId, leadTasks[0].id);
+  assert.equal(leadActivity[0].body, null, 'a lifecycle activity carries no free text');
+  assert.deepEqual(events, ['lead.updated', 'work-task.created', 'work-activity.created'],
+    'all three events dispatched, after the commit');
 
   // The action wrote a workflow trace.
   const traces = await client.request('/api/traces?workflowName=lead.qualify');
@@ -119,7 +159,7 @@ test('lead qualification end to end: qualify, disqualify, atomicity, idempotency
     () => leads.action(lead.id, 'qualify', { dueAt: '2026-09-01T09:00:00Z' }),
     (error) => error.status === 409 && error.code === 'INVALID_STATE',
   );
-  assert.equal((await tasks.list()).items.filter((task) => task.leadId === lead.id).length, 1);
+  assert.equal((await tasks.list()).items.filter((task) => task.subjectId === lead.id).length, 1);
   assert.deepEqual(events, [], 'a rejected action dispatches no events');
 
   // Bad input → 400 before any state change.
@@ -127,10 +167,22 @@ test('lead qualification end to end: qualify, disqualify, atomicity, idempotency
   // Unknown action → 404.
   await assert.rejects(() => leads.action(lead.id, 'ghost', {}), (error) => error.status === 404);
 
-  // Atomicity: force the task insert to fail (duplicate sourceKey) on a fresh
-  // lead and prove the status change rolls back with it.
+  // Atomicity: force the follow-up to fail on a fresh lead and prove the status
+  // change rolls back with it. The key is squatted in-process with a DIFFERENT
+  // title — the same key with the same payload would (correctly) replay, and a
+  // replay is not a failure. Public CRUD cannot squat it at all: the record is
+  // read-only, which is the point of the evidence boundary above.
   const atomicLead = await leads.create({ firstName: 'Rollback', lastName: 'Test', email: 'rollback@acme.example' });
-  await tasks.create({ title: 'squat', leadId: atomicLead.id, sourceKey: `qualify:${atomicLead.id}` });
+  await app.modules.get('work-task').service.createManaged({
+    sourceKey: `lead-qualified:${atomicLead.id}`,
+    title: 'a different ask entirely',
+    status: 'open',
+    subjectResource: 'lead',
+    subjectId: atomicLead.id,
+    subjectOwner: 'host',
+    sourcePackage: 'host',
+    sourceAction: 'qualify',
+  }, { actor: { type: 'user', id: 'squatter' } });
   events.length = 0;
   const auditBefore = app.audit.list({ entityType: 'lead' }).length;
   const failedBefore = (await client.request('/api/traces?workflowName=lead.qualify&status=failed')).items.length;
@@ -141,7 +193,9 @@ test('lead qualification end to end: qualify, disqualify, atomicity, idempotency
   const afterFailure = await leads.get(atomicLead.id);
   assert.equal(afterFailure.status, 'new', 'lead status rolled back after the task insert failed');
   assert.equal(afterFailure.qualifiedAt, null);
-  assert.equal((await tasks.list()).items.filter((task) => task.leadId === atomicLead.id).length, 1, 'no second task committed');
+  assert.equal((await tasks.list()).items.filter((task) => task.subjectId === atomicLead.id).length, 1, 'no second task committed');
+  assert.equal((await activities.list()).items.filter((row) => row.subjectId === atomicLead.id).length, 0,
+    'no orphan activity from a rolled-back follow-up');
   assert.deepEqual(events, [], 'no events leak from a rolled-back action');
   assert.equal(app.audit.list({ entityType: 'lead' }).length, auditBefore, 'no lead audit from a rolled-back action');
   // But a failed action still records a trace — written outside the business
@@ -158,7 +212,9 @@ test('lead qualification end to end: qualify, disqualify, atomicity, idempotency
   const fresh2 = await leads.get(lead2.id);
   assert.equal(fresh2.disqualificationReason, 'No budget this year');
   assert.equal(fresh2.qualifiedAt, null);
-  assert.equal((await tasks.list()).items.filter((task) => task.leadId === lead2.id).length, 0);
+  assert.equal((await tasks.list()).items.filter((task) => task.subjectId === lead2.id).length, 0);
+  assert.equal((await activities.list()).items.filter((row) => row.subjectId === lead2.id).length, 0,
+    'disqualification is not work, so it records no task and no activity');
   // Disqualify is only valid from `new`.
   await assert.rejects(() => leads.action(lead2.id, 'disqualify', { reason: 'again' }), (error) => error.status === 409);
 
@@ -189,8 +245,10 @@ test('lead qualification end to end: qualify, disqualify, atomicity, idempotency
   // task.created audit for its follow-up task.
   const firstLeadAudits = app.audit.list({ entityType: 'lead', entityId: lead.id }).map((a) => a.action).sort();
   assert.deepEqual(firstLeadAudits, ['lead.created', 'lead.updated']);
-  const followUpAudits = app.audit.list({ entityType: 'task', entityId: leadTasks[0].id }).map((a) => a.action);
-  assert.deepEqual(followUpAudits, ['task.created'], 'exactly one audit for the follow-up task');
+  const followUpAudits = app.audit.list({ entityType: 'work-task', entityId: leadTasks[0].id }).map((a) => a.action);
+  assert.deepEqual(followUpAudits, ['work-task.created'], 'exactly one audit for the follow-up task');
+  const activityAudits = app.audit.list({ entityType: 'work-activity', entityId: leadActivity[0].id }).map((a) => a.action);
+  assert.deepEqual(activityAudits, ['work-activity.created'], 'exactly one audit for its activity');
 
   await instance.close();
 
@@ -199,7 +257,8 @@ test('lead qualification end to end: qualify, disqualify, atomicity, idempotency
   t.after(() => instance.close());
   const survived = await instance.client.module('lead').get(lead.id);
   assert.equal(survived.status, 'qualified');
-  assert.equal((await instance.client.module('task').list()).items.filter((task) => task.leadId === lead.id).length, 1);
+  assert.equal((await instance.client.module('work-task').list()).items.filter((task) => task.subjectId === lead.id).length, 1);
+  assert.equal((await instance.client.module('work-activity').list()).items.filter((row) => row.subjectId === lead.id).length, 1);
 });
 
 test('concurrent qualify: exactly one success, one 409, exactly one task', async (t) => {
@@ -228,6 +287,8 @@ test('concurrent qualify: exactly one success, one 409, exactly one task', async
   assert.equal(fulfilled.length, 1, 'exactly one qualify succeeds');
   assert.equal(rejected.length, 1, 'exactly one qualify fails');
   assert.equal(rejected[0].reason.status, 409, 'the loser is a 409');
-  const leadTasks = (await client.module('task').list()).items.filter((task) => task.leadId === lead.id);
+  const leadTasks = (await client.module('work-task').list()).items.filter((task) => task.subjectId === lead.id);
   assert.equal(leadTasks.length, 1, 'exactly one follow-up task exists');
+  const leadActivity = (await client.module('work-activity').list()).items.filter((row) => row.subjectId === lead.id);
+  assert.equal(leadActivity.length, 1, 'and exactly one creation activity, never a half pair');
 });

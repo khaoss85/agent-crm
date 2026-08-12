@@ -262,7 +262,7 @@ Rewording a criterion changes its id, which is the point: evidence recorded
 against the old wording must not carry silently to a criterion nobody
 re-examined. Two identical statements collide and are refused
 (`PLAN_REQUIREMENT_DUPLICATE`). An **artifact is not a requirement** and neither
-is a JTBD row — ADR-030 says why.
+is a JTBD row — ADR-031 says why.
 
 ## Bounds
 
@@ -289,6 +289,6 @@ fingerprint — computed over the normalized document — would not cover it.
 `packages/cli/src/solution-command.js`,
 `examples/solution-plans/lead-to-won.plan.json`,
 `docs/plans/ax2-machine-readable-solution-plans.md`,
-`docs/IMPLEMENTATION_EVIDENCE.md` (DX10, and ADR-030 for requirement identity).
+`docs/IMPLEMENTATION_EVIDENCE.md` (DX10, and ADR-031 for requirement identity).
 Agent instructions:
 `.claude/skills/solve-business-goal/SKILL.md` and its `.agents/` mirror.

@@ -3,7 +3,7 @@
 **Status:** implemented.
 **Command:** `accordo solution verify <plan.json> --evidence <evidence.json> [--json] [--root dir]`
 **Contracts:** `implementationEvidenceContract: 1` (checked in), `solutionVerificationContract: 1` (the report).
-**ADR:** DECISIONS.md ADR-030.
+**ADR:** DECISIONS.md ADR-031.
 **Guide:** `docs/IMPLEMENTATION_EVIDENCE.md`.
 
 ## 1. Goal and user-visible outcome
@@ -455,7 +455,7 @@ which is pinned by a test rather than assumed.
    report shape shaken out against both before the contract is frozen.
 5. **The mutation matrix**, twelve mutations per plan, each reverted and proven
    by re-running to an identical report.
-6. **Docs, ADR-030, roadmap, North Star, Tool Surface, JTBD evidence**, and the
+6. **Docs, ADR-031, roadmap, North Star, Tool Surface, JTBD evidence**, and the
    full verification sweep.
 
 ## 12. Validation
@@ -580,7 +580,7 @@ hidden: a document that references no DX5 check never runs DX5.
 ## 15. Outcome and follow-up
 
 Shipped: two contracts, one command, two checked-in evidence documents, the
-mutation matrix, the guide, ADR-030 and the canonical doc updates.
+mutation matrix, the guide, ADR-031 and the canonical doc updates.
 
 **PROVE stays partial, and DX10 moves to Shipped.** The rung exists; the claim
 does not follow from it. No checked-in plan in this repository is fully
