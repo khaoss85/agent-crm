@@ -400,10 +400,31 @@ function replayOrConflict(existing, submitted) {
   );
 }
 
+/**
+ * Resolve a module without letting the registry's own miss become the answer.
+ *
+ * `ModuleRegistry.get` **throws** `NotFoundError` for an unregistered name, so
+ * `modules.get(TASK_MODULE)?.service` never evaluates to `undefined` — it
+ * escapes. The named refusal below was therefore unreachable, and a project
+ * that composed the host Lead path without applying the Work manifests got a
+ * bare `404 Module not found: work-task` instead of the sentence telling it what
+ * to run. That matters most exactly here: the host path is the one consumer the
+ * registry cannot refuse at startup, so a runtime refusal is all it ever gets.
+ *
+ * @param {any} modules @param {string} name
+ */
+export function resolveModule(modules, name) {
+  try {
+    return modules?.get?.(name) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** @param {{modules: any}} context */
 function services(context) {
-  const tasks = context.modules?.get?.(TASK_MODULE)?.service;
-  const activities = context.modules?.get?.(ACTIVITY_MODULE)?.service;
+  const tasks = resolveModule(context.modules, TASK_MODULE)?.service;
+  const activities = resolveModule(context.modules, ACTIVITY_MODULE)?.service;
   if (!tasks?.createManaged || !activities?.createManaged) {
     throw new AppError(
       `The work package is installed without its "${TASK_MODULE}" and "${ACTIVITY_MODULE}" records. `

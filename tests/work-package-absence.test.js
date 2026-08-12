@@ -194,3 +194,59 @@ test('a consumer that declares followUp without the work package is refused at s
   assert.match(out.message, /lifecycle/, 'the refusal names the consumer');
   assert.match(out.message, /work/, 'and the unmet provider');
 });
+
+// ---------------------------------------------------------------------------
+// REVIEW-70 — the host path has no startup check, so its runtime refusal must
+// be the one the package promises
+// ---------------------------------------------------------------------------
+
+test('the host Lead path without the work records names the edge instead of a bare 404', async (t) => {
+  const { mkdtempSync, cpSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { rmSync } = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const { join } = await import('node:path');
+  const { pathToFileURL, fileURLToPath } = await import('node:url');
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+
+  const root = mkdtempSync(join(tmpdir(), 'accordo-work-hostless-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
+    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
+  }
+  const applied = spawnSync(process.execPath, [
+    '--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create',
+    join(root, 'examples/starters/b2b-lead-qualification/lead.module.json'), '--apply', '--root', root,
+  ], { encoding: 'utf8', cwd: root });
+  assert.equal(applied.status, 0, applied.stderr);
+  // The host consumer, with NEITHER work record applied and no work package.
+  writeFileSync(join(root, 'packages/actions/generated/index.js'), [
+    "import { qualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/qualify.js';",
+    'export const generatedActions = [qualifyLead];',
+    '',
+  ].join('\n'));
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), 'export const generatedDomains = [];\n');
+
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const app = createAccordoApp({ dbPath: join(root, 'data', 'hostless.sqlite') });
+  t.after(() => app.close());
+  const actor = { type: 'user', id: 'absence' };
+  const lead = await app.modules.get('lead').service.create(
+    { firstName: 'No', lastName: 'Work', email: 'no@work.example' }, { actor },
+  );
+
+  // `ModuleRegistry.get` THROWS for an unregistered name, so reading it
+  // optionally let a bare `404 Module not found: work-task` escape instead of
+  // the sentence naming what to run. The host path is the one consumer the
+  // registry cannot refuse at startup, so this runtime refusal is all it gets.
+  await assert.rejects(
+    () => app.runAction({ module: 'lead', action: 'qualify', recordId: lead.id, input: { dueAt: '2026-09-01T09:00:00Z' }, actor }),
+    (error) => {
+      assert.equal(error.code, 'WORK_STORAGE_INVALID');
+      assert.match(error.message, /crm module create/);
+      return true;
+    },
+  );
+  // And the whole action rolled back: the lead was never left half-qualified.
+  assert.equal(app.modules.get('lead').service.get(lead.id).status, 'new');
+});

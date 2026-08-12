@@ -546,6 +546,24 @@ Clean clone: `npm install`, `npm run verify`, `npm run smoke`, `npm run
 gtm:check`, `crm project doctor --json`, `crm project verify --json`, `crm
 package test packages/work --json`. Plus starter upgrade, old-Task-data
 compatibility, absence/detach/reattach in separate processes, all three consumers,
-two-connection races, the fault matrix, hostile input, the exact-read proofs, a
-real-Chromium Admin smoke, links, Skill mirrors and no tracked artifacts. Node
-`22.16.0` (`.nvmrc`).
+two-connection races, the fault matrix, hostile input, the exact-read proofs,
+links, Skill mirrors and no tracked artifacts. Node `22.16.0` (`.nvmrc`).
+
+**The real-Chromium Admin smoke is manual, and it is not in CI.** This
+repository has no interactive browser harness at all — `scripts/site-shots.js`
+screenshots the marketing site and cannot click or assert, there is no
+Playwright, Puppeteer or WebDriver, and no CI job launches a browser.
+`docs/ADMIN_SMOKE.md` has always been a human checklist re-run by hand before
+releasing changes under `apps/admin/public/`, and it says so. Nothing in this
+plan should be read as a claim that CI covers it.
+
+It earned its keep again here: the enumerated Work block is **26** checks (this
+plan previously carried an estimate rather than a list), and check 26 failed
+against the first cut — a work task whose activity rows were older than one page
+of the whole activity table rendered "Nothing recorded yet." with a page-bound
+notice beneath it claiming the bound was about the screen. The stubbed DOM suite
+could not catch it because its fixture was smaller than the bound. The fix is
+ADR-008 addendum 2 (a server-narrowed collection read); the reproduction is in
+`tests/collection-filter.test.js` and `tests/admin-work.test.js`. The final
+counts belong in `docs/ADMIN_SMOKE.md` from the re-run against the fixed head,
+not here.

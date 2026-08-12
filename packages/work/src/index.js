@@ -15,6 +15,7 @@ import {
   optionalSafeText,
   recordActivity,
   requireHumanActor,
+  resolveModule,
   safeText,
   sortTimeline,
 } from './follow-up.js';
@@ -67,7 +68,9 @@ function resolvedNames(moduleNames = {}) {
 
 /** @param {any} modules @param {string} name */
 function activityService(modules, name) {
-  const service = modules?.get?.(name)?.service;
+  // Through resolveModule: an unregistered name throws out of the registry, so
+  // reading it optionally would let a bare 404 replace this named refusal.
+  const service = resolveModule(modules, name)?.service;
   if (!service?.createManaged) {
     throw new AppError(`The work package is installed without its "${name}" records`, {
       code: 'WORK_STORAGE_INVALID', status: 500,
@@ -263,7 +266,7 @@ export function createFollowUpCapability(moduleNames) {
          * @param {string} sourceKey
          */
         findBySourceKey(sourceKey) {
-          const service = context.modules?.get?.(names.task)?.service;
+          const service = resolveModule(context.modules, names.task)?.service;
           if (!service?.listWhere) {
             throw new AppError(`The work package is installed without its "${names.task}" records`, {
               code: 'WORK_STORAGE_INVALID', status: 500,

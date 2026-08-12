@@ -1,7 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError } from '../../core/index.js';
-import { TASK_MODULE, normalizeWorkActor } from './follow-up.js';
+import { TASK_MODULE, normalizeWorkActor, resolveModule } from './follow-up.js';
 
 /**
  * **The forward migration from the bespoke Lead Task slice.**
@@ -62,7 +62,7 @@ export async function migrateLegacyTasks(context, options = {}) {
     throw new ValidationError('subjectResource must be a canonical resource name', { field: 'subjectResource' });
   }
   const apply = options.apply === true;
-  const service = context.modules?.get?.(TASK_MODULE)?.service;
+  const service = resolveModule(context.modules, TASK_MODULE)?.service;
   if (!service?.createManaged) {
     throw new AppError(`The work package is installed without its "${TASK_MODULE}" records`, {
       code: 'WORK_STORAGE_INVALID', status: 500,
