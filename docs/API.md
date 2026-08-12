@@ -14,7 +14,7 @@ Base URL: `http://localhost:4000`
 | POST | `/api/approvals/:id/approve` | Approve through workflow |
 | POST | `/api/approvals/:id/reject` | Reject through workflow |
 | GET | `/api/modules/:module` | Generated-module metadata (fields, capabilities, paths) |
-| GET | `/api/modules/:module/records` | List generated-module records (`?limit=` strict integer 1–500) |
+| GET | `/api/modules/:module/records` | List generated-module records (`?limit=` strict integer 1–500; optionally narrowed by `?filter.<field>=<value>` — ADR-008 addendum 2) |
 | POST | `/api/modules/:module/records` | Create a record (201) through the generated service |
 | GET | `/api/modules/:module/records/:id` | Get a record |
 | PATCH | `/api/modules/:module/records/:id` | Update supplied fields |
@@ -72,6 +72,21 @@ Actor identity comes from the `x-actor-type` / `x-actor-id` headers and reaches 
 ### Accepted `limit` syntax (generated-module surface)
 
 A single base-10 positive integer between 1 and 500. No sign, exponent, hex, whitespace, leading-zero coercion, or repeated `limit` parameter — any of these returns 400. Core endpoints keep their historical lenient parsing; the generated service itself caps and floors the limit as a final boundary.
+
+### Accepted `filter.<field>` syntax (generated-module surface, ADR-008 addendum 2)
+
+A collection read may be narrowed **on the server**, so a client never has to fetch the newest N rows of a whole table and filter them itself — which shows an empty list for a parent whose rows are older than that page, while the page-bound notice beside it claims the bound was about the screen.
+
+- Only fields the module publishes in `filterableFields` (returned by `GET /api/modules/:module`): its **indexed and unique** fields plus `id`. A routed filter is always index-backed, so a page request can never become a table scan. Anything else is a 400 naming the filterable fields.
+- **Equality on a single scalar**, non-empty, at most 200 characters, never repeated, at most four filters combined. There is no `IN`, no range, no `OR`, no ordering control and no offset: this narrows a page, it is not a query language.
+- `limit` keeps its 1–500 bound and the `created_at DESC, id` ordering. A filtered read is still a **display** read; `listWhere` remains in-process and unrouted because a correctness decision must not be made from an HTTP page.
+- A module generated before this addendum publishes no `filterableFields`, and a filter against it is **refused**, never answered unfiltered.
+
+```
+GET /api/modules/work-activity/records?limit=100&filter.subjectResource=lead&filter.subjectId=<id>
+```
+
+Additive under `generatedResourceContract: 1`. The SDK and MCP surfaces are unchanged by this addendum and keep the unfiltered collection read.
 
 ### Record actions (Milestone 6)
 

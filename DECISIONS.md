@@ -50,6 +50,54 @@ Generated modules are exposed over HTTP through a single reviewed route family �
 
 Exposure is decided by a single shared validator (`packages/core/src/generated-module-contract.js`), applied both at startup (fail closed: a corrupted registry entry stops the app) and per request (fail closed: a non-conforming definition is 404). It checks name shape, exact `kind`, `manifestVersion`, that every declared capability maps to an actual service function, and field-metadata shape; the `ModuleRegistry` is `Map`-backed, so lookups can never resolve `__proto__`/`constructor` to inherited properties. This is a framework contract against accidental, stale or hand-edited entries — **not** a sandbox against malicious source-code changes, which are outside the threat model since repository code is trusted and executed. The public contract is versioned: `/api/schema` returns `generatedResourceContract: 1`. Generated source embeds all manifest-controlled strings via `JSON.stringify`, so hostile descriptions or enum values cannot inject code. The canonical `limit` syntax on this surface is a single base-10 integer in [1, 500]; the generated service remains the final validation boundary when called outside HTTP.
 
+### ADR-008 addendum 2 — a collection read may be narrowed on the server, by an index-backed equality filter
+
+**Status:** accepted, from the pre-merge review of PR #70 (CHROMIUM-70 check 26 /
+REVIEW-70). **This changes the shared HTTP envelope for every generated module**
+and is recorded here rather than slipped in under a package milestone.
+
+**What went wrong.** `GET /api/modules/:module/records` accepted `limit` and
+nothing else. A client that needed one parent's rows therefore had to ask for the
+newest N rows of the **whole table** and filter them itself. The real-browser
+matrix found what that costs: in a project with 132 activity rows, a work task
+whose two activity rows were the two oldest rendered **"Nothing recorded yet."** —
+directly above a notice reading *"Showing at most 100 entries. A display bound of
+this screen, never a bound on what exists."* Both statements were false at once,
+and the second is the dangerous kind of false, because it reads as a disclosure
+of exactly the thing it is getting wrong. The stubbed DOM suite could not catch
+it: its fixture was smaller than the bound.
+
+**Decision.** The collection read gains `filter.<field>=<value>`, and the grammar
+is deliberately tiny:
+
+- **Index-backed fields only.** A module publishes `filterableFields` — its
+  indexed and unique fields plus `id` — in its metadata and at
+  `GET /api/modules/:module`. Nothing else is filterable, so a routed filter can
+  never become a table scan.
+- **Equality on one scalar**, at most 200 characters, never repeated, at most
+  four filters combined. There is no `IN`, no range, no `OR`, no ordering
+  control and no offset. This narrows a page; it is not a query language, and
+  making it one would be a different decision.
+- **The page is still a page.** `limit` keeps its 1–500 bound and its
+  `created_at DESC, id` ordering. A filtered read is still a *display* read.
+- **Refusal over a silent wrong answer.** Every violation is a `400`. A module
+  generated before this addendum publishes no `filterableFields`, and a filter
+  against it is refused rather than answered **unfiltered** — which would be the
+  same false-completeness bug one layer down.
+- **`listWhere` stays in-process and unrouted**, as
+  `packages/cli/src/module-factory.js` has always said. It is unbounded and
+  complete, and a correctness decision must still never be made from an HTTP
+  page. That separation is the reason this addendum adds a filter to `list`
+  rather than routing `listWhere`.
+
+**Consequences.** `generatedResourceContract` stays `1`: the parameter and the
+`filterableFields` metadata key are both additive, an older client never sends a
+filter, and an older Admin ignores the new key. The SDK and the MCP surface are
+**not** changed by this addendum — they keep the unfiltered collection read, and
+extending them is a separate decision. A project holding modules generated before
+this change keeps working unchanged; it gains filtering only when those modules
+are regenerated with `accordo module create --apply`.
+
 ## ADR-009 — Generated modules render through one schema-driven Admin with an override seam
 
 **Status:** accepted

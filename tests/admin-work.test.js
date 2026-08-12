@@ -69,7 +69,17 @@ function stubClient(data, overrides = {}) {
       }
       if (path.includes('/actions/')) return { ok: true, result: {} };
       const module = path.split('/')[3];
-      return { items: data[module] ?? [] };
+      // The server narrows a collection read (ADR-008 addendum 2), so the stub
+      // must too — a stub that ignores `filter.*` is exactly the fake DOM that
+      // let the real browser find an empty timeline for a subject with entries.
+      const query = new URLSearchParams(path.split('?')[1] ?? '');
+      const limit = Number(query.get('limit') ?? 100);
+      const where = [...query.entries()]
+        .filter(([key]) => key.startsWith('filter.'))
+        .map(([key, value]) => [key.slice('filter.'.length), value]);
+      const rows = (data[module] ?? [])
+        .filter((row) => where.every(([field, value]) => String(row[field]) === value));
+      return { items: rows.slice(0, limit) };
     },
   };
 }
@@ -224,6 +234,70 @@ test('the timeline renders oldest first, as text, and says what it is not', asyn
   assert.equal(node.childNodes.some((child) => child.tagName === 'SCRIPT'), false);
   assert.match(text(v.mount), /not the audit log/);
   assert.match(text(v.mount), /nothing on it was sent anywhere/);
+});
+
+test('a quiet subject behind a crowded project still shows its timeline (CHROMIUM-70 check 26)', async () => {
+  // The exact shape the real browser found: this task's two activity rows are
+  // the OLDEST in the project, and 130 rows for another subject sit in front of
+  // them. Filtering the newest 100 rows in the browser found none of them, so
+  // the screen drew "Nothing recorded yet." with a page-bound notice beneath it
+  // claiming the bound was about the screen — two false statements at once.
+  const crowd = Array.from({ length: 130 }, (unused, index) => ({
+    ...NOTE,
+    id: `busy-${index}`,
+    sourceKey: `busy:${index}`,
+    subjectResource: 'lead',
+    subjectId: 'busy-lead',
+    taskId: 'task-busy',
+    body: `Busy ${index}`,
+    occurredAt: '2026-08-09T00:00:00.000Z',
+    createdAt: '2026-08-09T00:00:00.000Z',
+  }));
+  const v = view({ 'work-task': [OPEN_TASK], 'work-activity': [...crowd, NOTE, CREATED] });
+  await v.work.renderTask('task-1');
+  const rendered = text(v.mount);
+  assert.doesNotMatch(rendered, /Nothing recorded yet/, 'this subject has two entries and they must be drawn');
+  assert.deepEqual(
+    v.mount.findAll('li').map((node) => node.getAttribute('data-kind')),
+    ['task_created', 'note'],
+  );
+  // The read was narrowed on the SERVER, not in the browser.
+  const timelineCall = v.client.calls.find((call) => call.path.startsWith('/api/modules/work-activity/records?'));
+  assert.match(timelineCall.path, /filter\.subjectId=/);
+  assert.match(timelineCall.path, /filter\.subjectResource=/);
+  // And an un-truncated page prints no bound notice at all.
+  assert.doesNotMatch(rendered, /most recent ones/);
+});
+
+test('a genuinely truncated timeline says which end is missing', async () => {
+  // Drawn oldest-first from a newest-first page, a truncated timeline starts in
+  // the middle while looking exactly like one that starts at the beginning. The
+  // notice has to say so rather than describe a bound in the abstract.
+  const many = Array.from({ length: 130 }, (unused, index) => ({
+    ...NOTE, id: `n-${index}`, sourceKey: `n:${index}`,
+    occurredAt: `2026-09-${String((index % 28) + 1).padStart(2, '0')}T00:00:00.000Z`,
+    createdAt: `2026-09-${String((index % 28) + 1).padStart(2, '0')}T00:00:00.000Z`,
+  }));
+  const v = view({ 'work-task': [OPEN_TASK], 'work-activity': many });
+  await v.work.renderTask('task-1');
+  const rendered = text(v.mount);
+  assert.match(rendered, /100 most recent ones/);
+  assert.match(rendered, /starts in the middle/);
+  assert.match(rendered, /earlier entries exist and are\s+not shown|earlier entries exist and are not shown/);
+  assert.match(rendered, /never a bound on what exists/);
+});
+
+test('every text input keeps an accessible name after the user types (CHROMIUM-70)', async () => {
+  // A placeholder is not an accessible name: it disappears on first keystroke.
+  const v = view({ 'work-task': [OPEN_TASK], 'work-activity': [CREATED] });
+  await v.work.renderTask('task-1');
+  const named = v.mount.findAll('input');
+  assert.ok(named.length >= 3, 'complete note, cancel reason and the note body');
+  for (const input of named) {
+    const label = input.getAttribute('aria-label');
+    assert.ok(typeof label === 'string' && label.trim() !== '',
+      `${input.getAttribute('name')} must keep a name once its placeholder is gone`);
+  }
 });
 
 test('the note form says a note reaches nobody, and that two notes are two notes', async () => {

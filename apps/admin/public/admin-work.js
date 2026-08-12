@@ -71,10 +71,27 @@ export function createWorkView({ doc, mount, client, navigate = () => {} }) {
     }
   }
 
-  async function fetchRows(module, filter) {
-    const result = await client.request(`/api/modules/${module}/records?limit=${LIST_LIMIT}`);
-    const rows = (result.items ?? []).filter(filter ?? (() => true));
-    return { rows, truncated: (result.items ?? []).length >= LIST_LIMIT };
+  /**
+   * Read a page of a collection, narrowed **on the server** where a narrowing is
+   * asked for (ADR-008 addendum 2).
+   *
+   * The `where` argument is not a convenience. Filtering in the browser meant
+   * asking for the newest `LIST_LIMIT` rows of the *whole* table and keeping the
+   * ones that matched: once a project had more activity rows than that anywhere,
+   * an older subject's timeline rendered as "Nothing recorded yet." with a page
+   * bound printed beneath it claiming the bound belonged to the screen. Both
+   * statements were false at once. `predicate` is kept as well, so a server that
+   * ignored the filter could still never draw another subject's rows here.
+   */
+  async function fetchRows(module, predicate, where) {
+    const query = new URLSearchParams({ limit: String(LIST_LIMIT) });
+    for (const [field, value] of Object.entries(where ?? {})) {
+      if (value !== undefined && value !== null) query.set(`filter.${field}`, String(value));
+    }
+    const result = await client.request(`/api/modules/${module}/records?${query.toString()}`);
+    const items = result.items ?? [];
+    const rows = items.filter(predicate ?? (() => true));
+    return { rows, truncated: items.length >= LIST_LIMIT };
   }
 
   async function workMeta() {
@@ -210,8 +227,11 @@ export function createWorkView({ doc, mount, client, navigate = () => {} }) {
       if (token !== renderToken) return;
       if (!meta) { renderMissing('This application does not have the work package.'); return; }
       task = await client.request(`/api/modules/work-task/records/${encodeURIComponent(taskId)}`);
-      const activities = await fetchRows('work-activity',
-        (row) => row.subjectResource === task.subjectResource && row.subjectId === task.subjectId);
+      const activities = await fetchRows(
+        'work-activity',
+        (row) => row.subjectResource === task.subjectResource && row.subjectId === task.subjectId,
+        { subjectResource: task.subjectResource, subjectId: task.subjectId },
+      );
       timeline = activities;
     } catch (error) {
       if (token !== renderToken) return;
@@ -274,11 +294,13 @@ export function createWorkView({ doc, mount, client, navigate = () => {} }) {
       const completeNote = el('input');
       completeNote.setAttribute('name', 'completeNote');
       completeNote.setAttribute('placeholder', 'What was done (optional)');
+      completeNote.setAttribute('aria-label', 'Note recorded when completing this task (optional)');
       const complete = el('button', 'primary', 'Complete');
       complete.setAttribute('data-action', 'complete');
       const cancelReason = el('input');
       cancelReason.setAttribute('name', 'cancelReason');
       cancelReason.setAttribute('placeholder', 'Why this will not be done (required)');
+      cancelReason.setAttribute('aria-label', 'Reason this task will not be done (required)');
       const cancel = el('button', 'secondary', 'Cancel task');
       cancel.setAttribute('data-action', 'cancel');
       const all = [complete, cancel, completeNote, cancelReason];
@@ -323,7 +345,7 @@ export function createWorkView({ doc, mount, client, navigate = () => {} }) {
       + 'and nothing on it was sent anywhere.'));
     const ordered = sortTimelineRows(timeline.rows);
     if (ordered.length === 0) {
-      timelineBox.appendChild(el('div', 'empty', 'Nothing recorded yet.'));
+      timelineBox.appendChild(el('div', 'empty', 'Nothing recorded yet on this subject.'));
     } else {
       const list = el('ul', 'work-activity-list');
       for (const row of ordered) {
@@ -338,8 +360,13 @@ export function createWorkView({ doc, mount, client, navigate = () => {} }) {
       timelineBox.appendChild(list);
     }
     if (timeline.truncated) {
+      // Say which end is missing. The server answers newest-first and this list
+      // is drawn oldest-first, so a truncated timeline starts in the middle
+      // while looking exactly like one that starts at the beginning.
       timelineBox.appendChild(el('p', 'muted work-bound',
-        `Showing at most ${LIST_LIMIT} entries. A display bound of this screen, never a bound on what exists.`));
+        `This subject has more than ${LIST_LIMIT} entries. These are its ${LIST_LIMIT} most recent ones, `
+        + 'drawn oldest-first — so the timeline above starts in the middle, and earlier entries exist and are '
+        + 'not shown. A display bound of this screen, never a bound on what exists.'));
     }
 
     // ---- manual note ----
@@ -347,6 +374,9 @@ export function createWorkView({ doc, mount, client, navigate = () => {} }) {
     noteBox.appendChild(el('h3', undefined, 'Add a note'));
     const noteInput = el('input');
     noteInput.setAttribute('name', 'noteBody');
+    // A placeholder is not an accessible name: it disappears the moment the
+    // user types, and the field goes unnamed for a screen reader mid-entry.
+    noteInput.setAttribute('aria-label', 'Note to add to this subject timeline');
     noteInput.setAttribute('placeholder', 'Plain text, at most 1000 characters');
     const noteButton = el('button', 'primary', 'Add note');
     noteButton.setAttribute('data-action', 'add-note');
