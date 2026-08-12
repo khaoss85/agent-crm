@@ -151,7 +151,7 @@ policy version, an action that disappeared or a migration checksum that moved,
 none of which a plan's own evidence lists mention. What it is **not**: proof of
 authorship, authorization or correctness. Obtaining one honestly means running
 the tooling against a real project, which is exactly what makes it evidence of
-drift; `crm solution check --json` publishes the live value so an author can
+drift; `accordo solution check --json` publishes the live value so an author can
 record it.
 
 It covers package identities and versions, capability requires/provides and
@@ -251,7 +251,7 @@ requirement id is derived, not stored.
 
 ```text
 step:<stepId>        the id its author already wrote
-check:<12 hex>       the first 12 hex of sha256 over the acceptance-check statement
+check:<32 hex>       the first 32 hex of sha256 over the acceptance-check statement
 ```
 
 Nothing here gains a field, a rule or a byte of fingerprint, so every plan

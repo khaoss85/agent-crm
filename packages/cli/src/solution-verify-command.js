@@ -18,7 +18,7 @@ import { projectVerifyCommand, defaultGit, sampled, worktreeState } from './proj
 import { scenarioRunCommand } from './scenario-run-command.js';
 
 /**
- * `crm solution verify <plan.json> --evidence <evidence.json> [--json]` — DX10.
+ * `accordo solution verify <plan.json> --evidence <evidence.json> [--json]` — DX10.
  *
  * > **For every requirement in this checked-in SolutionPlan, what implementation
  * > evidence proves it is implemented, partial or blocked — and what is still
@@ -28,11 +28,11 @@ import { scenarioRunCommand } from './scenario-run-command.js';
  * every other rung honest:
  *
  * ```text
- * crm app inspect       what is composed?                         source facts
- * crm solution check    is this plan valid, and still true?       a document
- * crm project verify    can we PROVE the project is healthy?      project health
- * crm scenario run      which business jobs does it earn?         claimed rows
- * crm solution verify   does this evidence satisfy this plan?     this
+ * accordo app inspect       what is composed?                         source facts
+ * accordo solution check    is this plan valid, and still true?       a document
+ * accordo project verify    can we PROVE the project is healthy?      project health
+ * accordo scenario run      which business jobs does it earn?         claimed rows
+ * accordo solution verify   does this evidence satisfy this plan?     this
  * ```
  *
  * **The distinction from `solution check` is the whole design and is never
@@ -267,7 +267,7 @@ export async function solutionVerifyCommand({
     if (verifyReport === null) {
       problems.push({
         code: 'VERIFICATION_AUTHORITY_FAILED', path: 'project.verify',
-        message: 'crm project verify produced no report, so every project-verification and package-conformance reference is unresolved',
+        message: 'accordo project verify produced no report, so every project-verification and package-conformance reference is unresolved',
       });
     }
   }
@@ -398,7 +398,7 @@ function prefix(problems, code) {
  */
 function readDocument(path, root, maxBytes, err) {
   if (typeof path !== 'string' || path.trim() === '') {
-    err('Usage: crm solution verify <plan.json> --evidence <evidence.json>\n');
+    err('Usage: accordo solution verify <plan.json> --evidence <evidence.json>\n');
     return null;
   }
   const absolute = isAbsolute(path) ? path : resolve(root, path);
@@ -671,12 +671,12 @@ function resolveReference({ ref, bound, inspection, verifyReport, scenarioReport
 
     case 'project.verification': {
       if (verifyReport === null) {
-        return fail('EVIDENCE_AUTHORITY_UNAVAILABLE', 'no receipt', 'crm project verify produced no receipt in this run');
+        return fail('EVIDENCE_AUTHORITY_UNAVAILABLE', 'no receipt', 'accordo project verify produced no receipt in this run');
       }
       const found = (verifyReport.checks ?? []).find((row) => row.code === ref.check) ?? null;
       if (found === null) {
         return fail('EVIDENCE_REFERENCE_UNRESOLVED', 'absent',
-          `"${ref.check}" is not a check crm project verify published in this run. An unknown check code is a citation to nothing`);
+          `"${ref.check}" is not a check accordo project verify published in this run. An unknown check code is a citation to nothing`);
       }
       return found.status === ref.expect
         ? pass(found.status)
@@ -686,7 +686,7 @@ function resolveReference({ ref, bound, inspection, verifyReport, scenarioReport
 
     case 'package.conformance': {
       if (verifyReport === null) {
-        return fail('EVIDENCE_AUTHORITY_UNAVAILABLE', 'no receipt', 'crm project verify produced no receipt in this run');
+        return fail('EVIDENCE_AUTHORITY_UNAVAILABLE', 'no receipt', 'accordo project verify produced no receipt in this run');
       }
       const code = `packages.conformance.${ref.package}`;
       const found = (verifyReport.checks ?? []).find((row) => row.code === code) ?? null;

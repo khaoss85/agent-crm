@@ -41,8 +41,8 @@ read at all.
 **1. Which concrete agent failure mode does it prevent?**
 *An agent reports a plan complete while work is missing.* Concretely, in this
 repository today: `examples/solution-plans/lead-to-won.plan.json` is the one
-plan `package.json` declares **current**, `crm solution check` exits 0 on it,
-`crm project doctor` grades it `passed`, `crm project verify` is green and both
+plan `package.json` declares **current**, `accordo solution check` exits 0 on it,
+`accordo project doctor` grades it `passed`, `accordo project verify` is green and both
 scenarios pass — and five of its six requirements are not proven: three
 `blocked`, one `unverified` because a person has to read a screen, and one
 `partial`. Every existing authority is satisfied and the plan is not built. That gap is the
@@ -244,7 +244,7 @@ unit, a person owns their status, and DX10 promotes nothing.
 | Failure mode | an author gives two checks the same id, or forgets one | a genuinely duplicated statement collides — refused, see below |
 
 **Chosen: derived, content-addressed.** `requirementId` is
-`step:<stepId>` for a step and `check:<first 12 hex of sha256(statement)>` for an
+`step:<stepId>` for a step and `check:<first 32 hex of sha256(statement)>` for an
 acceptance check. It is the smallest possible additive change because it adds
 **nothing** to `solutionPlanContract: 1` — not a field, not a shape, not a
 validation rule, and not a byte of any plan fingerprint. Every plan already
@@ -392,13 +392,26 @@ is never sufficient on its own for any category — it is corroboration that the
 named file is the one that was verified, and its hash is what makes the evidence
 go stale when the file moves.
 
-A **floor** is applied where the plan itself carries the information: a step
-whose decision type is `configure`, `extend`, `provider` or `create-package`
-changes what the application does, so declaring it `structural` is refused
-(`EVIDENCE_CATEGORY_BELOW_FLOOR`). A step whose decision is `evolve` has a floor
-of `structural`. Acceptance checks carry no floor — the plan says nothing about
-their nature — so their category is declared, recorded verbatim in the report,
-and bounded by the published limitation `REQUIREMENT_CATEGORY_IS_DECLARED`.
+A **floor** is applied to every requirement, and a declared category may only
+sit on it or above it. Where the plan carries the information the floor comes
+from it: a step whose decision type is `configure`, `extend`, `provider` or
+`create-package` changes what the application does, so declaring it `structural`
+is refused (`EVIDENCE_CATEGORY_BELOW_FLOOR`); a step whose decision is `evolve`
+has a floor of `structural`. Everywhere else — every acceptance check, and any
+step whose decision type does not resolve — the floor is `behavioural`.
+
+> **Corrected by REVIEW-71 (ADR-031 addendum 1).** This section originally said
+> that an acceptance check's category was declared by the author and bounded by
+> a published limitation. That was the exploit rather than a bound: a
+> behavioural criterion labelled `structural` and cited with a source hash or
+> `action.present` reported **verified** with nothing having run. The floor is
+> now `behavioural` wherever the plan does not authoritatively type the
+> requirement, a declared category may only raise the required authority or
+> downgrade the result, and the report publishes the declared and the enforced
+> category side by side. The cost — a genuinely health-shaped criterion grading
+> `unevidenced` — is published as `ACCEPTANCE_CHECKS_ARE_UNTYPED`, and a typed
+> acceptance check is recorded as a future plan-contract option rather than
+> taken here.
 
 ## 10. Staleness, integrity and execution
 
@@ -535,7 +548,7 @@ Everything else exits 0.
   real `project verify` on this repository takes eleven to thirteen minutes — so
   fourteen mutations would be three hours of re-running one suite to learn
   nothing about DX10. The **real receipt** from an unmutated
-  `crm project verify --json` run in this checkout is injected instead; the
+  `accordo project verify --json` run in this checkout is injected instead; the
   end-to-end path that really spawns DX5 is proven by the unmutated run, which
   did.
 
@@ -594,3 +607,42 @@ declared-current plan whose `solution verify` exits **0**.
 Follow-up, none of it blocking: a per-test authority would allow a `test`
 evidence kind; a browser authority would allow `manual` to shrink; DX9 and DX13
 remain unbuilt.
+
+## 16. Adversarial review (REVIEW-71)
+
+Run under `.claude/skills/adversarial-review/SKILL.md` after this branch was
+merged onto the Work v1 main. Seven defects were fixed in place, each with a
+regression test; the full record is **ADR-031 addendum 1**. In one line each:
+
+1. a declared category could choose which authority had to answer — an untyped
+   requirement now falls to a `behavioural` floor, and a label may only raise
+   the requirement or downgrade the result;
+2. the derived requirement id was 48 bits, which is a chosen collision in an
+   afternoon — now 128 bits;
+3. `validateImplementationEvidence` executed author getters and read a document
+   twice — `toPlainData()` converts once, refusing accessors;
+4. the executable-text scan was described as the boundary and refused the prose
+   it exists to elicit — the shape is the boundary, the scan is pointer-only,
+   and its measured limits are published;
+5. a broken verification authority was reported as an author-declared business
+   block — `unverifiable` is now a separate status that outranks a downgrade,
+   and an invalid document runs no authority at all;
+6. a requirement could be verified from a run of a *different application* —
+   refused as `EVIDENCE_COMPOSITION_MISMATCH`;
+7. the exit-0 arm had never run through the real command — a labelled verifier
+   fixture now does, in about six seconds.
+
+**Neither real plan was weakened to make anything green.** Both still exit 1.
+The sixth fix cost `lead-to-won` its behavioural evidence and the first cost it
+its only verified requirement, and both losses are recorded in the document's
+own limitations rather than repaired by rewriting the plan.
+
+### The evidence rows the Work v1 merge moved
+
+| Row | Requirement it supports | What Work changed | Authority re-run | Verdict |
+|---|---|---|---|---|
+| `packages/service/src/index.js` in the service document | `step:step.plan-before-activating` — read what a contract's pending service obligations would become, before writing anything | an **opt-in** `followUp` option. With it off — the default, and what every existing composition uses — `requires` is identical, the actions are built identically, and only an additive `metadata().workFollowUp` string appears. Nothing about planning-before-activating moved | `accordo scenario run service-sla-escalation` → `passed`, `scenarioRunContract: 2`, 52 observations, `compositionFingerprint` **4c203a89… byte-identical to the pinned digest**; both cited observations still resolve with the same `expects` | **hash updated.** The behavioural authority is what proves the requirement and it is unmoved; the source artifact is structural corroboration, and the file it names is still the file this composition uses |
+| both plan fingerprints, both `applicationInspectionFingerprint` values | all rows | nothing — the repository root composes no domain package, so Work v1 did not move `649add63…`, and neither plan document changed | `accordo solution check` on both plans | **unchanged.** No row moved |
+| `compose.01` / `capture.02` in the lead document | `check:94439cfe…` — the starter installs into an empty project | Work inserted a `work` step and rewrote the `qualify` step's observations. Observation codes are `<stepId>.<NN>`, so inserting a step renumbers nothing before it | `accordo scenario run lead-to-won` → `passed`, 76 observations; both codes present, both `expected` strings byte-identical | **not stale.** But see below |
+| `check:94439cfe…` as a whole | the same | — | the review's own composition-isolation fix | **downgraded.** The lead plan binds to the repository root and this scenario composes a starter, so the observations describe a different application. `EVIDENCE_COMPOSITION_MISMATCH`, and the gap is declared as `NO_SCENARIO_COMPOSES_THIS_APPLICATION` |
+| `check:af9d6ee5…` | the full verification suite passes from a clean clone | — | — | **downgraded.** An acceptance check is untyped, so it grades at the `behavioural` floor and `project.verification` no longer satisfies it. It is also the more honest answer: `suite.verify` in this checkout was never evidence about a *clean clone* |

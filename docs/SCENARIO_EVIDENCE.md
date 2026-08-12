@@ -1,6 +1,6 @@
 # Scenario evidence
 
-`crm scenario run <scenario> [--json] [--root dir]` — **DX6**.
+`accordo scenario run <scenario> [--json] [--root dir]` — **DX6**.
 
 > **Which JTBD rows does this checkout actually earn — and which does it not?**
 
@@ -14,12 +14,12 @@ that the JTBD documents are referenced by path and never parsed.
 This command closes that gap, and only that gap.
 
 ```text
-crm app inspect      what is composed?                             source facts
-crm solution check   is this plan still compatible?                a document
-crm project doctor   what is stale in the source?                  cheap
-crm project verify   can we PROVE the project is healthy?          expensive
-crm scenario run     which business jobs does this checkout earn?  this
-crm solution verify  is the plan actually finished?                DX10, which runs this
+accordo app inspect      what is composed?                             source facts
+accordo solution check   is this plan still compatible?                a document
+accordo project doctor   what is stale in the source?                  cheap
+accordo project verify   can we PROVE the project is healthy?          expensive
+accordo scenario run     which business jobs does this checkout earn?  this
+accordo solution verify  is the plan actually finished?                DX10, which runs this
 ```
 
 ## Two consumers, and what the second one changed
@@ -67,7 +67,7 @@ so rather than assume it:
 ## What it is not
 
 **It is not a second test runner.** It runs no suite, grades no package and
-calls no doctor — that is `crm project verify`, and duplicating it would leave
+calls no doctor — that is `accordo project verify`, and duplicating it would leave
 two commands answering almost the same question. What it produces is the mapping
 prose cannot give you: *this scenario ran, against this composition, these rows
 it exercised with linked evidence, and these rows it did **not** establish.*
@@ -162,7 +162,7 @@ nothing and happens first.
 ### The observation vocabulary
 
 Closed, and owned by the runner rather than the document — the same discipline
-`crm project verify` uses for declared scripts, where the project declares a
+`accordo project verify` uses for declared scripts, where the project declares a
 *name* and the framework owns the list.
 
 | Kind | Authority | Answers |
@@ -341,9 +341,9 @@ reason — a document that could choose the instant could choose the one where t
 breach disappears, and a document that could write its own limitations could
 write a shorter list.
 
-## Relationship to `crm project verify` (DX5)
+## Relationship to `accordo project verify` (DX5)
 
-`crm project verify` **does not run scenarios**, and that was re-examined when
+`accordo project verify` **does not run scenarios**, and that was re-examined when
 the second one landed. It stays a separate, explicit command, and DX5 keeps
 publishing `SCENARIO_EVIDENCE_NOT_RUN`.
 
@@ -365,7 +365,7 @@ could run the declared ones. It is refused for now:
 What would change the answer: a scenario registry with declared applicability
 that exists for reasons other than DX5. DX10 has since arrived, and it did **not**
 change the answer — it made the relationship explicit in the other direction.
-`crm solution verify` runs Project Verify and each **explicitly referenced**
+`accordo solution verify` runs Project Verify and each **explicitly referenced**
 scenario, once each, because an evidence document names exactly the scenarios its
 requirements rest on. That is the applicability declaration the alternative
 wanted, and it lives where the *consumer* is declared rather than inside the

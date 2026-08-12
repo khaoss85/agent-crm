@@ -253,7 +253,7 @@ fits a user's problem. Fetch `llms-full.txt` if you want the harness and inspect
 - [docs/DELIVERY_HANDOVER.md](docs/DELIVERY_HANDOVER.md): Turning the pending Delivery Obligations of an activated contract into a planned delivery project: one…
 - [docs/FALSIFY.md](docs/FALSIFY.md): bash node scripts/falsify.js # the fast set — a couple of seconds node scripts/falsify.js --all #…
 - [docs/HANDOVER_CODEX.md](docs/HANDOVER_CODEX.md): an internal handover note; of no use to a reader outside this repository
-- [docs/IMPLEMENTATION_EVIDENCE.md](docs/IMPLEMENTATION_EVIDENCE.md): crm solution verify <plan.json> --evidence <evidence.json> [--json] [--root dir] — DX10.
+- [docs/IMPLEMENTATION_EVIDENCE.md](docs/IMPLEMENTATION_EVIDENCE.md): {{brand.slug}} solution verify <plan.json> --evidence <evidence.json> [--json] [--root dir] — DX10.
 - [docs/JTBD.md](docs/JTBD.md): the jobs-to-be-done framing the repository is organised around
 - [docs/LEAD_INTELLIGENCE.md](docs/LEAD_INTELLIGENCE.md): Enrichment, explainable scoring and deterministic routing over the Lead starter — local development slice;…
 - [docs/MCP.md](docs/MCP.md): The server uses newline-delimited JSON-RPC over stdio.
@@ -262,7 +262,7 @@ fits a user's problem. Fetch `llms-full.txt` if you want the harness and inspect
 - [docs/MODULE_MANIFEST.md](docs/MODULE_MANIFEST.md): A module manifest is a small declarative JSON file that describes one CRM module entity.
 - [docs/PACKAGE_AUTHORING.md](docs/PACKAGE_AUTHORING.md): How Claude Code, Codex — or a person — adds a bounded domain to an {{brand.name}} repository without changing the…
 - [docs/RENAME_SURFACE.md](docs/RENAME_SURFACE.md): The complete inventory of where the working title lives, grouped by what breaks when it moves.
-- [docs/SCENARIO_EVIDENCE.md](docs/SCENARIO_EVIDENCE.md): crm scenario run <scenario> [--json] [--root dir] — DX6.
+- [docs/SCENARIO_EVIDENCE.md](docs/SCENARIO_EVIDENCE.md): {{brand.slug}} scenario run <scenario> [--json] [--root dir] — DX6.
 - [docs/SERVICE_OPERATIONS.md](docs/SERVICE_OPERATIONS.md): The third domain package built under ADR-018, and the second that depends on another package.
 - [docs/SIGNATURE_ORDER.md](docs/SIGNATURE_ORDER.md): Turning an approved Quote Version into a signed commitment and one immutable Order — local development slice.
 - [docs/SKILL_PACKAGING.md](docs/SKILL_PACKAGING.md): A skill is the part of this framework that installs into somebody else's agent.

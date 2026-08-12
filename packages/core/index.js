@@ -122,7 +122,7 @@ export {
 } from './src/solution-plan.js';
 
 // ---- implementation evidence (DX10) ----
-// The checked-in half of `crm solution verify`: a bounded, function-free
+// The checked-in half of `accordo solution verify`: a bounded, function-free
 // document that says *where to look* for the proof of each plan requirement,
 // and cannot say what the proof concluded.
 export {

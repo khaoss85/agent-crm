@@ -548,7 +548,7 @@ const REFERENCE_SHAPES = Object.freeze({
     const expect = text(row.expect, `${path}.expect`, problems, { max: 40 });
     if (expect !== null && !VERIFICATION_STATUSES.includes(expect)) {
       report(problems, 'EVIDENCE_VOCABULARY_UNKNOWN', `${path}.expect`,
-        `must be one of ${VERIFICATION_STATUSES.join(', ')} — the statuses crm project verify publishes`);
+        `must be one of ${VERIFICATION_STATUSES.join(', ')} — the statuses accordo project verify publishes`);
     }
     return {
       check: text(row.check, `${path}.check`, problems, { max: MAX_IDENTIFIER }) ?? '',

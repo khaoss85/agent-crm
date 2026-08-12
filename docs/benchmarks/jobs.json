@@ -271,7 +271,7 @@
       "id": "JTBD-AX-01",
       "section": "Agent experience (AX0–AX5, cross-cutting)",
       "status": "validated end to end",
-      "summary": "crm app inspect [--json] (AX1) answers it in one deterministic document: the installed package graph with its five distinct version axes, the resolved capability graph including unresolved edges, records with their revisions, actions with declared transition metadata, policies and provider definitions. An invalid composition still produces a complete report with deterministic problems[], and limitations[] names every gap by code — tests/app-inspect.test.js. Source-only: no database is opened, no provider is contacted, and JTBD/quality evidence is referenced by path, never parsed",
+      "summary": "accordo app inspect [--json] (AX1) answers it in one deterministic document: the installed package graph with its five distinct version axes, the resolved capability graph including unresolved edges, records with their revisions, actions with declared transition metadata, policies and provider definitions. An invalid composition still produces a complete report with deterministic problems[], and limitations[] names every gap by code — tests/app-inspect.test.js. Source-only: no database is opened, no provider is contacted, and JTBD/quality evidence is referenced by path, never parsed",
       "tests": [
         "tests/app-inspect.test.js"
       ],
@@ -291,7 +291,7 @@
       "id": "JTBD-AX-03",
       "section": "Agent experience (AX0–AX5, cross-cutting)",
       "status": "partially supported",
-      "summary": "AX2: solutionPlanContract: 1 with a revision and a canonical fingerprint, six decision types mapped to the repository's own hierarchy, six evidence categories with resolving citations, a closed approval vocabulary, and crm solution inspect|validate|check — check binds the plan to this project's app inspect report and reports PLAN_STALE when the composition has moved. A plan cannot carry a command, rung 5 cannot be a step, rung 3 and above must evidence the rungs they inspected, and citations follow a DAG over evidence categories so a conclusion cannot be cited as a premise — tests/solution-plan.test.js. Partial, not validated: nothing writes the plan (there is no planner) and nothing executes it (there is no runtime); the contract makes a hand-written plan checkable, which is a different job from producing one",
+      "summary": "AX2: solutionPlanContract: 1 with a revision and a canonical fingerprint, six decision types mapped to the repository's own hierarchy, six evidence categories with resolving citations, a closed approval vocabulary, and accordo solution inspect|validate|check — check binds the plan to this project's app inspect report and reports PLAN_STALE when the composition has moved. A plan cannot carry a command, rung 5 cannot be a step, rung 3 and above must evidence the rungs they inspected, and citations follow a DAG over evidence categories so a conclusion cannot be cited as a premise — tests/solution-plan.test.js. Partial, not validated: nothing writes the plan (there is no planner) and nothing executes it (there is no runtime); the contract makes a hand-written plan checkable, which is a different job from producing one",
       "tests": [
         "tests/solution-plan.test.js"
       ],
@@ -311,7 +311,7 @@
       "id": "JTBD-AX-05",
       "section": "Agent experience (AX0–AX5, cross-cutting)",
       "status": "partially supported",
-      "summary": "Quality Gates, crm package validate, the test suites and the clean-clone run are real and enforced, and DX10 now closes the last hop from a plan to its proof: crm solution verify <plan.json> --evidence <evidence.json> --json reports, per requirement, whether it is proven, partial, blocked, unevidenced, stale or unverified, from authorities that ran in the same invocation. A requirement id is derived from the plan, the evidence document has no status field, and file exists can never satisfy a behavioural requirement — tests/implementation-evidence.test.js, tests/solution-verify.test.js. Still partial, and deliberately so: it grades the acceptance a plan *wrote down* and cannot catch one it omitted, manual requirements stay unverified, no checked-in plan verifies today, and there is still no automated goal-to-acceptance runner (AX3)",
+      "summary": "Quality Gates, crm package validate, the test suites and the clean-clone run are real and enforced, and DX10 now closes the last hop from a plan to its proof: accordo solution verify <plan.json> --evidence <evidence.json> --json reports, per requirement, whether it is proven, partial, blocked, unevidenced, stale or unverified, from authorities that ran in the same invocation. A requirement id is derived from the plan, the evidence document has no status field, and file exists can never satisfy a behavioural requirement — tests/implementation-evidence.test.js, tests/solution-verify.test.js. Still partial, and deliberately so: it grades the acceptance a plan *wrote down* and cannot catch one it omitted, manual requirements stay unverified, no checked-in plan verifies today, and there is still no automated goal-to-acceptance runner (AX3)",
       "tests": [
         "tests/implementation-evidence.test.js",
         "tests/solution-verify.test.js"
@@ -323,7 +323,7 @@
       "id": "JTBD-AX-06",
       "section": "Agent experience (AX0–AX5, cross-cutting)",
       "status": "partially supported",
-      "summary": "the JTBD matrix and package metadata make the honest answer *available*, and two commands now make part of it machine-checked rather than optional: the service scenario publishes each unavailable capability as a stated false it earned by attempting the operation, and crm solution verify refuses to let an agent declare a requirement met — the evidence document has no status field, a downgrade needs a reason, and a manual requirement can never read as proof. Still partial: nothing enforces that an agent writes an evidence document at all, which is why the Skill states it as a rule",
+      "summary": "the JTBD matrix and package metadata make the honest answer *available*, and two commands now make part of it machine-checked rather than optional: the service scenario publishes each unavailable capability as a stated false it earned by attempting the operation, and accordo solution verify refuses to let an agent declare a requirement met — the evidence document has no status field, a downgrade needs a reason, and a manual requirement can never read as proof. Still partial: nothing enforces that an agent writes an evidence document at all, which is why the Skill states it as a rule",
       "tests": [],
       "title": "Report unavailable capabilities honestly"
     },

@@ -620,7 +620,7 @@ function normalizeApplication(value, problems) {
     if (/^[0-9a-f]{64}$/.test(raw)) fingerprint = raw;
     else {
       report(problems, 'PLAN_FIELD_INVALID', 'plan.application.inspectionFingerprint',
-        'must be the 64-character hex digest `crm solution check --json` reports for this project. It is a drift detector, not proof of authorship — but it is not a label, either');
+        'must be the 64-character hex digest `accordo solution check --json` reports for this project. It is a drift detector, not proof of authorship — but it is not a label, either');
     }
   }
 

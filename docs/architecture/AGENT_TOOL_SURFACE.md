@@ -181,7 +181,7 @@ dry-run by default), and the rest are reads.
 That surface predates AX1, AX2 and the package seam. It exposes a *sample*
 domain — opportunities and approvals — rather than the framework's actual
 contracts. An agent asking "what is this application, and what may I do to it"
-gets a better answer today from `crm app inspect` than from any of the nine.
+gets a better answer today from `accordo app inspect` than from any of the nine.
 
 ---
 
@@ -248,12 +248,12 @@ surface rather than a list of commands:
 |---|---|---|
 | `app_inspect` | T0 | AX1 — shipped as a CLI today |
 | `solution_check` | T0 | AX2 — shipped as a CLI today |
-| `solution_verify` | **T1** | DX10 `crm solution verify` — shipped as a CLI today. **Deferred**, under the Solution namespace, never resident |
+| `solution_verify` | **T1** | DX10 `accordo solution verify` — shipped as a CLI today. **Deferred**, under the Solution namespace, never resident |
 | `package_inspect` | T0 | `crm package inspect` — shipped as a CLI today |
 | `package_scaffold` | T0 / **T2** | DX3 `crm package scaffold` — shipped as a CLI today. **T0 as a plan, T2 with `--apply`** |
 | `package_test` | **T1** | DX4 `crm package test` — shipped as a CLI today |
 | `explain` | T0 | DX8, not built |
-| `project_doctor` | T0 | DX1 `crm project doctor` — shipped as a CLI today |
+| `project_doctor` | T0 | DX1 `accordo project doctor` — shipped as a CLI today |
 | `change_inspect` | T0 | DX7, not built |
 | `context_pack` | T0 | DX9, not built — advisory only, never authorization |
 | `verify` | T1 | DX5, not built |
@@ -274,7 +274,7 @@ the same way `package_test` does — by what it can do, not by what it is expect
 to do. It is read-only about the caller's project: it writes nothing there, has
 no write mode, no `--fix` and no generation mode, opens no database and modifies
 no source. But it **executes** checked-in repository source with the operator's
-authority — `crm project verify` when something references it, which runs the
+authority — `accordo project verify` when something references it, which runs the
 project's own declared suites, and each explicitly referenced scenario, each of
 which composes a whole application in a temporary directory. So it consumes real
 time and real disk, and a blanket allow on something that runs a suite is a

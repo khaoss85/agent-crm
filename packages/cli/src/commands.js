@@ -500,7 +500,10 @@ each referenced scenario exactly once. It writes nothing, has no --fix and no
 write mode, promotes no JTBD row, and never treats a file existing as evidence
 that anything behaves correctly.
 Exit codes: 0 every required requirement is machine-verified, 1 readable but
-incomplete, stale, partial, blocked or manual, 2 unreadable.
+incomplete, stale, partial, blocked, unverifiable or manual, 2 the plan or the
+evidence document is unreadable or invalid — in which case nothing is run.
+A requirement an author declared blocked and one whose authority did not run are
+never the same word: the first is "blocked", the second is "unverifiable".
 Package contract: docs/PACKAGE_AUTHORING.md
 Application inspection: docs/APPLICATION_INSPECTION.md — plans: docs/SOLUTION_PLAN.md
 Scenario evidence: docs/SCENARIO_EVIDENCE.md

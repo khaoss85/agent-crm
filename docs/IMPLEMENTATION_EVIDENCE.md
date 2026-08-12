@@ -1,6 +1,6 @@
 # Implementation evidence
 
-`crm solution verify <plan.json> --evidence <evidence.json> [--json] [--root dir]` — **DX10**.
+`accordo solution verify <plan.json> --evidence <evidence.json> [--json] [--root dir]` — **DX10**.
 
 > **For every requirement in this checked-in SolutionPlan, what implementation
 > evidence proves it is implemented, partial or blocked — and what is still
@@ -9,12 +9,12 @@
 Every other rung stops one step short of that question:
 
 ```text
-crm app inspect      what is composed?                             source facts
-crm solution check   is this plan valid, and still true?           a document
-crm project doctor   what is stale in the source?                  cheap
-crm project verify   can we PROVE the project is healthy?          project health
-crm scenario run     which business jobs does this checkout earn?  claimed rows
-crm solution verify  does this evidence satisfy this plan?         this
+accordo app inspect      what is composed?                             source facts
+accordo solution check   is this plan valid, and still true?           a document
+accordo project doctor   what is stale in the source?                  cheap
+accordo project verify   can we PROVE the project is healthy?          project health
+accordo scenario run     which business jobs does this checkout earn?  claimed rows
+accordo solution verify  does this evidence satisfy this plan?         this
 ```
 
 `project verify` said so itself, in its own limitations, before this existed:
@@ -100,7 +100,7 @@ A **requirement** is a plan **step** or an **acceptance check**.
 
 ```text
 step:<stepId>        the id its author already wrote in the plan
-check:<12 hex>       the first 12 hex of sha256 over the acceptance-check statement
+check:<32 hex>       the first 32 hex of sha256 over the acceptance-check statement
 ```
 
 `acceptance.checks[]` is an array of bare strings with no identifier, and adding
@@ -110,6 +110,12 @@ for old ones. Deriving adds **nothing** to that contract — not a field, not a
 rule, not a byte of any plan's fingerprint — and every plan already checked in
 became addressable the moment DX10 shipped, with **no migration and no
 rewrite**. ADR-031 records the comparison.
+
+**32 hex = 128 bits**, not 12. The wording of an acceptance check is authored by
+a coding agent, and an agent that can propose wording can search wording, so the
+bound that matters is a *chosen* collision — landing a new criterion on an id
+another criterion's evidence already names. At 48 bits that is ~2^48 hashes:
+hours on one commodity GPU. ADR-031 addendum 1 records the numbers.
 
 The cost is deliberate and is the behaviour we want: **rewording an acceptance
 criterion changes its requirement id**, so evidence recorded against the old
@@ -126,7 +132,7 @@ Two things that look like candidates are deliberately **not** requirements:
   therefore it is done" wearing a contract.
 - **a JTBD row.** It is DX6's unit, and only a person moves its status.
 
-Read the ids from `crm solution check <plan.json> --json` → `requirements`. They
+Read the ids from `accordo solution check <plan.json> --json` → `requirements`. They
 are published **outside** the `plan` object precisely so no plan's fingerprint
 moves.
 
@@ -168,8 +174,8 @@ report with one carries `MANUAL_EVIDENCE_REMAINS_REQUIRED` as well.
 
 ## The sufficiency matrix
 
-The category is declared; **which authority satisfies it is not**, and an author
-cannot widen it.
+The category is declared; **which authority satisfies it is not**, and a declared
+category may only ever ask for *more* proof than the plan already requires.
 
 | Category | Satisfied by | Insufficient, however much of it | Why that authority |
 |---|---|---|---|
@@ -183,17 +189,44 @@ The observation **kind** is read from DX6's report, never from the evidence
 document. That is what stops an author relabelling `action.present` — "the
 action is declared" — as evidence that the application does anything.
 
-Where the plan itself carries the information, a **floor** applies and the
-declared category cannot go under it: a step whose decision type is `configure`,
-`extend`, `provider` or `create-package` changes what the application does, so
-`structural` is refused (`EVIDENCE_CATEGORY_BELOW_FLOOR`) **and the requirement
-is graded against the floor rather than the label** — reporting the violation
-while still grading the weaker claim would let the label decide the outcome,
-which is the one thing a declared category must never do. A step whose decision
-is `evolve` has a floor of `structural`. Acceptance checks carry no floor — the
-plan says nothing about the nature of a criterion — so their category is
-declared, recorded verbatim in the report, and bounded by the published
-limitation `REQUIREMENT_CATEGORY_IS_DECLARED`.
+### The floor — why a label cannot decide the outcome
+
+Every requirement is graded against a **floor**, and the declared category can
+only sit on it or above it. The invariant is: **an author must never be able to
+raise a requirement's verification status by choosing a weaker category.**
+
+| The plan says | Floor | Because |
+|---|---|---|
+| a step whose decision is `configure`, `extend`, `provider` or `create-package` | `behavioural` | it changes what the application *does* |
+| a step whose decision is `evolve` | `structural` | it moves a record to a new manifest revision; requiring a run to prove a schema would be requiring the wrong thing |
+| **anything else** — every acceptance check, and any step whose decision type does not resolve | `behavioural` | the plan says nothing about it, and "nothing" is not a licence to grade it cheaply |
+
+A declared category is honoured only when it requires at least as much proof as
+the floor (`CATEGORY_STRENGTH`: `structural` and `package-architecture` sit
+together at the bottom, then `project-health`, then `behavioural`, then `manual`,
+which can never resolve to a pass at all). Otherwise the requirement is graded at
+the floor and `EVIDENCE_CATEGORY_BELOW_FLOOR` says so. The report publishes
+`category` and `enforcedCategory` side by side, so nothing an author wrote is
+hidden — it just does not decide anything.
+
+This closes the exploit the first cut of this contract shipped with:
+
+```text
+a behavioural acceptance statement  →  the author labels it "structural"
+  →  cites source.artifact / action.present / package.composed
+  →  the verifier reported VERIFIED, having run nothing
+```
+
+**The cost, stated plainly.** `solutionPlanContract: 1` stores an acceptance
+check as a bare string, so the plan cannot say that "the full verification suite
+passes" is about project health rather than about behaviour. Under the floor that
+criterion grades `unevidenced` even when `project.verification` is cited, which
+is a false negative by construction (`ACCEPTANCE_CHECKS_ARE_UNTYPED`). It is
+preferred to the false positive an author-chosen category produces. The way to
+recover it is a plan contract in which an acceptance check carries its own type;
+that is recorded as a future option in ADR-031 addendum 1 and deliberately not
+taken here, because widening a frozen contract so a verifier goes greener is the
+move this rung exists to refuse.
 
 ## What the plan is bound to, and why a scenario may answer it
 

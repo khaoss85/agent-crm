@@ -9,7 +9,7 @@ import {
 import { inspectApplicationCommand } from './app-inspect-command.js';
 
 /**
- * `crm solution inspect|validate|check <plan.json>` — the CLI face of AX2.
+ * `accordo solution inspect|validate|check <plan.json>` — the CLI face of AX2.
  *
  * ```text
  * inspect    the normalized document, human or --json. No judgement, no project.
@@ -33,7 +33,7 @@ import { inspectApplicationCommand } from './app-inspect-command.js';
 /** @param {string} planPath */
 function readPlanFile(planPath) {
   if (typeof planPath !== 'string' || planPath.trim() === '') {
-    throw new Error('Usage: crm solution <inspect|validate|check> <plan.json>');
+    throw new Error('Usage: accordo solution <inspect|validate|check> <plan.json>');
   }
   const path = isAbsolute(planPath) ? planPath : resolve(process.cwd(), planPath);
   const stat = statSync(path, { throwIfNoEntry: false });
@@ -122,7 +122,7 @@ function emit({ json, plan, problems, current, mode, out, inspectionFingerprint 
       // which is exactly what makes it evidence of drift.
       ...(inspectionFingerprint === null ? {} : { inspectionFingerprint }),
       plan,
-      // The plan's requirements, with the identifier `crm solution verify`
+      // The plan's requirements, with the identifier `accordo solution verify`
       // addresses them by. **Derived, never declared**: a step reuses the id its
       // author already wrote, an acceptance check is content-addressed, and it
       // is published *outside* `plan` so no plan's fingerprint moves. An
