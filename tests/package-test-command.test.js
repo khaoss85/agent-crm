@@ -530,3 +530,73 @@ writeSync(3, '{"read": true, "package": {"name": "trunc');
   assert.match(impostor.noise, /impostor/, 'and it is returned as noise instead');
   assert.ok(t);
 });
+
+/**
+ * REGRESSION (Wave 2A) — the reporting child settles on **exit**, and the drain
+ * window is what makes that safe.
+ *
+ * `close` arrives only when every copy of the pipe is gone, so a grandchild the
+ * package spawned holds it for as long as it lives and the run waits out its
+ * whole timeout on a process that finished in milliseconds. Settling on `exit`
+ * fixes that and creates the opposite risk: a report written immediately before
+ * the process exits must still be collected. Both halves are pinned here.
+ */
+test('a reporting child settles on exit, and what it wrote just before exiting still arrives', async (t) => {
+  const { runReportingChild } = await import('../packages/cli/src/child-report.js');
+  const loaderFor = (body) => {
+    const dir = mkdtempSync(join(tmpdir(), 'accordo-drain-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const file = join(dir, 'loader.mjs');
+    writeFileSync(file, body);
+    return file;
+  };
+
+  // 1 · report written and the process exits in the same tick: the drain window
+  //     is the only thing that collects it.
+  const raced = await runReportingChild({
+    loader: loaderFor(`import { writeSync } from 'node:fs';
+writeSync(3, JSON.stringify({ read: true, package: { name: 'raced' } }));
+process.exit(0);
+`),
+    timeoutMs: 10_000,
+  });
+  assert.equal(raced.report?.package?.name, 'raced', 'a report written immediately before exit is not lost');
+
+  // 2 · a grandchild inherits fd 3 and never lets go. The reporting process has
+  //     exited and its report is complete, so the run must not wait for the
+  //     pipe to close.
+  const started = Date.now();
+  const leakyLoader = loaderFor(`import { writeSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: ['ignore', 1, 2, 3] }).unref();
+writeSync(3, JSON.stringify({ read: true, package: { name: 'leaked' } }));
+process.exit(0);
+`);
+  const leaked = await runReportingChild({ loader: leakyLoader, timeoutMs: 20_000 });
+  const elapsed = Date.now() - started;
+  assert.equal(leaked.report?.package?.name, 'leaked', 'the report survives the leak');
+  assert.ok(elapsed < 15_000, `settled on exit rather than on the pipe closing (${elapsed}ms)`);
+  // And the pipes are released, not merely stopped being read. An open stream
+  // is a ref'd handle: without this the promise resolved in 300ms and the
+  // process that called it could never exit, so `crm package test` printed its
+  // report and hung — and DX5's package stage, which spawns that command, saw a
+  // conforming package as a fifteen-minute timeout.
+  const child = spawnSync(process.execPath, ['--no-warnings', '--input-type=module', '-e', `
+    import { runReportingChild } from ${JSON.stringify(join(repoRoot, 'packages/cli/src/child-report.js'))};
+    const r = await runReportingChild({ loader: ${JSON.stringify(leakyLoader)}, timeoutMs: 20000 });
+    process.stdout.write(JSON.stringify(r.report));
+  `], { encoding: 'utf8', timeout: 25_000 });
+  assert.equal(child.signal, null, 'the calling process exits on its own; it is not killed by the timeout');
+  assert.equal(child.status, 0);
+  assert.match(child.stdout, /leaked/);
+
+  // 3 · a process that exits before writing anything is a stated outcome, never
+  //     an empty pass.
+  const early = await runReportingChild({
+    loader: loaderFor('process.exit(0);\n'),
+    timeoutMs: 10_000,
+    hints: { empty: 'No report was produced.' },
+  });
+  assert.equal(early.report, null);
+  assert.match(early.diagnostic, /No report was produced/);
+});
