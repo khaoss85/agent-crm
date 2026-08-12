@@ -22,12 +22,25 @@
     },
     {
       "id": "qualify",
-      "narrative": "Qualification and disqualification happen through actions, never through generic CRUD, and a qualification opens exactly one follow-up task.",
+      "narrative": "Qualification and disqualification happen through actions, never through generic CRUD, and a qualification opens exactly one follow-up task through the package-native Work records. Disqualification opens none: it is not human follow-up work.",
       "observe": [
         { "kind": "action.present", "action": "lead.qualify" },
         { "kind": "action.present", "action": "lead.disqualify" },
-        { "kind": "module.present", "module": "task" },
-        { "kind": "journey.count", "metric": "tasks", "equals": 2 }
+        { "kind": "module.present", "module": "work-task" },
+        { "kind": "module.present", "module": "work-activity" },
+        { "kind": "journey.count", "metric": "tasks", "equals": 3 },
+        { "kind": "journey.count", "metric": "workActivities", "equals": 6 }
+      ]
+    },
+    {
+      "id": "work",
+      "narrative": "Follow-up work is one package-native capability rather than a bespoke table per domain. A Lead qualification opens one task with its creation activity; a Service escalation opens a second through the declared capability work/follow-up@1, inside the escalation's own transaction, and a repeated escalation replays rather than opening a second. The task then runs its explicit transition table: a human note, a completion, a refusal to move a terminal task, and a cancellation that is never read as a completion. Nothing here is scheduled, reminded, assigned or notified, and a task long past its dueAt stays exactly open.",
+      "observe": [
+        { "kind": "package.composed", "package": "work" },
+        { "kind": "capability.available", "capability": "follow-up", "version": 1 },
+        { "kind": "action.present", "action": "work-task.complete" },
+        { "kind": "action.present", "action": "work-task.cancel" },
+        { "kind": "action.present", "action": "work-task.add-note" }
       ]
     },
     {

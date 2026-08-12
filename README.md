@@ -106,8 +106,8 @@ composition is deliberately empty — a project writes the composition it wants 
 same one CI runs on every push) into a directory it keeps, then inspects the result:
 
 ```text
-  modules       70        resources     41        policies       7
-  packages       6        actions       56        providers      5
+  modules       71        resources     43        policies       7
+  packages       7        actions       59        providers      5
 
   production posture — local development only: no authentication, tenancy or RBAC
                        exists, and actor headers are not identity
@@ -173,8 +173,10 @@ evidence is required to leave it.
   percentage attributed to this project is fabricated —
   [`docs/strategy/CRM_BUILD_BENCHMARK.md`](docs/strategy/CRM_BUILD_BENCHMARK.md) is the
   protocol, not a result.
-- **No scheduler, no task engine, no reminders.** One follow-up Task is created inside lead
-  qualification; nothing recurring exists, so renewal notice periods are recorded and never fire.
+- **No scheduler, no reminders, nothing on a timer.** Follow-up Tasks and an Activity
+  timeline exist as one shared model (`docs/WORK_TASKS.md`) and a person moves every one of
+  them: a due date changes no state, nothing recurring exists, nothing is assigned or
+  notified, and renewal notice periods are recorded and never fire.
 - **No email, calendar or marketing integrations.** A notification provider contract exists;
   no adapter sends anything to anyone.
 - **No import, export, dedupe, merge, bulk edit, saved views or global search.** Table stakes

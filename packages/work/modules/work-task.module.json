@@ -1,0 +1,27 @@
+{
+  "manifestVersion": 1,
+  "name": "work-task",
+  "table": "work_tasks",
+  "description": "A unit of human follow-up work arising from a business event, held against an opaque subject envelope. Every field is managed: a task exists only through the work package's actions or its follow-up capability, and no client can create, forge or rewrite one. It has an explicit transition table (open -> completed, open -> cancelled; both terminal, no reopen in v1) and no assignee: there is no authenticated or secure assignment here. dueAt is evidence only -- nothing is scheduled, nothing fires, and no clock changes a status.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "title", "type": "string", "writable": "managed" },
+    { "name": "status", "type": "enum", "values": ["open", "completed", "cancelled"], "index": true, "writable": "managed" },
+    { "name": "dueAt", "type": "timestamp", "writable": "managed" },
+    { "name": "subjectResource", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectOwner", "type": "enum", "values": ["host", "package"], "writable": "managed" },
+    { "name": "subjectOwnerPackage", "type": "string", "writable": "managed" },
+    { "name": "subjectLabel", "type": "string", "writable": "managed" },
+    { "name": "sourcePackage", "type": "string", "index": true, "writable": "managed" },
+    { "name": "sourceAction", "type": "string", "writable": "managed" },
+    { "name": "openedByType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+    { "name": "openedById", "type": "string", "writable": "managed" },
+    { "name": "openedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "completedBy", "type": "string", "writable": "managed" },
+    { "name": "completedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "cancelledBy", "type": "string", "writable": "managed" },
+    { "name": "cancelledAt", "type": "timestamp", "writable": "managed" },
+    { "name": "closingReason", "type": "string", "writable": "managed" }
+  ]
+}

@@ -50,6 +50,57 @@ Generated modules are exposed over HTTP through a single reviewed route family �
 
 Exposure is decided by a single shared validator (`packages/core/src/generated-module-contract.js`), applied both at startup (fail closed: a corrupted registry entry stops the app) and per request (fail closed: a non-conforming definition is 404). It checks name shape, exact `kind`, `manifestVersion`, that every declared capability maps to an actual service function, and field-metadata shape; the `ModuleRegistry` is `Map`-backed, so lookups can never resolve `__proto__`/`constructor` to inherited properties. This is a framework contract against accidental, stale or hand-edited entries — **not** a sandbox against malicious source-code changes, which are outside the threat model since repository code is trusted and executed. The public contract is versioned: `/api/schema` returns `generatedResourceContract: 1`. Generated source embeds all manifest-controlled strings via `JSON.stringify`, so hostile descriptions or enum values cannot inject code. The canonical `limit` syntax on this surface is a single base-10 integer in [1, 500]; the generated service remains the final validation boundary when called outside HTTP.
 
+### ADR-008 addendum 2 — a collection read may be narrowed on the server, by an index-backed equality filter
+
+**Status:** accepted, from the pre-merge review of PR #70 (CHROMIUM-70 check 26 /
+REVIEW-70). **This changes the shared HTTP envelope for every generated module**
+and is recorded here rather than slipped in under a package milestone.
+
+**What went wrong.** `GET /api/modules/:module/records` accepted `limit` and
+nothing else. A client that needed one parent's rows therefore had to ask for the
+newest N rows of the **whole table** and filter them itself. The real-browser
+matrix found what that costs: in a project with 132 activity rows, a work task
+whose two activity rows were the two oldest rendered **"Nothing recorded yet."** —
+directly above a notice reading *"Showing at most 100 entries. A display bound of
+this screen, never a bound on what exists."* Both statements were false at once,
+and the second is the dangerous kind of false, because it reads as a disclosure
+of exactly the thing it is getting wrong. The stubbed DOM suite could not catch
+it: its fixture was smaller than the bound.
+
+**Decision.** The collection read gains `filter.<field>=<value>`, and the grammar
+is deliberately tiny:
+
+- **Index-backed fields only.** A module publishes `filterableFields` — its
+  indexed and unique fields plus `id` — in its metadata and at
+  `GET /api/modules/:module`. Nothing else is filterable, so a routed filter can
+  never become a table scan.
+- **Equality on one scalar**, at most 200 characters, never repeated, at most
+  four filters combined. There is no `IN`, no range, no `OR`, no full-text or
+  substring match, no join across modules, no ordering control and no offset.
+  This narrows a page; it is not a query language, and making it one would be a
+  different decision. Accepted on exactly those terms and no wider: the human
+  decision approving this addendum named range, `OR`, full text, join and
+  arbitrary sort as explicitly **not** authorised by it.
+- **The page is still a page.** `limit` keeps its 1–500 bound and its
+  `created_at DESC, id` ordering. A filtered read is still a *display* read.
+- **Refusal over a silent wrong answer.** Every violation is a `400`. A module
+  generated before this addendum publishes no `filterableFields`, and a filter
+  against it is refused rather than answered **unfiltered** — which would be the
+  same false-completeness bug one layer down.
+- **`listWhere` stays in-process and unrouted**, as
+  `packages/cli/src/module-factory.js` has always said. It is unbounded and
+  complete, and a correctness decision must still never be made from an HTTP
+  page. That separation is the reason this addendum adds a filter to `list`
+  rather than routing `listWhere`.
+
+**Consequences.** `generatedResourceContract` stays `1`: the parameter and the
+`filterableFields` metadata key are both additive, an older client never sends a
+filter, and an older Admin ignores the new key. The SDK and the MCP surface are
+**not** changed by this addendum — they keep the unfiltered collection read, and
+extending them is a separate decision. A project holding modules generated before
+this change keeps working unchanged; it gains filtering only when those modules
+are regenerated with `accordo module create --apply`.
+
 ## ADR-009 — Generated modules render through one schema-driven Admin with an override seam
 
 **Status:** accepted
@@ -1374,3 +1425,282 @@ than as an increment, but no other contract is audited by this ADR. Coverage
 remains *claimed* rather than discovered (`COVERAGE_IS_CLAIMED_NOT_DISCOVERED`),
 two scenarios are not broad coverage, and PROVE stays partial because DX10 does
 not exist.
+
+## ADR-030 — Follow-up work is a package-native domain with an opaque subject envelope, and Activity is curated evidence rather than a projection of the audit log
+
+**Status:** accepted.
+
+**Context.** `TASKS.md` carried one unfinished item from Milestone 6: *"Add
+Activity and a first-class Task module with a general automatic follow-up
+workflow."* What existed was a bespoke slice — the B2B starter's own `task`
+module, table `tasks`, with `title`, `status` in `open`/`done`, `dueAt`, a
+**required** `leadId` reference and a unique `sourceKey`, every field publicly
+writable — created inside `lead.qualify`.
+
+Three things were wrong with it, and only the third is about code:
+
+1. **The subject was a Lead, structurally.** A task that cannot exist without a
+   `leadId` cannot be a follow-up on a contract, a support case or anything else.
+   The next domain that needed one would have written a second table.
+2. **It was not evidence.** `POST /api/modules/task/records` could forge a
+   follow-up with any `sourceKey`, and `PATCH` could rewrite the key the runtime
+   had written. There was no boundary at all.
+3. **`open`/`done` is not a lifecycle.** No transition table, no cancellation, no
+   actor, no record of who closed it or when.
+
+The failure mode this ADR is really about is the first one: *silent divergence of
+one concept across domains*. It had already started, and the second occurrence
+would not have been compatible with the first.
+
+**Decision.**
+
+1. **A package, not core.** `packages/work` — `work@1` — owns `work-task` and
+   `work-activity`, three human actions and one declared capability. ADR-018
+   admits domain behaviour into `packages/core` only when it is a *runtime
+   capability the kernel needs*, and the kernel needs no notion of a task: the
+   module registry, action runtime, audit, trace and event bus all work today
+   without one. **`packages/core` is unchanged by this milestone**, which is the
+   mechanical form of that argument. The counter-argument — "two domains consume
+   it" — is exactly what ADR-018 refuses; Contracts is consumed by three packages
+   and is still a package.
+
+   Named `work` after comparing the alternatives against the surface actually
+   built: `tasks` and `activities` each describe half of it; `engagement` would
+   promise a channel that does not exist; `work-management` would promise
+   planning, capacity and scheduling, and would collide semantically with
+   Delivery's shipped work packages and milestones.
+
+2. **The subject is an opaque envelope, and the limitation is published.**
+   `subjectResource`, `subjectId`, `subjectOwner` (`host` | `package`),
+   `subjectOwnerPackage`, an optional `subjectLabel` display snapshot, plus
+   `sourcePackage` and `sourceAction`. SQLite cannot enforce a foreign key whose
+   target table varies per row, and this package does not pretend it can
+   (`SUBJECT_REFERENCE_NOT_ENFORCED`). What makes the envelope trustworthy is
+   **who wrote it**: the domain action that owns the source record, running on
+   that record, inside the transaction that is about to commit. There is no
+   generic resolver and no service locator — a resolver would be justified only
+   if two real consumers needed identical resolution behaviour, and neither does.
+   `subjectOwner` preserves the Package Contract's distinction between a
+   host/project-owned record dependency and a foreign package-owned one.
+
+3. **An explicit transition table, and no reopen.** `open → completed`,
+   `open → cancelled`, both terminal. `open → completed` is direct because an
+   `in_progress` state would change no read, no action and no refusal in this
+   milestone — a state that changes nothing is decoration, and decoration in a
+   state machine is a future migration. Reopening is not "un-completing": it
+   needs a second lifecycle, and the honest answer for a repeated business round
+   is a new task under a new source key, which the idempotency rule already
+   supports.
+
+4. **`dueAt` is evidence only.** No clock-driven state change, no overdue
+   mutation, no timer, no scheduler. A read-only `due`/`overdue` may be computed
+   at an **injected** instant and never writes. Proven by stepping an injected
+   clock a year past a due date and re-reading the row byte-identical.
+
+5. **Activity is curated user-facing evidence, not a projection of audit.** A
+   closed four-entry vocabulary — `task_created`, `task_completed`,
+   `task_cancelled`, `note` — written **inside the transaction of the action that
+   caused it**. Audit and trace remain the exhaustive technical record; Activity
+   is the semantic one a person reads. **There is no asynchronous projection
+   engine, and there could not be one here:** the event bus dispatches after
+   commit (ADR-012), so a projection would either escape the originating
+   transaction or need Jobs/Outbox, which does not exist.
+
+6. **One creator, reached two ways, with the asymmetry stated.** Consuming
+   *packages* open `work/follow-up@1` through `domains.capability(...)`, which is
+   created with the caller's `modules` handle and therefore writes inside the
+   caller's transaction. The **host application cannot**:
+   `PackageRegistry.capability({ consumer })` resolves `consumer` against
+   registered packages, and a host action in project source is not one. Relaxing
+   that check was rejected — the declaration check is the entire value of the
+   seam, and weakening it for convenience would make every future
+   `CAPABILITY_NOT_DECLARED` a suggestion. Instead the project composes the
+   package's exported `createFollowUp` directly, exactly as
+   `packages/domains/generated/index.js` composes the package itself. It is the
+   same code the capability closes over: one implementation, two callers, no
+   fallback (`HOST_ACTIONS_CANNOT_DECLARE_CAPABILITIES`).
+
+7. **Consumers opt in; `requires` stays hard.** `createLifecyclePackage({
+   followUp: true })` and `createServicePackage({ …, followUp: true })` add the
+   declared requirement. Declaring it unconditionally would stop every existing
+   composition booting until it also composed `work` — a silent break for every
+   shipped database. Opting in is explicit, and a project that opts in *without*
+   composing `work` is refused **at startup** with the unmet edge named, never at
+   runtime inside a transaction. `work` requires nothing, so no composition of
+   these packages can cycle.
+
+8. **No versioned policy in v1, by decision.** A policy earns its fingerprint
+   when two consumers share a rule. These three share none: Lead qualification
+   wants a person's name and a caller-supplied due date; Lifecycle wants an
+   intent and no date at all; Service wants an escalation level and, again, no
+   date. A workflow DSL is refused outright. If a third
+   consumer arrives needing a shared rule it becomes a code-first, synchronous,
+   deterministic, fingerprinted policy with its identity on the record — the same
+   contract every other policy here uses — and not before.
+
+9. **Idempotency is the caller's business identity, and a clock in a key is
+   refused at the boundary.** Same key and same payload replays the existing task
+   and its creation activity; a divergent payload is `409
+   WORK_FOLLOW_UP_CONFLICT` naming the fields; a new business round uses a new
+   key. A key containing an ISO-8601 instant or a 13-digit epoch is **refused**
+   rather than accepted and later discovered as duplicate rows — this is the M16a
+   defect (ADR-028), turned from a review finding into a validator.
+
+10. **The bespoke slice is migrated forward, and the old table is never
+    touched.** Adoption was attempted first: Module Evolution (ADR-019) is
+    additive and forward-only, so a required `REFERENCES leads(id)` cannot be
+    relaxed into a generic subject. `tasks` is therefore not renamed, not altered
+    and not dropped — an existing starter database still opens and every
+    historical row is still readable — and `packages/work/src/legacy-tasks.js`
+    adopts rows forward: dry-run by default, idempotent on `legacy-task:<id>`,
+    `done → completed`, `leadId → subject { resource: 'lead', owner: 'host' }`,
+    and a row it cannot map is **refused and named** rather than guessed. It is a
+    function, not a command, so it adds nothing to the agent surface budget.
+
+**Consequences.**
+
+- One Task model, one Activity model, one queue, one lifecycle, for every domain
+  that wants follow-up work — instead of a table per domain.
+- Two packages now carry an optional dependency they did not have. A composition
+  that does not opt in is byte-identical to before.
+- Work becomes a package every future domain may depend on, so its version
+  discipline matters: `follow-up@1` is frozen on two *package* consumers plus the
+  host path — ADR-029's rule, since the host path cannot validate the capability
+  itself — and a change in what it *answers* is a new version, per ADR-029.
+- The starter's `task` module is gone. Every test that pinned its shape moved to
+  the new records; the list is in `docs/plans/activity-task-operations.md` §1.
+
+**What this does not decide.** It says nothing about a scheduler, reminders,
+calendar sync, notifications, assignment, RBAC, recurring work, attachments or a
+unified cross-domain timeline — all of which stay **not supported**, are listed
+in `metadata().notModeled`, and are asserted as absent by the suite. It does not
+migrate Service's `support-case-activity`, which stays domain-specific, and it
+does not unify Delivery's history. It claims **no `M`-number**: `M16` is
+Analytics Studio (planned) and taking `M17` would assert a position in a sequence
+this horizontal capability does not have.
+
+### ADR-030 addendum 1 — what the adversarial review changed, and what it corrected in this record
+
+**Status:** accepted, from the pre-merge review of PR #70 (REVIEW-70). Each item
+below was confirmed with a runnable probe against a real composed application
+*before* anything was changed, and each is now held by a regression test.
+
+1. **The transactional guarantee is verified, not assumed.** Decision 6 above
+   says the capability writes inside the caller's transaction. It did — when the
+   caller happened to be in one. Called outside a transaction, each managed write
+   commits on its own `SAVEPOINT`, so injecting a fault into the Activity write
+   left a **committed Task with no Activity**: the half pair this ADR says the
+   package never produces. `createFollowUp` now checks the module service's own
+   connection before the first write and refuses `500
+   WORK_TRANSACTION_REQUIRED` when no transaction is open. Fail-closed by
+   construction: there is no way to opt out of the check.
+
+2. **Semantic identity is the whole stored fact, not four fields of it.**
+   Decision 9's replay comparison read `title`, `dueAt`, `subjectResource` and
+   `subjectId` only. So one source key could be replayed with a different
+   **subject owner**, **owning package**, **source package** or **source
+   action** and be answered "already done" while the row said something else —
+   a Service escalation could reuse a Lifecycle key and be handed Lifecycle's
+   task, with Lifecycle's provenance, as its own. All eight semantic fields are
+   compared and each divergent one is named in the 409. **`subjectLabel` is
+   deliberately excluded** and is the *only* exclusion: the contract already
+   states it is a display snapshot taken at creation and never refreshed, so a
+   replay whose only difference is a renamed subject describes the same work and
+   is honoured — the stored snapshot is not rewritten.
+
+3. **Provenance is bound at capability resolution, and the limit of that is
+   stated.** `source.package` was free caller text: any declared consumer could
+   store any other package's name as the origin of work it opened, and the row
+   read as authoritative forever. `PackageRegistry.capability()` already
+   resolves and verifies the consumer against that package's own `requires`, so
+   it now passes that identity to the provider — generically, knowing nothing
+   about Work — and Work binds it: a request asserting anything else is refused
+   `403 WORK_SOURCE_PACKAGE_MISMATCH`, and a direct host caller may assert only
+   `host`. **This is not authentication and is not claimed to be.** The registry
+   cannot tell which package's code is executing (ADR-018 addendum 4: the
+   consumer name is asserted by the caller), so the floor moves from "any package
+   name a caller types" to "a package that also declared this capability". That
+   is a real narrowing, not a boundary, and it is published as
+   `metadata().capability.bindingLimitation`. `source.action` and
+   `subject.ownerPackage` stay caller-asserted, because the registry knows
+   neither which action is calling nor who owns a subject that may belong to a
+   third package.
+
+4. **An impossible `dueAt` is refused, not rolled over.** `optionalIsoDate` is
+   `Date.parse` underneath, which does not validate a calendar day: `2027-02-30`
+   was stored as `2027-03-02` and `2027-04-31` as `2027-05-01`, silently, as
+   evidence, with nothing on the row saying the date had been invented. This is
+   precisely the class ADR-028 added `isCalendarDate` for, shipped again. Work
+   validates the calendar-day part of any ISO form it is given against that same
+   round-trip authority and refuses `400` otherwise. (The wider question — that
+   `optionalIsoDate` itself accepts impossible days for *every* caller in the
+   framework — is a real finding beyond this milestone's scope and is named as a
+   follow-up rather than fixed here.)
+
+5. **Actor identity is the kernel's, byte for byte.** Work normalized its own
+   actor and truncated the id to 200 characters. Truncation of an identity is
+   not a bound, it is a **merge**: two distinct people sharing a 200-character
+   prefix became one string on the Task and on every Activity, while the audit
+   row written by the same transaction carried the full id — two records of one
+   write disagreeing about who did it, both looking authoritative. `normalizeActor`
+   is now exported from the public kernel surface and Work calls it, so there is
+   nothing left to drift.
+
+6. **The clock heuristic in a source key is removed.** Decision 9 refused any
+   ISO instant and any run of 13 or more digits. That is not a property of a
+   moving key, only of some strings that resemble one, and it refused real
+   business identities: 13-digit customer numbers, provider event ids, 16-digit
+   order numbers, and business events whose *scheduled* instant is deliberately
+   part of their identity and is stable under every retry. A **generic**
+   capability cannot infer a caller's business identity from a regex, and
+   carrying M16a's one-domain bug fix forward as a universal restriction was the
+   wrong trade. Work now refuses only what it can actually judge — structurally
+   invalid syntax and unbounded length. The guarantee moved to where the identity
+   is: every consumer derives its key from a committed record id, and
+   `tests/work-source-key-stability.test.js` runs each one at two clock instants
+   and asserts the key does not move.
+
+7. **Two smaller corrections.** A unique-constraint race was recognised from the
+   error *message* (`/already exists|unique constraint/i`), so any other 409
+   whose sentence contained those words could be answered with a replay; it now
+   matches the kernel's typed `ConflictError` and explicitly excludes a transient
+   busy conflict. And the timeline comparator used `localeCompare` with no locale
+   argument, making a repository-deterministic order depend on the host's ICU
+   collation, the Node ICU build and `LANG` — ICU is not code-point order, it
+   treats `-` and `_` as variable punctuation and orders case the other way
+   round, so two readers of the same rows could see two lists. It is code-point
+   lexical now.
+
+8. **The legacy adoption is atomic as well as idempotent.** Decision 10 promised
+   idempotence and delivered it, but adopted row by row: a run killed halfway
+   left a database neither in the old shape nor the new, with a reported
+   `adopted` count nobody could trust. The whole adoption now runs in one
+   transaction.
+
+**Correction to decision 1.** That decision states "**`packages/core` is
+unchanged by this milestone**" as the mechanical form of the no-core-Work-engine
+argument. That is no longer literally true and this record must not keep saying
+it is. `packages/core` now carries exactly two changes, both **generic** and
+neither naming Work or any package:
+
+- `PackageRegistry.capability()` passes the consumer identity it has already
+  resolved to the provider's `create(context)`, overwriting any `consumer` a
+  caller put in the context;
+- `normalizeActor` / `SYSTEM_ACTOR` are exported from the public kernel surface,
+  because a package that cannot reach the canonical actor authority will write
+  its own and drift from the audit log beside it.
+
+The substantive claim of decision 1 stands unchanged: there is **no Work engine
+in the kernel**, no record, action, capability, table or name belonging to this
+domain anywhere in `packages/core`, and removing `packages/work` still removes
+the domain entirely.
+
+**What the review did not change.** The three architectural positions this ADR
+takes all survived the attacks: a **package-native Work domain** (the kernel
+still needs no notion of a task, and the two core changes above are capability
+plumbing and an actor helper, neither of which is Work); an **opaque subject
+envelope** (the alternative is a generic resolver no second consumer needs, and
+the unenforceable-foreign-key limitation is published rather than papered over);
+and **curated Activity rather than an audit projection** (the event bus still
+dispatches after commit, so a projection would still either escape the
+originating transaction or need a Jobs/Outbox that does not exist).

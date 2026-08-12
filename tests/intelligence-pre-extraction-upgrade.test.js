@@ -51,7 +51,14 @@ function project(t) {
     ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), ...args, '--root', root],
     { encoding: 'utf8', cwd: root });
   const starter = join(root, 'examples/starters/b2b-lead-qualification');
-  for (const manifest of ['lead.module.json', 'task.module.json']) {
+  for (const manifest of [
+    'lead.module.json',
+    // Work v1 (ADR-030): the starter's bespoke `task` module is gone and its
+    // follow-up now lives in the work package's records. Relative to the
+    // starter directory, so the existing join(starter, manifest) still holds.
+    '../../../packages/work/modules/work-task.module.json',
+    '../../../packages/work/modules/work-activity.module.json',
+  ]) {
     const applied = cli(['module', 'create', join(starter, manifest), '--apply']);
     assert.equal(applied.status, 0, `${manifest}: ${applied.stderr}`);
   }

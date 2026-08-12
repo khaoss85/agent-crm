@@ -31,6 +31,29 @@ export const LIFECYCLE_PACKAGE = 'lifecycle';
 export const LIFECYCLE_RESOURCES = Object.freeze(['renewal-decision', 'commercial-followup']);
 export const SOURCE_CAPABILITY = Object.freeze({ package: 'contracts', capability: 'contract-lifecycle-source', version: 2 });
 
+/**
+ * **The optional Work dependency (Work v1, ADR-030).**
+ *
+ * A commercial follow-up is an ask for a human in Commercial to do something —
+ * M16a already called it "a governed handoff" and gave it a terminal state so it
+ * would not become "a queue of things nobody can close". The half that was
+ * missing is the work item itself, and `work/follow-up@1` is it.
+ *
+ * It is **opt-in** (`createLifecyclePackage({ followUp: true })`) for one
+ * reason: `requires` is hard, so declaring it unconditionally would stop every
+ * existing composition — including every shipped starter database's application
+ * — from booting until it also composed `work`. Opting in is explicit, and a
+ * project that opts in without composing `work` is refused **at startup** with
+ * the unmet edge named, never at runtime inside a transaction.
+ *
+ * Direction is one-way: `work` requires nothing at all, so no composition of
+ * these two can create a cycle.
+ */
+export const WORK_FOLLOW_UP_CAPABILITY = Object.freeze({ package: 'work', capability: 'follow-up', version: 1 });
+
+/** The business identity of the work item a commercial follow-up asks for. */
+export const workFollowUpKey = (followupId) => `lifecycle-commercial-followup:${followupId}`;
+
 export const DECISIONS = Object.freeze(['pursue_renewal', 'not_renewing', 'needs_changes', 'undecided']);
 export const INTENTS = Object.freeze(['renewal', 'expansion', 'contraction', 'pricing_change', 'scope_change']);
 export const FOLLOWUP_OPEN = 'pending_commercial_followup';
@@ -61,6 +84,34 @@ function lifecycleSource({ domains, modules, actor, now }) {
     if (error instanceof AppError && error.status !== 404) throw error;
     throw new AppError(
       `The lifecycle package requires the contracts package capability ${SOURCE_CAPABILITY.capability}@${SOURCE_CAPABILITY.version}, which is not available`,
+      { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+    );
+  }
+}
+
+/**
+ * Open `work/follow-up@1`, or refuse with the edge named.
+ *
+ * The same shape Delivery uses for `delivery-obligations@1`: a missing or
+ * wrong-version capability is a stable named refusal rather than a `TypeError`
+ * on `undefined`. In practice this is unreachable at runtime — the registry
+ * refuses the composition at startup — and it exists so that a project which
+ * somehow reaches it gets a sentence rather than a stack trace.
+ *
+ * @param {{domains: any, modules: any, actor?: unknown, now?: () => string}} ctx
+ */
+function workFollowUp({ domains, modules, actor, now }) {
+  try {
+    return domains.capability({
+      consumer: LIFECYCLE_PACKAGE,
+      capability: WORK_FOLLOW_UP_CAPABILITY.capability,
+      version: WORK_FOLLOW_UP_CAPABILITY.version,
+      context: { modules, actor, now },
+    });
+  } catch (error) {
+    if (error instanceof AppError && error.status !== 404) throw error;
+    throw new AppError(
+      `The lifecycle package was composed with followUp enabled, which requires the work package capability ${WORK_FOLLOW_UP_CAPABILITY.capability}@${WORK_FOLLOW_UP_CAPABILITY.version}`,
       { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
     );
   }
@@ -425,10 +476,24 @@ export function buildRecordRenewalDecisionAction(moduleNames) {
  * humans, through its own surface. This exists so the ask is recorded with its
  * reason and its baseline instead of living in somebody's inbox.
  *
+ * **Work v1 (ADR-030).** When the package is composed with `followUp: true`,
+ * the same transaction also opens exactly one **work task** on the follow-up
+ * record, through `work/follow-up@1`. That is the honest reading of this
+ * action: an ask recorded for a human to pick up *is* human work, and until now
+ * there was nowhere for it to appear. It creates the task **inside this
+ * action's transaction**, so a follow-up without its task, or a task without
+ * its follow-up, is a pair this package never produces.
+ *
+ * It does **not** notify, assign, schedule or route anything, and it sets no due
+ * date: nobody has stated when commercial work is due, and inventing one would
+ * be inventing a commitment.
+ *
  * @param {Record<string, string>} [moduleNames]
+ * @param {{followUp?: boolean}} [options]
  */
-export function buildRequestCommercialFollowupAction(moduleNames) {
+export function buildRequestCommercialFollowupAction(moduleNames, options = {}) {
   const names = resolvedNames(moduleNames);
+  const followUpEnabled = options.followUp === true;
   return {
     module: names.contract,
     name: 'request-commercial-followup',
@@ -524,16 +589,45 @@ export function buildRequestCommercialFollowupAction(moduleNames) {
         resolvedBy: null,
         resolvedAt: null,
       };
+      let created;
       try {
-        return await followups.createManaged(patch, { actor });
+        created = await followups.createManaged(patch, { actor });
       } catch (error) {
         // Two connections computed the same round and the unique constraint
-        // picked the winner. The loser answers from the winner's row.
+        // picked the winner. The loser answers from the winner's row — and
+        // creates no work task, because the winner already created that one.
         if (!isUniqueConflict(error)) throw error;
         const raced = followups.listWhere({ sourceKey })[0];
         if (!raced) throw error;
         return replayOrConflict(raced, submitted, replay);
       }
+      if (followUpEnabled) {
+        // Same transaction, the caller's own `modules` handle: if this throws,
+        // the follow-up record above rolls back with it.
+        const work = workFollowUp({ domains, modules, actor, now });
+        await work.createFollowUp({
+          // (contract, intent, round) is already the ask's identity, and the
+          // record that carries it has an id. Keying on that id means a second
+          // round is a second task by construction, and no clock is anywhere in
+          // it.
+          sourceKey: workFollowUpKey(created.id),
+          title: `Commercial follow-up: ${input.intent.replace(/_/g, ' ')}`,
+          // No due date. Nobody stated when this is due, and a date nobody
+          // committed to is a commitment invented by software.
+          dueAt: null,
+          subject: {
+            resource: names.followup,
+            id: created.id,
+            // A package-owned subject, not a host record: it disappears if
+            // Lifecycle is detached, and the envelope says so.
+            owner: 'package',
+            ownerPackage: LIFECYCLE_PACKAGE,
+            label: `${input.intent.replace(/_/g, ' ')} on contract ${record.id}`,
+          },
+          source: { package: LIFECYCLE_PACKAGE, action: 'request-commercial-followup' },
+        });
+      }
+      return created;
     },
   };
 }
@@ -580,8 +674,15 @@ export function buildResolveCommercialFollowupAction(moduleNames) {
   };
 }
 
-/** @param {{modules?: Record<string, string>}} [options] */
+/**
+ * @param {{modules?: Record<string, string>, followUp?: boolean}} [options]
+ *   `followUp: true` makes this package a consumer of `work/follow-up@1`, so a
+ *   recorded commercial ask also opens one work task in the same transaction.
+ *   It is opt-in because `requires` is hard: declaring it unconditionally would
+ *   stop every existing composition from booting until it also composed `work`.
+ */
 export function createLifecyclePackage(options = {}) {
+  const followUp = options.followUp === true;
   return definePackage({
     packageContract: 1,
     name: LIFECYCLE_PACKAGE,
@@ -590,12 +691,14 @@ export function createLifecyclePackage(options = {}) {
     description:
       'Reads a contract\'s term evidence, records human renewal and expansion intent, and hands governed follow-up work to Commercial. Renews nothing, cancels nothing and signs nothing.',
     resources: [...LIFECYCLE_RESOURCES],
-    requires: [{ ...SOURCE_CAPABILITY }],
+    requires: followUp
+      ? [{ ...SOURCE_CAPABILITY }, { ...WORK_FOLLOW_UP_CAPABILITY }]
+      : [{ ...SOURCE_CAPABILITY }],
     capabilities: [],
     actions: [
       buildPlanRenewalAction(options.modules),
       buildRecordRenewalDecisionAction(options.modules),
-      buildRequestCommercialFollowupAction(options.modules),
+      buildRequestCommercialFollowupAction(options.modules, { followUp }),
       buildResolveCommercialFollowupAction(options.modules),
     ],
     policies: [],
@@ -616,6 +719,9 @@ export function createLifecyclePackage(options = {}) {
             'identity is (contract, intent, round). At most one follow-up of an intent is open at a time and the open one answers an identical repeat; a repeat that differs is refused 409 FOLLOWUP_ALREADY_PENDING naming the fields. The round advances only once the previous one is resolved_externally or withdrawn, so genuinely repeated future work is never collapsed',
           clock: 'no key contains a timestamp; a key that moves every millisecond identifies nothing',
         },
+        workFollowUp: followUp
+          ? 'composed with followUp enabled: requesting a commercial follow-up also opens exactly one work task on that follow-up record, through work/follow-up@1, in the same transaction. The task has no due date and notifies, assigns, schedules and routes nothing'
+          : 'not composed. Without followUp enabled this package requires nothing from work, creates no task, and behaves exactly as it did before Work v1',
         baselineEvidence:
           'a follow-up carries its commercial baseline grouped by currency, charge type, interval AND interval count — quarterly is month x 3 and is not monthly. No total is computed across recurrences or currencies and no FX is applied; a single scalar amount is recorded only when the baseline holds exactly one kind of money',
         wording: {

@@ -27,7 +27,14 @@ test.before(async () => {
     cpSync(join(repoRoot, entry), join(projectRoot, entry), { recursive: true });
   }
   const starter = join(projectRoot, 'examples/starters/b2b-lead-qualification');
-  for (const manifest of ['lead.module.json', 'task.module.json']) {
+  for (const manifest of [
+    'lead.module.json',
+    // Work v1 (ADR-030): the starter's bespoke `task` module is gone and its
+    // follow-up now lives in the work package's records. Relative to the
+    // starter directory, so the existing join(starter, manifest) still holds.
+    '../../../packages/work/modules/work-task.module.json',
+    '../../../packages/work/modules/work-activity.module.json',
+  ]) {
     const result = spawnSync(
       process.execPath,
       ['--no-warnings', join(projectRoot, 'packages/cli/bin/accordo.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', projectRoot],
@@ -391,13 +398,13 @@ test('a pipeline targeting a generated module is rejected at startup (no dead pi
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(projectRoot, entry), join(altRoot, entry), { recursive: true });
   }
-  // The generated task module exists in this project — but it has no pipeline
-  // state storage, so a pipeline for it could never hold a record.
+  // The generated work-task module exists in this project — but it has no
+  // pipeline state storage, so a pipeline for it could never hold a record.
   writeFileSync(
     join(altRoot, 'packages/pipelines/generated/index.js'),
     [
       'export const generatedPipelines = [{',
-      "  pipelineContract: 1, name: 'task-flow', module: 'task', defaultStage: 'todo',",
+      "  pipelineContract: 1, name: 'task-flow', module: 'work-task', defaultStage: 'todo',",
       "  stages: [{ key: 'todo', order: 1, type: 'open', probability: 10 }, { key: 'done', order: 2, type: 'won', probability: 100 }],",
       '}];',
       '',

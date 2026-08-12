@@ -24,6 +24,7 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { sortTimeline } from '../../../packages/work/src/index.js';
 
 const starterDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(starterDir, '..', '..', '..');
@@ -43,12 +44,14 @@ try {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
 
-  // 2. Apply the Lead module, then the Task module (Task references leads, so
-  //    order matters: the factory refuses a reference to a not-yet-applied
-  //    target).
+  // 2. Apply the Lead module, then the Work records (Work v1, ADR-030). The
+  //    starter's bespoke `task` module is gone: a follow-up is now a `work-task`
+  //    with its `work-activity`, both owned by the work package, both read-only
+  //    in public, and neither tied to a Lead.
   const starterInProject = join(root, 'examples', 'starters', 'b2b-lead-qualification');
   applyModule(root, join(starterInProject, 'lead.module.json'));
-  applyModule(root, join(starterInProject, 'task.module.json'));
+  applyModule(root, join(root, 'packages', 'work', 'modules', 'work-task.module.json'));
+  applyModule(root, join(root, 'packages', 'work', 'modules', 'work-activity.module.json'));
   // Lead Intelligence record modules (Milestone 9): every field is managed, so
   // the records are immutable through public CRUD and writable only by actions.
   // They live with the package that owns them, applied the same way the other
@@ -201,6 +204,7 @@ try {
       "import { createLifecyclePackage } from '../../lifecycle/src/index.js';",
       "import { createDeliveryPackage } from '../../delivery/src/index.js';",
       "import { createServicePackage } from '../../service/src/index.js';",
+      "import { createWorkPackage } from '../../work/src/index.js';",
       "import { b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1 } from '../../../examples/starters/b2b-lead-qualification/service.js';",
       "import { createPartnerScorecardPackage } from '../../../examples/custom-packages/partner-scorecard/src/index.js';",
       "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
@@ -225,9 +229,12 @@ try {
       '    routingTargets,',
       '  }),',
       '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
-      '  createLifecyclePackage(),',
+      '  createWorkPackage(),',
+      '  // Two declared consumers of work/follow-up@1. Both are opt-in: a hard',
+      '  // `requires` would stop every composition without work from booting.',
+      '  createLifecyclePackage({ followUp: true }),',
       '  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1], costPolicies: [b2bDeliveryCostV1] }),',
-      '  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1] }),',
+      '  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1], followUp: true }),',
       '  createPartnerScorecardPackage(),',
       '];',
       '',
@@ -259,7 +266,8 @@ try {
   const app = createAccordoApp({ dbPath: join(root, 'data', 'starter.sqlite') });
   const actor = { type: 'user', id: 'starter' };
   const leads = app.modules.get('lead').service;
-  const tasks = app.modules.get('task').service;
+  const tasks = app.modules.get('work-task').service;
+  const workActivities = app.modules.get('work-activity').service;
 
   try {
     // Capture.
@@ -279,9 +287,17 @@ try {
       actor,
     });
     assert.equal(qualified.result.lead.status, 'qualified');
-    const openTasks = tasks.list({ limit: 500 }).filter((task) => task.leadId === lead.id);
+    const openTasks = tasks.listWhere({ subjectResource: 'lead', subjectId: lead.id });
     assert.equal(openTasks.length, 1, 'qualify creates exactly one follow-up task');
-    assert.equal(openTasks[0].sourceKey, `qualify:${lead.id}`);
+    assert.equal(openTasks[0].sourceKey, `lead-qualified:${lead.id}`);
+    assert.equal(openTasks[0].status, 'open');
+    assert.equal(openTasks[0].subjectOwner, 'host', 'a Lead belongs to the project, not to a package');
+    assert.equal(openTasks[0].sourcePackage, 'host');
+    assert.equal(openTasks[0].sourceAction, 'qualify');
+    // The creation activity is written in the same transaction, exactly once.
+    const leadTimeline = workActivities.listWhere({ subjectResource: 'lead', subjectId: lead.id });
+    assert.equal(leadTimeline.length, 1, 'one task, one creation activity — never a half pair');
+    assert.equal(leadTimeline[0].kind, 'task_created');
     assert.equal(leads.get(lead.id).status, 'qualified');
 
     // Repeat qualify → 409, and still exactly one task.
@@ -289,9 +305,10 @@ try {
       () => app.runAction({ module: 'lead', action: 'qualify', recordId: lead.id, input: { dueAt: '2026-09-01T09:00:00Z' }, actor }),
       (error) => error.code === 'INVALID_STATE' && error.status === 409,
     );
-    assert.equal(tasks.list({ limit: 500 }).filter((task) => task.leadId === lead.id).length, 1);
+    assert.equal(tasks.listWhere({ subjectResource: 'lead', subjectId: lead.id }).length, 1);
 
     // Disqualify a second lead: reason required, no task.
+    // Disqualification is not human follow-up work, so no task is invented for it.
     const lead2 = await leads.create({ firstName: 'Sam', lastName: 'Neri', email: 'sam@beta.example' }, { actor });
     await assert.rejects(
       () => app.runAction({ module: 'lead', action: 'disqualify', recordId: lead2.id, input: {}, actor }),
@@ -305,7 +322,8 @@ try {
       actor,
     });
     assert.equal(disqualified.result.lead.status, 'disqualified');
-    assert.equal(tasks.list({ limit: 500 }).filter((task) => task.leadId === lead2.id).length, 0);
+    assert.equal(tasks.listWhere({ subjectResource: 'lead', subjectId: lead2.id }).length, 0);
+    assert.equal(workActivities.listWhere({ subjectResource: 'lead', subjectId: lead2.id }).length, 0);
 
     // CRUD can never reach the qualified state.
     await assert.rejects(() => leads.update(lead2.id, { status: 'qualified' }, { actor }), (error) => error.code === 'VALIDATION_ERROR');
@@ -1438,6 +1456,101 @@ try {
     assert.equal(rated.result.scorecard.rating, 'preferred');
     assert.equal(app.modules.get('partner-scorecard').service.list().length, 1);
 
+    // ---- WORK v1: the second consumer, and the task lifecycle ----
+    //
+    // The Service escalation above was recorded as a human decision that routes
+    // to nobody and notifies nobody. Through `work/follow-up@1` it also opened
+    // exactly one work task, in the SAME transaction as the escalation and its
+    // case activity — the second declared consumer of the capability the Lead
+    // qualification above reaches through the host path.
+    const escalationTasks = tasks.listWhere({ subjectResource: 'service-escalation', subjectId: escalation.result.escalation.id });
+    assert.equal(escalationTasks.length, 1, 'recording an escalation opens exactly one work task');
+    const escalationTask = escalationTasks[0];
+    assert.equal(escalationTask.subjectOwner, 'package');
+    assert.equal(escalationTask.subjectOwnerPackage, 'service', 'the subject belongs to Service, not to the project');
+    assert.equal(escalationTask.sourcePackage, 'service');
+    assert.equal(escalationTask.sourceAction, 'record-escalation');
+    assert.equal(escalationTask.dueAt, null, 'no due date is invented for work nobody scheduled');
+    assert.equal(escalationTask.status, 'open');
+    // Recording the SAME escalation again is a replay, not a second task.
+    await runService('support-case', supportCase.id, 'record-escalation', {
+      escalationKey: 'esc-1', level: 'management', reason: 'the customer asked for a call',
+      targetRef: 'team:support-leads', slaEvaluationId: slaEvidence.result.slaEvaluation.id,
+    });
+    assert.equal(
+      tasks.listWhere({ subjectResource: 'service-escalation', subjectId: escalation.result.escalation.id }).length, 1,
+      'a repeated escalation replays and never opens a second task',
+    );
+
+    // A note is safe text on the subject's timeline. It is not sent anywhere.
+    await assert.rejects(
+      () => app.runAction({
+        module: 'work-task', action: 'add-note', recordId: escalationTask.id,
+        input: { body: 'bot opinion' }, actor: { type: 'agent', id: 'bot' },
+      }),
+      (error) => error.status === 403 && error.code === 'HUMAN_APPROVAL_REQUIRED',
+      'an agent may not write on somebody\'s timeline',
+    );
+    await app.runAction({
+      module: 'work-task', action: 'add-note', recordId: escalationTask.id,
+      input: { body: 'Called the customer; they want a written summary.' }, actor,
+    });
+
+    // dueAt is EVIDENCE ONLY: the lead task is long past its due date and is
+    // still exactly `open`, because nothing in this framework runs on a clock.
+    const dueTask = tasks.listWhere({ subjectResource: 'lead', subjectId: lead.id })[0];
+    assert.equal(dueTask.status, 'open', 'a past due date does not move a task; there is no scheduler');
+
+    // Complete: a human decision, over the declared transition table.
+    await assert.rejects(
+      () => app.runAction({
+        module: 'work-task', action: 'complete', recordId: escalationTask.id,
+        input: {}, actor: { type: 'agent', id: 'bot' },
+      }),
+      (error) => error.status === 403 && error.code === 'HUMAN_APPROVAL_REQUIRED',
+    );
+    const completed = await app.runAction({
+      module: 'work-task', action: 'complete', recordId: escalationTask.id,
+      input: { note: 'Summary sent and acknowledged.' }, actor,
+    });
+    assert.equal(completed.result.task.status, 'completed');
+    assert.equal(completed.result.task.completedBy, 'starter');
+    // Terminal means terminal: there is no reopen in v1, and completing twice
+    // is refused by the transition table rather than by a rank comparison.
+    for (const action of ['complete', 'cancel']) {
+      await assert.rejects(
+        () => app.runAction({
+          module: 'work-task', action, recordId: escalationTask.id, input: { reason: 'changed my mind' }, actor,
+        }),
+        (error) => error.status === 409 && error.code === 'INVALID_STATE',
+        `a completed task cannot ${action}`,
+      );
+    }
+
+    // The timeline for that subject, in order, is the whole story and nothing else.
+    const escalationTimeline = sortTimeline(
+      workActivities.listWhere({ subjectResource: 'service-escalation', subjectId: escalation.result.escalation.id }),
+    ).map((row) => row.kind);
+    assert.deepEqual(escalationTimeline, ['task_created', 'note', 'task_completed'],
+      'a closed, four-entry vocabulary — never a mirror of the audit log');
+
+    // Cancel is a different outcome and is never collapsed into completion.
+    const cancelTask = tasks.listWhere({ subjectResource: 'lead', subjectId: lead.id })[0];
+    const cancelled = await app.runAction({
+      module: 'work-task', action: 'cancel', recordId: cancelTask.id,
+      input: { reason: 'The lead went quiet; picking this up in the next campaign.' }, actor,
+    });
+    assert.equal(cancelled.result.task.status, 'cancelled');
+    assert.equal(cancelled.result.task.completedAt, null, 'cancelled is not completed');
+
+    // Work records are evidence: read-only in public, like every other one.
+    for (const name of ['work-task', 'work-activity']) {
+      const module = app.modules.get(name);
+      assert.deepEqual(module.capabilities, ['get', 'list'], name);
+      assert.equal(module.service.create, undefined, `no public create on ${name}`);
+      assert.equal(module.service.update, undefined, `no public update on ${name}`);
+    }
+
     // Delivery and custom-package records are read-only publicly too.
     for (const name of [
       'delivery-handover-run', 'delivery-project', 'delivery-work-package',
@@ -1463,9 +1576,10 @@ try {
 
     console.log(JSON.stringify({
       ok: true,
-      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads with immutable snapshots, runs and assignment history; synced a composite fixture catalog idempotently (flat, per-unit, volume and graduated components across one-time, monthly and annual charges, plus one unsupported metered offer refused for quoting) and built mixed quotes with grouped one-time/monthly/annual totals — one auto-approved, one through human discount approval with reject → revise → version 2 — then proved a tier/price change creates new offer revisions while the historical quote version stays unchanged; sent an approved quote version for signature as a human actor (agents refused), refused a forged webhook, ingested verified delivered and completed events, produced signed-artifact evidence and exactly one immutable Order with its lines, components, tiers and grouped totals, proved replay and out-of-order events change nothing and a decline creates no order; then activated that signed order — through the optional contracts domain package — into one commercial contract with an immutable version and six contract lines classified on two explicit axes (platform and seats as subscription lines owing nothing further, a one-time setup as a pending delivery obligation, annual support as BOTH a subscription line and a pending service obligation, a recurring API charge deliberately as neither, and one component the policy refused to guess until a human decided both of its axes with reasons), recording the term as post-signature operational metadata with its stated source, refusing agent actors, impossible and reversed dates, a notice period without auto-renewal, a term with no stated source and any second activation, and recording a future-dated contract as scheduled because no scheduler exists; then handed that contract to delivery through a SECOND domain package — reaching the first only through the declared capability contracts/delivery-obligations@1 — planning a delivery project with three work packages (two internal, the data migration subcontracted to a named partner who is granted no access of any kind), a kickoff/delivery/go-live milestone plan and post-sale planning dates, marking exactly the three delivery obligations handed over while the service obligation stayed untouched, refusing agent actors, a missing partner, a half window and any second handover; and rated that partner through a CUSTOMER-AUTHORED package attached with no kernel change; CRUD cannot set lifecycle, conversion, pipeline, intelligence, commercial, signature, order or contract fields.',
+      summary: 'Captured 3 leads; qualified 2; disqualified 1; converted 2 into 1 shared Company, 2 Contacts and 2 Opportunities entering Discovery; walked one to Won and one to Lost; terminal stages locked; enriched, scored (explainably) and routed 3 more leads with immutable snapshots, runs and assignment history; synced a composite fixture catalog idempotently (flat, per-unit, volume and graduated components across one-time, monthly and annual charges, plus one unsupported metered offer refused for quoting) and built mixed quotes with grouped one-time/monthly/annual totals — one auto-approved, one through human discount approval with reject → revise → version 2 — then proved a tier/price change creates new offer revisions while the historical quote version stays unchanged; sent an approved quote version for signature as a human actor (agents refused), refused a forged webhook, ingested verified delivered and completed events, produced signed-artifact evidence and exactly one immutable Order with its lines, components, tiers and grouped totals, proved replay and out-of-order events change nothing and a decline creates no order; then activated that signed order — through the optional contracts domain package — into one commercial contract with an immutable version and six contract lines classified on two explicit axes (platform and seats as subscription lines owing nothing further, a one-time setup as a pending delivery obligation, annual support as BOTH a subscription line and a pending service obligation, a recurring API charge deliberately as neither, and one component the policy refused to guess until a human decided both of its axes with reasons), recording the term as post-signature operational metadata with its stated source, refusing agent actors, impossible and reversed dates, a notice period without auto-renewal, a term with no stated source and any second activation, and recording a future-dated contract as scheduled because no scheduler exists; then handed that contract to delivery through a SECOND domain package — reaching the first only through the declared capability contracts/delivery-obligations@1 — planning a delivery project with three work packages (two internal, the data migration subcontracted to a named partner who is granted no access of any kind), a kickoff/delivery/go-live milestone plan and post-sale planning dates, marking exactly the three delivery obligations handed over while the service obligation stayed untouched, refusing agent actors, a missing partner, a half window and any second handover; and rated that partner through a CUSTOMER-AUTHORED package attached with no kernel change; opened every follow-up through ONE package-native Work capability rather than a bespoke per-domain task table — a lead qualification opening one task with its creation activity through the host path, and a Service escalation opening a second through the declared capability work/follow-up@1 inside the escalation\'s own transaction, with a repeated escalation replaying rather than opening a second; then drove the task lifecycle over its explicit transition table — a human note, a completion, a refusal to complete or cancel a terminal task, and a cancellation that is never read as completion — while a task long past its dueAt stayed exactly open, because nothing runs on a clock, nothing is scheduled, nothing is assigned and nobody is notified; CRUD cannot set lifecycle, conversion, pipeline, intelligence, commercial, signature, order, contract or work fields.',
       leads: leads.list().length,
-      tasks: tasks.list().length,
+      tasks: tasks.list({ limit: 500 }).length,
+      workActivities: workActivities.list({ limit: 500 }).length,
       companies: app.services.companies.list().length,
       contacts: app.services.contacts.list().length,
       opportunities: app.services.opportunities.list().length,

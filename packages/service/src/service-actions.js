@@ -42,6 +42,46 @@ export { CASE_PRIORITIES };
 export const SERVICE_PACKAGE = 'service';
 export const REQUIRED_CAPABILITY = Object.freeze({ package: 'contracts', capability: 'service-obligations', version: 1 });
 
+/**
+ * **The optional Work dependency (Work v1, ADR-030).**
+ *
+ * M15 records an escalation and says, correctly, that it routes to nobody and
+ * pages nobody. What it could never say was who was going to *do* something
+ * about it. `work/follow-up@1` is that, and only that: a work item a human can
+ * see, complete or cancel. It still notifies nobody.
+ *
+ * Opt-in (`createServicePackage({ followUp: true })`) because `requires` is
+ * hard: declaring it unconditionally would stop every existing composition
+ * booting until it also composed `work`. The direction is one-way -- `work`
+ * requires nothing -- so no composition of the two can cycle.
+ */
+export const WORK_FOLLOW_UP_CAPABILITY = Object.freeze({ package: 'work', capability: 'follow-up', version: 1 });
+
+/** The business identity of the work item an escalation asks for. */
+export const workFollowUpKey = (escalationId) => `service-escalation:${escalationId}`;
+
+/**
+ * Open `work/follow-up@1`, or refuse with the edge named. Unreachable in
+ * practice -- the registry refuses the composition at startup -- and present so
+ * that a project which somehow reaches it gets a sentence, not a stack trace.
+ */
+function workFollowUpCapability({ domains, modules, actor, now }) {
+  try {
+    return domains.capability({
+      consumer: SERVICE_PACKAGE,
+      capability: WORK_FOLLOW_UP_CAPABILITY.capability,
+      version: WORK_FOLLOW_UP_CAPABILITY.version,
+      context: { modules, actor, now },
+    });
+  } catch (error) {
+    if (error instanceof AppError && error.status !== 404) throw error;
+    throw new AppError(
+      'The service package was composed with followUp enabled, which requires the work package capability follow-up@1',
+      { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+    );
+  }
+}
+
 export const COVERAGE_STATES = Object.freeze(['planned', 'active', 'ended']);
 export const CASE_STATES = Object.freeze(['new', 'in_progress', 'waiting_customer', 'resolved', 'closed']);
 /** Every allowed move, as data. A state with no row is terminal by declaration. */
@@ -432,4 +472,4 @@ async function recordActivity(activities, { supportCaseId, serviceCoverageId, ty
   }, { actor });
 }
 
-export { computeActivation, readOverrides, activationPolicy, obligationsCapability, trusted, boundedText, calendarDate, oneOf, actorId, requireHuman, requireSameRecord, bySourceKey, coverageIn, recordActivity, activitySequence, callerActivityKey, MAX_TEXT, MAX_LABEL, MAX_KEY, MAX_REF };
+export { computeActivation, readOverrides, activationPolicy, obligationsCapability, trusted, boundedText, calendarDate, oneOf, actorId, requireHuman, requireSameRecord, bySourceKey, coverageIn, recordActivity, activitySequence, callerActivityKey, MAX_TEXT, MAX_LABEL, MAX_KEY, MAX_REF , workFollowUpCapability };

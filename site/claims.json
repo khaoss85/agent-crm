@@ -3,12 +3,12 @@
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used. Contract 2 (ADR-027): measuredAgainst additionally requires testFiles and testsTree, and no claim, limitation or repoFact may type an exact test count — the one number lives in measuredAgainst and reaches a page as {{measured.tests}}.",
   "measuredAgainst": {
     "date": "2026-08-12",
-    "sha": "ef5512c",
+    "sha": "6a7270b",
     "command": "npm run verify",
-    "tests": 949,
+    "tests": 1002,
     "failures": 0,
-    "testFiles": 90,
-    "testsTree": "f2563beaa4b1ea50e48c2b78e4cc54ed13bf8914",
+    "testFiles": 98,
+    "testsTree": "fc646e943a3a18dcf36dd4f0a6234b8717ebb6f9",
     "note": "Written by `node scripts/measure-suite.js --apply` from a real run on a clean tree. Never edit these numbers by hand: scripts/site-check.js verifies sha, testsTree and testFiles against the commit, so a record moved forward without a re-run fails the build."
   },
   "claims": [
@@ -296,7 +296,7 @@
     },
     {
       "id": "C-22",
-      "text": "One command composes the whole thing and then inspects it: 70 modules, 6 packages, 41 resources, 56 actions, 7 policies and 5 providers, applied from manifests and driven end to end — then it prints the eleven things the inspector says it cannot see.",
+      "text": "One command composes the whole thing and then inspects it: 71 modules, 7 packages, 43 resources, 59 actions, 7 policies and 5 providers, applied from manifests and driven end to end — then it prints the eleven things the inspector says it cannot see.",
       "evidence": {
         "tests": [
           "tests/app-inspect.test.js",
@@ -540,8 +540,8 @@
     },
     {
       "id": "L-04",
-      "headline": "No scheduler, no task engine, no reminders.",
-      "text": "One follow-up Task is created inside lead qualification. There is no recurring work, no delayed workflow, no queue — so nothing fires on a renewal notice period either.",
+      "headline": "No scheduler, no reminders, nothing on a timer.",
+      "text": "Follow-up Tasks and an Activity timeline are one shared model that a person moves by hand: a due date changes no state. There is no recurring work, no delayed workflow, no queue — so nothing fires on a renewal notice period either.",
       "evidence": {
         "jtbd": "JTBD-07, JTBD-10",
         "docs": [

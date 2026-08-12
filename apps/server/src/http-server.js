@@ -276,7 +276,12 @@ function buildRouter(app) {
   });
   router.add('GET', '/api/modules/:module/records', async ({ params, searchParams }) => {
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'list');
-    return { items: module.service.list({ limit: strictLimit(searchParams) }) };
+    return {
+      items: module.service.list({
+        limit: strictLimit(searchParams),
+        where: strictCollectionFilter(searchParams, module),
+      }),
+    };
   });
   router.add('POST', '/api/modules/:module/records', async ({ params, body, actor }) => {
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'create');
@@ -594,6 +599,10 @@ function generatedModuleMetadata(module, actions = []) {
     kind: module.kind,
     manifestVersion: module.manifestVersion ?? 1,
     capabilities: module.capabilities,
+    // ADR-008 addendum 2. Additive: a client that does not know about it simply
+    // never sends a filter, and an older generated module that does not publish
+    // it cannot be filtered at all.
+    filterableFields: module.filterableFields ?? [],
     fields: module.fields ?? [],
     immutableFields: module.immutableFields ?? ['id', 'createdAt', 'updatedAt'],
     // Code-first actions available on this module (ADR-011). Additive under
@@ -605,6 +614,75 @@ function generatedModuleMetadata(module, actions = []) {
       record: `/api/modules/${module.name}/records/:id`,
     },
   };
+}
+
+/**
+ * **Strict `filter.<field>=<value>` parsing for a collection read** (ADR-008
+ * addendum 2).
+ *
+ * The collection read is a *display* read with a page bound, and until now it
+ * had no way to say *which* rows it wanted a page of. A client that needed one
+ * parent's rows had to fetch the newest N of the whole table and filter them
+ * itself — which shows an empty list for a parent whose rows are older than that
+ * page, while the page-bound notice beside it claims the bound was about the
+ * screen. Both statements are then false at once, and the second one is the
+ * dangerous kind of false because it sounds like a disclosure.
+ *
+ * The grammar is deliberately tiny, and everything it refuses it refuses with a
+ * 400 rather than a silent behaviour change:
+ *
+ *   - only `filter.<field>`; every other query parameter is left alone;
+ *   - only a field the module publishes in `filterableFields`, which is only its
+ *     **indexed and unique** fields plus `id`, so a routed filter is always
+ *     index-backed and no client can turn a page request into a table scan;
+ *   - equality on a single non-empty scalar, at most 200 characters, never
+ *     repeated, at most four at once. There is no `IN`, no range, no `OR` and no
+ *     ordering control: this narrows a page, it is not a query language;
+ *   - a module generated before this addendum publishes no `filterableFields`,
+ *     and any filter against it is refused. It is never answered *unfiltered*,
+ *     which would be the same false-completeness bug one layer down.
+ *
+ * `listWhere` stays in-process and unrouted: it is unbounded and complete, and a
+ * correctness decision still must not be made from an HTTP page.
+ *
+ * @param {URLSearchParams} searchParams @param {any} module
+ */
+function strictCollectionFilter(searchParams, module) {
+  /** @type {Record<string, string>} */
+  const where = {};
+  const allowed = Array.isArray(module.filterableFields) ? module.filterableFields : null;
+  for (const key of new Set(searchParams.keys())) {
+    if (!key.startsWith('filter.')) continue;
+    const field = key.slice('filter.'.length);
+    const values = searchParams.getAll(key);
+    if (values.length > 1) {
+      throw new ValidationError(`filter.${field} must not be repeated`, { field });
+    }
+    if (allowed === null) {
+      throw new ValidationError(
+        `Module "${module.name}" was generated before filtered collection reads and publishes no filterable fields. `
+          + 'Regenerate it with `accordo module create --apply` rather than reading it unfiltered.',
+        { field },
+      );
+    }
+    if (!allowed.includes(field)) {
+      throw new ValidationError(
+        `filter.${field} is not a filterable field on "${module.name}". A filter must be index-backed; `
+          + `filterable: ${allowed.join(', ')}`,
+        { field },
+      );
+    }
+    const value = values[0];
+    if (value === '') throw new ValidationError(`filter.${field} must not be empty`, { field });
+    if (value.length > 200) throw new ValidationError(`filter.${field} must be at most 200 characters`, { field });
+    where[field] = value;
+  }
+  const fields = Object.keys(where);
+  if (fields.length === 0) return undefined;
+  if (fields.length > 4) {
+    throw new ValidationError('At most four filters may be combined on a collection read', { fields });
+  }
+  return where;
 }
 
 /**

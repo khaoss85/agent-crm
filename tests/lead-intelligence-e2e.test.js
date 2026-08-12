@@ -23,7 +23,8 @@ function project(t, { enrichTimeoutMs } = {}) {
   const starter = join(root, 'examples/starters/b2b-lead-qualification');
   for (const manifest of [
     'lead.module.json',
-    'task.module.json',
+    '../../../packages/work/modules/work-task.module.json',
+    '../../../packages/work/modules/work-activity.module.json',
     'enrichment-snapshot.module.json',
     'behavioral-signal.module.json',
     'score-run.module.json',
@@ -32,7 +33,14 @@ function project(t, { enrichTimeoutMs } = {}) {
     'route-evaluation.module.json',
     'assignment.module.json',
   ]) {
-    const from = ['lead.module.json', 'task.module.json'].includes(manifest)
+    const from = [
+    'lead.module.json',
+    // Work v1 (ADR-030): the starter's bespoke `task` module is gone and its
+    // follow-up now lives in the work package's records. Relative to the
+    // starter directory, so the existing join(starter, manifest) still holds.
+    '../../../packages/work/modules/work-task.module.json',
+    '../../../packages/work/modules/work-activity.module.json',
+  ].includes(manifest)
       ? starter : join(root, 'packages/intelligence/modules');
     assert.equal(cli(root, ['module', 'create', join(from, manifest), '--apply']).status, 0, `apply ${manifest}`);
   }
