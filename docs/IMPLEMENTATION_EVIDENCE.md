@@ -154,8 +154,12 @@ each other; recreating one here would be complexity with no failure behind it.
 
 ### Manual evidence, and why it is accepted
 
-A requirement whose evidence is manual-only is **`unverified`**. It can never be
-`verified`, and it forces a non-zero exit **on its own**, whatever else passes.
+A requirement whose category is `manual` and which carries manual evidence is
+**`unverified`**. It can never be `verified`, and it forces a non-zero exit **on
+its own**, whatever else passes. A manual note added *beside* real machine
+evidence under any other category is **context**: it is recorded and never
+resolved, and it neither satisfies the requirement nor sinks it. Manual evidence
+*alone* under a non-manual category satisfies nothing, and the report says so.
 It is accepted into the contract for one reason: refusing it means the browser
 requirement simply *vanishes* from the document, and this repository's rule is
 that a gap which is stated is part of the deliverable while a gap that is

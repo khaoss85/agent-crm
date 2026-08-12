@@ -483,7 +483,12 @@ function grade({ requirement, declaration, stale, bound, inspection, verifyRepor
     return { ...row, status: 'unevidenced', reason: 'no evidence is recorded for this requirement' };
   }
 
-  const unresolved = resolved.filter((entry) => !entry.resolved);
+  // A manual reference is **recorded, never resolved** — calling a human's word
+  // resolved is the promotion this rung refuses. So it is not counted as a
+  // reference that failed either: an author who adds a manual note beside real
+  // machine evidence has added context, not a fault, and the sufficiency rule
+  // below is what decides whether the machine evidence was enough.
+  const unresolved = resolved.filter((entry) => !entry.resolved && entry.kind !== 'manual');
   if (unresolved.length > 0) {
     return {
       ...row,

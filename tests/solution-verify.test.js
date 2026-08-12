@@ -387,6 +387,29 @@ test('a declared downgrade lowers a status and can never raise one', async (t) =
   assert.equal(partial.reason, 'only half of the field is there');
 });
 
+test('a manual note beside real evidence is context; manual evidence alone is never enough', async (t) => {
+  const plan = planDocument();
+  const ids = requirementIds(plan);
+
+  // A manual note added *beside* a passing runtime observation is context, not a
+  // fault: a human's word is recorded and never resolved, and it must not sink
+  // a requirement the machine evidence already satisfies.
+  const beside = evidenceDocument(plan);
+  beside.requirements[0].evidence.push({ kind: 'manual', describes: 'a reviewer also read the audit trail by hand' });
+  const withNote = await run(demo(t, { plan, evidence: beside }), { verify: verifyStub(CONFORMING_CHECKS) });
+  assert.equal(statusOf(withNote.report, ids['the application does the thing']), 'verified');
+
+  // Manual evidence *alone*, under a category that is not `manual`, satisfies
+  // nothing — and the reason says so rather than reading as a broken reference.
+  const alone = evidenceDocument(plan);
+  alone.requirements[0].evidence = [{ kind: 'manual', describes: 'a reviewer said it works' }];
+  const onlyNote = await run(demo(t, { plan, evidence: alone }), { verify: verifyStub(CONFORMING_CHECKS) });
+  assert.equal(statusOf(onlyNote.report, ids['the application does the thing']), 'unevidenced');
+  assert.ok(codes(onlyNote.report).includes('EVIDENCE_INSUFFICIENT_FOR_CATEGORY'));
+  const row = onlyNote.report.requirements.find((entry) => entry.requirementId === ids['the application does the thing']);
+  assert.equal(row.reason.includes('null'), false, 'a manual note is not a reference that failed to resolve');
+});
+
 test('a requirement the evidence never mentions is reported, not skipped', async (t) => {
   const plan = planDocument();
   const ids = requirementIds(plan);
