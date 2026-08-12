@@ -1479,9 +1479,10 @@ would not have been compatible with the first.
    these packages can cycle.
 
 8. **No versioned policy in v1, by decision.** A policy earns its fingerprint
-   when two consumers share a rule. These two share none: Lead qualification
+   when two consumers share a rule. These three share none: Lead qualification
    wants a person's name and a caller-supplied due date; Lifecycle wants an
-   intent and no date at all. A workflow DSL is refused outright. If a third
+   intent and no date at all; Service wants an escalation level and, again, no
+   date. A workflow DSL is refused outright. If a third
    consumer arrives needing a shared rule it becomes a code-first, synchronous,
    deterministic, fingerprinted policy with its identity on the record — the same
    contract every other policy here uses — and not before.
@@ -1512,8 +1513,9 @@ would not have been compatible with the first.
 - Two packages now carry an optional dependency they did not have. A composition
   that does not opt in is byte-identical to before.
 - Work becomes a package every future domain may depend on, so its version
-  discipline matters: `follow-up@1` is frozen on two consumers plus the host
-  path, and a change in what it *answers* is a new version, per ADR-029.
+  discipline matters: `follow-up@1` is frozen on two *package* consumers plus the
+  host path — ADR-029's rule, since the host path cannot validate the capability
+  itself — and a change in what it *answers* is a new version, per ADR-029.
 - The starter's `task` module is gone. Every test that pinned its shape moved to
   the new records; the list is in `docs/plans/activity-task-operations.md` §1.
 

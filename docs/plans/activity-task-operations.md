@@ -93,7 +93,7 @@ reader looks: the package `label` ("Work items and activity evidence"), its
 **Rejected, and the test for it is written down so a later milestone can apply
 it.** This would be right if two consumers needed *identical runtime behaviour*
 that the kernel had to arbitrate — a queue, a scheduler, a lease, a retry. They
-do not: both consumers call one function inside their own transaction and store a
+do not: every consumer calls one function inside its own transaction and stores a
 row. There is no runtime primitive here, only a domain model with an interface.
 If Jobs/Outbox (`docs/strategy/JOBS_AND_OUTBOX.md`) is ever built, *that* is the
 runtime primitive, and it will not be a task.
@@ -345,14 +345,15 @@ consumer is still refused.
 ## 10. Policy and idempotency
 
 **No versioned policy in v1, and that is a decision, not an omission.** A policy
-earns its fingerprint when two consumers need to share a rule. They do not: Lead
-qualification wants "Follow up with <name>" due at a caller-supplied instant, and
-Lifecycle wants "<intent> follow-up for contract <id>" with no due date at all.
-There is no shared threshold, no branch and nothing to version. A workflow DSL is
-refused outright. If a third consumer arrives needing a shared rule, it becomes a
-code-first, synchronous, deterministic, fingerprinted policy with its identity
-stored on the record — the same contract every other policy in this repository
-uses — and not before.
+earns its fingerprint when consumers need to share a rule. These three do not:
+Lead qualification wants "Follow up with <name>" due at a caller-supplied instant,
+Lifecycle wants "<intent> follow-up" with no due date at all, and Service wants
+"Handle <level> escalation on case <n>" — also with no date. There is no shared
+threshold, no branch and nothing to version. A workflow DSL is refused outright.
+If a consumer arrives needing a shared rule, it becomes a code-first,
+synchronous, deterministic, fingerprinted policy with its identity stored on the
+record — the same contract every other policy in this repository uses — and not
+before.
 
 **Idempotency.** The caller supplies `sourceKey`, which must carry true business
 identity:
@@ -360,7 +361,8 @@ identity:
 | Consumer | Key |
 |---|---|
 | Lead qualification | `lead-qualified:<leadId>` |
-| Lifecycle commercial follow-up | `commercial-followup:<followupId>` |
+| Lifecycle commercial follow-up | `lifecycle-commercial-followup:<followupId>` |
+| Service escalation | `service-escalation:<escalationId>` |
 
 Neither contains `now()`. That defect was fixed in M16a and the rule is enforced
 here as well as documented: `assertNoClockInSourceKey` refuses a key containing
@@ -418,22 +420,35 @@ package-owned subject rather than a host-owned one, no `dueAt` at all, a key
 derived from a *record* rather than from the subject, and a caller whose own
 transaction already spans two other writes.
 
-Why not the others, stated so the choice is visible:
+**Consumer 3 — Service `record-escalation`** (package, through `follow-up@1`),
+and it is here because of **ADR-029**, not for symmetry. That ADR's rule is that
+*a contract validated by one consumer is a shape fitted to that consumer wearing
+a version number*, and Lead qualification cannot validate `follow-up@1` — it
+reaches the same creator through the host path, because the host is not a
+package. So the capability itself would have had exactly one consumer. Service
+is the second: a different package, a different subject resource, a caller whose
+own transaction already spans an escalation row and a case-activity row, and a
+caller-supplied `escalationKey` rather than a derived id. M15's escalation was
+always honest that it "routes to nobody and pages nobody" — what it could never
+say is who was going to *do* something about it, and this is that and nothing
+more. The `routed: false, notified: false` in its result is still true and still
+asserted.
 
-- **Service escalation** — a good candidate and deliberately deferred. It would
-  add a third consumer without adding a third *kind* of consumer, and M15's
-  escalation already carries its own "notifies nobody, pages nobody" limitation
-  which a task next to it would blur on first reading.
+Why not the fourth, stated so the choice is visible:
+
 - **Delivery commercial follow-up** — M14b2's `delivery-commercial-change` is
   already resolved through Lifecycle's handoff shape; consuming it too would
-  create two tasks for one human ask.
+  create two tasks for one human ask. Recorded as `deferred` in the Legacy
+  Alignment backfill, with M16b named.
 - Nothing consumes it where the business event does not actually imply human
   work: routing a lead, scoring one, syncing a catalog and activating a contract
   all create **no** task.
 
 **No cycle.** `work` has `requires: []`. Lifecycle requires `contracts` and now
-optionally `work`; `work` requires neither. The declaration is *opt-in*
-(`createLifecyclePackage({ followUp: true })`) so every existing composition —
+optionally `work`; Service requires `contracts` and now optionally `work`; `work`
+requires neither, and nothing it does can reach back into either. The declaration
+is *opt-in* (`createLifecyclePackage({ followUp: true })`,
+`createServicePackage({ …, followUp: true })`) so every existing composition —
 including every shipped starter database's application — boots unchanged, and a
 project that opts in without composing `work` is refused **at startup** with the
 unmet edge named, not at runtime inside a transaction.
@@ -468,12 +483,16 @@ publishes `domains.work`:
   metric — because a second document would be a second name for one journey's
   evidence. Adding new scenario vocabulary would need its own DX Simplicity Gate
   justification and is not attempted.
-- **JTBD.** Only rows the merged evidence proves move: JTBD-07 and JTBD-CM-04
-  (their wording narrowed to the exact new evidence), JTBD-CM-03 and JTBD-DO-08
-  where a note and a subject timeline now exist for the subjects Work covers.
-  Scheduler, reminders, calendar, email, secure assignment, workload, recurring
-  work, attachments and a *unified* timeline across every domain stay **not
-  supported**. No Communications row unrelated to this evidence is promoted.
+- **JTBD.** Exactly two rows change status, and both only as far as the merged
+  tests reach: **JTBD-07** and **JTBD-CM-04** stay *partially supported* with
+  their wording narrowed to the new evidence and the word *schedule* explicitly
+  still unsupported, and **JTBD-DO-08** moves *not supported → partially
+  supported* for a **subject** timeline that is stated in the same breath to be
+  **not unified**. **JTBD-CM-03 stays not supported**: a note is not a logged
+  call, and its wording now says so rather than being promoted. Scheduler,
+  reminders, calendar, email, secure assignment, workload, recurring work and
+  attachments stay **not supported**, and no Communications row unrelated to this
+  evidence is promoted.
 - **Legacy Alignment.** A Work backfill section classifying every built domain
   and the custom-package fixture, and explicitly recording that Service's
   `support-case-activity` **stays domain-specific**, that Delivery history is
@@ -484,7 +503,7 @@ publishes `domains.work`:
 Clean clone: `npm install`, `npm run verify`, `npm run smoke`, `npm run
 gtm:check`, `crm project doctor --json`, `crm project verify --json`, `crm
 package test packages/work --json`. Plus starter upgrade, old-Task-data
-compatibility, absence/detach/reattach in separate processes, both consumers,
+compatibility, absence/detach/reattach in separate processes, all three consumers,
 two-connection races, the fault matrix, hostile input, the exact-read proofs, a
 real-Chromium Admin smoke, links, Skill mirrors and no tracked artifacts. Node
 `22.16.0` (`.nvmrc`).

@@ -47,7 +47,7 @@ the following today; none of them is a rough edge, each is an absence.
 - **L-01 — No authentication, tenancy or RBAC.** The server is local-development-only. An actor header is an assertion, not an identity. Do not expose it to a network. ([docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md))
 - **L-02 — SQLite only.** Persistence is Node's built-in SQLite adapter. PostgreSQL is on the Production Spine track and is not implemented. ([docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md))
 - **L-03 — The build benchmark has not been run.** The protocol is designed and published; no Successful Agent Build Rate exists yet. Any number you see quoted for this project is not ours. ([docs/strategy/CRM_BUILD_BENCHMARK.md](docs/strategy/CRM_BUILD_BENCHMARK.md))
-- **L-04 — No scheduler, no task engine, no reminders.** One follow-up Task is created inside lead qualification. There is no recurring work, no delayed workflow, no queue — so nothing fires on a renewal notice period either. ([docs/strategy/JOBS_AND_OUTBOX.md](docs/strategy/JOBS_AND_OUTBOX.md))
+- **L-04 — No scheduler, no reminders, nothing on a timer.** Follow-up Tasks and an Activity timeline are one shared model that a person moves by hand: a due date changes no state. There is no recurring work, no delayed workflow, no queue — so nothing fires on a renewal notice period either. ([docs/strategy/JOBS_AND_OUTBOX.md](docs/strategy/JOBS_AND_OUTBOX.md))
 - **L-05 — No email, calendar or marketing integrations.** An in-memory notification provider contract exists. No adapter sends anything to anyone. ([docs/strategy/INTEGRATION_RUNTIME.md](docs/strategy/INTEGRATION_RUNTIME.md))
 - **L-06 — No import, export, dedupe, merge, bulk edit, saved views or global search.** Table stakes in every commercial CRM, and none of them has a milestone yet. This is recorded deliberately rather than left for you to discover. ([docs/benchmarks/CRM_JTBD_MATRIX.md](docs/benchmarks/CRM_JTBD_MATRIX.md))
 - **L-08 — Ownership today means copying source, not installing a dependency.** There is a project bootstrap and there is no published package, and the two are different facts. The repository's bootstrap command scaffolds a project that boots, reports `valid` from `app inspect` and exits 0 from `project doctor`, offline and with no install — run from a checkout of this repository. The package published under the reserved npm name is still an empty 0.0.1 placeholder, so the `npm create` route installs nothing until a human publishes it. Either way the framework is vendored into the project rather than depended on by version: you own the result outright, and upgrading means merging, not bumping. ([docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md))
@@ -93,7 +93,7 @@ The complete evidence for every id is listed further down this file, always.
 
 ## CRM job coverage
 
-Of 149 catalogued CRM jobs: 23 validated end to end, 30 partially supported, 96 not supported. Status is conservative by policy —
+Of 149 catalogued CRM jobs: 23 validated end to end, 31 partially supported, 95 not supported. Status is conservative by policy —
 a job counts as validated end to end only when a test or a checked-in example proves it, so
 these numbers understate what can be built rather than overstate it.
 
@@ -271,6 +271,7 @@ The remaining documents, one line each in `llms.txt` if you need to know what th
 - [docs/SERVICE_OPERATIONS.md](docs/SERVICE_OPERATIONS.md)
 - [docs/SIGNATURE_ORDER.md](docs/SIGNATURE_ORDER.md)
 - [docs/SKILL_PACKAGING.md](docs/SKILL_PACKAGING.md)
+- [docs/WORK_TASKS.md](docs/WORK_TASKS.md)
 
 ## The claims ledger: evidence for every entry
 
