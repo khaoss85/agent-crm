@@ -33,8 +33,8 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, sep } from 'node:path';
 
 /**
  * Vendor facts this file depends on, each with the source it was read from and the day
@@ -313,9 +313,16 @@ export const PERMISSION_PROFILES = Object.freeze({
  * - a scratch `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, because auto
  *   memory is on by default and is keyed per repository — a second run in the same
  *   fixture would otherwise start with notes from the first;
- * - `--setting-sources project`, which keeps the settings the repository itself ships
- *   (part of the product, and therefore fair) and drops the operator's user and local
- *   settings (not part of the product, and therefore contamination);
+ * - `--setting-sources project,user`, which keeps the settings the repository itself
+ *   ships (part of the product, and therefore fair) and drops the operator's *local*
+ *   settings (not part of the product, and therefore contamination). `user` resolves
+ *   under the scratch `CLAUDE_CONFIG_DIR`, which this harness creates empty for every
+ *   cell and writes exactly one file into: the observation apparatus of
+ *   `instructionsHookSettings` below. The operator's real `~/.claude` is not on that
+ *   path — `CLAUDE_CONFIG_DIR` relocates it — so admitting the `user` source admits
+ *   this harness's own hooks and nothing else. It was `project` alone, which dropped
+ *   the operator's settings and, with them, the only place a hook could be declared
+ *   without editing the fixture under test;
  * - `--strict-mcp-config` with an empty config, which **disables the Project MCP server
  *   this repository ships**. `.mcp.json` is checked in and `packages/mcp/src/tools.js`
  *   exposes nine tools, so "no Project MCP exists" — which is what this comment and the
@@ -329,17 +336,24 @@ export const PERMISSION_PROFILES = Object.freeze({
  * - `--output-format stream-json`, because the tool calls are the measurement.
  *
  * @param {{ prompt: string, model?: string | null, maxTurns?: number, profile?: 'guarded' | 'permissive' }} request
- * @param {{ configDir: string }} isolation
+ * @param {{ configDir: string, instructionsLog?: string, sessionLog?: string }} isolation
  */
 export function claudeCodeInvocation(request, isolation) {
   const profileName = request.profile ?? 'guarded';
   const profile = PERMISSION_PROFILES[profileName];
   if (!profile) throw new Error(`claudeCodeInvocation: unknown permission profile ${profileName}`);
+  // Observed, or `unresolved` — never a silent fallback to `declared`. The caller either
+  // hands this adapter somewhere to record instruction loading, or the receipt says the
+  // apparatus was not wired for this cell. A receipt that reports the vendor's documented
+  // load order as though it had watched the load is the one failure this contract exists
+  // to prevent, and "declared" is exactly that sentence with a quieter word.
+  const observesInstructions = typeof isolation.instructionsLog === 'string'
+    && typeof isolation.sessionLog === 'string';
   const args = [
     '--print',
     '--output-format', 'stream-json',
     '--verbose',
-    '--setting-sources', 'project',
+    '--setting-sources', 'project,user',
     '--strict-mcp-config',
     '--mcp-config', '{"mcpServers":{}}',
     '--permission-mode', profile.mode,
@@ -359,20 +373,153 @@ export function claudeCodeInvocation(request, isolation) {
     // What this adapter can and cannot see, stated up front so a receipt never implies
     // an observation the transport does not carry.
     //
-    // `instructionFiles: 'declared'` is a statement about this adapter, not about the
-    // product. Claude Code can report loading through the `InstructionsLoaded` hook — a
-    // probe on 2026-08-13 confirmed a per-file payload of `file_path`, `memory_type` and
-    // `load_reason`, and confirmed a path-scoped rule stays silent until it matches — so
-    // this is observable and simply not yet wired. Wiring it adds a receipt field and
-    // therefore belongs in the pre-registration, before the freeze rather than after it.
-    // Until then the value stays `declared`, because a receipt claiming an observation it
-    // did not perform is the failure this contract exists to prevent.
+    // `instructionFiles` was `declared` — the vendor's documented load order, reported in
+    // the field a reader takes for an observation. It is now the hook or nothing:
+    // `observed` when the apparatus is wired and `unresolved` when it is not. The hook's
+    // per-file payload (`file_path`, `memory_type`, `load_reason`) was probed on
+    // 2026-08-13, and the probe confirmed the negative case too — a rule scoped to
+    // `**/*.ts` stayed silent in a session that read no TypeScript — so this reports what
+    // actually loaded rather than what exists on disk.
     observability: {
       actions: 'observed',
       approvals: 'observed',
-      instructionFiles: 'declared',
+      instructionFiles: observesInstructions ? 'observed' : 'unresolved',
       loadedToolFamilies: 'unobservable',
     },
+  };
+}
+
+/**
+ * The observation apparatus for instruction loading, as a settings document.
+ *
+ * Two hooks, and the second is what makes the first falsifiable.
+ *
+ * `InstructionsLoaded` fires once per instruction file the session actually loads, and
+ * this harness appends its payload to a log. But an **empty log is ambiguous**: it means
+ * either "this session loaded no instruction file" or "the hook was never live". Those are
+ * opposite readings of the same absence, and a benchmark that resolved that ambiguity in
+ * its own favour would be reporting a clean observation of nothing.
+ *
+ * So `SessionStart` writes a liveness marker. Marker present with an empty instruction log
+ * is an **observation** that nothing loaded; marker absent is `unresolved`, whatever the
+ * instruction log says.
+ *
+ * Neither hook writes to stdout, and that is deliberate rather than incidental: a
+ * `SessionStart` hook's stdout is added to the session's context, so an apparatus that
+ * echoed anything would be feeding the subject of the experiment. A probe on 2026-08-13
+ * recorded `stdout: ""` and `output: ""` on the hook_response event for exactly this
+ * reason.
+ *
+ * @param {{ instructionsLog: string, sessionLog: string }} logs absolute paths, outside the fixture
+ */
+export function instructionsHookSettings(logs) {
+  for (const [name, path] of Object.entries(logs)) {
+    // Single-quoted into a shell command, so a single quote in the path would end the
+    // quoting and change what runs. Refused rather than escaped: this path is chosen by
+    // the operator on the command line, and a benchmark that rewrites its own apparatus
+    // to fit a surprising input is a benchmark whose apparatus is not what it says.
+    if (typeof path !== 'string' || path === '' || path.includes("'")) {
+      throw new Error(`instructionsHookSettings: ${name} must be a path with no single quote in it, not ${JSON.stringify(path)}`);
+    }
+  }
+  return {
+    hooks: {
+      InstructionsLoaded: [{ hooks: [{ type: 'command', command: `cat >> '${logs.instructionsLog}'` }] }],
+      SessionStart: [{ hooks: [{ type: 'command', command: `cat >> '${logs.sessionLog}'` }] }],
+    },
+  };
+}
+
+/**
+ * Read back what the session actually loaded.
+ *
+ * Three answers, and only one of them is an observation:
+ *
+ * - **observed** — the liveness marker is there, so the hook was live for this session,
+ *   and the instruction log holds every file it reported. Zero files is a real answer.
+ * - **unresolved** — no liveness marker. The apparatus did not run, so this cell has
+ *   nothing to say about what loaded. It never falls back to the declared load order.
+ * - **unresolved**, with a reason — the log exists but does not parse.
+ *
+ * Paths are made fixture-relative, because a receipt carrying an absolute path names
+ * somebody's machine and the contract refuses one. A file loaded from *outside* the
+ * fixture is recorded by its basename under an `outside-fixture` marker rather than
+ * dropped: an instruction file the agent read from elsewhere is exactly the contamination
+ * this whole isolation section exists to detect, and silence about it would be the
+ * flattering answer.
+ *
+ * The content digest is taken when this runs, which is **after** the agent has finished.
+ * Under a profile that permits writes the agent could have edited a file it had already
+ * loaded, so the field is named for what it is and the fixture fingerprint pair remains
+ * the authority on whether anything moved.
+ *
+ * @param {{ instructionsLog: string, sessionLog: string, fixtureDir: string }} where
+ */
+export function readInstructionsLoaded(where) {
+  const wired = typeof where?.instructionsLog === 'string' && typeof where?.sessionLog === 'string';
+  if (!wired) {
+    return {
+      status: 'unresolved',
+      via: null,
+      reason: 'this cell was invoked without the InstructionsLoaded apparatus, so nothing observed what loaded',
+      files: [],
+      events: 0,
+      hookLive: false,
+    };
+  }
+  const hookLive = existsSync(where.sessionLog) && readFileSync(where.sessionLog, 'utf8').trim() !== '';
+  if (!hookLive) {
+    return {
+      status: 'unresolved',
+      via: 'InstructionsLoaded hook',
+      reason: 'the SessionStart liveness marker is absent, so an empty instruction log cannot be read as '
+        + '"nothing loaded" rather than "the hook never ran"',
+      files: [],
+      events: 0,
+      hookLive: false,
+    };
+  }
+  const raw = existsSync(where.instructionsLog) ? readFileSync(where.instructionsLog, 'utf8') : '';
+  /** @type {Array<{ path: string, memoryType: string | null, loadReason: string | null, contentDigest: string | null }>} */
+  const files = [];
+  let events = 0;
+  let unparsed = 0;
+  const prefix = where.fixtureDir.endsWith(sep) ? where.fixtureDir : `${where.fixtureDir}${sep}`;
+  for (const line of raw.split('\n')) {
+    if (line.trim() === '') continue;
+    events += 1;
+    let payload;
+    try { payload = JSON.parse(line); } catch { unparsed += 1; continue; }
+    const filePath = typeof payload?.file_path === 'string' ? payload.file_path : null;
+    if (filePath === null) { unparsed += 1; continue; }
+    const inside = filePath.startsWith(prefix);
+    files.push({
+      path: inside ? filePath.slice(prefix.length) : `outside-fixture:${filePath.split(sep).pop()}`,
+      memoryType: typeof payload.memory_type === 'string' ? payload.memory_type : null,
+      loadReason: typeof payload.load_reason === 'string' ? payload.load_reason : null,
+      contentDigest: existsSync(filePath)
+        ? createHash('sha256').update(readFileSync(filePath)).digest('hex')
+        : null,
+    });
+  }
+  if (unparsed > 0) {
+    return {
+      status: 'unresolved',
+      via: 'InstructionsLoaded hook',
+      reason: `${unparsed} of ${events} hook payload(s) could not be read, so the loaded set is incomplete`,
+      files,
+      events,
+      hookLive: true,
+    };
+  }
+  return {
+    status: 'observed',
+    via: 'InstructionsLoaded hook',
+    reason: '',
+    files,
+    events,
+    hookLive: true,
+    digestNote: 'content digests are taken after the run; the fixture fingerprint pair is the authority on whether anything moved',
   };
 }
 

@@ -92,7 +92,7 @@ A run is invalid unless all of the following hold. The first four are mechanical
 | Requirement | How it is met |
 |---|---|
 | The agent sees no prior Accordo conversation | a scratch config directory per run, and auto memory disabled by environment variable |
-| No operator profile leaks in | only the repository's own settings are loaded; user and local settings are dropped |
+| No operator profile leaks in | the repository's own settings are loaded and the operator's *local* settings are dropped. The `user` source is admitted, and it resolves under the scratch `CLAUDE_CONFIG_DIR` this harness creates empty for every cell — so what it admits is this harness's own observation hooks (§12.4) and nothing the operator has on this machine |
 | The fixture carries none of this benchmark's answers | the benchmark's own paths are never copied, **and** the materialised tree is re-scanned for literal markers afterwards. The scan is the gate; the deny-list is only the intent |
 | No run inherits from another | a fixture directory is built, never reused: `materializeFixture` refuses a target that already exists, and the runner refuses a run directory that does. There is no in-place reset, so the receipt carries no reset field at all: a field documented as permanently `null` is a field a forged receipt sets to `true` for free, and the two refusals above are what actually enforce this |
 | No prompt names a command | §5, checked in the suite |
@@ -809,6 +809,28 @@ the affected cells.
    same probe confirmed the negative case: a rule scoped to `**/*.ts` did **not** fire in
    a session that read no TypeScript, so the hook reports what actually loaded rather than
    what exists on disk. Codex and Gemini CLI remain declared from vendor documentation.
+
+   **The hook is wired, and the empty case is the part that needed designing.** The
+   adapter declares two hooks in the scratch config directory: `InstructionsLoaded`
+   appends its per-file payload to a log, and `SessionStart` writes a liveness marker.
+   An empty instruction log alone is ambiguous — "this session loaded nothing" and "the
+   hook never ran" are opposite readings of the same absence, and a benchmark that picked
+   the flattering one would be publishing a clean observation of nothing. So the marker
+   decides: present, and an empty log is an **observation** that nothing loaded; absent,
+   and the field is `unresolved` whatever the log says. Every receipt carries
+   `surfaces.instructionsLoaded` with a status of `observed` or `unresolved` — **never
+   `declared`**, which is the vendor's documented load order wearing the word a reader
+   takes for an observation. The declared list stays beside it under its own key, so a
+   disagreement between the two is legible rather than hidden.
+
+   Two consequences are stated rather than left to be found. The apparatus lives in the
+   scratch config directory, not in the fixture, so the tree under test stays
+   byte-identical to what the freeze named — which is why `--setting-sources` is now
+   `project,user`: `user` resolves under `CLAUDE_CONFIG_DIR`, which this harness creates
+   empty per cell, so the source admits this harness's own hooks and nothing of the
+   operator's. And neither hook writes to stdout, because a `SessionStart` hook's stdout is
+   added to the session's context and an apparatus that echoed anything would be feeding
+   its own subject; a probe recorded `stdout: ""` on the hook_response event.
 5. **Execution is out of scope.** Fixtures are uninstalled; a correctly selected command
    usually fails to run. The fixture *signals* above are an exception and were observed
    directly, because the framework's own CLI needs no dependency tree to run.

@@ -31,7 +31,7 @@ import { join, resolve, sep } from 'node:path';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { ARMS, DEFAULT_MAX_TURNS, PERMISSION_PROFILES, VENDOR_FACTS, classifyOutcome, claudeCodeInvocation, declaredMcpSurface, hasAdapter, parseClaudeTranscript, probeAllArms, probeArm } from './harness.js';
+import { ARMS, DEFAULT_MAX_TURNS, PERMISSION_PROFILES, VENDOR_FACTS, classifyOutcome, claudeCodeInvocation, declaredMcpSurface, hasAdapter, instructionsHookSettings, parseClaudeTranscript, probeAllArms, probeArm, readInstructionsLoaded } from './harness.js';
 import { PROSE_NGRAM } from './surface.js';
 import { buildRun, canonicalJson, validateRun } from './contract.js';
 import { FIXTURES, fingerprintTree, materializeFixture, uncommittedTrackedFiles, verifyIsolation } from './fixtures.js';
@@ -299,8 +299,15 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
       process.exit(0);
     }
     if (verb === 'freeze') {
-      const [out] = rest;
-      if (!out) throw new Error('usage: run.js freeze <out.json>');
+      // `options` was read here and defined in neither this branch nor an enclosing
+      // scope — the other two verbs each parse their own — so `run.js freeze` threw
+      // `options is not defined` on every invocation it has ever had. The protocol names
+      // this verb as **the only supported way to produce a freeze document**, and the
+      // suite reached `computeFreeze()` directly, so a gate that refuses to run a cell
+      // without a freeze sat behind a command that could not produce one.
+      const [out, ...flags] = rest;
+      if (!out) throw new Error('usage: run.js freeze <out.json> [--profile <name>]');
+      const options = parseFlags(flags);
       const document = computeFreeze(REPO_ROOT, { profile: options.profile ? String(options.profile) : 'guarded' });
       writeFileSync(resolve(out), `${JSON.stringify(document, null, 2)}\n`);
       process.stdout.write(`${JSON.stringify(document, null, 2)}\n`);
@@ -557,6 +564,18 @@ export function executeRun(request) {
     surfaces: {
       availableFamilies: matrix.surface.families,
       instructionFilesDeclared: arm.instructionFiles,
+      // What the session *actually* loaded, or `unresolved`. Every receipt carries this
+      // key, including the ones for cells that never ran — a planned cell with no field
+      // here would be indistinguishable from one whose apparatus silently failed. The
+      // valid path overwrites it with the hook's own answer below.
+      instructionsLoaded: {
+        status: 'unresolved',
+        via: null,
+        reason: 'this cell produced no session, so nothing observed what it would have loaded',
+        files: [],
+        events: 0,
+        hookLive: false,
+      },
       skillsDirectory: arm.skills,
       // What this repository ships and what the adapter did with it. `mcpServers: []`
       // read as "there is no MCP here", which was false: `.mcp.json` is checked in and
@@ -573,7 +592,7 @@ export function executeRun(request) {
     limitations: [
       'The fixture is not installed: no dependency tree is copied and nothing runs an install, so a selected command usually fails to execute. This instrument observes which rail an agent reaches for, not whether the command then succeeded.',
       'The closing-limitation metric is operator-graded and stays unresolved until an operator records a verdict.',
-      'Instruction-file loading is declared from vendor documentation, not observed from inside the arm.',
+      'Instruction-file loading is observed for this arm through its InstructionsLoaded hook, with a SessionStart liveness marker so that an empty log reads as unresolved rather than as "nothing loaded". It stays declared from vendor documentation for the arms with no adapter, and surfaces.instructionsLoaded says which of the two this receipt carries.',
       `Permission profile "${profileName}": ${PERMISSION_PROFILES[profileName].why}. The metrics it suspends are reported not_applicable, never met.`,
     ],
     evidence: { receipt: 'receipt.json', transcript: 'transcript.txt' },
@@ -714,7 +733,23 @@ export function executeRun(request) {
   }
 
   // --- the one invocation ------------------------------------------------------
-  const invocation = claudeCodeInvocation({ prompt: prompt.prompt, model: request.model, profile: /** @type {any} */ (profileName) }, { configDir });
+  //
+  // The observation apparatus is written into the scratch config directory rather than
+  // into the fixture, and that placement is the whole point: the fixture is fingerprinted
+  // and bound to the freeze, so a settings file added to it would change the tree under
+  // test and hand the agent a file the real repository does not ship. Here it sits beside
+  // the run, outside the agent's working directory, and the fixture stays byte-identical
+  // to what the freeze named.
+  const instructionsLog = join(runDir, 'instructions-loaded.jsonl');
+  const sessionLog = join(runDir, 'session-start.jsonl');
+  writeFileSync(
+    join(configDir, 'settings.json'),
+    `${JSON.stringify(instructionsHookSettings({ instructionsLog, sessionLog }), null, 2)}\n`,
+  );
+  const invocation = claudeCodeInvocation(
+    { prompt: prompt.prompt, model: request.model, profile: /** @type {any} */ (profileName) },
+    { configDir, instructionsLog, sessionLog },
+  );
   const started = spawnSync(invocation.binary, invocation.args, {
     cwd: fixtureDir,
     encoding: 'utf8',
@@ -739,6 +774,24 @@ export function executeRun(request) {
     after = fingerprintTree(fixtureDir);
   } catch (error) {
     fingerprintFailure = error instanceof Error ? error.message.slice(0, 300) : String(error);
+  }
+  // Read back what the session loaded, while the fixture is still on disk — the content
+  // digests below are of the files themselves, and the fixture is removed a few lines
+  // further down. A failure here is a receipt field that says `unresolved`, never a lost
+  // cell: this is an observation *about* the run and the run has already happened.
+  /** @type {any} */
+  let instructionsLoaded;
+  try {
+    instructionsLoaded = readInstructionsLoaded({ instructionsLog, sessionLog, fixtureDir });
+  } catch (error) {
+    instructionsLoaded = {
+      status: 'unresolved',
+      via: 'InstructionsLoaded hook',
+      reason: `the apparatus could not be read back: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}`,
+      files: [],
+      events: 0,
+      hookLive: false,
+    };
   }
   const parsed = parseClaudeTranscript(transcript);
   // Canonicalise this benchmark's own scratch locations, and nothing else. A receipt
@@ -828,6 +881,11 @@ export function executeRun(request) {
   const receipt = buildRun({
     ...base,
     model: { requested: request.model, reported: completion?.models ?? [] },
+    // The declared load order stays beside the observed one rather than being replaced by
+    // it. They answer different questions — what the vendor documents, and what this
+    // session did — and a disagreement between the two is a finding, not a bug to hide by
+    // dropping one of them.
+    surfaces: { ...base.surfaces, instructionsLoaded },
     arm: {
       id: arm.id,
       product: arm.product,
