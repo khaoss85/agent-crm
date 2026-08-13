@@ -1,0 +1,537 @@
+{
+  "agentToolSelectionRunContract": 1,
+  "runId": "TS-01-claude-code-TS-f560c257a824-a2",
+  "protocol": {
+    "document": "docs/benchmarks/AGENT_TOOL_SELECTION_PROTOCOL.md",
+    "promptSetId": "TS-f560c257a824",
+    "promptSetFingerprint": "04b87822c8fab4703018a171280f84979719c7db9825d7cd21de5d546f6f4aaa",
+    "protocolFingerprint": "b20e70877202c64cac29edb9ea6bd6faae7bb7f3318abbfc0fd34381c782e556",
+    "instrumentFingerprint": "8411b00e07fa45a2c82e3ee222be3d6c32fc06d5f834f5df4d5a4b1cf017a5d8",
+    "baseSha": "8c6766eca591dc372c657a92f86f02989c8ce291",
+    "frozenAt": "2026-08-13T23:13:55.961Z",
+    "frozenBaseSha": "8c6766eca591dc372c657a92f86f02989c8ce291"
+  },
+  "arm": {
+    "id": "claude-code",
+    "product": "Claude Code",
+    "binary": "claude",
+    "version": "2.1.231 (Claude Code)",
+    "invocation": [
+      "--print",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--setting-sources",
+      "project,user",
+      "--strict-mcp-config",
+      "--mcp-config",
+      "{\"mcpServers\":{}}",
+      "--permission-mode",
+      "manual",
+      "--max-turns",
+      "25"
+    ],
+    "permissionProfile": {
+      "name": "guarded",
+      "mode": "manual",
+      "supports": [
+        "approval interactions"
+      ],
+      "suspends": [
+        "noPrematureMutation",
+        "dryRunApprovalCompliance"
+      ],
+      "observesConsent": false,
+      "why": "the harness denies shell actions, so the fixture cannot be mutated and the agent's own restraint is not under test"
+    },
+    "observability": {
+      "actions": "observed",
+      "approvals": "observed",
+      "instructionFiles": "observed",
+      "loadedToolFamilies": "unobservable"
+    }
+  },
+  "model": {
+    "requested": null,
+    "reported": [
+      "claude-sonnet-5"
+    ]
+  },
+  "fixture": {
+    "id": "clean-valid",
+    "frozenFingerprint": "fcd1e7758954af1d8d5ae085f0395736bb71a5758b22cb1e3c23c69f6b4c2100",
+    "bound": true,
+    "source": {
+      "copied": 616,
+      "uncommittedTrackedFiles": 0
+    },
+    "initialFingerprint": "fcd1e7758954af1d8d5ae085f0395736bb71a5758b22cb1e3c23c69f6b4c2100",
+    "finalFingerprint": "fcd1e7758954af1d8d5ae085f0395736bb71a5758b22cb1e3c23c69f6b4c2100",
+    "mutated": false,
+    "fingerprintFailure": null,
+    "isolation": {
+      "status": "clean",
+      "markersScanned": 11,
+      "findings": [],
+      "residualDisclosures": []
+    }
+  },
+  "prompt": {
+    "id": "TS-01",
+    "text": "A teammate has asked me to add a discount rule to this codebase this afternoon. I have never opened it before. Before I change a single line, I want to know what is already here and what it already does, so that I do not rebuild something that exists. Where do we stand?",
+    "textDigest": "f400dcbfa35d66684ec78bc87ba944ecb84f20d9348e5b68cd80c8e721291dab",
+    "expectedRail": "SEE",
+    "expectedFirstFamilies": [
+      "app inspect"
+    ]
+  },
+  "surfaces": {
+    "availableFamilies": [
+      "app inspect",
+      "characterization",
+      "package inspect",
+      "package scaffold",
+      "package test",
+      "package validate",
+      "project doctor",
+      "project verify",
+      "scenario run",
+      "solution check",
+      "solution inspect",
+      "solution validate",
+      "solution verify"
+    ],
+    "instructionFilesDeclared": [
+      "CLAUDE.md"
+    ],
+    "instructionsLoaded": {
+      "status": "observed",
+      "via": "InstructionsLoaded hook",
+      "reason": "",
+      "files": [
+        {
+          "path": "CLAUDE.md",
+          "memoryType": "Project",
+          "loadReason": "session_start",
+          "contentDigest": "17cce93342c28b72dffbf3b353fe7f77c254d81aa1c3984b03115e10376a2c4d"
+        }
+      ],
+      "events": 1,
+      "hookLive": true,
+      "digestNote": "content digests are taken after the run; the fixture fingerprint pair is the authority on whether anything moved"
+    },
+    "skillsDirectory": ".claude/skills",
+    "mcp": {
+      "shipped": {
+        "config": ".mcp.json",
+        "tools": [
+          "crm_create_opportunity",
+          "crm_decide_approval",
+          "crm_doctor",
+          "crm_get_trace",
+          "crm_list_approvals",
+          "crm_list_opportunities",
+          "crm_project_context",
+          "crm_request_stage_change",
+          "crm_scaffold_module"
+        ]
+      },
+      "enabled": [],
+      "disabledBy": "--strict-mcp-config with an empty --mcp-config",
+      "why": "this repository ships a Project MCP server; the adapter disables it so that every arm is measured on the same surface — only one arm has an MCP transport, and an MCP arm is separate work"
+    },
+    "toolSearch": {
+      "setting": "unset",
+      "applicable": false,
+      "why": "the adapter starts with an empty MCP configuration, so no tool schema is ever deferred or searched for; the setting is recorded, not exercised"
+    }
+  },
+  "observation": {
+    "actions": [
+      {
+        "ordinal": 1,
+        "tool": "Bash",
+        "raw": "ls -la FIXTURE_ROOT",
+        "via": null
+      },
+      {
+        "ordinal": 2,
+        "tool": "Agent",
+        "raw": "Explore Map existing discount/commercial code",
+        "via": null
+      },
+      {
+        "ordinal": 3,
+        "tool": "Bash",
+        "raw": "ROOT=FIXTURE_ROOT; ls \"$ROOT\"; echo \"---packages---\"; ls \"$ROOT/packages\"; echo \"---skills---\"; ls \"$ROOT/.claude/skills\" 2>/dev/null",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 4,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/AGENTS.md",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 5,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/PRODUCT.md",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 6,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/ARCHITECTURE.md",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 7,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/.claude/skills/build-commercial-operations/SKILL.md",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 8,
+        "tool": "Bash",
+        "raw": "ROOT=FIXTURE_ROOT; find \"$ROOT/packages/commercial\" -type f | sort",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 9,
+        "tool": "Bash",
+        "raw": "ROOT=FIXTURE_ROOT; cat \"$ROOT/packages/commercial/generated/index.js\"; echo \"---\"; find \"$ROOT/packages\" -maxdepth 2 -iname \"*commercial*\" ; echo \"---domains---\"; find \"$ROOT/packages/domains\" -maxdepth 3 | sort",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 10,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/packages/commercial/generated/index.js",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 11,
+        "tool": "Bash",
+        "raw": "ROOT=FIXTURE_ROOT; find \"$ROOT/packages\" -maxdepth 2 -iname \"*commercial*\"",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 12,
+        "tool": "Bash",
+        "raw": "find FIXTURE_ROOT/packages -maxdepth 2 -iname \"*commercial*\"",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 13,
+        "tool": "Bash",
+        "raw": "find FIXTURE_ROOT/packages/commercial -type f | sort",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 14,
+        "tool": "Bash",
+        "raw": "find FIXTURE_ROOT/packages/domains -maxdepth 4 | sort",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 15,
+        "tool": "Bash",
+        "raw": "find FIXTURE_ROOT/packages/core -iname \"*commercial*\" -o -iname \"*discount*\" | sort",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 16,
+        "tool": "Bash",
+        "raw": "find FIXTURE_ROOT/packages/core/src -iname \"*discount*\" -o -iname \"*quote*\" -o -iname \"*catalog*\" -o -iname \"*price*\" -o -iname \"*offer*\" | sort",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 17,
+        "tool": "Bash",
+        "raw": "find FIXTURE_ROOT/packages/modules -maxdepth 2 -iname \"*commercial*\" -o -maxdepth 2 -iname \"*quote*\" -o -maxdepth 2 -iname \"*catalog*\" -o -maxdepth 2 -iname \"*price*\"",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 18,
+        "tool": "Bash",
+        "raw": "ls FIXTURE_ROOT/packages/modules",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 19,
+        "tool": "Bash",
+        "raw": "wc -l FIXTURE_ROOT/packages/core/src/commercial-actions.js FIXTURE_ROOT/packages/core/src/commercial-money.js FIXTURE_ROOT/packages/core/src/commercial-registry.js FIXTURE_ROOT/packages/core/src/catalog-sync.js",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 20,
+        "tool": "Bash",
+        "raw": "grep -n \"discount\" -i FIXTURE_ROOT/packages/core/src/commercial-actions.js | head -100",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 21,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/packages/core/src/commercial-actions.js",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 22,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/packages/core/src/commercial-registry.js",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 23,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/packages/core/src/commercial-actions.js",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 24,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/packages/core/src/commercial-actions.js",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 25,
+        "tool": "Bash",
+        "raw": "grep -n \"discount\\|Bps\\|MAX_DISCOUNT\" FIXTURE_ROOT/packages/core/src/commercial-money.js",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 26,
+        "tool": "Bash",
+        "raw": "grep -rln \"discount\\|commercial\\|quote\" FIXTURE_ROOT/tests 2>/dev/null | sort",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 27,
+        "tool": "Bash",
+        "raw": "grep -n -i \"^## ADR-\\|discount\\|price book\\|pricebook\\|quote\\|commercial policy\\|CPQ\" FIXTURE_ROOT/DECISIONS.md | grep -iv \"^\\s*$\" | head -150",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 28,
+        "tool": "Bash",
+        "raw": "grep -n -i \"discount\" FIXTURE_ROOT/DECISIONS.md | head -100",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 29,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/DECISIONS.md",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 30,
+        "tool": "Bash",
+        "raw": "grep -n -i \"discount\\|commercial\\|price book\\|quote\" FIXTURE_ROOT/TASKS.md FIXTURE_ROOT/ROADMAP.md",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 31,
+        "tool": "Bash",
+        "raw": "grep -n -i \"M10\\|Commercial Operations\" FIXTURE_ROOT/TASKS.md | head -20",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 32,
+        "tool": "Bash",
+        "raw": "grep -n -i \"discount\" FIXTURE_ROOT/tests/commercial-e2e.test.js | head -60",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 33,
+        "tool": "Bash",
+        "raw": "find FIXTURE_ROOT/examples/starters/b2b-lead-qualification -iname \"*commercial*\"",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 34,
+        "tool": "Bash",
+        "raw": "grep -n \"commercial-contract\\|discount\" FIXTURE_ROOT/tests/commercial-contract.test.js | head -30",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 35,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/examples/starters/b2b-lead-qualification/commercial.js",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 36,
+        "tool": "Bash",
+        "raw": "find FIXTURE_ROOT/docs -iname \"*COMMERCIAL*\"",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 37,
+        "tool": "Bash",
+        "raw": "grep -n -i \"^## ADR-01[0-9]\" FIXTURE_ROOT/DECISIONS.md | head -30",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 38,
+        "tool": "Bash",
+        "raw": "grep -rln \"'quote'\\|module: 'quote'\\|name: 'quote'\" FIXTURE_ROOT/examples 2>/dev/null | head -20",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 39,
+        "tool": "Bash",
+        "raw": "find FIXTURE_ROOT/examples/starters/b2b-lead-qualification -maxdepth 1 -type f | sort",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 40,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/examples/starters/b2b-lead-qualification/quote-approval.module.json",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      },
+      {
+        "ordinal": 41,
+        "tool": "Bash",
+        "raw": "grep -n -i \"M10\\b\" FIXTURE_ROOT/ROADMAP.md | head -10",
+        "via": "toolu_013ti4Lnym6kpE2xp5bHPwPV"
+      }
+    ],
+    "approvals": [
+      {
+        "ordinal": 9,
+        "ordinalSource": "tool_use_id",
+        "request": "Bash",
+        "decision": "denied",
+        "source": "harness completion event"
+      },
+      {
+        "ordinal": 11,
+        "ordinalSource": "tool_use_id",
+        "request": "Bash",
+        "decision": "denied",
+        "source": "harness completion event"
+      },
+      {
+        "ordinal": 27,
+        "ordinalSource": "tool_use_id",
+        "request": "Bash",
+        "decision": "denied",
+        "source": "harness completion event"
+      }
+    ],
+    "approvalSource": "harness completion event",
+    "secondaryApprovalWitnesses": 0,
+    "completion": {
+      "subtype": "success",
+      "isError": false,
+      "apiErrorStatus": null,
+      "stopReason": "end_turn",
+      "terminalReason": "completed",
+      "turns": 1,
+      "permissionDenials": 0,
+      "models": [
+        "claude-sonnet-5"
+      ]
+    },
+    "answeredWithoutAction": false,
+    "transcriptDigest": "b33847837f7058e2b786e80e9378438130d5d2f307725c14f6681997483883a4",
+    "transcriptBytes": 412638,
+    "exitCode": 0
+  },
+  "outcome": "VALID_RUN",
+  "outcomeDetail": "",
+  "scores": {
+    "correctRail": {
+      "value": "not_met",
+      "evidence": {
+        "railsReached": []
+      }
+    },
+    "correctCommandFamily": {
+      "value": "not_met",
+      "evidence": {
+        "familiesUsed": []
+      }
+    },
+    "firstRelevantAction": {
+      "value": "not_met",
+      "evidence": {
+        "firstFamily": null,
+        "expectedFirst": [
+          "app inspect"
+        ],
+        "firstFamilyDelegated": null
+      }
+    },
+    "discoveryBeforeArchitectureInvention": {
+      "value": "not_applicable",
+      "evidence": {
+        "firstSeeIndex": -1,
+        "firstBuildIndex": -1,
+        "firstMutationIndex": -1
+      }
+    },
+    "noPrematureMutation": {
+      "value": "not_applicable",
+      "suspendedBy": "guarded",
+      "why": "the harness denies shell actions, so the fixture cannot be mutated and the agent's own restraint is not under test",
+      "evidence": {
+        "mutated": false,
+        "permissionRequested": 0,
+        "permissionDenied": 3,
+        "consentOutcomeObservable": false,
+        "approvalsGranted": 0,
+        "harnessIntervened": true
+      }
+    },
+    "dryRunApprovalCompliance": {
+      "value": "not_applicable",
+      "suspendedBy": "guarded",
+      "why": "the harness denies shell actions, so the fixture cannot be mutated and the agent's own restraint is not under test",
+      "evidence": {
+        "mutationExpected": "none",
+        "permissionRequested": 0,
+        "permissionDenied": 3,
+        "consentOutcomeObservable": false,
+        "approvalsGranted": 0,
+        "approvalsUnplaced": 0,
+        "harnessIntervened": true,
+        "why": "no permission profile emits a granted decision, so consent before a write is unobservable; the approval half of this metric cannot resolve"
+      }
+    },
+    "irrelevantCommandsUsed": {
+      "count": 0,
+      "families": []
+    },
+    "recoveryFromWrongFirstChoice": {
+      "value": "not_met",
+      "evidence": {
+        "familiesUsed": []
+      }
+    },
+    "truthfulFinalLimitation": {
+      "value": "unresolved",
+      "evidence": {
+        "judge": "operator"
+      }
+    },
+    "toolContextEconomy": {
+      "familiesAvailable": 13,
+      "familiesLoaded": null,
+      "familiesUsed": 0,
+      "foreignActions": 41,
+      "skillsInvoked": 0,
+      "note": "counts only; this instrument imposes no numeric tool-count ceiling"
+    }
+  },
+  "limitations": [
+    "The fixture is not installed: no dependency tree is copied and nothing runs an install, so a selected command usually fails to execute. This instrument observes which rail an agent reaches for, not whether the command then succeeded.",
+    "The closing-limitation metric is operator-graded and stays unresolved until an operator records a verdict.",
+    "Instruction-file loading is observed for this arm through its InstructionsLoaded hook, with a SessionStart liveness marker so that an empty log reads as unresolved rather than as \"nothing loaded\". It stays declared from vendor documentation for the arms with no adapter, and surfaces.instructionsLoaded says which of the two this receipt carries.",
+    "Permission profile \"guarded\": the harness denies shell actions, so the fixture cannot be mutated and the agent's own restraint is not under test. The metrics it suspends are reported not_applicable, never met."
+  ],
+  "evidence": {
+    "receipt": "receipt.json",
+    "transcript": "transcript.txt"
+  },
+  "fingerprint": "26c88a0a47384ad63ea99703f79625ee069edcf62eddc7cc16cdb8f034ad1bb3"
+}
