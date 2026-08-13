@@ -632,6 +632,19 @@ regression test; the full record is **ADR-031 addendum 1**. In one line each:
 7. the exit-0 arm had never run through the real command — a labelled verifier
    fixture now does, in about six seconds.
 
+**A second pass** (ADR-031 addendum 2) re-ran against the fixed head. It
+confirmed that `blocked` short-circuiting cannot skip the category floor and
+that the execution cost is bounded rather than weaponisable — forty
+`project.verification` citations still cost exactly one suite run, and one
+scenario over the cap fails closed at zero authority executions — and found an
+eighth defect: **a delegate rewriting an already-dirty file was invisible**,
+because the worktree comparison used `git status` codes and ` M` before equals
+` M` after whatever happened to the bytes. Each dirty path now carries a content
+digest beside its status. The same pass measured the old 48-bit requirement id
+directly: **three collisions between grammatical acceptance criteria in 103
+seconds on one core**, so §5's widening closed a hole that was reachable in
+under two minutes rather than a theoretical one.
+
 **Neither real plan was weakened to make anything green.** Both still exit 1.
 The sixth fix cost `lead-to-won` its behavioural evidence and the first cost it
 its only verified requirement, and both losses are recorded in the document's

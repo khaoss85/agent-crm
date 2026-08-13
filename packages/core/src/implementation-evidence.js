@@ -189,6 +189,18 @@ export const EVIDENCE_LIMITATIONS = Object.freeze([
     message: 'this document is safe to read because of its shape — it has no command, script, effect or env field, and nothing executes a string from it. The additional scan for executable-looking text is a regex over English and is defence in depth only: it does not make any string safe to execute. It misses perl, ruby, make, docker, powershell, cmd, kubectl, `source`, `.`, a bidi override and full-width text, and it refuses ordinary prose that merely names a command, a URL or a backtick. It is applied to pointers, never to an author\'s prose',
   },
   {
+    code: 'WORKTREE_CONTENT_SAMPLING_IS_BOUNDED',
+    message: 'a dirty path is compared before and after the run by its git status and by a SHA-256 of its bytes, so a delegate that rewrites a file the operator was already editing is caught rather than hidden behind an unchanged status code. Above 8 MB per file, or 128 MB across the run, a path degrades to size-and-modification-time: an ordinary rewrite still moves both, and a same-size same-mtime rewrite of an oversized file is the residual this bound leaves',
+  },
+  {
+    code: 'NO_TIME_BOUND_OF_ITS_OWN',
+    message: 'this command sets no timeout, deadline or cancellation of its own. Every child it causes is spawned by project verify or scenario run, which bound their own children in time, output and process group, so the isolation is inherited rather than absent — but a delegate that never returns hangs this command with it, and there is no race or watchdog here that would cut it short',
+  },
+  {
+    code: 'AUTHORITY_REFUSAL_UNDER_A_DOWNGRADE_IS_NOT_RESTATED',
+    message: 'an authority that ran and said no — a failed observation, an observation whose meaning moved, a source hash that no longer matches — is recorded in problems[] and on the evidence entry, and it forces a non-zero exit. But when the author also declared blocked or partial for that requirement, the row\'s own status and reason are the author\'s, so the machine\'s refusal is one level further out than the reader\'s eye. It can never raise a status or reach exit 0. Extending unverifiable to cover authority-ran-and-refused, as it already covers authority-did-not-run, is deferred to a later contract version',
+  },
+  {
     code: 'VERIFICATION_SOURCE_TRUSTED',
     message: 'the scenarios and declared suites this command delegates to are checked-in repository source running with the operator\'s authority. Child processes are bounded in time, output and process group — that is isolation, not a sandbox',
   },
@@ -825,6 +837,20 @@ export function implementationEvidenceVocabulary() {
     observationKinds: {
       composition: [...COMPOSITION_OBSERVATION_KINDS],
       runtime: [...RUNTIME_OBSERVATION_KINDS],
+    },
+    // What the executable-text scan is and is not, published here rather than
+    // left for a reader to infer from a regex. The Solution Plan vocabulary
+    // carries the same entry; a contract that refuses executable-looking text
+    // should say in the same breath what that refusal is worth.
+    executableContent: {
+      shapes: EXECUTABLE_SHAPES.map((shape) => shape.name),
+      appliedTo: 'pointer fields only — identifiers, check codes, scenario ids, repository paths, and the verbatim `expects` string an authority published',
+      notAppliedTo: 'an author\'s prose: blocked.reason, partial.reason, manual.describes and limitations[].message. Bounds and the control-character refusal still apply there',
+      isTheBoundary: false,
+      boundary: 'the document\'s shape. There is no command, script, effect, env or path-to-execute field at any level of this contract, unknown keys are refused rather than ignored, and nothing in this repository executes a string that came out of one of these documents',
+      knownMisses: ['perl', 'ruby', 'make', 'docker', 'powershell', 'cmd.exe', 'kubectl', 'source', '.', 'a bidi override', 'full-width text'],
+      knownFalsePositives: ['prose naming a command', 'a URL in a sentence', 'Markdown backticks', 'a shell fragment quoted as an example'],
+      note: 'a regex over English is defence in depth. It does not make any string safe to execute, and nothing may be built on the assumption that it did',
     },
     problemCodes: [...EVIDENCE_PROBLEM_CODES],
     limitations: EVIDENCE_LIMITATIONS.map((row) => ({ ...row })),

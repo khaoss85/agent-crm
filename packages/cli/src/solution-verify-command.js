@@ -93,6 +93,17 @@ export const MAX_SCENARIO_RUNS = 8;
 export const MAX_REPORT_TEXT = 400;
 
 /**
+ * Bounds on the content sampling that makes a *second* modification visible.
+ *
+ * A dirty path is read twice — once before the run, once after — so the budget
+ * is what one invocation is willing to spend on watching the operator's own
+ * uncommitted work. Beyond it the path degrades to size-and-mtime, which still
+ * sees an ordinary rewrite and is published rather than assumed.
+ */
+export const MAX_WORKTREE_DIGEST_FILE_BYTES = 8 * 1024 * 1024;
+export const MAX_WORKTREE_DIGEST_TOTAL_BYTES = 128 * 1024 * 1024;
+
+/**
  * @param {{planPath: string, evidencePath: string, json?: boolean, rootDir?: string,
  *   out?: (text: string) => void, err?: (text: string) => void,
  *   inspect?: Function, verify?: Function, scenario?: Function,
@@ -173,6 +184,7 @@ export async function solutionVerifyCommand({
   // document itself is routinely an uncommitted file under active work. The
   // question is what *this run* changed, which is a difference between samples.
   const worktreeBefore = worktreeState(root, git);
+  const worktreeContentBefore = worktreeContent(root, worktreeBefore);
 
   const { requirements: planRequirementRows, problems: requirementProblems } = planRequirements(plan);
   for (const problem of requirementProblems) problems.push(problem);
@@ -321,7 +333,11 @@ export async function solutionVerifyCommand({
   }));
 
   // ---- 7. the worktree this command promised not to change -----------------
-  const worktree = compareWorktree(worktreeBefore, worktreeState(root, git), problems);
+  const worktreeAfter = worktreeState(root, git);
+  const worktree = compareWorktree(
+    worktreeBefore, worktreeAfter, problems,
+    worktreeContentBefore, worktreeContent(root, worktreeAfter),
+  );
 
   const counts = tally(graded.map((row) => row.status));
   const status = counts.verified === graded.length && graded.length > 0 && problems.length === 0
@@ -789,19 +805,98 @@ function applicationFact(inspection, ref) {
  * distinction is the whole reason both samples exist, and nothing is ever
  * reset, stashed or cleaned.
  */
-function compareWorktree(before, after, problems) {
+/**
+ * A content mark per dirty path, taken beside the porcelain sample.
+ *
+ * **Why the status code alone is not enough.** `git status --porcelain` answers
+ * *how* a path differs from HEAD — ` M`, `??`, `A `, ` D` — and DX5 already
+ * compares that rather than the path alone, which is what catches a file the
+ * operator had modified and a delegate then deleted. It still cannot see the
+ * case underneath: a path that is ` M` before the run and ` M` after it reads
+ * as unchanged *whatever happened to its bytes*. So a delegate that rewrites a
+ * file the operator was already editing was invisible, and the run went green.
+ *
+ * That made the stated rule false. "Pre-existing changes are context, changes
+ * caused during verification are failures" held for a file created during the
+ * run and for the first modification of a clean file, and failed for the second
+ * modification of an already-dirty one — which is the likeliest shape in the
+ * only situation that matters, an agent working in a tree it has already
+ * touched.
+ *
+ * So each dirty path also carries a mark: the SHA-256 of its bytes where that
+ * is affordable, and an explicit non-digest marker where it is not. The mark
+ * never enters the report or any fingerprint — it exists only to be compared
+ * with itself one moment later.
+ *
+ * @param {string} root @param {string[]|null} state
+ * @returns {Map<string, string>|null}
+ */
+function worktreeContent(root, state) {
+  if (state === null) return null;
+  const rootReal = (() => { try { return realpathSync(root); } catch { return root; } })();
+  /** @type {Map<string, string>} */
+  const marks = new Map();
+  let budget = MAX_WORKTREE_DIGEST_TOTAL_BYTES;
+
+  for (const line of state) {
+    const { path: relative_ } = sampled(line);
+    if (relative_ === '') continue;
+
+    let real;
+    try {
+      real = realpathSync(resolve(root, relative_));
+    } catch {
+      // Deleted, never created, or a dangling link. "Absent" is itself a state
+      // that changes: absent → present is a difference worth seeing.
+      marks.set(relative_, 'absent');
+      continue;
+    }
+    const inside = relative(rootReal, real);
+    if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+      // A dirty path that resolves outside the project is not this command's to
+      // read. It is recorded as such rather than followed.
+      marks.set(relative_, 'outside');
+      continue;
+    }
+    const stat = statSync(real, { throwIfNoEntry: false });
+    if (!stat) { marks.set(relative_, 'absent'); continue; }
+    if (!stat.isFile()) { marks.set(relative_, `nonfile:${stat.isDirectory() ? 'dir' : 'other'}`); continue; }
+
+    if (stat.size > MAX_WORKTREE_DIGEST_FILE_BYTES || stat.size > budget) {
+      // Too big to hash twice. Size and mtime still move under an ordinary
+      // rewrite; a same-size, same-mtime rewrite is the residual, and it is
+      // published as WORKTREE_CONTENT_SAMPLING_IS_BOUNDED rather than implied.
+      marks.set(relative_, `big:${stat.size}:${stat.mtimeMs}`);
+      continue;
+    }
+    try {
+      marks.set(relative_, `sha:${createHash('sha256').update(readFileSync(real)).digest('hex')}`);
+      budget -= stat.size;
+    } catch {
+      marks.set(relative_, 'unreadable');
+    }
+  }
+  return marks;
+}
+
+/** The status and the content mark together — the pair a comparison must use. */
+function markOf(status, path, marks) {
+  return `${status}\u0000${marks?.get(path) ?? ''}`;
+}
+
+function compareWorktree(before, after, problems, contentBefore = null, contentAfter = null) {
   if (before === null || after === null) {
     return { sampled: false, dirtyBeforeVerification: [], changedByVerification: [], revertedByVerification: [],
       note: 'not a git checkout, so "changed while verifying" has no meaning here' };
   }
-  const start = new Map(before.map(sampled).map((entry) => [entry.path, entry.status]));
-  const end = new Map(after.map(sampled).map((entry) => [entry.path, entry.status]));
+  const start = new Map(before.map(sampled).map((entry) => [entry.path, markOf(entry.status, entry.path, contentBefore)]));
+  const end = new Map(after.map(sampled).map((entry) => [entry.path, markOf(entry.status, entry.path, contentAfter)]));
   const caused = [...end.keys()].filter((path) => !start.has(path) || start.get(path) !== end.get(path)).sort();
   const reverted = [...start.keys()].filter((path) => !end.has(path)).sort();
   if (caused.length > 0) {
     problems.push({
       code: 'VERIFICATION_DIRTIED_WORKTREE', path: 'worktree',
-      message: `${caused.length} path(s) that were clean before this run differ from HEAD after it, so something this verification ran writes into the project. Paths already modified beforehand — the evidence document under active work is the ordinary case — are excluded. Nothing was reset, stashed or hidden`,
+      message: `${caused.length} path(s) were written into by something this verification ran: each was either clean before the run, or was already modified and had its bytes changed again while the run was in progress. A path merely modified beforehand and left alone — the evidence document under active work is the ordinary case — is context and is excluded. Nothing was reset, stashed or hidden`,
     });
   }
   if (reverted.length > 0) {
@@ -815,7 +910,7 @@ function compareWorktree(before, after, problems) {
     dirtyBeforeVerification: [...start.keys()].sort(),
     changedByVerification: caused,
     revertedByVerification: reverted,
-    note: 'sampled before and after the run; a file already modified beforehand is context, not a mutation caused by verifying',
+    note: 'sampled before and after the run, by status and by content digest; a file already modified beforehand and left alone is context, while one whose bytes change during the run is a mutation caused by verifying even if it was already dirty',
   };
 }
 

@@ -1902,7 +1902,15 @@ hashes: hours on one commodity GPU, days on a CPU. It is an afternoon, not a
 theoretical bound. At 32 hex = 128 bits the chosen-target search is ~2^128, the
 bound SHA-256's own second-preimage resistance rests on, and the birthday search
 is ~2^64. Nothing outside this repository consumes these identifiers yet, so
-this was the cheapest moment the change will ever have. Both properties that
+this was the cheapest moment the change will ever have.
+
+**This was measured, not estimated.** The parallel adversarial probe built the
+attack rather than bounding it, and at 48 bits it constructed **three collisions
+between grammatical, Accordo-style acceptance criteria in 103 seconds on one
+core**. The hole was reachable in under two minutes by anyone who controls the
+wording of an acceptance check, who could then land a new criterion on an
+existing requirement's id and inherit its evidence. The widening was not
+precautionary, and a measured attack cost is the number to cite. Both properties that
 made the derivation worth having are unchanged: rewording a criterion changes
 its id, and two identical criteria still collide and are still refused.
 
@@ -2013,3 +2021,69 @@ every report. `solutionPlanContract: 1` is untouched. PROVE is still partial,
 and the fixture does not move it: the condition remains a checked-in,
 **declared-current** plan whose `solution verify` exits 0, and the fixture is
 neither declared-current nor a product claim.
+
+### Addendum 2 — what the second review pass changed
+
+The parallel adversarial probe re-ran against the post-fix head. It confirmed
+two things addendum 1 had left open, and found one thing addendum 1 had wrong.
+
+**Confirmed.** `blocked` short-circuiting cannot skip the category floor: the
+floor is computed before the short-circuit, so `EVIDENCE_CATEGORY_BELOW_FLOOR`
+still fires and `enforcedCategory` is still published on a blocked row, and a
+fully-blocked plan yields `verified: 0` and exit 1. And the execution cost is
+bounded rather than weaponisable: whether to run `project verify` is a single
+boolean, so forty `project.verification` citations cost exactly one suite run,
+and a document naming one scenario over the cap fails closed at **zero**
+authority executions. High amplification ratio, fixed ceiling.
+
+**Wrong, and now fixed: a delegate that rewrote an *already-dirty* file was
+invisible.** `compareWorktree()` compared `git status --porcelain` status codes
+per path. That is strictly better than comparing paths alone — it is what
+catches a file the operator had modified and a delegate then deleted — but a
+path that is ` M` before the run and ` M` after reads as unchanged *whatever
+happened to its bytes*:
+
+```text
+clean before:  changedByVerification ["src.js"]   VERIFICATION_DIRTIED_WORKTREE   exit 1
+dirty before:  changedByVerification []           no problem                      exit 0
+```
+
+So the rule this contract states — pre-existing changes are context, changes
+caused *during* verification are failures — held for a created file and for the
+first modification of a clean one, and **failed for the second modification of
+an already-dirty one**. That is the likeliest shape in the only situation that
+matters: a coding agent working in a tree it has already touched. It could not
+forge a statement about a requirement, so it was never a merge blocker; it made
+a stated guarantee false, which under this repository's own rule is a defect of
+the same kind as a missing check.
+
+Each dirty path now carries a **content mark** beside its status — the SHA-256
+of its bytes, or an explicit non-digest marker (`absent`, `outside`,
+`nonfile:…`, `big:<size>:<mtime>`, `unreadable`). The mark never enters the
+report or any fingerprint; it exists only to be compared with itself one moment
+later. It is bounded at 8 MB per file and 128 MB per run, above which a path
+degrades to size-and-modification-time — an ordinary rewrite still moves both,
+and a same-size same-mtime rewrite of an oversized file is the residual.
+Published as `WORKTREE_CONTENT_SAMPLING_IS_BOUNDED`.
+
+**Two limits named rather than built**, deliberately, because each is a
+semantics change and this milestone has had enough of those:
+
+- `NO_TIME_BOUND_OF_ITS_OWN` — this command sets no timeout, deadline or
+  cancellation of its own. Every child it causes is spawned by `project verify`
+  or `scenario run`, which bound their own children in time, output and process
+  group, so the isolation is **inherited rather than absent** — but a delegate
+  that never returns hangs this command with it, and there is no watchdog here.
+- `AUTHORITY_REFUSAL_UNDER_A_DOWNGRADE_IS_NOT_RESTATED` — the `unverifiable`
+  status catches *authority did not run*. It does not catch *authority ran and
+  refused*: with `EVIDENCE_OBSERVATION_FAILED`, `EVIDENCE_OBSERVATION_MOVED` or
+  `EVIDENCE_SOURCE_HASH_MISMATCH` under an author's `blocked` or `partial`, the
+  row's status and reason are the author's, and the machine's verdict survives
+  in `problems[]` and on the evidence entry. It is the same substitution one
+  step further out. It can never raise a status or reach exit 0. Extending
+  `unverifiable` to cover it is deferred to a later contract version.
+
+`implementationEvidenceVocabulary()` also gains the `executableContent` honesty
+entry that `solutionPlanVocabulary()` already published — what the scan is
+applied to, what it is not applied to, that it is **not** the boundary, what the
+boundary actually is, and its measured misses and false positives.

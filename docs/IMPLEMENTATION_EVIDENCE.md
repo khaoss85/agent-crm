@@ -114,8 +114,10 @@ rewrite**. ADR-031 records the comparison.
 **32 hex = 128 bits**, not 12. The wording of an acceptance check is authored by
 a coding agent, and an agent that can propose wording can search wording, so the
 bound that matters is a *chosen* collision — landing a new criterion on an id
-another criterion's evidence already names. At 48 bits that is ~2^48 hashes:
-hours on one commodity GPU. ADR-031 addendum 1 records the numbers.
+another criterion's evidence already names. This was measured rather than
+argued: at 48 bits, **three collisions between grammatical, Accordo-style
+acceptance criteria were constructed in 103 seconds on one core**. ADR-031
+addenda 1 and 2 record the numbers.
 
 The cost is deliberate and is the behaviour we want: **rewording an acceptance
 criterion changes its requirement id**, so evidence recorded against the old
@@ -334,15 +336,49 @@ processes are bounded in time, output and process group. That is isolation, and
 ## Dirty state
 
 DX5's semantics, imported rather than copied. The worktree is sampled before and
-after; a file already modified beforehand is **context**; a file that becomes
-dirty *during* verification is `VERIFICATION_DIRTIED_WORKTREE`; a file silently
-reverted is `VERIFICATION_REPAIRED_WORKTREE`; and nothing is ever reset, stashed
-or cleaned.
+after; a file already modified beforehand **and left alone** is **context**; a
+file whose bytes change *during* verification is
+`VERIFICATION_DIRTIED_WORKTREE`; a file silently reverted is
+`VERIFICATION_REPAIRED_WORKTREE`; and nothing is ever reset, stashed or cleaned.
 
 **The evidence document is routinely an uncommitted file under active work.** It
 is dirty before the run, so it lands in `dirtyBeforeVerification` and never in
 `changedByVerification`. That distinction is the entire reason both samples
 exist, and it is pinned by a test rather than assumed.
+
+### Status is not enough — each dirty path also carries a content digest
+
+`git status --porcelain` answers *how* a path differs from HEAD, not *what is in
+it*. Comparing status codes catches a file the operator had modified and a
+delegate then deleted, and it still cannot see the case underneath: a path that
+is ` M` before the run and ` M` after reads as unchanged **whatever happened to
+its bytes**. A delegate that rewrote a file the operator was already editing was
+therefore invisible, and the run went green (ADR-031 addendum 2).
+
+```text
+clean before:  changedByVerification ["src.js"]   VERIFICATION_DIRTIED_WORKTREE   exit 1
+dirty before:  changedByVerification []           no problem                      exit 0   ← the hole
+```
+
+So each dirty path also carries a **content mark**: the SHA-256 of its bytes, or
+an explicit non-digest marker (`absent`, `outside`, `nonfile:…`,
+`big:<size>:<mtime>`, `unreadable`). The mark never enters the report or any
+fingerprint — it exists only to be compared with itself one moment later, which
+is why two runs of an unchanged project are still byte-identical.
+
+It is **bounded**: 8 MB per file, 128 MB across the run, above which a path
+degrades to size-and-modification-time. An ordinary rewrite still moves both; a
+same-size, same-mtime rewrite of an oversized file is the residual, published as
+`WORKTREE_CONTENT_SAMPLING_IS_BOUNDED`.
+
+### What this command does not bound
+
+`NO_TIME_BOUND_OF_ITS_OWN`. This command sets no timeout, deadline or
+cancellation. Every child process it causes is spawned by `project verify` or
+`scenario run`, and those bound their own children in time, output and process
+group — so the isolation is **inherited rather than absent**. The honest
+statement of the residual: a delegate that never returns hangs this command with
+it, and there is no watchdog here that would cut it short.
 
 ## Two worked consumers
 

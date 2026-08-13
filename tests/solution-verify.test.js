@@ -7,13 +7,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  MAX_SCENARIO_RUNS, REQUIREMENT_STATUSES, SOLUTION_VERIFICATION_CONTRACT, VERIFY_DEPTH_ENV,
+  MAX_SCENARIO_RUNS, MAX_WORKTREE_DIGEST_FILE_BYTES, MAX_WORKTREE_DIGEST_TOTAL_BYTES,
+  REQUIREMENT_STATUSES, SOLUTION_VERIFICATION_CONTRACT, VERIFY_DEPTH_ENV,
   semanticFingerprint, solutionVerifyCommand,
 } from '../packages/cli/src/solution-verify-command.js';
 import {
   fingerprintPlan, inspectionFingerprint, planRequirements, validateSolutionPlan,
 } from '../packages/core/src/solution-plan.js';
-import { effectiveRequirementCategory } from '../packages/core/src/implementation-evidence.js';
+import { EVIDENCE_LIMITATIONS, effectiveRequirementCategory } from '../packages/core/src/implementation-evidence.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -1233,4 +1234,94 @@ test('the checked-in verifier fixture reaches exit 0 through the real command', 
 
   // And it promotes nothing, exactly like every other report.
   assert.equal(report.promotion.performed, false);
+});
+
+// ---------------------------------------------------------------------------
+// REVIEW-71 follow-up. `git status --porcelain` answers *how* a path differs
+// from HEAD, not *what is in it*. A path that is ` M` before the run and ` M`
+// after reads as unchanged whatever happened to its bytes, so a delegate that
+// rewrote a file the operator was already editing was invisible and the run
+// went green. That made the stated rule false: it held for a created file and
+// for the first modification of a clean one, and failed for the second
+// modification of an already-dirty one — the likeliest shape in the only
+// situation that matters, an agent working in a tree it has already touched.
+// ---------------------------------------------------------------------------
+
+test('a delegate that rewrites an already-dirty file is caught, not hidden by an unchanged status code', async (t) => {
+  const plan = planDocument();
+  const root = demo(t, { plan });
+  mkdirSync(join(root, 'docs'), { recursive: true });
+  writeFileSync(join(root, 'docs/a.md'), 'the operator was here\n');
+
+  // Identical porcelain both samples: dirty before, dirty after, same status.
+  const git = () => ' M\tdocs/a.md';
+  const verify = async (options) => {
+    writeFileSync(join(root, 'docs/a.md'), 'a delegate silently rewrote this\n');
+    return verifyStub(CONFORMING_CHECKS)(options);
+  };
+  const { report } = await run(root, { verify, git });
+
+  assert.deepEqual(report.worktree.changedByVerification, ['docs/a.md'],
+    'the second modification of an already-dirty file is a mutation caused by verifying');
+  assert.ok(codes(report).includes('VERIFICATION_DIRTIED_WORKTREE'));
+  assert.deepEqual(report.worktree.dirtyBeforeVerification, ['docs/a.md'],
+    'and it is still reported as having been dirty beforehand');
+  // Nothing was repaired, reset or stashed — the delegate's bytes are still there.
+  assert.equal(readFileSync(join(root, 'docs/a.md'), 'utf8').trim(), 'a delegate silently rewrote this');
+  assert.deepEqual(report.worktree.revertedByVerification, []);
+});
+
+test('an already-dirty file nobody touched during the run stays context', async (t) => {
+  // The other half, and the one that must not regress: an evidence document
+  // under active work is dirty before and dirty after, and that is ordinary.
+  const plan = planDocument();
+  const root = demo(t, { plan });
+  mkdirSync(join(root, 'docs'), { recursive: true });
+  writeFileSync(join(root, 'docs/a.md'), 'work in progress\n');
+  const git = () => ' M\tdocs/a.md\n??\tplans/demo.evidence.json';
+  const { report } = await run(root, { verify: verifyStub(CONFORMING_CHECKS), git });
+  assert.deepEqual(report.worktree.changedByVerification, []);
+  assert.deepEqual(report.worktree.revertedByVerification, []);
+  assert.equal(codes(report).includes('VERIFICATION_DIRTIED_WORKTREE'), false);
+  assert.deepEqual(report.worktree.dirtyBeforeVerification, ['docs/a.md', 'plans/demo.evidence.json']);
+});
+
+test('a dirty path that vanishes, and one that resolves outside the project, are marks rather than reads', async (t) => {
+  const plan = planDocument();
+  const root = demo(t, { plan });
+  mkdirSync(join(root, 'docs'), { recursive: true });
+  writeFileSync(join(root, 'docs/gone.md'), 'here for now\n');
+  const git = () => ' M\tdocs/gone.md';
+  const verify = async (options) => {
+    rmSync(join(root, 'docs/gone.md'));
+    return verifyStub(CONFORMING_CHECKS)(options);
+  };
+  const { report } = await run(root, { verify, git });
+  // present → absent is a difference, even though the status column never moved.
+  assert.deepEqual(report.worktree.changedByVerification, ['docs/gone.md']);
+  assert.ok(codes(report).includes('VERIFICATION_DIRTIED_WORKTREE'));
+});
+
+test('the bound on content sampling is published rather than assumed', () => {
+  const limitation = EVIDENCE_LIMITATIONS.find((row) => row.code === 'WORKTREE_CONTENT_SAMPLING_IS_BOUNDED');
+  assert.ok(limitation, 'the sampling bound is a published limitation');
+  assert.match(limitation.message, /8 MB/);
+  assert.ok(MAX_WORKTREE_DIGEST_FILE_BYTES > 0 && MAX_WORKTREE_DIGEST_TOTAL_BYTES > MAX_WORKTREE_DIGEST_FILE_BYTES);
+});
+
+test('the two limits this milestone declines to build are named, not implied', () => {
+  const codesPublished = EVIDENCE_LIMITATIONS.map((row) => row.code);
+  // No timeout of its own: the isolation is inherited from DX5 and DX6, which
+  // bound their own children. Stated as inherited rather than as absent.
+  const time = EVIDENCE_LIMITATIONS.find((row) => row.code === 'NO_TIME_BOUND_OF_ITS_OWN');
+  assert.ok(time);
+  assert.match(time.message, /inherited rather than absent/);
+  assert.match(time.message, /hangs this command/);
+  // Authority-ran-and-refused under an author's downgrade: the machine's
+  // verdict is one level out from the row's own reason. It can never raise a
+  // status or reach exit 0, and extending `unverifiable` to it is deferred.
+  const refusal = EVIDENCE_LIMITATIONS.find((row) => row.code === 'AUTHORITY_REFUSAL_UNDER_A_DOWNGRADE_IS_NOT_RESTATED');
+  assert.ok(refusal);
+  assert.match(refusal.message, /never raise a status or reach exit 0/);
+  assert.ok(codesPublished.includes('EXECUTABLE_TEXT_SCAN_IS_NOT_A_PARSER'));
 });
