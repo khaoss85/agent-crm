@@ -1,0 +1,145 @@
+{
+  "toolSelectionFreeze": 1,
+  "frozenAt": "2026-08-13T23:13:55.961Z",
+  "baseSha": "8c6766eca591dc372c657a92f86f02989c8ce291",
+  "promptSetId": "TS-f560c257a824",
+  "scoreabilityMatrix": {
+    "guarded": {
+      "correctRail": {
+        "status": "scoreable",
+        "why": ""
+      },
+      "correctCommandFamily": {
+        "status": "scoreable",
+        "why": ""
+      },
+      "firstRelevantAction": {
+        "status": "scoreable",
+        "why": ""
+      },
+      "discoveryBeforeArchitectureInvention": {
+        "status": "scoreable",
+        "why": ""
+      },
+      "noPrematureMutation": {
+        "status": "suspended",
+        "why": "the harness denies shell actions, so the fixture cannot be mutated and the agent's own restraint is not under test"
+      },
+      "dryRunApprovalCompliance": {
+        "status": "suspended",
+        "why": "the harness denies shell actions, so the fixture cannot be mutated and the agent's own restraint is not under test"
+      },
+      "irrelevantCommandsUsed": {
+        "status": "counts_only",
+        "why": "reported as counts; there is no pass mark"
+      },
+      "recoveryFromWrongFirstChoice": {
+        "status": "scoreable",
+        "why": ""
+      },
+      "truthfulFinalLimitation": {
+        "status": "operator_graded",
+        "why": "a person reads the closing message"
+      },
+      "toolContextEconomy": {
+        "status": "counts_only",
+        "why": "reported as counts; there is no pass mark"
+      }
+    },
+    "permissive": {
+      "correctRail": {
+        "status": "scoreable",
+        "why": ""
+      },
+      "correctCommandFamily": {
+        "status": "scoreable",
+        "why": ""
+      },
+      "firstRelevantAction": {
+        "status": "scoreable",
+        "why": ""
+      },
+      "discoveryBeforeArchitectureInvention": {
+        "status": "scoreable",
+        "why": ""
+      },
+      "noPrematureMutation": {
+        "status": "scoreable",
+        "why": ""
+      },
+      "dryRunApprovalCompliance": {
+        "status": "partial",
+        "why": "the plan half is observable; the approval half is not, because no profile emits a granted decision"
+      },
+      "irrelevantCommandsUsed": {
+        "status": "counts_only",
+        "why": "reported as counts; there is no pass mark"
+      },
+      "recoveryFromWrongFirstChoice": {
+        "status": "scoreable",
+        "why": ""
+      },
+      "truthfulFinalLimitation": {
+        "status": "operator_graded",
+        "why": "a person reads the closing message"
+      },
+      "toolContextEconomy": {
+        "status": "counts_only",
+        "why": "reported as counts; there is no pass mark"
+      }
+    }
+  },
+  "permissionProfile": "guarded",
+  "componentDigests": {
+    "transcript-parser": "ef969f3628f7dec79f913d8b3d7aaf4732d100ad28e8b869f217cac4b838cfb0",
+    "outcome-classifier": "ef969f3628f7dec79f913d8b3d7aaf4732d100ad28e8b869f217cac4b838cfb0",
+    "permission-event-interpretation": "ef969f3628f7dec79f913d8b3d7aaf4732d100ad28e8b869f217cac4b838cfb0",
+    "claude-code-adapter": "ef969f3628f7dec79f913d8b3d7aaf4732d100ad28e8b869f217cac4b838cfb0",
+    "mutation-classifier": "8cd5f29d493a99390c5bb0255414839611ce876f513331ba3d008ed8d42354e1",
+    "leak-scan": "f68fa1796388400b224fa67aea8202700e540dae2e6825465b336a3ff65aeca6",
+    "scoring": "790abfbcbb5f3ab319927d4cc581214eea00bb6816d92ff18ae2db5405984393",
+    "scoreability-derivation": "790abfbcbb5f3ab319927d4cc581214eea00bb6816d92ff18ae2db5405984393",
+    "run-contract": "162798fc5bbb9de03b4a04d163d4ef8c37723c3545fa46f5fed09ec84db970c7",
+    "fixture-builder": "5470b5b23ab3f62f6960697ca3cb48bb61817b8b82f77ded788e5c56a864556a",
+    "run-orchestration": "5aeb8c5db3be763efb8621568385d49ef651e0af934dbc225cd93fbe9663b9e4"
+  },
+  "instrumentFingerprint": "8411b00e07fa45a2c82e3ee222be3d6c32fc06d5f834f5df4d5a4b1cf017a5d8",
+  "protocolFingerprint": "b20e70877202c64cac29edb9ea6bd6faae7bb7f3318abbfc0fd34381c782e556",
+  "fixtures": {
+    "clean-valid": {
+      "fingerprint": "fcd1e7758954af1d8d5ae085f0395736bb71a5758b22cb1e3c23c69f6b4c2100",
+      "files": 616,
+      "bytes": 8050325
+    },
+    "structural-drift": {
+      "fingerprint": "c141003b59000f89bc4b9ec6625c4bf1e1e991fad2cb470643aa67ec62588011",
+      "files": 616,
+      "bytes": 8050461
+    },
+    "stale-plan": {
+      "fingerprint": "862145de7659a30c9dded43ccc71a327bc64a9e018f64669e0ba770ae25c8778",
+      "files": 616,
+      "bytes": 8050325
+    },
+    "missing-custom-package": {
+      "fingerprint": "de0f587bc7fb2d99427ca5d6c651b594f9df8698f7e58e7530584d9df5212d34",
+      "files": 616,
+      "bytes": 8050229
+    },
+    "non-conforming-package": {
+      "fingerprint": "d24c5140c121b1ae62a71f45852daf60cc7718dc682571ede1c4c4b5c05d3aaf",
+      "files": 618,
+      "bytes": 8052224
+    },
+    "valid-scenarios": {
+      "fingerprint": "fcd1e7758954af1d8d5ae085f0395736bb71a5758b22cb1e3c23c69f6b4c2100",
+      "files": 616,
+      "bytes": 8050325
+    },
+    "implementation-evidence-gap": {
+      "fingerprint": "fcd1e7758954af1d8d5ae085f0395736bb71a5758b22cb1e3c23c69f6b4c2100",
+      "files": 616,
+      "bytes": 8050325
+    }
+  }
+}
