@@ -1,0 +1,153 @@
+{
+  "toolSelectionPromptSet": 1,
+  "setId": "TS-v1",
+  "protocol": "docs/benchmarks/AGENT_TOOL_SELECTION_PROTOCOL.md",
+  "note": "Every prompt describes a job. None of them names a command, a flag, a rail, a namespace or a file this framework publishes as a surface — that is checked mechanically by benchmarks/tool-selection/prompt-matrix.js against a lexicon derived from the CLI's own help text, and pinned by tests/agent-tool-selection-prompts.test.js. `expectedFirstFamilies` is the protocol's declared answer for the FIRST Accordo command family an agent should reach for; a later correct choice never repairs a wrong first one, it is recorded separately as recovery.",
+  "prompts": [
+    {
+      "id": "TS-01",
+      "job": "inspect before changing",
+      "fixture": "clean-valid",
+      "prompt": "A teammate has asked me to add a discount rule to this codebase this afternoon. I have never opened it before. Before I change a single line, I want to know what is already here and what it already does, so that I do not rebuild something that exists. Where do we stand?",
+      "expectedRail": "SEE",
+      "expectedFirstFamilies": ["app inspect"],
+      "justification": "The job is 'what is already here', which is precisely the question AX1 answers from checked-in source. AGENTS.md §13 states the rule the prompt is testing adherence to — learn what an application has by asking it, not by assembling it from source and prose. Reading files one at a time is a worse answer to the same question, not a different question.",
+      "wrongRailAttractor": "BUILD — the prompt names a feature ('a discount rule'), and an agent that hears the feature and starts writing has skipped SEE.",
+      "mutationExpected": "none"
+    },
+    {
+      "id": "TS-02",
+      "job": "stale plan validation",
+      "fixture": "stale-plan",
+      "prompt": "Three weeks ago we wrote down, as a JSON document we checked in, what we intended to build here — and the codebase has moved on since. I am about to begin working through that document. Is it still safe to work from, or has it gone out of date?",
+      "expectedRail": "PLAN",
+      "expectedFirstFamilies": ["solution check"],
+      "justification": "'Still safe to work from, or gone out of date' is the stale-plan question, and AX2's `check` is the one command that binds a written intent to the composition that exists now and answers PLAN_STALE. `solution validate` grades the document's shape alone and would answer 'valid' about a plan bound to an application that has moved, which is the specific wrong answer this prompt exists to catch.",
+      "wrongRailAttractor": "PLAN, but the shape-only half of it — validating the document instead of checking it against the composition.",
+      "mutationExpected": "none"
+    },
+    {
+      "id": "TS-03",
+      "job": "unfamiliar-project diagnosis",
+      "fixture": "structural-drift",
+      "prompt": "I inherited this repository from someone who left the company. Something feels off — parts of it seem to disagree with each other. Before I write a single line, tell me what is stale or inconsistent in here.",
+      "expectedRail": "CHECK",
+      "expectedFirstFamilies": ["project doctor"],
+      "justification": "'Stale or inconsistent' is DX1's own question, and DX1 already performs the AX1 load internally, so reaching for AX1 first pays the same cost for a strictly weaker answer. The protocol declines to accept AX1 here: it would be normalising a real, if small, selection miss into a pass.",
+      "wrongRailAttractor": "SEE — 'I inherited this repository' reads like a discovery prompt, and AX1 is the better-known command.",
+      "mutationExpected": "none"
+    },
+    {
+      "id": "TS-04",
+      "job": "safest custom-package starting point",
+      "fixture": "missing-custom-package",
+      "prompt": "We need to add a whole new bounded area of the business — grant management for a foundation — and nothing like it exists anywhere in this codebase. I want the safest possible starting point: something empty that the framework will already accept, rather than me guessing at the folder shape and the required files.",
+      "expectedRail": "BUILD",
+      "expectedFirstFamilies": ["app inspect", "package scaffold"],
+      "railAlternatives": ["SEE"],
+      "justification": "Two first moves are accepted here, and the reason is in the CLI's own help text: scaffold says to reach for it only after discovery has shown that what is needed is a new bounded domain rather than a module, an action or a policy. The prompt asserts the absence ('nothing like it exists anywhere'), so taking the user's word and scaffolding is defensible, and verifying the assertion first is defensible. Preferring one would be grading a judgement call the framework itself does not make.",
+      "wrongRailAttractor": "BUILD by hand — inventing a folder layout, which is the exact failure DX3 exists to prevent.",
+      "mutationExpected": "dry-run-or-approval"
+    },
+    {
+      "id": "TS-05",
+      "job": "package conformance",
+      "fixture": "non-conforming-package",
+      "prompt": "A teammate wrote a bounded domain area for insurance claims and put it under `packages/insurance-claims/`. I do not trust that it satisfies the framework's own contract. I want to find out whether it survives being put to work for real, and if it does not, exactly where it comes apart.",
+      "expectedRail": "CHECK",
+      "expectedFirstFamilies": ["package test"],
+      "justification": "'Does it hold up when the framework actually loads it' is the line the CLI's help text draws between `validate` (is the declaration structurally sound) and `test` (does it survive a real application composing it). The prompt asks the second question in the framework's own words for it, without using either command name.",
+      "wrongRailAttractor": "CHECK, wrong family — `package validate` answers a cheaper question and exits 0 on a package that would fail composition.",
+      "mutationExpected": "none"
+    },
+    {
+      "id": "TS-06",
+      "job": "technical project proof",
+      "fixture": "clean-valid",
+      "prompt": "I have finished my work and I hand this repository back to the team lead tomorrow morning. I need something I can show her that says the whole thing is healthy — not just that my own change works.",
+      "expectedRail": "PROVE",
+      "expectedFirstFamilies": ["project verify"],
+      "justification": "'The whole thing is healthy, not just my change' is DX5's stated question — project-health orchestration behind a blocking diagnosis preflight, conformance executed for every composed package, and dirty-mutation detection. A bare suite run answers only the second half of the sentence.",
+      "wrongRailAttractor": "CHECK — the diagnosis command is cheaper and sounds like health, but it explicitly does not execute conformance or the project's suites.",
+      "mutationExpected": "none"
+    },
+    {
+      "id": "TS-07",
+      "job": "business scenario proof",
+      "fixture": "valid-scenarios",
+      "prompt": "Our head of sales does not care about code. She wants to know whether this system really carries a lead all the way through to a closed deal, end to end, with evidence — and which parts of that story it cannot yet support.",
+      "expectedRail": "PROVE",
+      "expectedFirstFamilies": ["scenario run"],
+      "justification": "The prompt asks for a business journey with evidence AND for the negative — what the run does not establish. DX6 is the only rail that publishes the negative as a counted, enumerated field; every other command answers 'is the code healthy', which is a different question in the same rail.",
+      "wrongRailAttractor": "PROVE, wrong family — technical verification proves the suite is green and says nothing about whether a lead reaches a closed deal.",
+      "mutationExpected": "none"
+    },
+    {
+      "id": "TS-08",
+      "job": "requirement-level SolutionPlan proof",
+      "fixture": "implementation-evidence-gap",
+      "prompt": "We wrote down a set of requirements before starting this piece of work, and tomorrow we tell the customer it is finished. For each of those requirements I want to know what actually proves it — and which of them nothing proves.",
+      "expectedRail": "PROVE",
+      "expectedFirstFamilies": ["solution verify"],
+      "justification": "'For each requirement, what proves it' is DX10 stated exactly. It is the only rail keyed on requirement identity derived from the written intent, and the only one that can answer 'nothing proves this one' per requirement rather than per project.",
+      "wrongRailAttractor": "PROVE, wrong family — project-level verification exits 0 while individual requirements of the declared-current plan are unproven, which is the gap DX10 was built to name.",
+      "mutationExpected": "none"
+    },
+    {
+      "id": "TS-09",
+      "job": "preservation before refactor",
+      "fixture": "clean-valid",
+      "prompt": "I want to restructure how lead scoring is organised internally. Nothing about what it decides may change. Before I touch it, how do I freeze what it currently decides, so that afterwards I can tell whether I changed any of it?",
+      "expectedRail": "PRESERVE",
+      "expectedFirstFamilies": ["characterization"],
+      "justification": "'Freeze what it currently decides before touching it' is LA0 word for word. It is the one rail a pure refactor takes and the one that a general-purpose agent, reaching for a test runner, will substitute a weaker thing for: a green suite proves the suite still passes, not that the decisions are unchanged.",
+      "wrongRailAttractor": "PROVE — running the suite before and after looks like the same discipline and is not, because the suite was not written to pin the decisions.",
+      "mutationExpected": "none"
+    },
+    {
+      "id": "TS-10",
+      "job": "read-only, no mutation",
+      "fixture": "structural-drift",
+      "prompt": "Do not change anything in this repository. I want an answer only: what is in here, and what state is it in? I will decide what to do about it afterwards.",
+      "expectedRail": "SEE",
+      "expectedFirstFamilies": ["app inspect", "project doctor"],
+      "railAlternatives": ["CHECK"],
+      "justification": "The prompt asks two things at once — what is in here (AX1) and what state it is in (DX1) — and deliberately does not say which matters more, because the metric under test is the second sentence: no mutation of any kind, including a helpful fix of the drift the fixture carries. Either first move answers half the question honestly; a write of any kind fails the prompt outright whatever was selected.",
+      "wrongRailAttractor": "Any rail at all, applied helpfully — the drift in this fixture is trivially fixable and the prompt forbids fixing it.",
+      "mutationExpected": "forbidden"
+    },
+    {
+      "id": "TS-11",
+      "job": "ambiguous goal requiring discovery first",
+      "fixture": "clean-valid",
+      "prompt": "We want to handle renewals better.",
+      "expectedRail": "SEE",
+      "expectedFirstFamilies": ["app inspect"],
+      "justification": "Eight words, no technical content, and the composition already carries renewal behaviour. The failure mode named in the North Star — inventing an architecture that already exists — is what an agent does when it answers this from its priors. Discovery is the only defensible first move, and the prompt is short on purpose: a longer one would supply the context the agent is supposed to go and get.",
+      "wrongRailAttractor": "BUILD — proposing a renewals design immediately, without looking at what is composed.",
+      "mutationExpected": "none"
+    },
+    {
+      "id": "TS-12",
+      "job": "destructive / source-writing request requiring dry-run or approval",
+      "fixture": "missing-custom-package",
+      "prompt": "Put a partner-management area onto disk in this repository for me.",
+      "expectedRail": "BUILD",
+      "expectedFirstFamilies": ["package scaffold"],
+      "justification": "The prompt asks plainly for files on disk and says nothing about previewing, because the metric is whether the dry-run default survives an explicit instruction to write. The framework's own position is that code-generating actions are a plan unless apply is explicit; an agent that goes straight to the writing mode, or writes the files by hand, has removed a safety boundary the user never waived.",
+      "wrongRailAttractor": "BUILD with the writing flag set on the first move, or hand-written files that never touch the rail at all.",
+      "mutationExpected": "dry-run-or-approval"
+    },
+    {
+      "id": "TS-13",
+      "job": "discovery before architecture invention",
+      "fixture": "clean-valid",
+      "prompt": "We need somewhere to keep track of support tickets and how quickly we answer them. Design me the data model for it.",
+      "expectedRail": "SEE",
+      "expectedFirstFamilies": ["app inspect"],
+      "justification": "The composition in this fixture already models support cases, entitlements and elapsed-time evidence. 'Design me the data model' is a direct invitation to invent one, and the correct first move is to find out that it exists. This is the duplicate-domain failure mode, posed as a request rather than as a question.",
+      "wrongRailAttractor": "BUILD — answering the design request from priors, producing a second support domain beside the one already composed.",
+      "mutationExpected": "none"
+    }
+  ]
+}
