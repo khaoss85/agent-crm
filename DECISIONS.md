@@ -687,7 +687,7 @@ commands is the same mistake wearing a different name.
    recommendation names the ids it follows from, and every citation must
    resolve — forward or backward, because order in the file does not decide
    validity.
-6. **A plan is bound to a real AX1 report.** `crm solution check` re-runs the
+6. **A plan is bound to a real AX1 report.** `accordo solution check` re-runs the
    inspection and reports `PLAN_STALE` naming the specific difference — a
    package version, a capability that stopped resolving, a record revision — and
    `CAPABILITY_NOT_AVAILABLE` for a step that needs something this application
@@ -723,7 +723,7 @@ than no hash: a reader trusts it, and it proves nothing.
 
 It is replaced by `inspectionFingerprint`, a SHA-256 over the canonical AX1
 report, derived by `inspectionFingerprint(report)` and recomputed by
-`crm solution check` from the live project. `validate` refuses anything that is
+`accordo solution check` from the live project. `validate` refuses anything that is
 not a 64-character hex digest, so a label cannot occupy the slot at all, and
 `check --json` publishes the live value so an author can record it honestly.
 
@@ -812,7 +812,7 @@ exactly as Delivery opens Contract Activation's `delivery-obligations@1` today.
    declare, not through an ambient context key. The measurement is what makes
    this cheap: the ambient key is handed to every action and read by **no**
    action outside Intelligence's own four, which move into the package anyway.
-5. **AX1 representation.** The dependency becomes an edge `crm app inspect`
+5. **AX1 representation.** The dependency becomes an edge `accordo app inspect`
    reports, a Solution Plan can cite and bind, and `crm package test` enforces.
    The fixed `intelligence` composition slot is retired in favour of ordinary
    package discovery; see `INTELLIGENCE_PACKAGE_TARGET.md`.
@@ -943,7 +943,7 @@ terms they choose, which is the point of generating it.
 **Context.** `docs/strategy/CRM_BUILD_BENCHMARK.md` defines six gates, of which
 two — G5 (deployed smoke check) and G6 (trace/audit inspectable on a deployed
 instance) — require a public deployment. This framework has no authentication,
-tenancy or RBAC, and `crm app inspect` reports `productionPosture: "local
+tenancy or RBAC, and `accordo app inspect` reports `productionPosture: "local
 development only"`. Running G5 and G6 honestly would mean exposing an
 unauthenticated CRM on the public internet in order to earn 25 points, which is
 not a benchmark result — it is a security incident with a score attached.
@@ -1704,3 +1704,386 @@ the unenforceable-foreign-key limitation is published rather than papered over);
 and **curated Activity rather than an audit projection** (the event bus still
 dispatches after commit, so a projection would still either escape the
 originating transaction or need a Jobs/Outbox that does not exist).
+
+## ADR-031 — Requirement identity is derived from the plan, and an evidence document may point at proof but never declare it
+
+**Status:** accepted.
+
+**Context.** DX5 proves a project is healthy. DX6 proves which business jobs a
+checkout earns. AX2 proves a plan is a valid document still true of an
+application. None of them can answer the question a coding agent is actually
+asked at the end of a piece of work — *is the plan finished* — and this
+repository has a worked demonstration of the gap rather than a hypothetical one:
+`examples/solution-plans/lead-to-won.plan.json` is the one plan `package.json`
+declares **current**, `accordo solution check` exits 0 on it, `accordo project doctor`
+grades it `passed`, `accordo project verify` is green, both scenarios pass, and four
+of its six requirements are not implemented. Every authority in the repository is
+satisfied and the plan is not built.
+
+Closing that needs two things this repository did not have, and each is a
+decision rather than a mechanism.
+
+**The first: a requirement needs an identity, and one of the two kinds has none.**
+A plan already carries stable, unique, duplicate-refused ids for
+`decisions[].id`, `steps[].id` and every `evidence.<category>[].id`, plus a
+plan-wide `fingerprint` and a derived `application.inspectionFingerprint`.
+`acceptance.checks[]` is an array of **bare strings**. So the inventory is one
+gap, not a missing identity model, and the temptation was to fill it by widening
+the contract.
+
+Two options, compared rather than assumed:
+
+| | Explicit — accept `{id, statement}` in `acceptance.checks[]` | Derived — content-address the statement |
+|---|---|---|
+| change to `solutionPlanContract: 1` | a new accepted shape, new validation, a new normalized form | **none at all** |
+| plans already checked in | keep working, gain no id, need editing to get one | **addressable immediately, unedited** |
+| plan fingerprints | a new shape means new plans hash differently from old ones for the same words | **not one byte moves** |
+| migration | every historical plan eventually rewritten, or two forms forever | **none needed** |
+| rewording a criterion | the id survives, and the evidence silently survives with it | the id changes, and the evidence must be re-examined |
+| reordering the list | survives | survives — content-addressed, not positional |
+
+**Decision 1. Requirement identity is derived, and adds nothing to the Solution
+Plan contract.** A requirement is a plan **step** or an **acceptance check**.
+A step reuses the id its author already wrote — `step:<stepId>` — because
+minting a second name for a thing that already has one is how a repository ends
+up with two identifier systems. An acceptance check is
+`check:<first 12 hex of sha256 over its statement>`. `planRequirements()` lives
+in `packages/core/src/solution-plan.js` beside the plan it describes, is
+published by `solution inspect|validate|check --json` **outside** the `plan`
+object so no fingerprint moves, and is pinned by a test asserting that every
+checked-in plan still hashes to the value in its own file.
+
+The one real cost is accepted deliberately: **rewording an acceptance criterion
+changes its requirement id**, so evidence recorded against the old wording reads
+as unevidenced rather than carrying over to a criterion nobody re-examined. Two
+identical statements in one plan collide, and the collision is refused
+(`PLAN_REQUIREMENT_DUPLICATE`) rather than resolved — one requirement must not
+stand for two.
+
+An **artifact is not a requirement**, and neither is a JTBD row. `artifacts[]`
+names a place a step intends to produce a file; treating a declared path as a
+requirement is "the file exists, therefore it is done" wearing a contract, which
+is the inference this rung exists to refuse. A JTBD row is DX6's unit and a
+person's decision under `docs/QUALITY_GATES.md` §3.
+
+**The second: who gets to say a requirement is met.** Three shapes were
+considered.
+
+*Source and git heuristics* — match changed paths against the plan's declared
+artifacts, match test filenames against requirement text. **Rejected as a
+complete solution**: an empty file at the declared path scores identically to a
+working one, a rename scores zero while the behaviour is present, and a test
+*file* existing says nothing about whether that test ran. It survives as one
+evidence kind, content-hashed, with a hard rule attached.
+
+*An agent-authored checklist* — a status per requirement with a prose
+justification. **Rejected**: it reproduces the self-report, which is the failure
+mode. A green checklist written by the agent that wrote the code, read by
+nobody holding independent facts, is indistinguishable from an honest one.
+
+**Decision 2. A checked-in evidence document declares *where to look*; a
+deterministic verifier decides *what is true*, from authorities that ran in the
+same invocation.** `implementationEvidenceContract: 1` has **no status field
+anywhere**. A requirement carries a category and a list of pointers. The only
+shapes an author may add are **downgrades** — `blocked` and `partial`, each with
+a mandatory reason, mutually exclusive, and unable to raise a status. An author
+may always say "this is less proven than it looks"; no author may say "this is
+more proven than the evidence shows". The document, like a Solution Plan and a
+scenario, is function-free by contract and refuses executable content through
+the same exported `EXECUTABLE_SHAPES`.
+
+Four consequences worth stating, because each was a live alternative:
+
+1. **There is no `test` evidence kind.** A test name is exactly the arbitrary
+   string the contract refuses: no authority here publishes which tests ran, so
+   citing one would be a claim dressed as a citation. `project.verification` on
+   `suite.verify` says the true, weaker thing.
+2. **There are no evidence-to-evidence citations.** An entry names an authority
+   and a fact, so a conclusion is not expressible as a premise and there is no
+   graph to keep acyclic. AX2 needed a citation DAG because its entries derive
+   from each other; recreating one here would be complexity with no failure
+   behind it.
+3. **Manual evidence is accepted and can never be proof.** A manual-only
+   requirement is `unverified`, forces a non-zero exit on its own, and publishes
+   `MANUAL_EVIDENCE_IS_NOT_PROOF`. Refusing it outright would make the browser
+   requirement *vanish* from the document, and a gap that is stated is part of
+   the deliverable while a gap that is omitted is a claim.
+4. **A step's decision type is a floor on its category, and the floor is what
+   the sufficiency rule is applied against** — not merely reported. A
+   `configure` step declared `structural` is graded as behavioural, because a
+   violation that still grades the weaker claim lets the label decide the
+   outcome. **The behavioural rule itself is keyed on the observation's kind,
+   read from DX6's report.** `file exists` never satisfies a behavioural requirement, and neither
+   does `action.present` — "the action is declared" is not "the application does
+   this". An author cannot relabel one as the other, because the kind does not
+   come from the document. Symmetrically, a purely structural requirement needs
+   no scenario: a record either is in the composition or is not, and requiring a
+   run to prove a schema would be the mirror error.
+
+**Decision 3. A plan's composition binding may be answered by a scenario, and it
+is derived rather than declared.** AX2's `inspectionFingerprint` names the
+application a plan was written against. In a project that is the project; in a
+*framework* repository whose root composes no domain package, the application a
+plan describes is the one a starter composes, and the only authority that
+produces that digest is DX6, which publishes it as
+`composition.compositionFingerprint`. So `solution verify` resolves the pinned
+digest against the authorities that actually ran — AX1 at the root first, then
+exactly one explicitly referenced scenario — and names which one answered. When
+the binding is a scenario, an `application.fact` reference is **refused**: the
+only full AX1 report in hand describes a different application, and answering a
+question with the wrong application's facts is the failure the rule prevents.
+
+**Exit 0 is forbidden while manual evidence remains required**, and a partial
+plan is never "verified with warnings": `partial`, `blocked`, `unevidenced`,
+`stale` and `unverified` each force exit 1 on their own.
+
+**What this does not decide.** It does not promote PROVE. DX10 exists and no
+checked-in plan in this repository is fully machine-verifiable, so nothing here
+exits 0 today; promoting the story because the command exists is the move this
+rung was built to stop. The condition is now machine-checkable rather than
+rhetorical: a checked-in, declared-current plan whose `solution verify` exits 0.
+It also decides nothing about MCP — `docs/architecture/AGENT_TOOL_SURFACE.md`
+maps `solution.verify` under the deferred Solution namespace as policy, and DX13
+remains unbuilt.
+
+### Addendum 1 — what the adversarial review changed
+
+The review (`.claude/skills/adversarial-review/SKILL.md`) found that four of
+this ADR's own guarantees were properties of a *reader* rather than of the
+contract, and one bound was argued from the wrong threat model. Each is
+corrected here rather than restated as a limitation, because a limitation
+paragraph that describes a hole is not a fix.
+
+**1. A declared category could choose the authority. Now it can only raise it.**
+The first cut let an evidence author declare an acceptance check's category, and
+that category selected the sufficiency rule. So a behavioural criterion labelled
+`structural`, cited with `source.artifact`, `action.present` or
+`package.composed`, reported **verified** with nothing having run — and the
+shipped limitation `REQUIREMENT_CATEGORY_IS_DECLARED` documented exactly that
+rather than closing it.
+
+The invariant is now stated as an invariant: **an author must never be able to
+raise a requirement's verification status by choosing a weaker category.** A
+requirement the plan does not *authoritatively* type falls to
+`UNTYPED_CATEGORY_FLOOR`, which is `behavioural`, and needs an authority that
+ran. That is every acceptance check under `solutionPlanContract: 1`, and also
+any step whose decision type does not resolve — the plan is authoritative only
+where it actually says something, and an unrecognised decision type says
+nothing. A declared category is still read and still published, and it may only
+move the grade in one direction: it may require *more* proof
+(`CATEGORY_STRENGTH`), or it may downgrade the result, which is what declaring
+`manual` does. The rule is a pure total function in core,
+`effectiveRequirementCategory()`, and the report publishes `category` and
+`enforcedCategory` side by side so nothing an author wrote is hidden.
+
+The cost is real and is not hidden: an acceptance criterion that is genuinely
+about project health — "the full verification suite passes from a clean clone" —
+can no longer be *verified* by citing `project.verification`, because nothing in
+`solutionPlanContract: 1` distinguishes that criterion from a behavioural one.
+It grades `unevidenced` with a reason, and `lead-to-won`'s only verified
+requirement was exactly that one. A false negative by construction is preferred
+to the false positive an author-chosen category produces.
+
+**The future option, recorded rather than taken.** The way to recover a typed
+criterion is a plan contract in which `acceptance.checks[]` carries its own
+type, at `solutionPlanContract: 2`. That is deliberately **not** done here:
+widening a frozen contract so a verifier goes greener is the move this rung
+exists to refuse, and it needs a migration story for every checked-in plan.
+`ACCEPTANCE_CHECKS_ARE_UNTYPED` publishes the gap in the meantime.
+
+**2. The requirement id was 48 bits. It is now 128.** `check:<12 hex>` was
+argued from birthday chance among the ~200 rows one plan may carry. That is the
+wrong threat model: the wording of an acceptance check is authored by a coding
+agent, and an agent that can propose wording can search wording. The bound that
+matters is a **chosen** collision — landing a new criterion on an id that
+another criterion's evidence already names, which makes an unevidenced criterion
+resolve against evidence written for a different one. At 48 bits that is ~2^48
+hashes: hours on one commodity GPU, days on a CPU. It is an afternoon, not a
+theoretical bound. At 32 hex = 128 bits the chosen-target search is ~2^128, the
+bound SHA-256's own second-preimage resistance rests on, and the birthday search
+is ~2^64. Nothing outside this repository consumes these identifiers yet, so
+this was the cheapest moment the change will ever have.
+
+**This was measured, not estimated.** The parallel adversarial probe built the
+attack rather than bounding it, and at 48 bits it constructed **three collisions
+between grammatical, Accordo-style acceptance criteria in 103 seconds on one
+core**. The hole was reachable in under two minutes by anyone who controls the
+wording of an acceptance check, who could then land a new criterion on an
+existing requirement's id and inherit its evidence. The widening was not
+precautionary, and a measured attack cost is the number to cite. Both properties that
+made the derivation worth having are unchanged: rewording a criterion changes
+its id, and two identical criteria still collide and are still refused.
+
+**3. "Function-free by contract" was true of the file and not of the API.**
+`validateImplementationEvidence` is exported core API and is not restricted to
+the `JSON.parse` path the CLI uses. Given a live object it read fields directly,
+so a getter on `blocked` or `category` was author-supplied code that the
+validator *ran* — in a contract whose whole claim is that it runs nothing an
+author wrote. A `Proxy` was worse: a field was consulted twice, once by
+`Object.keys` for enumerability and once for its value, so the document that
+passed validation and the document that was fingerprinted need not have been the
+same document.
+
+`toPlainData()` now converts a document to plain data once, before any field is
+read for meaning. It refuses an accessor rather than invoking it; refuses a
+non-plain prototype, which takes `Date`, `Map`, `Set`, `RegExp`, a class
+instance and an object whose fields come from its prototype chain with it;
+refuses a symbol key, a function, a symbol, a `BigInt` and a non-finite number;
+refuses a cycle with a path rather than overflowing; and takes one snapshot of
+every own descriptor so every value is read exactly once. It lives in
+`packages/core/src/solution-plan.js` beside `EXECUTABLE_SHAPES` and
+`canonicalJson` — the module the plan, scenario and evidence contracts already
+share — so it is one more shared refusal rather than a third JSON contract.
+The plan and scenario validators have the same exposure on the same public-API
+path and are deliberately left alone: retrofitting two frozen contracts is a
+separate change.
+
+**4. The executable-text scan was described as the boundary. It is not.** It is
+a regex over English, and measured in both directions it misses `perl`, `ruby`,
+`make`, `docker`, `powershell`, `cmd.exe`, `kubectl`, `source`, `.` and a bidi
+override, while refusing ordinary acceptance prose — "`npm run verify` does not
+cover it", a URL in a sentence, "must render as `${amount}` text", "`rm -rf` is
+never run here". Those are the exact sentences a blocked or manual requirement
+needs, and pushing an author towards a vaguer reason is the worse outcome: a
+shell-shaped reason is inert, a vague one hides a gap.
+
+What makes the document safe to read is its **shape** — no command, script,
+effect, env or path-to-execute field exists at any level, unknown keys are
+refused, and nothing in this repository executes a string that came out of one.
+The scan stays as defence in depth on **pointer** fields and no longer applies
+to the three free-prose fields or to an author's limitation message; bounds and
+the control-character refusal still apply everywhere. Its measured limits are
+published as `EXECUTABLE_TEXT_SCAN_IS_NOT_A_PARSER`. The shared
+`EXECUTABLE_SHAPES` vocabulary is **not** changed, because it is frozen into two
+merged contracts.
+
+**5. A broken authority was reported as a business decision.** `grade()` applied
+the document's `blocked` downgrade before it asked whether the authorities that
+requirement depends on had run. So a requirement whose scenario produced no
+report was published as `blocked` carrying the author's business reason, when
+the true answer was that the machine did not run. A reader acts on those
+differently: one is a plan, the other is a re-run. The report now keeps three
+answers apart, and this is a contract rule rather than a convention:
+
+```text
+blocked        the business requirement is blocked; an author said so, with a reason
+unverifiable   an authority did not run; this says nothing about the work at all
+exit 2         the document is invalid, and carries no requirement rows to misread
+```
+
+`unverifiable` outranks every author-written downgrade, and the author's claim
+survives beside it as `declaredDowngrade` rather than as the verdict. Relatedly,
+only a document that could not be normalized *at all* used to stop before the
+fan-out; one that merely carried an unknown key normalized to something and then
+ran AX1, every referenced scenario and up to thirteen minutes of `project
+verify` against a document already known to be invalid. An invalid plan or
+evidence document now runs nothing.
+
+**6. A requirement could be verified from a run of a different application.** A
+scenario observation was looked up by scenario id and read out of the report
+without ever asking which application that scenario had composed. So a
+behavioural requirement of a plan bound to application A was `verified` by an
+observation from a scenario that composed application B — every observation
+passing, the code present, the `expects` string matching, and none of it about
+the application the plan was written against. An observation is now refused with
+`EVIDENCE_COMPOSITION_MISMATCH` unless the scenario's published
+`compositionFingerprint` equals the composition the plan is bound to. **One
+requirement, one application identity.**
+
+This lands on this ADR's own shipped evidence, and the honest outcome is kept
+rather than papered over: `lead-to-won.plan.json` binds to the repository root,
+which composes no domain package, while `scenario:lead-to-won` composes a
+starter into a directory of its own. Its starter-installation criterion was
+being verified across two application identities and is now refused. The
+citations are kept so the gap is machine-visible, and the document declares
+`NO_SCENARIO_COMPOSES_THIS_APPLICATION` — the same treatment
+`govern-delivery-change` already gets for having no evidence document at all.
+
+**7. The exit-0 arm had never run through the real command.** Every exit-0
+assertion injected its delegates. `examples/solution-plans/verifier-fixture-exit-zero.plan.json`
+and its evidence document are a **verifier fixture**: four requirements, every
+one graded behavioural at the untyped floor, every one answered by a runtime
+observation the shipped service scenario already publishes. It binds through
+`scenario:service-sla-escalation`, runs AX1 once and one scenario once, never
+touches `project verify`, and reaches exit 0 with an empty problems list in
+about six seconds. It is labelled a fixture in its file name and in both
+documents' limitations, and it claims no product coverage and no JTBD row.
+**Neither real plan was weakened**: both still exit 1, which is the true state
+of both.
+
+**What the addendum does not change.** No status field appears anywhere in
+`implementationEvidenceContract: 1`. There is still no `test` evidence kind
+(B16: no authority publishes which tests ran, so a test name would be a claim
+dressed as a citation, and it may only be reopened under a later contract
+version if such an authority appears). There is still no evidence-to-evidence
+citation, no write mode, no `--fix`, and `promotion.performed` is `false` on
+every report. `solutionPlanContract: 1` is untouched. PROVE is still partial,
+and the fixture does not move it: the condition remains a checked-in,
+**declared-current** plan whose `solution verify` exits 0, and the fixture is
+neither declared-current nor a product claim.
+
+### Addendum 2 — what the second review pass changed
+
+The parallel adversarial probe re-ran against the post-fix head. It confirmed
+two things addendum 1 had left open, and found one thing addendum 1 had wrong.
+
+**Confirmed.** `blocked` short-circuiting cannot skip the category floor: the
+floor is computed before the short-circuit, so `EVIDENCE_CATEGORY_BELOW_FLOOR`
+still fires and `enforcedCategory` is still published on a blocked row, and a
+fully-blocked plan yields `verified: 0` and exit 1. And the execution cost is
+bounded rather than weaponisable: whether to run `project verify` is a single
+boolean, so forty `project.verification` citations cost exactly one suite run,
+and a document naming one scenario over the cap fails closed at **zero**
+authority executions. High amplification ratio, fixed ceiling.
+
+**Wrong, and now fixed: a delegate that rewrote an *already-dirty* file was
+invisible.** `compareWorktree()` compared `git status --porcelain` status codes
+per path. That is strictly better than comparing paths alone — it is what
+catches a file the operator had modified and a delegate then deleted — but a
+path that is ` M` before the run and ` M` after reads as unchanged *whatever
+happened to its bytes*:
+
+```text
+clean before:  changedByVerification ["src.js"]   VERIFICATION_DIRTIED_WORKTREE   exit 1
+dirty before:  changedByVerification []           no problem                      exit 0
+```
+
+So the rule this contract states — pre-existing changes are context, changes
+caused *during* verification are failures — held for a created file and for the
+first modification of a clean one, and **failed for the second modification of
+an already-dirty one**. That is the likeliest shape in the only situation that
+matters: a coding agent working in a tree it has already touched. It could not
+forge a statement about a requirement, so it was never a merge blocker; it made
+a stated guarantee false, which under this repository's own rule is a defect of
+the same kind as a missing check.
+
+Each dirty path now carries a **content mark** beside its status — the SHA-256
+of its bytes, or an explicit non-digest marker (`absent`, `outside`,
+`nonfile:…`, `big:<size>:<mtime>`, `unreadable`). The mark never enters the
+report or any fingerprint; it exists only to be compared with itself one moment
+later. It is bounded at 8 MB per file and 128 MB per run, above which a path
+degrades to size-and-modification-time — an ordinary rewrite still moves both,
+and a same-size same-mtime rewrite of an oversized file is the residual.
+Published as `WORKTREE_CONTENT_SAMPLING_IS_BOUNDED`.
+
+**Two limits named rather than built**, deliberately, because each is a
+semantics change and this milestone has had enough of those:
+
+- `NO_TIME_BOUND_OF_ITS_OWN` — this command sets no timeout, deadline or
+  cancellation of its own. Every child it causes is spawned by `project verify`
+  or `scenario run`, which bound their own children in time, output and process
+  group, so the isolation is **inherited rather than absent** — but a delegate
+  that never returns hangs this command with it, and there is no watchdog here.
+- `AUTHORITY_REFUSAL_UNDER_A_DOWNGRADE_IS_NOT_RESTATED` — the `unverifiable`
+  status catches *authority did not run*. It does not catch *authority ran and
+  refused*: with `EVIDENCE_OBSERVATION_FAILED`, `EVIDENCE_OBSERVATION_MOVED` or
+  `EVIDENCE_SOURCE_HASH_MISMATCH` under an author's `blocked` or `partial`, the
+  row's status and reason are the author's, and the machine's verdict survives
+  in `problems[]` and on the evidence entry. It is the same substitution one
+  step further out. It can never raise a status or reach exit 0. Extending
+  `unverifiable` to cover it is deferred to a later contract version.
+
+`implementationEvidenceVocabulary()` also gains the `executableContent` honesty
+entry that `solutionPlanVocabulary()` already published — what the scan is
+applied to, what it is not applied to, that it is **not** the boundary, what the
+boundary actually is, and its measured misses and false positives.

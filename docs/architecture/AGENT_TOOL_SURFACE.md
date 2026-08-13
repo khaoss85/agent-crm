@@ -181,7 +181,7 @@ dry-run by default), and the rest are reads.
 That surface predates AX1, AX2 and the package seam. It exposes a *sample*
 domain — opportunities and approvals — rather than the framework's actual
 contracts. An agent asking "what is this application, and what may I do to it"
-gets a better answer today from `crm app inspect` than from any of the nine.
+gets a better answer today from `accordo app inspect` than from any of the nine.
 
 ---
 
@@ -248,11 +248,12 @@ surface rather than a list of commands:
 |---|---|---|
 | `app_inspect` | T0 | AX1 — shipped as a CLI today |
 | `solution_check` | T0 | AX2 — shipped as a CLI today |
+| `solution_verify` | **T1** | DX10 `accordo solution verify` — shipped as a CLI today. **Deferred**, under the Solution namespace, never resident |
 | `package_inspect` | T0 | `crm package inspect` — shipped as a CLI today |
 | `package_scaffold` | T0 / **T2** | DX3 `crm package scaffold` — shipped as a CLI today. **T0 as a plan, T2 with `--apply`** |
 | `package_test` | **T1** | DX4 `crm package test` — shipped as a CLI today |
 | `explain` | T0 | DX8, not built |
-| `project_doctor` | T0 | DX1 `crm project doctor` — shipped as a CLI today |
+| `project_doctor` | T0 | DX1 `accordo project doctor` — shipped as a CLI today |
 | `change_inspect` | T0 | DX7, not built |
 | `context_pack` | T0 | DX9, not built — advisory only, never authorization |
 | `verify` | T1 | DX5, not built |
@@ -267,6 +268,37 @@ real time and real disk, and it runs the package's own code. A blanket allow on
 something that executes checked-in source is a different decision from a blanket
 allow on something that reads it, so the tiers differ even though neither
 mutates the project.
+
+`solution_verify` is the **second** already-built T1 entry, and it earns the tier
+the same way `package_test` does — by what it can do, not by what it is expected
+to do. It is read-only about the caller's project: it writes nothing there, has
+no write mode, no `--fix` and no generation mode, opens no database and modifies
+no source. But it **executes** checked-in repository source with the operator's
+authority — `accordo project verify` when something references it, which runs the
+project's own declared suites, and each explicitly referenced scenario, each of
+which composes a whole application in a temporary directory. So it consumes real
+time and real disk, and a blanket allow on something that runs a suite is a
+different decision from a blanket allow on something that reads source.
+
+Three things follow, and they are the honest cost, not caveats:
+
+- **it is one job-oriented tool, not one per evidence kind.** It answers "is this
+  plan actually finished", which is a question somebody has. `verify_source`,
+  `verify_scenario` and `verify_conformance` would be a menu an agent has to
+  choose from, and it would choose the cheap one.
+- **it belongs in the deferred Solution namespace**, with `solution_check`, and
+  never in the always-on set. It matters at the end of a piece of work, not in
+  every session, and commitment 6 is what keeps that from drifting.
+- **its cost is declared, and it is not small.** A document referencing only
+  scenarios costs seconds; one referencing `suite.verify` costs whatever the
+  project's suite costs. A tool description that hides that gets called in a
+  loop.
+
+Two refusals travel with it into any future MCP surface: it must not gain a
+write mode of any kind (that would make it a T3 tool that *executes a Solution
+Plan*, which C.4 forbids outright), and it must not accept an arbitrary path to
+run — the plan and evidence paths are documents read and validated, refused if
+they resolve outside the project, and never executed.
 
 `project_doctor` is T0 without qualification, and it is the clearest case in the
 table: it mutates nothing, opens no database, reaches no network, and the one
@@ -408,6 +440,7 @@ semantic source, deterministic adapters, a drift check in `verify`. Today the
 
 `docs/AGENT_HARNESS_COMPATIBILITY.md`, `docs/MCP.md`,
 `docs/APPLICATION_INSPECTION.md`, `docs/SOLUTION_PLAN.md`,
-`docs/CODER_TOOLING_ROADMAP.md`, `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`.
+`docs/CODER_TOOLING_ROADMAP.md`, `docs/IMPLEMENTATION_EVIDENCE.md`,
+`docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`.
 The vendor sources are cited inline with their retrieval dates; this repository
 holds no cached copy of any of them, deliberately.

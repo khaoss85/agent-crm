@@ -259,6 +259,7 @@ The remaining documents, one line each in `llms.txt` if you need to know what th
 - [docs/DELIVERY_HANDOVER.md](docs/DELIVERY_HANDOVER.md)
 - [docs/FALSIFY.md](docs/FALSIFY.md)
 - [docs/HANDOVER_CODEX.md](docs/HANDOVER_CODEX.md)
+- [docs/IMPLEMENTATION_EVIDENCE.md](docs/IMPLEMENTATION_EVIDENCE.md)
 - [docs/JTBD.md](docs/JTBD.md)
 - [docs/LEAD_INTELLIGENCE.md](docs/LEAD_INTELLIGENCE.md)
 - [docs/MCP.md](docs/MCP.md)

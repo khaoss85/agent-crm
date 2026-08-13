@@ -1,0 +1,141 @@
+{
+  "solutionPlanContract": 1,
+  "revision": 1,
+  "goal": {
+    "id": "verifier-fixture-exit-zero",
+    "statement": "Prove that solution verify can reach exit 0, by writing down only requirements a shipped authority already answers.",
+    "outcome": "One checked-in plan whose every requirement is machine-verifiable in one invocation, so the exit-0 arm of solutionVerificationContract 1 is exercised end to end by the real command rather than only by an injected delegate."
+  },
+  "metric": {
+    "name": "requirements_of_this_plan_that_are_machine_verified",
+    "definition": "Count of requirements this plan declares whose status in a solution verification report is the verified status, over the count it declares.",
+    "baseline": "0 of 0 before this fixture existed: no checked-in plan in this repository reached exit 0",
+    "target": "all of them, or this fixture has stopped doing its job"
+  },
+  "application": {
+    "inspectionContract": 1,
+    "inspectionFingerprint": "4c203a89be16368a68a3077541cb4abd2de697006eb01d2e9f2e6b5b1566f764",
+    "packages": [
+      {
+        "name": "contracts",
+        "version": 4
+      },
+      {
+        "name": "service",
+        "version": 1
+      }
+    ],
+    "capabilities": [
+      {
+        "name": "service-obligations",
+        "version": 1,
+        "status": "resolved"
+      },
+      {
+        "name": "service-coverage",
+        "version": 1,
+        "status": "resolved"
+      },
+      {
+        "name": "service-case-management",
+        "version": 1,
+        "status": "resolved"
+      },
+      {
+        "name": "service-sla-evidence",
+        "version": 1,
+        "status": "resolved"
+      }
+    ],
+    "modules": [
+      {
+        "name": "service-coverage",
+        "revision": 1
+      },
+      {
+        "name": "service-entitlement",
+        "revision": 1
+      },
+      {
+        "name": "support-case",
+        "revision": 1
+      },
+      {
+        "name": "service-obligation",
+        "revision": 2
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "id": "decision.observe-the-shipped-service-journey",
+      "type": "configure",
+      "target": "examples/scenarios/service-sla-escalation.scenario.json",
+      "rationale": "The service SLA and escalation scenario already composes this application and already publishes runtime observations about it. This fixture writes down only requirements that journey answers, so nothing here needs work that does not exist."
+    }
+  ],
+  "steps": [
+    {
+      "id": "step.activate-coverage-from-what-was-bought",
+      "decisionId": "decision.observe-the-shipped-service-journey",
+      "description": "Activate a contract's pending service obligations into an operational coverage with an entitlement, without amending any commercial record.",
+      "requiresCapabilities": [
+        "service-obligations"
+      ],
+      "approvals": [],
+      "verifies": []
+    },
+    {
+      "id": "step.run-a-case-through-its-transition-table",
+      "decisionId": "decision.observe-the-shipped-service-journey",
+      "description": "Drive a support case through its explicit transition table, refusing the transitions the table does not allow and reaching a terminal state.",
+      "requiresCapabilities": [
+        "service-case-management"
+      ],
+      "approvals": [],
+      "verifies": []
+    }
+  ],
+  "approvals": [],
+  "evidence": {
+    "observedFacts": [
+      {
+        "id": "fact.the-journey-runs",
+        "statement": "The service SLA and escalation scenario composes this application and reports passed, publishing runtime observations about coverage activation and support case transitions.",
+        "source": "a scenarioRunContract 2 report",
+        "citations": []
+      }
+    ],
+    "derivedMetrics": [],
+    "assumptions": [],
+    "inferences": [],
+    "recommendations": [
+      {
+        "id": "rec.keep-it-small",
+        "statement": "Keep this fixture to requirements one shipped scenario already answers, so it never becomes a second place to maintain product truth.",
+        "citations": [
+          "fact.the-journey-runs"
+        ]
+      }
+    ],
+    "unavailableEvidence": []
+  },
+  "limitations": [
+    {
+      "code": "FIXTURE_NOT_A_PRODUCT_PLAN",
+      "message": "This is a verifier fixture. It exists to exercise the exit-0 arm of solution verify end to end, and it claims no product coverage, no business outcome and no JTBD row. Nothing here says the service domain is complete: activate-support-and-manage-cases.plan.json is the real plan for that work and it exits 1."
+    },
+    {
+      "code": "FIXTURE_CLAIMS_ONLY_WHAT_ONE_JOURNEY_OBSERVED",
+      "message": "Every requirement here was chosen because the shipped service scenario already publishes a runtime observation for it. That is deliberate, and it is also the bound: this plan proves that the verifier can reach exit 0 on honest evidence, not that anything is finished."
+    }
+  ],
+  "acceptance": {
+    "checks": [
+      "the activation produces exactly one coverage and one entitlement and amends no commercial record",
+      "a support case reaches a terminal state through its transition table and refuses the transitions the table forbids"
+    ],
+    "jtbdRows": [],
+    "artifacts": []
+  }
+}

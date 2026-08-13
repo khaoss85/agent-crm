@@ -10,7 +10,7 @@ import { projectDoctorCommand } from './project-doctor-command.js';
 import { discoverCandidatePackages, projectKind } from './project-doctor-checks.js';
 
 /**
- * `crm project verify [--json] [--root <dir>]` — DX5.
+ * `accordo project verify [--json] [--root <dir>]` — DX5.
  *
  * > **Can you prove this project is healthy enough to hand back after a
  * > coding-agent change?**
@@ -20,8 +20,8 @@ import { discoverCandidatePackages, projectKind } from './project-doctor-checks.
  * authority refused.
  *
  * ```text
- * crm project doctor    source coherence, read-only, sub-second   DX1
- * crm project verify    orchestrated evidence, minutes            DX5
+ * accordo project doctor    source coherence, read-only, sub-second   DX1
+ * accordo project verify    orchestrated evidence, minutes            DX5
  * ```
  *
  * **It is an orchestrator, not a task runner.** Every check delegates to
@@ -35,9 +35,11 @@ import { discoverCandidatePackages, projectKind } from './project-doctor-checks.
  * `not_applicable` with a reason, not a hopeful `npm test`.
  *
  * **PROVE is still partial.** Scenario evidence is a separate command
- * (`crm scenario run`, DX6) that this one deliberately does not invoke, and
- * implementation evidence (DX10) does not exist. The report says so in its own
- * limitations rather than letting a green exit code imply completeness.
+ * (`accordo scenario run`, DX6) that this one deliberately does not invoke, and
+ * requirement-level implementation evidence is another (`accordo solution verify`,
+ * DX10) that runs *this* command rather than the other way round. The report
+ * says so in its own limitations rather than letting a green exit code imply
+ * completeness.
  *
  * That separation was re-examined when DX6 gained a second scenario, and it
  * stands. The alternative considered was a bounded applicability contract —
@@ -181,15 +183,15 @@ const DECLARED_SCRIPTS = Object.freeze([
 const LIMITATIONS = Object.freeze([
   {
     code: 'BROWSER_EVIDENCE_NOT_AUTOMATED',
-    message: 'no browser is driven and no rendered page is checked. Nothing here is evidence about the Admin as a user sees it, and `crm scenario run` does not drive one either',
+    message: 'no browser is driven and no rendered page is checked. Nothing here is evidence about the Admin as a user sees it, and `accordo scenario run` does not drive one either',
   },
   {
     code: 'SCENARIO_EVIDENCE_NOT_RUN',
-    message: 'no business scenario is executed end to end. A passing suite is not the same as "this works for the customer\'s process" — that is `crm scenario run <scenario> --json`, which is a separate command and is not run from here. Two scenarios ship in examples/scenarios/, each composing a whole application of its own; running every one of them from here would add unbounded minutes to every verification, so which scenarios matter stays an explicit choice',
+    message: 'no business scenario is executed end to end. A passing suite is not the same as "this works for the customer\'s process" — that is `accordo scenario run <scenario> --json`, which is a separate command and is not run from here. Two scenarios ship in examples/scenarios/, each composing a whole application of its own; running every one of them from here would add unbounded minutes to every verification, so which scenarios matter stays an explicit choice',
   },
   {
     code: 'IMPLEMENTATION_EVIDENCE_NOT_MAPPED',
-    message: 'nothing here maps a plan\'s requirements to the code that implements them, so a green report never means a plan is finished. That is DX10',
+    message: 'nothing here maps a plan\'s requirements to the code that implements them, so a green report never means a plan is finished. That is `accordo solution verify <plan.json> --evidence <evidence.json> --json` (DX10), which is a separate command and is not run from here — it references this receipt rather than the other way round',
   },
   {
     code: 'PROJECT_COMMANDS_TRUSTED',
@@ -550,7 +552,7 @@ export function worktreeState(rootDir, run = defaultGit) {
  *
  * @param {string} rootDir
  */
-function defaultGit(rootDir) {
+export function defaultGit(rootDir) {
   const inside = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: rootDir, encoding: 'utf8' });
   if (inside.status !== 0) return null;
   const changed = spawnSync('git', ['status', '--porcelain', '-z', '--untracked-files=all'], {
@@ -580,7 +582,7 @@ function defaultGit(rootDir) {
  *
  * @param {string} line
  */
-function sampled(line) {
+export function sampled(line) {
   const tab = line.indexOf('\t');
   return tab === -1 ? { status: '', path: line } : { status: line.slice(0, tab), path: line.slice(tab + 1) };
 }
@@ -640,7 +642,7 @@ export async function projectVerifyCommand(options = {}) {
     status: doctorFailed.length === 0 ? 'passed' : 'failed',
     authority: 'project-doctor',
     required: true,
-    evidence: `crm project doctor: ${doctorFailed.length} failure(s), ${doctorWarned.length} warning(s)`,
+    evidence: `accordo project doctor: ${doctorFailed.length} failure(s), ${doctorWarned.length} warning(s)`,
     reason: doctorFailed.length === 0 ? null : doctorFailed.map((entry) => boundText(entry.id)).sort().join(', '),
   }));
   for (const warned of doctorWarned) {

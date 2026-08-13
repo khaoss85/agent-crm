@@ -236,7 +236,7 @@ It said the domain build Skills existed under `.claude/skills/` only and that
 across.
 
 - **Measured now.** `.claude/skills/` and `.agents/skills/` each carry **12**
-  skills, with **none** on one side only. `crm project doctor` reports
+  skills, with **none** on one side only. `accordo project doctor` reports
   `skills.mirror-coverage` **passing** and `skills.mirror-drift` **passing**,
   and the whole report is `passed`.
 - **So why is this still `partial`?** Because the row is about a *capability
@@ -247,7 +247,7 @@ across.
   in state**; the **mechanism** is still missing, and the next skill added to
   one side re-opens it silently until somebody runs the doctor.
 - **Evidence.** `ls .claude/skills/` versus `ls .agents/skills/`;
-  `crm project doctor --json` → `skills.mirror-coverage`, `skills.mirror-drift`.
+  `accordo project doctor --json` → `skills.mirror-coverage`, `skills.mirror-drift`.
 - **Pass.** **DX2** (`crm agent skills sync|check`) — unchanged, and now the
   *only* thing missing rather than one of two.
 - **Compatibility risk.** **None.** Additive files; no runtime reads them.
@@ -490,7 +490,7 @@ domains that are not packages yet.
 
 ## The DX1 backfill answer, as the rule requires
 
-DX1 (`crm project doctor`) is a **horizontal capability**: it applies to every
+DX1 (`accordo project doctor`) is a **horizontal capability**: it applies to every
 project built on this framework, and to every domain in one.
 
 | Question | Answer |
@@ -507,7 +507,7 @@ project built on this framework, and to every domain in one.
 Two rows of this document were prose until now and are now mechanical:
 
 - **the Skill mirrors.** This matrix records `partial` because six domain build
-  skills exist under `.claude/` only. `crm project doctor` reports that as
+  skills exist under `.claude/` only. `accordo project doctor` reports that as
   `skills.mirror-coverage: warning` with the six named, and would report a
   **failure** if two mirrors of one skill ever disagreed in content. DX2 still
   owns the fix; the gap is now observed on every run rather than remembered.
@@ -572,7 +572,7 @@ out of the way.
 
 ## The DX6 backfill answer, as the rule requires
 
-DX6 (`crm scenario run`) is a **horizontal capability**: business-scenario
+DX6 (`accordo scenario run`) is a **horizontal capability**: business-scenario
 evidence is something every domain could have, and this matrix already carries a
 "JTBD rows with linked evidence" row that DX6 turns from prose into a report.
 
@@ -615,6 +615,50 @@ unlike consumer (`docs/plans/dx6-second-scenario.md`). The rule applies again.
 | What is `deferred` now, and closed by what | **Lifecycle (M16a)** and **Delivery execution, economics, change and acceptance (M14a/M14b1/M14b2)**: real runtimes that no scenario claims. Closed by writing scenarios; neither needs a code change unless it needs a clock. **Marketing, Analytics and Communications stay `not_applicable`** — they have no runtime, so no scenario can honestly claim their rows |
 | What changed for extraction? | Nothing |
 | Matrix updated? | Yes — the Service row above, and this section |
+
+## The DX10 backfill answer, as the rule requires
+
+DX10 (`accordo solution verify`) is a **read-only agent surface over authorities that
+already decide**, not a capability a domain implements. The rule still applies,
+and the answer is the finding: **there is no per-domain status to record**, so
+the gap is declared rather than assumed.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None, at runtime or in source.** DX10 adds one CLI command, one core contract module, two checked-in evidence documents and two test files. It changes no kernel behaviour, refactors no domain, adds no capability, and writes nothing anywhere — it has no write mode, no `--fix` and no generation mode. Two changes sit outside its own files, both additive: `planRequirements()` in `packages/core/src/solution-plan.js` derives requirement identity **without touching `solutionPlanContract: 1`** — no field, no rule, and not one byte of any plan's fingerprint — and `worktreeState`/`sampled`/`defaultGit` are now **exported** from `packages/cli/src/project-verify-command.js` so the dirty-state semantics are imported rather than copied. No behaviour changed |
+| Is it horizontal? | **No, and that is the row.** A domain does not "support DX10" or fail to. What a domain can have is a *plan* with an evidence document beside it, and that is a checked-in JSON file per plan, not a per-domain capability. The matrix would carry the same value in every cell |
+| Which are already aligned? | Not applicable. The two shipped consumers are **plans**, not domains: `lead-to-won` (declared current, bound to this project) and `activate-support-and-manage-cases` (bound through the service scenario, which composes the application it was written against) |
+| Which need metadata only? | **None.** A plan gets requirement ids for free the moment DX10 ships — derived, no migration, no rewrite of any historical plan |
+| Which need a code backfill? | **None.** A new *evidence kind* would need one, deliberately: that boundary is what keeps a document from naming a new thing to trust |
+| What is `deferred`, and closed by what | Nothing per domain. What is genuinely open is **plan coverage**, and after REVIEW-71 it is wider than first recorded — see the inventory below. Closed by scenarios that compose the applications those plans were written against; no code change is needed unless one of them needs a clock |
+| What changed for extraction? | Nothing. DX10 measures plans, not seams. It is neutral on the three `needs_extraction` domains and adds no blocker |
+| Matrix updated? | Yes — this section, which records that the capability is not horizontal and why |
+
+### The evidence inventory — which checked-in plan has a behavioural authority
+
+Recorded per plan rather than per domain, because a plan is DX10's unit. The
+third column is the one that matters: a plan whose application no shipped
+scenario composes has **no behavioural authority available to it at all**, and
+under `EVIDENCE_COMPOSITION_MISMATCH` (ADR-031 addendum 1) a run of a different
+application is not a substitute.
+
+| Plan | Evidence document | A scenario composes its application? | Status |
+|---|---|---|---|
+| `activate-support-and-manage-cases` | yes | **yes** — `scenario:service-sla-escalation` publishes composition `4c203a89…`, exactly the digest the plan pins | `partial` — 6 verified, 4 partial, exit 1 |
+| `lead-to-won` | yes | **no.** It binds to the repository root (`649add63…`), which composes no domain package; `scenario:lead-to-won` composes a *starter* into a directory of its own. Declared in the document as `NO_SCENARIO_COMPOSES_THIS_APPLICATION` | `partial` — nothing behavioural can be proven for it today, exit 1 |
+| `govern-delivery-change` | **no** | **no** — no shipped scenario composes the application it was written against | `deferred`. Not papered over: no evidence document is invented for it, because one would have nothing honest to cite |
+| `verifier-fixture-exit-zero` | yes | yes — binds through `scenario:service-sla-escalation` | **verifier fixture, not a product plan.** 4 verified, exit 0. It exists so the exit-0 arm of the contract is exercised end to end, and it claims no product coverage and no JTBD row |
+
+### What DX10 deliberately did not close
+
+- **It promotes nothing** — no JTBD row, no plan status, no document. `promotion.performed` is `false` on every report.
+- **It discovers no requirement.** It reports the requirements *a plan wrote down*
+  (`COVERAGE_IS_THE_PLAN_ONLY`). A requirement no plan states cannot be caught here.
+- **It drives no browser**, contacts no provider, opens no database, and observes
+  no deployed or external system — the same gaps DX5 and DX6 publish, published
+  again here rather than assumed to carry over.
+- **It does not make PROVE complete.** Both shipped consumers exit 1. That is the
+  true state of both plans, and a green exit here would be the defect.
 
 ## The LA0 backfill answer, as the rule requires
 
@@ -837,8 +881,8 @@ The question DX3 makes it fair to ask: **is the path now complete enough to
 extract Lead Intelligence?**
 
 ```text
-crm app inspect        the composition before                    exists (AX1)
-crm solution check     a plan bound to that composition          exists (AX2)
+accordo app inspect        the composition before                    exists (AX1)
+accordo solution check     a plan bound to that composition          exists (AX2)
 crm package scaffold   an empty conforming lead-intelligence     exists (DX3)
   move code            registries, actions, records              by hand
 crm package test       does the result conform?                  exists (DX4)

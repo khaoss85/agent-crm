@@ -129,6 +129,7 @@ export const PLAN_PROBLEM_CODES = Object.freeze([
   'PLAN_EXECUTABLE_CONTENT',
   'PLAN_CITATION_UNRESOLVED',
   'PLAN_DUPLICATE_ID',
+  'PLAN_REQUIREMENT_DUPLICATE',
   'PLAN_APPROVAL_MISSING',
   'PLAN_DECISION_NOT_A_STEP',
   'PLAN_DECISION_UNKNOWN',
@@ -275,6 +276,99 @@ function object(value, path, problems, { required = true, allowed = null } = {})
     }
   }
   return value;
+}
+
+/**
+ * The strict plain-data gate the checked-in contracts share.
+ *
+ * A Solution Plan, a scenario and an implementation-evidence document are all
+ * **function-free by contract**, and each is normally read from JSON text, where
+ * that is true for free. The exported validators are not restricted to that
+ * path: they are public core API, a future MCP tool would hand them an object,
+ * and a test hands them literals. Against a live object "function-free" was a
+ * property of the *reader*, not of the contract — a getter on a field the
+ * validator reads is author-supplied code that the validator runs, and a Proxy
+ * can answer a different value each time it is read, so the document that was
+ * validated and the document that was fingerprinted need not be the same one.
+ *
+ * So a document is converted to plain data **once**, before any field is read
+ * for meaning, and everything downstream reads the copy:
+ *
+ * - an accessor property is refused rather than invoked — nothing here executes
+ *   anything an author wrote, which is the sentence the three contracts make;
+ * - a non-plain prototype is refused, which takes `Date`, `Map`, `Set`,
+ *   `RegExp`, a class instance and an object whose meaning comes from its
+ *   prototype chain with it;
+ * - a symbol key, a function, a symbol and a `BigInt` are refused, because none
+ *   of them survives JSON and a value that vanishes on the way to disk is a
+ *   value a reader and a writer disagree about;
+ * - a non-finite number is refused for the same reason (`JSON.stringify` turns
+ *   it into `null`);
+ * - a cycle is refused with a path rather than overflowing the stack;
+ * - every value is read exactly once, so a Proxy cannot answer validation and
+ *   fingerprinting differently.
+ *
+ * This is the same judgement `canonicalJson` in `signature-operations.js` makes
+ * about a document about to be signed, and the same one `assertPlainMetadata`
+ * makes about a package's `metadata()`. It is stated once here, next to
+ * `EXECUTABLE_SHAPES` and `canonicalJson`, because this is the module the three
+ * document contracts already share.
+ *
+ * @param {unknown} value @param {string} [path] @param {Set<object>} [ancestors]
+ * @returns {any} a plain-data copy
+ */
+export function toPlainData(value, path = 'document', ancestors = new Set()) {
+  if (value === null) return null;
+  const type = typeof value;
+  if (type === 'string' || type === 'boolean') return value;
+  if (type === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new ValidationError(`${path} must be a finite number; ${String(value)} does not survive JSON`);
+    }
+    return value;
+  }
+  if (type === 'undefined') return undefined;
+  if (type !== 'object') {
+    throw new ValidationError(`${path} must be plain data; a ${type} is not JSON and would be lost or refused on the way to disk`);
+  }
+
+  if (ancestors.has(/** @type {object} */ (value))) {
+    throw new ValidationError(`${path} is a cycle; a checked-in document is a tree, and a cycle has no canonical bytes`);
+  }
+  const nested = new Set(ancestors);
+  nested.add(/** @type {object} */ (value));
+
+  if (Array.isArray(value)) {
+    return value.map((item, index) => toPlainData(item, `${path}[${index}]`, nested));
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new ValidationError(`${path} must be plain data; a class instance, Date, Map, Set or RegExp is not a document, and an object whose fields come from its prototype is not what it says it is`);
+  }
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    throw new ValidationError(`${path} carries a symbol key, which no reader of this document will ever see`);
+  }
+
+  // One snapshot of every own descriptor. `Object.keys` would consult each
+  // descriptor once for enumerability and the read below would consult it
+  // again, and two reads is exactly the gap a Proxy answers differently in.
+  const descriptors = Object.getOwnPropertyDescriptors(/** @type {any} */ (value));
+
+  // A null prototype so `__proto__` can only ever be an ordinary own key here;
+  // the contract's own reserved-key refusal is what reports it.
+  const plain = Object.create(null);
+  for (const key of Object.keys(descriptors)) {
+    const descriptor = descriptors[key];
+    if (!descriptor.enumerable) continue;
+    if (typeof descriptor.get === 'function' || typeof descriptor.set === 'function') {
+      throw new ValidationError(`${path}.${key} is an accessor. These documents are function-free by contract, so a getter is refused rather than invoked`);
+    }
+    const converted = toPlainData(descriptor.value, `${path}.${key}`, nested);
+    if (converted === undefined) continue;
+    Object.defineProperty(plain, key, { value: converted, enumerable: true, writable: true, configurable: true });
+  }
+  return plain;
 }
 
 /**
@@ -526,7 +620,7 @@ function normalizeApplication(value, problems) {
     if (/^[0-9a-f]{64}$/.test(raw)) fingerprint = raw;
     else {
       report(problems, 'PLAN_FIELD_INVALID', 'plan.application.inspectionFingerprint',
-        'must be the 64-character hex digest `crm solution check --json` reports for this project. It is a drift detector, not proof of authorship — but it is not a label, either');
+        'must be the 64-character hex digest `accordo solution check --json` reports for this project. It is a drift detector, not proof of authorship — but it is not a label, either');
     }
   }
 
@@ -948,6 +1042,133 @@ function normalizeLimitations(value, problems, { hasProviderDecision = false } =
 }
 
 /**
+ * The kinds of plan entry that are a **requirement** — something that must be
+ * true before the plan is implemented. Closed, and deliberately short.
+ *
+ * A *step* is the work; an *acceptance check* is the criterion. Two things that
+ * look like candidates are excluded on purpose:
+ *
+ * - **an artifact is not a requirement.** `acceptance.artifacts[]` names a place
+ *   a step intends to produce a file. Treating that path as a requirement is
+ *   "the file exists, therefore it is done" wearing a contract, which is the
+ *   inference this whole family of commands refuses.
+ * - **a JTBD row is not a requirement.** It is DX6's unit, its status is a
+ *   person's decision under `docs/QUALITY_GATES.md` §3, and nothing here
+ *   promotes one.
+ */
+export const REQUIREMENT_KINDS = Object.freeze(['step', 'acceptance-check']);
+
+/**
+ * How many hex characters of the statement digest name an acceptance check.
+ *
+ * **32 hex = 128 bits.** The first cut of this contract used 12 hex = 48 bits,
+ * argued from birthday chance among the ~200 rows one plan may carry. That is
+ * the wrong threat model. The wording of an acceptance check is authored by a
+ * coding agent, and an agent that can propose wording can *search* wording, so
+ * the bound that matters is a **deliberate** collision, not an accidental one:
+ *
+ * - **birthday, self-chosen pair** — ~2^24 (~1.7e7) hashes, well under a second
+ *   on one core. This one is already refused downstream: two requirements with
+ *   one id is `PLAN_REQUIREMENT_DUPLICATE`.
+ * - **chosen target — land a new criterion on an id somebody else's evidence
+ *   already names** — ~2^48 (~2.8e14) hashes at 48 bits. That is hours on one
+ *   commodity GPU and days on a CPU; it is not a theoretical bound, it is an
+ *   afternoon. It is also the dangerous one, because it makes an unevidenced
+ *   criterion resolve against evidence written for a different criterion.
+ *
+ * At 128 bits the chosen-target search is ~2^128, which is the bound SHA-256's
+ * own second-preimage resistance rests on, and the birthday search is ~2^64 —
+ * both out of reach of an author who can only pick words.
+ *
+ * The cost of the wider id is a longer string in a checked-in document, and
+ * nothing outside this repository consumes these identifiers yet, so this is
+ * the cheapest moment the change will ever have.
+ *
+ * Both properties that made the derivation worth having are unchanged:
+ * rewording a criterion still changes its id, and two identical criteria still
+ * collide and are still refused.
+ */
+export const REQUIREMENT_DIGEST_LENGTH = 32;
+
+/**
+ * Every requirement in a plan, with a **derived** stable identifier.
+ *
+ * `steps[].id` already exists and is already unique, so a step requirement
+ * reuses it rather than minting a second name for the same thing:
+ * `step:<stepId>`. An acceptance check is a bare string with no identifier at
+ * all, so its id is content-addressed: `check:<first 32 hex of sha256>` over the
+ * statement.
+ *
+ * **Why derived rather than a new field.** Widening `acceptance.checks[]` to
+ * accept `{id, statement}` would be a change to `solutionPlanContract: 1`: new
+ * validation, a new normalized shape, and a fingerprint that means one thing for
+ * new plans and another for old ones. Deriving adds *nothing* to the contract —
+ * not a field, not a rule, not a byte of any plan's fingerprint — and every plan
+ * already checked in becomes addressable with no migration and no rewrite. That
+ * is the smallest additive change that exists.
+ *
+ * The cost is deliberate and is the behaviour we want: **rewording an acceptance
+ * criterion changes its requirement id**, so evidence recorded against the old
+ * wording reads as unevidenced rather than silently carrying over to a criterion
+ * nobody re-examined.
+ *
+ * Two identical statements in one plan would collide, so the collision is
+ * refused rather than resolved: one requirement must not stand for two.
+ *
+ * Reads a plan **already normalized by `validateSolutionPlan`**.
+ *
+ * @param {any} plan
+ * @returns {{requirements: {requirementId: string, kind: string, statement: string,
+ *   stepId: string|null, decisionId: string|null, decisionType: string|null,
+ *   position: number}[], problems: PlanProblem[]}}
+ */
+export function planRequirements(plan) {
+  /** @type {PlanProblem[]} */
+  const problems = [];
+  /** @type {any[]} */
+  const requirements = [];
+  /** @type {Map<string, string>} */
+  const seen = new Map();
+
+  const add = (row, path) => {
+    const previous = seen.get(row.requirementId);
+    if (previous !== undefined) {
+      report(problems, 'PLAN_REQUIREMENT_DUPLICATE', path,
+        `"${row.requirementId}" is already the requirement id of ${previous}. Two requirements that cannot be told apart cannot carry separate evidence`);
+      return;
+    }
+    seen.set(row.requirementId, path);
+    requirements.push({ ...row, position: requirements.length });
+  };
+
+  for (const step of plan?.steps ?? []) {
+    add({
+      requirementId: `step:${step.id}`,
+      kind: 'step',
+      statement: step.description ?? '',
+      stepId: step.id,
+      decisionId: step.decisionId === '' ? null : step.decisionId ?? null,
+      decisionType: step.decisionType === '' ? null : step.decisionType ?? null,
+    }, `plan.steps[${step.position}]`);
+  }
+
+  const checks = plan?.acceptance?.checks ?? [];
+  for (const [index, statement] of checks.entries()) {
+    const digest = createHash('sha256').update(String(statement)).digest('hex').slice(0, REQUIREMENT_DIGEST_LENGTH);
+    add({
+      requirementId: `check:${digest}`,
+      kind: 'acceptance-check',
+      statement: String(statement),
+      stepId: null,
+      decisionId: null,
+      decisionType: null,
+    }, `plan.acceptance.checks[${index}]`);
+  }
+
+  return { requirements, problems };
+}
+
+/**
  * Bind a validated plan to a real AX1 report.
  *
  * A composition that has moved since the plan was written produces `PLAN_STALE`
@@ -1086,6 +1307,18 @@ export function solutionPlanVocabulary() {
       Object.entries(CITATION_SOURCES).map(([category, sources]) => [category, [...sources]]),
     ),
     artifactKinds: [...ARTIFACT_KINDS],
+    // Requirement identity is **derived**, never declared, so it adds nothing to
+    // this contract and moves no plan's fingerprint. Published because a reader
+    // that has to guess an identifier will guess a different one.
+    requirements: {
+      kinds: [...REQUIREMENT_KINDS],
+      rule: 'a requirement is a step or an acceptance check. A step reuses the id its author already wrote (`step:<stepId>`); an acceptance check has no id in this contract, so it is content-addressed (`check:<first 32 hex of sha256 of the statement>`)',
+      notRequirements: [
+        'an acceptance artifact — a declared file path is a place, not proof that the work behind it happened',
+        'a JTBD row — its status is a person\'s decision under docs/QUALITY_GATES.md §3',
+      ],
+      digestLength: REQUIREMENT_DIGEST_LENGTH,
+    },
     inspectionContract: INSPECTION_CONTRACT,
     approvalCodes: [...APPROVAL_CODES],
     requiredApprovals: { ...REQUIRED_APPROVALS },

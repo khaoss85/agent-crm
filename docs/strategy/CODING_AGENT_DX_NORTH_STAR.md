@@ -39,7 +39,8 @@ GOAL
   → BUILD     a conforming start, then the work  Package Scaffold (DX3) + the agent
   → CHECK     inconsistencies, and the rules     Project Doctor (DX1) + Package Conformance (DX4)
   → PROVE     that it works                      Quality Gates + Project Verify (DX5)
-              which business jobs it earns        Scenario Evidence (DX6, two scenarios); DX10 is future
+              which business jobs it earns        Scenario Evidence (DX6, two scenarios)
+              whether the plan is actually done   Implementation Evidence (DX10, two plan consumers)
 
 Refactor-only:
   → PRESERVE  freeze behaviour before changing it   LA0 Characterization
@@ -111,18 +112,18 @@ Every entry below is either **implemented** and verifiable by a command, or
 | Rail | What it answers | Status |
 |---|---|---|
 | **Project Bootstrap** | give me a project to work in, from nothing | **implemented and deterministically packaged, not published** — `create-accordo <dir> --apply` scaffolds from a checkout; the assembled candidate packs, installs offline and runs end to end; `npm create accordo` still reaches an empty name reservation and installs nothing |
-| **AX1 — application discovery** | what is this application already? | **implemented** — `crm app inspect --json` |
-| **AX2 — Solution Plan** | is this plan valid, and still compatible? | **implemented** — `crm solution inspect\|validate\|check` |
-| **DX1 — Project Doctor** | what is inconsistent or stale before I edit? | **implemented** — `crm project doctor --json` |
+| **AX1 — application discovery** | what is this application already? | **implemented** — `accordo app inspect --json` |
+| **AX2 — Solution Plan** | is this plan valid, and still compatible? | **implemented** — `accordo solution inspect\|validate\|check` |
+| **DX1 — Project Doctor** | what is inconsistent or stale before I edit? | **implemented** — `accordo project doctor --json` |
 | **DX3 — Package Scaffold** | give me an empty package that already conforms | **implemented** — `crm package scaffold` |
 | **DX4 — Package Conformance** | does this package satisfy the framework contract? | **implemented** — `crm package test --json` |
 | **Quality Gates** | what must a change prove before it merges? | **implemented** — `docs/QUALITY_GATES.md` |
 | **LA0 — legacy characterization** | does a refactor preserve behaviour? | **implemented** — `tests/characterization/`, `npm run characterize:intelligence` |
 | DX2 — Skill mirror sync | do the harness mirrors agree, and stay agreeing? | **future, and now a reconciliation** — the mirrors currently agree (12/12, doctor `passed`) because they were aligned by hand on main. Project Doctor detects disagreement and by design never writes: no canonical source, no sync command, no CI drift gate, no adapter generation |
-| **DX5 — Project Verify** | can I prove this project is healthy enough to hand back? | **implemented** — `crm project verify --json`. Four things are test-pinned rather than described: project-health orchestration behind a blocking doctor preflight; conformance actually **executed** for every composed package with local source, first-party or customer-authored, so one non-conforming package fails the run; the doctor's plan verdicts carried verbatim, with a declared-**required** stale plan failing and a declared-**current** one warning; and **dirty-mutation detection** from a before/after pair of worktree samples, which never resets, stashes or cleans. PROVE stays partial: DX10 does not exist |
-| **DX6 — Scenario Runner** | which JTBD rows does this checkout actually earn, and which does it not? | **implemented, with two consumers** — `crm scenario run <scenario> --json`, `scenarioRunContract: 2`. Two checked-in scenarios run two checked-in journeys: a sales funnel on the wall clock over a six-package composition, and a service case → SLA evaluation → escalation story on an **injected, stepped clock** over a two-package one. The second consumer is what makes the contract a contract rather than a shape fitted to the first, and it changed three things: journey evidence gained stated **facts** beside counts, the report now publishes **which clock** produced the evidence, and limitations gained a **scope** so a journey declares its own. Coverage is still *claimed*, not discovered, and PROVE stays partial: DX10 does not exist |
+| **DX5 — Project Verify** | can I prove this project is healthy enough to hand back? | **implemented** — `accordo project verify --json`. Four things are test-pinned rather than described: project-health orchestration behind a blocking doctor preflight; conformance actually **executed** for every composed package with local source, first-party or customer-authored, so one non-conforming package fails the run; the doctor's plan verdicts carried verbatim, with a declared-**required** stale plan failing and a declared-**current** one warning; and **dirty-mutation detection** from a before/after pair of worktree samples, which never resets, stashes or cleans. DX10 now runs *this* command rather than the other way round, and its `IMPLEMENTATION_EVIDENCE_NOT_MAPPED` limitation names it |
+| **DX6 — Scenario Runner** | which JTBD rows does this checkout actually earn, and which does it not? | **implemented, with two consumers** — `accordo scenario run <scenario> --json`, `scenarioRunContract: 2`. Two checked-in scenarios run two checked-in journeys: a sales funnel on the wall clock over a six-package composition, and a service case → SLA evaluation → escalation story on an **injected, stepped clock** over a two-package one. The second consumer is what makes the contract a contract rather than a shape fitted to the first, and it changed three things: journey evidence gained stated **facts** beside counts, the report now publishes **which clock** produced the evidence, and limitations gained a **scope** so a journey declares its own. Coverage is still *claimed*, not discovered |
 | DX9 — Context Pack | what does an agent need to know, compactly? | **future** |
-| DX10 — Implementation Evidence | is the plan actually finished? | **future** |
+| **DX10 — Implementation Evidence** | is the plan actually finished? | **implemented, with two plan consumers** — `accordo solution verify <plan.json> --evidence <evidence.json> --json`, `implementationEvidenceContract: 1` + `solutionVerificationContract: 1`. Five things are test-pinned rather than described: requirement identity is **derived** from the plan (`step:<stepId>`, `check:<32 hex>` — 128 bits, so a chosen collision is out of reach) so it adds nothing to `solutionPlanContract: 1` and moves no plan's fingerprint; the evidence document has **no status field anywhere**, and its only author-writable shapes are downgrades with a mandatory reason; the sufficiency matrix keys the behavioural rule on the *observation kind read from DX6's report*, and a requirement the plan does not authoritatively type — every acceptance check under `solutionPlanContract: 1` — is graded at a **behavioural floor**, so a declared category may only ask for more proof and never less; **manual evidence is accepted and can never be proof**, resolving to `unverified` and forbidding exit 0 on its own; and the plan's composition binding is resolved against the authorities that actually ran, so a plan written against a *starter's* application binds through the scenario that composes it and may cite no AX1 fact from elsewhere. **PROVE stays partial** — both shipped consumers exit 1, which is the true state of both plans |
 | DX13 — MCP parity | the same contracts as tools | **future** — policy in `docs/architecture/AGENT_TOOL_SURFACE.md` |
 
 ---
@@ -136,7 +137,7 @@ wrong. Each row names the failure first.
 |---|---|---|
 | inventing an architecture that already exists in the project | AX1 discovery, AX2 plan, the package/module/action/policy hierarchy | implemented |
 | building a second package that duplicates an installed domain | AX1 discovery + Solution Plan citation | implemented |
-| working from a plan written against an application that has since moved | `crm solution check` → `PLAN_STALE` | implemented |
+| working from a plan written against an application that has since moved | `accordo solution check` → `PLAN_STALE` | implemented |
 | producing a package the framework will not accept | DX3 scaffold (start conforming) + DX4 conformance (prove it) | implemented |
 | editing a project whose composition, module state, plans, Skills or links are already broken | DX1 Project Doctor | implemented |
 | refactoring a domain and silently changing what it decides | LA0 characterization | implemented |
@@ -145,7 +146,8 @@ wrong. Each row names the failure first.
 | non-reproducible answers that cannot be diffed or trusted | deterministic contracts, canonical JSON, fingerprints, stable exit codes | implemented |
 | claiming a checkout supports a business job because a test filename sits next to that row in a Markdown table, with no way to state what a run did *not* establish | DX6 Scenario Runner | implemented, two consumers |
 | shipping a generic contract validated by exactly one consumer, so its accidental assumptions read as principles | a second, deliberately unlike consumer — `examples/scenarios/service-sla-escalation.scenario.json` | implemented for DX6; unaddressed for every other contract |
-| reporting a plan complete while work is missing | DX10 Implementation Evidence | **future** |
+| reporting a plan complete while work is missing | DX10 Implementation Evidence | implemented, two plan consumers |
+| a rung passing while the plan it was meant to prove is unbuilt — `solution check` exits 0, the doctor passes, `project verify` is green, both scenarios pass, and five of the six requirements of the declared-current plan are not proven | DX10, which is the only thing that could name it | implemented, and its first real answer is that gap |
 | exhausting context on a project it cannot summarize | DX9 Context Pack | **future** |
 
 ---
@@ -167,7 +169,7 @@ the Quality Gates       what a change must prove
 
 Harness adapters stay **thin**. A `.claude/` file and its `.agents/` mirror carry
 the same semantics; if one of them starts carrying behaviour the other cannot,
-the behaviour is in the wrong place. `crm project doctor` grades the two ways
+the behaviour is in the wrong place. `accordo project doctor` grades the two ways
 mirrors can disagree differently, for exactly this reason: two copies of one
 skill whose *contents* diverge is `skills.mirror-drift`, a **failure**, because
 each harness is now being told something different; a skill that exists under

@@ -1,0 +1,272 @@
+{
+  "implementationEvidenceContract": 1,
+  "plan": "examples/solution-plans/activate-support-and-manage-cases.plan.json",
+  "planFingerprint": "77b39328ae53d2a47a9a8ffa7e6583153a3e59b907d71191d294d22670c56782",
+  "applicationInspectionFingerprint": "4c203a89be16368a68a3077541cb4abd2de697006eb01d2e9f2e6b5b1566f764",
+  "requirements": [
+    {
+      "requirementId": "step:step.plan-before-activating",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "activate-coverage.01",
+          "expects": "action.present action=commercial-contract.plan-service-activation"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "activate-coverage.11",
+          "expects": "journey.fact fact=amendedCommercialRecord is=false"
+        },
+        {
+          "kind": "source.artifact",
+          "path": "packages/service/src/index.js",
+          "sha256": "10d416e2d054c48ea3cd6bdaad4c96db0e312a26dff980d41c42f075321c5082"
+        }
+      ]
+    },
+    {
+      "requirementId": "step:step.activate-coverage",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "activate-coverage.10",
+          "expects": "journey.fact fact=coverageStatus is=active"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "activate-coverage.07",
+          "expects": "journey.count equals=1 metric=serviceCoverages"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "refuse-the-guess.01",
+          "expects": "journey.fact fact=ambiguousActivationRefused is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "activate-coverage.06",
+          "expects": "policy.present policy=b2b-service-activation version=1"
+        },
+        {
+          "kind": "source.artifact",
+          "path": "examples/starters/b2b-lead-qualification/service.js",
+          "sha256": "4ec05be30ae5218cf6f08e4bfa28a0e1c2db5cccc0b9c23c7d628d1f0df81719"
+        }
+      ]
+    },
+    {
+      "requirementId": "step:step.manage-cases",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "open-case.04",
+          "expects": "journey.count equals=1 metric=supportCases"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "close-the-case.02",
+          "expects": "journey.fact fact=closeFromInProgressRefused is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "close-the-case.03",
+          "expects": "journey.fact fact=caseFinalStatus is=closed"
+        }
+      ]
+    },
+    {
+      "requirementId": "step:step.record-sla-and-escalation",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "sla-boundary.02",
+          "expects": "journey.fact fact=firstResponseStateAtDueInstant is=at_risk"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "sla-boundary.03",
+          "expects": "journey.fact fact=firstResponseStateOneMsLater is=breached"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "record-evidence.04",
+          "expects": "journey.count atLeast=2 metric=slaEvaluations"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "escalate.04",
+          "expects": "journey.fact fact=escalationCitesSlaEvaluation is=true"
+        },
+        {
+          "kind": "source.artifact",
+          "path": "tests/service-operations-evidence.test.js",
+          "sha256": "790571c2244bf25a781f836560c6739f14048e282da7a3d93a73cba979e23c06"
+        }
+      ]
+    },
+    {
+      "requirementId": "check:7b8962e911232bd9a6fb2ceef0618e35",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "activate-coverage.11",
+          "expects": "journey.fact fact=amendedCommercialRecord is=false"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "nothing-commercial-moved.01",
+          "expects": "journey.fact fact=commercialRecordUnchanged is=true"
+        }
+      ],
+      "partial": {
+        "reason": "the run publishes that no commercial record was amended over the whole journey. It publishes no fact about the planning call specifically, and none at all about the audit rows or events planning did or did not write, so the middle two thirds of this criterion are unobserved"
+      }
+    },
+    {
+      "requirementId": "check:92bb70c70d8c320216b3cc4df4d81696",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "refuse-the-guess.01",
+          "expects": "journey.fact fact=ambiguousActivationRefused is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "refuse-the-guess.02",
+          "expects": "journey.fact fact=agentActivationRefused is=true"
+        }
+      ],
+      "partial": {
+        "reason": "the refusal is observed, and it is attempted rather than earned by never trying. What is not observed is the second half of the criterion: no fact is published about a human then overriding the refusal with a stated reason, so this run cannot say that path works"
+      }
+    },
+    {
+      "requirementId": "check:9a4371dbee79c74d27157ffcf3d6b3c6",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "nothing-commercial-moved.01",
+          "expects": "journey.fact fact=commercialRecordUnchanged is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "nothing-commercial-moved.02",
+          "expects": "journey.count equals=1 metric=commercialContracts"
+        }
+      ]
+    },
+    {
+      "requirementId": "check:d3f8cb1e979db450c58c1719406f661e",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "refuse-the-guess.03",
+          "expects": "journey.fact fact=uncoveredCategoryRefused is=true"
+        }
+      ],
+      "partial": {
+        "reason": "one of the three refusals this criterion names is observed. An uncovered priority and a full entitlement are refused by the service package and are covered by its own suite, but this scenario publishes no fact about either, and a suite passing is not a fact about which refusal fired"
+      }
+    },
+    {
+      "requirementId": "check:fe5e7cfbce3abdd7033630dfad41a85d",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "record-evidence.07",
+          "expects": "journey.fact fact=slaBasisStatesNoBusinessHours is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "record-evidence.08",
+          "expects": "journey.fact fact=contractualBreachDetermined is=false"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "record-evidence.05",
+          "expects": "journey.fact fact=recordedFirstResponseState is=breached"
+        }
+      ],
+      "partial": {
+        "reason": "\"never claims to be current\" is observed: the evaluation states its basis and states that no contractual breach was determined. \"Names the instant it used\" is not \u2014 the run publishes the state an evaluation recorded, not the timestamp field it recorded it against"
+      }
+    },
+    {
+      "requirementId": "check:905912f60da4ffd158c0c2f52da0a442",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "escalate.04",
+          "expects": "journey.fact fact=escalationCitesSlaEvaluation is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "escalate.05",
+          "expects": "journey.fact fact=escalationRouted is=false"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "escalate.06",
+          "expects": "journey.fact fact=escalationNotified is=false"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "service-sla-escalation",
+          "observation": "escalate.07",
+          "expects": "journey.fact fact=firstResponseNotificationSent is=false"
+        },
+        {
+          "kind": "source.artifact",
+          "path": "apps/admin/public/admin-service.js",
+          "sha256": "fc223c65f2a73e08068d6de2286c211b2dafdc5c1cb312e5f79a70f76870091f"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    {
+      "code": "PLAN_TARGETS_A_STARTER_NOT_THIS_REPOSITORY",
+      "message": "this plan was written against the application the b2b starter composes, which is not the composition this repository's own root has. The digest it pins is reproduced here by the service scenario, which composes exactly that application \u2014 so every fact about it is cited where it was observed, and no application fact is cited from this repository's AX1 report"
+    },
+    {
+      "code": "SERVICE_COVERAGE_IS_NOT_A_CONTRACT",
+      "message": "the scenario that answers most of this document publishes four journey-scoped limitations of its own, including that nothing was notified, routed or billed and that an SLA here is elapsed time rather than a contractual judgement. Every requirement below inherits them"
+    }
+  ]
+}
