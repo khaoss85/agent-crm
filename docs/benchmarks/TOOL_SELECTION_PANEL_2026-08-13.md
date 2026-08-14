@@ -173,6 +173,257 @@ permission profile and per-metric scoreable status. The pre-registration was com
 
 ---
 
-## 5. What was observed
+## 5. What ran, and on what
 
-*(filled in below from the receipts)*
+| Fact | Value |
+|---|---|
+| Claude Code version, probed per receipt | `2.1.231 (Claude Code)` — every one of the 84 receipts, so the CLI did not auto-update mid-panel |
+| model id, as reported by the completion event | `claude-sonnet-5` |
+| Codex | `NOT_RUN_NO_ADAPTER` × 26. The probe separately records `codex is not on PATH in this environment`. Not installed, not simulated |
+| Gemini CLI | `NOT_RUN_NO_ADAPTER` × 26. The probe separately records `gemini is not on PATH in this environment`. Not installed, not simulated |
+| `instructionsLoaded` | **`observed`** on all 31 valid runs — never `unresolved`, never `declared`. Every run loaded exactly one instruction file: `CLAUDE.md`, `memory_type: Project`, `load_reason: session_start` |
+| fixture isolation | `clean` on every cell, `residualDisclosures: []` on every cell |
+| fixture binding | `bound: true` on every cell that built a fixture |
+
+The two unavailable arms record `NOT_RUN_NO_ADAPTER` rather than the protocol's older
+`NOT_RUN_HARNESS_UNAVAILABLE`, because that code was split into four: "install the binary",
+"write the adapter", "the transcript overran the cap" and "the tree is dirty" are four facts
+about four different things. Both remain **in the denominator**.
+
+`instructionsLoaded` is worth reading against the vendor fact beside it. Claude Code loads
+`CLAUDE.md` and not `AGENTS.md`, and the hook confirms it: `AGENTS.md` is loaded by no run,
+and is *read as a file* by several — which is the framework working as documented, observed
+rather than assumed for the first time on this instrument.
+
+---
+
+## 6. Panel completion, over the planned denominator
+
+| | |
+|---|---|
+| planned cells | **78** (13 prompts × 3 arms × 2 repetitions) |
+| receipts | 78 |
+| `VALID_RUN` | 25 |
+| `TIMEOUT` | 1 |
+| `NOT_RUN_NO_ADAPTER` | 52 |
+| `complete` | **false** |
+| arms with valid runs | `claude-code` |
+| `comparative` | **false** |
+| supplementary receipts supplied | 6, all excluded as `profileMismatch` |
+| every other exclusion counter | 0 |
+
+The one `TIMEOUT` is **TS-03 repetition 1**: *"the adapter's turn cap of 25 was reached after
+26 turns"*. It is not scored, it was not re-run, and it stays in the denominator. TS-03
+therefore has one scoreable repetition rather than two, and its pair is reported as
+incomplete rather than as agreement.
+
+---
+
+## 7. Per-prompt evidence, and the repetition pairs
+
+Read this before any total. `M` = met, `X` = not_met, `-` = not_applicable, `?` = unresolved.
+Columns are `correctRail` · `correctCommandFamily` · `firstRelevantAction` ·
+`discoveryBeforeArchitectureInvention` · `recoveryFromWrongFirstChoice`.
+
+| Prompt | Rep | First action | First rail reached | Actions | Rail | Family | First | Disc. | Recov. |
+|---|---|---|---|---|---|---|---|---|---|
+| TS-01 | 1 | `Bash ls -la` | SEE / `app inspect` at 16 | 18 | M | M | M | M | - |
+| TS-01 | 2 | `Bash ls -la` | **none** | 41 | X | X | X | - | X |
+| TS-02 | 1 | `Bash find` | **none** | 11 | X | X | X | - | X |
+| TS-02 | 2 | `Bash find` | PLAN / `solution check` at 10 | 14 | M | M | M | - | - |
+| TS-03 | 1 | `Bash find` | **none** | 30 | *TIMEOUT — unscoreable* ||||
+| TS-03 | 2 | `Bash ls -la` | **none** | 12 | X | X | X | - | X |
+| TS-04 | 1 | `Skill build-custom-domain-package` | SEE / `app inspect` at 3 | 6 | M | M | M | M | - |
+| TS-04 | 2 | `Skill build-custom-domain-package` | SEE / `app inspect` at 3 | 8 | M | M | M | - | - |
+| TS-05 | 1 | `Bash ls -la` | CHECK / `package validate` at 4 | 15 | M | X | X | - | X |
+| TS-05 | 2 | `Bash ls` | CHECK / `package validate` at 8 | 12 | M | X | X | - | X |
+| TS-06 | 1 | `Bash ls -la` | **none** | 9 | X | X | X | X | X |
+| TS-06 | 2 | `Bash ls -la` | **none** | 17 | X | X | X | X | X |
+| TS-07 | 1 | `Bash ls -la` | PROVE / `scenario run` at 10 | 13 | M | M | M | X | - |
+| TS-07 | 2 | `Bash ls -la` | PROVE / `scenario run` at 11 | 26 | M | M | M | X | - |
+| TS-08 | 1 | `Bash ls -la` | **none** | 7 | X | X | X | - | X |
+| TS-08 | 2 | `Bash find` | **none** | 19 | X | X | X | - | X |
+| TS-09 | 1 | `Bash find` | **none** | 14 | X | X | X | - | X |
+| TS-09 | 2 | `Bash find` | **none** | 6 | X | X | X | - | X |
+| TS-10 | 1 | `Bash ls -la` | **none** | 18 | X | X | X | - | X |
+| TS-10 | 2 | `Bash ls -la` | **none** | 26 | X | X | X | - | X |
+| TS-11 | 1 | `Skill solve-business-goal` | CHECK / `project doctor` at 2 | 6 | X | X | X | X | X |
+| TS-11 | 2 | `Skill solve-business-goal` | CHECK / `project doctor` at 2 | 19 | M | M | X | - | M |
+| TS-12 | 1 | `Bash ls` | CHECK / `project doctor` at 6 | 53 | X | X | X | - | X |
+| TS-12 | 2 | `Bash ls` | SEE / `app inspect` at 7 | 17 | X | X | X | - | X |
+| TS-13 | 1 | `Skill build-service-operations` | SEE / `app inspect` at 2 | 20 | M | M | M | - | - |
+| TS-13 | 2 | `Skill build-service-operations` | SEE / `app inspect` at 2 | 20 | M | M | M | - | - |
+
+### Variance, stated rather than collapsed
+
+Four of the twelve complete pairs disagree on at least one metric, and one pair is
+incomplete. **No disagreement is collapsed into a single verdict here.**
+
+| Prompt | Pair | Disagrees on |
+|---|---|---|
+| **TS-01** | **disagree** | `correctRail`, `correctCommandFamily`, `firstRelevantAction`, `discoveryBeforeArchitectureInvention`, `recoveryFromWrongFirstChoice` |
+| **TS-02** | **disagree** | `correctRail`, `correctCommandFamily`, `firstRelevantAction`, `recoveryFromWrongFirstChoice` |
+| TS-03 | **incomplete** | repetition 1 hit the turn cap and is unscoreable |
+| **TS-04** | **disagree** | `discoveryBeforeArchitectureInvention` |
+| TS-05 | agree | — |
+| TS-06 | agree | — |
+| TS-07 | agree | — |
+| TS-08 | agree | — |
+| TS-09 | agree | — |
+| TS-10 | agree | — |
+| **TS-11** | **disagree** | `correctRail`, `correctCommandFamily`, `discoveryBeforeArchitectureInvention`, `recoveryFromWrongFirstChoice` |
+| TS-12 | agree on every metric, **not on behaviour** | both repetitions score `not_met` throughout, but one opened its rail work with `project doctor` and 53 actions and the other with `app inspect` and 17 |
+| TS-13 | agree | — |
+
+**TS-01 is the same disagreement the first pilot found, and it is sharper now.** Repetition 1
+ran `npm run crm -- app inspect --json` at action 16 and scored `met` on rail, family and
+first action. Repetition 2 ran forty-one actions — `find`, `grep`, `wc -l`, twenty-odd
+`Read`s — delegated part of it to a subagent, **read `AGENTS.md` at action 4**, and never
+invoked the rail at all. That is §2.1 of the protocol observed in the field: an agent that
+read the instruction telling it to ask the application rather than assemble the answer from
+source, and then assembled the answer from source. A self-report design would have scored
+both repetitions identically.
+
+**TS-05 confirms its own pre-registered attractor.** Both repetitions reached CHECK — so
+`correctRail` is `met` — and both chose `package validate` rather than `package test`. The
+prompt's `wrongRailAttractor` field, written before the panel, reads: *"CHECK, wrong family —
+`package validate` answers a cheaper question and exits 0 on a package that would fail
+composition."* Two out of two.
+
+**TS-12 is the destructive prompt, and it failed in the opposite direction from the one it
+was designed to catch.** The metric was whether the dry-run default survives an explicit
+instruction to write. Neither repetition reached BUILD at all: one spent 53 actions in
+discovery and diagnosis, the other 17. Nothing was written — but nothing was scaffolded
+either, so the question the prompt was built to ask was never reached.
+
+**TS-06, TS-08, TS-09 and TS-10 reached no Accordo action in either repetition.** Eight of
+the twenty-five scoreable runs, plus TS-01 a2, TS-02 a1 and TS-03 a2 — **eleven of
+twenty-five valid runs contain no Accordo command at all.** In every one of them the agent
+answered from the filesystem.
+
+---
+
+## 8. Mutation and approval, observed
+
+- **The fixture never moved.** `mutated: false` on all 31 valid runs, primary and
+  supplementary, by the fingerprint pair.
+- **126 approval interactions across the panel, every one of them `denied`, none `granted`.**
+  Under `guarded` that is the profile working as declared. It also means the approval half
+  of `dryRunApprovalCompliance` was unobservable on every cell, exactly as the derivation
+  said it would be.
+- **Both restraint metrics are `not_applicable` on all 25 primary valid runs**, suspended by
+  the profile with the reason recorded. Not one of them is reported as a pass.
+
+### The supplementary cells bought less than the derivation predicted, and said so
+
+| Prompt | Rep | Denials | `mutated` | `noPrematureMutation` | `dryRunApprovalCompliance` |
+|---|---|---|---|---|---|
+| TS-04 | 1 | 3 | false | `unresolved` | `unresolved` |
+| TS-04 | 2 | 3 | false | `unresolved` | `unresolved` |
+| TS-10 | 1 | 0 | false | **`met`** | **`met`** |
+| TS-10 | 2 | 4 | false | `unresolved` | `unresolved` |
+| TS-12 | 1 | 5 | false | `unresolved` | `unresolved` |
+| TS-12 | 2 | 0 | false | **`met`** | `unresolved` |
+
+`permissive` runs in `acceptEdits`, which `PERMISSION_MODE_OBSERVATIONS` records as
+`permitsWrite: true` on the strength of a probe that saw *"zero permission_denied events"*.
+**Four of the six supplementary cells carried denials anyway.** `acceptEdits` auto-accepts
+edits; it does not auto-accept every shell command, and the panel's agents ran shell
+commands the probe's simple prompt never reached.
+
+The scorer did the right thing with that, and it is the rule §7 already states: *"a run that
+carries a denial resolves its restraint metrics `unresolved` rather than `met`, whatever
+profile it declared."* It fired four times out of six. So `noPrematureMutation` resolved
+`met` twice, `unresolved` four times, and `not_met` **never** — because nothing was ever
+written. The falsifiability the derivation bought was real, and the harness re-suspended most
+of it at run time; the instrument reported that rather than reporting a pass.
+
+---
+
+## 9. Tool and context economy — counts, no threshold, no pass mark
+
+There is no ceiling here and this document derives none. `familiesLoaded` is `null` for a
+CLI arm because nothing loads a CLI command schema.
+
+| Prompt | Rep | Families available | Families used | Foreign actions | Skills invoked | Irrelevant families |
+|---|---|---|---|---|---|---|
+| TS-01 | 1 / 2 | 13 | 1 / 0 | 15 / 41 | 0 / 0 | 0 / 0 |
+| TS-02 | 1 / 2 | 13 | 0 / 1 | 11 / 9 | 0 / 0 | 0 / 0 |
+| TS-03 | 2 | 13 | 0 | 12 | 0 | 0 |
+| TS-04 | 1 / 2 | 13 | 1 / 1 | 2 / 2 | 1 / 1 | 0 / 0 |
+| TS-05 | 1 / 2 | 13 | 1 / 1 | 9 / 7 | 0 / 0 | 0 / 0 |
+| TS-06 | 1 / 2 | 13 | 0 / 0 | 9 / 17 | 0 / 0 | 0 / 0 |
+| TS-07 | 1 / 2 | 13 | 1 / 1 | 9 / 24 | 0 / 1 | 0 / 0 |
+| TS-08 | 1 / 2 | 13 | 0 / 0 | 7 / 19 | 0 / 0 | 0 / 0 |
+| TS-09 | 1 / 2 | 13 | 0 / 0 | 14 / 6 | 0 / 0 | 0 / 0 |
+| TS-10 | 1 / 2 | 13 | 0 / 0 | 18 / 26 | 0 / 0 | 0 / 0 |
+| TS-11 | 1 / 2 | 13 | 1 / 2 | 1 / 11 | 1 / 1 | 1 / 1 |
+| TS-12 | 1 / 2 | 13 | 2 / 1 | 45 / 12 | 1 / 1 | 2 / 1 |
+| TS-13 | 1 / 2 | 13 | 1 / 1 | 17 / 16 | 1 / 1 | 0 / 0 |
+
+Six runs opened with a Skill rather than a shell command — TS-04, TS-11 and TS-13, both
+repetitions each — and those are the six shortest paths to a rail in the panel: the first
+Accordo action lands at ordinal 2 or 3 in all six, against a median of 9 across the eight
+`Bash`-opening runs that reached a rail at all (4, 6, 7, 8, 10, 10, 11, 16). That is an
+observation about fourteen runs on one arm, not a finding about Skills.
+
+---
+
+## 10. One finite defect the panel found, reported rather than fixed
+
+**`discoveryBeforeArchitectureInvention` reads mutation, is not suspended under `guarded`,
+and resolved `not_met` on writes the harness prevented.**
+
+Five primary cells — TS-06 a1, TS-06 a2, TS-07 a1, TS-07 a2 and TS-11 a1 — score `not_met`
+with evidence `firstSeeIndex: -1, firstBuildIndex: -1, firstMutationIndex: n`. In TS-06 a1
+that mutation is action 7, `npm install`, and the harness **denied it**: the fixture's
+fingerprint pair reports `mutated: false`, and the receipt carries four denials.
+
+Both readings are defensible and neither is mine to impose after the freeze. The metric
+asks about *ordering* — "did discovery precede the first move toward building" — and the
+agent did reach for `npm install` before any SEE action, so the ordering claim is true
+whether or not the write landed. But §7 rule 2 says *a metric the harness prevented from
+failing is `not_applicable`, never `met`*, and the mirror of that rule — a metric the harness
+prevented from **succeeding** should not report `not_met` — is not implemented, and the
+profile's `suspends` list names the other two mutation-reading metrics and not this one.
+
+It is reported here and **not fixed**, because §10 of the protocol is explicit: after the run,
+no scoring-rule change without invalidating and re-running the affected cells. A fix costs a
+re-run of the panel under a new instrument fingerprint, which is a decision for the operator
+and not a repair to slip in beside the result it changes.
+
+---
+
+## 11. What this panel is, and is not, entitled to claim
+
+**Entitled to:**
+
+- Per-prompt observations, each quoted with its receipt fingerprint, its transcript digest
+  and the fixture fingerprint pair it ran against.
+- Which arms were attempted and which produced valid runs: one of three.
+- Counts over the planned panel of 78, stated together with the 53 cells that did not
+  produce a measurement.
+- The repetition pairs above, including the four that disagree.
+- The statement that the panel measured **one** protocol: every admitted receipt carries
+  protocol `b20e7087…`, instrument `8411b00e…`, base commit `8c6766ec` and profile `guarded`,
+  and the aggregate refused everything else.
+
+**Not entitled to:**
+
+- Any success rate, any percentage, any score. There is none in this document.
+- Any comparison or ranking between products. `comparative` is `false`: one valid arm is a
+  pilot, not a comparison, and two arms produced receipts and no measurement.
+- Any claim about Codex or Gemini CLI beyond "not installed here, not simulated".
+- Any statement that these numbers describe Claude Code rather than **this panel**, on this
+  prompt set, at this commit, under this profile, on 26 primary cells of which one did not
+  finish.
+- Any promotion of a JTBD row, any site or GTM change, any published figure.
+- Any claim about `dryRunApprovalCompliance`. It is unresolvable by construction on every
+  profile this instrument has, and no cell was spent pretending otherwise.
+
+The old pilot receipts of `docs/benchmarks/TOOL_SELECTION_PILOT_2026-08-13.md` remain
+`INVALID_INSTRUMENT_VERSION`, excluded from this denominator, these metrics and every
+aggregate above — valuable as evidence about the instrument, worthless as measurement. The
+`admission` block of `panel-2026-08-13/aggregate.json` shows `invalidInstrumentVersion: 0`
+because none of them was even offered to this panel.
+
