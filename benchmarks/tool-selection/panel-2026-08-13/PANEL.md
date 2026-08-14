@@ -2,9 +2,9 @@
 
 Date: 2026-08-13
 Protocol: `docs/benchmarks/AGENT_TOOL_SELECTION_PROTOCOL.md`
-Pre-registration: `docs/benchmarks/PANEL_PREREGISTRATION_2026-08-13.json`
+Pre-registration: `benchmarks/tool-selection/panel-2026-08-13/preregistration.json`
 Freeze: `benchmarks/tool-selection/frozen-protocol.json`
-Receipts: `docs/benchmarks/panel-2026-08-13/runs/`
+Receipts: `benchmarks/tool-selection/panel-2026-08-13/runs/`
 
 **Status: run, and bounded.** One arm produced valid runs; two produced receipts and no
 measurement. `comparative` is **false** and there is no success rate in this document,
@@ -424,6 +424,6 @@ and not a repair to slip in beside the result it changes.
 The old pilot receipts of `docs/benchmarks/TOOL_SELECTION_PILOT_2026-08-13.md` remain
 `INVALID_INSTRUMENT_VERSION`, excluded from this denominator, these metrics and every
 aggregate above — valuable as evidence about the instrument, worthless as measurement. The
-`admission` block of `panel-2026-08-13/aggregate.json` shows `invalidInstrumentVersion: 0`
+`admission` block of `benchmarks/tool-selection/panel-2026-08-13/aggregate.json` shows `invalidInstrumentVersion: 0`
 because none of them was even offered to this panel.
 
