@@ -3,8 +3,20 @@
 Date: 2026-08-13
 Protocol: `docs/benchmarks/AGENT_TOOL_SELECTION_PROTOCOL.md`
 Pre-registration: `benchmarks/tool-selection/panel-2026-08-13/preregistration.json`
-Freeze: `benchmarks/tool-selection/frozen-protocol.json`
+Freeze: `benchmarks/tool-selection/panel-2026-08-13/frozen-protocol.json`
 Receipts: `benchmarks/tool-selection/panel-2026-08-13/runs/`
+
+Two placement notes, because a failing gate decided both rather than taste. This record
+and its receipts live under `benchmarks/tool-selection/` — which `DENY` already excludes
+wholesale — rather than under `docs/benchmarks/`, because a receipt carries
+`expectedRail` and `expectedFirstFamilies` and would otherwise put the answer sheet into
+every fixture built from this repository. And the freeze is kept here, beside the panel it
+describes, rather than at the default `benchmarks/tool-selection/frozen-protocol.json`: it
+names commit `8c6766e` and can never be current again, so leaving it on the default path
+would make the next operator's cell fail `PROTOCOL_STALE` against a stale document instead
+of `PROTOCOL_UNFROZEN` against an honest absence — and it made the suite's own proof that
+absence is refused unreachable. A frozen protocol is evidence of one panel, not a
+checked-in default.
 
 **Status: run, and bounded.** One arm produced valid runs; two produced receipts and no
 measurement. `comparative` is **false** and there is no success rate in this document,
