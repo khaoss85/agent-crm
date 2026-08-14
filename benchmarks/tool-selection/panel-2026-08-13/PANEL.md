@@ -406,7 +406,26 @@ and not a repair to slip in beside the result it changes.
 
 ---
 
-## 11. What this panel is, and is not, entitled to claim
+## 11. How to re-check this panel
+
+The cells ran from a detached checkout of the commit the freeze names, so that receipts
+could be committed to the branch while the tree the fixtures were cut from stayed at
+`baseSha`. To re-derive or re-aggregate:
+
+```
+git worktree add --detach <dir> 8c6766eca591dc372c657a92f86f02989c8ce291
+node <dir>/benchmarks/tool-selection/run.js aggregate \
+  benchmarks/tool-selection/panel-2026-08-13/runs \
+  --repetitions 2 --arms claude-code,codex,gemini-cli \
+  --freeze benchmarks/tool-selection/panel-2026-08-13/frozen-protocol.json
+```
+
+Running it from a checkout at any other commit is refused, which is the gate working: a
+cell measured against one tree cannot be recorded under another.
+
+---
+
+## 12. What this panel is, and is not, entitled to claim
 
 **Entitled to:**
 

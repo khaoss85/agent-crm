@@ -6,6 +6,12 @@ routing layer is added by the work that introduced it.** This sits under the exi
 `docs/strategy/EXECUTION_ROADMAP.md`); it is not a new public DX identifier and it
 publishes nothing.
 
+**The panel has been run.** `benchmarks/tool-selection/panel-2026-08-13/PANEL.md` is the
+record, with its freeze, its pre-registration and all 84 receipts beside it. It lives under
+`benchmarks/tool-selection/` rather than here because a receipt carries `expectedRail` and
+`expectedFirstFamilies`, and `DENY` excludes that directory wholesale — evidence kept in
+`docs/benchmarks/` would put the answer sheet into every fixture.
+
 Companion documents: `docs/benchmarks/PILOT_PROTOCOL.md` (the Edition L runbook this
 borrows its operator discipline from), `docs/benchmarks/URR_PILOT_2026-08-10.md` (the
 invalid pilot whose denominator lesson is enforced here in code),
