@@ -1,0 +1,134 @@
+# ExecPlan — extract Signature & Order as a domain package
+
+**Status: in progress.** Branch `claude/signature-order-extraction` from
+`9a57c78` (ADR-032 merged; signer fix and the Signature LA0 baseline of record
+on main at `a5a71dd`; Commercial package-native since `6cf4c85`).
+
+## Objective
+
+Move Signature & Order — envelopes, verified webhooks, signed artifacts,
+immutable Orders (ADR-017) — out of `packages/core` into the optional
+`packages/signature` domain package, on the pattern the Intelligence (#38) and
+Commercial (#79) extractions established, **implementing the ADR-032
+operations seam exactly within its five-item rollout boundary** so both
+consumers (Commercial's `syncCatalog`, Signature's `ingestSignatureEvent` /
+`reconcileSignature`) attach through declared operations instead of named
+kernel wiring.
+
+**Acceptance harness**: both LA0 baselines replay with zero asserted
+observations moved — Signature (110 observations, asserted fingerprint
+`fe1875bf9cb6…`) and Commercial (107 observations, `82c1f02fa354…`).
+
+## Approaches compared
+
+1. **Two packages (signature + order)** — rejected: the characterization
+   treats them as one lifecycle (a verified completion atomically creates the
+   Order; `order:quote-version:<id>` uniqueness is the envelope's own
+   invariant), no consumer needs Order without Signature, and a split would
+   invent a capability edge between them with one consumer on each side.
+2. **Extract without the seam, keeping two named residues** — rejected: it
+   contradicts the merged ADR-032 rollout, which binds the seam to this PR
+   precisely because both real consumers exercise it here.
+3. **One package + ADR-032 seam within the five-item boundary** — chosen.
+
+## Architecture
+
+- `packages/signature/src/operations.js` and `src/registry.js`: the moved
+  kernel files (`signature-operations.js`, `signature-registry.js`), bodies
+  unchanged except imports from public core and the two deliberate wiring
+  changes below. `packages/core/src/external-operation.js` **stays in core**
+  (the recorded neutral-helper verdict); the operations receive it via the
+  seam's injected `runExternal`, closing the private-export gap the narrow way
+  ADR-032 chose.
+- `packages/signature/src/index.js` — `createSignatureDomain({signatureProviders, config})`:
+  - `resources`: the nine record modules (`signature-envelope`,
+    `signature-signer`, `signature-event`, `signed-artifact`, `order`,
+    `order-line`, `order-component`, `order-tier`, `order-total`), whose
+    manifests move to `packages/signature/modules/` (the Commercial precedent
+    for the quote family);
+  - `requires`: `commercial/commercial-quotes@1` and
+    `commercial/commercial-quote-binding@1` — the declared edges the
+    Commercial extraction sized from this domain's own consumption inventory.
+    Composition therefore **fails closed** when Commercial is absent or offers
+    the wrong version (`DEPENDENCY_MISSING_PACKAGE` / `DEPENDENCY_UNSATISFIED`);
+  - `actions`: `buildRequestSignatureAction(config, registries)` — the
+    registries close over the package instance (ADR-021 applied, exactly as
+    Commercial's `submit` did), and the ambient `signature` action-context key
+    is removed from the action runtime with no fallback;
+  - `operations` (ADR-032): `ingest-signature-event` (`appMethod:
+    ingestSignatureEvent`) and `reconcile-signature` (`appMethod:
+    reconcileSignature`), run names `signature.event` / `signature.reconcile`
+    grandfathered as frozen consumer-visible values;
+  - `metadata()`: the same block `SignatureRegistries.metadata()` always
+    published, now under `domains.signature`; the ambient `schema.signature`
+    block is gone with no fallback (the LA0 harness reads location through its
+    seam and freezes the contents);
+  - `persistFingerprints`: kept on the package (the recorded ADR-022
+    deviation, third application) — shipped databases hold
+    `signature-provider` rows in `definition_versions`, and re-typing them
+    would retire the drift check.
+- **Commercial consumption.** No Commercial import exists in Signature source
+  (measured in the LA0 ExecPlan §1.1) and none is added. The `request-signature`
+  action's intent opens **`commercial-quotes@1` through the registry**
+  (`ctx.domains.capability`, consumer `signature`) for every quote/version
+  read that builds the signable document, and opens
+  `commercial-quote-binding@1` for the declared bounded-write edge; the quote
+  patch itself stays `applyManaged` on the quote module — the capability's own
+  written contract (`writePath`), not a second mechanism. Inside the two
+  app-scoped operations the completion evidence keeps its `modules`-based
+  reads: the ADR-032 bounded context deliberately provides `modules` ("the
+  same handles the operation code holds today") and no capability resolver —
+  a resolver there would exceed the five-item boundary, so the declared
+  `requires` edge carries the dependency and the byte-identical reads carry
+  the behaviour. Recorded here so the reviewer meets it as a decision, not a
+  discovery.
+
+## The ADR-032 boundary accounting (what each of the five items adds)
+
+1. **`operations` validation** — `package-registry.js`:
+   `operationContract: 1`, `NAME_RE` name unique per package, bounded
+   label/description, optional camelCase bounded `appMethod`, optional `input`
+   declared in the action-registry field shapes, `create` function;
+   `package-composition.js`: cross-package `appMethod` collision refusal.
+2. **`packages/core/src/operation-runtime.js`** — one generic module, zero
+   domain vocabulary: builds the bounded context `{database, modules, events,
+   config, runExternal, trace}` (trace = bounded best-effort writer over the
+   same `workflow_runs`/`trace_spans` rows) and composes declared operations
+   into `{name → fn}` plus alias list.
+3. **`create-app.js`** — generic composition + alias attachment replacing
+   BOTH named residues (the Commercial `createCatalogSyncOperation` lookup and
+   the entire named Signature wiring); alias shadow refusal against existing
+   app keys.
+4. **`apps/server`** — the three enumerated routes keep their exact behaviour,
+   delegating to the composed aliases; the raw-body webhook keeps its
+   raw-body/header-allowlist/synthesized-actor/non-echoing-401 semantics
+   byte-for-byte; the ambient `signature` schema block is removed (the package
+   publishes under `domains`).
+5. **AX1 / `/api/schema`** — additive publication of declared operation names
+   (registry `get()`/`metadata()` and the inspect report).
+
+Anything beyond this list stops the work and becomes a report, not code.
+
+## Consumers and callers updated in this PR
+
+Starter `install.mjs` (composes `createSignatureDomain`, drops the fixed
+provider slot and the kernel action import; signature/order manifests read
+from `packages/signature/modules/`), `tests/helpers/contracts-project.js`,
+`tests/signature-*.test.js`, `tests/service-operations-upgrade.test.js`,
+`examples/journeys/service-sla-escalation/journey.mjs`, Admin
+(`admin-quotes.js` signature section resolves `schema.signature ??
+schema.domains?.signature` — the Commercial precedent), AX1's fixed
+`signature` slot removed, and the LA0 harness seam
+(`tests/characterization/signature-harness.mjs` — the one characterization
+file the extraction was designed to edit).
+
+## Verification plan
+
+`npm install`; both baseline replays (zero moved, fingerprints unchanged);
+new `tests/signature-package-absence.test.js` (detach deletes no rows,
+absence answers honest 404s incl. the webhook, reattach restores evidence);
+old-DB upgrade (pre-extraction database boots, drift check passes, same
+cents); `crm package test packages/signature`; full battery — `verify`,
+`smoke`, `gtm:check`, `app inspect`, `doctor`, `project verify`, both
+scenarios; CI green on the exact head. PR opened and left unmerged for the
+independent review; PROJECT_STATUS/TASKS untouched.
