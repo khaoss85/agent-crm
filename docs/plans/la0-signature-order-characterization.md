@@ -231,10 +231,13 @@ Three candidate shapes were considered, mirroring the Intelligence LA0:
 
 Baseline: `tests/characterization/signature-baseline.json` —
 `legacyCharacterizationContract: 1`, domain `signature-order`, attachment
-`kernel-wired-action-and-fixed-provider-slot`, **108 observations / 1,209
-asserted values** (94 `contractual`, 3 `compatibility_required`, 2
+`kernel-wired-action-and-fixed-provider-slot`, **109 observations / 1,214
+asserted values** (95 `contractual`, 3 `compatibility_required`, 2
 `incidental`, 1 `defect_candidate`, 8 `pre_extraction_evidence`). Generated
-twice; the two runs were byte-identical across every observed value.
+three times; consecutive runs were byte-identical across every observed
+value, and the one deliberate late addition (the terminal-state idempotency
+refusal) regenerated as exactly one added observation with zero moved values
+— the reviewed-regeneration loop demonstrated on this domain too.
 Regeneration: `node scripts/characterize-signature.mjs` (npm alias arrives at
 extraction time by design).
 
