@@ -44,7 +44,7 @@ appears in exactly one of the two sections, never both.
 
 | | Tool | Why it waits |
 |---|---|---|
-| **—** | first existing-domain extraction pilot | one of Intelligence / Commercial / Signature moved out of core, once DX4 can prove the result still conforms. The per-domain status that decides the candidate is `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, which records **Lead Intelligence** as the working hypothesis and the evidence that must exist before it is chosen |
+| **—** | remaining legacy-domain extraction | the extraction path is proven twice on the same LA0-first pattern — **Lead Intelligence** (PR #38) and **Commercial Operations** — each with zero asserted characterization observations moved. `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` records **Signature & Order** as the one legacy domain still in core, already characterized; its extraction waits on the signer input-integrity fix and on the package application-operation decision the matrix's seam evidence motivates |
 
 ### Before an AX3 public benchmark
 
