@@ -80,8 +80,8 @@ observation — sessions that load the instructions and then wander through gene
 repository search without selecting any rail — is answered, as guidance and nothing
 else, by the "Selecting an Accordo rail" section in `CLAUDE.md` and `AGENTS.md`.
 Whether guidance moves selection is a question the instrument answers by re-running
-the same frozen cells rather than by prose; `docs/PROJECT_STATUS.md` tracks the
-second panel until its record merges.
+the same frozen cells rather than by prose; the second panel's frozen record now
+sits beside the first under `benchmarks/tool-selection/`.
 
 ### Review and maintenance
 
