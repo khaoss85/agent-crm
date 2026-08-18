@@ -124,6 +124,22 @@ outside-fixture instruction contamination in the field**, which V1 built it to d
 never got to see; and the invalid pass's numbers are directionally similar to the valid
 pass's, which is reported as an aside and used for nothing.
 
+### What a receipt includes — a decision made explicit after review
+
+A run directory in this record carries exactly the six evidence files V1's carried:
+`receipt.json`, `receipt-validation.json`, `transcript.txt`, `stderr.txt`,
+`instructions-loaded.jsonl`, `session-start.jsonl`. The per-cell scratch
+`CLAUDE_CONFIG_DIR` (`agent-config/`) is **apparatus, not evidence**: nothing in the
+receipt contract binds it, the aggregate never reads it, and on Claude Code 2.1.234 it
+accumulates a synced copy of every enabled skill per cell — ~280 MB across 116 cells,
+including a qpdf usage example in the pdf skill's `REFERENCE.md` whose
+`--password=` flag carries an obvious placeholder value — flagged by a secret
+scanner as a false positive on the first push, and described here rather than
+quoted so no commit of this branch carries the credential-shaped string.
+Those trees were removed from the record after the panel ran; every receipt,
+transcript and hook log is bit-identical, and the aggregate re-admits 78 of 84 with 26
+valid, unchanged.
+
 ---
 
 ## 5. What ran, and on what
