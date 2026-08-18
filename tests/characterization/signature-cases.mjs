@@ -833,6 +833,22 @@ export async function runJourneyCases(t, record) {
     },
   }));
 
+  // The idempotency key against a TERMINAL envelope: still one envelope per
+  // quote version, ever — the refusal names the terminal state instead of
+  // pretending the request could be retried.
+  record(observation({
+    id: 'envelope-lifecycle.repeat-request-after-terminal-refused',
+    category: 'envelope-lifecycle',
+    classification: 'contractual',
+    surface: 'sdk',
+    observed: await refusal(client.module('quote').action(deal.quote.id, 'request-signature', {
+      quoteVersionId: deal.versionId, provider: 'fixture-signature', providerVersion: 1, signers: signerList('journey@example.com'),
+    })).then((result) => ({
+      ...result,
+      envelopesForVersion: modules('signature-envelope').countWhere({ quoteVersionId: deal.versionId }),
+    })),
+  }));
+
   // Replay of the completion creates no new audit rows, no new order.
   const beforeReplay = auditCounts();
   const replayResponse = await send(completedEvent);

@@ -2,13 +2,13 @@
   "attachment": "kernel-wired-action-and-fixed-provider-slot",
   "counts": {
     "compatibility_required": 3,
-    "contractual": 94,
+    "contractual": 95,
     "defect_candidate": 1,
     "incidental": 2,
     "pre_extraction_evidence": 8
   },
   "domain": "signature-order",
-  "fingerprint": "e1ad767d3e8ee1f983fd388cf4c94e1a82ade577c98251ea59ec3fb232f0e74f",
+  "fingerprint": "2c4329602c4aede72cbd31357fc0098263c30fc0fbbec215389bebc4fea99d64",
   "legacyCharacterizationContract": 1,
   "limitations": [
     {
@@ -1310,6 +1310,20 @@
       "observed": {
         "code": "ENVELOPE_EXISTS",
         "message": "A signature envelope already exists for this quote version (failed) — reconcile it instead of requesting a second one",
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.repeat-request-after-terminal-refused",
+      "note": null,
+      "observed": {
+        "code": "ENVELOPE_EXISTS",
+        "envelopesForVersion": 1,
+        "message": "A signature envelope already exists for this quote version (completed) — reconcile it instead of requesting a second one",
         "refused": true,
         "status": 409
       },
