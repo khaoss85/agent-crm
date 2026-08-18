@@ -271,38 +271,73 @@ injection · >500 exact reads · provider hostile/timeout/retry.
 
 ---
 
-## B4 — the capability, sized by its real consumers
+## B4 — the capability, sized by its real consumers (FROZEN)
 
-Consumers that exist or are scheduled: **Signature/Order** (reads the quote and
-its approved current version's immutable evidence — version, lines, components,
-totals — to build the signature document package and the Order), **M16b
-amendment execution** (future: reads the same evidence to base an amendment on),
-**Delivery commercial-followup** (future: cites the same evidence). All three
-are *reads over immutable evidence*. No consumer needs a mutation: quote
-mutation authority stays with the quote actions and their human boundary, so
-there is no second write path to separate — one read capability, not a
-capability per method and not a package-as-tool.
+Frozen against the Signature agent's measured consumption inventory
+(`docs/plans/la0-signature-order-characterization.md` §1 on the signature
+branch), delivered by the integrator. The load-bearing measurements:
 
-`commercial-quotes@1` (frozen only after the integrator delivers the Signature
-agent's import inventory; the shape below is the working draft):
+- Signature imports **zero** Commercial code; the entire coupling is records by
+  module name — `quote` (read + managed write of exactly
+  `signatureEnvelopeId`, `signatureStatus`, `orderId`), and read-only
+  `quote-version`, `quote-version-line`, `quote-version-component`,
+  `quote-version-total`.
+- `version.policyFingerprint` is copied opaquely into the signed
+  `documentHash`, never recomputed.
+- What Signature needs guaranteed is **record/evidence semantics**, not service
+  methods: lifecycle facts (only the current, approved, non-rejected version is
+  signable), snapshot immutability (the document hash is rebuilt from the rows
+  at completion and must match byte-for-byte), snapshot completeness (≥1 line,
+  ≥1 grouped total), and the exact column shapes including the
+  `tiersJson`/`tierBreakdownJson` encodings and cents/bps conventions.
+
+Read authority and mutation authority differ, so there are **two** capabilities
+— and no more. Not one per method, not a package-as-tool, no generic platform
+seam:
+
+**`commercial-quotes@1` — read-only quote/version evidence.** Consumers:
+Signature/Order (document package + Order build), future M16b amendment
+execution, future Delivery commercial-followup — all reads over immutable
+evidence.
 
 ```js
 {
   name: 'commercial-quotes', version: 1,
-  create({ modules, consumer }) => ({
+  create: ({ modules, consumer }) => ({
     capabilityContract: 1,
-    quote(quoteId),                      // bounded quote summary (status, currency, links)
-    version(versionId),                  // one immutable Quote Version row
-    versionEvidence(versionId),          // { version, lines, components, totals } — exact indexed reads
-    policies(),                          // declared discount-policy identities + fingerprints
+    quote(quoteId),               // the quote record — status/currentVersionId lifecycle facts
+    version(versionId),           // one immutable Quote Version row, policy evidence included
+    versionLines(versionId),      // exact indexed reads, position-ordered
+    versionComponents(versionId), // incl. tiersJson / tierBreakdownJson encodings
+    versionTotals(versionId),     // the grouped totals; unlike periods never summed
+    policies(),                   // declared discount-policy identities + fingerprints
   })
 }
 ```
 
-Reads run against the caller's `modules` view inside the caller's transaction —
-the pattern `contracts/delivery-obligations@1` established. The capability
-grants no registration, no storage handle, no catalog write and no way to
-evaluate a policy.
+Reads run against the caller's `modules` view inside the caller's transaction
+(the `contracts/delivery-obligations@1` pattern). The rows are returned as
+stored — the column shapes ARE the contract, and the capability's description
+records the four semantic guarantees above. It grants no registration, no
+storage handle, no catalog write and no policy evaluation.
+
+**`commercial-quote-binding@1` — the bounded managed write.** One consumer
+(Signature), separated because its authority semantics differ from every read:
+Signature is the only party that may stamp external-signature linkage onto a
+quote, and it does so through a field allowlist — exactly
+`signatureEnvelopeId`, `signatureStatus`, `orderId`, the fields the project's
+`quote.module.json` already declares managed for this purpose. Any other field
+in the patch is refused. This does not widen behaviour: it is the same
+`applyManaged` write Signature performs today via the module registry, made
+into a declared edge instead of an undeclared reach.
+
+In **this** PR the capabilities are offered and conformance-tested; the kernel
+Signature code keeps its current module-registry reads unchanged (zero
+behaviour change). The Signature extraction branch is the consumer that
+declares them, and the integrator reconciles the edge. Downstream symmetry,
+recorded for B7: Contract Activation consumes Signature's records the same
+record-semantics way, so this read-capability shape is the precedent that seam
+will reuse.
 
 ## B7 — the HTTP-route / app-operation seam, recorded not built
 
