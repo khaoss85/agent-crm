@@ -35,14 +35,15 @@ proven → scenario run · the plan proven complete → solution verify.
 The boundaries between neighbouring rails:
 
 - `app inspect` describes what exists — composition, capabilities, records,
-  actions, policies, providers — never health, correctness or runtime state.
+  actions, policies, providers — never health, domain correctness or runtime state.
 - `project doctor` diagnoses source consistency and drift; it makes no claim
   about business behaviour.
 - `solution check` asks whether the plan still matches the application
   (`PLAN_STALE`), not whether it is implemented: it can exit 0 on a plan
   nobody has built a line of.
-- `project verify` proves technical health through the project's declared
-  authorities; it runs no business scenario and maps no requirement to proof.
+- `project verify` proves technical health by orchestrating existing authorities
+  — conformance, the doctor, the project's declared scripts; it runs no business
+  scenario and maps no requirement to proof.
 - `scenario run` proves one named business journey with linked evidence; it is
   not whole-project health, and it promotes no JTBD row.
 - `solution verify` maps every plan requirement to machine-checked proof and
