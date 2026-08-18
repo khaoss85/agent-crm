@@ -563,15 +563,16 @@ test('the canonical Lead→Won objective is answered with what exists and what i
     'and no capability claims them either',
   );
   // Nothing in the report may be read as "marketing is handled". The catalog
-  // providers and discount policies now travel with the commercial package's
-  // composition (like Intelligence's definitions before them), so the fixed
-  // provider slots that remain are signature's alone.
+  // and signature providers both travel with their packages' compositions now
+  // (like Intelligence's definitions before them), so no fixed provider slot
+  // remains — this fixture composes no pipelines, and the list is empty.
   assert.deepEqual(
     [...new Set(report.providers.map((entry) => entry.kind))].sort(),
-    ['signature-provider'],
+    [],
     'the provider list is the honest one',
   );
   assert.ok(packages.has('commercial'), 'commercial is discovered as a package, not a provider slot');
+  assert.ok(packages.has('signature'), 'and signature is discovered as a package, not a provider slot');
 });
 
 test('/api/schema and application boot are unchanged by AX1', async (t) => {
@@ -589,7 +590,7 @@ test('/api/schema and application boot are unchanged by AX1', async (t) => {
     Object.prototype.hasOwnProperty.call(schema, 'applicationInspectionContract'), false,
     'AX1 is a CLI surface and adds nothing to the HTTP schema',
   );
-  assert.equal(context.app.domains.size, 3, 'the composition still registers commercial, contracts and delivery');
+  assert.equal(context.app.domains.size, 4, 'the composition still registers commercial, signature, contracts and delivery');
 });
 
 

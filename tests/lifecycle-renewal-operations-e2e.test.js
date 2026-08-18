@@ -732,7 +732,7 @@ test('the package detaches and reattaches, and its rows outlive it', async (t) =
   writeFileSync(composition, attached.split('\n')
     .filter((line) => !line.includes('createLifecyclePackage')).join('\n'));
   const detached = inspect();
-  assert.deepEqual(detached.packages, ['commercial', 'contracts'], 'the application boots without it');
+  assert.deepEqual(detached.packages, ['commercial', 'contracts', 'signature'], 'the application boots without it');
   assert.deepEqual(detached.lifecycleActions, [], 'and its actions are gone with it');
   assert.equal(detached.decisions, 1, 'the rows it wrote are left alone, not deleted');
   assert.equal(detached.followups, 1);
@@ -742,7 +742,7 @@ test('the package detaches and reattaches, and its rows outlive it', async (t) =
   // Putting the line back restores the surface over the same rows.
   writeFileSync(composition, attached);
   const reattached = inspect();
-  assert.deepEqual(reattached.packages, ['commercial', 'contracts', 'lifecycle']);
+  assert.deepEqual(reattached.packages, ['commercial', 'contracts', 'lifecycle', 'signature']);
   assert.equal(reattached.lifecycleActions.length, 4);
   assert.equal(reattached.decisions, 1, 'the same row, not a new one');
   assert.equal(reattached.reason, 'recorded before the package was removed');
