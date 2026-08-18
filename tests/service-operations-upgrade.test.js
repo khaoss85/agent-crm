@@ -5,7 +5,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { COMMERCIAL_MANIFESTS, DOMAIN_MANIFESTS, SERVICE_MANIFESTS, STARTER_MANIFESTS, activatedContract, boot } from './helpers/contracts-project.js';
+import { COMMERCIAL_MANIFESTS, DOMAIN_MANIFESTS, SERVICE_MANIFESTS, SIGNATURE_MANIFESTS, activatedContract, boot } from './helpers/contracts-project.js';
 
 /**
  * The ADR-019 upgrade, on data that predates it.
@@ -117,9 +117,8 @@ test('a shipped M12 project adopts M15 without losing a single obligation', asyn
   }
   writeFileSync(manifestPath, `${JSON.stringify(original, null, 2)}\n`);
 
-  const starter = join(root, 'examples/starters/b2b-lead-qualification');
   for (const manifest of COMMERCIAL_MANIFESTS) apply(join(root, 'packages/commercial/modules', manifest));
-  for (const manifest of STARTER_MANIFESTS) apply(join(starter, manifest));
+  for (const manifest of SIGNATURE_MANIFESTS) apply(join(root, 'packages/signature/modules', manifest));
   for (const manifest of DOMAIN_MANIFESTS) apply(join(root, 'packages/contracts/modules', manifest));
   composition(root, { withService: false });
 

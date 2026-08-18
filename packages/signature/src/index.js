@@ -3,6 +3,7 @@
 import { definePackage } from '../../core/index.js';
 import { SignatureRegistries } from './registry.js';
 import { buildRequestSignatureAction, createSignatureOperations } from './operations.js';
+import { createSignatureOrdersCapability } from './capability.js';
 
 /**
  * The Signature & Order domain package (ADR-017, extracted under ADR-018 on
@@ -104,6 +105,13 @@ export function createSignatureDomain(options = {}) {
       { package: 'commercial', capability: 'commercial-quotes', version: 1 },
       { package: 'commercial', capability: 'commercial-quote-binding', version: 1 },
     ],
+    // The one thing this package offers other packages: read-only signed-Order
+    // evidence, sized by its measured real consumer — Contract Activation
+    // (see `capability.js`). It exists because a package whose actions target
+    // `order` must be able to DECLARE that edge (DX4): the contracts package
+    // requires it, and the conformance rail refuses an undeclared
+    // record-level dependency on another package's resources.
+    capabilities: [createSignatureOrdersCapability(config)],
     actions: [buildRequestSignatureAction(config, registries)],
     // Deliberately empty; see persistFingerprints below (the ADR-022 deviation).
     policies: [],

@@ -164,12 +164,15 @@ test('a consumer that declares followUp without the work package is refused at s
   const root = project(t, { withWorkTables: false });
   // Lifecycle opting in, with no `work` in the composition. The registry must
   // refuse the whole application at boot — never at runtime, inside somebody's
-  // transaction.
+  // transaction. Contracts' own dependency chain (signature, then commercial)
+  // is composed so the ONE unmet edge is the one this test is about.
   writeFileSync(join(root, COMPOSITION), [
     '// @ts-check',
+    "import { createCommercialDomain } from '../../commercial/src/index.js';",
+    "import { createSignatureDomain } from '../../signature/src/index.js';",
     "import { createLifecyclePackage } from '../../lifecycle/src/index.js';",
     "import { createContractsDomain } from '../../contracts/src/index.js';",
-    'export const generatedDomains = [createContractsDomain({ policies: [] }), createLifecyclePackage({ followUp: true })];',
+    'export const generatedDomains = [createCommercialDomain(), createSignatureDomain(), createContractsDomain({ policies: [] }), createLifecyclePackage({ followUp: true })];',
     '',
   ].join('\n'));
   const script = join(root, 'boot-unmet.mjs');

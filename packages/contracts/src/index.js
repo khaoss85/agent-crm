@@ -64,6 +64,13 @@ export function createContractsDomain(options = {}) {
     label: 'Contracts and subscriptions',
     description: 'Activates a signed immutable Order into a commercial contract, a subscription and pending delivery/service obligations.',
     resources: [...CONTRACTS_RESOURCES],
+    // The actions below target `order` and read its signature evidence — records
+    // the Signature & Order package owns since its extraction. The DECLARATION
+    // is what changed, not the reads: activation keeps proving the evidence
+    // itself through the same trusted managed-module path it always used, and
+    // the conformance rail requires the record-level dependency to be declared
+    // through a capability of the owning package (DX4).
+    requires: [{ package: 'signature', capability: 'signature-orders', version: 1 }],
     // Additive: `delivery-obligations@1` is untouched, and the package now also
     // offers the service half of the same idea to the optional Service package.
     capabilities: [

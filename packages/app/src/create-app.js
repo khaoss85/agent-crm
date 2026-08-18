@@ -141,11 +141,10 @@ export function createAccordoApp(options = {}) {
 
   // ── Declared application operations (ADR-032) ─────────────────────────────
   // Packages contribute bounded application-scoped operations, and the
-  // composition attaches each declared alias generically. This replaces the
-  // two named residues the seam was designed against — the Commercial
-  // `syncCatalog` lookup and the named Signature wiring: the names now live in
-  // the package declarations, where names belong. Without the owning package
-  // composed, an alias is simply absent and its route answers an honest 404.
+  // composition attaches each declared alias generically. This factory no
+  // longer looks any package up by name: the names live in the package
+  // declarations, where names belong. Without the owning package composed,
+  // an alias is simply absent and its route answers an honest 404.
   const operationRuntime = createOperationRuntime({
     database,
     modules,

@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { cpSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { PackageRegistry, definePackage, validatePackageDefinition } from '../packages/core/index.js';
+import { createCommercialDomain } from '../packages/commercial/src/index.js';
+import { createSignatureDomain } from '../packages/signature/src/index.js';
 import { createContractsDomain } from '../packages/contracts/src/index.js';
 import { createDeliveryPackage } from '../packages/delivery/src/index.js';
 import { createLifecyclePackage } from '../packages/lifecycle/src/index.js';
@@ -163,7 +165,11 @@ test('the first-party contracts package conforms', () => {
         'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
       ],
       actions: ['order.activate-contract', 'order.plan-activation'],
-      requires: [],
+      // The Signature & Order extraction moved ownership of `order` — the
+      // record both actions target — into the signature package, so the
+      // record-level dependency that always existed is now declarable, and
+      // declared. The reads themselves did not move.
+      requires: ['signature/signature-orders@1'],
       provides: ['contract-lifecycle-source@2', 'delivery-obligations@1', 'service-obligations@1'],
     },
     // Contracts must reach none of the packages that consume it.
@@ -273,19 +279,26 @@ test('a customer-authored package conforms through the identical contract', () =
   const imports = [...source.matchAll(/from '([^']+)'/g)].map((match) => match[1]);
   assert.deepEqual(imports, ['../../../../packages/core/index.js']);
 
-  // …and the three packages compose together without any of them knowing the
-  // others exist beyond a declared capability.
+  // …and the packages compose together without any of them knowing the
+  // others exist beyond a declared capability. The chain is longer since the
+  // Signature & Order extraction: contracts declares `signature-orders@1`
+  // (its actions target the `order` record signature now owns), and signature
+  // declares the two commercial capabilities — so the smallest composition
+  // that carries partner-scorecard's whole dependency graph is these five.
   const registry = new PackageRegistry({
     packages: [
+      createCommercialDomain(),
+      createSignatureDomain(),
       createContractsDomain({ policies: [b2bSaasOrderActivationV1] }),
       createDeliveryPackage({ policies: [b2bDeliveryHandoverV1] }),
       createPartnerScorecardPackage(),
     ],
   });
-  assert.deepEqual([...registry.names()], ['contracts', 'delivery', 'partner-scorecard']);
-  assert.deepEqual(Object.keys(registry.metadata()), ['contracts', 'delivery', 'partner-scorecard']);
-  assert.equal(registry.actions().length, 25, 'M14b2 added seven change and acceptance actions on top of M14b1\'s five');
-  assert.equal(registry.resources().length, 25);
+  assert.deepEqual([...registry.names()], ['commercial', 'signature', 'contracts', 'delivery', 'partner-scorecard']);
+  assert.deepEqual(Object.keys(registry.metadata()), ['commercial', 'contracts', 'delivery', 'partner-scorecard', 'signature'],
+    'metadata is published in name order, whatever the registration order was');
+  assert.equal(registry.actions().length, 34, 'M14b2 added seven change and acceptance actions on top of M14b1\'s five; the extracted commercial (8) and signature (1) actions now arrive by composition');
+  assert.equal(registry.resources().length, 48);
 });
 
 test('the kernel never depends on a package, in either direction', () => {
