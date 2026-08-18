@@ -86,7 +86,7 @@ before a commenter gets to say them.
 >
 > If you want to judge it in a minute rather than read about it: clone and run `npm run tour`.
 > There is nothing to install. It composes the whole application from manifests —
-> 71 modules, 43 resources, 59 actions, 7 policies, 5 providers — drives it end to
+> 71 modules, 57 resources, 59 actions, 7 policies, 2 providers — drives it end to
 > end, and then prints the eleven things its own inspector says it cannot see. [C-22]
 >
 > If you would rather try to break it than read about it: `npm run falsify` removes five

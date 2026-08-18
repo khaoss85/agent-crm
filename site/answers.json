@@ -46,7 +46,7 @@
     {
       "slug": "what-does-app-inspect-tell-an-agent",
       "question": "How does a coding agent find out what an application built with this actually contains?",
-      "answer": "One command returns packages, capabilities, resources, actions, policies and providers as a single deterministic JSON report, read from checked-in source (C-14). It is source-only and read-only: it never opens the database, contacts a provider, reads a secret, or reports runtime, CI or authorization state — and it lists those blind spots as machine-readable limitations in its own output. Composing the starter and inspecting it gives 71 modules, 7 packages, 43 resources, 59 actions, 7 policies and 5 providers, then prints the eleven things the inspector says it cannot see (C-22). Those counts describe that starter's composition, not yours, it runs locally against SQLite with no authentication, and wall-clock time is deliberately not claimed.",
+      "answer": "One command returns packages, capabilities, resources, actions, policies and providers as a single deterministic JSON report, read from checked-in source (C-14). It is source-only and read-only: it never opens the database, contacts a provider, reads a secret, or reports runtime, CI or authorization state — and it lists those blind spots as machine-readable limitations in its own output. Composing the starter and inspecting it gives 71 modules, 8 packages, 57 resources, 59 actions, 7 policies and 2 providers, then prints the eleven things the inspector says it cannot see (C-22). Those counts describe that starter's composition, not yours, it runs locally against SQLite with no authentication, and wall-clock time is deliberately not claimed.",
       "claims": [
         "C-14",
         "C-22"
