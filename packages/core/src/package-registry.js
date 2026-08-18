@@ -43,11 +43,16 @@ import { resolvePackageComposition } from './package-composition.js';
  */
 
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
+/** App-method aliases and input names are camelCase identifiers (ADR-032). */
+const APP_METHOD_RE = /^[a-z][a-zA-Z0-9]*$/;
+/** The action runtime's declared input vocabulary, reused verbatim (ADR-032). */
+const OPERATION_INPUT_TYPES = new Set(['string', 'timestamp', 'enum', 'integer', 'json']);
 const MAX_NAME = 64;
 const MAX_LABEL = 80;
 const MAX_DESCRIPTION = 400;
 const MAX_VERSION = 1_000_000;
 export const SUPPORTED_PACKAGE_CONTRACT = 1;
+export const SUPPORTED_OPERATION_CONTRACT = 1;
 
 /**
  * Declare a domain package. This is a validating identity function: it returns
@@ -118,7 +123,7 @@ export function validatePackageDefinition(pkg) {
   if (pkg.description !== undefined && (typeof pkg.description !== 'string' || pkg.description.length > MAX_DESCRIPTION)) {
     throw new ValidationError(`${label}: description must be a string of at most ${MAX_DESCRIPTION} characters`);
   }
-  for (const field of ['actions', 'policies', 'resources', 'requires', 'capabilities']) {
+  for (const field of ['actions', 'policies', 'resources', 'requires', 'capabilities', 'operations']) {
     if (pkg[field] !== undefined && !Array.isArray(pkg[field])) {
       throw new ValidationError(`${label}: ${field} must be an array`);
     }
@@ -194,6 +199,72 @@ export function validatePackageDefinition(pkg) {
     }
     assertPolicyIdentity(`${label} policy kind "${entry.kind}"`, entry.definition);
   }
+
+  // Declared application-scoped operations (ADR-032): bounded identities the
+  // composition attaches generically. Absent means absent — no contract bump.
+  const declaredOperations = new Set();
+  const declaredAliases = new Set();
+  for (const entry of pkg.operations ?? []) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new ValidationError(`${label}: each operations entry must be an object`);
+    }
+    if (entry.operationContract !== SUPPORTED_OPERATION_CONTRACT) {
+      throw new ValidationError(
+        `${label}: operations[].operationContract must be ${SUPPORTED_OPERATION_CONTRACT} (received ${JSON.stringify(entry.operationContract)})`,
+      );
+    }
+    if (typeof entry.name !== 'string' || !NAME_RE.test(entry.name) || entry.name.length > MAX_NAME) {
+      throw new ValidationError(`${label}: operation name must match ${NAME_RE} and be at most ${MAX_NAME} characters`);
+    }
+    if (declaredOperations.has(entry.name)) {
+      throw new ValidationError(`${label}: duplicate operation "${entry.name}"`);
+    }
+    declaredOperations.add(entry.name);
+    if (entry.label !== undefined && (typeof entry.label !== 'string' || entry.label.length === 0 || entry.label.length > MAX_LABEL)) {
+      throw new ValidationError(`${label}: operation "${entry.name}" label must be a non-empty string of at most ${MAX_LABEL} characters`);
+    }
+    if (entry.description !== undefined && (typeof entry.description !== 'string' || entry.description.length > MAX_DESCRIPTION)) {
+      throw new ValidationError(`${label}: operation "${entry.name}" description must be a bounded string`);
+    }
+    if (entry.appMethod !== undefined) {
+      if (typeof entry.appMethod !== 'string' || !APP_METHOD_RE.test(entry.appMethod) || entry.appMethod.length > MAX_NAME) {
+        throw new ValidationError(`${label}: operation "${entry.name}" appMethod must match ${APP_METHOD_RE} and be at most ${MAX_NAME} characters`);
+      }
+      if (declaredAliases.has(entry.appMethod)) {
+        throw new ValidationError(`${label}: duplicate operation appMethod "${entry.appMethod}"`);
+      }
+      declaredAliases.add(entry.appMethod);
+    }
+    if (entry.input !== undefined) {
+      if (!Array.isArray(entry.input)) {
+        throw new ValidationError(`${label}: operation "${entry.name}" input must be an array`);
+      }
+      const seen = new Set();
+      for (const field of entry.input) {
+        if (!field || typeof field !== 'object' || typeof field.name !== 'string' || !APP_METHOD_RE.test(field.name)) {
+          throw new ValidationError(`${label}: operation "${entry.name}" inputs need camelCase names`);
+        }
+        if (seen.has(field.name)) {
+          throw new ValidationError(`${label}: operation "${entry.name}" duplicate input "${field.name}"`);
+        }
+        seen.add(field.name);
+        if (!OPERATION_INPUT_TYPES.has(field.type)) {
+          throw new ValidationError(
+            `${label}: operation "${entry.name}" input "${field.name}" type must be one of: ${[...OPERATION_INPUT_TYPES].join(', ')}`,
+          );
+        }
+        if (field.type === 'enum' && (!Array.isArray(field.values) || field.values.length === 0 || field.values.some((value) => typeof value !== 'string'))) {
+          throw new ValidationError(`${label}: operation "${entry.name}" enum input "${field.name}" needs string values`);
+        }
+        if (field.hint !== undefined && (typeof field.hint !== 'string' || field.hint.length > 200)) {
+          throw new ValidationError(`${label}: operation "${entry.name}" input "${field.name}" hint must be a string of at most 200 characters`);
+        }
+      }
+    }
+    if (typeof entry.create !== 'function') {
+      throw new ValidationError(`${label}: operation "${entry.name}" must declare create()`);
+    }
+  }
   return pkg;
 }
 
@@ -205,7 +276,7 @@ export function validatePackageDefinition(pkg) {
  */
 const RESERVED_METADATA_KEYS = Object.freeze([
   'packageContract', 'version', 'label', 'description',
-  'resources', 'requires', 'provides', 'actions', 'policies',
+  'resources', 'requires', 'provides', 'actions', 'policies', 'operations',
 ]);
 
 /**
@@ -293,6 +364,16 @@ export class PackageRegistry {
     return [...this.#packages.values()].flatMap((pkg) => pkg.actions ?? []);
   }
 
+  /**
+   * Every declared application-scoped operation with its owning package, in
+   * registration order (ADR-032). The composition consumes this to build and
+   * attach operations generically; the entries are the validated declarations.
+   */
+  operations() {
+    return [...this.#packages.values()].flatMap((pkg) => (pkg.operations ?? [])
+      .map((entry) => ({ package: pkg.name, entry })));
+  }
+
   /** How many packages are registered. The composition, not the definitions. */
   get size() {
     return this.#packages.size;
@@ -335,6 +416,8 @@ export class PackageRegistry {
       provides: Object.freeze((pkg.capabilities ?? [])
         .map((entry) => Object.freeze({ name: entry.name, version: entry.version }))),
       actions: Object.freeze((pkg.actions ?? []).map((action) => `${action.module}.${action.name}`).sort()),
+      operations: Object.freeze((pkg.operations ?? [])
+        .map((entry) => Object.freeze({ name: entry.name, ...(entry.appMethod ? { appMethod: entry.appMethod } : {}) }))),
     });
   }
 
@@ -489,6 +572,15 @@ export class PackageRegistry {
           }))
           .sort((a, b) => (a.name === b.name ? a.version - b.version : a.name < b.name ? -1 : 1)),
         actions: (pkg.actions ?? []).map((action) => `${action.module}.${action.name}`).sort(),
+        // Declared application-scoped operations (ADR-032): names and aliases
+        // only — function-free, additive, gone when the package detaches.
+        operations: (pkg.operations ?? [])
+          .map((entry) => ({
+            name: entry.name,
+            ...(entry.label ? { label: entry.label } : {}),
+            ...(entry.appMethod ? { appMethod: entry.appMethod } : {}),
+          }))
+          .sort((a, b) => (a.name < b.name ? -1 : 1)),
         policies: [...this.#policies.values()]
           .filter((entry) => entry.domain === name)
           .map((entry) => ({

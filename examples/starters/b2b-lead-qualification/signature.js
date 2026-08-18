@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { hmacSignatureHeaders, verifyHmacSignature } from '../../../packages/core/src/signature-registry.js';
+import { hmacSignatureHeaders, verifyHmacSignature } from '../../../packages/signature/src/registry.js';
 
 /**
  * Deterministic offline signature provider for the B2B starter (ADR-017).

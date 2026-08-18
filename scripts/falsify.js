@@ -70,7 +70,7 @@ export const MUTATIONS = [
   },
   {
     id: 'webhook-signature-verification',
-    file: 'packages/core/src/signature-registry.js',
+    file: 'packages/signature/src/registry.js',
     find: 'if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {',
     replace: 'if (false) {',
     rule: 'a signature webhook is rejected unless its HMAC verifies',

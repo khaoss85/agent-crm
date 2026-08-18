@@ -309,9 +309,6 @@ async function runExternalRecordAction(params, definition, validatedInput) {
     database,
     core: params.core ?? Object.freeze({}),
     pipelines: params.pipelines ?? Object.freeze({ forModule: () => null, get: () => null, list: () => [] }),
-    signature: params.signature ?? Object.freeze({
-      getSignatureProvider: () => { throw new NotFoundError('Signature provider', 'none registered'); },
-    }),
     domains: params.domains ?? Object.freeze({
       getPolicy: () => { throw new NotFoundError('Domain policy', 'none registered'); },
       has: () => false,
@@ -345,7 +342,6 @@ async function runExternalRecordAction(params, definition, validatedInput) {
         intent: ctx.intent,
         input: validatedInput,
         actor,
-        signature: params.signature ?? Object.freeze({}),
         config: params.config ?? {},
         step: ctx.step,
         now: ctx.now,

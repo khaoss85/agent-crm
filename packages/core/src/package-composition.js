@@ -63,6 +63,8 @@ export function resolvePackageComposition(list = []) {
   const capabilities = new Map();
   /** @type {Map<string, {domain: string, kind: string, definition: any, fingerprint: string}>} */
   const policies = new Map();
+  /** @type {Map<string, string>} appMethod alias → owning package (ADR-032) */
+  const operationAliases = new Map();
 
   const fail = (problem) => {
     problems.push({ ...problem, error: problem.error ?? new ValidationError(problem.message) });
@@ -114,6 +116,22 @@ export function resolvePackageComposition(list = []) {
         continue;
       }
       capabilities.set(key, { package: pkg.name, entry });
+    }
+
+    // Declared operation aliases share ONE application surface (ADR-032): two
+    // packages claiming the same app method would fight over a single key the
+    // way two packages claiming a resource would fight over a table.
+    for (const entry of pkg.operations ?? []) {
+      if (entry.appMethod === undefined) continue;
+      const existing = operationAliases.get(entry.appMethod);
+      if (existing !== undefined) {
+        fail({
+          code: 'OPERATION_ALIAS_COLLISION', package: pkg.name,
+          message: `Operation alias collision: app method "${entry.appMethod}" is declared by packages "${existing}" and "${pkg.name}"`,
+        });
+        continue;
+      }
+      operationAliases.set(entry.appMethod, pkg.name);
     }
 
     for (const { kind, definition } of pkg.policies ?? []) {

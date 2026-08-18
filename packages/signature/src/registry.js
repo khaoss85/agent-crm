@@ -1,8 +1,13 @@
 // @ts-check
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { AppError, ValidationError, NotFoundError } from './errors.js';
-import { computeDefinitionFingerprint, validateDeclaredConfig } from './definition-fingerprint.js';
+import {
+  AppError,
+  ValidationError,
+  NotFoundError,
+  computeDefinitionFingerprint,
+  validateDeclaredConfig,
+} from '../../core/index.js';
 
 /**
  * Signature provider registry (ADR-017): bounded, versioned, fingerprinted

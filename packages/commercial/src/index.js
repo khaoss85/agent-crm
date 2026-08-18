@@ -95,6 +95,44 @@ export function createCommercialDomain(options = {}) {
     // rows that record them already exist in shipped databases under their own
     // type strings, and those rows are the immutability evidence.
     policies: [],
+    /**
+     * The declared application operation (ADR-032): catalog synchronization,
+     * attached generically as `app.syncCatalog` — replacing the named lookup
+     * `create-app` carried as recorded B7 seam residue. The run name
+     * `catalog.sync` is a frozen consumer-visible value in the LA0-Commercial
+     * baseline and is grandfathered explicitly (ADR-032).
+     */
+    operations: [
+      {
+        operationContract: 1,
+        name: 'sync-catalog',
+        label: 'Synchronize catalog',
+        appMethod: 'syncCatalog',
+        description:
+          'Synchronize a declared catalog provider\'s normalized catalog into immutable commercial records: the provider call runs outside the write transaction, reconciliation is atomic, and a CatalogSyncRun records the evidence.',
+        input: [
+          { name: 'provider', type: 'string', required: true, hint: 'Registered catalog provider name.' },
+        ],
+        create(runtime) {
+          return createCatalogSync({
+            database: runtime.database,
+            events: runtime.events,
+            modules: runtime.modules,
+            commercial: registries,
+            config: { catalogTimeoutMs: runtime.config.catalogTimeoutMs },
+            moduleNames: config ? {
+              product: config.productModule,
+              productVersion: config.productVersionModule,
+              priceBook: config.priceBookModule,
+              offer: config.offerModule,
+              component: config.componentModule,
+              tier: config.tierModule,
+              syncRun: config.syncRunModule,
+            } : {},
+          });
+        },
+      },
+    ],
     /** Function-free, additive schema metadata — the same block as before the move. */
     metadata() {
       return registries.metadata();
@@ -114,32 +152,6 @@ export function createCommercialDomain(options = {}) {
    * @param {any} database
    */
   pkg.persistFingerprints = (database) => registries.persistFingerprints(database);
-
-  /**
-   * The catalog-sync operation, built from the composing application's runtime
-   * handles. The package owns the code; the application owns the attachment
-   * (`app.syncCatalog`, `POST /api/catalog/sync`) because no package can
-   * contribute an HTTP route or an application operation today — the B7 seam
-   * evidence in `docs/plans/extract-commercial-operations-package.md`.
-   *
-   * @param {{database: any, events: any, modules: any, config?: any}} runtime
-   */
-  pkg.createCatalogSyncOperation = ({ database, events, modules, config: runtimeConfig }) => createCatalogSync({
-    database,
-    events,
-    modules,
-    commercial: registries,
-    config: runtimeConfig ?? {},
-    moduleNames: config ? {
-      product: config.productModule,
-      productVersion: config.productVersionModule,
-      priceBook: config.priceBookModule,
-      offer: config.offerModule,
-      component: config.componentModule,
-      tier: config.tierModule,
-      syncRun: config.syncRunModule,
-    } : {},
-  });
 
   /** The registries, for the composition that owns this package instance. */
   pkg.registries = registries;

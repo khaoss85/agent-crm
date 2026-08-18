@@ -89,9 +89,14 @@ try {
     'quote-approval.module.json',
   ]) applyModule(root, join(root, 'packages', 'commercial', 'modules', manifest));
   for (const manifest of [
-    // Signature and Order record modules (Milestone 11): immutable evidence,
-    // written only by the signature operations through the trusted managed
-    // path — never by public CRUD.
+  ]) {
+    applyModule(root, join(starterInProject, manifest));
+  }
+  // Signature and Order record modules (Milestone 11): immutable evidence,
+  // written only by the signature operations through the trusted managed
+  // path — never by public CRUD. The manifests live with the signature
+  // package the composition registers below.
+  for (const manifest of [
     'signature-envelope.module.json',
     'signature-signer.module.json',
     'signature-event.module.json',
@@ -102,7 +107,7 @@ try {
     'order-tier.module.json',
     'order-total.module.json',
   ]) {
-    applyModule(root, join(starterInProject, manifest));
+    applyModule(root, join(root, 'packages', 'signature', 'modules', manifest));
   }
   // Milestone 12 records live in the OPTIONAL contracts domain package, not in
   // the starter: a project that does not register the package never applies
@@ -171,16 +176,15 @@ try {
       "import { disqualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/disqualify.js';",
       "import { convertLead } from '../../../examples/starters/b2b-lead-qualification/actions/convert.js';",
       "import { buildMoveStageAction } from '../../core/src/pipeline-actions.js';",
-      "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
       '',
-      '// The quote actions arrive with the commercial package (see',
+      '// The quote actions arrive with the commercial package and',
+      '// request-signature with the signature package (see',
       '// packages/domains/generated/index.js) rather than being registered here.',
       'export const generatedActions = [',
       '  qualifyLead,',
       '  disqualifyLead,',
       '  convertLead,',
       "  buildMoveStageAction({ module: 'opportunity' }),",
-      '  buildRequestSignatureAction(),',
       '];',
       '',
     ].join('\n'),
@@ -196,6 +200,8 @@ try {
       '  standardSalesDiscountV1,',
       '  standardSalesDiscountV2,',
       "} from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
+      "import { createSignatureDomain } from '../../signature/src/index.js';",
+      "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
       "import { createContractsDomain } from '../../contracts/src/index.js';",
       "import { createLifecyclePackage } from '../../lifecycle/src/index.js';",
       "import { createDeliveryPackage } from '../../delivery/src/index.js';",
@@ -222,6 +228,7 @@ try {
       '    catalogProviders: [fixtureSaasCatalogProvider],',
       '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
       '  }),',
+      '  createSignatureDomain({ signatureProviders: [fixtureSignatureProvider] }),',
       '  createIntelligenceDomain({',
       '    enrichmentProviders: [fixtureFirmographicsProvider],',
       '    scoringModels: [b2bSaasScoreV1, b2bSaasScoreV2],',
@@ -237,16 +244,6 @@ try {
       '  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1], followUp: true }),',
       '  createPartnerScorecardPackage(),',
       '];',
-      '',
-    ].join('\n'),
-  );
-  writeFileSync(
-    join(root, 'packages', 'signature', 'generated', 'index.js'),
-    [
-      '// @ts-check',
-      "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
-      '',
-      'export const generatedSignatureProviders = [fixtureSignatureProvider];',
       '',
     ].join('\n'),
   );

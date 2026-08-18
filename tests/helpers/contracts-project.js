@@ -24,7 +24,7 @@ export const COMMERCIAL_MANIFESTS = [
   'quote-approval.module.json',
 ];
 
-export const STARTER_MANIFESTS = [
+export const SIGNATURE_MANIFESTS = [
   'signature-envelope.module.json', 'signature-signer.module.json',
   'signature-event.module.json', 'signed-artifact.module.json',
   'order.module.json', 'order-line.module.json', 'order-component.module.json',
@@ -120,7 +120,7 @@ export function project(t, {
     assert.equal(result.status, 0, `apply ${manifestPath}: ${result.stderr}`);
   };
   for (const manifest of COMMERCIAL_MANIFESTS) apply(join(root, 'packages/commercial/modules', manifest));
-  for (const manifest of STARTER_MANIFESTS) apply(join(starter, manifest));
+  for (const manifest of SIGNATURE_MANIFESTS) apply(join(root, 'packages/signature/modules', manifest));
   if (withDomain) for (const manifest of DOMAIN_MANIFESTS) apply(join(root, 'packages/contracts/modules', manifest));
   if (withDelivery) for (const manifest of DELIVERY_MANIFESTS) apply(join(root, 'packages/delivery/modules', manifest));
   if (withService) for (const manifest of SERVICE_MANIFESTS) apply(join(root, 'packages/service/modules', manifest));
@@ -132,17 +132,9 @@ export function project(t, {
     join(root, 'packages/actions/generated/index.js'),
     [
       '// @ts-check',
-      "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
-      '// The quote actions arrive with the commercial package composition below.',
-      'export const generatedActions = [buildRequestSignatureAction()];',
-      '',
-    ].join('\n'),
-  );
-  writeFileSync(
-    join(root, 'packages/signature/generated/index.js'),
-    [
-      "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
-      'export const generatedSignatureProviders = [fixtureSignatureProvider];',
+      '// The quote actions arrive with the commercial package and',
+      '// request-signature with the signature package composed below.',
+      'export const generatedActions = [];',
       '',
     ].join('\n'),
   );
@@ -156,6 +148,8 @@ export function project(t, {
       [
         "import { createCommercialDomain } from '../../commercial/src/index.js';",
         "import { fixtureSaasCatalogProvider, standardSalesDiscountV1, standardSalesDiscountV2 } from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
+        "import { createSignatureDomain } from '../../signature/src/index.js';",
+        "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
         ...(withDomain ? [
           "import { createContractsDomain } from '../../contracts/src/index.js';",
           "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
@@ -179,6 +173,7 @@ export function project(t, {
         '    catalogProviders: [fixtureSaasCatalogProvider],',
         '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
         '  }),',
+        '  createSignatureDomain({ signatureProviders: [fixtureSignatureProvider] }),',
         ...(withDomain ? ['  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),'] : []),
         ...(withDelivery ? ['  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1], costPolicies: [b2bDeliveryCostV1] }),'] : []),
         ...(withService ? [`  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1]${followUp ? ', followUp: true' : ''} }),`] : []),

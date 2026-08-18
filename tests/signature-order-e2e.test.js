@@ -52,10 +52,11 @@ function project(t) {
     );
     assert.equal(result.status, 0, `apply ${manifest}: ${result.stderr}`);
   }
+  void starter;
   for (const manifest of MANIFESTS) {
     const result = spawnSync(
       process.execPath,
-      ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', root],
+      ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create', join(root, 'packages/signature/modules', manifest), '--apply', '--root', root],
       { encoding: 'utf8', cwd: root },
     );
     assert.equal(result.status, 0, `apply ${manifest}: ${result.stderr}`);
@@ -64,9 +65,9 @@ function project(t) {
     join(root, 'packages/actions/generated/index.js'),
     [
       '// @ts-check',
-      "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
-      '// The quote actions arrive with the commercial package composition below.',
-      'export const generatedActions = [buildRequestSignatureAction()];',
+      '// Quote actions arrive with the commercial package, request-signature',
+      '// with the signature package — both composed below.',
+      'export const generatedActions = [];',
       '',
     ].join('\n'),
   );
@@ -76,21 +77,15 @@ function project(t) {
       '// @ts-check',
       "import { createCommercialDomain } from '../../commercial/src/index.js';",
       "import { fixtureSaasCatalogProvider, standardSalesDiscountV1, standardSalesDiscountV2 } from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
+      "import { createSignatureDomain } from '../../signature/src/index.js';",
+      "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
       'export const generatedDomains = [',
       '  createCommercialDomain({',
       '    catalogProviders: [fixtureSaasCatalogProvider],',
       '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
       '  }),',
+      '  createSignatureDomain({ signatureProviders: [fixtureSignatureProvider] }),',
       '];',
-      '',
-    ].join('\n'),
-  );
-  writeFileSync(
-    join(root, 'packages/signature/generated/index.js'),
-    [
-      '// @ts-check',
-      "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
-      'export const generatedSignatureProviders = [fixtureSignatureProvider];',
       '',
     ].join('\n'),
   );
