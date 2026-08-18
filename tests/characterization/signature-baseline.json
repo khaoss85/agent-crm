@@ -2,13 +2,13 @@
   "attachment": "kernel-wired-action-and-fixed-provider-slot",
   "counts": {
     "compatibility_required": 3,
-    "contractual": 95,
+    "contractual": 96,
     "defect_candidate": 1,
     "incidental": 2,
     "pre_extraction_evidence": 8
   },
   "domain": "signature-order",
-  "fingerprint": "2c4329602c4aede72cbd31357fc0098263c30fc0fbbec215389bebc4fea99d64",
+  "fingerprint": "fe1875bf9cb68a5b4e8f55f79127cbec57581b9cd0e0b668569422e3cee9c82f",
   "legacyCharacterizationContract": 1,
   "limitations": [
     {
@@ -1641,15 +1641,19 @@
       "category": "hostile-input",
       "classification": "defect_candidate",
       "id": "hostile-input.signer-newline-and-null-byte",
-      "note": "Signer name/role accept control characters: a newline is stored verbatim, and a NUL byte is accepted but NOT stored byte-identically — a silent storage mutation, on data that becomes part of the signed document package. The same class was already fixed on record-signal (1e40d1e) and partner-scorecard refuses control characters. Recommend the same write-time refusal for signer text fields in a separate pre-extraction fix; deliberately not frozen as contract.",
+      "note": "The baseline's one defect candidate, now FIXED: signer name/email/role refuse control characters and line breaks with the same rule record-signal adopted in 1e40d1e (the recommendation this observation carried). The id and classification are kept, as the record-signal precedent does, so the history reads found-as-defect, then refused; the refusals themselves are asserted as contract in signers.refusals and tests/signature-signer-input.test.js",
       "observed": {
         "newlineName": {
-          "refused": false,
-          "storedByteIdentical": true
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must not contain control characters or line breaks",
+          "refused": true,
+          "status": 400
         },
         "nullByteRole": {
-          "refused": false,
-          "storedByteIdentical": false
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].role must not contain control characters or line breaks",
+          "refused": true,
+          "status": 400
         }
       },
       "surface": "sdk"
@@ -2382,6 +2386,20 @@
     {
       "category": "signers",
       "classification": "contractual",
+      "id": "signers.international-names-accepted",
+      "note": "The refusal rule is structural (control characters and line breaks), never a script or normalization rule.",
+      "observed": [
+        "José García-Müller",
+        "田中花子",
+        "محمد الأمين",
+        "Zoë Nuñez",
+        "Дмитрий Ковалёв"
+      ],
+      "surface": "sdk"
+    },
+    {
+      "category": "signers",
+      "classification": "contractual",
       "id": "signers.normalized-shape",
       "note": null,
       "observed": [
@@ -2408,6 +2426,16 @@
       "id": "signers.refusals",
       "note": null,
       "observed": {
+        "c1-control-in-name": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must not contain control characters or line breaks",
+          "refused": true
+        },
+        "delete-in-role": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].role must not contain control characters or line breaks",
+          "refused": true
+        },
         "double-dot-email": {
           "code": "VALIDATION_ERROR",
           "message": "signers[0].email is not a valid address",
@@ -2433,6 +2461,11 @@
           "message": "signers[0].email is not a valid address",
           "refused": true
         },
+        "line-separator-in-role": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].role must not contain control characters or line breaks",
+          "refused": true
+        },
         "name-missing": {
           "code": "VALIDATION_ERROR",
           "message": "signers[0].name is required",
@@ -2443,9 +2476,29 @@
           "message": "signers[0].name must be a string of at most 200 characters",
           "refused": true
         },
+        "newline-in-name": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must not contain control characters or line breaks",
+          "refused": true
+        },
         "not-an-array": {
           "code": "VALIDATION_ERROR",
           "message": "signers must be a non-empty array",
+          "refused": true
+        },
+        "nul-in-email-local-part": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].email must not contain control characters or line breaks",
+          "refused": true
+        },
+        "nul-in-name": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must not contain control characters or line breaks",
+          "refused": true
+        },
+        "nul-in-role": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].role must not contain control characters or line breaks",
           "refused": true
         },
         "order-beyond-max": {
@@ -2463,9 +2516,19 @@
           "message": "signers[0].order must be an integer 1-5",
           "refused": true
         },
+        "paragraph-separator-in-name": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must not contain control characters or line breaks",
+          "refused": true
+        },
         "role-oversized": {
           "code": "VALIDATION_ERROR",
           "message": "signers[0].role must be a string of at most 80 characters",
+          "refused": true
+        },
+        "tab-in-name": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must not contain control characters or line breaks",
           "refused": true
         },
         "too-many": {
@@ -2750,7 +2813,7 @@
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
     "packages/core/src/external-operation.js": "a42f0be7e894cdce0c1ee1845e04930dddd64fe68a32929e965c2c8a57ec9fbe",
     "packages/core/src/money.js": "67d7c03a14cf053e1e6f52d73ed2ca96608a8c3992615fe6a6738bcfc930e705",
-    "packages/core/src/signature-operations.js": "b25041fc6e7ac0882ae4e7728b2599060ad3eef479cb30372ff4b2beb54e937f",
+    "packages/core/src/signature-operations.js": "6c2910004aceb14a6d9a4a6678bd14a0375d6da59da7b8ae4aaebc476d6cf845",
     "packages/core/src/signature-registry.js": "14985af898df5939fac4a16cc5a0242426d732ac767e7bb8227a9ce643da6869",
     "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325"
   }

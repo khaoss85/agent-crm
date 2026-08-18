@@ -449,3 +449,61 @@ Before a Signature & Order extraction can start it needs, in order:
 4. Then: extraction against this baseline, with
    `tests/characterization/signature-harness.mjs` as the only
    characterization file the move edits.
+
+
+---
+
+## 8. Post-Commercial-extraction reconciliation and the signer input-integrity fix
+
+Appended on the `claude/signature-signer-input-integrity` branch, which merges
+this characterization onto post-#79 main and closes the section-5 defect candidate.
+
+### 8.1 Re-seam across the Commercial extraction (zero behaviour moved)
+
+PR #79 extracted Commercial Operations into `packages/commercial`. The harness
+seam (`signature-harness.mjs`, the one file that knows where things live) was
+updated: the journey composes `createCommercialDomain` instead of registering
+kernel quote actions and the fixed slots, the quote/catalog manifests are read
+from `packages/commercial/modules/`, and `BEHAVIOUR_BEARING_SOURCE` follows the
+moved files. The regenerated baseline changed **zero observations of any
+classification**; the asserted-values fingerprint stayed byte-identical
+(`2c4329602c4a...`). The Commercial extraction preserved every externally
+observable Signature behaviour.
+
+### 8.2 The fix: control characters in signer fields refused
+
+`fix(signature)`: `normalizeSigners` now tests every signer text field --
+`name`, `email`, `role` -- on the RAW input against the same single-line rule
+`record-signal` adopted in `1e40d1e`
+(`/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/`), refusing 400
+`signers[i].<field> must not contain control characters or line breaks`
+without echoing the byte. This also closes the email local-part NUL bypass
+(NUL is not JavaScript whitespace, so `[^\s@]` matched it). The refusal is in
+the intent phase: no envelope, no signer row, no audit row, no domain event,
+no provider call -- a failed trace run is the only (refusal-shaped) evidence --
+and the corrected retry succeeds on the same quote version instead of being
+stranded behind `ENVELOPE_EXISTS`. No ASCII allowlist, no Unicode
+normalization: accents, CJK, RTL, combining marks and Cyrillic pass and are
+stored byte-identically. Red-first reproducer and inverted contract:
+`tests/signature-signer-input.test.js`.
+
+### 8.3 The reviewed regeneration (the new baseline of record)
+
+Replay of the pre-fix baseline against the fixed tree moved **exactly** the
+intended set and nothing else:
+
+| Moved | Classification | Why |
+|---|---|---|
+| `signers.refusals` | contractual (asserted) | gains nine control-character refusal entries -- the intended new contract |
+| `signers.international-names-accepted` | contractual (asserted, ADDED) | the false-positive guard: the rule is structural, never a script rule |
+| `hostile-input.signer-newline-and-null-byte` | defect_candidate (never asserted) | flips to refused; keeps its id and classification, as the record-signal precedent does, so the history reads found then fixed |
+
+One source digest moved (`packages/core/src/signature-operations.js`). All
+other 106 observations are byte-identical.
+
+**New baseline of record** (supersedes `bff9b25`'s): **110 observations**
+(96 contractual, 3 compatibility_required, 2 incidental, 1 defect_candidate,
+8 pre_extraction_evidence), asserted-values fingerprint
+**`fe1875bf9cb68a5b4e8f55f79127cbec57581b9cd0e0b668569422e3cee9c82f`**.
+This is the pre-extraction baseline the Signature extraction must replay
+against; the section-5 numbers above are the historical record of the first freeze.

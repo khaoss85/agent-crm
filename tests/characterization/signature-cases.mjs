@@ -181,9 +181,37 @@ export async function runPureCases(record) {
     ['order-fraction', [{ name: 'A', email: 'a@example.com', order: 1.5 }]],
     ['order-beyond-max', [{ name: 'A', email: 'a@example.com', order: 6 }]],
     ['entry-not-object', ['maria']],
+    // Intentional additions of the signer input-integrity fix: the same
+    // single-line control-character rule record-signal adopted in 1e40d1e,
+    // applied to every signer text field on the raw input.
+    ['newline-in-name', [{ name: 'a\nb', email: 'a@example.com' }]],
+    ['tab-in-name', [{ name: 'a\tb', email: 'a@example.com' }]],
+    ['nul-in-name', [{ name: 'a\u0000b', email: 'a@example.com' }]],
+    ['nul-in-role', [{ name: 'A', email: 'a@example.com', role: 'r\u0000oot' }]],
+    ['nul-in-email-local-part', [{ name: 'A', email: 'x\u0000y@example.com' }]],
+    ['c1-control-in-name', [{ name: 'a\u0085b', email: 'a@example.com' }]],
+    ['delete-in-role', [{ name: 'A', email: 'a@example.com', role: 'a\u007fb' }]],
+    ['line-separator-in-role', [{ name: 'A', email: 'a@example.com', role: 'a\u2028b' }]],
+    ['paragraph-separator-in-name', [{ name: 'a\u2029b', email: 'a@example.com' }]],
   ]) {
     signerRefusals[label] = syncRefusal(() => normalizeSigners(value));
   }
+  // What the control rule must NOT catch: legitimate international names,
+  // untouched — no ASCII allowlist, no Unicode normalization.
+  record(observation({
+    id: 'signers.international-names-accepted',
+    category: 'signers',
+    classification: 'contractual',
+    surface: 'sdk',
+    observed: normalizeSigners([
+      { name: 'José García-Müller', email: 'accents@example.com', order: 1 },
+      { name: '田中花子', email: 'cjk@example.com', order: 2 },
+      { name: 'محمد الأمين', email: 'rtl@example.com', order: 3 },
+      { name: 'Zoë Nuñez', email: 'combining@example.com', order: 4 },
+      { name: 'Дмитрий Ковалёв', email: 'cyrillic@example.com', order: 5 },
+    ]).map((signer) => signer.name),
+    note: 'The refusal rule is structural (control characters and line breaks), never a script or normalization rule.',
+  }));
   record(observation({
     id: 'signers.refusals',
     category: 'signers',
@@ -990,7 +1018,7 @@ export async function runJourneyCases(t, record) {
       newlineName: await controlProbe(newlineDeal, { name: 'a\nb', email: 'nl@example.com' }),
       nullByteRole: await controlProbe(nullByteDeal, { name: 'A', email: 'nb@example.com', role: 'r\u0000oot' }),
     },
-    note: 'Signer name/role accept control characters: a newline is stored verbatim, and a NUL byte is accepted but NOT stored byte-identically — a silent storage mutation, on data that becomes part of the signed document package. The same class was already fixed on record-signal (1e40d1e) and partner-scorecard refuses control characters. Recommend the same write-time refusal for signer text fields in a separate pre-extraction fix; deliberately not frozen as contract.',
+    note: 'The baseline\'s one defect candidate, now FIXED: signer name/email/role refuse control characters and line breaks with the same rule record-signal adopted in 1e40d1e (the recommendation this observation carried). The id and classification are kept, as the record-signal precedent does, so the history reads found-as-defect, then refused; the refusals themselves are asserted as contract in signers.refusals and tests/signature-signer-input.test.js',
   }));
 
   // ---- AX1: what `crm app inspect` reports about Signature ------------------
