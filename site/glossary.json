@@ -1,0 +1,33 @@
+{
+  "glossaryContract": 1,
+  "$comment": "Definitional cluster. Stub entry pending integration of the drafted set.",
+  "entries": [
+    {
+      "id": "glossary-stub",
+      "slug": "what-is-a-crm-framework",
+      "title": "What is a CRM framework?",
+      "metaTitle": "What is a CRM framework?",
+      "plainName": "CRM framework, defined",
+      "intent": "what is a crm framework",
+      "summary": "A CRM framework supplies the machinery a CRM application is built from \u2014 records, workflows, policies, audit \u2014 rather than a finished application you sign up for.",
+      "metaDescription": "A CRM framework supplies the machinery a CRM is built from \u2014 records, workflows, policies and audit \u2014 rather than a finished app you sign up for.",
+      "sections": [
+        {
+          "heading": "The definition",
+          "body": [
+            "A CRM framework is a code library that generates or hosts the moving parts of a CRM \u2014 records, workflows, approval policies, audit \u2014 leaving the application itself to be assembled per process."
+          ]
+        }
+      ],
+      "boundaries": [
+        "A definition page: it claims no capability the ledger does not carry."
+      ],
+      "claims": [],
+      "limitations": [],
+      "jobs": [],
+      "related": [
+        "customer-hub"
+      ]
+    }
+  ]
+}

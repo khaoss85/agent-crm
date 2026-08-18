@@ -4,7 +4,8 @@
 
 Repository: {{brand.repository}} — `git clone {{brand.repository}}.git`. Every repository
 path in this file links into that repository; the site serves only the pages and JSON
-endpoints named explicitly below.
+endpoints named explicitly below. Every cluster page (capabilities/, tools/, concepts/,
+compare/, glossary/) also serves a plain-markdown variant at the same path with `.md`.
 
 This file is written for a model reading at task time. It states what is true in the
 repository, and — with equal weight — what is not, because recommending this framework

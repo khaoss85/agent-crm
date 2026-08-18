@@ -56,12 +56,63 @@
         "No claim about how quickly an agent finishes a CRM with this, because the benchmark has not been run (L-03).",
         "Real customer data does not go in yet: no export and no erasure path, so a subject access or deletion request cannot be serviced (L-09)."
       ],
-      "claims": ["C-01", "C-03", "C-04", "C-16", "C-17", "C-19", "C-22"],
-      "limitations": ["L-01", "L-02", "L-03", "L-04", "L-05", "L-06", "L-07", "L-08", "L-09"],
-      "jobs": ["JTBD-01", "JTBD-02", "JTBD-03", "JTBD-06", "JTBD-07", "JTBD-15", "JTBD-DO-01", "JTBD-DO-04", "JTBD-DO-07"],
-      "docs": ["ARCHITECTURE.md", "docs/MODULE_FACTORY.md", "docs/MODULE_EVOLUTION.md", "docs/PROJECT_STATUS.md"],
-      "tests": ["tests/module-factory-e2e.test.js", "tests/workflow.test.js", "tests/module-evolution.test.js"],
-      "related": ["vs-twenty", "vs-odoo", "vs-a-customer-data-platform"]
+      "claims": [
+        "C-01",
+        "C-03",
+        "C-04",
+        "C-16",
+        "C-17",
+        "C-19",
+        "C-22"
+      ],
+      "limitations": [
+        "L-01",
+        "L-02",
+        "L-03",
+        "L-04",
+        "L-05",
+        "L-06",
+        "L-07",
+        "L-08",
+        "L-09"
+      ],
+      "jobs": [
+        "JTBD-01",
+        "JTBD-02",
+        "JTBD-03",
+        "JTBD-06",
+        "JTBD-07",
+        "JTBD-15",
+        "JTBD-DO-01",
+        "JTBD-DO-04",
+        "JTBD-DO-07"
+      ],
+      "docs": [
+        "ARCHITECTURE.md",
+        "docs/MODULE_FACTORY.md",
+        "docs/MODULE_EVOLUTION.md",
+        "docs/PROJECT_STATUS.md"
+      ],
+      "tests": [
+        "tests/module-factory-e2e.test.js",
+        "tests/workflow.test.js",
+        "tests/module-evolution.test.js"
+      ],
+      "related": [
+        "vs-twenty",
+        "vs-odoo",
+        "vs-a-customer-data-platform"
+      ],
+      "faq": [
+        {
+          "q": "What do I actually save versus starting from an empty repository?",
+          "a": "The machinery teams re-derive under deadline: generated migrations, services, REST and Admin from a module manifest, deterministic workflows, versioned policies with human approval, audit and trace. Your domain logic is still yours to write."
+        },
+        {
+          "q": "What do I still have to build myself?",
+          "a": "Everything the ledger lists as absent: authentication, tenancy, RBAC, hosting, billing, schedulers, real provider adapters. The framework generates a local, SQLite-backed application — production hardening is explicitly not included."
+        }
+      ]
     },
     {
       "id": "cmp-twenty",
@@ -119,12 +170,57 @@
         "The MCP server is stdio and local only, with no hosted or authenticated endpoint, and it inherits the local process's authority.",
         "No claim that a coding agent builds faster or more reliably here than anywhere else — the benchmark has not been run (L-03)."
       ],
-      "claims": ["C-01", "C-13", "C-14", "C-17", "C-18"],
-      "limitations": ["L-01", "L-02", "L-03", "L-07", "L-08"],
-      "jobs": ["JTBD-AX-01", "JTBD-AX-02", "JTBD-AX-04", "JTBD-PK-01", "JTBD-PK-02", "JTBD-PK-05", "JTBD-PK-06", "JTBD-15"],
-      "docs": ["docs/strategy/COMPETITOR_MAP.md", "docs/PACKAGE_AUTHORING.md", "docs/APPLICATION_INSPECTION.md", "docs/MCP.md", "DECISIONS.md"],
-      "tests": ["tests/custom-package-e2e.test.js", "tests/app-inspect.test.js", "tests/mcp.test.js"],
-      "related": ["vs-odoo", "vs-building-a-crm-from-scratch", "vs-a-customer-data-platform"]
+      "claims": [
+        "C-01",
+        "C-13",
+        "C-14",
+        "C-17",
+        "C-18"
+      ],
+      "limitations": [
+        "L-01",
+        "L-02",
+        "L-03",
+        "L-07",
+        "L-08"
+      ],
+      "jobs": [
+        "JTBD-AX-01",
+        "JTBD-AX-02",
+        "JTBD-AX-04",
+        "JTBD-PK-01",
+        "JTBD-PK-02",
+        "JTBD-PK-05",
+        "JTBD-PK-06",
+        "JTBD-15"
+      ],
+      "docs": [
+        "docs/strategy/COMPETITOR_MAP.md",
+        "docs/PACKAGE_AUTHORING.md",
+        "docs/APPLICATION_INSPECTION.md",
+        "docs/MCP.md",
+        "DECISIONS.md"
+      ],
+      "tests": [
+        "tests/custom-package-e2e.test.js",
+        "tests/app-inspect.test.js",
+        "tests/mcp.test.js"
+      ],
+      "related": [
+        "vs-odoo",
+        "vs-building-a-crm-from-scratch",
+        "vs-a-customer-data-platform"
+      ],
+      "faq": [
+        {
+          "q": "When is Twenty the better choice?",
+          "a": "When you want a working open-source CRM application today — UI, hosting story, community — and are happy to extend a platform through its SDK. This framework wins only when the commercial process itself must live as reviewable code in your repository."
+        },
+        {
+          "q": "Is this a fork of or plugin for Twenty?",
+          "a": "Neither. They share nothing: Twenty is an application you run and extend; this generates a bespoke application from your process description. Every fact about Twenty on this page is single-sourced from the dated competitor review, and nothing was installed or run."
+        }
+      ]
     },
     {
       "id": "cmp-odoo",
@@ -181,12 +277,60 @@
         "No email, calendar or marketing integration, and no import or export, so this does not connect to a suite you already run (L-05, L-06).",
         "Real customer data cannot go in yet: no export and no erasure path means a subject request cannot be serviced (L-09)."
       ],
-      "claims": ["C-03", "C-04", "C-13", "C-16", "C-19", "C-21"],
-      "limitations": ["L-01", "L-05", "L-06", "L-07", "L-09"],
-      "jobs": ["JTBD-01", "JTBD-02", "JTBD-13", "JTBD-14", "JTBD-15", "JTBD-AN-02", "JTBD-AN-03", "JTBD-CO-01", "JTBD-CO-03", "JTBD-DO-01", "JTBD-DO-04"],
-      "docs": ["docs/strategy/COMPETITOR_MAP.md", "docs/COMMERCIAL_OPERATIONS.md", "docs/benchmarks/CRM_JTBD_MATRIX.md", "docs/PROJECT_STATUS.md", "DECISIONS.md"],
-      "tests": ["tests/commercial-e2e.test.js", "tests/workflow.test.js"],
-      "related": ["vs-twenty", "vs-building-a-crm-from-scratch", "vs-a-customer-data-platform"]
+      "claims": [
+        "C-03",
+        "C-04",
+        "C-13",
+        "C-16",
+        "C-19",
+        "C-21"
+      ],
+      "limitations": [
+        "L-01",
+        "L-05",
+        "L-06",
+        "L-07",
+        "L-09"
+      ],
+      "jobs": [
+        "JTBD-01",
+        "JTBD-02",
+        "JTBD-13",
+        "JTBD-14",
+        "JTBD-15",
+        "JTBD-AN-02",
+        "JTBD-AN-03",
+        "JTBD-CO-01",
+        "JTBD-CO-03",
+        "JTBD-DO-01",
+        "JTBD-DO-04"
+      ],
+      "docs": [
+        "docs/strategy/COMPETITOR_MAP.md",
+        "docs/COMMERCIAL_OPERATIONS.md",
+        "docs/benchmarks/CRM_JTBD_MATRIX.md",
+        "docs/PROJECT_STATUS.md",
+        "DECISIONS.md"
+      ],
+      "tests": [
+        "tests/commercial-e2e.test.js",
+        "tests/workflow.test.js"
+      ],
+      "related": [
+        "vs-twenty",
+        "vs-building-a-crm-from-scratch",
+        "vs-a-customer-data-platform"
+      ],
+      "faq": [
+        {
+          "q": "When is Odoo the better choice?",
+          "a": "Most of the time, honestly: when you want CRM as one app inside a suite with accounting, inventory and HR, run by a vendor and ecosystem. This framework fits the narrower case where one commercial process must be owned as code and reviewed like code."
+        },
+        {
+          "q": "Does this replace an ERP?",
+          "a": "No, and it does not try: there is no accounting, inventory, purchasing, manufacturing or HR here, and no billing at all. The scope is the commercial process chain — lead to quote to signature to contract to delivery to service — as generated, tested source."
+        }
+      ]
     },
     {
       "id": "cmp-customer-data-platform",
@@ -243,12 +387,63 @@
         "The one provider call that exists runs against a checked-in fixture. No external data source is wired and no credential ships.",
         "This page names no CDP product, because the only permitted competitor source carries no CDP research."
       ],
-      "claims": ["C-06", "C-07", "C-16"],
-      "limitations": ["L-01", "L-04", "L-05", "L-06", "L-09"],
-      "jobs": ["JTBD-LI-01", "JTBD-LI-02", "JTBD-LI-04", "JTBD-DO-01", "JTBD-DO-02", "JTBD-DO-03", "JTBD-DO-07", "JTBD-DO-08", "JTBD-CM-01", "JTBD-CM-02", "JTBD-MK-01", "JTBD-MK-02", "JTBD-MK-03", "JTBD-MK-06", "JTBD-DG-01", "JTBD-DG-03", "JTBD-DG-06", "JTBD-DG-07"],
-      "docs": ["docs/strategy/DATA_GOVERNANCE.md", "docs/benchmarks/CRM_JTBD_MATRIX.md", "docs/LEAD_INTELLIGENCE.md", "docs/strategy/MARKETING_GROWTH_OPERATIONS.md"],
-      "tests": ["tests/lead-intelligence-e2e.test.js"],
-      "related": ["cdp-plus-crm", "vs-building-a-crm-from-scratch", "vs-twenty", "vs-odoo"]
+      "claims": [
+        "C-06",
+        "C-07",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-04",
+        "L-05",
+        "L-06",
+        "L-09"
+      ],
+      "jobs": [
+        "JTBD-LI-01",
+        "JTBD-LI-02",
+        "JTBD-LI-04",
+        "JTBD-DO-01",
+        "JTBD-DO-02",
+        "JTBD-DO-03",
+        "JTBD-DO-07",
+        "JTBD-DO-08",
+        "JTBD-CM-01",
+        "JTBD-CM-02",
+        "JTBD-MK-01",
+        "JTBD-MK-02",
+        "JTBD-MK-03",
+        "JTBD-MK-06",
+        "JTBD-DG-01",
+        "JTBD-DG-03",
+        "JTBD-DG-06",
+        "JTBD-DG-07"
+      ],
+      "docs": [
+        "docs/strategy/DATA_GOVERNANCE.md",
+        "docs/benchmarks/CRM_JTBD_MATRIX.md",
+        "docs/LEAD_INTELLIGENCE.md",
+        "docs/strategy/MARKETING_GROWTH_OPERATIONS.md"
+      ],
+      "tests": [
+        "tests/lead-intelligence-e2e.test.js"
+      ],
+      "related": [
+        "cdp-plus-crm",
+        "vs-building-a-crm-from-scratch",
+        "vs-twenty",
+        "vs-odoo"
+      ],
+      "faq": [
+        {
+          "q": "Can this ingest events from my warehouse or website?",
+          "a": "No. Nothing ingests: no import, no email or calendar sync, no integration adapter, no scheduler to run one. A CDP owns ingestion, identity resolution and audiences; this framework owns the deterministic commercial process beside it."
+        },
+        {
+          "q": "How do the two work together?",
+          "a": "Split the job: the CDP resolves identities and builds segments, and the agent-built CRM owns the governed process — quotes, approvals, orders, contracts, delivery, service — as code in your repository. Neither replaces the other, and this page states the seam rather than blurring it."
+        }
+      ]
     }
   ]
 }
