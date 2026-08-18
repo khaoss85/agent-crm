@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "npm install",
-  "buildCommand": "(git rev-parse --is-shallow-repository 2>/dev/null | grep -q true && (git fetch --quiet --unshallow 2>/dev/null || git fetch --quiet --unshallow \"https://github.com/${VERCEL_GIT_REPO_OWNER}/${VERCEL_GIT_REPO_SLUG}.git\")) ; npm run site:check && node scripts/assemble-docs-mcp-runtime.js",
+  "buildCommand": "node scripts/vercel-unshallow.js && npm run site:check && node scripts/assemble-docs-mcp-runtime.js",
   "outputDirectory": "site/dist",
   "cleanUrls": false,
   "trailingSlash": false,
