@@ -2804,6 +2804,7 @@
     "packages/signature/modules/signature-event.module.json": "2158484e29c6f76ff4708e055f46fce142ec963677388e9a3ad1c3422ffa7eb0",
     "packages/signature/modules/signature-signer.module.json": "a463d01186ff8b60778565d37bdb0332b13fdf9f8033f90636e0cabb4bfb53f6",
     "packages/signature/modules/signed-artifact.module.json": "8f783ce318c59d86be6987290382db542c5023d95e65986667b47d612e1f4e53",
+    "packages/signature/src/capability.js": "ad1c90779f4757cab59ee33e414e2799b0fd0c1e5878ea946d141a73c9090a81",
     "packages/signature/src/index.js": "407463c2f3d9f1026339b06641c7e8037b0ce9310ec9ef3ead8cfa6a53c68763",
     "packages/signature/src/operations.js": "2383a9b762c25652cf11245b61c5a7488b06fb80fb45f84839042097075107c6",
     "packages/signature/src/registry.js": "685721b7345a76bdbaa5fd4495243b99c3d8dd4c465538799530ace4e5b35bdd"

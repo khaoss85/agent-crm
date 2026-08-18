@@ -237,6 +237,7 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/signature/src/index.js',
   'packages/signature/src/operations.js',
   'packages/signature/src/registry.js',
+  'packages/signature/src/capability.js',
   'packages/core/src/external-operation.js',
   'packages/core/src/operation-runtime.js',
   'packages/core/src/action-runtime.js',
