@@ -92,6 +92,20 @@
       ],
       "related": [
         "quote-to-cash-cpq"
+      ],
+      "faq": [
+        {
+          "q": "Does lead scoring here call a real data provider?",
+          "a": "No. Enrichment runs against a checked-in fixture provider — no Clearbit, Apollo or ZoomInfo adapter exists and no credential ships. The scoring model itself is real: a versioned, explainable weighted model whose every score names its model version and inputs."
+        },
+        {
+          "q": "Can I see why a lead got its score?",
+          "a": "Yes — that is the design constraint. A score is produced by a versioned weighted model, records the model version and the inputs it read, and can be re-derived from them. There is no opaque model and no external inference call anywhere in the path."
+        },
+        {
+          "q": "Does routing assign leads automatically in production?",
+          "a": "Routing is deterministic against a versioned policy and routing targets, proven by tests on one developer's machine. There is no production deployment story: no authentication, no tenancy and no scheduler exist, so nothing routes anywhere unattended."
+        }
       ]
     },
     {
@@ -181,6 +195,20 @@
       "related": [
         "lead-intelligence",
         "signature-to-order"
+      ],
+      "faq": [
+        {
+          "q": "Does quote-to-cash include invoicing or payments?",
+          "a": "No. The chain stops at the immutable Order: there is no invoice, no payment, no dunning, no tax and no revenue recognition. Quote-to-cash here means catalog, server-priced composite quotes, immutable quote versions and a versioned discount policy with human approval."
+        },
+        {
+          "q": "Who calculates the prices — the client or the server?",
+          "a": "The server, always. A quote line is priced entirely server-side from the catalog and price books, in integer cents, and currencies are never summed together. The client can ask; it cannot assert a price."
+        },
+        {
+          "q": "Can an agent approve a discount above the policy threshold?",
+          "a": "No. A discount outside the versioned policy's bounds stops and waits for a named human decision, and a test asserts that an agent pretending to be the approver is refused. Policy outcomes are deterministic: approve or escalate, never a silent override."
+        }
       ]
     },
     {
@@ -267,6 +295,20 @@
       "related": [
         "quote-to-cash-cpq",
         "contract-and-subscription"
+      ],
+      "faq": [
+        {
+          "q": "Does this integrate with DocuSign or Adobe Sign?",
+          "a": "Not yet with any real vendor: every signature provider is an offline fixture and no credential ships. What is proven is the shape — one envelope per approved quote version, cryptographically verified provider events, signed-artifact evidence and exactly one immutable Order."
+        },
+        {
+          "q": "What stops a forged webhook from creating an Order?",
+          "a": "Provider events are verified against the webhook key before any state changes, a duplicated event id with different bytes is refused, and the Order is built only from a completed envelope over an approved quote version. The tests replay hostile and out-of-order events against exactly those boundaries."
+        },
+        {
+          "q": "Can an Order be edited after signature?",
+          "a": "No. The Order is immutable by construction: it is derived once from the signed envelope and the approved quote version, and changing commercial terms afterwards means a new quote version through the same policy path, not an edit."
+        }
       ]
     },
     {
@@ -356,6 +398,20 @@
       "related": [
         "signature-to-order",
         "delivery-projects"
+      ],
+      "faq": [
+        {
+          "q": "Does contract activation start billing?",
+          "a": "No. Activation turns a signed Order into a Commercial Contract, an immutable contract version, a Subscription and pending obligations — and stops there. There is no invoice, no payment, no usage rating, no proration and no renewal automation."
+        },
+        {
+          "q": "Can a contract be activated without a human?",
+          "a": "No. Activation runs through a versioned policy and one recorded human decision. An ambiguous plan blocks until a person decides it, and the tests assert an agent cannot stand in for that decision."
+        },
+        {
+          "q": "What happens to the contract if the package is removed?",
+          "a": "The domain is optional and detaches cleanly: the kernel fingerprint is unchanged with the package absent, and a database written before removal boots again with its rows intact when the package returns. That boundary is held by tests, not convention."
+        }
       ]
     },
     {
@@ -462,6 +518,20 @@
       "related": [
         "contract-and-subscription",
         "service-and-sla"
+      ],
+      "faq": [
+        {
+          "q": "Does this schedule people or track utilisation?",
+          "a": "No. Nothing schedules and nobody is staffed: there is no resource calendar, no capacity model, no percent complete and no critical path. What exists is governed handover into work packages and milestones, human-driven state transitions, and append-only time and expense evidence."
+        },
+        {
+          "q": "Is delivery economics a margin calculation?",
+          "a": "Deliberately not. Time and expense are recorded as immutable evidence and costed by a versioned policy into a reproducible contribution estimate — no revenue recognition, no COGS, no ARR or MRR, no FX, and currencies are grouped, never summed."
+        },
+        {
+          "q": "Can acceptance be recorded by the agent that did the work?",
+          "a": "No. Acceptance is recorded by a human against a frozen scope copy, completion is explicitly not acceptance, and an unresolved commercial change blocks acceptance over the scope it touches. Each of those refusals has a named test."
+        }
       ]
     },
     {
@@ -559,6 +629,20 @@
       ],
       "related": [
         "delivery-projects"
+      ],
+      "faq": [
+        {
+          "q": "Is there a customer portal for support cases?",
+          "a": "No. There is no customer account and no portal: every case is recorded by an internal user on the customer's behalf. Coverage, immutable entitlements and case transitions are real and tested; the customer-facing surface does not exist."
+        },
+        {
+          "q": "Are SLA breaches legally binding determinations?",
+          "a": "No. SLA states are elapsed wall-clock time against the entitlement's targets — evidence, not a contractual judgement. The system records first response and resolution timing and keeps current versus recorded apart; nothing here adjudicates a contract."
+        },
+        {
+          "q": "Does escalation notify anyone automatically?",
+          "a": "No. Escalation is recorded, not delivered: there is no notification channel, no on-call rotation and no scheduler. The record states plainly that nothing was notified, which is the honest shape until a notification exists."
+        }
       ]
     }
   ]

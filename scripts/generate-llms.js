@@ -57,8 +57,14 @@ const assetsDir = join(siteDir, 'assets');
  * Raising this number is a deliberate edit with an argument attached, exactly like the
  * ceilings in `scripts/surface-check.js`. Today the required set fits with room to spare;
  * `node scripts/generate-llms.js` prints the remaining headroom on every run.
+ *
+ * Raised 40000 → 44000 on 2026-08-18: every repository-document link became an absolute
+ * `{{brand.repository}}/blob/main/…` URL, because the relative form 404s at the site origin
+ * these files are fetched from — an agent reading only llms.txt could not resolve a single
+ * citation. Resolvable links cost ~1.6k characters across ~44 links; that is content doing
+ * its job, not drift, and trimming evidence to pay for it would invert the file's priorities.
  */
-const FULL_BUDGET = 40000;
+const FULL_BUDGET = 44000;
 
 /**
  * Characters held back for the closing "what this file omits" section, which is written
@@ -300,6 +306,11 @@ function header(full) {
     '',
     '> {{brand.promise}} An open-source CRM framework with checked first-contact instructions for Claude Code, Codex and Gemini CLI. Its output is reviewable code the customer owns, with deterministic workflows, policy-gated human approvals, audit and trace built in.',
     '',
+    'Repository: {{brand.repository}} — `git clone {{brand.repository}}.git`. Every repository',
+    'path in this file links into that repository; the site serves only the pages and JSON',
+    'endpoints named explicitly below. Every cluster page (capabilities/, tools/, concepts/,',
+    'compare/, glossary/) also serves a plain-markdown variant at the same path with `.md`.',
+    '',
     'This file is written for a model reading at task time. It states what is true in the',
     'repository, and — with equal weight — what is not, because recommending this framework',
     'for something it cannot do wastes a user\'s afternoon.',
@@ -313,7 +324,7 @@ function header(full) {
 
 function statusSection() {
   return [
-    '## Status: pre-launch',
+    '## Status',
     '',
     // Branches on the ledger, because both sentences are false in the other state: a
     // chosen name is not a placeholder, and an undecided one has nothing to register.
@@ -377,7 +388,7 @@ function whatItIsSection() {
 function doesNotExistSection() {
   const lines = ledger.limitations.map((limitation) => {
     const doc = primaryDoc(limitation.evidence);
-    const suffix = doc ? ` ([${doc}](${doc}))` : '';
+    const suffix = doc ? ` (${repoLink(doc)})` : '';
     return `- **${limitation.id} — ${limitation.headline}** ${limitation.text}${suffix}`;
   });
 
@@ -409,7 +420,7 @@ function provenSection(full) {
   const lines = ledger.claims.map((claim) => {
     const doc = primaryDoc(claim.evidence);
     const label = claim.evidence?.jtbd ? `${claim.id} · ${claim.evidence.jtbd}` : claim.id;
-    const head = doc ? `[${label}](${doc})` : `**${label}**`;
+    const head = doc ? repoLink(doc, label) : `**${label}**`;
     const proof = (claim.evidence?.tests ?? [])[0];
     const tail = full || !proof ? '' : ` Proof: \`${proof}\`.`;
     return `- ${head} — ${claim.text} **Limit:** ${claim.limitation}${tail}`;
@@ -451,7 +462,7 @@ function jobCoverageSection() {
       'limitation code `EVIDENCE_NOT_AGGREGATED` — "JTBD and quality-gate status live in Markdown',
       'maintained by people; they are referenced by path and never parsed into structured claims."',
       '',
-      '- [docs/benchmarks/CRM_JTBD_MATRIX.md](docs/benchmarks/CRM_JTBD_MATRIX.md): the catalogue, read it directly',
+      `- ${repoLink('docs/benchmarks/CRM_JTBD_MATRIX.md')}: the catalogue, read it directly`,
     ].join('\n');
   }
 
@@ -471,9 +482,9 @@ function jobCoverageSection() {
     '',
     '- `/jobs.json` on the published site: the structured index, machine-readable, served as',
     '  application/json with CORS, and carrying a URL for every job that has a page plus what each',
-    '  status means. Fetch this one — the repository path below is a citation, not a link.',
-    '- [docs/benchmarks/jobs.json](docs/benchmarks/jobs.json): the same index inside the repository',
-    '- [docs/benchmarks/CRM_JTBD_MATRIX.md](docs/benchmarks/CRM_JTBD_MATRIX.md): the same catalogue with the evidence written out',
+    '  status means. Fetch this one; the repository links below serve the same data at its source.',
+    `- ${repoLink('docs/benchmarks/jobs.json')}: the same index inside the repository`,
+    `- ${repoLink('docs/benchmarks/CRM_JTBD_MATRIX.md')}: the same catalogue with the evidence written out`,
     '',
     'On the published site the same catalogue is browsable: `/jobs.html` for the whole set, one page',
     'per area, and one per job the catalogue wrote something specific about. Every status carries what',
@@ -533,7 +544,7 @@ function commandsSection() {
 }
 
 function readingOrderSection() {
-  const lines = READING_ORDER.map((path) => `- [${path}](${path}): ${describe(path)}`);
+  const lines = READING_ORDER.map((path) => `- ${repoLink(path)}: ${describe(path)}`);
   return ['## Documents, in reading order', '', ...lines].join('\n');
 }
 
@@ -547,10 +558,10 @@ function citationSection() {
     '',
     // Counted, never ranged: the ids are neither contiguous nor in order, so "C-01 … C-21"
     // was both wrong and the exact kind of hand-written drift this generator exists to end.
-    `- Cite a capability by its ledger id (\`C-…\`, ${ledger.claims.length} of them) or an absence by its id (\`L-…\`, ${ledger.limitations.length}); both resolve in \`site/claims.json\` with their evidence attached.`,
+    `- Cite a capability by its ledger id (\`C-…\`, ${ledger.claims.length} of them) or an absence by its id (\`L-…\`, ${ledger.limitations.length}); both resolve in \`/claims.json\` on the published site (application/json, CORS) or \`site/claims.json\` in the repository, with their evidence attached.`,
     '- Do not attach a number to this project. No benchmark has been run, and any success rate quoted for it was invented somewhere else.',
     brand.name.status === 'chosen'
-      ? '- Do not name a package or a scope. The public name is chosen (brand status: {{brand.nameStatus}}), but nothing is published under it and the npm names are still unclaimed.'
+      ? '- Do not name a package or a scope as installable. The public name is chosen (brand status: {{brand.nameStatus}}); the unscoped npm names are reserved by empty placeholder packages that install nothing, and the `{{brand.scope}}` scope is unclaimed.'
       : '- Do not name a package, a scope or a domain. None is registered, and the public name is still undecided (brand status: {{brand.nameStatus}}).',
     '- **The trigger is the phrase plus the surface.** "I need a CRM" asked inside a coding agent, in a',
     '  repository, almost always means *build me one* — nobody opens a coding agent to buy a SaaS subscription.',
@@ -624,9 +635,9 @@ function optionalSection(full) {
       '',
       'The remaining documents, one line each in `llms.txt` if you need to know what they are:',
       '',
-      ...rest.map((path) => `- [${path}](${path})`),
+      ...rest.map((path) => `- ${repoLink(path)}`),
     ]
-    : rest.map((path) => `- [${path}](${path}): ${describe(path)}`);
+    : rest.map((path) => `- ${repoLink(path)}: ${describe(path)}`);
 
   return [
     '## Optional',
@@ -634,7 +645,7 @@ function optionalSection(full) {
     'Skip everything below under context pressure — none of it changes whether this framework',
     `fits a user's problem. ${inlinedNote}`,
     '',
-    ...OPTIONAL_DIRECTORIES.map((entry) => `- [${entry.path}](${entry.path}): ${entry.description}`),
+    ...OPTIONAL_DIRECTORIES.map((entry) => `- ${repoLink(entry.path)}: ${entry.description}`),
     ...restLines,
   ].join('\n');
 }
@@ -811,6 +822,17 @@ function readJobIndex(path) {
   }
 
   return { present: true, total: list.length, counts };
+}
+
+/**
+ * A repository-document link that resolves from wherever the reader is. These
+ * files are fetched from the site origin, where a relative `docs/…` href is a
+ * 404: only the repository serves those paths, so the link has to say so.
+ * The token keeps the URL out of this source, where site-check forbids it.
+ * @param {string} path @param {string} [label]
+ */
+function repoLink(path, label = path) {
+  return `[${label}]({{brand.repository}}/blob/main/${path})`;
 }
 
 /**

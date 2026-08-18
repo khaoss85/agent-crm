@@ -226,5 +226,4 @@ which preserve validation, actor identity, policy, trace and audit — `ARCHITEC
 
 ## Licence
 
-MIT today. A final confirmation before public launch is an explicit, ADR-gated human
-decision — `docs/strategy/MASTER_PLAN.md` §10.
+MIT, confirmed by ADR-023.

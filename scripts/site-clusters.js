@@ -115,6 +115,21 @@ const CLUSTERS = [
     description:
       'How this differs from building a CRM yourself, from Twenty, from Odoo and from a CDP. Every competitor fact is single-sourced and dated; nothing was run.',
   },
+  {
+    key: 'glossary',
+    dir: 'glossary',
+    name: 'Glossary',
+    eyebrow: 'Glossary',
+    heading: 'The vocabulary, defined before it is argued.',
+    title: 'Glossary: CRM framework terms, defined with their limits',
+    lede:
+      `<p>Each page below opens with a definition a reader — or a model — can quote whole, then states how the
+      term works in this repository and where that stops. <strong>A definition here never claims a capability
+      the ledger does not carry:</strong> where a term names something this framework does not do, the page
+      says so in the same breath, with the limitation id beside it.</p>`,
+    description:
+      'CRM framework, agent-built CRM, CPQ, versioned policy and their neighbours — each term defined first, then bounded by what this repository proves.',
+  },
 ];
 
 /**
@@ -288,12 +303,35 @@ export function buildClusterPages({ sources, ledger, jobs, brand, origin, blogDi
         }
       }
 
+      // An optional question block. Bounded to 2-4 pairs on purpose: FAQ markup exists so an
+      // extractive reader can lift a question with its answer, and a page that needs more than
+      // four is a page whose sections are doing the FAQ's job badly. Every answer is authored
+      // copy and goes through the same forbidden-vocabulary scan as the rest of the entry.
+      if (entry.faq !== undefined) {
+        if (!Array.isArray(entry.faq) || entry.faq.length < 2 || entry.faq.length > 4) {
+          throw new Error(`${where}: faq must contain 2-4 question/answer pairs`);
+        }
+        for (const [index, pair] of entry.faq.entries()) {
+          if (!pair || typeof pair !== 'object' || Array.isArray(pair)) throw new Error(`${where}: faq[${index}] must be an object`);
+          for (const field of Object.keys(pair)) {
+            if (field !== 'q' && field !== 'a') throw new Error(`${where}: faq[${index}] has unknown field ${field}`);
+          }
+          if (!pair.q || typeof pair.q !== 'string' || !pair.q.trim().endsWith('?')) {
+            throw new Error(`${where}: faq[${index}].q must be a question ending in "?"`);
+          }
+          if (pair.q.length > 120) throw new Error(`${where}: faq[${index}].q exceeds 120 characters`);
+          if (!pair.a || typeof pair.a !== 'string' || pair.a.trim().length < 40) {
+            throw new Error(`${where}: faq[${index}].a must answer in at least 40 characters`);
+          }
+          if (pair.a.length > 600) throw new Error(`${where}: faq[${index}].a exceeds 600 characters`);
+        }
+      }
+
       // `title` is the H1 — the sentence the page argues, and often longer than a search result
       // will render. `metaTitle` is the same page named in under 60 characters for the tab, the
       // result and the share card. It is optional only while the H1 already fits: the moment it
       // does not, a page that ships no short name is a page whose <title> ends in an ellipsis.
-      if (entry.metaTitle !== undefined && typeof entry.metaTitle !== 'string') throw new Error(`${where}: metaTitle must be a string`);
-      const metaTitle = (entry.metaTitle ?? entry.title).trim();
+      if (entry.metaTitle !== undefined && typeof entry.metaTitle !== 'string') throw new Error(`${where}: metaTitle must be a string`);      const metaTitle = (entry.metaTitle ?? entry.title).trim();
       if (metaTitle.length > TITLE_MAX) {
         throw new Error(
           `${where}: the <title> would be ${metaTitle.length} characters and a search result truncates near ${TITLE_MAX}. `
@@ -447,6 +485,15 @@ function spokePage({ cluster, entry, claims, limitations, jobIndex, standing, ta
     description: entry.metaDescription,
     jsonLd: [
       breadcrumbList(origin, [['Home', '/'], [cluster.name, `/${cluster.dir}.html`], [entry.title, url]]),
+      ...(entry.faq ? [{
+        '@context': 'https://schema.org',
+        '@type': 'FAQPage',
+        mainEntity: entry.faq.map((/** @type {any} */ pair) => ({
+          '@type': 'Question',
+          name: pair.q,
+          acceptedAnswer: { '@type': 'Answer', text: pair.a },
+        })),
+      }] : []),
     ],
     body: [
       '  <div class="shell">',
@@ -475,12 +522,33 @@ function spokePage({ cluster, entry, claims, limitations, jobIndex, standing, ta
         ...(section.body ?? []).map((paragraph) => `        <p>${escapeHtml(paragraph)}</p>`),
         '      </div>',
       ].join('\n')),
+      faqBlock(entry),
       evidenceRail({ entry, claims, limitations, jobIndex }),
       relatedRail(entry, target),
       '    </section>',
       '  </div>',
     ].join('\n'),
   };
+}
+
+/**
+ * The optional question block, rendered as the visible counterpart of the FAQPage
+ * structured data so the markup never claims content the reader cannot see.
+ * @param {any} entry
+ */
+function faqBlock(entry) {
+  if (!entry.faq) return '';
+  return [
+    '      <div class="section-block" id="faq">',
+    '        <h2>Common questions</h2>',
+    ...entry.faq.map((/** @type {any} */ pair) => [
+      '        <details class="faq-item">',
+      `          <summary>${escapeHtml(pair.q)}</summary>`,
+      `          <p>${escapeHtml(pair.a)}</p>`,
+      '        </details>',
+    ].join('\n')),
+    '      </div>',
+  ].join('\n');
 }
 
 /**
@@ -1094,6 +1162,7 @@ function authoredStrings(entry) {
       layer.label, layer.name, ...(layer.owns ?? []), layer.doesNotOwn,
     ]),
     ...(entry.boundaries ?? []),
+    ...(entry.faq ?? []).flatMap((/** @type {any} */ pair) => [pair.q, pair.a]),
     ...(entry.sections ?? []).flatMap((/** @type {any} */ section) => [section.heading, ...(section.body ?? [])]),
   ].filter((value) => typeof value === 'string');
 }

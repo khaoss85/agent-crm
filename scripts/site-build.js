@@ -27,7 +27,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, existsSync
 import { join, dirname, relative } from 'node:path';
 
 import { buildJobPages, buildAnswerPages, hasOwnPage, STATUS_MEANING } from './site-pages.js';
-import { buildClusterPages } from './site-clusters.js';
+import { buildClusterPages, readBlogPosts } from './site-clusters.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -119,6 +119,7 @@ const clusterSources = {
   tools: readJson(join(siteDir, 'tools.json')),
   concepts: readJson(join(siteDir, 'concepts.json')),
   compare: readJson(join(siteDir, 'compare.json')),
+  glossary: readJson(join(siteDir, 'glossary.json')),
 };
 
 const generated = [
@@ -160,6 +161,18 @@ writeFileSync(join(outDir, 'answers.json'), `${JSON.stringify({
   refused: answers.refused,
 }, null, 2)}\n`);
 
+// The claims ledger is the spine every other surface resolves against, and until now it was
+// the one machine-readable artifact an HTTP-only reader could not fetch: answers.json and
+// jobs.json were published, while the ledger they cite lived only in the repository. Served
+// as-is — the ledger is already plain data — plus the same sourceVisibility block the other
+// two carry, so a reader knows whether the evidence paths inside it resolve.
+writeFileSync(join(outDir, 'claims.json'), `${JSON.stringify({
+  ...JSON.parse(readFileSync(join(siteDir, 'claims.json'), 'utf8')),
+  sourceVisibility: repositoryIsPublic
+    ? { repository: brand.repository.value, note: 'Evidence paths resolve in the public repository.' }
+    : { repository: null, note: 'The repository is not public yet, so every evidence path names a real file you cannot fetch. Treat them as citations, not as links.' },
+}, null, 2)}\n`);
+
 // Non-template assets are copied verbatim.
 for (const asset of walk(join(siteDir, 'assets'))) {
   const target = join(outDir, relative(join(siteDir, 'assets'), asset));
@@ -193,6 +206,72 @@ if (jobsIndex) {
   }, null, 2)}\n`);
 } else {
   console.error('note: docs/benchmarks/jobs.json is missing — run `npm run jobs` before publishing.');
+}
+
+// The blog as a feed. RSS is the one shape aggregators, newsletter tools and the DEV/Hashnode
+// auto-import paths all read; a blog without one is subscribable only by revisiting it. Items
+// come from the same readBlogPosts gate as the pages, so a post that failed the front-matter
+// contract can no more appear here than on /blog.html.
+{
+  const posts = readBlogPosts(join(siteDir, 'blog'), ledger);
+  writeFileSync(join(outDir, 'feed.xml'), [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<rss version="2.0"><channel>',
+    `  <title>${escapeHtml(brand.name.value)} — published writing</title>`,
+    `  <link>${ORIGIN}/blog.html</link>`,
+    '  <description>Evidence-backed writing: every post cites the claims ledger and names its transcript and editor of record.</description>',
+    '  <language>en</language>',
+    ...posts.map((post) => [
+      '  <item>',
+      `    <title>${escapeHtml(post.title)}</title>`,
+      `    <link>${ORIGIN}/blog/${post.slug}.html</link>`,
+      `    <guid isPermaLink="true">${ORIGIN}/blog/${post.slug}.html</guid>`,
+      `    <pubDate>${new Date(`${post.date}T00:00:00Z`).toUTCString()}</pubDate>`,
+      `    <description>${escapeHtml(post.summary ?? '')}</description>`,
+      '  </item>',
+    ].join('\n')),
+    '</channel></rss>',
+    '',
+  ].join('\n'));
+}
+
+// Every cluster spoke also ships a plain-markdown variant at the same path with `.md` swapped in.
+// The syndicated Hashnode copy of the one blog post serves text/markdown and the canonical site
+// did not — the copy was more agent-friendly than the original. The variant is generated from the
+// same source JSON as the HTML, so the two cannot say different things.
+for (const [key, source] of Object.entries(clusterSources)) {
+  const dir = key;
+  for (const entry of source.entries ?? []) {
+    const lines = [
+      `# ${entry.title}`,
+      '',
+      `> ${entry.summary}`,
+      '',
+      `Asked as: "${entry.intent}"`,
+      '',
+      '## Where this stops',
+      '',
+      ...(entry.boundaries ?? []).map((/** @type {string} */ boundary) => `- ${boundary}`),
+      '',
+      ...(entry.sections ?? []).flatMap((/** @type {any} */ section) => [
+        `## ${section.heading}`,
+        '',
+        ...(section.body ?? []).flatMap((/** @type {string} */ paragraph) => [paragraph, '']),
+      ]),
+      ...(entry.faq ? [
+        '## Common questions',
+        '',
+        ...entry.faq.flatMap((/** @type {any} */ pair) => [`**${pair.q}**`, '', pair.a, '']),
+      ] : []),
+      '---',
+      '',
+      `Evidence: ${[...(entry.claims ?? []), ...(entry.limitations ?? [])].join(', ') || 'see the claims ledger'} — resolvable at ${ORIGIN}/claims.json`,
+      `Canonical: ${ORIGIN}/${dir}/${entry.slug}.html`,
+      '',
+    ].join('\n');
+    mkdirSync(join(outDir, dir), { recursive: true });
+    writeFileSync(join(outDir, dir, `${entry.slug}.md`), lines);
+  }
 }
 
 // The sitemap is an inventory of what exists, so it is written either way and stays honest about
@@ -453,7 +532,7 @@ function resolve(token) {
     'status.name': brand.name.status === 'chosen'
       ? `\u201c${brand.name.value}\u201d is the chosen name; the trademark screen has not been run.`
       : `\u201c${brand.name.value}\u201d is a working title, not the public name.`,
-    'status.headline': repositoryIsPublic ? 'Pre-launch.' : 'Pre-launch, source not yet public.',
+    'status.headline': repositoryIsPublic ? 'Open source.' : 'Open source; repository not yet public.',
     'status.text': repositoryIsPublic
       ? 'Not deployable to production. This page states what the tests prove and what is missing — nothing else.'
       : 'The repository opens shortly; until it does, every source link here will not resolve for you. Not deployable to production either. This page states what the tests prove and what is missing — nothing else.',

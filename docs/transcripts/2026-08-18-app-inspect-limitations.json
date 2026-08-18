@@ -1,0 +1,137 @@
+{
+  "applicationInspectionContract": 1,
+  "valid": true,
+  "application": {
+    "name": "accordo",
+    "packageContract": 1,
+    "composition": [
+      "packages/domains/generated/index.js",
+      "packages/modules/generated/index.js",
+      "packages/actions/generated/index.js",
+      "packages/pipelines/generated/index.js",
+      "packages/commercial/generated/index.js",
+      "packages/signature/generated/index.js"
+    ],
+    "databaseBackend": "sqlite (node:sqlite)",
+    "productionPosture": "local development only: no authentication, tenancy or RBAC exists, and actor headers are not identity"
+  },
+  "packages": [],
+  "capabilities": [],
+  "resources": [],
+  "actions": [],
+  "policies": [],
+  "providers": [],
+  "modules": [
+    {
+      "name": "approval",
+      "kind": "core",
+      "owner": null,
+      "table": null,
+      "manifestVersion": null,
+      "revision": null,
+      "adopted": null,
+      "migrations": null,
+      "stateFile": null,
+      "capabilities": [],
+      "fields": [],
+      "references": []
+    },
+    {
+      "name": "company",
+      "kind": "core",
+      "owner": null,
+      "table": null,
+      "manifestVersion": null,
+      "revision": null,
+      "adopted": null,
+      "migrations": null,
+      "stateFile": null,
+      "capabilities": [],
+      "fields": [],
+      "references": []
+    },
+    {
+      "name": "contact",
+      "kind": "core",
+      "owner": null,
+      "table": null,
+      "manifestVersion": null,
+      "revision": null,
+      "adopted": null,
+      "migrations": null,
+      "stateFile": null,
+      "capabilities": [],
+      "fields": [],
+      "references": []
+    },
+    {
+      "name": "opportunity",
+      "kind": "core",
+      "owner": null,
+      "table": null,
+      "manifestVersion": null,
+      "revision": null,
+      "adopted": null,
+      "migrations": null,
+      "stateFile": null,
+      "capabilities": [],
+      "fields": [],
+      "references": []
+    }
+  ],
+  "adminExtensions": [],
+  "problems": [],
+  "limitations": [
+    {
+      "code": "DATABASE_NOT_INSPECTED",
+      "message": "the configured application database is never opened, so what a particular database has applied, holds or is missing is unknown"
+    },
+    {
+      "code": "PACKAGE_SOURCE_TRUSTED",
+      "message": "reading a code-first package means importing it, so package code runs with this process’s authority. Nothing here is sandboxed"
+    },
+    {
+      "code": "PROCESS_ISOLATION_BOUNDED",
+      "message": "the load runs in its own process group and a timeout stops that group, so an ordinary child a package spawns is stopped with it. A package that deliberately detaches a process into a new group outlives the inspection; tracking descendants is not attempted and would not be a sandbox either"
+    },
+    {
+      "code": "EVIDENCE_NOT_AGGREGATED",
+      "message": "JTBD and quality-gate status live in Markdown maintained by people; they are referenced by path and never parsed into structured claims"
+    },
+    {
+      "code": "CI_EVIDENCE_NOT_INFERRED",
+      "message": "no CI, browser-smoke or benchmark result is read or inferred"
+    },
+    {
+      "code": "SECRETS_NOT_INSPECTED",
+      "message": "no secret, credential, token or environment value is read, and no provider is contacted or authenticated"
+    },
+    {
+      "code": "PROVIDER_HEALTH_UNKNOWN",
+      "message": "a registered provider definition says a provider was composed, never that it is reachable, configured or operational"
+    },
+    {
+      "code": "PRODUCTION_SPINE_ABSENT",
+      "message": "there is no authentication, tenancy or RBAC in this framework, so no runtime authorization can be reported"
+    },
+    {
+      "code": "ADMIN_EXTENSIONS_UNSUPPORTED",
+      "message": "the framework has no seam for a package to contribute an Admin extension, so adminExtensions is empty for every project — not merely empty for this one"
+    },
+    {
+      "code": "DATA_QUALITY_UNKNOWN",
+      "message": "source-only inspection can say which records exist, never whether their data is correct, complete or duplicated"
+    },
+    {
+      "code": "RUNTIME_STATE_UNKNOWN",
+      "message": "nothing here reports what is running, deployed or reachable"
+    }
+  ],
+  "evidence": {
+    "status": "not_aggregated",
+    "qualityGatesPath": "docs/QUALITY_GATES.md",
+    "jtbdMatrixPath": "docs/benchmarks/CRM_JTBD_MATRIX.md",
+    "projectStatusPath": "docs/PROJECT_STATUS.md",
+    "note": "these documents are prose maintained by people; AX1 references them and never parses them into structured claims"
+  }
+}
