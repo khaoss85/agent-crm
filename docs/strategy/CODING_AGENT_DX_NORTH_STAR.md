@@ -142,7 +142,7 @@ wrong. Each row names the failure first.
 | editing a project whose composition, module state, plans, Skills or links are already broken | DX1 Project Doctor | implemented |
 | refactoring a domain and silently changing what it decides | LA0 characterization | implemented |
 | drowning in tools, then picking the wrong one | Agent Tool Surface: tiered, deferred, searchable namespaces | policy implemented, tools future |
-| loading the instructions, then wandering through generic `find`/`grep` without selecting any rail — observed in the tool-selection panel's first frozen run (`benchmarks/tool-selection/panel-2026-08-13/PANEL.md`) | the "Selecting an Accordo rail" section in `CLAUDE.md`/`AGENTS.md`: a question→rail table, boundary discriminators, a smallest-rail rule — guidance, not orchestration | implemented as guidance; its effect is a question for the panel's re-runs, not for this table |
+| loading the instructions, then wandering through generic `find`/`grep` without selecting any rail | the "Selecting an Accordo rail" section in `CLAUDE.md`/`AGENTS.md`: a question→rail table, boundary discriminators, a smallest-rail rule — guidance, not orchestration | implemented as guidance |
 | mutating a project while claiming to inspect it | read/write separation, dry-run defaults, explicit `--apply`, human approval boundaries | implemented |
 | non-reproducible answers that cannot be diffed or trusted | deterministic contracts, canonical JSON, fingerprints, stable exit codes | implemented |
 | claiming a checkout supports a business job because a test filename sits next to that row in a Markdown table, with no way to state what a run did *not* establish | DX6 Scenario Runner | implemented, two consumers |
