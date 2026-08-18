@@ -75,7 +75,13 @@ One AX3 instrument exists and is a **pilot, not a public benchmark**:
 a job-shaped prompt selects the right rail, in the right order, without premature
 mutation. It adds no command, tool, runtime or routing layer, and it publishes nothing —
 its first run is recorded in `docs/benchmarks/TOOL_SELECTION_PILOT_2026-08-13.md`, where
-two of three arms were unavailable and no rate was derived.
+two of three arms were unavailable and no rate was derived. That run's sharpest
+observation — sessions that load the instructions and then wander through generic
+repository search without selecting any rail — is answered, as guidance and nothing
+else, by the "Selecting an Accordo rail" section in `CLAUDE.md` and `AGENTS.md`.
+Whether guidance moves selection is a question the instrument answers by re-running
+the same frozen cells rather than by prose; the second panel's frozen record now
+sits beside the first under `benchmarks/tool-selection/`.
 
 ### Review and maintenance
 

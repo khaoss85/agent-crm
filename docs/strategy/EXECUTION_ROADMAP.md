@@ -310,6 +310,7 @@ as two:
 
 - **Outcome:** E2E-G1 runs end to end for the capabilities that exist, and reports the rest honestly.
 - **Dependencies:** package authoring (merged) and a benchmark runner.
+- **Status:** E2E-G1 is not built. A first AX3-track instrument exists in-repo as an internal pilot; it publishes no number.
 
 ### AX4 — Objective-driven deploy, observe and fix through Cloud
 
