@@ -2087,3 +2087,201 @@ semantics change and this milestone has had enough of those:
 entry that `solutionPlanVocabulary()` already published — what the scan is
 applied to, what it is not applied to, that it is **not** the boundary, what the
 boundary actually is, and its measured misses and false positives.
+
+## ADR-032 — Packages may contribute bounded application operations without owning arbitrary HTTP routes
+
+**Status:** accepted. **Implementation deferred by design**: this ADR lands
+alone, and the seam is built in the Signature extraction PR, where both real
+consumers exercise it in one reviewable change (Rollout, below). Per ADR-029,
+a contract is not a contract until a second consumer has used it — so nothing
+here ships mechanism ahead of its second consumer.
+
+**Context.** Two extractions measured the same gap from opposite sides, and
+recorded it instead of solving it ad hoc.
+
+The Commercial extraction (merged `6cf4c85`; B7 evidence in
+`docs/plans/extract-commercial-operations-package.md` §B7) moved catalog sync
+into `packages/commercial` but could not move its *attachment*: the operation's
+identity is a **provider**, not a CRM record id, so the generic
+`/api/modules/:module/records/:id/actions/:action` surface cannot carry it
+without minting a synthetic anchor record — a schema and API change a
+behaviour-preserving refactor may not make. The package therefore exposes
+`createCatalogSyncOperation(runtime)` and `packages/app/src/create-app.js`
+attaches `app.syncCatalog` with **one domain-named lookup**, honestly commented
+as seam residue. It works, it is detach-safe, and it is exactly the shape this
+repository refuses at scale: a dependency the composition file does not
+declare, wired by name in framework source.
+
+The Signature characterization (`docs/plans/la0-signature-order-characterization.md`,
+merged `a5a71dd`; §6 and §1.5) measured the second case. `app.reconcileSignature` is **nearly a declared action already**: it
+addresses an existing record by id, takes no raw body, uses the ordinary actor
+path, and its runtime shape is precisely an `externalOperation: 1` sequence.
+Two things stop it: envelope records are read-only managed modules whose
+action-eligibility would be a public-surface change, and the operation lives on
+the app object, not the action registry. `app.ingestSignatureEvent` shares the
+non-record identity problem — `(provider, providerEventId)`, where the target
+envelope may not exist locally at all — and both operations call
+`runExternalOperation` directly, **which is not public kernel API**: an
+extracted Signature package could reach the external-operation contract for an
+*action* (the kernel runs it), but not for its two app-level operations. That
+export gap is part of this seam's motivation, and this ADR closes it with a
+bounded injected context rather than a raw public export.
+
+Two measured consumers, one shape: **a package needs to own an
+application-scoped operation — provider-addressed, transaction-disciplined,
+traced, audited — without the kernel naming the domain and without the package
+registering routes.** That meets the two-real-consumers bar
+(`TWO_CONSUMERS_JUSTIFY_DESIGN`, recorded in the Commercial B7) that this
+repository requires before any generic seam is designed.
+
+**What this seam is NOT — non-goals, stated as bluntly as the mandate states
+them.** This ADR does not create: generic raw HTTP routes; arbitrary
+path/method registration; Express-style middleware; arbitrary command
+execution; MCP tool auto-generation; a webhook framework; a scheduler or job
+system; RBAC/auth. A package that needs any of those has a missing decision,
+not a missing mechanism.
+
+**The Signature raw-body webhook stays explicit and special — it is not this
+seam.** The Signature characterization's §6 measured four structural properties that
+separate `POST /api/signature/providers/:provider/events` from everything an
+operation contract can generalize:
+
+1. **Identity** — addressed by `(provider, providerEventId)`, and the target
+   envelope may not exist locally (quarantine is contractual);
+2. **Bytes** — verification must see the exact bytes the provider signed;
+   the action pipeline's decode/validate/sanitize would verify a different
+   document and silently replace invalid UTF-8;
+3. **Actor** — the caller is unauthenticated by design and authenticated by
+   HMAC; the route synthesizes `{ type: 'system', id: 'signature:<provider>' }`
+   itself and never trusts headers for it;
+4. **Refusal shape** — a verification failure is a stable 401 that echoes
+   neither payload, signature nor key, not a validation envelope that reflects
+   input back.
+
+Catalog sync shares only the first property, so a generic raw-body route seam
+still has exactly **one** consumer and is not designed here. The webhook route
+remains a hand-written, enumerated, kernel-reviewed endpoint in `apps/server`;
+what changes is only what it delegates *to*.
+
+**Decision: the package contract gains a declared, bounded `operations` list,
+and the kernel gains one generic operation runtime.** Reuse over invention, in
+order: `PackageRegistry`/`resolvePackageComposition` validate and
+collision-check the declarations; canonical input validation is the action
+runtime's `validateActionInput` shapes; transaction discipline for
+provider-backed operations is the existing External Operation contract
+(ADR-017); events go through the ADR-012 transaction-scoped buffer; audit
+stays the managed-write path inside the operation's own module services; traces
+are the same `workflow_runs`/`trace_spans` rows every run surface already
+reads. Core owns generic dispatch, validation, bounding and refusal mechanics.
+Packages own every domain behaviour. **No domain name appears in
+`packages/core` — the domain names live in the package's own declaration.**
+
+The V1 contract, smallest shape both consumers justify:
+
+```js
+definePackage({
+  // ...existing fields...
+  operations: [{
+    operationContract: 1,
+    name: 'sync-catalog',            // NAME_RE, unique per package
+    label: 'Synchronize catalog',
+    description: '…',                 // bounded, like every declared identity
+    appMethod: 'syncCatalog',         // optional compatibility alias (below)
+    input: [ /* validateActionInput field shapes, reused verbatim */ ],
+    create(runtime) { return async (params) => { /* domain behaviour */ }; },
+  }],
+})
+```
+
+`create(runtime)` is called once at composition, exactly as
+`createCatalogSyncOperation` is today, and receives a **bounded operation
+context** — not the raw kernel:
+
+- `database` and `modules` — the same handles the operation code holds today;
+- `events` — the buffered bus, so domain events stay invisible until commit;
+- `config` — the bounded, JSON-safe slice the application passes
+  (`catalogTimeoutMs`, `signatureTimeoutMs`: the two knobs that exist);
+- `runExternal` — the External Operation sequencer, injected so a package
+  operation gets intent/external/finalize/compensate discipline **without
+  `runExternalOperation` becoming public API**. This closes the Signature
+  export gap the narrow way: the contract travels with the seam, the module
+  stays private, and no third path to it exists;
+- `trace` — a bounded trace writer (below).
+
+**The trace decision, closing the review's recorded Low.** Both consumers
+demonstrably write traces: catalog sync writes its own `catalog.sync` run with
+steps, best-effort in a `finally`; the Signature operations get theirs through
+`runExternalOperation`. So the question "does package operation code need a
+bounded trace context injected by the runtime" is answered by measurement:
+**yes, for both.** The injected `trace` accepts the same run shape `writeTrace`
+persists today and adds the bounds the raw export never had: JSON-safe input
+and output (the `sanitizeJsonSafe` discipline), size-bounded step lists and
+messages, best-effort semantics stated in the contract rather than re-invented
+per caller. Operation run names are package-declared, not kernel-derived —
+`catalog.sync` is frozen in the LA0-Commercial baseline as a
+consumer-visible value, and a namespace rule that renamed it would be a
+behaviour change wearing a tidiness costume; new operations should name runs
+`<package>.<operation>`, and existing names are grandfathered explicitly.
+The public `writeTrace`/`normalizeError` exports on `packages/core/index.js`
+**remain**: they are published API with a shipped consumer, and removing them
+when the consumer migrates would be surface narrowing for no behavioural gain.
+The residual is documented here, honestly: once Commercial's operation takes
+the injected `trace`, the raw export has no in-repo package caller and stays
+public anyway. That is the whole cost, and it is cheaper than a breaking
+cleanup.
+
+**Adapter exposure is decided per adapter, deliberately — V1 exposes only what
+current behaviour requires.** No operation is auto-exposed anywhere.
+
+| Adapter | V1 | Why |
+|---|---|---|
+| App method | **yes, by declared alias** | `app.syncCatalog`, `app.ingestSignatureEvent`, `app.reconcileSignature` are today's consumer-visible surface (starter, journeys, tests, LA0 baselines). The alias is declared by the package (`appMethod`), attached **generically** by the composition, `NAME_RE`-bounded, collision-checked, and refused if it would shadow an existing application key. The domain-named lookup in `create-app` is deleted; the name moves to the declaration, where names belong |
+| HTTP | **yes, enumerated kernel-owned routes only** | `POST /api/catalog/sync`, `POST /api/signature/envelopes/:id/reconcile` and the raw-body webhook stay hand-written in `apps/server`, byte-identical in behaviour, delegating to the composed operation instead of named app wiring — each already answers an honest 404 when the owning package is absent. **No package-declared path or method exists in V1**; that is the arbitrary-route non-goal |
+| SDK | **no new surface** | the SDK reaches the existing routes; nothing changes |
+| CLI | **no** | no current consumer; deferred until one is measured |
+| Admin | **no** | no operation UI exists today; the quote screens stay as they are |
+| AX1 `app inspect` | **yes, additive** | declared operations appear in the package report, and detach removes them — the matrix's detach/reattach discipline applied to operations |
+| `/api/schema` | **yes, additive** | operation names published in the package's `domains` block, function-free, alongside the `eventEndpoint` string Signature's metadata already carries |
+| MCP | **no** | DX13 owns tool exposure; auto-generation is a named non-goal |
+
+**Rollout — and the written boundary on what the implementation may add to
+core.** This ADR merges alone. The seam is implemented in the **Signature
+extraction PR**, where both consumers exercise it in the same change:
+Commercial's `syncCatalog` migrates onto the declared operation (LA0-Commercial
+must replay with zero asserted observations moved — the attachment is
+`pre_extraction_evidence`, the behaviour is contract), and Signature's two
+operations compose through it. Under this ADR, that PR's core-side diff is
+authorized to contain **exactly**:
+
+1. the optional `operations` field on `packageContract: 1` — additive
+   validation in `package-registry.js`/`package-composition.js` (identity,
+   `NAME_RE`, per-package uniqueness, alias collision/shadow refusal); no
+   contract version bump, because absent means absent;
+2. one generic operation-runtime module in `packages/core/src/` that builds the
+   bounded context (`database`, `modules`, buffered `events`, bounded `config`,
+   injected `runExternal`, bounded `trace`) — zero domain vocabulary;
+3. `packages/app/src/create-app.js`: generic composition of declared operations
+   and generic alias attachment, **replacing** the named Commercial lookup and
+   the named Signature wiring;
+4. `apps/server`: the three enumerated routes delegating to composed
+   operations, behaviour byte-identical, the webhook keeping its raw-body,
+   header-allowlist, synthesized-actor and non-echoing-401 semantics exactly as
+   frozen in the Signature baseline;
+5. AX1 and `/api/schema` additive publication of declared operations.
+
+Nothing else. A need that exceeds this list is a new decision, not an
+interpretation of this one. The Compatibility Backfill row for the seam is
+written by the implementation PR (the capability lands there, and the rule
+binds the PR that lands it); the DX Simplicity Gate answers travel in that PR's
+body, seeded by the two ExecPlans' measurements. Both LA0 baselines are the
+acceptance harness: an asserted observation that moves fails the migration,
+whatever the seam's tests say.
+
+**Consequences.** The last domain-named residue in the application factory
+becomes a declared, inspectable, detach-safe edge, and AX2 can cite what a
+composition can *do* at application scope, not only which records it owns. The
+webhook stays special on measured grounds rather than by habit, which keeps
+the raw-byte trust boundary reviewable in one place. The cost is one more
+declared list on the package contract and one more generic runtime module —
+paid only when the PR that pays it also retires two hand-wired attachments and
+closes a private-API gap without widening the public surface.
