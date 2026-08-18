@@ -676,7 +676,7 @@ application is not a substitute.
 
 | Plan | Evidence document | A scenario composes its application? | Status |
 |---|---|---|---|
-| `activate-support-and-manage-cases` | yes | **yes** — `scenario:service-sla-escalation` publishes composition `4c203a89…`, exactly the digest the plan pins | `partial` — 6 verified, 4 partial, exit 1 |
+| `activate-support-and-manage-cases` | yes | **yes** — `scenario:service-sla-escalation` publishes composition `b038c158…`, exactly the digest the plan pins | `partial` — 6 verified, 4 partial, exit 1 |
 | `lead-to-won` | yes | **no.** It binds to the repository root (`649add63…`), which composes no domain package; `scenario:lead-to-won` composes a *starter* into a directory of its own. Declared in the document as `NO_SCENARIO_COMPOSES_THIS_APPLICATION` | `partial` — nothing behavioural can be proven for it today, exit 1 |
 | `govern-delivery-change` | **no** | **no** — no shipped scenario composes the application it was written against | `deferred`. Not papered over: no evidence document is invented for it, because one would have nothing honest to cite |
 | `verifier-fixture-exit-zero` | yes | yes — binds through `scenario:service-sla-escalation` | **verifier fixture, not a product plan.** 4 verified, exit 0. It exists so the exit-0 arm of the contract is exercised end to end, and it claims no product coverage and no JTBD row |

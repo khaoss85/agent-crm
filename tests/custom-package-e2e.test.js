@@ -125,7 +125,7 @@ test('a customer-authored package attaches, works and detaches with no kernel ch
   `], { encoding: 'utf8', cwd: root });
   assert.equal(probe.status, 0, probe.stderr);
   const facts = JSON.parse(probe.stdout.trim().split('\n').at(-1));
-  assert.deepEqual(facts.packages, ['contracts', 'delivery'], 'the custom package is gone');
+  assert.deepEqual(facts.packages, ['commercial', 'contracts', 'delivery'], 'the custom package is gone');
   assert.deepEqual(facts.actions, [], 'and so is its action');
   assert.equal(facts.scorecards, 1, 'its data is left alone, not deleted');
   assert.equal(facts.deliveryProjects, 1, 'every other package is untouched');

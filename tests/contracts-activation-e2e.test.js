@@ -213,8 +213,9 @@ test('the contracts domain is optional: the kernel works identically without it'
 
   // No domain metadata, no domain actions, no domain modules.
   const schema = await client.request('/api/schema');
-  assert.equal(schema.domains, undefined, 'no registered domain means no schema block at all');
-  assert.equal(schema.commercial.commercialContract, 1, 'every earlier contract is untouched');
+  assert.equal(schema.domains.contracts, undefined, 'no contracts package means no contracts schema block');
+  assert.equal(schema.commercial, undefined, 'the ambient commercial block is gone — the package contributes it');
+  assert.equal(schema.domains.commercial.commercialContract, 1, 'every earlier contract is untouched');
   assert.equal(schema.signature.signatureContract, 1);
   await assert.rejects(
     () => client.module('order').action(order.id, 'activate-contract', { ...POLICY, ...ACTIVATION }),

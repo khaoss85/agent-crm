@@ -137,12 +137,12 @@ project doctor              passed
 solution check lead-to-won                          valid, current            exit 0
 solution check activate-support-and-manage-cases    PLAN_STALE ×N             exit 1
 solution check govern-delivery-change               PLAN_STALE ×N             exit 1
-scenario run service-sla-escalation   passed, 5.6 s, composition 4c203a89…
+scenario run service-sla-escalation   passed, 5.6 s, composition b038c158…
 scenario run lead-to-won              passed, 9.1 s, composition 04e3bd98…
 ```
 
 The load-bearing discovery is in the last three lines. **The composition digest
-the service plan pins — `4c203a89…` — is exactly the digest the service scenario
+the service plan pins — `b038c158…` — is exactly the digest the service scenario
 publishes.** The service plan is not rotten; it was written against a *project*
 composition, and this repository is the framework, which composes no domain
 package at all. Repinning it to the repo root would delete its two packages, its
@@ -654,7 +654,7 @@ own limitations rather than repaired by rewriting the plan.
 
 | Row | Requirement it supports | What Work changed | Authority re-run | Verdict |
 |---|---|---|---|---|
-| `packages/service/src/index.js` in the service document | `step:step.plan-before-activating` — read what a contract's pending service obligations would become, before writing anything | an **opt-in** `followUp` option. With it off — the default, and what every existing composition uses — `requires` is identical, the actions are built identically, and only an additive `metadata().workFollowUp` string appears. Nothing about planning-before-activating moved | `accordo scenario run service-sla-escalation` → `passed`, `scenarioRunContract: 2`, 52 observations, `compositionFingerprint` **4c203a89… byte-identical to the pinned digest**; both cited observations still resolve with the same `expects` | **hash updated.** The behavioural authority is what proves the requirement and it is unmoved; the source artifact is structural corroboration, and the file it names is still the file this composition uses |
+| `packages/service/src/index.js` in the service document | `step:step.plan-before-activating` — read what a contract's pending service obligations would become, before writing anything | an **opt-in** `followUp` option. With it off — the default, and what every existing composition uses — `requires` is identical, the actions are built identically, and only an additive `metadata().workFollowUp` string appears. Nothing about planning-before-activating moved | `accordo scenario run service-sla-escalation` → `passed`, `scenarioRunContract: 2`, 52 observations, `compositionFingerprint` **b038c158… byte-identical to the pinned digest**; both cited observations still resolve with the same `expects` | **hash updated.** The behavioural authority is what proves the requirement and it is unmoved; the source artifact is structural corroboration, and the file it names is still the file this composition uses |
 | both plan fingerprints, both `applicationInspectionFingerprint` values | all rows | nothing — the repository root composes no domain package, so Work v1 did not move `649add63…`, and neither plan document changed | `accordo solution check` on both plans | **unchanged.** No row moved |
 | `compose.01` / `capture.02` in the lead document | `check:94439cfe…` — the starter installs into an empty project | Work inserted a `work` step and rewrote the `qualify` step's observations. Observation codes are `<stepId>.<NN>`, so inserting a step renumbers nothing before it | `accordo scenario run lead-to-won` → `passed`, 76 observations; both codes present, both `expected` strings byte-identical | **not stale.** But see below |
 | `check:94439cfe…` as a whole | the same | — | the review's own composition-isolation fix | **downgraded.** The lead plan binds to the repository root and this scenario composes a starter, so the observations describe a different application. `EVIDENCE_COMPOSITION_MISMATCH`, and the gap is declared as `NO_SCENARIO_COMPOSES_THIS_APPLICATION` |
