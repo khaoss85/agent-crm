@@ -15,13 +15,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
-export const STARTER_MANIFESTS = [
+export const COMMERCIAL_MANIFESTS = [
   'product.module.json', 'product-version.module.json', 'price-book.module.json',
   'offer.module.json', 'price-component.module.json', 'price-tier.module.json',
   'catalog-sync-run.module.json', 'quote.module.json', 'quote-line.module.json',
   'quote-version.module.json', 'quote-version-line.module.json',
   'quote-version-component.module.json', 'quote-version-total.module.json',
   'quote-approval.module.json',
+];
+
+export const STARTER_MANIFESTS = [
   'signature-envelope.module.json', 'signature-signer.module.json',
   'signature-event.module.json', 'signed-artifact.module.json',
   'order.module.json', 'order-line.module.json', 'order-component.module.json',
@@ -116,6 +119,7 @@ export function project(t, {
     );
     assert.equal(result.status, 0, `apply ${manifestPath}: ${result.stderr}`);
   };
+  for (const manifest of COMMERCIAL_MANIFESTS) apply(join(root, 'packages/commercial/modules', manifest));
   for (const manifest of STARTER_MANIFESTS) apply(join(starter, manifest));
   if (withDomain) for (const manifest of DOMAIN_MANIFESTS) apply(join(root, 'packages/contracts/modules', manifest));
   if (withDelivery) for (const manifest of DELIVERY_MANIFESTS) apply(join(root, 'packages/delivery/modules', manifest));
@@ -128,18 +132,9 @@ export function project(t, {
     join(root, 'packages/actions/generated/index.js'),
     [
       '// @ts-check',
-      "import { buildCommercialActions } from '../../core/src/commercial-actions.js';",
       "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
-      'export const generatedActions = [...buildCommercialActions(), buildRequestSignatureAction()];',
-      '',
-    ].join('\n'),
-  );
-  writeFileSync(
-    join(root, 'packages/commercial/generated/index.js'),
-    [
-      "import { fixtureSaasCatalogProvider, standardSalesDiscountV1, standardSalesDiscountV2 } from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
-      'export const generatedCatalogProviders = [fixtureSaasCatalogProvider];',
-      'export const generatedDiscountPolicies = [standardSalesDiscountV1, standardSalesDiscountV2];',
+      '// The quote actions arrive with the commercial package composition below.',
+      'export const generatedActions = [buildRequestSignatureAction()];',
       '',
     ].join('\n'),
   );
@@ -151,14 +146,20 @@ export function project(t, {
       '',
     ].join('\n'),
   );
-  if (withDomain) {
+  {
     // The composition file is the ONLY place a project names its packages:
-    // this is the same static import list a customer edits by hand.
+    // this is the same static import list a customer edits by hand. The
+    // commercial package is always composed here — every helper journey
+    // starts from a priced quote.
     writeFileSync(
       join(root, 'packages/domains/generated/index.js'),
       [
-        "import { createContractsDomain } from '../../contracts/src/index.js';",
-        "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
+        "import { createCommercialDomain } from '../../commercial/src/index.js';",
+        "import { fixtureSaasCatalogProvider, standardSalesDiscountV1, standardSalesDiscountV2 } from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
+        ...(withDomain ? [
+          "import { createContractsDomain } from '../../contracts/src/index.js';",
+          "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
+        ] : []),
         ...(withDelivery ? [
           "import { createDeliveryPackage } from '../../delivery/src/index.js';",
           "import { b2bDeliveryHandoverV1 } from '../../../examples/starters/b2b-lead-qualification/delivery.js';",
@@ -174,7 +175,11 @@ export function project(t, {
           "import { createPartnerScorecardPackage } from '../../../examples/custom-packages/partner-scorecard/src/index.js';",
         ] : []),
         'export const generatedDomains = [',
-        '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
+        '  createCommercialDomain({',
+        '    catalogProviders: [fixtureSaasCatalogProvider],',
+        '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
+        '  }),',
+        ...(withDomain ? ['  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),'] : []),
         ...(withDelivery ? ['  createDeliveryPackage({ policies: [b2bDeliveryHandoverV1], costPolicies: [b2bDeliveryCostV1] }),'] : []),
         ...(withService ? [`  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1]${followUp ? ', followUp: true' : ''} }),`] : []),
         ...(withLifecycle ? [`  createLifecyclePackage(${followUp ? '{ followUp: true }' : ''}),`] : []),

@@ -1,7 +1,13 @@
 # Commercial Operations (Milestone 10, ADR-016)
 
 Catalog, quotes and discount approval over the B2B starter — local development
-slice. **Signature and Order are Milestone 11 (ADR-017,
+slice. **The domain is now an optional package** (`packages/commercial/`,
+composed via `createCommercialDomain` in `packages/domains/generated/index.js`;
+extraction record: `docs/plans/extract-commercial-operations-package.md`,
+behaviour preservation: `npm run characterize:commercial`). Everything below
+still holds — the extraction changed where the code lives, not what it does.
+The one wiring note: `POST /api/catalog/sync` and `app.syncCatalog` exist only
+while the package is composed. **Signature and Order are Milestone 11 (ADR-017,
 `docs/SIGNATURE_ORDER.md`) and are not implemented in this milestone**; no
 taxes, currency conversion, metered usage, overage, proration, ramps, minimum
 commitments, attribute-based pricing, PDFs, payment or billing. Volume and
@@ -231,7 +237,8 @@ Quote Version stays byte-identical, and new drafts price at the new revision.
 ## Evidence
 
 `tests/commercial-contract.test.js`, `tests/commercial-e2e.test.js`,
-`tests/admin-quotes.test.js`,
+`tests/admin-quotes.test.js`, `tests/commercial-package-absence.test.js`,
+`tests/characterization/commercial-characterization.test.js`,
 `examples/starters/b2b-lead-qualification/install.mjs`,
 `docs/plans/milestone-10-commercial-operations.md`. Agent instructions:
 `.claude/skills/build-commercial-operations/SKILL.md` (this file is the

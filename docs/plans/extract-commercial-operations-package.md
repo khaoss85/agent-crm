@@ -321,15 +321,19 @@ stored — the column shapes ARE the contract, and the capability's description
 records the four semantic guarantees above. It grants no registration, no
 storage handle, no catalog write and no policy evaluation.
 
-**`commercial-quote-binding@1` — the bounded managed write.** One consumer
-(Signature), separated because its authority semantics differ from every read:
-Signature is the only party that may stamp external-signature linkage onto a
-quote, and it does so through a field allowlist — exactly
-`signatureEnvelopeId`, `signatureStatus`, `orderId`, the fields the project's
-`quote.module.json` already declares managed for this purpose. Any other field
-in the patch is refused. This does not widen behaviour: it is the same
-`applyManaged` write Signature performs today via the module registry, made
-into a declared edge instead of an undeclared reach.
+**`commercial-quote-binding@1` — the declared, documented edge for the one
+bounded write.** One consumer (Signature), separated because its authority
+semantics differ from every read: Signature is the only party that may stamp
+external-signature linkage onto a quote — exactly `signatureEnvelopeId`,
+`signatureStatus`, `orderId`, the fields the quote manifest already declares
+managed for this purpose. Deliberately **not a write mechanism**: DX4's own
+measurement is that record access by module name is the ordinary mechanism and
+the gap was *declaration and documented semantics*, so the capability's
+interface is frozen data — the field allowlist and the guarantee — and the
+write itself stays the quote record's managed path, the same code Signature
+runs today rather than a second path. The edge becomes visible in AX1,
+declarable in `requires` and citable in a plan, which is everything the seam
+actually lacked.
 
 In **this** PR the capabilities are offered and conformance-tested; the kernel
 Signature code keeps its current module-registry reads unchanged (zero
@@ -377,6 +381,26 @@ For each Commercial-owned surface:
 **`app.syncCatalog` (in-process operation)** — same analysis; the residue in
 `create-app` (Stage 5) is the interim attachment, one named lookup, honestly
 commented, removed the day the seam exists.
+
+**The pairing with Signature's routes, stated for the seam decision.** The
+Signature characterization (§6 of its plan) itemizes why the webhook needs a
+genuinely custom endpoint: (1) event identity is `(provider, providerEventId)`,
+not a record id; (2) exact-bytes raw-body verification; (3) a system actor
+minted from the path (`signature:<provider>`); (4) non-echoing 401 refusal
+semantics. Catalog sync shares **only the first property** (its identity is a
+provider, not a record) — it needs no raw body, no special actor and no
+secret-safe refusal shape; its needs are an ordinary JSON body, the caller's
+own actor, runtime handles (`database`, `events`, `modules`, bounded config)
+and a multi-module reconciliation transaction after a provider call outside
+any transaction. So the honest verdict is split: a **package-contributed
+application-operation seam** now has two measured consumers
+(`syncCatalog`; `ingestSignatureEvent`/`reconcileSignature`) and meets the
+two-real-consumers bar for being *designed* (TWO_CONSUMERS_JUSTIFY_DESIGN — an
+ADR with both extractions' evidence in hand, not this PR); a **generic
+raw-body route seam** has exactly one consumer with the four properties above
+(Signature's webhook), and Commercial adds no second case for it
+(NO_GENERIC_SEAM_NEEDED beyond the operation seam — the catalog route is an
+ordinary JSON route over an application operation).
 
 **Admin quote screens (`apps/admin/public/admin-quotes.js`)**
 - *Owned today by:* core Admin, unconditionally routed; gated at render time on

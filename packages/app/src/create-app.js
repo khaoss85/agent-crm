@@ -12,15 +12,9 @@ import { createApprovalModule } from '../../modules/approval/src/index.js';
 import { generatedModules } from '../../modules/generated/index.js';
 import { generatedActions } from '../../actions/generated/index.js';
 import { generatedPipelines } from '../../pipelines/generated/index.js';
-import {
-  generatedCatalogProviders,
-  generatedDiscountPolicies,
-} from '../../commercial/generated/index.js';
 import { generatedSignatureProviders } from '../../signature/generated/index.js';
 import { generatedDomains } from '../../domains/generated/index.js';
 import { PipelineRegistry } from '../../core/src/pipeline-registry.js';
-import { CommercialRegistries } from '../../core/src/commercial-registry.js';
-import { createCatalogSync } from '../../core/src/catalog-sync.js';
 import { SignatureRegistries } from '../../core/src/signature-registry.js';
 import { createSignatureOperations } from '../../core/src/signature-operations.js';
 import { PackageRegistry } from '../../core/src/package-registry.js';
@@ -127,14 +121,6 @@ export function createAccordoApp(options = {}) {
   const pipelines = new PipelineRegistry({ moduleExists: (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name) });
   for (const definition of generatedPipelines) pipelines.register(definition);
 
-  // Commercial Operations registries (ADR-016): catalog providers + versioned
-  // discount policies on the same declared-definition fingerprint mechanism.
-  const commercial = new CommercialRegistries({
-    catalogProviders: generatedCatalogProviders,
-    discountPolicies: generatedDiscountPolicies,
-  });
-  commercial.persistFingerprints(database);
-
   // Signature provider registry (ADR-017): the same declared-definition
   // fingerprint mechanism. The fingerprint proves provider CODE and declared
   // config integrity — never remote-service behavior, which is why every
@@ -160,6 +146,29 @@ export function createAccordoApp(options = {}) {
   // the same eligibility rules as any other action. Registration order is
   // deterministic and a malformed action stops startup.
   for (const definition of domains.actions()) actions.register(definition);
+
+  // ── B7 seam residue, recorded not generic ─────────────────────────────────
+  // Catalog synchronization is Commercial-owned code
+  // (packages/commercial/src/catalog-sync.js), but its attachment — the
+  // `app.syncCatalog` method the kernel HTTP route calls — is still wired here
+  // by name, because no package can contribute an HTTP route or an application
+  // operation today. This is the measured seam pressure recorded in
+  // docs/plans/extract-commercial-operations-package.md §B7 (Signature's
+  // ingest/reconcile operations are the second case); it is one named lookup,
+  // not a seam, and it goes away the day the seam exists. Without the package
+  // composed, `app.syncCatalog` is absent and the route answers its honest
+  // 404.
+  const commercialPackage = generatedDomains.find(
+    (pkg) => pkg && pkg.name === 'commercial' && typeof pkg.createCatalogSyncOperation === 'function',
+  );
+  const syncCatalogOperation = commercialPackage
+    ? commercialPackage.createCatalogSyncOperation({
+      database,
+      events,
+      modules,
+      config: { catalogTimeoutMs: /** @type {any} */ (options).catalogTimeoutMs },
+    })
+    : undefined;
 
   const notificationProvider = new MemoryNotificationProvider();
   providers.register({
@@ -210,27 +219,18 @@ export function createAccordoApp(options = {}) {
     services,
     actions,
     pipelines,
-    commercial,
     signature,
     domains,
     actionEligibleCoreModules: [...ACTION_ELIGIBLE_CORE_MODULES].sort(),
     /**
      * Synchronize a catalog provider's normalized catalog into immutable
-     * commercial records (ADR-016). Provider call happens outside the write
-     * transaction; reconciliation is atomic; a CatalogSyncRun records the
-     * evidence and a trace is written best-effort.
-     * @param {{provider: string, input?: unknown, actor?: unknown}} params
+     * commercial records (ADR-016) — present only while the commercial
+     * package is composed; the B7 residue above explains the wiring. Provider
+     * call happens outside the write transaction; reconciliation is atomic; a
+     * CatalogSyncRun records the evidence and a trace is written best-effort.
+     * @type {undefined | ((params: {provider: string, input?: unknown, actor?: unknown}) => Promise<any>)}
      */
-    syncCatalog(params) {
-      return app._syncCatalog(params);
-    },
-    _syncCatalog: createCatalogSync({
-      database,
-      events,
-      modules,
-      commercial,
-      config: { catalogTimeoutMs: /** @type {any} */ (options).catalogTimeoutMs },
-    }),
+    syncCatalog: syncCatalogOperation,
     /**
      * Ingest one provider-verified signature event (ADR-017). Verification
      * happens before any state is touched; the inbox is idempotent by provider
@@ -276,7 +276,6 @@ export function createAccordoApp(options = {}) {
         services,
         core: coreAdapters,
         pipelines,
-        commercial,
         signature,
         domains,
         now,

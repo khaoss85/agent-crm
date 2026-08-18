@@ -121,7 +121,7 @@ repository than in a customer's project. The command is right in both.
 | `create-crm-module` | 2 — `generated-project` | drives `crm module validate\|plan\|create`; the manifest example and `packages/modules/` are source, its guides are background |
 | `create-crm-workflow` | 2 — `generated-project` | reads the workflow engine and an existing workflow in the project's own source |
 | `build-lead-intelligence` | 2 — `generated-project` | registers a provider or policy in `packages/intelligence/generated/index.js` |
-| `build-commercial-operations` | 2 — `generated-project` | registers in `packages/commercial/generated/index.js` and uses the shared money helpers |
+| `build-commercial-operations` | 2 — `generated-project` | composes `createCommercialDomain` in `packages/domains/generated/index.js` and uses the package's pricing helpers |
 | `build-signature-order` | 2 — `generated-project` | registers in `packages/signature/generated/index.js` |
 | `build-contract-activation` | 2 — `generated-project` | authors a domain package against `packages/core/index.js` and the static composition file |
 | `build-delivery-handover` | 2 — `generated-project` | needs the `contracts/delivery-obligations@1` capability to resolve, which the report tells it |

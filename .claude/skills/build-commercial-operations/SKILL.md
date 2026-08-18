@@ -4,7 +4,7 @@ description: Add or extend Commercial Operations in an Accordo project - catalog
 requires:
   tier: generated-project
   command: "crm app inspect"
-  projectSurface: ["packages/commercial/generated/index.js", "packages/core/src/commercial-money.js"]
+  projectSurface: ["packages/domains/generated/index.js", "packages/commercial/src/money.js"]
   repositorySurface: ["ARCHITECTURE.md", "DECISIONS.md", "docs/COMMERCIAL_OPERATIONS.md"]
   degradesTo: "the composed commercial packages, actions, policies and providers reported by `crm app inspect --json`"
 ---
@@ -25,7 +25,7 @@ If the repository documents this skill names are absent, you are in a project bu
 
 1. Define it code-first: `{ name, version, label, config, async fetchCatalog(input, ctx) }` returning `{ sourceRef?, priceBooks[], products[], offers[] }`. An **offer** is the sellable package: `{ sourceKey, priceBookSourceKey, productSourceKey, name, active, externalOfferId?, components[] }`. A **component** is `{ sourceKey, label, chargeType: 'one_time'|'recurring', pricingModel: 'flat_fee'|'per_unit'|'volume'|'graduated', interval?, intervalCount?, unitAmountCents? (per_unit), flatAmountCents? (flat_fee), tiers? (volume/graduated), externalPriceId?, sourcePricingModel? }`. Tiers are ordered `{ upTo (inclusive, null on the final open-ended tier), unitAmountCents, flatAmountCents? }`. Out-of-contract output is refused (`PROVIDER_INVALID`) — never loosen the normalizer.
 2. **Never flatten a provider model.** Map Stripe one_time/recurring and `tiers_mode` volume/graduated, and Zuora one-time/recurring with Volume and Tiered/Cumulative pricing, onto the four supported models and keep `sourcePricingModel` + external ids. For anything unsupported (metered usage, overage, proration, ramps, minimums, attribute-based pricing), mark the component `unsupportedModel: '<name>'` — the offer persists `quoteEligible: false` with a reason and is refused for quoting. Approximating it as a flat price is a defect.
-3. Register it in `packages/commercial/generated/index.js` (static import, like actions/pipelines/intelligence).
+3. Register it in the composition: pass it to `createCommercialDomain({ catalogProviders: [...] })` in `packages/domains/generated/index.js` (static import — the composition file is the only place a project names its packages).
 4. The provider is called **outside** the write transaction under a bounded timeout. Never add DB writes to a provider.
 5. Sync is idempotent by source key + declared source fingerprint: unchanged data must produce no writes/audits/events; changed data must create a **new** product version or **whole-offer revision** (with fresh component and tier rows), never an in-place edit. Historical and quoted evidence is immutable.
 6. Test failure paths with a deterministic fixture (outage → `PROVIDER_FAILED`, hang → `PROVIDER_TIMEOUT`, bad shapes → `PROVIDER_INVALID`): no partial catalog, honest failed trace.
@@ -35,7 +35,7 @@ If the repository documents this skill names are absent, you are in a project bu
 
 1. Storage modules are **read-only publicly** (every field `writable: "managed"` → capabilities `get`/`list`, no public create/update). Never add a public write path to a commercial record; use the trusted `createManaged`/`applyManaged` from action code.
 2. Every price and total is **server-derived** from catalog data. A client may send `offerId`, `quantity` and `discountBps` — never an amount, a tier or a total.
-3. Use `computeComponentAmount`/`computeLineBreakdown`/`groupComponentTotals` from `packages/core/src/commercial-money.js`. Do not hand-roll money arithmetic and never use floating-point percentages. Respect quantity semantics: **flat fees are charged once per line**, per-unit multiplies, volume prices the whole quantity at the reached tier, graduated prices each band.
+3. Use `computeComponentAmount`/`computeLineBreakdown`/`groupComponentTotals` from `packages/commercial/src/money.js` (the neutral value bounds — `requireAmount`, `requireBps`, `requireQuantity` — are public kernel API in `packages/core/index.js`). Do not hand-roll money arithmetic and never use floating-point percentages. Respect quantity semantics: **flat fees are charged once per line**, per-unit multiplies, volume prices the whole quantity at the reached tier, graduated prices each band.
 4. **Never combine unlike periods.** Persist and display the one-time total plus one total per `(currency, interval, intervalCount)`. Do not derive ARR/MRR/TCV — contract term is not modeled.
 5. Guard draft edits with `expectedRevision` (optimistic concurrency) and gate every action with `fromStates`. A quote binds one price book and one currency; a mismatched, inactive, incomplete or quote-ineligible offer is refused. A draft line re-prices only from its pinned offer revision.
 6. Never delete records: soft-remove draft lines.

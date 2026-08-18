@@ -13,8 +13,14 @@ seam did not exist, and each one is what taught us what the seam had to be.
 **Lead Intelligence has since been extracted** and is now a package like any
 other. It is the proof that a legacy domain can move without changing what it
 decides: LA0 froze its externally observable behaviour first, and zero asserted
-observations moved across the extraction. Commercial Operations and Signature &
-Order are still where they were.
+observations moved across the extraction. **Commercial Operations has now
+followed** on the same pattern: LA0-Commercial
+(`tests/characterization/commercial-*`) froze catalog, pricing, quote, version
+and approval behaviour as values before the move, and zero asserted
+observations moved. Signature & Order is still where it was, with one recorded
+exception inherited by the Commercial move: catalog sync's HTTP route and app
+method remain kernel-attached because no package can contribute either — the
+B7 seam evidence in `docs/plans/extract-commercial-operations-package.md`.
 
 Pipeline is in `packages/core/src/` too and belongs there. It is a reusable
 runtime capability rather than a domain, and it is in the matrix so that a reader
@@ -48,7 +54,7 @@ Verified against the working tree, 2026-08-07.
 | Core CRM (Sales) | project-generated modules: company, contact, opportunity, lead, task, approval | no — these are a project's own records, not a domain package |
 | Pipeline | `packages/core/src/pipeline-*.js`; `packages/pipelines/generated/` | no — and correctly so, see ¹ |
 | Lead Intelligence | `packages/intelligence/` — `src/`, `modules/`, `README.md` | **yes** — the first legacy domain extracted |
-| Commercial Operations | `packages/core/src/commercial-*.js`, `catalog-sync.js`; `packages/commercial/generated/` | no |
+| Commercial Operations | `packages/commercial/` — `src/`, `modules/`, `README.md` | **yes** — the second legacy domain extracted |
 | Signature & Order | `packages/core/src/signature-*.js`, `external-operation.js`; `packages/signature/generated/` | no |
 | Contract Activation | `packages/contracts/` — `src/`, `modules/`, `README.md` | **yes** |
 | Delivery | `packages/delivery/` — `src/`, `modules/`, `README.md` | **yes** |
@@ -79,10 +85,10 @@ runtime integrations.
 
 | Horizontal capability | Pipeline | Lead Intelligence | Commercial Ops | Signature & Order | Contract Activation | Delivery |
 |---|---|---|---|---|---|---|
-| **Domain package seam** (ADR-018) — `definePackage`, declared resources, one static import | `not_applicable` ¹ | `aligned` | `needs_extraction` | `needs_extraction` | `aligned` | `aligned` |
-| **Declared cross-package capability** — reaching another domain only through a named, versioned capability | `not_applicable` ¹ | `aligned` | `needs_extraction` | `needs_extraction` | `aligned` — provides `delivery-obligations@1` | `aligned` — requires that one; provides three |
-| **`packageContract: 1` conformance** — validated at startup, detach/reattach proven | `not_applicable` ¹ | `aligned` | `needs_extraction` | `needs_extraction` | `aligned` | `aligned` |
-| **Package version discipline** — additive bumps, never a silent break | `not_applicable` ¹ | `aligned` — `intelligence@1` | `not_applicable` | `not_applicable` | `aligned` | `aligned` |
+| **Domain package seam** (ADR-018) — `definePackage`, declared resources, one static import | `not_applicable` ¹ | `aligned` | `aligned` | `needs_extraction` | `aligned` | `aligned` |
+| **Declared cross-package capability** — reaching another domain only through a named, versioned capability | `not_applicable` ¹ | `aligned` | `aligned` — provides `commercial-quotes@1` and `commercial-quote-binding@1` | `needs_extraction` | `aligned` — provides `delivery-obligations@1` | `aligned` — requires that one; provides three |
+| **`packageContract: 1` conformance** — validated at startup, detach/reattach proven | `not_applicable` ¹ | `aligned` | `aligned` | `needs_extraction` | `aligned` | `aligned` |
+| **Package version discipline** — additive bumps, never a silent break | `not_applicable` ¹ | `aligned` — `intelligence@1` | `aligned` — `commercial@1` | `not_applicable` | `aligned` | `aligned` |
 | **Module Evolution v1** (ADR-019) — a shipped record grows through a declared revision | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Managed records** — `writable: "managed"`, no public create, update or delete | `partial` — the stage fields are managed and CRUD cannot write them, but a stage is current state rather than append-only evidence | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Human-actor boundary** — the decision requires `actor.type === "user"` | `partial` — the boundary is in the approval workflow around a staged move, not in `move-stage` | `partial` — scoring and routing carry no user-actor requirement: they are deterministic computations from a published definition, not decisions | `aligned` — quote approval | `aligned` — requesting a signature | `aligned` — activation | `aligned` — every writing action |
@@ -95,10 +101,10 @@ runtime integrations.
 | **Transaction-scoped events** (ADR-012) | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Audit and trace on every write** | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Exact reads past the display bound** — `listWhere`/`countWhere` on every correctness path | `not_applicable` — `move-stage` reads one record by id and makes no collection read | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
-| **AX1 visibility** — appears in `app inspect` as a package with resources, actions and capabilities | `partial` ¹ — its actions are reported; there is no package to report | `aligned` — discovered as a package, with no fixed slot | `partial` | `partial` | `aligned` | `aligned` |
-| **AX2 citability** — a Solution Plan can cite the domain's capabilities and record revisions | `partial` ¹ | `aligned` — `intelligence@1` is citable | `partial` | `partial` | `aligned` | `aligned` |
-| **Package-scoped Admin section** — renders only while the package's schema metadata is published | `not_applicable` — the board is a core Admin feature | `not_applicable` | `partial` — the quote screens are core Admin, not gated on package metadata | `partial` | `aligned` | `aligned` |
-| **Detach/reattach proof** — removing the domain removes its whole surface and nothing else | `not_applicable` ¹ | `aligned` | `needs_extraction` | `needs_extraction` | `aligned` | `aligned` |
+| **AX1 visibility** — appears in `app inspect` as a package with resources, actions and capabilities | `partial` ¹ — its actions are reported; there is no package to report | `aligned` — discovered as a package, with no fixed slot | `aligned` — discovered as a package, with no fixed slot | `partial` | `aligned` | `aligned` |
+| **AX2 citability** — a Solution Plan can cite the domain's capabilities and record revisions | `partial` ¹ | `aligned` — `intelligence@1` is citable | `aligned` — `commercial-quotes@1` is citable | `partial` | `aligned` | `aligned` |
+| **Package-scoped Admin section** — renders only while the package's schema metadata is published | `not_applicable` — the board is a core Admin feature | `not_applicable` | `partial` — the quote screens are core Admin, gated at render time on the package's published block; a package-contributed screen is still not expressible | `partial` | `aligned` | `aligned` |
+| **Detach/reattach proof** — removing the domain removes its whole surface and nothing else | `not_applicable` ¹ | `aligned` | `aligned` — `tests/commercial-package-absence.test.js` | `needs_extraction` | `aligned` | `aligned` |
 | **Fault-injection and two-connection evidence** | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Migration array with per-entry checksums** — an applied migration cannot be edited | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Declared action metadata** — `fromStates`/`toState` published in the schema and in `app inspect` | `aligned` | `not_applicable` — scoring and routing are not transitions | `aligned` | `aligned` | `aligned` | `aligned` |
@@ -196,6 +202,10 @@ entry below states the **gap**, the **evidence** it rests on, the **pass that
 closes it**, and the **compatibility risk** of closing it.
 
 ### `needs_extraction` — Lead Intelligence, Commercial Operations, Signature & Order
+
+> **Update:** Lead Intelligence and Commercial Operations have since been
+> extracted; the entry below is kept as the record of the gap it described.
+> Signature & Order is the one domain it still applies to.
 
 Four rows, one gap: the package seam, declared capabilities, `packageContract`
 conformance, and the detach proof.
@@ -385,6 +395,28 @@ not.
 - **Nothing is scheduled.** The `deferred` cell above is about a *consumer*, not
   about a timer. There is no scheduler in this repository and Work v1 does not
   bring one.
+
+## The Commercial-extraction backfill answer, as the rule requires
+
+The Commercial Operations extraction changes one **horizontal** surface: the
+public kernel gains `writeTrace` and `normalizeError`
+(`packages/core/index.js`), because a package-owned, provider-backed operation
+that runs outside the action runtime (catalog sync) must persist the same
+trace and failure shapes every run surface reads, and `packages/core/src/*` is
+private. The neutral money bounds every package already imported
+(`requireAmount`, `requireQuantity`, `requireBps` and the charge/pricing
+vocabulary) moved from `commercial-money.js` into a neutral
+`packages/core/src/money.js` with the public re-export unchanged in name and
+behaviour — the `definition-fingerprint.js`/`timeout.js` judgement applied
+again.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **Commercial Operations** (extracted) and, prospectively, **Signature & Order**: its `ingestSignatureEvent`/`reconcileSignature` operations are the measured second consumer of `writeTrace`/`normalizeError` when that domain extracts |
+| Which are already aligned? | Commercial — it is the consumer the exports were added for. Contracts, Delivery, Service, Work, Lifecycle and Intelligence run their writes through the action runtime, which traces for them: `not_applicable` |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None.** No existing domain re-implements the trace row today |
+| Was the matrix updated? | Yes — this section, the Commercial cells above, and the characterization coverage table |
 
 ## The M16a hardening backfill answer, as the rule requires
 
@@ -681,7 +713,7 @@ this matrix can claim about one domain.
 | Domain | Characterized | Note |
 |---|---|---|
 | Lead Intelligence | **yes** — `tests/characterization/`, `legacyCharacterizationContract: 1` | the extraction candidate. Still **not** package-aligned: it remains kernel source with an ambient runtime field and a fixed definition slot |
-| Commercial Operations | no | would need its own suite before any extraction |
+| Commercial Operations | **yes** — `tests/characterization/commercial-*`, `legacyCharacterizationContract: 1` | extracted; the baseline replayed identically across the move |
 | Signature & Order | no | same, plus the HTTP-route seam it owns |
 | Contracts, Delivery, Service | **not applicable** | package-native from birth; `crm package test` plus their own suites already cover them |
 

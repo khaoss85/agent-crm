@@ -67,9 +67,12 @@ try {
     'route-evaluation.module.json',
     'assignment.module.json',
   ]) applyModule(root, join(root, 'packages', 'intelligence', 'modules', manifest));
+  // Commercial Operations record modules (Milestone 10): all read-only
+  // publicly — records exist only through catalog sync and quote actions. They
+  // live with the package that owns them, byte-identical to the manifests the
+  // starter used to carry, so the tables, migrations and checksums of an
+  // existing project are untouched by the move.
   for (const manifest of [
-    // Commercial Operations record modules (Milestone 10): all read-only
-    // publicly — records exist only through catalog sync and quote actions.
     'product.module.json',
     'product-version.module.json',
     'price-book.module.json',
@@ -84,6 +87,8 @@ try {
     'quote-version-component.module.json',
     'quote-version-total.module.json',
     'quote-approval.module.json',
+  ]) applyModule(root, join(root, 'packages', 'commercial', 'modules', manifest));
+  for (const manifest of [
     // Signature and Order record modules (Milestone 11): immutable evidence,
     // written only by the signature operations through the trusted managed
     // path — never by public CRUD.
@@ -166,32 +171,17 @@ try {
       "import { disqualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/disqualify.js';",
       "import { convertLead } from '../../../examples/starters/b2b-lead-qualification/actions/convert.js';",
       "import { buildMoveStageAction } from '../../core/src/pipeline-actions.js';",
-      "import { buildCommercialActions } from '../../core/src/commercial-actions.js';",
       "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
       '',
+      '// The quote actions arrive with the commercial package (see',
+      '// packages/domains/generated/index.js) rather than being registered here.',
       'export const generatedActions = [',
       '  qualifyLead,',
       '  disqualifyLead,',
       '  convertLead,',
       "  buildMoveStageAction({ module: 'opportunity' }),",
-      '  ...buildCommercialActions(),',
       '  buildRequestSignatureAction(),',
       '];',
-      '',
-    ].join('\n'),
-  );
-  writeFileSync(
-    join(root, 'packages', 'commercial', 'generated', 'index.js'),
-    [
-      '// @ts-check',
-      'import {',
-      '  fixtureSaasCatalogProvider,',
-      '  standardSalesDiscountV1,',
-      '  standardSalesDiscountV2,',
-      "} from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
-      '',
-      'export const generatedCatalogProviders = [fixtureSaasCatalogProvider];',
-      'export const generatedDiscountPolicies = [standardSalesDiscountV1, standardSalesDiscountV2];',
       '',
     ].join('\n'),
   );
@@ -200,6 +190,12 @@ try {
     [
       '// @ts-check',
       "import { createIntelligenceDomain } from '../../intelligence/src/index.js';",
+      "import { createCommercialDomain } from '../../commercial/src/index.js';",
+      'import {',
+      '  fixtureSaasCatalogProvider,',
+      '  standardSalesDiscountV1,',
+      '  standardSalesDiscountV2,',
+      "} from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
       "import { createContractsDomain } from '../../contracts/src/index.js';",
       "import { createLifecyclePackage } from '../../lifecycle/src/index.js';",
       "import { createDeliveryPackage } from '../../delivery/src/index.js';",
@@ -222,6 +218,10 @@ try {
       '// The composition file is the ONLY place a project names its packages.',
       '// Deleting a line removes that package; nothing in the kernel changes.',
       'export const generatedDomains = [',
+      '  createCommercialDomain({',
+      '    catalogProviders: [fixtureSaasCatalogProvider],',
+      '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
+      '  }),',
       '  createIntelligenceDomain({',
       '    enrichmentProviders: [fixtureFirmographicsProvider],',
       '    scoringModels: [b2bSaasScoreV1, b2bSaasScoreV2],',

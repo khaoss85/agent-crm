@@ -51,15 +51,15 @@ export const COMMERCIAL_MODULES = Object.freeze([
 export const FIXED_NOW = '2026-01-01T00:00:00.000Z';
 
 /**
- * How Commercial Operations is attached to a project **today**: framework
- * actions registered by the project's action registry
- * (`buildCommercialActions()` in `packages/actions/generated/index.js`) plus a
- * fixed project-owned definition slot (`packages/commercial/generated/index.js`)
- * that `create-app` imports directly. `ATTACHMENT` records which shape produced
- * a baseline so a comparison across the move is never silently comparing two
- * different things.
+ * How Commercial Operations is attached to a project **today**: one
+ * composition entry in `packages/domains/generated/index.js`, which is how
+ * every optional domain package is attached. Before the extraction this was an
+ * action-registry import plus the fixed project-owned
+ * `packages/commercial/generated` slot; `ATTACHMENT` records which shape
+ * produced a baseline so a comparison across the move is never silently
+ * comparing two different things.
  */
-export const ATTACHMENT = 'kernel-wired-fixed-slot';
+export const ATTACHMENT = 'composed-domain-package';
 
 /**
  * **Every path that knows where Commercial Operations lives today, in one
@@ -68,16 +68,17 @@ export const ATTACHMENT = 'kernel-wired-fixed-slot';
  * commercial characterization changes.
  */
 export const COMMERCIAL_SOURCE = Object.freeze({
-  money: '../../packages/core/src/commercial-money.js',
-  registry: '../../packages/core/src/commercial-registry.js',
-  actions: '../../packages/core/src/commercial-actions.js',
-  catalogSync: '../../packages/core/src/catalog-sync.js',
+  money: '../../packages/commercial/src/money.js',
+  registry: '../../packages/commercial/src/registry.js',
+  actions: '../../packages/commercial/src/actions.js',
+  catalogSync: '../../packages/commercial/src/catalog-sync.js',
+  entry: '../../packages/commercial/src/index.js',
   /** Where the record manifests live, relative to a copied project root. */
-  manifestsDir: 'examples/starters/b2b-lead-qualification',
+  manifestsDir: 'packages/commercial/modules',
   /** Patterns for the architecture-evidence cases, kept in the seam. */
   greps: Object.freeze([
     'app.commercial',
-    'commercial-actions.js', 'commercial-registry.js', 'commercial-money.js', 'catalog-sync.js',
+    'commercial/src/registry.js', 'commercial/src/actions.js', 'commercial/src/money.js', 'commercial/src/catalog-sync.js',
     'commercial/generated',
   ]),
 });
@@ -121,10 +122,13 @@ export async function loadRegistry() {
  * of them stales the baseline and forces a deliberate, reviewed regeneration.
  */
 export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
-  'packages/core/src/commercial-actions.js',
-  'packages/core/src/commercial-money.js',
-  'packages/core/src/commercial-registry.js',
-  'packages/core/src/catalog-sync.js',
+  'packages/commercial/src/index.js',
+  'packages/commercial/src/actions.js',
+  'packages/commercial/src/money.js',
+  'packages/commercial/src/registry.js',
+  'packages/commercial/src/catalog-sync.js',
+  'packages/commercial/src/capability.js',
+  'packages/core/src/money.js',
   'packages/core/src/definition-fingerprint.js',
   'packages/core/src/timeout.js',
   'packages/core/src/action-runtime.js',
@@ -133,7 +137,7 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/sdk/src/index.js',
   'apps/admin/public/admin-quotes.js',
   'examples/starters/b2b-lead-qualification/commercial.js',
-  ...COMMERCIAL_MODULES.map((manifest) => `examples/starters/b2b-lead-qualification/${manifest}`),
+  ...COMMERCIAL_MODULES.map((manifest) => `packages/commercial/modules/${manifest}`),
 ]);
 
 /**
@@ -266,16 +270,24 @@ export function wireCommercial(root) {
   const starter = '../../../examples/starters/b2b-lead-qualification';
   writeFileSync(join(root, 'packages/actions/generated/index.js'), [
     '// @ts-check',
-    "import { buildCommercialActions } from '../../core/src/commercial-actions.js';",
-    'export const generatedActions = [...buildCommercialActions()];',
+    '// The quote actions arrive with the commercial package composition below.',
+    'export const generatedActions = [];',
     '',
   ].join('\n'));
-  writeFileSync(join(root, 'packages/commercial/generated/index.js'), [
+  // One composition entry — the whole attachment. The eight actions arrive
+  // with the package rather than being registered by the project, which is the
+  // difference between a domain the project wires and a domain it composes.
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
     '// @ts-check',
+    "import { createCommercialDomain } from '../../commercial/src/index.js';",
     `import { fixtureSaasCatalogProvider, standardSalesDiscountV1, standardSalesDiscountV2 } from '${starter}/commercial.js';`,
     AUX_PROVIDERS_SOURCE,
-    'export const generatedCatalogProviders = [fixtureSaasCatalogProvider, la0AuxCatalogProvider, la0DeactivatingCatalogProvider];',
-    'export const generatedDiscountPolicies = [standardSalesDiscountV1, standardSalesDiscountV2];',
+    'export const generatedDomains = [',
+    '  createCommercialDomain({',
+    '    catalogProviders: [fixtureSaasCatalogProvider, la0AuxCatalogProvider, la0DeactivatingCatalogProvider],',
+    '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
+    '  }),',
+    '];',
     '',
   ].join('\n'));
 }

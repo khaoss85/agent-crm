@@ -246,8 +246,9 @@ export async function runArchitectureEvidence(record, rootDir = repoRoot) {
     classification: 'pre_extraction_evidence',
     surface: 'sdk',
     observed: sourceFiles
-      .filter((file) => importsFrom(read(file), /(commercial-(actions|registry|money)|catalog-sync)\.js$/).length > 0).sort(),
-    note: 'Every file with a real import statement naming a Commercial internal — the coupling the extraction dissolves into public core plus the package.',
+      .filter((file) => !file.startsWith('packages/commercial/'))
+      .filter((file) => importsFrom(read(file), /(commercial-(actions|registry|money)|catalog-sync|commercial\/src\/[a-z-]+)\.js$/).length > 0).sort(),
+    note: 'Every file outside the package with a real import statement naming a Commercial source file. After the extraction the only sanctioned importer is the project composition file, which is generated per project and not checked in here.',
   }));
   record(observation({
     id: 'architecture.definition-registry-slot',

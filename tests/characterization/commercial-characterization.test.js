@@ -114,7 +114,7 @@ test('every commercial behaviour-bearing file is owned by the digest, and the se
     'packages/sdk/src/index.js',
     'apps/admin/public/admin-quotes.js',
     'examples/starters/b2b-lead-qualification/commercial.js',
-    'examples/starters/b2b-lead-qualification/quote.module.json',
+    'packages/commercial/modules/quote.module.json',
   ]) {
     assert.ok(BEHAVIOUR_BEARING_SOURCE.includes(file), `${file} is not owned by the source digest`);
   }

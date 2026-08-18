@@ -5,7 +5,7 @@ import {
   validateCatalogProvider,
   validateDiscountPolicy,
   normalizePolicyResult,
-} from '../packages/core/src/commercial-registry.js';
+} from '../packages/commercial/src/registry.js';
 import {
   computeComponentAmount,
   computeLineBreakdown,
@@ -18,7 +18,7 @@ import {
   requireBps,
   requireQuantity,
   requireCurrency,
-} from '../packages/core/src/commercial-money.js';
+} from '../packages/commercial/src/money.js';
 import { createDatabase } from '../packages/core/src/database.js';
 
 function provider(overrides = {}) {
