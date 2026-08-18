@@ -1,0 +1,2820 @@
+{
+  "attachment": "kernel-wired-action-and-fixed-provider-slot",
+  "counts": {
+    "compatibility_required": 3,
+    "contractual": 96,
+    "defect_candidate": 1,
+    "incidental": 2,
+    "pre_extraction_evidence": 8
+  },
+  "domain": "signature-order",
+  "fingerprint": "fe1875bf9cb68a5b4e8f55f79127cbec57581b9cd0e0b668569422e3cee9c82f",
+  "legacyCharacterizationContract": 1,
+  "limitations": [
+    {
+      "code": "DETERMINISTIC_FIXTURES_ONLY",
+      "message": "the only provider is the checked-in deterministic fixture. Nothing here characterizes a real signature service's latency, error shapes, artifact formats or webhook cadence — no DocuSign/Adobe Sign/Dropbox Sign behaviour is frozen because none exists"
+    },
+    {
+      "code": "INCIDENTAL_NOT_ASSERTED",
+      "message": "observations classified incidental are recorded and not compared. Row ordering nobody specified and internal id shapes are free to change"
+    },
+    {
+      "code": "DEFECTS_NOT_FROZEN",
+      "message": "observations classified defect_candidate are reproduced and documented but never asserted as must-stay"
+    },
+    {
+      "code": "NOT_A_PERFORMANCE_BASELINE",
+      "message": "no timing is captured. An extraction that preserves every value and doubles the latency passes this suite"
+    },
+    {
+      "code": "CONCURRENCY_ONLY_WHERE_OBSERVABLE",
+      "message": "races are characterized only where the current implementation exposes a deterministic outcome (one order, one winner). Interleavings without a deterministic observable are not claimed safe by absence of a case"
+    },
+    {
+      "code": "WALL_CLOCK_FIELDS_MASKED",
+      "message": "ingest/reconcile timestamps (receivedAt, sentAt, failedAt, …) come from the wall clock — createSignatureOperations does not receive the injected app clock — so they are asserted by presence, not value. completedAt/acceptedAt come from the deterministic fixture event and are asserted by value"
+    },
+    {
+      "code": "ADMIN_DATA_NOT_PIXELS",
+      "message": "the Admin surface is characterized as the data its reads return (records, capabilities, refusal statuses), not as rendered DOM. Browser behaviour is the repository-wide manual gap QUALITY_GATES §4 records"
+    },
+    {
+      "code": "ARTIFACT_BYTES_NOT_STORED",
+      "message": "artifactHash is provider-reported and the artifact bytes are never downloaded or hashed locally; this baseline freezes exactly that weaker guarantee and no stronger one"
+    },
+    {
+      "code": "SINGLE_ATTACHMENT_SHAPE",
+      "message": "the baseline records how Signature was attached when generated (kernel-wired action + fixed provider slot). Comparing baselines generated under different attachment shapes compares two different applications; the contract carries the shape so that cannot happen silently"
+    }
+  ],
+  "observations": [
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.app-inspect-cites-signature-action",
+      "note": "AX2 depends on these facts being reported: a Solution Plan can only bind to what inspect publishes.",
+      "observed": {
+        "envelopeRecordCitable": true,
+        "exitCode": 0,
+        "orderRecordCitable": true,
+        "requestSignatureCitable": true
+      },
+      "surface": "app-inspect"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.app-inspect-signature-facts",
+      "note": "AX1 evidence: how the composition reports Signature today. The extraction changes where these facts appear (a package instead of fixed slots), so the location is evidence, not contract.",
+      "observed": {
+        "exitCode": 0,
+        "mentionsFixtureProvider": true,
+        "mentionsRequestSignature": true,
+        "providerSlotShape": "not-a-top-level-slot",
+        "valid": true
+      },
+      "surface": "app-inspect"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.app-signature-consumers",
+      "note": "Every file that reads the ambient app.signature registry handle, in code.",
+      "observed": [
+        "apps/server/src/http-server.js"
+      ],
+      "surface": "sdk"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.b7-route-ownership",
+      "note": "B7 evidence: the webhook and reconcile routes are owned by apps/server today. No package can contribute an HTTP route, which LEGACY_ALIGNMENT_MATRIX records as the extraction precondition for Signature.",
+      "observed": {
+        "appMethodsWired": [
+          "ingestSignatureEvent",
+          "reconcileSignature"
+        ],
+        "eventsRouteInKernelServer": true,
+        "eventsRouteRawBodyBounded": true,
+        "reconcileRouteInKernelServer": true
+      },
+      "surface": "http"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.external-operation-importers",
+      "note": "The evidence behind the neutral-helper verdict: the generic action runtime imports it for any externalOperation action; signature-operations.js is today its only other direct caller.",
+      "observed": [
+        "packages/core/src/action-runtime.js",
+        "packages/core/src/signature-operations.js"
+      ],
+      "surface": "sdk"
+    },
+    {
+      "category": "architecture",
+      "classification": "incidental",
+      "id": "architecture.grep-patterns-used",
+      "note": "The seam patterns the evidence cases scan for, recorded so a reader of the baseline can reproduce the scan.",
+      "observed": [
+        "signature-operations.js",
+        "signature-registry.js",
+        "signature/generated",
+        "/api/signature/",
+        "ingestSignatureEvent",
+        "reconcileSignature"
+      ],
+      "surface": "sdk"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.kernel-public-api-signature-surface",
+      "note": "Readiness gap, measured: packages/core/index.js — the only import a package may use — exports neither runExternalOperation nor withExternalTimeout, so an extracted Signature package could not run its app-level operations without a new public export or an operations seam.",
+      "observed": {
+        "exportsDefinitionFingerprint": true,
+        "exportsRunExternalOperation": false,
+        "exportsSignatureAnything": false,
+        "exportsWithExternalTimeout": false,
+        "exportsWithTimeout": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.schema-signature-block-present",
+      "note": "Published today as an ambient `signature` block on /api/schema. After extraction it should be the package's own schema contribution — a deliberate migration, not a behaviour change to hide.",
+      "observed": {
+        "foundAt": "schema.signature",
+        "present": true
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.signature-generated-slot-dependants",
+      "note": "Who depends on the fixed project-owned provider slot packages/signature/generated/.",
+      "observed": [
+        "packages/app/src/create-app.js",
+        "packages/cli/src/app-inspect.js"
+      ],
+      "surface": "app-inspect"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.signature-internal-importers",
+      "note": "Every file with a real import statement naming a Signature internal. Scanner limits: LEXICAL_NOT_SYNTACTIC — comments and literals are stripped, but no AST is built; ALIASING_NOT_TRACKED — a consumer that copies the field to another name first is not followed; DYNAMIC_KEYS_NOT_RESOLVED — a computed property name built at runtime is not evaluated.",
+      "observed": [
+        "examples/journeys/service-sla-escalation/journey.mjs",
+        "examples/starters/b2b-lead-qualification/install.mjs",
+        "examples/starters/b2b-lead-qualification/signature.js",
+        "packages/app/src/create-app.js",
+        "packages/core/src/signature-operations.js"
+      ],
+      "surface": "sdk"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit-events-trace.completion-audit-delta",
+      "note": null,
+      "observed": {
+        "artifact": 1,
+        "envelope": 1,
+        "event": 2,
+        "order": 1,
+        "orderComponent": 3,
+        "orderLine": 1,
+        "orderTier": 3,
+        "orderTotal": 2,
+        "quote": 1,
+        "signer": 1
+      },
+      "surface": "audit"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit-events-trace.completion-dispatched-events",
+      "note": null,
+      "observed": {
+        "order-component.created": 3,
+        "order-line.created": 1,
+        "order-tier.created": 3,
+        "order-total.created": 2,
+        "order.created": 1,
+        "quote.updated": 1,
+        "signature-envelope.updated": 1,
+        "signature-event.created": 1,
+        "signature-event.updated": 1,
+        "signature-signer.updated": 1,
+        "signed-artifact.created": 1
+      },
+      "surface": "events"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit-events-trace.completion-event-spans",
+      "note": null,
+      "observed": [
+        {
+          "name": "signature.event.intent",
+          "status": "completed"
+        },
+        {
+          "name": "signature.event-accepted",
+          "status": "completed"
+        },
+        {
+          "name": "signature.artifact-fetched",
+          "status": "completed"
+        },
+        {
+          "name": "signature.event.external",
+          "status": "completed"
+        },
+        {
+          "name": "order.created",
+          "status": "completed"
+        },
+        {
+          "name": "signature.completed",
+          "status": "completed"
+        },
+        {
+          "name": "signature.event.finalize",
+          "status": "completed"
+        }
+      ],
+      "surface": "trace"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit-events-trace.event-run-counts-by-status",
+      "note": null,
+      "observed": {
+        "completed": 6,
+        "failed": 1
+      },
+      "surface": "trace"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit-events-trace.replay-creates-nothing",
+      "note": null,
+      "observed": {
+        "auditDelta": {
+          "artifact": 0,
+          "envelope": 0,
+          "event": 0,
+          "order": 0,
+          "orderComponent": 0,
+          "orderLine": 0,
+          "orderTier": 0,
+          "orderTotal": 0,
+          "quote": 0,
+          "signer": 0
+        },
+        "inboxRows": 1,
+        "orders": 1,
+        "response": {
+          "duplicate": true,
+          "status": 200
+        }
+      },
+      "surface": "audit"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit-events-trace.request-audit-delta",
+      "note": null,
+      "observed": {
+        "artifact": 0,
+        "envelope": 3,
+        "event": 0,
+        "order": 0,
+        "orderComponent": 0,
+        "orderLine": 0,
+        "orderTier": 0,
+        "orderTotal": 0,
+        "quote": 1,
+        "signer": 1
+      },
+      "surface": "audit"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit-events-trace.request-dispatched-events",
+      "note": null,
+      "observed": {
+        "quote.updated": 1,
+        "signature-envelope.created": 1,
+        "signature-envelope.updated": 2,
+        "signature-signer.created": 1
+      },
+      "surface": "events"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit-events-trace.request-signature-spans",
+      "note": null,
+      "observed": [
+        {
+          "name": "quote.request-signature.intent",
+          "status": "completed"
+        },
+        {
+          "name": "signature.intent-created",
+          "status": "completed"
+        },
+        {
+          "name": "signature.provider-envelope",
+          "status": "completed"
+        },
+        {
+          "name": "quote.request-signature.external",
+          "status": "completed"
+        },
+        {
+          "name": "signature.sent",
+          "status": "completed"
+        },
+        {
+          "name": "signature.sent",
+          "status": "completed"
+        },
+        {
+          "name": "quote.request-signature.finalize",
+          "status": "completed"
+        }
+      ],
+      "surface": "trace"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit-events-trace.trace-vocabulary",
+      "note": null,
+      "observed": [
+        "catalog.sync",
+        "opportunity.create-quote",
+        "quote.add-line",
+        "quote.request-signature",
+        "quote.submit",
+        "signature.event"
+      ],
+      "surface": "trace"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.completed-response",
+      "note": null,
+      "observed": {
+        "applied": true,
+        "envelope": {
+          "documentFormat": "application/vnd.accordo.quote-package+json",
+          "documentHash": "<h:7>",
+          "failureCode": null,
+          "failurePhase": null,
+          "id": "<id:1>",
+          "orderId": "<id:2>",
+          "provider": "fixture-signature",
+          "providerEnvelopeId": "<h:8>",
+          "providerVersion": 1,
+          "quoteId": "<id:3>",
+          "quoteVersionId": "<id:4>",
+          "signedArtifactId": "<id:5>",
+          "signerCount": 1,
+          "status": "completed"
+        },
+        "envelopeId": "<id:1>",
+        "eventId": "<id:6>",
+        "ok": true,
+        "orderId": "<id:2>",
+        "provider": "fixture-signature",
+        "signedArtifactId": "<id:5>",
+        "status": "completed"
+      },
+      "surface": "http"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.envelope-after-request",
+      "note": null,
+      "observed": {
+        "completedAt": null,
+        "createdAt": "<present>",
+        "declinedAt": null,
+        "deliveredAt": null,
+        "documentFormat": "application/vnd.accordo.quote-package+json",
+        "documentHash": "<h:7>",
+        "documentJsonHashesToDocumentHash": true,
+        "failedAt": null,
+        "failureCode": null,
+        "failurePhase": null,
+        "id": "<id:1>",
+        "idempotencyKey": "env:quote-version:<id:2>",
+        "orderId": null,
+        "partiesJson": {
+          "companyId": "<id:1>",
+          "companyName": "Journey Deal SpA",
+          "contactEmail": "journey-deal@example.com",
+          "contactId": "<id:2>",
+          "opportunityId": "<id:3>"
+        },
+        "provider": "fixture-signature",
+        "providerEnvelopeId": "<h:8>",
+        "providerFingerprint": "<h:9>",
+        "providerSequence": 1,
+        "providerVersion": 1,
+        "quoteId": "<id:6>",
+        "quoteVersionId": "<id:2>",
+        "requestedAt": "<present>",
+        "requestedBy": "sig-la0",
+        "sentAt": "<present>",
+        "signedArtifactId": null,
+        "signerCount": 1,
+        "sourceKey": "env:quote-version:<id:2>",
+        "status": "sent",
+        "updatedAt": "<present>",
+        "voidedAt": null
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.envelope-completed",
+      "note": null,
+      "observed": {
+        "completedAt": "2026-08-05T12:00:00.000Z",
+        "createdAt": "<present>",
+        "declinedAt": null,
+        "deliveredAt": "<present>",
+        "documentFormat": "application/vnd.accordo.quote-package+json",
+        "documentHash": "<h:9>",
+        "failedAt": null,
+        "failureCode": null,
+        "failurePhase": null,
+        "id": "<id:1>",
+        "idempotencyKey": "env:quote-version:<id:2>",
+        "linksAgree": true,
+        "orderId": "<id:3>",
+        "partiesJson": "{\"companyId\":\"<id:4>\",\"companyName\":\"Journey Deal SpA\",\"contactId\":\"<id:5>\",\"contactEmail\":\"journey-deal@example.com\",\"opportunityId\":\"<id:6>\"}",
+        "provider": "fixture-signature",
+        "providerEnvelopeId": "<h:10>",
+        "providerFingerprint": "<h:11>",
+        "providerSequence": 3,
+        "providerVersion": 1,
+        "quoteId": "<id:7>",
+        "quoteVersionId": "<id:2>",
+        "requestedAt": "<present>",
+        "requestedBy": "sig-la0",
+        "sentAt": "<present>",
+        "signedArtifactId": "<id:8>",
+        "signerCount": 1,
+        "sourceKey": "env:quote-version:<id:2>",
+        "status": "completed",
+        "updatedAt": "<present>",
+        "voidedAt": null
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.immutable-against-source-movement",
+      "note": null,
+      "observed": {
+        "customerNameAsSigned": "Restart Deal SpA",
+        "envelopeDocumentHashUnchanged": true,
+        "orderIdentical": true,
+        "signedTierPricesSurvive": true
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.instant-terminal-answer-completes",
+      "note": null,
+      "observed": {
+        "artifacts": 1,
+        "envelopeStatus": "completed",
+        "orderIdReturned": true,
+        "orders": 1,
+        "resultStatus": "completed"
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.order-components",
+      "note": null,
+      "observed": [
+        {
+          "chargeType": "recurring",
+          "componentId": "<id:16>",
+          "componentKey": "fixture:offer:enterprise:1:ent-platform",
+          "createdAt": "<present>",
+          "discountAmountCents": 10000,
+          "externalPriceId": "price_ent_platform",
+          "flatAmountCents": 200000,
+          "id": "<id:17>",
+          "interval": "month",
+          "intervalCount": 1,
+          "label": "Platform fee",
+          "listAmountCents": 200000,
+          "netAmountCents": 190000,
+          "orderId": "<id:4>",
+          "orderLineId": "<id:11>",
+          "pricingModel": "flat_fee",
+          "provider": "fixture-saas-catalog",
+          "quantity": 0,
+          "sourcePricingModel": "stripe:recurring.flat",
+          "tierBreakdownJson": [],
+          "tiersJson": [],
+          "unitAmountCents": null,
+          "updatedAt": "<present>",
+          "versionComponentId": "<id:18>"
+        },
+        {
+          "chargeType": "recurring",
+          "componentId": "<id:19>",
+          "componentKey": "fixture:offer:enterprise:1:ent-seats",
+          "createdAt": "<present>",
+          "discountAmountCents": 5000,
+          "externalPriceId": "price_ent_seats",
+          "flatAmountCents": null,
+          "id": "<id:20>",
+          "interval": "month",
+          "intervalCount": 1,
+          "label": "Seats",
+          "listAmountCents": 100000,
+          "netAmountCents": 95000,
+          "orderId": "<id:4>",
+          "orderLineId": "<id:11>",
+          "pricingModel": "volume",
+          "provider": "fixture-saas-catalog",
+          "quantity": 20,
+          "sourcePricingModel": "stripe:tiers_mode=volume",
+          "tierBreakdownJson": [
+            {
+              "amountCents": 100000,
+              "flatAmountCents": 0,
+              "from": 1,
+              "position": 1,
+              "quantity": 20,
+              "to": 20,
+              "unitAmountCents": 5000
+            }
+          ],
+          "tiersJson": [
+            {
+              "flatAmountCents": 0,
+              "position": 1,
+              "unitAmountCents": 5000,
+              "upTo": 20
+            },
+            {
+              "flatAmountCents": 0,
+              "position": 2,
+              "unitAmountCents": 4000,
+              "upTo": 100
+            },
+            {
+              "flatAmountCents": 0,
+              "position": 3,
+              "unitAmountCents": 3000,
+              "upTo": null
+            }
+          ],
+          "unitAmountCents": null,
+          "updatedAt": "<present>",
+          "versionComponentId": "<id:21>"
+        },
+        {
+          "chargeType": "one_time",
+          "componentId": "<id:22>",
+          "componentKey": "fixture:offer:enterprise:1:ent-setup",
+          "createdAt": "<present>",
+          "discountAmountCents": 25000,
+          "externalPriceId": "price_ent_setup",
+          "flatAmountCents": 500000,
+          "id": "<id:23>",
+          "interval": null,
+          "intervalCount": null,
+          "label": "Setup and migration",
+          "listAmountCents": 500000,
+          "netAmountCents": 475000,
+          "orderId": "<id:4>",
+          "orderLineId": "<id:11>",
+          "pricingModel": "flat_fee",
+          "provider": "fixture-saas-catalog",
+          "quantity": 0,
+          "sourcePricingModel": "stripe:one_time.flat",
+          "tierBreakdownJson": [],
+          "tiersJson": [],
+          "unitAmountCents": null,
+          "updatedAt": "<present>",
+          "versionComponentId": "<id:24>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.order-grouped-totals",
+      "note": null,
+      "observed": [
+        {
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "discountAmountCents": 25000,
+          "id": "<id:28>",
+          "interval": null,
+          "intervalCount": null,
+          "kind": "one_time",
+          "listAmountCents": 500000,
+          "netAmountCents": 475000,
+          "orderId": "<id:4>",
+          "updatedAt": "<present>"
+        },
+        {
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "discountAmountCents": 15000,
+          "id": "<id:29>",
+          "interval": "month",
+          "intervalCount": 1,
+          "kind": "recurring",
+          "listAmountCents": 300000,
+          "netAmountCents": 285000,
+          "orderId": "<id:4>",
+          "updatedAt": "<present>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.order-lines",
+      "note": null,
+      "observed": [
+        {
+          "componentCount": 3,
+          "createdAt": "<present>",
+          "discountAmountCents": 40000,
+          "discountBps": 500,
+          "id": "<id:11>",
+          "listAmountCents": 800000,
+          "netAmountCents": 760000,
+          "offerId": "<id:12>",
+          "offerLogicalKey": "fixture:offer:enterprise",
+          "offerName": "Enterprise Plan",
+          "offerRevision": 1,
+          "orderId": "<id:4>",
+          "position": 1,
+          "productId": "<id:13>",
+          "productVersionId": "<id:14>",
+          "quantity": 20,
+          "sku": "PLATFORM",
+          "updatedAt": "<present>",
+          "versionLineId": "<id:15>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.order-record",
+      "note": null,
+      "observed": {
+        "acceptedAt": "2026-08-05T12:00:00.000Z",
+        "activatedAt": null,
+        "artifactHash": "<h:9>",
+        "companyId": "<id:1>",
+        "contactId": "<id:2>",
+        "contractId": null,
+        "createdAt": "<present>",
+        "currency": "EUR",
+        "customerEmail": "journey-deal@example.com",
+        "customerName": "Journey Deal SpA",
+        "documentHash": "<h:10>",
+        "envelopeId": "<id:3>",
+        "exactlyOne": true,
+        "id": "<id:4>",
+        "lineCount": 1,
+        "oneTimeNetCents": 475000,
+        "opportunityId": "<id:5>",
+        "policy": "standard-sales-discount",
+        "policyDecision": "auto_approve",
+        "policyVersion": 1,
+        "quoteId": "<id:6>",
+        "quoteVersionId": "<id:7>",
+        "recurringGroupCount": 1,
+        "signedArtifactId": "<id:8>",
+        "sourceFingerprint": "<h:10>",
+        "sourceKey": "order:quote-version:<id:7>",
+        "status": "accepted",
+        "totalsJson": {
+          "oneTimeTotal": {
+            "currency": "EUR",
+            "discountAmountCents": 25000,
+            "listAmountCents": 500000,
+            "netAmountCents": 475000
+          },
+          "recurringTotals": [
+            {
+              "currency": "EUR",
+              "discountAmountCents": 15000,
+              "interval": "month",
+              "intervalCount": 1,
+              "listAmountCents": 300000,
+              "netAmountCents": 285000
+            }
+          ]
+        },
+        "updatedAt": "<present>",
+        "versionNumber": 1
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.order-tiers",
+      "note": null,
+      "observed": [
+        {
+          "createdAt": "<present>",
+          "flatAmountCents": 0,
+          "id": "<id:25>",
+          "orderComponentId": "<id:20>",
+          "orderId": "<id:4>",
+          "position": 1,
+          "unitAmountCents": 5000,
+          "upToQuantity": 20,
+          "updatedAt": "<present>"
+        },
+        {
+          "createdAt": "<present>",
+          "flatAmountCents": 0,
+          "id": "<id:26>",
+          "orderComponentId": "<id:20>",
+          "orderId": "<id:4>",
+          "position": 2,
+          "unitAmountCents": 4000,
+          "upToQuantity": 100,
+          "updatedAt": "<present>"
+        },
+        {
+          "createdAt": "<present>",
+          "flatAmountCents": 0,
+          "id": "<id:27>",
+          "orderComponentId": "<id:20>",
+          "orderId": "<id:4>",
+          "position": 3,
+          "unitAmountCents": 3000,
+          "upToQuantity": null,
+          "updatedAt": "<present>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.quote-after-completion",
+      "note": null,
+      "observed": {
+        "orderIdMatches": true,
+        "signatureStatus": "completed",
+        "status": "approved"
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.quote-after-request",
+      "note": null,
+      "observed": {
+        "orderId": null,
+        "signatureEnvelopeIdMatches": true,
+        "signatureStatus": "sent",
+        "status": "approved"
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.request-result",
+      "note": null,
+      "observed": {
+        "envelope": {
+          "documentFormat": "application/vnd.accordo.quote-package+json",
+          "documentHash": "<h:4>",
+          "failureCode": null,
+          "failurePhase": null,
+          "id": "<id:1>",
+          "orderId": null,
+          "provider": "fixture-signature",
+          "providerEnvelopeId": "<h:5>",
+          "providerVersion": 1,
+          "quoteId": "<id:2>",
+          "quoteVersionId": "<id:3>",
+          "signedArtifactId": null,
+          "signerCount": 1,
+          "status": "sent"
+        },
+        "orderId": null,
+        "signers": 1
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.signed-artifact-evidence",
+      "note": null,
+      "observed": {
+        "artifactHash": "<h:6>",
+        "completedAt": "2026-08-05T12:00:00.000Z",
+        "completionEventId": "<id:1>",
+        "completionEventLinked": true,
+        "createdAt": "<present>",
+        "documentFormat": "application/vnd.accordo.quote-package+json",
+        "documentHash": "<h:7>",
+        "documentJsonMatchesEnvelope": true,
+        "envelopeId": "<id:2>",
+        "id": "<id:3>",
+        "mimeType": "application/vnd.accordo.quote-package+json",
+        "provider": "fixture-signature",
+        "providerArtifactId": "<h:8>",
+        "quoteId": "<id:4>",
+        "quoteVersionId": "<id:5>",
+        "signerEvidence": [
+          {
+            "decidedAt": "2026-08-05T12:00:00.000Z",
+            "email": "journey@example.com",
+            "order": 1,
+            "role": "customer",
+            "signerKey": "s1",
+            "status": "signed"
+          }
+        ],
+        "signerEvidenceJson": "[{\"signerKey\":\"s1\",\"email\":\"journey@example.com\",\"role\":\"customer\",\"order\":1,\"status\":\"signed\",\"decidedAt\":\"2026-08-05T12:00:00.000Z\"}]",
+        "sizeBytes": 2048,
+        "sourceKey": "art:<id:2>",
+        "storageRef": "fixture://artifacts/<h:9>",
+        "updatedAt": "<present>"
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "completion-order",
+      "classification": "contractual",
+      "id": "completion-order.signer-rows-after-request",
+      "note": null,
+      "observed": [
+        {
+          "createdAt": "<present>",
+          "decidedAt": null,
+          "email": "journey@example.com",
+          "envelopeId": "<id:1>",
+          "id": "<id:2>",
+          "name": "Maria Bianchi",
+          "role": "customer",
+          "signerKey": "s1",
+          "signingOrder": 1,
+          "sourceKey": "sgn:<id:1>:s1",
+          "status": "pending",
+          "updatedAt": "<present>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.byte-order-locale-independent",
+      "note": null,
+      "observed": {
+        "accentAfterZ": 1,
+        "equal": 0,
+        "plain": -1,
+        "zBeforeLowerA": -1
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.canonical-hash-properties",
+      "note": null,
+      "observed": {
+        "arrayOrderSignificant": true,
+        "crlfVsLfDiffer": true,
+        "fixedDocumentHash": "ab3e4857ac97e2596d0aa1894332884002eb6b2a714ef0891b40fb835018f8aa",
+        "format": "application/vnd.accordo.quote-package+json",
+        "hashCoversExactBytes": true,
+        "keyOrderIrrelevant": true,
+        "numberVsStringDiffer": true,
+        "oversizedRefused": {
+          "code": "DOCUMENT_TOO_LARGE",
+          "message": "The document package exceeds the storable bound",
+          "refused": true
+        },
+        "unicodeNormalizationNotApplied": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.canonical-json.array-order",
+      "note": null,
+      "observed": "[1,2,3]",
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.canonical-json.empty-array",
+      "note": null,
+      "observed": "[]",
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.canonical-json.empty-object",
+      "note": null,
+      "observed": "{}",
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.canonical-json.flat-key-order",
+      "note": null,
+      "observed": "{\"a\":2,\"b\":1}",
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.canonical-json.flat-key-order-swapped",
+      "note": null,
+      "observed": "{\"a\":2,\"b\":1}",
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.canonical-json.nested",
+      "note": null,
+      "observed": "{\"a\":null,\"z\":{\"b\":[1,2,{\"c\":\"d\"}]}}",
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.canonical-json.null",
+      "note": null,
+      "observed": "null",
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.canonical-json.number-vs-string",
+      "note": null,
+      "observed": "{\"a\":1,\"b\":\"1\"}",
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.canonical-json.refusals",
+      "note": null,
+      "observed": {
+        "classInstance": {
+          "code": "VALIDATION_ERROR",
+          "message": "Cannot canonicalize a non-plain object at $",
+          "refused": true
+        },
+        "functionValue": {
+          "code": "VALIDATION_ERROR",
+          "message": "Cannot canonicalize a value of type function at $.a",
+          "refused": true
+        },
+        "nan": {
+          "code": "VALIDATION_ERROR",
+          "message": "Cannot canonicalize a non-finite number at $",
+          "refused": true
+        },
+        "nonFinite": {
+          "code": "VALIDATION_ERROR",
+          "message": "Cannot canonicalize a non-finite number at $.a",
+          "refused": true
+        },
+        "protoKey": "{\"__proto__\":1,\"a\":2}"
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.canonical-json.undefined-member",
+      "note": null,
+      "observed": "{\"a\":null,\"b\":1}",
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.canonical-json.unicode",
+      "note": null,
+      "observed": "{\"emoji\":\"x\",\"ключ\":\"значение\"}",
+      "surface": "sdk"
+    },
+    {
+      "category": "document",
+      "classification": "contractual",
+      "id": "document.package-structure",
+      "note": null,
+      "observed": {
+        "documentContract": 1,
+        "format": "application/vnd.accordo.quote-package+json",
+        "lines": [
+          {
+            "components": [
+              {
+                "chargeType": "recurring",
+                "componentKey": "fixture:offer:enterprise:1:ent-platform",
+                "discountAmountCents": 10000,
+                "flatAmountCents": 200000,
+                "interval": "month",
+                "intervalCount": 1,
+                "label": "Platform fee",
+                "listAmountCents": 200000,
+                "netAmountCents": 190000,
+                "pricingModel": "flat_fee",
+                "quantity": 0,
+                "sourcePricingModel": "stripe:recurring.flat",
+                "tierBreakdown": [],
+                "tiers": [],
+                "unitAmountCents": null
+              },
+              {
+                "chargeType": "recurring",
+                "componentKey": "fixture:offer:enterprise:1:ent-seats",
+                "discountAmountCents": 5000,
+                "flatAmountCents": null,
+                "interval": "month",
+                "intervalCount": 1,
+                "label": "Seats",
+                "listAmountCents": 100000,
+                "netAmountCents": 95000,
+                "pricingModel": "volume",
+                "quantity": 20,
+                "sourcePricingModel": "stripe:tiers_mode=volume",
+                "tierBreakdown": [
+                  {
+                    "amountCents": 100000,
+                    "flatAmountCents": 0,
+                    "from": 1,
+                    "position": 1,
+                    "quantity": 20,
+                    "to": 20,
+                    "unitAmountCents": 5000
+                  }
+                ],
+                "tiers": [
+                  {
+                    "flatAmountCents": 0,
+                    "position": 1,
+                    "unitAmountCents": 5000,
+                    "upTo": 20
+                  },
+                  {
+                    "flatAmountCents": 0,
+                    "position": 2,
+                    "unitAmountCents": 4000,
+                    "upTo": 100
+                  },
+                  {
+                    "flatAmountCents": 0,
+                    "position": 3,
+                    "unitAmountCents": 3000,
+                    "upTo": null
+                  }
+                ],
+                "unitAmountCents": null
+              },
+              {
+                "chargeType": "one_time",
+                "componentKey": "fixture:offer:enterprise:1:ent-setup",
+                "discountAmountCents": 25000,
+                "flatAmountCents": 500000,
+                "interval": null,
+                "intervalCount": null,
+                "label": "Setup and migration",
+                "listAmountCents": 500000,
+                "netAmountCents": 475000,
+                "pricingModel": "flat_fee",
+                "quantity": 0,
+                "sourcePricingModel": "stripe:one_time.flat",
+                "tierBreakdown": [],
+                "tiers": [],
+                "unitAmountCents": null
+              }
+            ],
+            "discountAmountCents": 40000,
+            "discountBps": 500,
+            "id": "<id:1>",
+            "listAmountCents": 800000,
+            "netAmountCents": 760000,
+            "offerLogicalKey": "fixture:offer:enterprise",
+            "offerName": "Enterprise Plan",
+            "offerRevision": 1,
+            "position": 1,
+            "productVersionId": "<id:2>",
+            "quantity": 20,
+            "sku": "PLATFORM"
+          }
+        ],
+        "parties": {
+          "companyId": "<id:3>",
+          "companyName": "Journey Deal SpA",
+          "contactEmail": "journey-deal@example.com",
+          "contactId": "<id:4>",
+          "opportunityId": "<id:5>"
+        },
+        "quote": {
+          "currency": "EUR",
+          "id": "<id:6>",
+          "priceBookId": "<id:7>"
+        },
+        "signers": [
+          {
+            "email": "journey@example.com",
+            "name": "Maria Bianchi",
+            "order": 1,
+            "role": "customer",
+            "signerKey": "s1"
+          }
+        ],
+        "totals": [
+          {
+            "currency": "EUR",
+            "discountAmountCents": 25000,
+            "interval": null,
+            "intervalCount": null,
+            "kind": "one_time",
+            "listAmountCents": 500000,
+            "netAmountCents": 475000
+          },
+          {
+            "currency": "EUR",
+            "discountAmountCents": 15000,
+            "interval": "month",
+            "intervalCount": 1,
+            "kind": "recurring",
+            "listAmountCents": 300000,
+            "netAmountCents": 285000
+          }
+        ],
+        "version": {
+          "decisionReason": "max line discount 500bps within auto-approve limit 1000bps",
+          "effectiveDiscountBps": 500,
+          "id": "<id:8>",
+          "maxLineDiscountBps": 500,
+          "policy": "standard-sales-discount",
+          "policyDecision": "auto_approve",
+          "policyFingerprint": "<h:9>",
+          "policyVersion": 1,
+          "submittedAt": "2026-08-10T00:00:00.000Z",
+          "versionNumber": 1
+        }
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.agent-actor-refused",
+      "note": null,
+      "observed": {
+        "code": "HUMAN_APPROVAL_REQUIRED",
+        "message": "Requesting a signature requires a human user actor",
+        "refused": true,
+        "status": 403
+      },
+      "surface": "http"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.allowed-transitions",
+      "note": null,
+      "observed": {
+        "completed": [],
+        "declined": [],
+        "delivered": [
+          "completed",
+          "declined",
+          "voided"
+        ],
+        "failed": [
+          "sent",
+          "delivered",
+          "completed",
+          "declined",
+          "voided"
+        ],
+        "preparing": [
+          "failed",
+          "sent",
+          "delivered",
+          "completed",
+          "declined",
+          "voided"
+        ],
+        "sent": [
+          "delivered",
+          "completed",
+          "declined",
+          "voided"
+        ],
+        "voided": []
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.completed-after-declined-impossible",
+      "note": null,
+      "observed": {
+        "applied": false,
+        "envelopeStatus": "declined",
+        "orders": 0,
+        "reason": "terminal"
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.declined-terminal-no-order",
+      "note": "quote.signatureStatus stays at the finalize-time value after a decline; downstream consumers (Admin, Contract Activation) read the envelope, not this field.",
+      "observed": {
+        "applied": true,
+        "artifacts": 0,
+        "declinedAtPresent": true,
+        "orders": 0,
+        "quoteSignatureStatus": "sent",
+        "signerStatuses": [
+          "declined"
+        ],
+        "status": "declined"
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.failed-envelope-cannot-resend",
+      "note": "The retained M11 limitation: reconciliation is the only recovery path; no resend framework exists.",
+      "observed": {
+        "code": "ENVELOPE_EXISTS",
+        "message": "A signature envelope already exists for this quote version (failed) — reconcile it instead of requesting a second one",
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.repeat-request-after-terminal-refused",
+      "note": null,
+      "observed": {
+        "code": "ENVELOPE_EXISTS",
+        "envelopesForVersion": 1,
+        "message": "A signature envelope already exists for this quote version (completed) — reconcile it instead of requesting a second one",
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.repeat-request-refused",
+      "note": null,
+      "observed": {
+        "code": "ENVELOPE_EXISTS",
+        "message": "A signature envelope already exists for this quote version (sent) — reconcile it instead of requesting a second one",
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.states",
+      "note": null,
+      "observed": {
+        "maxSigners": 5,
+        "signerStates": [
+          "pending",
+          "signed",
+          "declined"
+        ],
+        "states": [
+          "preparing",
+          "failed",
+          "sent",
+          "delivered",
+          "completed",
+          "declined",
+          "voided"
+        ],
+        "terminal": [
+          "completed",
+          "declined",
+          "voided"
+        ]
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.transition-matrix",
+      "note": null,
+      "observed": {
+        "completed": {
+          "completed": false,
+          "declined": false,
+          "delivered": false,
+          "failed": false,
+          "preparing": false,
+          "sent": false,
+          "unknown": false,
+          "voided": false
+        },
+        "declined": {
+          "completed": false,
+          "declined": false,
+          "delivered": false,
+          "failed": false,
+          "preparing": false,
+          "sent": false,
+          "unknown": false,
+          "voided": false
+        },
+        "delivered": {
+          "completed": true,
+          "declined": true,
+          "delivered": false,
+          "failed": false,
+          "preparing": false,
+          "sent": false,
+          "unknown": false,
+          "voided": true
+        },
+        "failed": {
+          "completed": true,
+          "declined": true,
+          "delivered": true,
+          "failed": false,
+          "preparing": false,
+          "sent": true,
+          "unknown": false,
+          "voided": true
+        },
+        "preparing": {
+          "completed": true,
+          "declined": true,
+          "delivered": true,
+          "failed": true,
+          "preparing": false,
+          "sent": true,
+          "unknown": false,
+          "voided": true
+        },
+        "sent": {
+          "completed": true,
+          "declined": true,
+          "delivered": true,
+          "failed": false,
+          "preparing": false,
+          "sent": false,
+          "unknown": false,
+          "voided": true
+        },
+        "unknown": {
+          "completed": false,
+          "declined": false,
+          "delivered": false,
+          "failed": false,
+          "preparing": false,
+          "sent": false,
+          "unknown": false,
+          "voided": false
+        },
+        "voided": {
+          "completed": false,
+          "declined": false,
+          "delivered": false,
+          "failed": false,
+          "preparing": false,
+          "sent": false,
+          "unknown": false,
+          "voided": false
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.unknown-state-refused",
+      "note": null,
+      "observed": {
+        "code": "VALIDATION_ERROR",
+        "message": "Unknown envelope state \"signed\"",
+        "refused": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.version-of-another-quote-refused",
+      "note": null,
+      "observed": {
+        "code": "VERSION_MISMATCH",
+        "message": "The quote version belongs to another quote",
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "envelope-lifecycle",
+      "classification": "contractual",
+      "id": "envelope-lifecycle.voided-terminal",
+      "note": null,
+      "observed": {
+        "orders": 0,
+        "status": "voided",
+        "voidedAtPresent": true
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "external-operation",
+      "classification": "compatibility_required",
+      "id": "external-operation.default-timeout",
+      "note": "The bound every provider call inherits when the project declares none.",
+      "observed": 5000,
+      "surface": "sdk"
+    },
+    {
+      "category": "external-operation",
+      "classification": "contractual",
+      "id": "external-operation.failed-run-spans",
+      "note": null,
+      "observed": [
+        {
+          "name": "quote.request-signature.intent",
+          "status": "completed"
+        },
+        {
+          "name": "signature.intent-created",
+          "status": "completed"
+        },
+        {
+          "name": "quote.request-signature.external",
+          "status": "failed"
+        },
+        {
+          "name": "signature.failed",
+          "status": "completed"
+        },
+        {
+          "name": "quote.request-signature.compensate",
+          "status": "completed"
+        }
+      ],
+      "surface": "trace"
+    },
+    {
+      "category": "external-operation",
+      "classification": "compatibility_required",
+      "id": "external-operation.phase-value-freezing",
+      "note": "What may cross a phase boundary into the external phase: plain frozen JSON-safe data only.",
+      "observed": {
+        "cycleRefused": {
+          "code": "VALIDATION_ERROR",
+          "message": "cyclic structure at value.self",
+          "refused": true
+        },
+        "dangerousKeysDropped": [
+          "safe"
+        ],
+        "frozen": true,
+        "functionRefused": {
+          "code": "VALIDATION_ERROR",
+          "message": "plain JSON-safe data required (found function at value.handler)",
+          "refused": true
+        },
+        "nonPlainRefused": {
+          "code": "VALIDATION_ERROR",
+          "message": "plain JSON-safe data required (non-plain object at value)",
+          "refused": true
+        },
+        "plain": {
+          "a": 1,
+          "nested": [
+            true,
+            "x"
+          ]
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "external-operation",
+      "classification": "contractual",
+      "id": "external-operation.provider-outage-compensated",
+      "note": null,
+      "observed": {
+        "callerSees": {
+          "code": "APP_ERROR",
+          "message": "simulated signature provider outage",
+          "refused": true,
+          "status": 500
+        },
+        "envelope": {
+          "failureCode": "APP_ERROR",
+          "failurePhase": "external",
+          "providerEnvelopeId": null,
+          "status": "failed"
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "external-operation",
+      "classification": "contractual",
+      "id": "external-operation.provider-timeout",
+      "note": null,
+      "observed": {
+        "callerSees": {
+          "code": "PROVIDER_TIMEOUT",
+          "refused": true,
+          "status": 504
+        },
+        "envelope": {
+          "failureCode": "PROVIDER_TIMEOUT",
+          "failurePhase": "external",
+          "status": "failed"
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "external-operation",
+      "classification": "compatibility_required",
+      "id": "external-operation.timeout-outcomes",
+      "note": "The exact error a caller sees, and the late-settlement discipline: abandoned, never unhandled.",
+      "observed": {
+        "lateSettlement": {
+          "codeSeen": "PROVIDER_TIMEOUT",
+          "unhandledRejection": false
+        },
+        "rejected": {
+          "code": "X",
+          "message": "inner failure",
+          "outcome": "threw"
+        },
+        "resolved": {
+          "outcome": "resolved",
+          "value": "value"
+        },
+        "timedOut": {
+          "code": "PROVIDER_TIMEOUT",
+          "message": "probe timed out after 20ms",
+          "outcome": "threw",
+          "status": 504
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "defect_candidate",
+      "id": "hostile-input.signer-newline-and-null-byte",
+      "note": "The baseline's one defect candidate, now FIXED: signer name/email/role refuse control characters and line breaks with the same rule record-signal adopted in 1e40d1e (the recommendation this observation carried). The id and classification are kept, as the record-signal precedent does, so the history reads found-as-defect, then refused; the refusals themselves are asserted as contract in signers.refusals and tests/signature-signer-input.test.js",
+      "observed": {
+        "newlineName": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must not contain control characters or line breaks",
+          "refused": true,
+          "status": 400
+        },
+        "nullByteRole": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].role must not contain control characters or line breaks",
+          "refused": true,
+          "status": 400
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.signer-values-stored-inert",
+      "note": "Storing hostile text verbatim is correct — escaping is a rendering concern, and the SQL-shaped value surviving proves parameterized queries.",
+      "observed": [
+        {
+          "byteIdentical": true,
+          "name": "<script>alert(1)</script>",
+          "role": "quo'te\"s`"
+        },
+        {
+          "byteIdentical": true,
+          "name": "${process.env.HOME} ; DROP TABLE quote; --",
+          "role": "a b"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.webhook-route",
+      "note": null,
+      "observed": {
+        "bad-signature": {
+          "code": "SIGNATURE_INVALID",
+          "echoesPayload": false,
+          "status": 401
+        },
+        "missing-headers": {
+          "code": "SIGNATURE_INVALID",
+          "status": 401
+        },
+        "oversized-body": {
+          "code": "PAYLOAD_TOO_LARGE",
+          "status": 413
+        },
+        "proto-provider": {
+          "code": "NOT_FOUND",
+          "status": 404
+        },
+        "stale-timestamp": {
+          "code": "SIGNATURE_INVALID",
+          "status": 401
+        },
+        "tampered-body": {
+          "code": "SIGNATURE_INVALID",
+          "status": 401
+        },
+        "unknown-provider": {
+          "code": "NOT_FOUND",
+          "status": 404
+        },
+        "verified-proto-payload": {
+          "globalNotPolluted": true,
+          "quarantined": true,
+          "status": 200
+        }
+      },
+      "surface": "http"
+    },
+    {
+      "category": "provider-contract",
+      "classification": "contractual",
+      "id": "provider-contract.envelope-identity-checks",
+      "note": null,
+      "observed": {
+        "envelopeIdMismatch": {
+          "code": "PROVIDER_ENVELOPE_MISMATCH",
+          "message": "The provider envelope does not match this signature request (providerEnvelopeId)",
+          "refused": true
+        },
+        "hashMismatch": {
+          "code": "PROVIDER_ENVELOPE_MISMATCH",
+          "message": "The provider envelope does not match this signature request (documentHash)",
+          "refused": true
+        },
+        "matching": {
+          "code": null,
+          "message": null,
+          "refused": false
+        },
+        "noEchoAccepted": {
+          "code": null,
+          "message": null,
+          "refused": false
+        },
+        "signerCountMismatch": {
+          "code": "PROVIDER_ENVELOPE_MISMATCH",
+          "message": "The provider envelope does not match this signature request (signers)",
+          "refused": true
+        },
+        "signerSetMismatch": {
+          "code": "PROVIDER_ENVELOPE_MISMATCH",
+          "message": "The provider envelope does not match this signature request (signers)",
+          "refused": true
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "provider-contract",
+      "classification": "contractual",
+      "id": "provider-contract.envelope-normalized",
+      "note": null,
+      "observed": {
+        "completedAt": null,
+        "documentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "providerEnvelopeId": "env_x",
+        "sequence": 3,
+        "signers": [
+          {
+            "decidedAt": null,
+            "signerKey": "s1",
+            "status": "pending"
+          }
+        ],
+        "status": "sent"
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "provider-contract",
+      "classification": "contractual",
+      "id": "provider-contract.lookup-semantics",
+      "note": null,
+      "observed": {
+        "byIdentity": true,
+        "byNameAmbiguous": {
+          "code": "PROVIDER_AMBIGUOUS",
+          "message": "Signature provider \"fixture-signature\" is registered in several versions — address it explicitly",
+          "refused": true
+        },
+        "byNameUnknown": {
+          "code": "NOT_FOUND",
+          "message": "Signature provider not found: nope",
+          "refused": true
+        },
+        "protoLookup": {
+          "code": "NOT_FOUND",
+          "message": "Signature provider not found: __proto__@1",
+          "refused": true
+        },
+        "unknownIdentity": {
+          "code": "NOT_FOUND",
+          "message": "Signature provider not found: fixture-signature@3",
+          "refused": true
+        },
+        "versionsSameFingerprintDifferentIdentity": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "provider-contract",
+      "classification": "contractual",
+      "id": "provider-contract.normalization-refusals",
+      "note": null,
+      "observed": {
+        "array": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned a non-object envelope",
+          "refused": true
+        },
+        "artifact-missing-id": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned no \"artifactId\"",
+          "refused": true
+        },
+        "artifact-missing-mime": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned no \"mimeType\"",
+          "refused": true
+        },
+        "artifact-size-not-integer": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned an invalid \"sizeBytes\"",
+          "refused": true
+        },
+        "envelope-id-oversized": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned an invalid \"providerEnvelopeId\"",
+          "refused": true
+        },
+        "event-missing-event-id": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned no \"providerEventId\"",
+          "refused": true
+        },
+        "event-status-preparing": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned an unsupported event status \"preparing\"",
+          "refused": true
+        },
+        "missing-status": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned no \"status\"",
+          "refused": true
+        },
+        "non-object": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned a non-object envelope",
+          "refused": true
+        },
+        "sequence-negative": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned an invalid \"sequence\"",
+          "refused": true
+        },
+        "signer-status-unknown": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned an unsupported signer status \"maybe\"",
+          "refused": true
+        },
+        "signers-too-many": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned an invalid signer list",
+          "refused": true
+        },
+        "status-failed-refused": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned an unsupported envelope status \"failed\"",
+          "refused": true
+        },
+        "status-preparing-refused": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned an unsupported envelope status \"preparing\"",
+          "refused": true
+        },
+        "status-unknown": {
+          "code": "PROVIDER_INVALID",
+          "message": "Signature provider returned an unsupported envelope status \"shipped\"",
+          "refused": true
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "provider-contract",
+      "classification": "contractual",
+      "id": "provider-contract.registration-refusals",
+      "note": null,
+      "observed": {
+        "bad-name": {
+          "code": "VALIDATION_ERROR",
+          "message": "signature provider \"Bad Name\": name must match /^[a-z][a-z0-9-]*$/",
+          "refused": true
+        },
+        "duplicate-identity": {
+          "code": "VALIDATION_ERROR",
+          "message": "Duplicate signature provider identity: fixture-signature@1",
+          "refused": true
+        },
+        "fraction-version": {
+          "code": "VALIDATION_ERROR",
+          "message": "signature provider \"fixture-signature\": version must be a positive integer (1–1000000)",
+          "refused": true
+        },
+        "missing-handler": {
+          "code": "VALIDATION_ERROR",
+          "message": "signature provider \"p1@1\": getSignedArtifact must be a function",
+          "refused": true
+        },
+        "oversized-label": {
+          "code": "VALIDATION_ERROR",
+          "message": "signature provider \"fixture-signature\": label must be a non-empty string of at most 80 characters",
+          "refused": true
+        },
+        "proto-name": {
+          "code": "VALIDATION_ERROR",
+          "message": "signature provider \"__proto__\": name must match /^[a-z][a-z0-9-]*$/",
+          "refused": true
+        },
+        "zero-version": {
+          "code": "VALIDATION_ERROR",
+          "message": "signature provider \"fixture-signature\": version must be a positive integer (1–1000000)",
+          "refused": true
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "provider-contract",
+      "classification": "contractual",
+      "id": "provider-contract.unknown-provider-version-refused",
+      "note": null,
+      "observed": {
+        "code": "NOT_FOUND",
+        "message": "Signature provider not found: fixture-signature@9",
+        "refused": true,
+        "status": 404
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "races-restart",
+      "classification": "contractual",
+      "id": "races-restart.kill-between-phases-recovery",
+      "note": null,
+      "observed": {
+        "afterRestart": {
+          "intentSurvived": true,
+          "providerEnvelopeId": null,
+          "status": "preparing"
+        },
+        "childExitCode": 9,
+        "envelopesForVersion": 1,
+        "reconcile": {
+          "applied": true,
+          "status": "sent"
+        },
+        "recoveredEnvelope": {
+          "providerEnvelopeIdRecovered": true,
+          "status": "sent"
+        },
+        "rerequestRefused": {
+          "code": "ENVELOPE_EXISTS",
+          "refused": true,
+          "status": 409
+        }
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "races-restart",
+      "classification": "contractual",
+      "id": "races-restart.restart-preserves-evidence",
+      "note": null,
+      "observed": {
+        "envelopeIdentical": true,
+        "orderIdentical": true,
+        "reconcileIsSafeNoOp": {
+          "applied": false,
+          "reason": "terminal"
+        },
+        "schemaSignatureBlockIdentical": true
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "races-restart",
+      "classification": "contractual",
+      "id": "races-restart.two-connection-duplicate-webhook",
+      "note": null,
+      "observed": {
+        "atLeastOneFulfilled": true,
+        "envelopeStatus": "completed",
+        "inboxRows": 1,
+        "noRawSqliteError": true,
+        "orders": 1
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "races-restart",
+      "classification": "incidental",
+      "id": "races-restart.two-connection-interleaving-detail",
+      "note": "Which connection wins and whether the loser sees duplicate/resumed/refused depends on scheduling; the deterministic contract (one order, one completed envelope, one inbox row, no raw SQLite error) is asserted above.",
+      "observed": [
+        {
+          "applied": true,
+          "duplicate": null,
+          "fulfilled": true,
+          "resumed": null
+        },
+        {
+          "code": "CONFLICT",
+          "fulfilled": false
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "races-restart",
+      "classification": "contractual",
+      "id": "races-restart.webhook-races-reconcile",
+      "note": null,
+      "observed": {
+        "artifacts": 1,
+        "bothSettledWithoutRawError": true,
+        "envelopeStatus": "completed",
+        "orders": 1
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "reconciliation",
+      "classification": "contractual",
+      "id": "reconciliation.absent-at-provider",
+      "note": null,
+      "observed": {
+        "envelope": {
+          "failureCode": "APP_ERROR",
+          "failurePhase": "external",
+          "status": "failed"
+        },
+        "result": {
+          "applied": false,
+          "ok": true,
+          "reason": "absent-at-provider",
+          "status": "failed"
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "reconciliation",
+      "classification": "contractual",
+      "id": "reconciliation.foreign-envelope-refused",
+      "note": null,
+      "observed": {
+        "envelopeUntouched": "sent",
+        "orders": 0,
+        "refusal": {
+          "code": "PROVIDER_ENVELOPE_MISMATCH",
+          "refused": true,
+          "status": 409
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "reconciliation",
+      "classification": "contractual",
+      "id": "reconciliation.terminal-short-circuit",
+      "note": null,
+      "observed": {
+        "applied": false,
+        "ok": true,
+        "reason": "terminal",
+        "status": "voided"
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scale",
+      "classification": "contractual",
+      "id": "scale.exact-reads-beyond-page-bound",
+      "note": null,
+      "observed": {
+        "countExact": 520,
+        "envelopeExactLookupStillExact": 1,
+        "exactRowFoundBeyondBound": 1,
+        "exactRowSequence": 517,
+        "pagedListBounded": 500,
+        "written": 520
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.provider-fingerprint.fixture-signature@1",
+      "note": null,
+      "observed": {
+        "fingerprint": "b910114475e5584cad52bb863ce27d284c662b3ff7488063b14db5086976a1ed",
+        "label": "Fixture signature provider (deterministic)",
+        "name": "fixture-signature",
+        "version": 1
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.public-write-refused",
+      "note": null,
+      "observed": {
+        "create-envelope": {
+          "code": "NOT_FOUND",
+          "status": 404
+        },
+        "create-order": {
+          "code": "NOT_FOUND",
+          "status": 404
+        },
+        "patch-event": {
+          "code": "NOT_FOUND",
+          "status": 404
+        },
+        "patch-order": {
+          "code": "NOT_FOUND",
+          "status": 404
+        }
+      },
+      "surface": "http"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.read-only-capabilities.order",
+      "note": null,
+      "observed": {
+        "capabilities": [
+          "get",
+          "list"
+        ],
+        "managedFields": 26,
+        "publiclyWritableFields": 0
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.read-only-capabilities.order-component",
+      "note": null,
+      "observed": {
+        "capabilities": [
+          "get",
+          "list"
+        ],
+        "managedFields": 21,
+        "publiclyWritableFields": 0
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.read-only-capabilities.order-line",
+      "note": null,
+      "observed": {
+        "capabilities": [
+          "get",
+          "list"
+        ],
+        "managedFields": 16,
+        "publiclyWritableFields": 0
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.read-only-capabilities.order-tier",
+      "note": null,
+      "observed": {
+        "capabilities": [
+          "get",
+          "list"
+        ],
+        "managedFields": 6,
+        "publiclyWritableFields": 0
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.read-only-capabilities.order-total",
+      "note": null,
+      "observed": {
+        "capabilities": [
+          "get",
+          "list"
+        ],
+        "managedFields": 8,
+        "publiclyWritableFields": 0
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.read-only-capabilities.signature-envelope",
+      "note": null,
+      "observed": {
+        "capabilities": [
+          "get",
+          "list"
+        ],
+        "managedFields": 27,
+        "publiclyWritableFields": 0
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.read-only-capabilities.signature-event",
+      "note": null,
+      "observed": {
+        "capabilities": [
+          "get",
+          "list"
+        ],
+        "managedFields": 15,
+        "publiclyWritableFields": 0
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.read-only-capabilities.signature-signer",
+      "note": null,
+      "observed": {
+        "capabilities": [
+          "get",
+          "list"
+        ],
+        "managedFields": 9,
+        "publiclyWritableFields": 0
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.read-only-capabilities.signed-artifact",
+      "note": null,
+      "observed": {
+        "capabilities": [
+          "get",
+          "list"
+        ],
+        "managedFields": 16,
+        "publiclyWritableFields": 0
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.request-signature-action-contract",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": true,
+        "externalOperation": null,
+        "fromStates": [
+          "approved"
+        ],
+        "input": [
+          {
+            "name": "quoteVersionId",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "provider",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "providerVersion",
+            "required": true,
+            "type": "integer"
+          },
+          {
+            "name": "signers",
+            "required": true,
+            "type": "json"
+          }
+        ],
+        "path": "/api/modules/quote/records/:id/actions/request-signature",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "schema-metadata",
+      "classification": "contractual",
+      "id": "schema-metadata.signature-block",
+      "note": null,
+      "observed": {
+        "allowedTransitions": {
+          "completed": [],
+          "declined": [],
+          "delivered": [
+            "completed",
+            "declined",
+            "voided"
+          ],
+          "failed": [
+            "sent",
+            "delivered",
+            "completed",
+            "declined",
+            "voided"
+          ],
+          "preparing": [
+            "failed",
+            "sent",
+            "delivered",
+            "completed",
+            "declined",
+            "voided"
+          ],
+          "sent": [
+            "delivered",
+            "completed",
+            "declined",
+            "voided"
+          ],
+          "voided": []
+        },
+        "artifactHash": "provider-reported; accordo does not download or hash the artifact bytes and verifies no signature cryptographically",
+        "documentPackage": "deterministic canonical JSON derived from the approved quote version, SHA-256 hashed; not a PDF",
+        "envelopeStates": [
+          "preparing",
+          "failed",
+          "sent",
+          "delivered",
+          "completed",
+          "declined",
+          "voided"
+        ],
+        "eventEndpoint": "/api/signature/providers/:provider/events (raw body, provider-verified, bounded)",
+        "eventVerification": "provider-declared; the shipped fixture uses a test-only HMAC key and is NOT production webhook security",
+        "humanApproval": "request-signature requires actor.type === \"user\"; agent actors are refused 403 HUMAN_APPROVAL_REQUIRED",
+        "maxSigners": 5,
+        "orderSnapshot": "orders copy the approved quote version snapshot (lines, components, tier schedules, band breakdowns, grouped totals) and never read the live catalog",
+        "replayScope": "provider + providerEventId; the payload fingerprint must match or the reuse is refused 409 EVENT_ID_CONFLICT",
+        "signatureContract": 1,
+        "signerSemantics": "all signers required; declared order is recorded, not sequentially gated; 1-5 signers; no conditional routing; signer identity assurance is not claimed",
+        "terminalStates": [
+          "completed",
+          "declined",
+          "voided"
+        ]
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "signers",
+      "classification": "contractual",
+      "id": "signers.international-names-accepted",
+      "note": "The refusal rule is structural (control characters and line breaks), never a script or normalization rule.",
+      "observed": [
+        "José García-Müller",
+        "田中花子",
+        "محمد الأمين",
+        "Zoë Nuñez",
+        "Дмитрий Ковалёв"
+      ],
+      "surface": "sdk"
+    },
+    {
+      "category": "signers",
+      "classification": "contractual",
+      "id": "signers.normalized-shape",
+      "note": null,
+      "observed": [
+        {
+          "email": "ada@example.com",
+          "name": "Ada Lovelace",
+          "order": 2,
+          "role": "customer",
+          "signerKey": "s1"
+        },
+        {
+          "email": "grace@example.com",
+          "name": "Grace Hopper",
+          "order": 2,
+          "role": "signer",
+          "signerKey": "s2"
+        }
+      ],
+      "surface": "sdk"
+    },
+    {
+      "category": "signers",
+      "classification": "contractual",
+      "id": "signers.refusals",
+      "note": null,
+      "observed": {
+        "c1-control-in-name": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must not contain control characters or line breaks",
+          "refused": true
+        },
+        "delete-in-role": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].role must not contain control characters or line breaks",
+          "refused": true
+        },
+        "double-dot-email": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].email is not a valid address",
+          "refused": true
+        },
+        "duplicate-email-case-insensitive": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers must have distinct email addresses",
+          "refused": true
+        },
+        "empty": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers must be a non-empty array",
+          "refused": true
+        },
+        "entry-not-object": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0] must be an object",
+          "refused": true
+        },
+        "invalid-email": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].email is not a valid address",
+          "refused": true
+        },
+        "line-separator-in-role": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].role must not contain control characters or line breaks",
+          "refused": true
+        },
+        "name-missing": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name is required",
+          "refused": true
+        },
+        "name-oversized": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must be a string of at most 200 characters",
+          "refused": true
+        },
+        "newline-in-name": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must not contain control characters or line breaks",
+          "refused": true
+        },
+        "not-an-array": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers must be a non-empty array",
+          "refused": true
+        },
+        "nul-in-email-local-part": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].email must not contain control characters or line breaks",
+          "refused": true
+        },
+        "nul-in-name": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must not contain control characters or line breaks",
+          "refused": true
+        },
+        "nul-in-role": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].role must not contain control characters or line breaks",
+          "refused": true
+        },
+        "order-beyond-max": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].order must be an integer 1-5",
+          "refused": true
+        },
+        "order-fraction": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].order must be an integer 1-5",
+          "refused": true
+        },
+        "order-zero": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].order must be an integer 1-5",
+          "refused": true
+        },
+        "paragraph-separator-in-name": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must not contain control characters or line breaks",
+          "refused": true
+        },
+        "role-oversized": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].role must be a string of at most 80 characters",
+          "refused": true
+        },
+        "tab-in-name": {
+          "code": "VALIDATION_ERROR",
+          "message": "signers[0].name must not contain control characters or line breaks",
+          "refused": true
+        },
+        "too-many": {
+          "code": "VALIDATION_ERROR",
+          "message": "at most 5 signers are supported",
+          "refused": true
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "signers",
+      "classification": "contractual",
+      "id": "signers.sort-by-order-then-key",
+      "note": null,
+      "observed": [
+        "s2:a@example.com:1",
+        "s3:b@example.com:1",
+        "s1:c@example.com:2"
+      ],
+      "surface": "sdk"
+    },
+    {
+      "category": "webhook",
+      "classification": "contractual",
+      "id": "webhook.after-terminal-ignored",
+      "note": null,
+      "observed": {
+        "applied": false,
+        "envelopeStillCompleted": "completed",
+        "inboxRow": {
+          "effect": "ignored",
+          "effectReason": "envelope already completed (terminal)",
+          "processed": true
+        },
+        "reason": "terminal",
+        "status": 200,
+        "stillOneOrder": 1
+      },
+      "surface": "http"
+    },
+    {
+      "category": "webhook",
+      "classification": "contractual",
+      "id": "webhook.delivered-applied",
+      "note": null,
+      "observed": {
+        "applied": true,
+        "envelope": {
+          "documentFormat": "application/vnd.accordo.quote-package+json",
+          "documentHash": "<h:5>",
+          "failureCode": null,
+          "failurePhase": null,
+          "id": "<id:1>",
+          "orderId": null,
+          "provider": "fixture-signature",
+          "providerEnvelopeId": "<h:6>",
+          "providerVersion": 1,
+          "quoteId": "<id:2>",
+          "quoteVersionId": "<id:3>",
+          "signedArtifactId": null,
+          "signerCount": 1,
+          "status": "delivered"
+        },
+        "envelopeId": "<id:1>",
+        "eventId": "<id:4>",
+        "ok": true,
+        "orderId": null,
+        "provider": "fixture-signature",
+        "signedArtifactId": null,
+        "status": "delivered"
+      },
+      "surface": "http"
+    },
+    {
+      "category": "webhook",
+      "classification": "contractual",
+      "id": "webhook.failed-processing-redelivery-resumes",
+      "note": null,
+      "observed": {
+        "afterFault": {
+          "artifacts": 0,
+          "envelopeStatus": "sent",
+          "inbox": {
+            "effect": "pending",
+            "processed": false,
+            "recorded": true
+          },
+          "orders": 0
+        },
+        "finalOrders": 1,
+        "firstDelivery": {
+          "message": "injected order failure",
+          "refused": true
+        },
+        "inboxProcessed": true,
+        "orderComplete": {
+          "lines": 1,
+          "totals": 2
+        },
+        "redelivery": {
+          "applied": true,
+          "duplicate": null,
+          "resumed": null
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "webhook",
+      "classification": "contractual",
+      "id": "webhook.hmac-headers-deterministic",
+      "note": null,
+      "observed": {
+        "x-signature-256": "28b13fac5609e5aff4a676df0e9523a28671fd6b366e2337a22af78ecd13839a",
+        "x-signature-timestamp": "1754000000"
+      },
+      "surface": "http"
+    },
+    {
+      "category": "webhook",
+      "classification": "contractual",
+      "id": "webhook.hmac-verification-outcomes",
+      "note": null,
+      "observed": {
+        "at301Early": {
+          "ok": false,
+          "reason": "timestamp outside the replay window"
+        },
+        "at301Late": {
+          "ok": false,
+          "reason": "timestamp outside the replay window"
+        },
+        "exactly300Early": {
+          "ok": true,
+          "reason": null
+        },
+        "exactly300Late": {
+          "ok": true,
+          "reason": null
+        },
+        "invalidUtf8Bytes": {
+          "ok": true,
+          "reason": null
+        },
+        "malformedSignature": {
+          "ok": false,
+          "reason": "malformed signature header"
+        },
+        "malformedTimestamp": {
+          "ok": false,
+          "reason": "malformed timestamp header"
+        },
+        "missingHeaders": {
+          "ok": false,
+          "reason": "malformed signature header"
+        },
+        "truncatedSignature": {
+          "ok": false,
+          "reason": "malformed signature header"
+        },
+        "valid": {
+          "ok": true,
+          "reason": null
+        },
+        "wrongBody": {
+          "ok": false,
+          "reason": "signature mismatch"
+        },
+        "wrongKey": {
+          "ok": false,
+          "reason": "signature mismatch"
+        }
+      },
+      "surface": "http"
+    },
+    {
+      "category": "webhook",
+      "classification": "contractual",
+      "id": "webhook.out-of-order-ignored",
+      "note": null,
+      "observed": {
+        "applied": false,
+        "envelopeStatus": "delivered",
+        "inboxRow": {
+          "effect": "ignored",
+          "effectReason": "envelope already delivered (not-newer)",
+          "processed": true
+        },
+        "reason": "not-newer",
+        "status": 200
+      },
+      "surface": "http"
+    },
+    {
+      "category": "webhook",
+      "classification": "contractual",
+      "id": "webhook.replay-same-bytes-is-stable-duplicate",
+      "note": null,
+      "observed": {
+        "duplicate": true,
+        "effect": "applied",
+        "status": 200
+      },
+      "surface": "http"
+    },
+    {
+      "category": "webhook",
+      "classification": "contractual",
+      "id": "webhook.same-id-different-bytes-conflict",
+      "note": null,
+      "observed": {
+        "code": "EVENT_ID_CONFLICT",
+        "status": 409
+      },
+      "surface": "http"
+    },
+    {
+      "category": "webhook",
+      "classification": "contractual",
+      "id": "webhook.unknown-envelope-quarantined-then-adopted",
+      "note": null,
+      "observed": {
+        "inboxAfter": {
+          "effectReason": "linked to its envelope after the provider id became known",
+          "envelopeLinked": true
+        },
+        "inboxBefore": {
+          "effect": "quarantined",
+          "effectReason": "no local envelope for this provider envelope id",
+          "envelopeLinked": false,
+          "processed": true
+        },
+        "ingest": {
+          "quarantined": true
+        },
+        "ordersAfterReconcile": 1,
+        "ordersBeforeReconcile": 0,
+        "reconcile": {
+          "applied": true,
+          "status": "completed"
+        }
+      },
+      "surface": "sdk"
+    }
+  ],
+  "source": {
+    "apps/server/src/http-server.js": "afe47f374127ec22ee431f5076136d3ef63e56f2df42ed44515b2ccb5d42c021",
+    "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
+    "examples/starters/b2b-lead-qualification/order-component.module.json": "8883bbb80b1a2068f25004c45c6ed5506acbe9126f10823b7ffdfae5704cf746",
+    "examples/starters/b2b-lead-qualification/order-line.module.json": "03e6f0dbdf3106203bf16b330304ad5fd499e5c41cd10e0415da09f3705573ac",
+    "examples/starters/b2b-lead-qualification/order-tier.module.json": "6d86fb6c0453df866d5004d4e6120c1e93aa8ac04607d0b66809d25345e8bd97",
+    "examples/starters/b2b-lead-qualification/order-total.module.json": "2d829f70a33f821a996cbf2453486723d07c15aaf54d21239a1f2c894eb7cbfd",
+    "examples/starters/b2b-lead-qualification/order.module.json": "23c4860ad08b04a537f73e8c1b05ed86f8250a6c6bd6ed9f8555029cc63f7fed",
+    "examples/starters/b2b-lead-qualification/signature-envelope.module.json": "ae47f69988592b890ffeec5261595d5d5529e386116f6e428798fdcafca1dba3",
+    "examples/starters/b2b-lead-qualification/signature-event.module.json": "2158484e29c6f76ff4708e055f46fce142ec963677388e9a3ad1c3422ffa7eb0",
+    "examples/starters/b2b-lead-qualification/signature-signer.module.json": "a463d01186ff8b60778565d37bdb0332b13fdf9f8033f90636e0cabb4bfb53f6",
+    "examples/starters/b2b-lead-qualification/signature.js": "dafc3487e8fca7b0242e74659b2e5fea3778dd1c011b2e2a8713ccdcf9195efa",
+    "examples/starters/b2b-lead-qualification/signed-artifact.module.json": "8f783ce318c59d86be6987290382db542c5023d95e65986667b47d612e1f4e53",
+    "packages/app/src/create-app.js": "a71b83e7d65d2acf176cc5115ee773ecb52889f62ce8c115d8665db437e2f88f",
+    "packages/commercial/modules/catalog-sync-run.module.json": "509281aedba609303861b1097d4b9c7239fd85dcfb9b2d8c54e9c570aee0fc29",
+    "packages/commercial/modules/offer.module.json": "3eb3c85338d22f8a8962ed0c0c0fe79da0007e8c4e66a44aad14d9b8bbca22c4",
+    "packages/commercial/modules/price-book.module.json": "35793cdd5dca999c30760f055622b607d1e68b215b4f9ceaf8fac63ce1b0a670",
+    "packages/commercial/modules/price-component.module.json": "8b0200de0daba4e7a0df10766ee9d4bfe59bd9caddb9ae00752a4dd5e7a1e4c6",
+    "packages/commercial/modules/price-tier.module.json": "586e5ec5bc06a6e1c95e97eefcac830806fdfd6351733adc0f981fe36d936519",
+    "packages/commercial/modules/product-version.module.json": "f8cc600c6f3008a4a4ecc2d16a7f4d5f94b3f423947dc5807363584c5a5ee0fc",
+    "packages/commercial/modules/product.module.json": "e2afd380e694deb0d9a9d1a13f96f52a467be2f7c22ed17506ddf59f50a3838c",
+    "packages/commercial/modules/quote-approval.module.json": "a886a2f2767360a254ef8171d32a65c4a5e0735d1a9cdb23dec8293982fae60a",
+    "packages/commercial/modules/quote-line.module.json": "b755d181baaae0160de1a22f0b9a9a715eaaf6eb4b80a92477e391bc0f8544f2",
+    "packages/commercial/modules/quote-version-component.module.json": "0ad13e20fc017b8138a7d1bcc77822936304054d320308873f5847bedeff33ee",
+    "packages/commercial/modules/quote-version-line.module.json": "284ae9693a67b74a1e22bf446c614c67d3b42e2b60d0b6a69f694b0b2c11deb6",
+    "packages/commercial/modules/quote-version-total.module.json": "9ea4af6efc5ff7e506b7f7b78c7440e9be603507d6d0246904b7b384bb1a88e2",
+    "packages/commercial/modules/quote-version.module.json": "b3a209f5f45c1486f942e145437e69f091cd3bd77972485386607af0dc5f3bc9",
+    "packages/commercial/modules/quote.module.json": "08a6d9a8e48d2d412837a8a52c6fae22520b3add5a82275901ce4754c31386b0",
+    "packages/commercial/src/actions.js": "ff96a1de7311aa398ae9fc951f0c1aadc53c0d26e86baf7994866c38ccfbe1c9",
+    "packages/commercial/src/capability.js": "eecf075298574d0fc0d8b1a22bb95702405c36479cdf1c2add633f849857f121",
+    "packages/commercial/src/catalog-sync.js": "f9ac765ce30ebde27e35aa9f441f417dd1da640a70a98dbb7a013b900489bdb4",
+    "packages/commercial/src/index.js": "b3175983605a733ff99db16d5a417f4e5d6ceab2304ab32e36915ae24499cdb6",
+    "packages/commercial/src/money.js": "5a2716542ebac08388b75d425c0c8c7b91b3dbc8ec756e42927d6d9b203d5a86",
+    "packages/commercial/src/registry.js": "b10cf6027eb889385ac9169502cfebf91036108af22ae631735ae60dacc4c07b",
+    "packages/core/src/action-runtime.js": "8824d7698d2380dd74f9d2c842f04814ed16cccf4cf4fe6bc49d9917d0b6cc9f",
+    "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
+    "packages/core/src/external-operation.js": "a42f0be7e894cdce0c1ee1845e04930dddd64fe68a32929e965c2c8a57ec9fbe",
+    "packages/core/src/money.js": "67d7c03a14cf053e1e6f52d73ed2ca96608a8c3992615fe6a6738bcfc930e705",
+    "packages/core/src/signature-operations.js": "6c2910004aceb14a6d9a4a6678bd14a0375d6da59da7b8ae4aaebc476d6cf845",
+    "packages/core/src/signature-registry.js": "14985af898df5939fac4a16cc5a0242426d732ac767e7bb8227a9ce643da6869",
+    "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325"
+  }
+}

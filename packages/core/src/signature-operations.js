@@ -37,6 +37,18 @@ import {
 
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@.]+(\.[^\s@.]+)+$/;
 const MAX_TEXT = 200;
+/**
+ * C0 and C1 control characters, DEL, and the Unicode line/paragraph
+ * separators — the same single-line rule `record-signal` adopted in 1e40d1e
+ * and `work`/`lifecycle` reuse. A signer's name, email and role are one-line
+ * identity labels that enter the canonical document package the provider
+ * signs; a control character there is never legitimate input, and a NUL byte
+ * does not even survive storage byte-identically. The rule is deliberately
+ * NOT an ASCII allowlist and applies no Unicode normalization: accented,
+ * CJK, RTL and combining-mark names pass untouched. Tested on the RAW input,
+ * before trimming, exactly as the record-signal precedent does.
+ */
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 export const DOCUMENT_FORMAT = 'application/vnd.accordo.quote-package+json';
 /** The document package a quote version can produce is small; bound it anyway. */
 const MAX_DOCUMENT_BYTES = 200_000;
@@ -155,6 +167,12 @@ export function normalizeSigners(raw) {
       }
       if (typeof item !== 'string' || item.trim() === '' || item.length > max) {
         throw new ValidationError(`signers[${index}].${field} must be a string of at most ${max} characters`, { field: 'signers' });
+      }
+      // Refused BEFORE any envelope intent is written and before any provider
+      // call, so a refusal leaves nothing behind and the corrected retry is
+      // never stranded behind ENVELOPE_EXISTS.
+      if (CONTROL_RE.test(item)) {
+        throw new ValidationError(`signers[${index}].${field} must not contain control characters or line breaks`, { field: 'signers' });
       }
       return item.trim();
     };
@@ -343,7 +361,7 @@ export function buildRequestSignatureAction(config) {
       { name: 'quoteVersionId', type: 'string', required: true, hint: 'The approved quote version to sign.' },
       { name: 'provider', type: 'string', required: true, hint: 'Registered signature provider name.' },
       { name: 'providerVersion', type: 'integer', required: true, hint: 'Explicit provider version — never an implicit latest.' },
-      { name: 'signers', type: 'json', required: true, hint: '1-5 signers: {name, email, role?, order?}. All signers are required to sign.' },
+      { name: 'signers', type: 'json', required: true, hint: '1-5 signers: {name, email, role?, order?}. All signers are required to sign; no control characters or line breaks in name, email or role.' },
     ],
 
     /** Transaction A: local intent only — no remote call has happened yet. */
