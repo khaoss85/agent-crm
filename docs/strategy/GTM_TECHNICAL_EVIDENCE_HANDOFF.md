@@ -177,6 +177,19 @@ evidence does not belong in this document.
 | **Do not claim** | **that `npm create accordo` works.** The published `create-accordo@0.0.1` is an empty name reservation and the registry state is unchanged by a locally verified publication candidate. "create-accordo scaffolds a working project from this repository" and "the assembled candidate packs and installs offline" are true; "`npm create accordo` creates a project" stays false until a human-approved staged publish has a live registry receipt. Do not claim the generated project is production-ready, deployable, or upgradeable by a version bump, or that it models any business: the command publishes `NO_AUTHENTICATION`, `NO_TENANCY`, `NO_RBAC`, `SQLITE_ONLY`, `LOCAL_DEVELOPMENT_ONLY`, `SOURCE_IS_A_COPY_NOT_A_DEPENDENCY`, `CONFORMANCE_IS_NOT_CORRECTNESS` and `SOURCE_ORIGIN_NOT_VERIFIED` in its own output. |
 | **Status** | implemented and deterministically packaged; **not published** |
 
+### 15. Tool-selection panel — method only, never a figure
+
+| | |
+|---|---|
+| **Technical fact** | A pre-registered, receipt-backed instrument asking whether a coding agent, given a plain business goal that names no command, selects the correct framework rail. The protocol was frozen and fingerprinted before the first cell ran; every expected outcome was pre-registered in a commit that precedes every run; all receipts are committed, including every planned cell that could not run and the run that hit its turn cap; refusal paths were exercised before the panel was trusted (eleven wrong-protocol attempts, eleven refusals). One arm produced valid runs, so the record marks itself `comparative: false` and contains no success rate. |
+| **Evidence** | `benchmarks/tool-selection/panel-2026-08-13/PANEL.md`, `frozen-protocol.json`, `preregistration.json`, `aggregate.json`; `docs/benchmarks/AGENT_TOOL_SELECTION_PROTOCOL.md`; `tests/agent-tool-selection-scoring.test.js`, `tests/agent-tool-selection-prompts.test.js` |
+| **User value** | The measurement discipline is demonstrated practice, not policy prose: the scoreboard is built, frozen and published before the first result, and the parts that hurt are committed next to the parts that flatter. |
+| **Allowed positioning** | Method sentences only: that the panel ran, that it was frozen and pre-registered before the first run, that its receipts — including the cells that could not run — are public in the repository, and that it contains no success rate by design because one measured arm is a pilot, not a comparison. Pointing at the panel directory and protocol is allowed. |
+| **Do not claim** | Any figure from `aggregate.json` on a public surface — no rate, no count presented as a result, no per-metric number. No comparison or ranking between agent products; the two uninstalled arms license only "not installed here, not simulated". No statement that the panel measures framework capability — it measures agent behaviour on this repository, and the two vocabularies are disjoint. It promotes no JTBD row. It is not the build benchmark: L-03 stands untouched, and no sentence may blur the two instruments. |
+| **Status** | run once, single-arm, bounded; public surfaces carry method only |
+
+---
+
 ## Planned only — must never be positioned as available
 
 | Capability | Status | Note |

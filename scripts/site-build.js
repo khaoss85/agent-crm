@@ -160,6 +160,18 @@ writeFileSync(join(outDir, 'answers.json'), `${JSON.stringify({
   refused: answers.refused,
 }, null, 2)}\n`);
 
+// The claims ledger is the spine every other surface resolves against, and until now it was
+// the one machine-readable artifact an HTTP-only reader could not fetch: answers.json and
+// jobs.json were published, while the ledger they cite lived only in the repository. Served
+// as-is — the ledger is already plain data — plus the same sourceVisibility block the other
+// two carry, so a reader knows whether the evidence paths inside it resolve.
+writeFileSync(join(outDir, 'claims.json'), `${JSON.stringify({
+  ...JSON.parse(readFileSync(join(siteDir, 'claims.json'), 'utf8')),
+  sourceVisibility: repositoryIsPublic
+    ? { repository: brand.repository.value, note: 'Evidence paths resolve in the public repository.' }
+    : { repository: null, note: 'The repository is not public yet, so every evidence path names a real file you cannot fetch. Treat them as citations, not as links.' },
+}, null, 2)}\n`);
+
 // Non-template assets are copied verbatim.
 for (const asset of walk(join(siteDir, 'assets'))) {
   const target = join(outDir, relative(join(siteDir, 'assets'), asset));
@@ -453,7 +465,7 @@ function resolve(token) {
     'status.name': brand.name.status === 'chosen'
       ? `\u201c${brand.name.value}\u201d is the chosen name; the trademark screen has not been run.`
       : `\u201c${brand.name.value}\u201d is a working title, not the public name.`,
-    'status.headline': repositoryIsPublic ? 'Pre-launch.' : 'Pre-launch, source not yet public.',
+    'status.headline': repositoryIsPublic ? 'Open source.' : 'Open source; repository not yet public.',
     'status.text': repositoryIsPublic
       ? 'Not deployable to production. This page states what the tests prove and what is missing — nothing else.'
       : 'The repository opens shortly; until it does, every source link here will not resolve for you. Not deployable to production either. This page states what the tests prove and what is missing — nothing else.',
