@@ -50,3 +50,5 @@
 {"at":"2026-08-18T06:38:17.467Z","cellId":"TS-13-gemini-cli-TS-f560c257a824-a1","role":"primary","promptId":"TS-13","armId":"gemini-cli","attempt":1,"profile":"guarded","outcome":"NOT_RUN_NO_ADAPTER","exit":1,"seconds":0,"stderr":""}
 {"at":"2026-08-18T06:38:17.620Z","cellId":"TS-13-codex-TS-f560c257a824-a2","role":"primary","promptId":"TS-13","armId":"codex","attempt":2,"profile":"guarded","outcome":"NOT_RUN_NO_ADAPTER","exit":1,"seconds":0,"stderr":""}
 {"at":"2026-08-18T06:38:17.791Z","cellId":"TS-13-gemini-cli-TS-f560c257a824-a2","role":"primary","promptId":"TS-13","armId":"gemini-cli","attempt":2,"profile":"guarded","outcome":"NOT_RUN_NO_ADAPTER","exit":1,"seconds":0,"stderr":""}
+{"at":"2026-08-18T06:38:31.162Z","cellId":"TS-01-claude-code-TS-f560c257a824-a1","role":"primary","promptId":"TS-01","armId":"claude-code","attempt":1,"profile":"guarded","outcome":"VALID_RUN","exit":0,"seconds":12,"stderr":""}
+{"at":"2026-08-18T06:38:49.519Z","cellId":"TS-01-claude-code-TS-f560c257a824-a2","role":"primary","promptId":"TS-01","armId":"claude-code","attempt":2,"profile":"guarded","outcome":"VALID_RUN","exit":0,"seconds":18,"stderr":""}
