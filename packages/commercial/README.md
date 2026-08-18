@@ -38,9 +38,11 @@ before the move, and zero asserted observations moved across it.
 - `commercial-quotes@1` — read-only quote/version evidence for the packages
   downstream of a sale (Signature/Order today; amendment execution and
   delivery commercial-followup when they exist). The rows are the contract.
-- `commercial-quote-binding@1` — the bounded managed write the signature/order
-  domain uses to stamp `signatureEnvelopeId`, `signatureStatus` and `orderId`
-  onto a quote; every other field is refused.
+- `commercial-quote-binding@1` — the declared, documented edge for the one
+  bounded write: the signature/order domain stamping `signatureEnvelopeId`,
+  `signatureStatus` and `orderId` onto a quote. The capability names the field
+  allowlist and the guarantee; the write itself stays the quote record's own
+  managed path.
 
 ## Composition
 
