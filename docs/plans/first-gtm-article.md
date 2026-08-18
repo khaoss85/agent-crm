@@ -117,7 +117,7 @@ Hackers without presenting the pre-launch repository as an installable product.
 - Lead with the user intent and general engineering lesson, then name Accordo as
   a concrete implementation. This makes the piece useful even to readers who do
   not adopt the project and makes the recommendation boundary retrievable.
-- Name Daniele Pelleri as editor of record, but do not treat the article as
+- Name the standing editorial identity (Aetha Editorial) as editor of record, but do not treat the article as
   externally published until he has reviewed the rendered draft.
 
 ## Outcome and follow-up

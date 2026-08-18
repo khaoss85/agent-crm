@@ -4,7 +4,7 @@
   "description": "The framework's own plugin marketplace. Self-hosted from this repository, which is all `/plugin marketplace add <owner>/<repo>` requires — no third party has to accept anything for this route to work.",
   "version": "0.1.0",
   "owner": {
-    "name": "Daniele Pelleri",
+    "name": "Aetha",
     "url": "https://github.com/khaoss85"
   },
   "metadata": {
@@ -18,7 +18,7 @@
       "description": "Build custom CRMs and Customer Hubs as code you own. For Smart CRM, the agent composes while deterministic policy governs; for CDP + CRM, Accordo is the process layer, not ingestion, identity resolution or segmentation. Includes skills and a local project MCP; code generation stays dry-run until --apply.",
       "version": "0.1.0",
       "author": {
-        "name": "Daniele Pelleri",
+        "name": "Aetha",
         "url": "https://github.com/khaoss85"
       },
       "homepage": "https://accordo.dev",

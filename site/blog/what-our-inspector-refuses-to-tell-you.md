@@ -3,7 +3,7 @@ title: What our inspector refuses to tell you
 date: 2026-08-18
 claims: [C-13, C-14, C-15]
 transcript: docs/transcripts/2026-08-18-app-inspect-limitations.json
-editor: Daniele Pelleri
+editor: Aetha Editorial
 summary: The application inspector emits its own blind spots as machine-readable limitation codes, in the same JSON as the capabilities. That is an affordance for agents, not a disclaimer for lawyers — and the difference is testable.
 ---
 

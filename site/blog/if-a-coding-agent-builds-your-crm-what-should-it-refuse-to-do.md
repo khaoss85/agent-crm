@@ -3,7 +3,7 @@ title: If a coding agent builds your CRM, what should it refuse to do?
 date: 2026-08-09
 claims: [C-04, C-16, C-21]
 transcript: docs/transcripts/2026-08-09-human-approval-boundary.txt
-editor: Daniele Pelleri
+editor: Aetha Editorial
 summary: A prompt can ask an agent to leave consequential decisions to a human. A refusal surface makes that boundary executable, tested, and visible after the fact.
 ---
 

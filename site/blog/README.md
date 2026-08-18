@@ -29,7 +29,7 @@ six gates in `docs/strategy/ORGANIC_GROWTH.md` §11 made into build failures.
 | `date` | `YYYY-MM-DD` | Publication date. Any other shape fails the build. |
 | `claims` | list of ledger ids | Every claim id from `site/claims.json` the piece uses. An id that is not in the ledger fails the build. **A piece that cites no claim does not build** — if it needs a claim the ledger does not carry, the ledger is the thing to fix, and it is fixed with evidence, not with a sentence. |
 | `transcript` | string | The repository path of the transcript, log or command output the piece is grounded in. A post is a write-up of something that happened, and this names it. |
-| `editor` | string | The named human editor of record. Not a team, not a role — a person who read it. |
+| `editor` | string | The named editor of record: the stable identity accountable for having read it. The project publishes under “Aetha Editorial” — one consistent byline, chosen deliberately so no personal name has to appear; what the gate refuses is an empty or rotating value, because accountability needs a name that stays the same, not a legal one. |
 
 `summary` is optional; without it the index card uses the first paragraph.
 
@@ -39,7 +39,7 @@ title: What the conformance report refuses to say
 date: 2026-08-14
 claims: [C-11, C-12]
 transcript: docs/transcripts/2026-08-12-package-conformance.md
-editor: Daniele Pelleri
+editor: Aetha Editorial
 ---
 
 Body starts here.
