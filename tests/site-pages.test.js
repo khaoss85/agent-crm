@@ -51,6 +51,13 @@ test('the documented site inventory is derived from the pages the build emits', 
   assert.match(architecture, new RegExp('`jobs\\.html` over ' + jobsCount + ' job pages'));
   assert.match(architecture, new RegExp('`answers\\.html` over ' + answersCount + ' answer pages'));
   assert.match(architecture, new RegExp('\\| \\*\\*Concepts\\*\\* \\| `concepts\\.html` \\| ' + conceptsCount + ' \\|'));
+  for (const [label, directory] of [['Capabilities', 'capabilities'], ['Agent tools', 'tools'], ['Compare', 'compare'], ['Glossary', 'glossary']]) {
+    assert.match(
+      architecture,
+      new RegExp('\\| \\*\\*' + label + '\\*\\* \\| `' + directory + '\\.html` \\| ' + countPages(directory) + ' \\|'),
+      `SITE_ARCHITECTURE's ${label} spoke count must match the ${countPages(directory)} pages the build emits`,
+    );
+  }
   assert.match(brief, new RegExp(`Page inventory — ${total} pages`));
 });
 
@@ -332,6 +339,7 @@ test('the refusal proof content contract rejects an incomplete receipt', () => {
     tools: readJson('site/tools.json'),
     concepts: readJson('site/concepts.json'),
     compare: readJson('site/compare.json'),
+    glossary: readJson('site/glossary.json'),
   };
   const build = (source) => buildClusterPages({
     sources: source,
@@ -409,6 +417,7 @@ test('the responsibility map contract is closed, bounded, single-line and escape
     tools: readJson('site/tools.json'),
     concepts: readJson('site/concepts.json'),
     compare: readJson('site/compare.json'),
+    glossary: readJson('site/glossary.json'),
   };
   const build = (source) => buildClusterPages({
     sources: source,

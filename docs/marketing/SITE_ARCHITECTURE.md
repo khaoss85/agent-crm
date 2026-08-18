@@ -27,19 +27,19 @@ with evidence paths, and pages are a rendering of it.
 
 ## 2. The clusters
 
-| Cluster | Pillar | Answers the question |
-|---|---|---|
-| **Capabilities** | `capabilities.html` | "can it do *my* commercial process?" |
-| **Agent tools** | `tools.html` | "what can my coding agent actually do here?" |
-| **Concepts** | `concepts.html` | "why is it built this way?" |
-| **Compare** | `compare.html` | "why this and not that?" |
-| **Glossary** | `glossary.html` | "what does this term mean, exactly — and where does it stop?" |
-| **Jobs** *(exists)* | `jobs.html` | "is this specific job supported?" |
-| **Answers** *(exists)* | `answers.html` | a direct question, directly answered |
+| Cluster | Pillar | Spokes | Answers the question |
+|---|---|---|---|
+| **Capabilities** | `capabilities.html` | 6 | "can it do *my* commercial process?" |
+| **Agent tools** | `tools.html` | 8 | "what can my coding agent actually do here?" |
+| **Concepts** | `concepts.html` | 8 | "why is it built this way?" |
+| **Compare** | `compare.html` | 9 | "why this and not that?" |
+| **Glossary** | `glossary.html` | 10 | "what does this term mean, exactly — and where does it stop?" |
+| **Jobs** *(exists)* | `jobs.html` | 66 | "is this specific job supported?" |
+| **Answers** *(exists)* | `answers.html` | 15 | a direct question, directly answered |
 
-Spoke counts are deliberately not written down here: the JSON sources are the
-inventory, `scripts/site-build.js` reports the page total on every build, and a
-number typed into prose is the same drift the measurement rule exists to end.
+The spoke counts above are not free prose: `tests/site-pages.test.js` binds them
+to the pages the build actually emits, so a count that drifts fails the suite
+until this table is updated.
 
 Every cluster spoke also serves a plain-markdown variant at the same path with
 `.md`, generated from the same JSON source as the HTML; the blog publishes an
