@@ -63,6 +63,11 @@ export const MAX_FIXTURE_BYTES = 64 * 1024 * 1024;
  * `clean-valid`, so TS-04 had no fixture at all.
  */
 export const COMPOSED_DOMAINS = Object.freeze([
+  // Contracts declares `signature/signature-orders@1` since the Signature &
+  // Order extraction, and signature declares the two commercial capabilities,
+  // so the smallest composition that carries contracts is this chain.
+  { directory: 'commercial', factory: 'createCommercialDomain' },
+  { directory: 'signature', factory: 'createSignatureDomain' },
   { directory: 'contracts', factory: 'createContractsDomain' },
   // TS-09 asks about restructuring lead scoring; without this the prompt names something
   // the fixture does not contain.
