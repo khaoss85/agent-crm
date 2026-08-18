@@ -9,12 +9,12 @@
   "metric": {
     "name": "median_lead_to_won_days",
     "definition": "Median calendar days from lead capture to the opportunity reaching the Won stage, over leads captured in the trailing quarter.",
-    "baseline": "unknown — see evidence entry unavailable.no-timestamps-before-m8",
+    "baseline": "unknown \u2014 see evidence entry unavailable.no-timestamps-before-m8",
     "target": "stated by the business; this plan does not invent one"
   },
   "application": {
     "inspectionContract": 1,
-    "inspectionFingerprint": "d43e971e07025c6597fe2e0a24499aa330ff00bebe1a8156e24293beb14e4d9e",
+    "inspectionFingerprint": "a0818b576ece478b089387a2f23f4acddab777a6929f47f95229122475027d79",
     "packages": [],
     "capabilities": [],
     "modules": []
@@ -123,7 +123,7 @@
         4,
         5
       ],
-      "gap": "Durable scheduled work: something that survives a restart and fires later. No installed package provides it, and no package could — a package cannot give the runtime a scheduler.",
+      "gap": "Durable scheduled work: something that survives a restart and fires later. No installed package provides it, and no package could \u2014 a package cannot give the runtime a scheduler.",
       "rejectedRungs": [
         {
           "rung": 1,

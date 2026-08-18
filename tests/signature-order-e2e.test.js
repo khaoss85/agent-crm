@@ -160,10 +160,12 @@ test('approved quote → verified signature → signed artifact → one immutabl
 
   // The schema advertises the contract, never a secret or a handler.
   const schema = await client.request('/api/schema');
-  assert.equal(schema.signature.signatureContract, 1);
-  assert.equal(schema.signature.providers[0].name, 'fixture-signature');
-  assert.match(schema.signature.providers[0].fingerprint, /^[0-9a-f]{64}$/);
-  assert.ok(!JSON.stringify(schema.signature).includes('not-a-secret'), 'no verification key in the schema');
+  const signatureBlock = schema.domains.signature;
+  assert.equal(schema.signature, undefined, 'the ambient block is gone; the package publishes under domains');
+  assert.equal(signatureBlock.signatureContract, 1);
+  assert.equal(signatureBlock.providers[0].name, 'fixture-signature');
+  assert.match(signatureBlock.providers[0].fingerprint, /^[0-9a-f]{64}$/);
+  assert.ok(!JSON.stringify(signatureBlock).includes('not-a-secret'), 'no verification key in the schema');
 
   // An agent actor may PREPARE everything, but may not send.
   await assert.rejects(

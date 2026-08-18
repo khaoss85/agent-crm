@@ -4,7 +4,7 @@ description: Add or extend Signature and Order in an Accordo project - signature
 requires:
   tier: generated-project
   command: "crm app inspect"
-  projectSurface: ["packages/signature/generated/index.js"]
+  projectSurface: ["packages/domains/generated/index.js"]
   repositorySurface: ["ARCHITECTURE.md", "DECISIONS.md", "docs/SIGNATURE_ORDER.md"]
   degradesTo: "the composed signature providers, actions and records reported by `crm app inspect --json`"
 ---
@@ -35,7 +35,7 @@ If the repository documents this skill names are absent, you are in a project bu
 
 ## Add a signature provider
 
-1. Define it code-first: `{ name, version, label, config, createEnvelope, getEnvelope, verifyEvent, getSignedArtifact }` and register it in `packages/signature/generated/index.js` (static import, like actions/pipelines/intelligence/commercial).
+1. Define it code-first: `{ name, version, label, config, createEnvelope, getEnvelope, verifyEvent, getSignedArtifact }` and register it in the composition: pass it to `createSignatureDomain({ signatureProviders: [...] })` in `packages/domains/generated/index.js` (static import — the composition file is the only place a project names its packages).
 2. The declared-definition fingerprint proves **provider code and config integrity, not remote-service behavior**. Re-validate every provider result into the normalized contract (`normalizeProviderEnvelope`/`normalizeProviderEvent`/`normalizeProviderArtifact`) before it touches local state; off-contract data is `PROVIDER_INVALID`. A provider may never assert the local-only `preparing`/`failed` states.
 3. `verifyEvent` receives the **raw bytes** (a Buffer — decoding first would replace invalid UTF-8 and verify something the provider never signed), must compare in constant time and must bound replay by timestamp. Never log or echo the payload, the signature or the key.
 4. A verification key in checked-in `config` is **test-only**. Do not describe it as production webhook security, and do not ship a real DocuSign/Adobe/Dropbox adapter or credential.

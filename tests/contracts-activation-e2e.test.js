@@ -216,7 +216,7 @@ test('the contracts domain is optional: the kernel works identically without it'
   assert.equal(schema.domains.contracts, undefined, 'no contracts package means no contracts schema block');
   assert.equal(schema.commercial, undefined, 'the ambient commercial block is gone — the package contributes it');
   assert.equal(schema.domains.commercial.commercialContract, 1, 'every earlier contract is untouched');
-  assert.equal(schema.signature.signatureContract, 1);
+  assert.equal(schema.domains.signature.signatureContract, 1);
   await assert.rejects(
     () => client.module('order').action(order.id, 'activate-contract', { ...POLICY, ...ACTIVATION }),
     (error) => error.status === 404,

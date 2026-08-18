@@ -165,9 +165,29 @@ export async function loadSignatureInternals() {
   return { operations, registry, externalOperation };
 }
 
-/** Where the published schema block lives — the location is the seam's business. */
+/**
+ * Where the published schema block lives — the location is the seam's
+ * business, the CONTENTS are the contract. Under `domains`, the package
+ * registry spreads its own composition envelope (contract version, resources,
+ * requires, provides, actions, operations, …) around the package's metadata;
+ * those keys are the registry's publication about ANY package — reserved, so
+ * a package can never redeclare them — and are frozen elsewhere (AX1,
+ * conformance), never part of the ADR-017 block this baseline compares. The
+ * seam strips them so the block observation keeps comparing exactly the
+ * domain contract it always compared.
+ */
+const COMPOSITION_ENVELOPE_KEYS = Object.freeze([
+  'packageContract', 'version', 'label', 'description',
+  'resources', 'requires', 'provides', 'actions', 'policies', 'operations',
+]);
+
 export function signatureSchemaBlock(schema) {
-  return schema?.signature ?? schema?.domains?.signature?.metadata ?? schema?.domains?.signature;
+  if (schema?.signature) return schema.signature;
+  const block = schema?.domains?.signature?.metadata ?? schema?.domains?.signature;
+  if (!block || typeof block !== 'object') return block;
+  const out = { ...block };
+  for (const key of COMPOSITION_ENVELOPE_KEYS) delete out[key];
+  return out;
 }
 
 export function signatureSchemaLocation(schema) {

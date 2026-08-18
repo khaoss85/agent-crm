@@ -67,13 +67,17 @@ export function createSignatureDomain(options = {}) {
   const config = options.config;
 
   /**
-   * Both declared operations share one composed instance: they are two entry
-   * points into one recovery story (verified ingestion and explicit
-   * reconciliation over the same envelope state machine).
-   * @type {any}
+   * Both declared operations share one composed instance PER APPLICATION:
+   * they are two entry points into one recovery story (verified ingestion and
+   * explicit reconciliation over the same envelope state machine). Keyed by
+   * the bounded runtime, because one composition module may serve several
+   * application instances in one process — a restart boots a new application
+   * against the same static composition, and an instance cached against the
+   * first boot would hold its closed database.
    */
-  let composed;
+  const composedByRuntime = new WeakMap();
   const operations = (runtime) => {
+    let composed = composedByRuntime.get(runtime);
     if (!composed) {
       composed = createSignatureOperations({
         database: runtime.database,
@@ -83,6 +87,7 @@ export function createSignatureDomain(options = {}) {
         runExternal: runtime.runExternal,
         config: { ...(config ?? {}), signatureTimeoutMs: runtime.config.signatureTimeoutMs },
       });
+      composedByRuntime.set(runtime, composed);
     }
     return composed;
   };

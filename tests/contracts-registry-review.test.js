@@ -207,7 +207,7 @@ test('the dependency direction is one-way, and the package is genuinely removabl
       contracts: app.database.raw.prepare('SELECT COUNT(*) AS n FROM commercial_contracts').get().n,
       subscriptionLines: app.database.raw.prepare('SELECT COUNT(*) AS n FROM subscription_lines').get().n,
       orderLink: app.modules.get('order').service.get(${JSON.stringify(order.id)}).contractId !== null,
-      signature: Boolean(app.signature),
+      signatureRows: app.database.raw.prepare('SELECT COUNT(*) AS n FROM signature_envelopes').get().n,
     };
     console.log(JSON.stringify(out));
     app.close();
@@ -216,7 +216,7 @@ test('the dependency direction is one-way, and the package is genuinely removabl
   const facts = JSON.parse(probe.stdout.trim().split('\n').at(-1));
   assert.equal(facts.domains, 0, 'no domain is registered');
   assert.equal(facts.hasPlan, false, 'and its actions are gone with it');
-  assert.equal(facts.signature, true, 'earlier milestones are untouched');
+  assert.ok(facts.signatureRows >= 1, 'earlier milestones\' evidence is untouched — signature is a package now, and its rows outlive the composition');
   // The rows are still there: removing a package never deletes data.
   assert.equal(facts.contracts, 1, 'the package leaves, the data stays');
   assert.equal(facts.subscriptionLines, 3);
