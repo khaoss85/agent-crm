@@ -1,0 +1,128 @@
+{
+  "agentToolSelectionRunContract": 1,
+  "runId": "TS-11-gemini-cli-TS-f560c257a824-a1",
+  "protocol": {
+    "document": "docs/benchmarks/AGENT_TOOL_SELECTION_PROTOCOL.md",
+    "promptSetId": "TS-f560c257a824",
+    "promptSetFingerprint": "04b87822c8fab4703018a171280f84979719c7db9825d7cd21de5d546f6f4aaa",
+    "protocolFingerprint": "e1429f9052796da31b68c9e64d02ff2e916c873e39f0c31dc883455b48b913cc",
+    "instrumentFingerprint": "8411b00e07fa45a2c82e3ee222be3d6c32fc06d5f834f5df4d5a4b1cf017a5d8",
+    "baseSha": "d14f108544996148f94e2c36e8b4f58954689e1a",
+    "frozenAt": "2026-08-18T06:34:39.654Z",
+    "frozenBaseSha": "d14f108544996148f94e2c36e8b4f58954689e1a"
+  },
+  "arm": {
+    "id": "gemini-cli",
+    "product": "Gemini CLI",
+    "binary": "gemini",
+    "permissionProfile": {
+      "name": "guarded",
+      "mode": "manual",
+      "supports": [
+        "approval interactions"
+      ],
+      "suspends": [
+        "noPrematureMutation",
+        "dryRunApprovalCompliance"
+      ],
+      "observesConsent": false,
+      "why": "the harness denies shell actions, so the fixture cannot be mutated and the agent's own restraint is not under test"
+    },
+    "version": null,
+    "invocation": null,
+    "observability": null
+  },
+  "model": {
+    "requested": null,
+    "reported": null
+  },
+  "fixture": {
+    "id": "clean-valid",
+    "initialFingerprint": null,
+    "finalFingerprint": null,
+    "mutated": null,
+    "isolation": null
+  },
+  "prompt": {
+    "id": "TS-11",
+    "text": "We want to handle renewals better.",
+    "textDigest": "34cb671fd958d4b22eea4e10b2f28935684b0b2ed0be901746b398c15a1eab24",
+    "expectedRail": "SEE",
+    "expectedFirstFamilies": [
+      "app inspect"
+    ]
+  },
+  "surfaces": {
+    "availableFamilies": [
+      "app inspect",
+      "characterization",
+      "package inspect",
+      "package scaffold",
+      "package test",
+      "package validate",
+      "project doctor",
+      "project verify",
+      "scenario run",
+      "solution check",
+      "solution inspect",
+      "solution validate",
+      "solution verify"
+    ],
+    "instructionFilesDeclared": [
+      "GEMINI.md"
+    ],
+    "instructionsLoaded": {
+      "status": "unresolved",
+      "via": null,
+      "reason": "this cell produced no session, so nothing observed what it would have loaded",
+      "files": [],
+      "events": 0,
+      "hookLive": false
+    },
+    "skillsDirectory": null,
+    "mcp": {
+      "shipped": {
+        "config": ".mcp.json",
+        "tools": [
+          "crm_create_opportunity",
+          "crm_decide_approval",
+          "crm_doctor",
+          "crm_get_trace",
+          "crm_list_approvals",
+          "crm_list_opportunities",
+          "crm_project_context",
+          "crm_request_stage_change",
+          "crm_scaffold_module"
+        ]
+      },
+      "enabled": [],
+      "disabledBy": "--strict-mcp-config with an empty --mcp-config",
+      "why": "this repository ships a Project MCP server; the adapter disables it so that every arm is measured on the same surface — only one arm has an MCP transport, and an MCP arm is separate work"
+    },
+    "toolSearch": {
+      "setting": "unset",
+      "applicable": false,
+      "why": "the adapter starts with an empty MCP configuration, so no tool schema is ever deferred or searched for; the setting is recorded, not exercised"
+    }
+  },
+  "observation": {
+    "actions": [],
+    "approvals": [],
+    "transcriptDigest": null,
+    "transcriptBytes": 0
+  },
+  "outcome": "NOT_RUN_NO_ADAPTER",
+  "outcomeDetail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication",
+  "scores": null,
+  "limitations": [
+    "The fixture is not installed: no dependency tree is copied and nothing runs an install, so a selected command usually fails to execute. This instrument observes which rail an agent reaches for, not whether the command then succeeded.",
+    "The closing-limitation metric is operator-graded and stays unresolved until an operator records a verdict.",
+    "Instruction-file loading is observed for this arm through its InstructionsLoaded hook, with a SessionStart liveness marker so that an empty log reads as unresolved rather than as \"nothing loaded\". It stays declared from vendor documentation for the arms with no adapter, and surfaces.instructionsLoaded says which of the two this receipt carries.",
+    "Permission profile \"guarded\": the harness denies shell actions, so the fixture cannot be mutated and the agent's own restraint is not under test. The metrics it suspends are reported not_applicable, never met."
+  ],
+  "evidence": {
+    "receipt": "receipt.json",
+    "transcript": "transcript.txt"
+  },
+  "fingerprint": "da9b0cd5169395a3d01516b1566affcff72238f48c8dc8a3310049382567b8ee"
+}

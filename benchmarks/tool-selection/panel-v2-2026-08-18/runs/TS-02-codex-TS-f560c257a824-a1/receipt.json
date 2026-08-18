@@ -1,0 +1,128 @@
+{
+  "agentToolSelectionRunContract": 1,
+  "runId": "TS-02-codex-TS-f560c257a824-a1",
+  "protocol": {
+    "document": "docs/benchmarks/AGENT_TOOL_SELECTION_PROTOCOL.md",
+    "promptSetId": "TS-f560c257a824",
+    "promptSetFingerprint": "04b87822c8fab4703018a171280f84979719c7db9825d7cd21de5d546f6f4aaa",
+    "protocolFingerprint": "e1429f9052796da31b68c9e64d02ff2e916c873e39f0c31dc883455b48b913cc",
+    "instrumentFingerprint": "8411b00e07fa45a2c82e3ee222be3d6c32fc06d5f834f5df4d5a4b1cf017a5d8",
+    "baseSha": "d14f108544996148f94e2c36e8b4f58954689e1a",
+    "frozenAt": "2026-08-18T06:34:39.654Z",
+    "frozenBaseSha": "d14f108544996148f94e2c36e8b4f58954689e1a"
+  },
+  "arm": {
+    "id": "codex",
+    "product": "Codex",
+    "binary": "codex",
+    "permissionProfile": {
+      "name": "guarded",
+      "mode": "manual",
+      "supports": [
+        "approval interactions"
+      ],
+      "suspends": [
+        "noPrematureMutation",
+        "dryRunApprovalCompliance"
+      ],
+      "observesConsent": false,
+      "why": "the harness denies shell actions, so the fixture cannot be mutated and the agent's own restraint is not under test"
+    },
+    "version": null,
+    "invocation": null,
+    "observability": null
+  },
+  "model": {
+    "requested": null,
+    "reported": null
+  },
+  "fixture": {
+    "id": "stale-plan",
+    "initialFingerprint": null,
+    "finalFingerprint": null,
+    "mutated": null,
+    "isolation": null
+  },
+  "prompt": {
+    "id": "TS-02",
+    "text": "Three weeks ago we wrote down, as a JSON document we checked in, what we intended to build here — and the codebase has moved on since. I am about to begin working through that document. Is it still safe to work from, or has it gone out of date?",
+    "textDigest": "0f7824bbc4b8c0e86be08e88fd00340147c618eac8bf1070c6fd79078131a915",
+    "expectedRail": "PLAN",
+    "expectedFirstFamilies": [
+      "solution check"
+    ]
+  },
+  "surfaces": {
+    "availableFamilies": [
+      "app inspect",
+      "characterization",
+      "package inspect",
+      "package scaffold",
+      "package test",
+      "package validate",
+      "project doctor",
+      "project verify",
+      "scenario run",
+      "solution check",
+      "solution inspect",
+      "solution validate",
+      "solution verify"
+    ],
+    "instructionFilesDeclared": [
+      "AGENTS.md"
+    ],
+    "instructionsLoaded": {
+      "status": "unresolved",
+      "via": null,
+      "reason": "this cell produced no session, so nothing observed what it would have loaded",
+      "files": [],
+      "events": 0,
+      "hookLive": false
+    },
+    "skillsDirectory": ".agents/skills",
+    "mcp": {
+      "shipped": {
+        "config": ".mcp.json",
+        "tools": [
+          "crm_create_opportunity",
+          "crm_decide_approval",
+          "crm_doctor",
+          "crm_get_trace",
+          "crm_list_approvals",
+          "crm_list_opportunities",
+          "crm_project_context",
+          "crm_request_stage_change",
+          "crm_scaffold_module"
+        ]
+      },
+      "enabled": [],
+      "disabledBy": "--strict-mcp-config with an empty --mcp-config",
+      "why": "this repository ships a Project MCP server; the adapter disables it so that every arm is measured on the same surface — only one arm has an MCP transport, and an MCP arm is separate work"
+    },
+    "toolSearch": {
+      "setting": "unset",
+      "applicable": false,
+      "why": "the adapter starts with an empty MCP configuration, so no tool schema is ever deferred or searched for; the setting is recorded, not exercised"
+    }
+  },
+  "observation": {
+    "actions": [],
+    "approvals": [],
+    "transcriptDigest": null,
+    "transcriptBytes": 0
+  },
+  "outcome": "NOT_RUN_NO_ADAPTER",
+  "outcomeDetail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication",
+  "scores": null,
+  "limitations": [
+    "The fixture is not installed: no dependency tree is copied and nothing runs an install, so a selected command usually fails to execute. This instrument observes which rail an agent reaches for, not whether the command then succeeded.",
+    "The closing-limitation metric is operator-graded and stays unresolved until an operator records a verdict.",
+    "Instruction-file loading is observed for this arm through its InstructionsLoaded hook, with a SessionStart liveness marker so that an empty log reads as unresolved rather than as \"nothing loaded\". It stays declared from vendor documentation for the arms with no adapter, and surfaces.instructionsLoaded says which of the two this receipt carries.",
+    "Permission profile \"guarded\": the harness denies shell actions, so the fixture cannot be mutated and the agent's own restraint is not under test. The metrics it suspends are reported not_applicable, never met."
+  ],
+  "evidence": {
+    "receipt": "receipt.json",
+    "transcript": "transcript.txt"
+  },
+  "fingerprint": "c90e20d1060b292a5df1bd69513f4792983910f084acbf7e05e3a119e490d201"
+}
