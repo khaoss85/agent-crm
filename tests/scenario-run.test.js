@@ -827,10 +827,11 @@ test('the second shipped scenario runs for real, on a stepped clock', { timeout:
     assert.equal(report.journey.facts[claim], 'false', claim);
   }
 
-  // A materially different composition from the first scenario's: two packages,
-  // not six. `EVIDENCE_IS_ONE_COMPOSITION` has always claimed this mattered and
-  // nothing until now showed two.
-  assert.deepEqual(report.composition.packages, ['contracts', 'service']);
+  // A materially different composition from the first scenario's: three
+  // packages, not eight. `EVIDENCE_IS_ONE_COMPOSITION` has always claimed this
+  // mattered. Commercial joins because the journey starts from a priced quote,
+  // and since the extraction a priced quote is the commercial package.
+  assert.deepEqual(report.composition.packages, ['commercial', 'contracts', 'service']);
   assert.ok(report.limitations.some((entry) => entry.scope === 'journey'
     && entry.code === 'SLA_IS_ELAPSED_TIME_NOT_A_CONTRACTUAL_JUDGEMENT'));
 
