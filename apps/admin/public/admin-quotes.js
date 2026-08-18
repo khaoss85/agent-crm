@@ -15,6 +15,17 @@ import { renderActivation } from './admin-contracts.js';
 
 const LIST_LIMIT = 200;
 
+/**
+ * The commercial schema block, wherever the composition publishes it: the
+ * ambient top-level key before the extraction, the package's own contribution
+ * under `domains` after it. The contents are the contract; the location is the
+ * seam's business.
+ * @param {any} schema
+ */
+function commercialBlock(schema) {
+  return schema?.commercial ?? schema?.domains?.commercial;
+}
+
 /** Server-generated evidence blobs; malformed data degrades to empty, never throws. */
 function parseJson(text, fallback) {
   if (typeof text !== 'string' || text === '') return fallback;
@@ -77,7 +88,7 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
       return;
     }
     if (token !== renderToken) return;
-    if (!schema.commercial) {
+    if (!commercialBlock(schema)) {
       status.textContent = 'Commercial Operations is not enabled in this project.';
       return;
     }
@@ -329,7 +340,7 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
       const submitPanel = el('div', 'quote-submit');
       submitPanel.appendChild(el('h3', undefined, 'Submit for approval'));
       const policySelect = el('select');
-      for (const policy of schema.commercial?.discountPolicies ?? []) {
+      for (const policy of commercialBlock(schema)?.discountPolicies ?? []) {
         const option = el('option', undefined, `${policy.label} (v${policy.version})`);
         option.setAttribute('value', `${policy.name}@${policy.version}`);
         policySelect.appendChild(option);

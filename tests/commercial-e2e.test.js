@@ -43,16 +43,15 @@ function project(t) {
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
-  const starter = join(root, 'examples/starters/b2b-lead-qualification');
   for (const manifest of COMMERCIAL_MANIFESTS) {
-    assert.equal(cli(root, ['module', 'create', join(starter, manifest), '--apply']).status, 0, `apply ${manifest}`);
+    assert.equal(cli(root, ['module', 'create', join(root, 'packages/commercial/modules', manifest), '--apply']).status, 0, `apply ${manifest}`);
   }
   writeFileSync(
     join(root, 'packages/actions/generated/index.js'),
     [
       '// @ts-check',
-      "import { buildCommercialActions } from '../../core/src/commercial-actions.js';",
-      'export const generatedActions = [...buildCommercialActions()];',
+      '// The quote actions arrive with the commercial package composition.',
+      'export const generatedActions = [];',
       '',
     ].join('\n'),
   );
@@ -62,12 +61,17 @@ function project(t) {
 
 function writeCommercialIndex(root) {
   writeFileSync(
-    join(root, 'packages/commercial/generated/index.js'),
+    join(root, 'packages/domains/generated/index.js'),
     [
       '// @ts-check',
+      "import { createCommercialDomain } from '../../commercial/src/index.js';",
       "import { fixtureSaasCatalogProvider, standardSalesDiscountV1, standardSalesDiscountV2 } from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
-      'export const generatedCatalogProviders = [fixtureSaasCatalogProvider];',
-      'export const generatedDiscountPolicies = [standardSalesDiscountV1, standardSalesDiscountV2];',
+      'export const generatedDomains = [',
+      '  createCommercialDomain({',
+      '    catalogProviders: [fixtureSaasCatalogProvider],',
+      '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
+      '  }),',
+      '];',
       '',
     ].join('\n'),
   );
@@ -116,23 +120,27 @@ test('commercial e2e: composite catalog sync, mixed-recurrence quote, grouped to
   t.after(() => instance.close().catch(() => {}));
   const { app, client } = instance;
 
-  // Schema: the pricing contract is exposed safely and function-free.
+  // Schema: the pricing contract is exposed safely and function-free — now as
+  // the package's own contribution under `domains` rather than an ambient
+  // top-level block. The contents are unchanged; the location is the seam's.
   const schema = await client.schema();
-  assert.equal(schema.commercial.commercialContract, 1);
-  assert.equal(schema.commercial.pricingContract, 1);
-  assert.deepEqual(schema.commercial.chargeTypes, ['one_time', 'recurring']);
-  assert.deepEqual(schema.commercial.pricingModels, ['flat_fee', 'per_unit', 'volume', 'graduated']);
-  assert.deepEqual(schema.commercial.recurringIntervals, ['month', 'year']);
-  assert.match(schema.commercial.money, /1\/100 currency units/);
-  assert.match(schema.commercial.totals, /never summed/);
-  assert.match(schema.commercial.unsupportedModels, /quoteEligible=false/);
-  assert.match(schema.commercial.quantitySemantics.flat_fee, /charged once/);
-  assert.match(schema.commercial.discountPolicies[0].fingerprint, /^[0-9a-f]{64}$/);
+  assert.equal(schema.commercial, undefined, 'the ambient block is gone for good');
+  const commercialSchema = schema.domains.commercial;
+  assert.equal(commercialSchema.commercialContract, 1);
+  assert.equal(commercialSchema.pricingContract, 1);
+  assert.deepEqual(commercialSchema.chargeTypes, ['one_time', 'recurring']);
+  assert.deepEqual(commercialSchema.pricingModels, ['flat_fee', 'per_unit', 'volume', 'graduated']);
+  assert.deepEqual(commercialSchema.recurringIntervals, ['month', 'year']);
+  assert.match(commercialSchema.money, /1\/100 currency units/);
+  assert.match(commercialSchema.totals, /never summed/);
+  assert.match(commercialSchema.unsupportedModels, /quoteEligible=false/);
+  assert.match(commercialSchema.quantitySemantics.flat_fee, /charged once/);
+  assert.match(commercialSchema.discountPolicies[0].fingerprint, /^[0-9a-f]{64}$/);
   const walk = (value) => {
     if (typeof value === 'function') assert.fail('schema exposes a function');
     if (value && typeof value === 'object') Object.values(value).forEach(walk);
   };
-  walk(schema.commercial);
+  walk(commercialSchema);
 
   // Sync the composite catalog; every pricing shape lands.
   const sync1 = await client.request('/api/catalog/sync', { method: 'POST', body: { provider: 'fixture-saas-catalog' } });
@@ -437,12 +445,14 @@ test('commercial e2e: approval boundary, revise/version-2, concurrency, fault in
 
   // Policy config drift stops the next boot; restoring it boots cleanly.
   writeFileSync(
-    join(root, 'packages/commercial/generated/index.js'),
+    join(root, 'packages/domains/generated/index.js'),
     [
+      "import { createCommercialDomain } from '../../commercial/src/index.js';",
       "import { fixtureSaasCatalogProvider, standardSalesDiscountV1 } from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
       'const drifted = { ...standardSalesDiscountV1, config: { ...standardSalesDiscountV1.config, autoApproveMaxBps: 9999 } };',
-      'export const generatedCatalogProviders = [fixtureSaasCatalogProvider];',
-      'export const generatedDiscountPolicies = [drifted];',
+      'export const generatedDomains = [',
+      '  createCommercialDomain({ catalogProviders: [fixtureSaasCatalogProvider], discountPolicies: [drifted] }),',
+      '];',
       '',
     ].join('\n'),
   );

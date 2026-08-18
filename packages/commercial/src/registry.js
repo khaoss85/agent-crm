@@ -1,15 +1,16 @@
 // @ts-check
 
-import { ValidationError, NotFoundError } from './errors.js';
-import { computeDefinitionFingerprint, validateDeclaredConfig } from './definition-fingerprint.js';
 import {
-  requireCurrency,
+  ValidationError,
+  NotFoundError,
+  computeDefinitionFingerprint,
+  validateDeclaredConfig,
   CHARGE_TYPES,
   PRICING_MODELS,
   RECURRING_INTERVALS,
-  MAX_DISCOUNT_BPS,
   MAX_QUANTITY,
-} from './commercial-money.js';
+} from '../../core/index.js';
+import { requireCurrency, MAX_DISCOUNT_BPS } from './money.js';
 
 /**
  * Commercial Operations registries (ADR-016): catalog providers and versioned

@@ -40,7 +40,8 @@
     "bench:tools:rescore": "node benchmarks/tool-selection/run.js rescore",
     "bench:tools:aggregate": "node benchmarks/tool-selection/run.js aggregate",
     "bench:tools:freeze": "node benchmarks/tool-selection/run.js freeze",
-    "characterize:intelligence": "node scripts/characterize-intelligence.mjs"
+    "characterize:intelligence": "node scripts/characterize-intelligence.mjs",
+    "characterize:commercial": "node scripts/characterize-commercial.mjs"
   },
   "keywords": [
     "crm",

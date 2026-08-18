@@ -29,8 +29,10 @@ export {
 
 // ---- errors a package raises through the runtime ----
 // Status and code travel to HTTP, SDK, MCP and Admin unchanged, so a package
-// never formats its own transport response.
-export { AppError, ValidationError, NotFoundError, ConflictError, ForbiddenError } from './src/errors.js';
+// never formats its own transport response. `normalizeError` is the same
+// normalization the kernel applies before an error crosses a surface, public
+// so a package-owned operation records the identical failure shape.
+export { AppError, ValidationError, NotFoundError, ConflictError, ForbiddenError, normalizeError } from './src/errors.js';
 
 // ---- bounded outbound calls ----
 // A package that calls a provider bounds it with the framework's timeout
@@ -42,6 +44,14 @@ export { withTimeout } from './src/timeout.js';
 // ---- the framework clock ----
 // One ISO-8601 clock, so a package never stamps a record from its own.
 export { nowIso } from './src/time.js';
+
+// ---- run traces ----
+// A package-owned, provider-backed operation that runs outside the action
+// runtime (Commercial's catalog sync; Signature's ingest/reconcile) persists
+// the same trace shape every run surface reads. Public for the same reason
+// `withTimeout` is: `packages/core/src/*` is private, and a package that
+// re-implements the trace row drifts from the evidence beside it.
+export { writeTrace } from './src/action-runtime.js';
 
 // ---- the canonical actor authority ----
 // The SAME normalization the audit log applies, so a package's stored actor and
@@ -69,7 +79,7 @@ export {
   RECURRING_INTERVALS,
   MAX_INTERVAL_COUNT,
   MAX_QUANTITY,
-} from './src/commercial-money.js';
+} from './src/money.js';
 
 // ---- shared value validation ----
 // The same bounded validators the kernel's own services use, so a package's

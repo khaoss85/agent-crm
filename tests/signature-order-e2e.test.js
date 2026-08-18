@@ -16,13 +16,16 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
  * deterministic fixture signature provider. No network, no credential.
  */
 
-const MANIFESTS = [
+const COMMERCIAL_MANIFESTS = [
   'product.module.json', 'product-version.module.json', 'price-book.module.json',
   'offer.module.json', 'price-component.module.json', 'price-tier.module.json',
   'catalog-sync-run.module.json', 'quote.module.json', 'quote-line.module.json',
   'quote-version.module.json', 'quote-version-line.module.json',
   'quote-version-component.module.json', 'quote-version-total.module.json',
   'quote-approval.module.json',
+];
+
+const MANIFESTS = [
   'signature-envelope.module.json', 'signature-signer.module.json',
   'signature-event.module.json', 'signed-artifact.module.json',
   'order.module.json', 'order-line.module.json', 'order-component.module.json',
@@ -41,6 +44,14 @@ function project(t) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
   const starter = join(root, 'examples/starters/b2b-lead-qualification');
+  for (const manifest of COMMERCIAL_MANIFESTS) {
+    const result = spawnSync(
+      process.execPath,
+      ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create', join(root, 'packages/commercial/modules', manifest), '--apply', '--root', root],
+      { encoding: 'utf8', cwd: root },
+    );
+    assert.equal(result.status, 0, `apply ${manifest}: ${result.stderr}`);
+  }
   for (const manifest of MANIFESTS) {
     const result = spawnSync(
       process.execPath,
@@ -53,19 +64,24 @@ function project(t) {
     join(root, 'packages/actions/generated/index.js'),
     [
       '// @ts-check',
-      "import { buildCommercialActions } from '../../core/src/commercial-actions.js';",
       "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
-      'export const generatedActions = [...buildCommercialActions(), buildRequestSignatureAction()];',
+      '// The quote actions arrive with the commercial package composition below.',
+      'export const generatedActions = [buildRequestSignatureAction()];',
       '',
     ].join('\n'),
   );
   writeFileSync(
-    join(root, 'packages/commercial/generated/index.js'),
+    join(root, 'packages/domains/generated/index.js'),
     [
       '// @ts-check',
+      "import { createCommercialDomain } from '../../commercial/src/index.js';",
       "import { fixtureSaasCatalogProvider, standardSalesDiscountV1, standardSalesDiscountV2 } from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
-      'export const generatedCatalogProviders = [fixtureSaasCatalogProvider];',
-      'export const generatedDiscountPolicies = [standardSalesDiscountV1, standardSalesDiscountV2];',
+      'export const generatedDomains = [',
+      '  createCommercialDomain({',
+      '    catalogProviders: [fixtureSaasCatalogProvider],',
+      '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
+      '  }),',
+      '];',
       '',
     ].join('\n'),
   );

@@ -464,7 +464,7 @@ a change scoped to two defect candidates:
 | Neutral helpers moved out of Intelligence files | **yes** — `728d7bc`. Moved to `definition-fingerprint.js` and `timeout.js`; runtime imports reaching into an Intelligence module for a neutral helper went from eight to zero, with every asserted value byte-identical |
 | `app.intelligence` decision taken | **ADR-021, accepted** — declared capability with a staged migration. Not implemented |
 | Definition-registry decision taken | **ADR-022, accepted** — reuse `policies`, providers and capabilities; no new definition-registry seam. Not implemented |
-| Package-contributed HTTP route seam needed | **not for Intelligence.** DX4 established that route contribution is not required for generic conformance. It remains a precondition for **Commercial** and **Signature** specifically, each of which owns a route in `apps/server` |
+| Package-contributed HTTP route seam needed | **not for Intelligence.** DX4 established that route contribution is not required for generic conformance. For **Commercial**, the extraction proceeded *without* the seam by leaving the attachment where it was: the package owns the catalog-sync code, and `create-app` wires `app.syncCatalog` with one named lookup, recorded as B7 evidence in `docs/plans/extract-commercial-operations-package.md`. The seam itself remains undesigned and is still the honest precondition for retiring that residue — and for **Signature**, whose two routes are the harder raw-body case |
 
 **Lead Intelligence is still not extractable today** — but the remaining
 blockers are now small, measured and mostly decisions rather than unknowns.

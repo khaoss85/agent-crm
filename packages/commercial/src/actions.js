@@ -1,13 +1,13 @@
 // @ts-check
 
-import { AppError, ValidationError } from './errors.js';
-import { normalizePolicyResult } from './commercial-registry.js';
+import { AppError, ValidationError } from '../../core/index.js';
+import { normalizePolicyResult } from './registry.js';
 import {
   computeLineBreakdown,
   groupComponentTotals,
   effectiveDiscountBps,
   maxLineDiscountBps,
-} from './commercial-money.js';
+} from './money.js';
 
 /**
  * Commercial Operations quote actions (ADR-016), framework-provided and
@@ -364,8 +364,18 @@ export function buildQuoteLineActions(config) {
   return [addLine, updateLine, removeLine];
 }
 
-/** @param {CommercialActionConfig} [config] */
-export function buildSubmitQuoteAction(config) {
+/**
+ * @param {CommercialActionConfig|undefined} config
+ * @param {{getDiscountPolicy: (name: string, version: number) => {definition: any, fingerprint: string}}} registries
+ *   The package's own registries. Before the extraction this arrived as the
+ *   ambient `commercial` context key every action received; the action now
+ *   closes over the registries the composed package owns (ADR-021 applied to
+ *   Commercial), and the ambient key is gone.
+ */
+export function buildSubmitQuoteAction(config, registries) {
+  if (!registries || typeof registries.getDiscountPolicy !== 'function') {
+    throw new ValidationError('buildSubmitQuoteAction needs the commercial registries — compose the package rather than registering the action bare');
+  }
   const cfg = resolved(config);
   return {
     module: cfg.quoteModule,
@@ -381,13 +391,13 @@ export function buildSubmitQuoteAction(config) {
       { name: 'expectedRevision', type: 'integer', required: false },
     ],
     /** @param {any} ctx */
-    async execute({ record: quote, input, actor, modules, services, commercial, managed, now, step }) {
+    async execute({ record: quote, input, actor, modules, services, managed, now, step }) {
       checkRevision(quote, input);
       const lines = activeLines(modules, cfg, quote.id);
       if (lines.length === 0) {
         throw new AppError('A quote needs at least one active line before submission', { code: 'EMPTY_QUOTE', status: 409 });
       }
-      const { definition: policy, fingerprint } = commercial.getDiscountPolicy(input.policy, input.version);
+      const { definition: policy, fingerprint } = registries.getDiscountPolicy(input.policy, input.version);
       const componentAmounts = quoteComponentAmounts(lines);
       const totals = groupComponentTotals(componentAmounts, quote.currency);
       const maxDiscountBps = maxLineDiscountBps(lines);
@@ -728,12 +738,16 @@ function quoteSummary(quote) {
   };
 }
 
-/** Convenience bundle for starters. */
-export function buildCommercialActions(config) {
+/**
+ * The eight quote actions the package contributes, in registration order.
+ * @param {CommercialActionConfig|undefined} config
+ * @param {any} registries the package's CommercialRegistries instance
+ */
+export function buildCommercialActions(config, registries) {
   return [
     buildCreateQuoteAction(config),
     ...buildQuoteLineActions(config),
-    buildSubmitQuoteAction(config),
+    buildSubmitQuoteAction(config, registries),
     ...buildQuoteDecisionActions(config),
     buildReviseQuoteAction(config),
   ];

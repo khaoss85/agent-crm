@@ -1,0 +1,4255 @@
+{
+  "attachment": "composed-domain-package",
+  "counts": {
+    "compatibility_required": 7,
+    "contractual": 91,
+    "defect_candidate": 0,
+    "incidental": 1,
+    "pre_extraction_evidence": 8
+  },
+  "domain": "commercial-operations",
+  "fingerprint": "82c1f02fa3545f9c72abbc89121b26cb5562b3d792755f414275732310f3fcf2",
+  "legacyCharacterizationContract": 1,
+  "limitations": [
+    {
+      "code": "DETERMINISTIC_FIXTURES_ONLY",
+      "message": "every catalog provider is a checked-in deterministic fixture. No network call is made, so nothing here characterizes a real provider's latency, error shape or data quality"
+    },
+    {
+      "code": "INCIDENTAL_NOT_ASSERTED",
+      "message": "observations classified incidental are recorded and not compared. Row ordering nobody specified and internal id shapes are free to change; freezing them would block the refactor this baseline exists to enable"
+    },
+    {
+      "code": "DEFECTS_NOT_FROZEN",
+      "message": "observations classified defect_candidate are reproduced and documented but never asserted as must-stay. Each one is a recommendation for a separate pre-extraction fix"
+    },
+    {
+      "code": "NOT_A_PERFORMANCE_BASELINE",
+      "message": "no timing is captured. An extraction that preserves every value and doubles the latency passes this suite"
+    },
+    {
+      "code": "CONCURRENCY_INVARIANTS_ONLY",
+      "message": "races are frozen as deterministic invariants (exactly one version, exactly one decision, totals matching surviving lines), never as which contender won — the winner is scheduling, not behaviour"
+    },
+    {
+      "code": "ADMIN_RENDER_NOT_MODELLED",
+      "message": "the Admin quote screens are frozen through the data they read — the schema block, the module rows and the action metadata — not through a driven browser. Browser rendering behaviour stays with tests/admin-quotes.test.js"
+    },
+    {
+      "code": "SCENARIO_EVIDENCE_SEPARATE",
+      "message": "DX6 scenario evidence (lead-to-won claims CO-01, CO-03, CO-07) runs its own composition and is not re-frozen here; the B8 battery replays the scenario as separate proof"
+    },
+    {
+      "code": "SINGLE_ATTACHMENT_SHAPE",
+      "message": "a baseline records how Commercial was attached when it was generated. Comparing baselines generated under different attachment shapes is a comparison of two different applications, and the contract carries the shape so that cannot happen silently"
+    }
+  ],
+  "observations": [
+    {
+      "category": "approval",
+      "classification": "contractual",
+      "id": "approval.agent-actor-refused",
+      "note": null,
+      "observed": {
+        "code": "HUMAN_APPROVAL_REQUIRED",
+        "refused": true,
+        "status": 403
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "approval",
+      "classification": "contractual",
+      "id": "approval.already-decided",
+      "note": null,
+      "observed": {
+        "code": "INVALID_STATE",
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "approval",
+      "classification": "contractual",
+      "id": "approval.approval-record",
+      "note": null,
+      "observed": [
+        {
+          "createdAt": "<present>",
+          "decidedAt": null,
+          "decidedBy": null,
+          "decisionReason": null,
+          "effectiveDiscountBps": 2000,
+          "id": "<id:1>",
+          "maxLineDiscountBps": 2000,
+          "policy": "standard-sales-discount",
+          "policyFingerprint": "ebb651487f4d29effac1a47251e085974ed219cb7f5acb6b55ccb45394e6adf7",
+          "policyVersion": 1,
+          "quoteId": "<id:2>",
+          "quoteVersionId": "<id:3>",
+          "reason": "max line discount 2000bps exceeds auto-approve limit 1000bps",
+          "requestedAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": "la0-commercial",
+          "requiredApprovalKey": "sales-manager",
+          "sourceKey": "qa:<id:3>",
+          "status": "pending",
+          "updatedAt": "<present>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "approval",
+      "classification": "contractual",
+      "id": "approval.approval-required-version",
+      "note": null,
+      "observed": {
+        "quoteStatus": "pending_approval",
+        "version": {
+          "decision": "approval_required",
+          "effectiveDiscountBps": 2000,
+          "id": "<id:1>",
+          "maxLineDiscountBps": 2000,
+          "policy": "standard-sales-discount",
+          "policyFingerprint": "ebb651487f4d29effac1a47251e085974ed219cb7f5acb6b55ccb45394e6adf7",
+          "policyVersion": 1,
+          "reason": "max line discount 2000bps exceeds auto-approve limit 1000bps",
+          "totals": {
+            "oneTimeTotal": {
+              "currency": "EUR",
+              "discountAmountCents": 100000,
+              "listAmountCents": 500000,
+              "netAmountCents": 400000
+            },
+            "recurringTotals": [
+              {
+                "currency": "EUR",
+                "discountAmountCents": 50000,
+                "interval": "month",
+                "intervalCount": 1,
+                "listAmountCents": 250000,
+                "netAmountCents": 200000
+              }
+            ]
+          },
+          "versionNumber": 1
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "approval",
+      "classification": "contractual",
+      "id": "approval.approve-decision",
+      "note": null,
+      "observed": {
+        "approvalId": "<id:1>",
+        "decision": "approved",
+        "quote": {
+          "currency": "EUR",
+          "currentApprovalId": "<id:1>",
+          "currentVersionId": "<id:2>",
+          "currentVersionNumber": 1,
+          "draftRevision": 2,
+          "id": "<id:3>",
+          "oneTimeTotal": {
+            "currency": "EUR",
+            "discountAmountCents": 100000,
+            "listAmountCents": 500000,
+            "netAmountCents": 400000
+          },
+          "opportunityId": "<id:4>",
+          "priceBookId": "<id:5>",
+          "recurringTotals": [
+            {
+              "currency": "EUR",
+              "discountAmountCents": 50000,
+              "interval": "month",
+              "intervalCount": 1,
+              "listAmountCents": 250000,
+              "netAmountCents": 200000
+            }
+          ],
+          "status": "approved"
+        },
+        "versionId": "<id:2>"
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "approval",
+      "classification": "contractual",
+      "id": "approval.decided-record",
+      "note": null,
+      "observed": [
+        {
+          "createdAt": "<present>",
+          "decidedAt": "2026-01-01T00:00:00.000Z",
+          "decidedBy": "la0-commercial",
+          "decisionReason": "Within delegated authority",
+          "effectiveDiscountBps": 2000,
+          "id": "<id:1>",
+          "maxLineDiscountBps": 2000,
+          "policy": "standard-sales-discount",
+          "policyFingerprint": "ebb651487f4d29effac1a47251e085974ed219cb7f5acb6b55ccb45394e6adf7",
+          "policyVersion": 1,
+          "quoteId": "<id:2>",
+          "quoteVersionId": "<id:3>",
+          "reason": "max line discount 2000bps exceeds auto-approve limit 1000bps",
+          "requestedAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": "la0-commercial",
+          "requiredApprovalKey": "sales-manager",
+          "sourceKey": "qa:<id:3>",
+          "status": "approved",
+          "updatedAt": "<present>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "approval",
+      "classification": "contractual",
+      "id": "approval.historical-version-keeps-decision",
+      "note": null,
+      "observed": {
+        "decisionReason": "max line discount 6000bps exceeds hard limit 5000bps",
+        "policyDecision": "reject",
+        "policyVersion": 1
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "approval",
+      "classification": "contractual",
+      "id": "approval.policy-reject",
+      "note": null,
+      "observed": {
+        "approvalId": null,
+        "quoteStatus": "rejected",
+        "version": {
+          "decision": "reject",
+          "effectiveDiscountBps": 6000,
+          "id": "<id:1>",
+          "maxLineDiscountBps": 6000,
+          "policy": "standard-sales-discount",
+          "policyFingerprint": "ebb651487f4d29effac1a47251e085974ed219cb7f5acb6b55ccb45394e6adf7",
+          "policyVersion": 1,
+          "reason": "max line discount 6000bps exceeds hard limit 5000bps",
+          "totals": {
+            "oneTimeTotal": {
+              "currency": "EUR",
+              "discountAmountCents": 300000,
+              "listAmountCents": 500000,
+              "netAmountCents": 200000
+            },
+            "recurringTotals": [
+              {
+                "currency": "EUR",
+                "discountAmountCents": 150000,
+                "interval": "month",
+                "intervalCount": 1,
+                "listAmountCents": 250000,
+                "netAmountCents": 100000
+              }
+            ]
+          },
+          "versionNumber": 1
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "approval",
+      "classification": "contractual",
+      "id": "approval.version-2-under-policy-v2",
+      "note": null,
+      "observed": {
+        "distinctFingerprintFromV1": true,
+        "quoteStatus": "approved",
+        "version": {
+          "decision": "auto_approve",
+          "effectiveDiscountBps": 300,
+          "id": "<id:1>",
+          "maxLineDiscountBps": 300,
+          "policy": "standard-sales-discount",
+          "policyFingerprint": "c733ebdce7521f2c626b549d3beecf3d72a70b97c0ccf75bae93aaec720b0564",
+          "policyVersion": 2,
+          "reason": "max line discount 300bps within auto-approve limit 500bps",
+          "totals": {
+            "oneTimeTotal": {
+              "currency": "EUR",
+              "discountAmountCents": 15000,
+              "listAmountCents": 500000,
+              "netAmountCents": 485000
+            },
+            "recurringTotals": [
+              {
+                "currency": "EUR",
+                "discountAmountCents": 7500,
+                "interval": "month",
+                "intervalCount": 1,
+                "listAmountCents": 250000,
+                "netAmountCents": 242500
+              }
+            ]
+          },
+          "versionNumber": 2
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.action-contract.add-line",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": false,
+        "fromStates": [
+          "draft"
+        ],
+        "input": [
+          {
+            "name": "offerId",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "required": true,
+            "type": "integer"
+          },
+          {
+            "name": "discountBps",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "name": "expectedRevision",
+            "required": false,
+            "type": "integer"
+          }
+        ],
+        "path": "/api/modules/quote/records/:id/actions/add-line",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.action-contract.approve",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": true,
+        "fromStates": [
+          "pending_approval"
+        ],
+        "input": [
+          {
+            "name": "reason",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "path": "/api/modules/quote/records/:id/actions/approve",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.action-contract.create-quote",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": false,
+        "fromStates": [],
+        "input": [
+          {
+            "name": "priceBookId",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "path": "/api/modules/opportunity/records/:id/actions/create-quote",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.action-contract.reject",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": true,
+        "fromStates": [
+          "pending_approval"
+        ],
+        "input": [
+          {
+            "name": "reason",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "path": "/api/modules/quote/records/:id/actions/reject",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.action-contract.remove-line",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": false,
+        "fromStates": [
+          "draft"
+        ],
+        "input": [
+          {
+            "name": "lineId",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "expectedRevision",
+            "required": false,
+            "type": "integer"
+          }
+        ],
+        "path": "/api/modules/quote/records/:id/actions/remove-line",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.action-contract.revise",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": false,
+        "fromStates": [
+          "rejected"
+        ],
+        "input": [],
+        "path": "/api/modules/quote/records/:id/actions/revise",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.action-contract.submit",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": false,
+        "fromStates": [
+          "draft"
+        ],
+        "input": [
+          {
+            "name": "policy",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "required": true,
+            "type": "integer"
+          },
+          {
+            "name": "expectedRevision",
+            "required": false,
+            "type": "integer"
+          }
+        ],
+        "path": "/api/modules/quote/records/:id/actions/submit",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.action-contract.update-line",
+      "note": null,
+      "observed": {
+        "actionContract": 1,
+        "confirm": false,
+        "fromStates": [
+          "draft"
+        ],
+        "input": [
+          {
+            "name": "lineId",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "name": "discountBps",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "name": "expectedRevision",
+            "required": false,
+            "type": "integer"
+          }
+        ],
+        "path": "/api/modules/quote/records/:id/actions/update-line",
+        "stateField": "status"
+      },
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.admin-read-data",
+      "note": "The presence gate and the submit dropdown in apps/admin/public/admin-quotes.js read exactly this.",
+      "observed": {
+        "blockPresent": true,
+        "discountPolicyOptions": [
+          "standard-sales-discount@1",
+          "standard-sales-discount@2"
+        ]
+      },
+      "surface": "admin"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.app-commercial-consumers",
+      "note": "Every file that really reads the ambient app.commercial field, in code rather than in prose.",
+      "observed": [],
+      "surface": "sdk"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.app-commercial-field-present",
+      "note": "The ambient registries on the application object, injected into every action context. The extraction replaces them with registries the package owns.",
+      "observed": {
+        "present": false
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.app-inspect-commercial-shape",
+      "note": "Today Commercial appears through the fixed composition slot and the providers listing. After extraction it appears as a discovered package; this shape is the thing the extraction changes.",
+      "observed": {
+        "commercialProviders": [],
+        "packages": [
+          "commercial"
+        ]
+      },
+      "surface": "app-inspect"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.app-inspect-valid",
+      "note": null,
+      "observed": {
+        "exitCode": 0,
+        "problems": 0,
+        "valid": true
+      },
+      "surface": "app-inspect"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.catalog-route-in-kernel-server",
+      "note": "The B7 seam evidence: the route and the app method are kernel-owned because no package can contribute either today.",
+      "observed": {
+        "appMethodWired": true,
+        "routeDeclared": true
+      },
+      "surface": "http"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.catalog-sync-ownership",
+      "note": "The one Commercial-owned kernel HTTP route and app method. No package can contribute a route or an application operation today — the B7 seam evidence in the ExecPlan. The route behaviour itself is frozen contractually by the catalog.* observations.",
+      "observed": {
+        "appMethod": true,
+        "route": "POST /api/catalog/sync"
+      },
+      "surface": "http"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.commercial-internal-importers",
+      "note": "Every file outside the package with a real import statement naming a Commercial source file. After the extraction the only sanctioned importer is the project composition file, which is generated per project and not checked in here.",
+      "observed": [
+        "examples/journeys/service-sla-escalation/journey.mjs",
+        "examples/starters/b2b-lead-qualification/install.mjs"
+      ],
+      "surface": "sdk"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.definition-kinds-published",
+      "note": null,
+      "observed": {
+        "catalogProviders": [
+          "fixture-saas-catalog@1",
+          "la0-aux-catalog@1",
+          "la0-deactivating-catalog@1"
+        ],
+        "discountPolicies": [
+          "standard-sales-discount@1",
+          "standard-sales-discount@2"
+        ]
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.definition-registry-slot",
+      "note": "Who depends on the fixed project-owned definition slot, in code.",
+      "observed": [],
+      "surface": "app-inspect"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.fingerprint.catalogProviders.fixture-saas-catalog@1",
+      "note": null,
+      "observed": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.fingerprint.catalogProviders.la0-aux-catalog@1",
+      "note": null,
+      "observed": "6b3ca3b11eff552b0afd3824c3d3d0619210ad319e539369fa80c263b65017bd",
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.fingerprint.catalogProviders.la0-deactivating-catalog@1",
+      "note": null,
+      "observed": "6bb73e1729e0de523c7107aebd885e78d97f27cddebdb2a1808afb9e2cf8f925",
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.fingerprint.discountPolicies.standard-sales-discount@1",
+      "note": null,
+      "observed": "ebb651487f4d29effac1a47251e085974ed219cb7f5acb6b55ccb45394e6adf7",
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.fingerprint.discountPolicies.standard-sales-discount@2",
+      "note": null,
+      "observed": "c733ebdce7521f2c626b549d3beecf3d72a70b97c0ccf75bae93aaec720b0564",
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.managed-fields",
+      "note": null,
+      "observed": {
+        "catalog-sync-run": [
+          "completedAt",
+          "componentsCreated",
+          "deactivated",
+          "ineligibleOffers",
+          "offersCreated",
+          "offersRevised",
+          "priceBooksCreated",
+          "productsCreated",
+          "provider",
+          "providerFingerprint",
+          "providerVersion",
+          "sourceRef",
+          "startedAt",
+          "status",
+          "tiersCreated",
+          "unchanged",
+          "versionsCreated"
+        ],
+        "offer": [
+          "active",
+          "componentCount",
+          "currency",
+          "externalOfferId",
+          "logicalKey",
+          "name",
+          "priceBookId",
+          "productId",
+          "productVersionId",
+          "provider",
+          "providerFingerprint",
+          "providerVersion",
+          "quoteEligible",
+          "revision",
+          "sourceFingerprint",
+          "sourceKey",
+          "unsupportedReason"
+        ],
+        "price-book": [
+          "active",
+          "currency",
+          "name",
+          "provider",
+          "sourceKey",
+          "sourceKind"
+        ],
+        "price-component": [
+          "chargeType",
+          "componentKey",
+          "currency",
+          "externalPriceId",
+          "flatAmountCents",
+          "interval",
+          "intervalCount",
+          "label",
+          "offerId",
+          "position",
+          "pricingModel",
+          "provider",
+          "sourceKey",
+          "sourcePricingModel",
+          "tierCount",
+          "unitAmountCents"
+        ],
+        "price-tier": [
+          "componentId",
+          "flatAmountCents",
+          "position",
+          "sourceKey",
+          "unitAmountCents",
+          "upToQuantity"
+        ],
+        "product": [
+          "active",
+          "currentVersionId",
+          "externalId",
+          "provider",
+          "sourceKey",
+          "sourceKind"
+        ],
+        "product-version": [
+          "category",
+          "description",
+          "effectiveAt",
+          "name",
+          "productId",
+          "provider",
+          "providerFingerprint",
+          "providerVersion",
+          "sku",
+          "sourceFingerprint",
+          "sourceKey",
+          "version"
+        ],
+        "quote": [
+          "currency",
+          "currentApprovalId",
+          "currentVersionId",
+          "currentVersionNumber",
+          "draftRevision",
+          "oneTimeNetCents",
+          "opportunityId",
+          "orderId",
+          "priceBookId",
+          "recurringGroupCount",
+          "signatureEnvelopeId",
+          "signatureStatus",
+          "status",
+          "totalsJson"
+        ],
+        "quote-approval": [
+          "decidedAt",
+          "decidedBy",
+          "decisionReason",
+          "effectiveDiscountBps",
+          "maxLineDiscountBps",
+          "policy",
+          "policyFingerprint",
+          "policyVersion",
+          "quoteId",
+          "quoteVersionId",
+          "reason",
+          "requestedAt",
+          "requestedBy",
+          "requiredApprovalKey",
+          "sourceKey",
+          "status"
+        ],
+        "quote-line": [
+          "breakdownJson",
+          "componentCount",
+          "discountAmountCents",
+          "discountBps",
+          "listAmountCents",
+          "netAmountCents",
+          "offerId",
+          "offerLogicalKey",
+          "offerName",
+          "offerRevision",
+          "position",
+          "productId",
+          "productVersionId",
+          "quantity",
+          "quoteId",
+          "removed",
+          "sku"
+        ],
+        "quote-version": [
+          "approvalId",
+          "currency",
+          "decisionReason",
+          "draftRevisionUsed",
+          "effectiveDiscountBps",
+          "maxLineDiscountBps",
+          "oneTimeDiscountCents",
+          "oneTimeListCents",
+          "oneTimeNetCents",
+          "opportunityId",
+          "policy",
+          "policyDecision",
+          "policyFingerprint",
+          "policyVersion",
+          "priceBookId",
+          "quoteId",
+          "recurringGroupCount",
+          "requiredApprovalKey",
+          "sourceKey",
+          "submittedAt",
+          "submittedBy",
+          "totalsJson",
+          "versionNumber"
+        ],
+        "quote-version-component": [
+          "chargeType",
+          "componentId",
+          "componentKey",
+          "discountAmountCents",
+          "externalPriceId",
+          "flatAmountCents",
+          "interval",
+          "intervalCount",
+          "label",
+          "listAmountCents",
+          "netAmountCents",
+          "pricingModel",
+          "provider",
+          "quantity",
+          "sourcePricingModel",
+          "tierBreakdownJson",
+          "tiersJson",
+          "unitAmountCents",
+          "versionId",
+          "versionLineId"
+        ],
+        "quote-version-line": [
+          "componentCount",
+          "discountAmountCents",
+          "discountBps",
+          "listAmountCents",
+          "netAmountCents",
+          "offerId",
+          "offerLogicalKey",
+          "offerName",
+          "offerRevision",
+          "position",
+          "productId",
+          "productVersionId",
+          "quantity",
+          "sku",
+          "versionId"
+        ],
+        "quote-version-total": [
+          "currency",
+          "discountAmountCents",
+          "interval",
+          "intervalCount",
+          "kind",
+          "listAmountCents",
+          "netAmountCents",
+          "versionId"
+        ]
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.module-capabilities",
+      "note": null,
+      "observed": {
+        "catalog-sync-run": [
+          "get",
+          "list"
+        ],
+        "offer": [
+          "get",
+          "list"
+        ],
+        "price-book": [
+          "get",
+          "list"
+        ],
+        "price-component": [
+          "get",
+          "list"
+        ],
+        "price-tier": [
+          "get",
+          "list"
+        ],
+        "product": [
+          "get",
+          "list"
+        ],
+        "product-version": [
+          "get",
+          "list"
+        ],
+        "quote": [
+          "get",
+          "list"
+        ],
+        "quote-approval": [
+          "get",
+          "list"
+        ],
+        "quote-line": [
+          "get",
+          "list"
+        ],
+        "quote-version": [
+          "get",
+          "list"
+        ],
+        "quote-version-component": [
+          "get",
+          "list"
+        ],
+        "quote-version-line": [
+          "get",
+          "list"
+        ],
+        "quote-version-total": [
+          "get",
+          "list"
+        ]
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.opportunity-actions-advertised",
+      "note": null,
+      "observed": [
+        "create-quote"
+      ],
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.quote-actions-advertised",
+      "note": null,
+      "observed": [
+        "add-line",
+        "approve",
+        "reject",
+        "remove-line",
+        "revise",
+        "submit",
+        "update-line"
+      ],
+      "surface": "action-metadata"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.read-only-refusals",
+      "note": null,
+      "observed": {
+        "offer": {
+          "create": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          },
+          "update": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          }
+        },
+        "price-book": {
+          "create": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          },
+          "update": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          }
+        },
+        "quote": {
+          "create": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          },
+          "update": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          }
+        },
+        "quote-version": {
+          "create": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          },
+          "update": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          }
+        }
+      },
+      "surface": "http"
+    },
+    {
+      "category": "architecture",
+      "classification": "pre_extraction_evidence",
+      "id": "architecture.schema-commercial-block-present",
+      "note": "Published today as an ambient `commercial` block on /api/schema from app.commercial.metadata(). After extraction it should be the package's own schema contribution — a deliberate migration, not a behaviour change to hide.",
+      "observed": {
+        "foundAt": "schema.domains.commercial",
+        "present": true
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.schema-contract-strings",
+      "note": null,
+      "observed": {
+        "chargeTypes": [
+          "one_time",
+          "recurring"
+        ],
+        "commercialContract": 1,
+        "discounts": "integer basis points 0-10000; discount = trunc(list*bps/10000), applied per component after tier calculation",
+        "maxDiscountBps": 10000,
+        "maxQuantity": 1000000,
+        "money": "safe integers, 1/100 currency units, two decimals (not ISO-4217 exponents)",
+        "pricingContract": 1,
+        "pricingModels": [
+          "flat_fee",
+          "per_unit",
+          "volume",
+          "graduated"
+        ],
+        "quantitySemantics": {
+          "flat_fee": "charged once per quote line; line quantity does not multiply it",
+          "graduated": "each tier band prices the quantity that falls inside it",
+          "per_unit": "unitAmount x quantity",
+          "volume": "the tier the total quantity reaches prices the entire quantity"
+        },
+        "recurringIntervals": [
+          "month",
+          "year"
+        ],
+        "totals": "grouped: one one-time total plus one per (currency, interval, intervalCount); unlike periods are never summed and no ARR/MRR/TCV is derived",
+        "unsupportedModels": "metered usage, overage, proration, ramps, minimum commitments, attribute-based pricing, taxes and FX are never approximated: such offers persist with quoteEligible=false and an unsupportedReason"
+      },
+      "surface": "schema"
+    },
+    {
+      "category": "architecture",
+      "classification": "contractual",
+      "id": "architecture.solution-plan-binding",
+      "note": "AX2: the shipped lead-to-won plan must keep binding to this repository's composition. The extraction repins the inspection fingerprint; the exit code must not move.",
+      "observed": {
+        "exitCode": 0
+      },
+      "surface": "solution-plan"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit.action-vocabulary",
+      "note": null,
+      "observed": [
+        "catalog-sync-run.created",
+        "company.created",
+        "offer.created",
+        "offer.updated",
+        "opportunity.created",
+        "price-book.created",
+        "price-component.created",
+        "price-tier.created",
+        "product-version.created",
+        "product.created",
+        "product.updated",
+        "quote-approval.created",
+        "quote-approval.updated",
+        "quote-line.created",
+        "quote-line.updated",
+        "quote-version-component.created",
+        "quote-version-line.created",
+        "quote-version-total.created",
+        "quote-version.created",
+        "quote-version.updated",
+        "quote.created",
+        "quote.updated"
+      ],
+      "surface": "audit"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "audit.counts-by-action",
+      "note": null,
+      "observed": {
+        "catalog-sync-run.created": 7,
+        "company.created": 7,
+        "offer.created": 13,
+        "offer.updated": 3,
+        "opportunity.created": 7,
+        "price-book.created": 5,
+        "price-component.created": 17,
+        "price-tier.created": 15,
+        "product-version.created": 11,
+        "product.created": 11,
+        "product.updated": 12,
+        "quote-approval.created": 2,
+        "quote-approval.updated": 2,
+        "quote-line.created": 13,
+        "quote-line.updated": 3,
+        "quote-version-component.created": 22,
+        "quote-version-line.created": 9,
+        "quote-version-total.created": 13,
+        "quote-version.created": 6,
+        "quote-version.updated": 6,
+        "quote.created": 7,
+        "quote.updated": 25
+      },
+      "surface": "audit"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.deactivate-missing-honoured",
+      "note": null,
+      "observed": {
+        "firstCounts": {
+          "componentsCreated": 0,
+          "deactivated": 0,
+          "ineligibleOffers": 0,
+          "offersCreated": 0,
+          "offersRevised": 0,
+          "priceBooksCreated": 1,
+          "productsCreated": 2,
+          "tiersCreated": 0,
+          "unchanged": 0,
+          "versionsCreated": 2
+        },
+        "gonerActive": false,
+        "keeperActive": true,
+        "secondCounts": {
+          "componentsCreated": 0,
+          "deactivated": 1,
+          "ineligibleOffers": 0,
+          "offersCreated": 0,
+          "offersRevised": 0,
+          "priceBooksCreated": 0,
+          "productsCreated": 0,
+          "tiersCreated": 0,
+          "unchanged": 2,
+          "versionsCreated": 0
+        }
+      },
+      "surface": "http"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.missing-not-deactivated-without-declared-config",
+      "note": null,
+      "observed": {
+        "activeFixtureProducts": 7
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.provider-failures",
+      "note": null,
+      "observed": {
+        "bad-tiers": {
+          "code": "PROVIDER_INVALID",
+          "refused": true,
+          "status": 502
+        },
+        "fail": {
+          "code": "PROVIDER_FAILED",
+          "refused": true,
+          "status": 502
+        },
+        "invalid": {
+          "code": "PROVIDER_INVALID",
+          "refused": true,
+          "status": 502
+        },
+        "oversized": {
+          "code": "PROVIDER_INVALID",
+          "refused": true,
+          "status": 502
+        },
+        "slow": {
+          "code": "PROVIDER_TIMEOUT",
+          "refused": true,
+          "status": 504
+        }
+      },
+      "surface": "http"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.provider-failures-leave-no-partial-state",
+      "note": null,
+      "observed": {
+        "failedTraces": 5,
+        "offerCountUnchanged": true
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.records.components-and-tiers",
+      "note": null,
+      "observed": [
+        {
+          "chargeType": "recurring",
+          "componentKey": "api-calls",
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalPriceId": "price_api_m",
+          "flatAmountCents": null,
+          "id": "<id:1>",
+          "interval": "month",
+          "intervalCount": 1,
+          "label": "API capacity (per 1k calls)",
+          "offerId": "<id:2>",
+          "position": 1,
+          "pricingModel": "per_unit",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:offer:api-monthly:1:api-calls",
+          "sourcePricingModel": "stripe:recurring.per_unit",
+          "tierCount": 0,
+          "tiers": [],
+          "unitAmountCents": 900,
+          "updatedAt": "<present>"
+        },
+        {
+          "chargeType": "one_time",
+          "componentKey": "ent-setup",
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalPriceId": "price_ent_setup",
+          "flatAmountCents": 500000,
+          "id": "<id:3>",
+          "interval": null,
+          "intervalCount": null,
+          "label": "Setup and migration",
+          "offerId": "<id:4>",
+          "position": 1,
+          "pricingModel": "flat_fee",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:offer:enterprise:1:ent-setup",
+          "sourcePricingModel": "stripe:one_time.flat",
+          "tierCount": 0,
+          "tiers": [],
+          "unitAmountCents": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "chargeType": "recurring",
+          "componentKey": "ent-platform",
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalPriceId": "price_ent_platform",
+          "flatAmountCents": 200000,
+          "id": "<id:5>",
+          "interval": "month",
+          "intervalCount": 1,
+          "label": "Platform fee",
+          "offerId": "<id:4>",
+          "position": 2,
+          "pricingModel": "flat_fee",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:offer:enterprise:1:ent-platform",
+          "sourcePricingModel": "stripe:recurring.flat",
+          "tierCount": 0,
+          "tiers": [],
+          "unitAmountCents": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "chargeType": "recurring",
+          "componentKey": "ent-seats",
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalPriceId": "price_ent_seats",
+          "flatAmountCents": null,
+          "id": "<id:6>",
+          "interval": "month",
+          "intervalCount": 1,
+          "label": "Seats",
+          "offerId": "<id:4>",
+          "position": 3,
+          "pricingModel": "volume",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:offer:enterprise:1:ent-seats",
+          "sourcePricingModel": "stripe:tiers_mode=volume",
+          "tierCount": 3,
+          "tiers": [
+            {
+              "flatAmountCents": 0,
+              "position": 1,
+              "unitAmountCents": 5000,
+              "upToQuantity": 20
+            },
+            {
+              "flatAmountCents": 0,
+              "position": 2,
+              "unitAmountCents": 4000,
+              "upToQuantity": 100
+            },
+            {
+              "flatAmountCents": 0,
+              "position": 3,
+              "unitAmountCents": 3000,
+              "upToQuantity": null
+            }
+          ],
+          "unitAmountCents": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "chargeType": "recurring",
+          "componentKey": "platform-fee",
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalPriceId": "price_platform_m",
+          "flatAmountCents": 200000,
+          "id": "<id:7>",
+          "interval": "month",
+          "intervalCount": 1,
+          "label": "Platform fee",
+          "offerId": "<id:8>",
+          "position": 1,
+          "pricingModel": "flat_fee",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:offer:platform-monthly:1:platform-fee",
+          "sourcePricingModel": "stripe:recurring.flat",
+          "tierCount": 0,
+          "tiers": [],
+          "unitAmountCents": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "chargeType": "recurring",
+          "componentKey": "seats",
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalPriceId": "price_seats_m",
+          "flatAmountCents": null,
+          "id": "<id:9>",
+          "interval": "month",
+          "intervalCount": 1,
+          "label": "User seats",
+          "offerId": "<id:10>",
+          "position": 1,
+          "pricingModel": "volume",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:offer:seats-monthly:1:seats",
+          "sourcePricingModel": "stripe:tiers_mode=volume",
+          "tierCount": 3,
+          "tiers": [
+            {
+              "flatAmountCents": 0,
+              "position": 1,
+              "unitAmountCents": 5000,
+              "upToQuantity": 20
+            },
+            {
+              "flatAmountCents": 0,
+              "position": 2,
+              "unitAmountCents": 4000,
+              "upToQuantity": 100
+            },
+            {
+              "flatAmountCents": 0,
+              "position": 3,
+              "unitAmountCents": 3000,
+              "upToQuantity": null
+            }
+          ],
+          "unitAmountCents": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "chargeType": "one_time",
+          "componentKey": "setup-fee",
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalPriceId": "price_setup",
+          "flatAmountCents": 500000,
+          "id": "<id:11>",
+          "interval": null,
+          "intervalCount": null,
+          "label": "Setup fee",
+          "offerId": "<id:12>",
+          "position": 1,
+          "pricingModel": "flat_fee",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:offer:setup:1:setup-fee",
+          "sourcePricingModel": "stripe:one_time.flat",
+          "tierCount": 0,
+          "tiers": [],
+          "unitAmountCents": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "chargeType": "one_time",
+          "componentKey": "migration-records",
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalPriceId": "price_migration",
+          "flatAmountCents": null,
+          "id": "<id:13>",
+          "interval": null,
+          "intervalCount": null,
+          "label": "Data migration (per record)",
+          "offerId": "<id:12>",
+          "position": 2,
+          "pricingModel": "per_unit",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:offer:setup:1:migration-records",
+          "sourcePricingModel": "stripe:one_time.per_unit",
+          "tierCount": 0,
+          "tiers": [],
+          "unitAmountCents": 25,
+          "updatedAt": "<present>"
+        },
+        {
+          "chargeType": "recurring",
+          "componentKey": "storage-gb",
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalPriceId": "price_storage_m",
+          "flatAmountCents": null,
+          "id": "<id:14>",
+          "interval": "month",
+          "intervalCount": 1,
+          "label": "Storage (per GB)",
+          "offerId": "<id:15>",
+          "position": 1,
+          "pricingModel": "graduated",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:offer:storage-monthly:1:storage-gb",
+          "sourcePricingModel": "zuora:tiered.cumulative",
+          "tierCount": 3,
+          "tiers": [
+            {
+              "flatAmountCents": 0,
+              "position": 1,
+              "unitAmountCents": 200,
+              "upToQuantity": 100
+            },
+            {
+              "flatAmountCents": 0,
+              "position": 2,
+              "unitAmountCents": 150,
+              "upToQuantity": 1000
+            },
+            {
+              "flatAmountCents": 0,
+              "position": 3,
+              "unitAmountCents": 100,
+              "upToQuantity": null
+            }
+          ],
+          "unitAmountCents": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "chargeType": "recurring",
+          "componentKey": "support-fee",
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalPriceId": "price_support_y",
+          "flatAmountCents": 1000000,
+          "id": "<id:16>",
+          "interval": "year",
+          "intervalCount": 1,
+          "label": "Premium support",
+          "offerId": "<id:17>",
+          "position": 1,
+          "pricingModel": "flat_fee",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:offer:support-annual:1:support-fee",
+          "sourcePricingModel": "zuora:recurring.flat",
+          "tierCount": 0,
+          "tiers": [],
+          "unitAmountCents": null,
+          "updatedAt": "<present>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.records.offers",
+      "note": null,
+      "observed": [
+        {
+          "active": true,
+          "componentCount": 1,
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalOfferId": "plan_api_monthly",
+          "id": "<id:1>",
+          "logicalKey": "fixture:offer:api-monthly",
+          "name": "API Add-on — Monthly",
+          "priceBookId": "<id:2>",
+          "productId": "<id:3>",
+          "productVersionId": "<id:4>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "quoteEligible": true,
+          "revision": 1,
+          "sourceFingerprint": "<offer-declared-fingerprint>",
+          "sourceKey": "fixture:offer:api-monthly:1",
+          "unsupportedReason": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "componentCount": 0,
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalOfferId": "plan_bandwidth_metered",
+          "id": "<id:5>",
+          "logicalKey": "fixture:offer:bandwidth-metered",
+          "name": "Metered Bandwidth",
+          "priceBookId": "<id:2>",
+          "productId": "<id:6>",
+          "productVersionId": "<id:7>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "quoteEligible": false,
+          "revision": 1,
+          "sourceFingerprint": "<offer-declared-fingerprint>",
+          "sourceKey": "fixture:offer:bandwidth-metered:1",
+          "unsupportedReason": "metered usage billing is not modeled in this milestone (no usage records, no rating)",
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "componentCount": 3,
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalOfferId": "plan_enterprise",
+          "id": "<id:8>",
+          "logicalKey": "fixture:offer:enterprise",
+          "name": "Enterprise Plan",
+          "priceBookId": "<id:2>",
+          "productId": "<id:9>",
+          "productVersionId": "<id:10>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "quoteEligible": true,
+          "revision": 1,
+          "sourceFingerprint": "<offer-declared-fingerprint>",
+          "sourceKey": "fixture:offer:enterprise:1",
+          "unsupportedReason": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "componentCount": 1,
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalOfferId": "plan_platform_monthly",
+          "id": "<id:11>",
+          "logicalKey": "fixture:offer:platform-monthly",
+          "name": "Platform — Monthly",
+          "priceBookId": "<id:2>",
+          "productId": "<id:9>",
+          "productVersionId": "<id:10>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "quoteEligible": true,
+          "revision": 1,
+          "sourceFingerprint": "<offer-declared-fingerprint>",
+          "sourceKey": "fixture:offer:platform-monthly:1",
+          "unsupportedReason": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "componentCount": 1,
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalOfferId": "plan_seats_monthly",
+          "id": "<id:12>",
+          "logicalKey": "fixture:offer:seats-monthly",
+          "name": "Seats — Monthly (volume)",
+          "priceBookId": "<id:2>",
+          "productId": "<id:13>",
+          "productVersionId": "<id:14>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "quoteEligible": true,
+          "revision": 1,
+          "sourceFingerprint": "<offer-declared-fingerprint>",
+          "sourceKey": "fixture:offer:seats-monthly:1",
+          "unsupportedReason": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "componentCount": 2,
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalOfferId": "plan_setup",
+          "id": "<id:15>",
+          "logicalKey": "fixture:offer:setup",
+          "name": "Setup & Migration",
+          "priceBookId": "<id:2>",
+          "productId": "<id:16>",
+          "productVersionId": "<id:17>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "quoteEligible": true,
+          "revision": 1,
+          "sourceFingerprint": "<offer-declared-fingerprint>",
+          "sourceKey": "fixture:offer:setup:1",
+          "unsupportedReason": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "componentCount": 1,
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalOfferId": "plan_storage_monthly",
+          "id": "<id:18>",
+          "logicalKey": "fixture:offer:storage-monthly",
+          "name": "Storage — Monthly (graduated)",
+          "priceBookId": "<id:2>",
+          "productId": "<id:19>",
+          "productVersionId": "<id:20>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "quoteEligible": true,
+          "revision": 1,
+          "sourceFingerprint": "<offer-declared-fingerprint>",
+          "sourceKey": "fixture:offer:storage-monthly:1",
+          "unsupportedReason": null,
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "componentCount": 1,
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "externalOfferId": "plan_support_annual",
+          "id": "<id:21>",
+          "logicalKey": "fixture:offer:support-annual",
+          "name": "Premium Support — Annual",
+          "priceBookId": "<id:2>",
+          "productId": "<id:22>",
+          "productVersionId": "<id:23>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "quoteEligible": true,
+          "revision": 1,
+          "sourceFingerprint": "<offer-declared-fingerprint>",
+          "sourceKey": "fixture:offer:support-annual:1",
+          "unsupportedReason": null,
+          "updatedAt": "<present>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.records.price-book",
+      "note": null,
+      "observed": [
+        {
+          "active": true,
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "id": "<id:1>",
+          "name": "Standard EUR",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:pb:standard-eur",
+          "sourceKind": "provider",
+          "updatedAt": "<present>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.records.product-versions",
+      "note": null,
+      "observed": [
+        {
+          "category": "subscription",
+          "createdAt": "<present>",
+          "description": "Per-call API capacity.",
+          "effectiveAt": "<present>",
+          "id": "<id:1>",
+          "name": "API Add-on",
+          "productId": "<id:2>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "sku": "API",
+          "sourceFingerprint": "2d975c43207a30c39600e8a9323eedff43f678a7187e99a92f08d257e7a99ea8",
+          "sourceKey": "pv:fixture:product:api:1",
+          "updatedAt": "<present>",
+          "version": 1
+        },
+        {
+          "category": "subscription",
+          "createdAt": "<present>",
+          "description": "Core platform subscription.",
+          "effectiveAt": "<present>",
+          "id": "<id:3>",
+          "name": "SaaS Platform",
+          "productId": "<id:4>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "sku": "PLATFORM",
+          "sourceFingerprint": "02942e392d01f5a6bfe425c71c644108a16c7b3c4a80c48180524266dcc0c0c2",
+          "sourceKey": "pv:fixture:product:platform:1",
+          "updatedAt": "<present>",
+          "version": 1
+        },
+        {
+          "category": "subscription",
+          "createdAt": "<present>",
+          "description": "Named user seats.",
+          "effectiveAt": "<present>",
+          "id": "<id:5>",
+          "name": "User Seats",
+          "productId": "<id:6>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "sku": "SEATS",
+          "sourceFingerprint": "98273dd233e482a3d279917a92f2539ca60626d15b1d99b962c137c65c4af443",
+          "sourceKey": "pv:fixture:product:seats:1",
+          "updatedAt": "<present>",
+          "version": 1
+        },
+        {
+          "category": "services",
+          "createdAt": "<present>",
+          "description": "Setup, migration and training.",
+          "effectiveAt": "<present>",
+          "id": "<id:7>",
+          "name": "Professional Services",
+          "productId": "<id:8>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "sku": "SERVICES",
+          "sourceFingerprint": "e8ddbd4faa3fd99a6e7772c7c705a913bf27c35eca9cb228a310d5e591202463",
+          "sourceKey": "pv:fixture:product:services:1",
+          "updatedAt": "<present>",
+          "version": 1
+        },
+        {
+          "category": "subscription",
+          "createdAt": "<present>",
+          "description": "Managed storage in GB.",
+          "effectiveAt": "<present>",
+          "id": "<id:9>",
+          "name": "Storage",
+          "productId": "<id:10>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "sku": "STORAGE",
+          "sourceFingerprint": "6d8e6b8168bbf7e38f71c02fa8e41ee4123b8820f411d2ca65dfedcbf984fdf4",
+          "sourceKey": "pv:fixture:product:storage:1",
+          "updatedAt": "<present>",
+          "version": 1
+        },
+        {
+          "category": "support",
+          "createdAt": "<present>",
+          "description": "Annual premium support.",
+          "effectiveAt": "<present>",
+          "id": "<id:11>",
+          "name": "Premium Support",
+          "productId": "<id:12>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "sku": "SUPPORT",
+          "sourceFingerprint": "2197ce5171819a5001d304d7abc8f87238830850244c93a3b62a0c5811c68fd8",
+          "sourceKey": "pv:fixture:product:support:1",
+          "updatedAt": "<present>",
+          "version": 1
+        },
+        {
+          "category": "usage",
+          "createdAt": "<present>",
+          "description": "Usage-billed bandwidth.",
+          "effectiveAt": "<present>",
+          "id": "<id:13>",
+          "name": "Metered Bandwidth",
+          "productId": "<id:14>",
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "sku": "USAGE",
+          "sourceFingerprint": "c090b18acb66ab439ba9d44f0da94233a83417418bcc013a40f416cccf9380f6",
+          "sourceKey": "pv:fixture:product:usage:1",
+          "updatedAt": "<present>",
+          "version": 1
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.records.products",
+      "note": null,
+      "observed": [
+        {
+          "active": true,
+          "createdAt": "<present>",
+          "currentVersionId": "<id:1>",
+          "externalId": "prod_api",
+          "id": "<id:2>",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:product:api",
+          "sourceKind": "provider",
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "createdAt": "<present>",
+          "currentVersionId": "<id:3>",
+          "externalId": "prod_platform",
+          "id": "<id:4>",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:product:platform",
+          "sourceKind": "provider",
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "createdAt": "<present>",
+          "currentVersionId": "<id:5>",
+          "externalId": "prod_seats",
+          "id": "<id:6>",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:product:seats",
+          "sourceKind": "provider",
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "createdAt": "<present>",
+          "currentVersionId": "<id:7>",
+          "externalId": "prod_services",
+          "id": "<id:8>",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:product:services",
+          "sourceKind": "provider",
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "createdAt": "<present>",
+          "currentVersionId": "<id:9>",
+          "externalId": "prod_storage",
+          "id": "<id:10>",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:product:storage",
+          "sourceKind": "provider",
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "createdAt": "<present>",
+          "currentVersionId": "<id:11>",
+          "externalId": "prod_support",
+          "id": "<id:12>",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:product:support",
+          "sourceKind": "provider",
+          "updatedAt": "<present>"
+        },
+        {
+          "active": true,
+          "createdAt": "<present>",
+          "currentVersionId": "<id:13>",
+          "externalId": "prod_usage",
+          "id": "<id:14>",
+          "provider": "fixture-saas-catalog",
+          "sourceKey": "fixture:product:usage",
+          "sourceKind": "provider",
+          "updatedAt": "<present>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.sync.aux-provider",
+      "note": null,
+      "observed": {
+        "counts": {
+          "componentsCreated": 1,
+          "deactivated": 0,
+          "ineligibleOffers": 0,
+          "offersCreated": 1,
+          "offersRevised": 0,
+          "priceBooksCreated": 2,
+          "productsCreated": 1,
+          "tiersCreated": 0,
+          "unchanged": 0,
+          "versionsCreated": 1
+        },
+        "provider": "la0-aux-catalog"
+      },
+      "surface": "http"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.sync.first-run",
+      "note": null,
+      "observed": {
+        "counts": {
+          "componentsCreated": 10,
+          "deactivated": 0,
+          "ineligibleOffers": 1,
+          "offersCreated": 8,
+          "offersRevised": 0,
+          "priceBooksCreated": 1,
+          "productsCreated": 7,
+          "tiersCreated": 9,
+          "unchanged": 0,
+          "versionsCreated": 7
+        },
+        "ok": true,
+        "provider": "fixture-saas-catalog",
+        "providerVersion": 1,
+        "runId": "<id:1>"
+      },
+      "surface": "http"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.sync.rerun-idempotent",
+      "note": "An identical re-sync writes only its sync-run evidence: no fake audits, no fake events, no rewritten rows.",
+      "observed": {
+        "auditDelta": 1,
+        "counts": {
+          "componentsCreated": 0,
+          "deactivated": 0,
+          "ineligibleOffers": 1,
+          "offersCreated": 0,
+          "offersRevised": 0,
+          "priceBooksCreated": 0,
+          "productsCreated": 0,
+          "tiersCreated": 0,
+          "unchanged": 16,
+          "versionsCreated": 0
+        },
+        "eventDelta": 1
+      },
+      "surface": "http"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.sync.run-record",
+      "note": null,
+      "observed": [
+        {
+          "completedAt": "<present>",
+          "componentsCreated": 10,
+          "createdAt": "<present>",
+          "deactivated": 0,
+          "id": "<id:1>",
+          "ineligibleOffers": 1,
+          "offersCreated": 8,
+          "offersRevised": 0,
+          "priceBooksCreated": 1,
+          "productsCreated": 7,
+          "provider": "fixture-saas-catalog",
+          "providerFingerprint": "d2802fea82c634ff2a38cd5004e418e6910e593fff73e7481ffca8d9fd09050b",
+          "providerVersion": 1,
+          "sourceRef": "fixture:v1",
+          "startedAt": "<present>",
+          "status": "completed",
+          "tiersCreated": 9,
+          "unchanged": 0,
+          "updatedAt": "<present>",
+          "versionsCreated": 7
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.unknown-provider-refused",
+      "note": null,
+      "observed": {
+        "missingProvider": {
+          "code": "VALIDATION_ERROR",
+          "refused": true,
+          "status": 400
+        },
+        "unknown": {
+          "code": "NOT_FOUND",
+          "refused": true,
+          "status": 404
+        }
+      },
+      "surface": "http"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.unsupported-offer-preserved-not-approximated",
+      "note": null,
+      "observed": {
+        "componentRows": 0,
+        "quoteEligible": false,
+        "unsupportedReason": "metered usage billing is not modeled in this milestone (no usage records, no rating)"
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.v2.new-draft-prices-at-new-revision",
+      "note": null,
+      "observed": {
+        "volumeComponent": [
+          {
+            "listAmountCents": 126000,
+            "quantity": 30
+          }
+        ]
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.v2.new-offer-revision",
+      "note": null,
+      "observed": {
+        "newRevision": 2,
+        "newTiers": [
+          [
+            25,
+            5500
+          ],
+          [
+            100,
+            4200
+          ],
+          [
+            null,
+            3000
+          ]
+        ],
+        "oldRevisionActive": false
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "catalog",
+      "classification": "contractual",
+      "id": "catalog.v2.revision-counts",
+      "note": null,
+      "observed": {
+        "counts": {
+          "componentsCreated": 5,
+          "deactivated": 0,
+          "ineligibleOffers": 1,
+          "offersCreated": 0,
+          "offersRevised": 3,
+          "priceBooksCreated": 0,
+          "productsCreated": 0,
+          "tiersCreated": 6,
+          "unchanged": 13,
+          "versionsCreated": 0
+        }
+      },
+      "surface": "http"
+    },
+    {
+      "category": "concurrency",
+      "classification": "contractual",
+      "id": "concurrency.decide-race-one-decision",
+      "note": null,
+      "observed": {
+        "approvalMatchesQuote": true,
+        "conflicts": 1,
+        "fulfilled": 1
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "concurrency",
+      "classification": "contractual",
+      "id": "concurrency.fault-injection-rolls-back",
+      "note": null,
+      "observed": {
+        "approvals": 0,
+        "draftRevisionUnchanged": true,
+        "statusUnchanged": true,
+        "submitFailed": true,
+        "versions": 0
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "concurrency",
+      "classification": "contractual",
+      "id": "concurrency.submit-race-one-version",
+      "note": null,
+      "observed": {
+        "conflicts": 1,
+        "fulfilled": 1,
+        "versions": 1
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "concurrency",
+      "classification": "contractual",
+      "id": "concurrency.two-connection-edit-invariants",
+      "note": null,
+      "observed": {
+        "everyOutcomeFulfilledOr409": true,
+        "rawSqliteErrorSurfaced": false,
+        "totalsMatchSurvivingLines": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "events.counts-by-type",
+      "note": null,
+      "observed": {
+        "catalog-sync-run.created": 7,
+        "company.created": 8,
+        "offer.created": 13,
+        "offer.updated": 3,
+        "opportunity.created": 8,
+        "price-book.created": 5,
+        "price-component.created": 17,
+        "price-tier.created": 15,
+        "product-version.created": 11,
+        "product.created": 11,
+        "product.updated": 12,
+        "quote-approval.created": 2,
+        "quote-approval.updated": 2,
+        "quote-line.created": 14,
+        "quote-line.updated": 3,
+        "quote-version-component.created": 22,
+        "quote-version-line.created": 9,
+        "quote-version-total.created": 13,
+        "quote-version.created": 6,
+        "quote-version.updated": 6,
+        "quote.created": 8,
+        "quote.updated": 26
+      },
+      "surface": "events"
+    },
+    {
+      "category": "helpers",
+      "classification": "compatibility_required",
+      "id": "helpers.money-bounds",
+      "note": "Pinned so the planned split of commercial-money.js into a neutral kernel money module and package pricing can be proved to change nothing — values and refusal strings alike.",
+      "observed": {
+        "accepted": {
+          "amountZero": 0,
+          "bpsMax": 10000,
+          "currency": "EUR",
+          "quantityMax": 1000000
+        },
+        "constants": {
+          "CHARGE_TYPES": [
+            "one_time",
+            "recurring"
+          ],
+          "MAX_DISCOUNT_BPS": 10000,
+          "MAX_INTERVAL_COUNT": 60,
+          "MAX_QUANTITY": 1000000,
+          "MAX_TIERS": 50,
+          "PRICING_MODELS": [
+            "flat_fee",
+            "per_unit",
+            "volume",
+            "graduated"
+          ],
+          "RECURRING_INTERVALS": [
+            "month",
+            "year"
+          ]
+        },
+        "refusals": {
+          "addOverflow": {
+            "message": "x overflows the safe integer range",
+            "ok": false
+          },
+          "amountFloat": {
+            "message": "x must be a non-negative safe integer in 1/100 currency units",
+            "ok": false
+          },
+          "amountNegative": {
+            "message": "x must be a non-negative safe integer in 1/100 currency units",
+            "ok": false
+          },
+          "amountUnsafe": {
+            "message": "x must be a non-negative safe integer in 1/100 currency units",
+            "ok": false
+          },
+          "bpsNegative": {
+            "message": "x must be an integer between 0 and 10000 basis points",
+            "ok": false
+          },
+          "bpsOver": {
+            "message": "x must be an integer between 0 and 10000 basis points",
+            "ok": false
+          },
+          "currencyLowercase": {
+            "message": "currency must be an uppercase three-letter currency code",
+            "ok": false
+          },
+          "currencyShape": {
+            "message": "currency must be an uppercase three-letter currency code",
+            "ok": false
+          },
+          "multiplyOverflow": {
+            "message": "x overflows the safe integer range",
+            "ok": false
+          },
+          "quantityOver": {
+            "message": "x must be an integer between 1 and 1000000",
+            "ok": false
+          },
+          "quantityZero": {
+            "message": "x must be an integer between 1 and 1000000",
+            "ok": false
+          }
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.errors-do-not-leak",
+      "note": null,
+      "observed": {
+        "leaky": false,
+        "refused": true
+      },
+      "surface": "http"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.forged-amounts-ignored",
+      "note": "The server prices from the pinned catalog; client-supplied amounts never survive.",
+      "observed": {
+        "listAmountCents": 711000,
+        "netAmountCents": 711000
+      },
+      "surface": "http"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.malformed-quote-inputs",
+      "note": null,
+      "observed": {
+        "discount-negative": {
+          "code": "VALIDATION_ERROR",
+          "refused": true,
+          "status": 400
+        },
+        "discount-over-10000": {
+          "code": "VALIDATION_ERROR",
+          "refused": true,
+          "status": 400
+        },
+        "non-object-body": {
+          "code": "VALIDATION_ERROR",
+          "refused": true,
+          "status": 400
+        },
+        "offer-id-oversized": {
+          "code": "VALIDATION_ERROR",
+          "refused": true,
+          "status": 400
+        },
+        "quantity-fractional": {
+          "code": "VALIDATION_ERROR",
+          "refused": true,
+          "status": 400
+        },
+        "quantity-negative": {
+          "code": "VALIDATION_ERROR",
+          "refused": true,
+          "status": 400
+        },
+        "quantity-over-bound": {
+          "code": "VALIDATION_ERROR",
+          "refused": true,
+          "status": 400
+        },
+        "quantity-string": {
+          "code": "VALIDATION_ERROR",
+          "refused": true,
+          "status": 400
+        },
+        "quantity-zero": {
+          "code": "VALIDATION_ERROR",
+          "refused": true,
+          "status": 400
+        }
+      },
+      "surface": "http"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.prototype-shaped-identifiers",
+      "note": null,
+      "observed": {
+        "<script>alert(1)</script>": {
+          "offerId": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          },
+          "provider": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          }
+        },
+        "constructor": {
+          "offerId": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          },
+          "provider": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          }
+        },
+        "polluted": false,
+        "prototype": {
+          "offerId": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          },
+          "provider": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          }
+        },
+        "toString": {
+          "offerId": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          },
+          "provider": {
+            "code": "NOT_FOUND",
+            "refused": true,
+            "status": 404
+          }
+        }
+      },
+      "surface": "http"
+    },
+    {
+      "category": "hostile-input",
+      "classification": "contractual",
+      "id": "hostile-input.provider-payload-stored-verbatim",
+      "note": "Markup, template syntax and control characters inside bounded provider text are stored verbatim by recorded decision; oversized fields were refused in catalog.provider-failures.",
+      "observed": {
+        "counts": {
+          "componentsCreated": 1,
+          "deactivated": 0,
+          "ineligibleOffers": 0,
+          "offersCreated": 1,
+          "offersRevised": 0,
+          "priceBooksCreated": 1,
+          "productsCreated": 1,
+          "tiersCreated": 0,
+          "unchanged": 0,
+          "versionsCreated": 1
+        },
+        "descriptionLength": 500,
+        "name": "<script>alert(1)</script> ${process.env.HOME} \"quoted\"  line",
+        "polluted": false
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "pricing",
+      "classification": "compatibility_required",
+      "id": "pricing.component-amount-table",
+      "note": "flat_fee charged once; per_unit multiplies; volume prices the whole quantity at the reached tier plus its flat amount once; graduated prices each receiving band plus that band's flat amount. Boundary quantities on both sides of every tier edge.",
+      "observed": {
+        "flat-fee-q30": {
+          "listAmountCents": 500000,
+          "quantityPriced": 0,
+          "tierBreakdown": []
+        },
+        "graduated-q1": {
+          "listAmountCents": 900,
+          "quantityPriced": 1,
+          "tierBreakdown": [
+            {
+              "amountCents": 900,
+              "flatAmountCents": 700,
+              "from": 1,
+              "position": 1,
+              "quantity": 1,
+              "to": 100,
+              "unitAmountCents": 200
+            }
+          ]
+        },
+        "graduated-q100": {
+          "listAmountCents": 20700,
+          "quantityPriced": 100,
+          "tierBreakdown": [
+            {
+              "amountCents": 20700,
+              "flatAmountCents": 700,
+              "from": 1,
+              "position": 1,
+              "quantity": 100,
+              "to": 100,
+              "unitAmountCents": 200
+            }
+          ]
+        },
+        "graduated-q1000": {
+          "listAmountCents": 155700,
+          "quantityPriced": 1000,
+          "tierBreakdown": [
+            {
+              "amountCents": 20700,
+              "flatAmountCents": 700,
+              "from": 1,
+              "position": 1,
+              "quantity": 100,
+              "to": 100,
+              "unitAmountCents": 200
+            },
+            {
+              "amountCents": 135000,
+              "flatAmountCents": 0,
+              "from": 101,
+              "position": 2,
+              "quantity": 900,
+              "to": 1000,
+              "unitAmountCents": 150
+            }
+          ]
+        },
+        "graduated-q1001": {
+          "listAmountCents": 155890,
+          "quantityPriced": 1001,
+          "tierBreakdown": [
+            {
+              "amountCents": 20700,
+              "flatAmountCents": 700,
+              "from": 1,
+              "position": 1,
+              "quantity": 100,
+              "to": 100,
+              "unitAmountCents": 200
+            },
+            {
+              "amountCents": 135000,
+              "flatAmountCents": 0,
+              "from": 101,
+              "position": 2,
+              "quantity": 900,
+              "to": 1000,
+              "unitAmountCents": 150
+            },
+            {
+              "amountCents": 190,
+              "flatAmountCents": 90,
+              "from": 1001,
+              "position": 3,
+              "quantity": 1,
+              "to": null,
+              "unitAmountCents": 100
+            }
+          ]
+        },
+        "graduated-q101": {
+          "listAmountCents": 20850,
+          "quantityPriced": 101,
+          "tierBreakdown": [
+            {
+              "amountCents": 20700,
+              "flatAmountCents": 700,
+              "from": 1,
+              "position": 1,
+              "quantity": 100,
+              "to": 100,
+              "unitAmountCents": 200
+            },
+            {
+              "amountCents": 150,
+              "flatAmountCents": 0,
+              "from": 101,
+              "position": 2,
+              "quantity": 1,
+              "to": 1000,
+              "unitAmountCents": 150
+            }
+          ]
+        },
+        "graduated-q250": {
+          "listAmountCents": 43200,
+          "quantityPriced": 250,
+          "tierBreakdown": [
+            {
+              "amountCents": 20700,
+              "flatAmountCents": 700,
+              "from": 1,
+              "position": 1,
+              "quantity": 100,
+              "to": 100,
+              "unitAmountCents": 200
+            },
+            {
+              "amountCents": 22500,
+              "flatAmountCents": 0,
+              "from": 101,
+              "position": 2,
+              "quantity": 150,
+              "to": 1000,
+              "unitAmountCents": 150
+            }
+          ]
+        },
+        "per-unit-q400": {
+          "listAmountCents": 10000,
+          "quantityPriced": 400,
+          "tierBreakdown": []
+        },
+        "volume-q1": {
+          "listAmountCents": 6000,
+          "quantityPriced": 1,
+          "tierBreakdown": [
+            {
+              "amountCents": 6000,
+              "flatAmountCents": 1000,
+              "from": 1,
+              "position": 1,
+              "quantity": 1,
+              "to": 20,
+              "unitAmountCents": 5000
+            }
+          ]
+        },
+        "volume-q100": {
+          "listAmountCents": 400000,
+          "quantityPriced": 100,
+          "tierBreakdown": [
+            {
+              "amountCents": 400000,
+              "flatAmountCents": 0,
+              "from": 1,
+              "position": 2,
+              "quantity": 100,
+              "to": 100,
+              "unitAmountCents": 4000
+            }
+          ]
+        },
+        "volume-q1000000": {
+          "listAmountCents": 3000000500,
+          "quantityPriced": 1000000,
+          "tierBreakdown": [
+            {
+              "amountCents": 3000000500,
+              "flatAmountCents": 500,
+              "from": 1,
+              "position": 3,
+              "quantity": 1000000,
+              "to": null,
+              "unitAmountCents": 3000
+            }
+          ]
+        },
+        "volume-q101": {
+          "listAmountCents": 303500,
+          "quantityPriced": 101,
+          "tierBreakdown": [
+            {
+              "amountCents": 303500,
+              "flatAmountCents": 500,
+              "from": 1,
+              "position": 3,
+              "quantity": 101,
+              "to": null,
+              "unitAmountCents": 3000
+            }
+          ]
+        },
+        "volume-q20": {
+          "listAmountCents": 101000,
+          "quantityPriced": 20,
+          "tierBreakdown": [
+            {
+              "amountCents": 101000,
+              "flatAmountCents": 1000,
+              "from": 1,
+              "position": 1,
+              "quantity": 20,
+              "to": 20,
+              "unitAmountCents": 5000
+            }
+          ]
+        },
+        "volume-q21": {
+          "listAmountCents": 84000,
+          "quantityPriced": 21,
+          "tierBreakdown": [
+            {
+              "amountCents": 84000,
+              "flatAmountCents": 0,
+              "from": 1,
+              "position": 2,
+              "quantity": 21,
+              "to": 100,
+              "unitAmountCents": 4000
+            }
+          ]
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "pricing",
+      "classification": "compatibility_required",
+      "id": "pricing.discount-rounding-table",
+      "note": "discount = trunc(list x bps / 10000): never rounds up, never loses a cent of net. 999@5000 truncating to 499 is the canonical case.",
+      "observed": {
+        "0@0": {
+          "discountAmountCents": 0,
+          "listAmountCents": 0,
+          "netAmountCents": 0
+        },
+        "1000@5000": {
+          "discountAmountCents": 500,
+          "listAmountCents": 1000,
+          "netAmountCents": 500
+        },
+        "123456@725": {
+          "discountAmountCents": 8950,
+          "listAmountCents": 123456,
+          "netAmountCents": 114506
+        },
+        "1@1": {
+          "discountAmountCents": 0,
+          "listAmountCents": 1,
+          "netAmountCents": 1
+        },
+        "1@9999": {
+          "discountAmountCents": 0,
+          "listAmountCents": 1,
+          "netAmountCents": 1
+        },
+        "500000@1": {
+          "discountAmountCents": 50,
+          "listAmountCents": 500000,
+          "netAmountCents": 499950
+        },
+        "500000@10000": {
+          "discountAmountCents": 500000,
+          "listAmountCents": 500000,
+          "netAmountCents": 0
+        },
+        "999@5000": {
+          "discountAmountCents": 499,
+          "listAmountCents": 999,
+          "netAmountCents": 500
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "pricing",
+      "classification": "compatibility_required",
+      "id": "pricing.effective-discount-and-max-line",
+      "note": null,
+      "observed": {
+        "effective": 250,
+        "effectiveOnZeroList": 0,
+        "maxLine": 2000
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "pricing",
+      "classification": "compatibility_required",
+      "id": "pricing.grouped-totals-never-sum-unlike-periods",
+      "note": null,
+      "observed": {
+        "oneTimeTotal": {
+          "currency": "EUR",
+          "discountAmountCents": 100,
+          "listAmountCents": 1000,
+          "netAmountCents": 900
+        },
+        "recurringTotals": [
+          {
+            "currency": "EUR",
+            "discountAmountCents": 300,
+            "interval": "month",
+            "intervalCount": 1,
+            "listAmountCents": 5000,
+            "netAmountCents": 4700
+          },
+          {
+            "currency": "EUR",
+            "discountAmountCents": 0,
+            "interval": "month",
+            "intervalCount": 3,
+            "listAmountCents": 4000,
+            "netAmountCents": 4000
+          },
+          {
+            "currency": "EUR",
+            "discountAmountCents": 0,
+            "interval": "year",
+            "intervalCount": 1,
+            "listAmountCents": 5000,
+            "netAmountCents": 5000
+          }
+        ]
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "pricing",
+      "classification": "compatibility_required",
+      "id": "pricing.policy-result-normalization",
+      "note": null,
+      "observed": {
+        "arrayRefused": {
+          "message": "probe must return {decision, reason?, requiredApprovalKey?, matchedRule?}",
+          "ok": false
+        },
+        "boundedReason": 500,
+        "decisions": [
+          "auto_approve",
+          "approval_required",
+          "reject"
+        ],
+        "emptyReason": {
+          "message": "probe reason must be a non-empty string when present",
+          "ok": false
+        },
+        "normalized": {
+          "decision": "approval_required",
+          "matchedRule": "band",
+          "reason": null,
+          "requiredApprovalKey": "sales-manager"
+        },
+        "promiseRefused": {
+          "message": "probe must return synchronously — Promises are rejected",
+          "ok": false
+        },
+        "unknownDecision": {
+          "message": "probe decision must be one of: auto_approve, approval_required, reject",
+          "ok": false
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "pricing",
+      "classification": "compatibility_required",
+      "id": "pricing.schedule-and-component-refusals",
+      "note": null,
+      "observed": {
+        "flatWithUnit": {
+          "message": "probe: flat_fee components price by flatAmountCents; unitAmountCents is not supported",
+          "ok": false
+        },
+        "noOpenEnd": {
+          "message": "probe: the last tier must be open-ended (upTo null) so every quantity is priced",
+          "ok": false
+        },
+        "nonIncreasing": {
+          "message": "probe: tier boundaries must strictly increase (tier 2 upTo 20 follows 100)",
+          "ok": false
+        },
+        "oneTimeWithInterval": {
+          "message": "probe: one_time components must not declare interval or intervalCount",
+          "ok": false
+        },
+        "openEndNotLast": {
+          "message": "probe: the open-ended tier (upTo null) must be last",
+          "ok": false
+        },
+        "overflowingQuantity": {
+          "message": "component per_unit overflows the safe integer range",
+          "ok": false
+        },
+        "perUnitWithFlat": {
+          "message": "probe: per_unit components price by unitAmountCents; flatAmountCents is not supported",
+          "ok": false
+        },
+        "recurringWithoutInterval": {
+          "message": "probe: recurring components need interval \"month\" or \"year\"",
+          "ok": false
+        },
+        "tieredWithUnitAmount": {
+          "message": "probe: tiered components carry their amounts in tiers, not unitAmountCents",
+          "ok": false
+        },
+        "tooManyTiers": {
+          "message": "probe: at most 50 tiers are supported",
+          "ok": false
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.add-line.enterprise-30",
+      "note": null,
+      "observed": {
+        "line": {
+          "components": [
+            {
+              "chargeType": "one_time",
+              "componentId": "<id:1>",
+              "componentKey": "fixture:offer:enterprise:1:ent-setup",
+              "discountAmountCents": 0,
+              "flatAmountCents": 500000,
+              "interval": null,
+              "intervalCount": null,
+              "label": "Setup and migration",
+              "listAmountCents": 500000,
+              "netAmountCents": 500000,
+              "pricingModel": "flat_fee",
+              "quantity": 0,
+              "tierBreakdown": [],
+              "unitAmountCents": null
+            },
+            {
+              "chargeType": "recurring",
+              "componentId": "<id:2>",
+              "componentKey": "fixture:offer:enterprise:1:ent-platform",
+              "discountAmountCents": 0,
+              "flatAmountCents": 200000,
+              "interval": "month",
+              "intervalCount": 1,
+              "label": "Platform fee",
+              "listAmountCents": 200000,
+              "netAmountCents": 200000,
+              "pricingModel": "flat_fee",
+              "quantity": 0,
+              "tierBreakdown": [],
+              "unitAmountCents": null
+            },
+            {
+              "chargeType": "recurring",
+              "componentId": "<id:3>",
+              "componentKey": "fixture:offer:enterprise:1:ent-seats",
+              "discountAmountCents": 0,
+              "flatAmountCents": null,
+              "interval": "month",
+              "intervalCount": 1,
+              "label": "Seats",
+              "listAmountCents": 120000,
+              "netAmountCents": 120000,
+              "pricingModel": "volume",
+              "quantity": 30,
+              "tierBreakdown": [
+                {
+                  "amountCents": 120000,
+                  "flatAmountCents": 0,
+                  "from": 1,
+                  "position": 2,
+                  "quantity": 30,
+                  "to": 100,
+                  "unitAmountCents": 4000
+                }
+              ],
+              "unitAmountCents": null
+            }
+          ],
+          "discountAmountCents": 0,
+          "discountBps": 0,
+          "id": "<id:4>",
+          "listAmountCents": 820000,
+          "netAmountCents": 820000,
+          "offer": "fixture:offer:enterprise",
+          "offerId": "<id:5>",
+          "offerName": "Enterprise Plan",
+          "offerRevision": 1,
+          "position": 1,
+          "quantity": 30,
+          "removed": false,
+          "sku": "PLATFORM"
+        },
+        "quote": {
+          "currency": "EUR",
+          "currentApprovalId": null,
+          "currentVersionId": null,
+          "currentVersionNumber": null,
+          "draftRevision": 2,
+          "id": "<id:6>",
+          "oneTimeTotal": {
+            "currency": "EUR",
+            "discountAmountCents": 0,
+            "listAmountCents": 500000,
+            "netAmountCents": 500000
+          },
+          "opportunityId": "<id:7>",
+          "priceBookId": "<id:8>",
+          "recurringTotals": [
+            {
+              "currency": "EUR",
+              "discountAmountCents": 0,
+              "interval": "month",
+              "intervalCount": 1,
+              "listAmountCents": 320000,
+              "netAmountCents": 320000
+            }
+          ],
+          "status": "draft"
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.add-line.storage-graduated-250",
+      "note": null,
+      "observed": {
+        "components": [
+          {
+            "chargeType": "recurring",
+            "componentId": "<id:1>",
+            "componentKey": "fixture:offer:storage-monthly:1:storage-gb",
+            "discountAmountCents": 0,
+            "flatAmountCents": null,
+            "interval": "month",
+            "intervalCount": 1,
+            "label": "Storage (per GB)",
+            "listAmountCents": 42500,
+            "netAmountCents": 42500,
+            "pricingModel": "graduated",
+            "quantity": 250,
+            "tierBreakdown": [
+              {
+                "amountCents": 20000,
+                "flatAmountCents": 0,
+                "from": 1,
+                "position": 1,
+                "quantity": 100,
+                "to": 100,
+                "unitAmountCents": 200
+              },
+              {
+                "amountCents": 22500,
+                "flatAmountCents": 0,
+                "from": 101,
+                "position": 2,
+                "quantity": 150,
+                "to": 1000,
+                "unitAmountCents": 150
+              }
+            ],
+            "unitAmountCents": null
+          }
+        ],
+        "discountAmountCents": 0,
+        "discountBps": 0,
+        "id": "<id:2>",
+        "listAmountCents": 42500,
+        "netAmountCents": 42500,
+        "offer": "fixture:offer:storage-monthly",
+        "offerId": "<id:3>",
+        "offerName": "Storage — Monthly (graduated)",
+        "offerRevision": 1,
+        "position": 2,
+        "quantity": 250,
+        "removed": false,
+        "sku": "STORAGE"
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.add-line.support-discounted",
+      "note": null,
+      "observed": {
+        "components": [
+          {
+            "chargeType": "recurring",
+            "componentId": "<id:1>",
+            "componentKey": "fixture:offer:support-annual:1:support-fee",
+            "discountAmountCents": 50000,
+            "flatAmountCents": 1000000,
+            "interval": "year",
+            "intervalCount": 1,
+            "label": "Premium support",
+            "listAmountCents": 1000000,
+            "netAmountCents": 950000,
+            "pricingModel": "flat_fee",
+            "quantity": 0,
+            "tierBreakdown": [],
+            "unitAmountCents": null
+          }
+        ],
+        "discountAmountCents": 50000,
+        "discountBps": 500,
+        "id": "<id:2>",
+        "listAmountCents": 1000000,
+        "netAmountCents": 950000,
+        "offer": "fixture:offer:support-annual",
+        "offerId": "<id:3>",
+        "offerName": "Premium Support — Annual",
+        "offerRevision": 1,
+        "position": 3,
+        "quantity": 1,
+        "removed": false,
+        "sku": "SUPPORT"
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.approved-is-terminal",
+      "note": null,
+      "observed": {
+        "addLine": {
+          "code": "INVALID_STATE",
+          "refused": true,
+          "status": 409
+        },
+        "resubmit": {
+          "code": "INVALID_STATE",
+          "refused": true,
+          "status": 409
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.create-against-inactive-book",
+      "note": null,
+      "observed": {
+        "code": "PRICE_BOOK_INACTIVE",
+        "refused": true,
+        "status": 409
+      },
+      "surface": "http"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.created",
+      "note": null,
+      "observed": {
+        "currency": "EUR",
+        "currentApprovalId": null,
+        "currentVersionId": null,
+        "currentVersionNumber": null,
+        "draftRevision": 1,
+        "id": "<id:1>",
+        "oneTimeTotal": {
+          "currency": "EUR",
+          "discountAmountCents": 0,
+          "listAmountCents": 0,
+          "netAmountCents": 0
+        },
+        "opportunityId": "<id:2>",
+        "priceBookId": "<id:3>",
+        "recurringTotals": [],
+        "status": "draft"
+      },
+      "surface": "http"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.grouped-totals",
+      "note": null,
+      "observed": {
+        "hasGrandTotal": false,
+        "oneTimeNetCents": 1010000,
+        "oneTimeTotal": {
+          "currency": "EUR",
+          "discountAmountCents": 0,
+          "listAmountCents": 1010000,
+          "netAmountCents": 1010000
+        },
+        "recurringGroupCount": 2,
+        "recurringTotals": [
+          {
+            "currency": "EUR",
+            "discountAmountCents": 0,
+            "interval": "month",
+            "intervalCount": 1,
+            "listAmountCents": 362500,
+            "netAmountCents": 362500
+          },
+          {
+            "currency": "EUR",
+            "discountAmountCents": 50000,
+            "interval": "year",
+            "intervalCount": 1,
+            "listAmountCents": 1000000,
+            "netAmountCents": 950000
+          }
+        ]
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.refusals.not-eligible-and-cross-book",
+      "note": null,
+      "observed": {
+        "crossBook": {
+          "code": "PRICE_BOOK_MISMATCH",
+          "refused": true,
+          "status": 409
+        },
+        "metered": {
+          "code": "OFFER_NOT_QUOTE_ELIGIBLE",
+          "refused": true,
+          "status": 409
+        },
+        "staleRevision": {
+          "code": "STALE_REVISION",
+          "refused": true,
+          "status": 409
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.remove-line-recalculates",
+      "note": null,
+      "observed": {
+        "quote": {
+          "currency": "EUR",
+          "currentApprovalId": null,
+          "currentVersionId": null,
+          "currentVersionNumber": null,
+          "draftRevision": 7,
+          "id": "<id:1>",
+          "oneTimeTotal": {
+            "currency": "EUR",
+            "discountAmountCents": 0,
+            "listAmountCents": 1010000,
+            "netAmountCents": 1010000
+          },
+          "opportunityId": "<id:2>",
+          "priceBookId": "<id:3>",
+          "recurringTotals": [
+            {
+              "currency": "EUR",
+              "discountAmountCents": 0,
+              "interval": "month",
+              "intervalCount": 1,
+              "listAmountCents": 362500,
+              "netAmountCents": 362500
+            },
+            {
+              "currency": "EUR",
+              "discountAmountCents": 50000,
+              "interval": "year",
+              "intervalCount": 1,
+              "listAmountCents": 1000000,
+              "netAmountCents": 950000
+            }
+          ],
+          "status": "draft"
+        },
+        "removedRowStillStored": 1
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.revise-reopens-draft",
+      "note": null,
+      "observed": {
+        "currency": "EUR",
+        "currentApprovalId": null,
+        "currentVersionId": "<id:1>",
+        "currentVersionNumber": 1,
+        "draftRevision": 3,
+        "id": "<id:2>",
+        "oneTimeTotal": {
+          "currency": "EUR",
+          "discountAmountCents": 300000,
+          "listAmountCents": 500000,
+          "netAmountCents": 200000
+        },
+        "opportunityId": "<id:3>",
+        "priceBookId": "<id:4>",
+        "recurringTotals": [
+          {
+            "currency": "EUR",
+            "discountAmountCents": 150000,
+            "interval": "month",
+            "intervalCount": 1,
+            "listAmountCents": 250000,
+            "netAmountCents": 100000
+          }
+        ],
+        "status": "draft"
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.submit-empty-refused",
+      "note": null,
+      "observed": {
+        "code": "EMPTY_QUOTE",
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.submit.auto-approve",
+      "note": null,
+      "observed": {
+        "approvalId": null,
+        "quote": {
+          "currency": "EUR",
+          "currentApprovalId": null,
+          "currentVersionId": "<id:1>",
+          "currentVersionNumber": 1,
+          "draftRevision": 7,
+          "id": "<id:2>",
+          "oneTimeTotal": {
+            "currency": "EUR",
+            "discountAmountCents": 0,
+            "listAmountCents": 1010000,
+            "netAmountCents": 1010000
+          },
+          "opportunityId": "<id:3>",
+          "priceBookId": "<id:4>",
+          "recurringTotals": [
+            {
+              "currency": "EUR",
+              "discountAmountCents": 0,
+              "interval": "month",
+              "intervalCount": 1,
+              "listAmountCents": 362500,
+              "netAmountCents": 362500
+            },
+            {
+              "currency": "EUR",
+              "discountAmountCents": 50000,
+              "interval": "year",
+              "intervalCount": 1,
+              "listAmountCents": 1000000,
+              "netAmountCents": 950000
+            }
+          ],
+          "status": "approved"
+        },
+        "version": {
+          "decision": "auto_approve",
+          "effectiveDiscountBps": 210,
+          "id": "<id:1>",
+          "maxLineDiscountBps": 500,
+          "policy": "standard-sales-discount",
+          "policyFingerprint": "ebb651487f4d29effac1a47251e085974ed219cb7f5acb6b55ccb45394e6adf7",
+          "policyVersion": 1,
+          "reason": "max line discount 500bps within auto-approve limit 1000bps",
+          "totals": {
+            "oneTimeTotal": {
+              "currency": "EUR",
+              "discountAmountCents": 0,
+              "listAmountCents": 1010000,
+              "netAmountCents": 1010000
+            },
+            "recurringTotals": [
+              {
+                "currency": "EUR",
+                "discountAmountCents": 0,
+                "interval": "month",
+                "intervalCount": 1,
+                "listAmountCents": 362500,
+                "netAmountCents": 362500
+              },
+              {
+                "currency": "EUR",
+                "discountAmountCents": 50000,
+                "interval": "year",
+                "intervalCount": 1,
+                "listAmountCents": 1000000,
+                "netAmountCents": 950000
+              }
+            ]
+          },
+          "versionNumber": 1
+        }
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "quote",
+      "classification": "contractual",
+      "id": "quote.update-line-reprices",
+      "note": null,
+      "observed": {
+        "components": [
+          {
+            "chargeType": "one_time",
+            "componentId": "<id:1>",
+            "componentKey": "fixture:offer:enterprise:1:ent-setup",
+            "discountAmountCents": 15000,
+            "flatAmountCents": 500000,
+            "interval": null,
+            "intervalCount": null,
+            "label": "Setup and migration",
+            "listAmountCents": 500000,
+            "netAmountCents": 485000,
+            "pricingModel": "flat_fee",
+            "quantity": 0,
+            "tierBreakdown": [],
+            "unitAmountCents": null
+          },
+          {
+            "chargeType": "recurring",
+            "componentId": "<id:2>",
+            "componentKey": "fixture:offer:enterprise:1:ent-platform",
+            "discountAmountCents": 6000,
+            "flatAmountCents": 200000,
+            "interval": "month",
+            "intervalCount": 1,
+            "label": "Platform fee",
+            "listAmountCents": 200000,
+            "netAmountCents": 194000,
+            "pricingModel": "flat_fee",
+            "quantity": 0,
+            "tierBreakdown": [],
+            "unitAmountCents": null
+          },
+          {
+            "chargeType": "recurring",
+            "componentId": "<id:3>",
+            "componentKey": "fixture:offer:enterprise:1:ent-seats",
+            "discountAmountCents": 1500,
+            "flatAmountCents": null,
+            "interval": "month",
+            "intervalCount": 1,
+            "label": "Seats",
+            "listAmountCents": 50000,
+            "netAmountCents": 48500,
+            "pricingModel": "volume",
+            "quantity": 10,
+            "tierBreakdown": [
+              {
+                "amountCents": 50000,
+                "flatAmountCents": 0,
+                "from": 1,
+                "position": 1,
+                "quantity": 10,
+                "to": 20,
+                "unitAmountCents": 5000
+              }
+            ],
+            "unitAmountCents": null
+          }
+        ],
+        "discountAmountCents": 22500,
+        "discountBps": 300,
+        "id": "<id:4>",
+        "listAmountCents": 750000,
+        "netAmountCents": 727500,
+        "offer": "fixture:offer:enterprise",
+        "offerId": "<id:5>",
+        "offerName": "Enterprise Plan",
+        "offerRevision": 1,
+        "position": 1,
+        "quantity": 10,
+        "removed": false,
+        "sku": "PLATFORM"
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "scale",
+      "classification": "contractual",
+      "id": "scale.big-catalog-resync-idempotent",
+      "note": null,
+      "observed": {
+        "counts": {
+          "componentsCreated": 0,
+          "deactivated": 0,
+          "ineligibleOffers": 0,
+          "offersCreated": 0,
+          "offersRevised": 0,
+          "priceBooksCreated": 0,
+          "productsCreated": 0,
+          "tiersCreated": 0,
+          "unchanged": 521,
+          "versionsCreated": 0
+        }
+      },
+      "surface": "http"
+    },
+    {
+      "category": "scale",
+      "classification": "contractual",
+      "id": "scale.big-catalog-sync-counts",
+      "note": null,
+      "observed": {
+        "counts": {
+          "componentsCreated": 0,
+          "deactivated": 0,
+          "ineligibleOffers": 0,
+          "offersCreated": 0,
+          "offersRevised": 0,
+          "priceBooksCreated": 1,
+          "productsCreated": 520,
+          "tiersCreated": 0,
+          "unchanged": 0,
+          "versionsCreated": 520
+        }
+      },
+      "surface": "http"
+    },
+    {
+      "category": "scale",
+      "classification": "contractual",
+      "id": "scale.exact-reads-beyond-page-bounds",
+      "note": "countWhere/listWhere are the complete query; the paged list() caps at 500 by design and is a display bound, not a correctness read.",
+      "observed": {
+        "countWhere": 520,
+        "listWhere": 520,
+        "pagedListCapped": 500
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "scale",
+      "classification": "contractual",
+      "id": "scale.row-517-exact",
+      "note": null,
+      "observed": {
+        "active": true,
+        "createdAt": "<present>",
+        "currentVersionId": "<id:1>",
+        "externalId": null,
+        "id": "<id:2>",
+        "provider": "la0-aux-catalog",
+        "sourceKey": "la0:product:bulk-517",
+        "sourceKind": "provider",
+        "updatedAt": "<present>"
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "storage-restart",
+      "classification": "contractual",
+      "id": "storage-restart.quote-identical",
+      "note": null,
+      "observed": {
+        "currentVersionNumber": 1,
+        "status": "approved",
+        "totals": {
+          "oneTimeTotal": {
+            "currency": "EUR",
+            "discountAmountCents": 0,
+            "listAmountCents": 500000,
+            "netAmountCents": 500000
+          },
+          "recurringTotals": [
+            {
+              "currency": "EUR",
+              "discountAmountCents": 0,
+              "interval": "month",
+              "intervalCount": 1,
+              "listAmountCents": 320000,
+              "netAmountCents": 320000
+            }
+          ]
+        }
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "storage-restart",
+      "classification": "contractual",
+      "id": "storage-restart.reboot-passes-fingerprint-drift-check",
+      "note": "Booting a second application over the same database re-verifies every persisted provider and policy fingerprint; a reboot that survives is the drift check passing.",
+      "observed": {
+        "rebooted": true
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "storage-restart",
+      "classification": "contractual",
+      "id": "storage-restart.resubmit-reproduces",
+      "note": null,
+      "observed": {
+        "sameDecision": true,
+        "samePolicyFingerprint": true,
+        "sameTotals": true
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "storage-restart",
+      "classification": "contractual",
+      "id": "storage-restart.version-evidence-counts",
+      "note": null,
+      "observed": {
+        "components": 3,
+        "lines": 1,
+        "totals": 2,
+        "versions": 1
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "contractual",
+      "id": "trace.counts-by-workflow-and-status",
+      "note": null,
+      "observed": {
+        "catalog.sync:completed": 7,
+        "catalog.sync:failed": 11,
+        "opportunity.create-quote:completed": 7,
+        "opportunity.create-quote:failed": 1,
+        "quote.add-line:completed": 13,
+        "quote.add-line:failed": 16,
+        "quote.approve:completed": 2,
+        "quote.approve:failed": 2,
+        "quote.reject:failed": 1,
+        "quote.remove-line:completed": 1,
+        "quote.revise:completed": 1,
+        "quote.submit:completed": 6,
+        "quote.submit:failed": 4,
+        "quote.update-line:completed": 2
+      },
+      "surface": "trace"
+    },
+    {
+      "category": "audit-events-trace",
+      "classification": "incidental",
+      "id": "trace.run-order",
+      "note": "Nothing declares an ordering for the trace listing; recorded, never asserted.",
+      "observed": [
+        "catalog.sync",
+        "catalog.sync",
+        "catalog.sync",
+        "opportunity.create-quote",
+        "opportunity.create-quote",
+        "quote.submit",
+        "quote.add-line",
+        "quote.add-line",
+        "quote.add-line",
+        "quote.add-line",
+        "quote.add-line",
+        "quote.remove-line",
+        "quote.add-line",
+        "quote.add-line",
+        "quote.add-line",
+        "quote.submit",
+        "quote.add-line",
+        "quote.submit",
+        "opportunity.create-quote",
+        "quote.add-line",
+        "quote.submit",
+        "quote.approve",
+        "quote.approve",
+        "quote.reject",
+        "opportunity.create-quote",
+        "quote.add-line",
+        "quote.submit",
+        "quote.revise",
+        "quote.update-line",
+        "quote.submit",
+        "opportunity.create-quote",
+        "quote.add-line",
+        "catalog.sync",
+        "quote.add-line",
+        "quote.update-line",
+        "quote.add-line",
+        "catalog.sync",
+        "catalog.sync",
+        "catalog.sync",
+        "catalog.sync"
+      ],
+      "surface": "trace"
+    },
+    {
+      "category": "versions",
+      "classification": "contractual",
+      "id": "versions.draft-repriced-from-pinned-revision",
+      "note": "After the v2 catalog, an existing draft line still prices from its pinned v1 offer revision: 40 seats at the v1 tier, never the v2 price.",
+      "observed": {
+        "volumeComponent": [
+          {
+            "listAmountCents": 160000,
+            "quantity": 40
+          }
+        ]
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "versions",
+      "classification": "contractual",
+      "id": "versions.frozen-across-catalog-change",
+      "note": null,
+      "observed": {
+        "byteIdentical": true,
+        "componentAmounts": [
+          [
+            "fixture:offer:enterprise:1:ent-platform",
+            200000
+          ],
+          [
+            "fixture:offer:enterprise:1:ent-seats",
+            120000
+          ],
+          [
+            "fixture:offer:enterprise:1:ent-setup",
+            500000
+          ],
+          [
+            "fixture:offer:setup:1:migration-records",
+            10000
+          ],
+          [
+            "fixture:offer:setup:1:setup-fee",
+            500000
+          ],
+          [
+            "fixture:offer:storage-monthly:1:storage-gb",
+            42500
+          ],
+          [
+            "fixture:offer:support-annual:1:support-fee",
+            1000000
+          ]
+        ]
+      },
+      "surface": "storage"
+    },
+    {
+      "category": "versions",
+      "classification": "contractual",
+      "id": "versions.superseded-revision-refused-on-new-drafts",
+      "note": null,
+      "observed": {
+        "code": "OFFER_INACTIVE",
+        "refused": true,
+        "status": 409
+      },
+      "surface": "sdk"
+    },
+    {
+      "category": "versions",
+      "classification": "contractual",
+      "id": "versions.version-components",
+      "note": null,
+      "observed": [
+        {
+          "chargeType": "recurring",
+          "componentId": "<id:1>",
+          "componentKey": "fixture:offer:enterprise:1:ent-platform",
+          "createdAt": "<present>",
+          "discountAmountCents": 0,
+          "externalPriceId": "price_ent_platform",
+          "flatAmountCents": 200000,
+          "id": "<id:2>",
+          "interval": "month",
+          "intervalCount": 1,
+          "label": "Platform fee",
+          "listAmountCents": 200000,
+          "netAmountCents": 200000,
+          "pricingModel": "flat_fee",
+          "provider": "fixture-saas-catalog",
+          "quantity": 0,
+          "sourcePricingModel": "stripe:recurring.flat",
+          "tierBreakdownJson": [],
+          "tiersJson": [],
+          "unitAmountCents": null,
+          "updatedAt": "<present>",
+          "versionId": "<id:3>",
+          "versionLineId": "<id:4>"
+        },
+        {
+          "chargeType": "recurring",
+          "componentId": "<id:5>",
+          "componentKey": "fixture:offer:enterprise:1:ent-seats",
+          "createdAt": "<present>",
+          "discountAmountCents": 0,
+          "externalPriceId": "price_ent_seats",
+          "flatAmountCents": null,
+          "id": "<id:6>",
+          "interval": "month",
+          "intervalCount": 1,
+          "label": "Seats",
+          "listAmountCents": 120000,
+          "netAmountCents": 120000,
+          "pricingModel": "volume",
+          "provider": "fixture-saas-catalog",
+          "quantity": 30,
+          "sourcePricingModel": "stripe:tiers_mode=volume",
+          "tierBreakdownJson": [
+            {
+              "amountCents": 120000,
+              "flatAmountCents": 0,
+              "from": 1,
+              "position": 2,
+              "quantity": 30,
+              "to": 100,
+              "unitAmountCents": 4000
+            }
+          ],
+          "tiersJson": [
+            {
+              "flatAmountCents": 0,
+              "position": 1,
+              "unitAmountCents": 5000,
+              "upTo": 20
+            },
+            {
+              "flatAmountCents": 0,
+              "position": 2,
+              "unitAmountCents": 4000,
+              "upTo": 100
+            },
+            {
+              "flatAmountCents": 0,
+              "position": 3,
+              "unitAmountCents": 3000,
+              "upTo": null
+            }
+          ],
+          "unitAmountCents": null,
+          "updatedAt": "<present>",
+          "versionId": "<id:3>",
+          "versionLineId": "<id:4>"
+        },
+        {
+          "chargeType": "one_time",
+          "componentId": "<id:7>",
+          "componentKey": "fixture:offer:enterprise:1:ent-setup",
+          "createdAt": "<present>",
+          "discountAmountCents": 0,
+          "externalPriceId": "price_ent_setup",
+          "flatAmountCents": 500000,
+          "id": "<id:8>",
+          "interval": null,
+          "intervalCount": null,
+          "label": "Setup and migration",
+          "listAmountCents": 500000,
+          "netAmountCents": 500000,
+          "pricingModel": "flat_fee",
+          "provider": "fixture-saas-catalog",
+          "quantity": 0,
+          "sourcePricingModel": "stripe:one_time.flat",
+          "tierBreakdownJson": [],
+          "tiersJson": [],
+          "unitAmountCents": null,
+          "updatedAt": "<present>",
+          "versionId": "<id:3>",
+          "versionLineId": "<id:4>"
+        },
+        {
+          "chargeType": "one_time",
+          "componentId": "<id:9>",
+          "componentKey": "fixture:offer:setup:1:migration-records",
+          "createdAt": "<present>",
+          "discountAmountCents": 0,
+          "externalPriceId": "price_migration",
+          "flatAmountCents": null,
+          "id": "<id:10>",
+          "interval": null,
+          "intervalCount": null,
+          "label": "Data migration (per record)",
+          "listAmountCents": 10000,
+          "netAmountCents": 10000,
+          "pricingModel": "per_unit",
+          "provider": "fixture-saas-catalog",
+          "quantity": 400,
+          "sourcePricingModel": "stripe:one_time.per_unit",
+          "tierBreakdownJson": [],
+          "tiersJson": [],
+          "unitAmountCents": 25,
+          "updatedAt": "<present>",
+          "versionId": "<id:3>",
+          "versionLineId": "<id:11>"
+        },
+        {
+          "chargeType": "one_time",
+          "componentId": "<id:12>",
+          "componentKey": "fixture:offer:setup:1:setup-fee",
+          "createdAt": "<present>",
+          "discountAmountCents": 0,
+          "externalPriceId": "price_setup",
+          "flatAmountCents": 500000,
+          "id": "<id:13>",
+          "interval": null,
+          "intervalCount": null,
+          "label": "Setup fee",
+          "listAmountCents": 500000,
+          "netAmountCents": 500000,
+          "pricingModel": "flat_fee",
+          "provider": "fixture-saas-catalog",
+          "quantity": 0,
+          "sourcePricingModel": "stripe:one_time.flat",
+          "tierBreakdownJson": [],
+          "tiersJson": [],
+          "unitAmountCents": null,
+          "updatedAt": "<present>",
+          "versionId": "<id:3>",
+          "versionLineId": "<id:11>"
+        },
+        {
+          "chargeType": "recurring",
+          "componentId": "<id:14>",
+          "componentKey": "fixture:offer:storage-monthly:1:storage-gb",
+          "createdAt": "<present>",
+          "discountAmountCents": 0,
+          "externalPriceId": "price_storage_m",
+          "flatAmountCents": null,
+          "id": "<id:15>",
+          "interval": "month",
+          "intervalCount": 1,
+          "label": "Storage (per GB)",
+          "listAmountCents": 42500,
+          "netAmountCents": 42500,
+          "pricingModel": "graduated",
+          "provider": "fixture-saas-catalog",
+          "quantity": 250,
+          "sourcePricingModel": "zuora:tiered.cumulative",
+          "tierBreakdownJson": [
+            {
+              "amountCents": 20000,
+              "flatAmountCents": 0,
+              "from": 1,
+              "position": 1,
+              "quantity": 100,
+              "to": 100,
+              "unitAmountCents": 200
+            },
+            {
+              "amountCents": 22500,
+              "flatAmountCents": 0,
+              "from": 101,
+              "position": 2,
+              "quantity": 150,
+              "to": 1000,
+              "unitAmountCents": 150
+            }
+          ],
+          "tiersJson": [
+            {
+              "flatAmountCents": 0,
+              "position": 1,
+              "unitAmountCents": 200,
+              "upTo": 100
+            },
+            {
+              "flatAmountCents": 0,
+              "position": 2,
+              "unitAmountCents": 150,
+              "upTo": 1000
+            },
+            {
+              "flatAmountCents": 0,
+              "position": 3,
+              "unitAmountCents": 100,
+              "upTo": null
+            }
+          ],
+          "unitAmountCents": null,
+          "updatedAt": "<present>",
+          "versionId": "<id:3>",
+          "versionLineId": "<id:16>"
+        },
+        {
+          "chargeType": "recurring",
+          "componentId": "<id:17>",
+          "componentKey": "fixture:offer:support-annual:1:support-fee",
+          "createdAt": "<present>",
+          "discountAmountCents": 50000,
+          "externalPriceId": "price_support_y",
+          "flatAmountCents": 1000000,
+          "id": "<id:18>",
+          "interval": "year",
+          "intervalCount": 1,
+          "label": "Premium support",
+          "listAmountCents": 1000000,
+          "netAmountCents": 950000,
+          "pricingModel": "flat_fee",
+          "provider": "fixture-saas-catalog",
+          "quantity": 0,
+          "sourcePricingModel": "zuora:recurring.flat",
+          "tierBreakdownJson": [],
+          "tiersJson": [],
+          "unitAmountCents": null,
+          "updatedAt": "<present>",
+          "versionId": "<id:3>",
+          "versionLineId": "<id:19>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "versions",
+      "classification": "contractual",
+      "id": "versions.version-lines",
+      "note": null,
+      "observed": [
+        {
+          "componentCount": 3,
+          "createdAt": "<present>",
+          "discountAmountCents": 0,
+          "discountBps": 0,
+          "id": "<id:1>",
+          "listAmountCents": 820000,
+          "netAmountCents": 820000,
+          "offerId": "<id:2>",
+          "offerLogicalKey": "fixture:offer:enterprise",
+          "offerName": "Enterprise Plan",
+          "offerRevision": 1,
+          "position": 1,
+          "productId": "<id:3>",
+          "productVersionId": "<id:4>",
+          "quantity": 30,
+          "sku": "PLATFORM",
+          "updatedAt": "<present>",
+          "versionId": "<id:5>"
+        },
+        {
+          "componentCount": 1,
+          "createdAt": "<present>",
+          "discountAmountCents": 0,
+          "discountBps": 0,
+          "id": "<id:6>",
+          "listAmountCents": 42500,
+          "netAmountCents": 42500,
+          "offerId": "<id:7>",
+          "offerLogicalKey": "fixture:offer:storage-monthly",
+          "offerName": "Storage — Monthly (graduated)",
+          "offerRevision": 1,
+          "position": 2,
+          "productId": "<id:8>",
+          "productVersionId": "<id:9>",
+          "quantity": 250,
+          "sku": "STORAGE",
+          "updatedAt": "<present>",
+          "versionId": "<id:5>"
+        },
+        {
+          "componentCount": 1,
+          "createdAt": "<present>",
+          "discountAmountCents": 50000,
+          "discountBps": 500,
+          "id": "<id:10>",
+          "listAmountCents": 1000000,
+          "netAmountCents": 950000,
+          "offerId": "<id:11>",
+          "offerLogicalKey": "fixture:offer:support-annual",
+          "offerName": "Premium Support — Annual",
+          "offerRevision": 1,
+          "position": 3,
+          "productId": "<id:12>",
+          "productVersionId": "<id:13>",
+          "quantity": 1,
+          "sku": "SUPPORT",
+          "updatedAt": "<present>",
+          "versionId": "<id:5>"
+        },
+        {
+          "componentCount": 2,
+          "createdAt": "<present>",
+          "discountAmountCents": 0,
+          "discountBps": 0,
+          "id": "<id:14>",
+          "listAmountCents": 510000,
+          "netAmountCents": 510000,
+          "offerId": "<id:15>",
+          "offerLogicalKey": "fixture:offer:setup",
+          "offerName": "Setup & Migration",
+          "offerRevision": 1,
+          "position": 4,
+          "productId": "<id:16>",
+          "productVersionId": "<id:17>",
+          "quantity": 400,
+          "sku": "SERVICES",
+          "updatedAt": "<present>",
+          "versionId": "<id:5>"
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "versions",
+      "classification": "contractual",
+      "id": "versions.version-record",
+      "note": null,
+      "observed": [
+        {
+          "approvalId": null,
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "decisionReason": "max line discount 500bps within auto-approve limit 1000bps",
+          "draftRevisionUsed": 7,
+          "effectiveDiscountBps": 210,
+          "id": "<id:1>",
+          "maxLineDiscountBps": 500,
+          "oneTimeDiscountCents": 0,
+          "oneTimeListCents": 1010000,
+          "oneTimeNetCents": 1010000,
+          "opportunityId": "<id:2>",
+          "policy": "standard-sales-discount",
+          "policyDecision": "auto_approve",
+          "policyFingerprint": "ebb651487f4d29effac1a47251e085974ed219cb7f5acb6b55ccb45394e6adf7",
+          "policyVersion": 1,
+          "priceBookId": "<id:3>",
+          "quoteId": "<id:4>",
+          "recurringGroupCount": 2,
+          "requiredApprovalKey": null,
+          "sourceKey": "qv:<id:4>:1",
+          "submittedAt": "2026-01-01T00:00:00.000Z",
+          "submittedBy": "la0-commercial",
+          "totalsJson": {
+            "oneTimeTotal": {
+              "currency": "EUR",
+              "discountAmountCents": 0,
+              "listAmountCents": 1010000,
+              "netAmountCents": 1010000
+            },
+            "recurringTotals": [
+              {
+                "currency": "EUR",
+                "discountAmountCents": 0,
+                "interval": "month",
+                "intervalCount": 1,
+                "listAmountCents": 362500,
+                "netAmountCents": 362500
+              },
+              {
+                "currency": "EUR",
+                "discountAmountCents": 50000,
+                "interval": "year",
+                "intervalCount": 1,
+                "listAmountCents": 1000000,
+                "netAmountCents": 950000
+              }
+            ]
+          },
+          "updatedAt": "<present>",
+          "versionNumber": 1
+        }
+      ],
+      "surface": "storage"
+    },
+    {
+      "category": "versions",
+      "classification": "contractual",
+      "id": "versions.version-totals",
+      "note": null,
+      "observed": [
+        {
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "discountAmountCents": 0,
+          "id": "<id:1>",
+          "interval": null,
+          "intervalCount": null,
+          "kind": "one_time",
+          "listAmountCents": 1010000,
+          "netAmountCents": 1010000,
+          "updatedAt": "<present>",
+          "versionId": "<id:2>"
+        },
+        {
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "discountAmountCents": 0,
+          "id": "<id:3>",
+          "interval": "month",
+          "intervalCount": 1,
+          "kind": "recurring",
+          "listAmountCents": 362500,
+          "netAmountCents": 362500,
+          "updatedAt": "<present>",
+          "versionId": "<id:2>"
+        },
+        {
+          "createdAt": "<present>",
+          "currency": "EUR",
+          "discountAmountCents": 50000,
+          "id": "<id:4>",
+          "interval": "year",
+          "intervalCount": 1,
+          "kind": "recurring",
+          "listAmountCents": 1000000,
+          "netAmountCents": 950000,
+          "updatedAt": "<present>",
+          "versionId": "<id:2>"
+        }
+      ],
+      "surface": "storage"
+    }
+  ],
+  "source": {
+    "apps/admin/public/admin-quotes.js": "83dd5fd1e814c9bd61e475c1d4ebcda6c7f36e0d458520dce84db156a17a77f8",
+    "apps/server/src/http-server.js": "afe47f374127ec22ee431f5076136d3ef63e56f2df42ed44515b2ccb5d42c021",
+    "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
+    "packages/app/src/create-app.js": "a71b83e7d65d2acf176cc5115ee773ecb52889f62ce8c115d8665db437e2f88f",
+    "packages/commercial/modules/catalog-sync-run.module.json": "509281aedba609303861b1097d4b9c7239fd85dcfb9b2d8c54e9c570aee0fc29",
+    "packages/commercial/modules/offer.module.json": "3eb3c85338d22f8a8962ed0c0c0fe79da0007e8c4e66a44aad14d9b8bbca22c4",
+    "packages/commercial/modules/price-book.module.json": "35793cdd5dca999c30760f055622b607d1e68b215b4f9ceaf8fac63ce1b0a670",
+    "packages/commercial/modules/price-component.module.json": "8b0200de0daba4e7a0df10766ee9d4bfe59bd9caddb9ae00752a4dd5e7a1e4c6",
+    "packages/commercial/modules/price-tier.module.json": "586e5ec5bc06a6e1c95e97eefcac830806fdfd6351733adc0f981fe36d936519",
+    "packages/commercial/modules/product-version.module.json": "f8cc600c6f3008a4a4ecc2d16a7f4d5f94b3f423947dc5807363584c5a5ee0fc",
+    "packages/commercial/modules/product.module.json": "e2afd380e694deb0d9a9d1a13f96f52a467be2f7c22ed17506ddf59f50a3838c",
+    "packages/commercial/modules/quote-approval.module.json": "a886a2f2767360a254ef8171d32a65c4a5e0735d1a9cdb23dec8293982fae60a",
+    "packages/commercial/modules/quote-line.module.json": "b755d181baaae0160de1a22f0b9a9a715eaaf6eb4b80a92477e391bc0f8544f2",
+    "packages/commercial/modules/quote-version-component.module.json": "0ad13e20fc017b8138a7d1bcc77822936304054d320308873f5847bedeff33ee",
+    "packages/commercial/modules/quote-version-line.module.json": "284ae9693a67b74a1e22bf446c614c67d3b42e2b60d0b6a69f694b0b2c11deb6",
+    "packages/commercial/modules/quote-version-total.module.json": "9ea4af6efc5ff7e506b7f7b78c7440e9be603507d6d0246904b7b384bb1a88e2",
+    "packages/commercial/modules/quote-version.module.json": "b3a209f5f45c1486f942e145437e69f091cd3bd77972485386607af0dc5f3bc9",
+    "packages/commercial/modules/quote.module.json": "08a6d9a8e48d2d412837a8a52c6fae22520b3add5a82275901ce4754c31386b0",
+    "packages/commercial/src/actions.js": "ff96a1de7311aa398ae9fc951f0c1aadc53c0d26e86baf7994866c38ccfbe1c9",
+    "packages/commercial/src/capability.js": "eecf075298574d0fc0d8b1a22bb95702405c36479cdf1c2add633f849857f121",
+    "packages/commercial/src/catalog-sync.js": "f9ac765ce30ebde27e35aa9f441f417dd1da640a70a98dbb7a013b900489bdb4",
+    "packages/commercial/src/index.js": "b3175983605a733ff99db16d5a417f4e5d6ceab2304ab32e36915ae24499cdb6",
+    "packages/commercial/src/money.js": "5a2716542ebac08388b75d425c0c8c7b91b3dbc8ec756e42927d6d9b203d5a86",
+    "packages/commercial/src/registry.js": "b10cf6027eb889385ac9169502cfebf91036108af22ae631735ae60dacc4c07b",
+    "packages/core/src/action-runtime.js": "8824d7698d2380dd74f9d2c842f04814ed16cccf4cf4fe6bc49d9917d0b6cc9f",
+    "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
+    "packages/core/src/money.js": "67d7c03a14cf053e1e6f52d73ed2ca96608a8c3992615fe6a6738bcfc930e705",
+    "packages/core/src/timeout.js": "9af8f74ac0f6fa7b229576c43540364d9014ce2225198c0e84e18070d952ff88",
+    "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325"
+  }
+}

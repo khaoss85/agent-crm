@@ -378,6 +378,8 @@ function compose(root) {
     'quote-version.module.json', 'quote-version-line.module.json',
     'quote-version-component.module.json', 'quote-version-total.module.json',
     'quote-approval.module.json',
+  ]) applyModule(root, join(root, 'packages', 'commercial', 'modules', manifest));
+  for (const manifest of [
     'signature-envelope.module.json', 'signature-signer.module.json',
     'signature-event.module.json', 'signed-artifact.module.json',
     'order.module.json', 'order-line.module.json', 'order-component.module.json',
@@ -398,22 +400,10 @@ function compose(root) {
 
   writeFileSync(join(root, 'packages', 'actions', 'generated', 'index.js'), [
     '// @ts-check',
-    "import { buildCommercialActions } from '../../core/src/commercial-actions.js';",
     "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
     '',
-    'export const generatedActions = [...buildCommercialActions(), buildRequestSignatureAction()];',
-    '',
-  ].join('\n'));
-  writeFileSync(join(root, 'packages', 'commercial', 'generated', 'index.js'), [
-    '// @ts-check',
-    'import {',
-    '  fixtureSaasCatalogProvider,',
-    '  standardSalesDiscountV1,',
-    '  standardSalesDiscountV2,',
-    "} from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
-    '',
-    'export const generatedCatalogProviders = [fixtureSaasCatalogProvider];',
-    'export const generatedDiscountPolicies = [standardSalesDiscountV1, standardSalesDiscountV2];',
+    '// The quote actions arrive with the commercial package below.',
+    'export const generatedActions = [buildRequestSignatureAction()];',
     '',
   ].join('\n'));
   writeFileSync(join(root, 'packages', 'signature', 'generated', 'index.js'), [
@@ -427,6 +417,12 @@ function compose(root) {
   // Two lines, and Service reaches Contracts through a declared capability.
   writeFileSync(join(root, 'packages', 'domains', 'generated', 'index.js'), [
     '// @ts-check',
+    "import { createCommercialDomain } from '../../commercial/src/index.js';",
+    'import {',
+    '  fixtureSaasCatalogProvider,',
+    '  standardSalesDiscountV1,',
+    '  standardSalesDiscountV2,',
+    "} from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
     "import { createContractsDomain } from '../../contracts/src/index.js';",
     "import { createServicePackage } from '../../service/src/index.js';",
     "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
@@ -436,6 +432,10 @@ function compose(root) {
     "} from '../../../examples/starters/b2b-lead-qualification/service.js';",
     '',
     'export const generatedDomains = [',
+    '  createCommercialDomain({',
+    '    catalogProviders: [fixtureSaasCatalogProvider],',
+    '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
+    '  }),',
     '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
     '  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1] }),',
     '];',

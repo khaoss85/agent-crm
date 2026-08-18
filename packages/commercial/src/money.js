@@ -1,6 +1,12 @@
 // @ts-check
 
-import { ValidationError } from './errors.js';
+import {
+  ValidationError,
+  requireAmount,
+  requireBps,
+  requireQuantity,
+  MAX_QUANTITY,
+} from '../../core/index.js';
 
 /**
  * Commercial money, discount and tier arithmetic (ADR-016).
@@ -20,40 +26,25 @@ import { ValidationError } from './errors.js';
  * quote totals are the checked sums of line component amounts GROUPED by
  * commercial period (see groupComponentTotals) — unlike periods are never
  * added together.
+ *
+ * The domain-neutral value bounds (`requireAmount`, `requireBps`,
+ * `requireQuantity` and the charge/pricing vocabulary) are the kernel's
+ * ADR-014 money contract, imported from public core. Everything in this file
+ * is Commercial's own pricing *semantics* and moved here with the extraction,
+ * function bodies unchanged.
  */
 
+/** The same spec constant `requireBps` is defined by (basis points per unit). */
 export const MAX_DISCOUNT_BPS = 10_000;
-export const MAX_QUANTITY = 1_000_000;
-export const CHARGE_TYPES = Object.freeze(['one_time', 'recurring']);
-export const PRICING_MODELS = Object.freeze(['flat_fee', 'per_unit', 'volume', 'graduated']);
-export const RECURRING_INTERVALS = Object.freeze(['month', 'year']);
-export const MAX_INTERVAL_COUNT = 60;
 export const MAX_TIERS = 50;
 const CURRENCY_RE = /^[A-Z]{3}$/;
 
-/** @param {unknown} value @param {string} field — non-negative safe-integer amount */
-export function requireAmount(value, field) {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    throw new ValidationError(`${field} must be a non-negative safe integer in 1/100 currency units`, { field });
-  }
-  return value;
-}
+import { CHARGE_TYPES, PRICING_MODELS, RECURRING_INTERVALS, MAX_INTERVAL_COUNT } from '../../core/index.js';
 
-/** @param {unknown} value @param {string} field — integer basis points 0–10000 */
-export function requireBps(value, field) {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > MAX_DISCOUNT_BPS) {
-    throw new ValidationError(`${field} must be an integer between 0 and ${MAX_DISCOUNT_BPS} basis points`, { field });
-  }
-  return value;
-}
-
-/** @param {unknown} value @param {string} field — positive bounded integer quantity */
-export function requireQuantity(value, field) {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > MAX_QUANTITY) {
-    throw new ValidationError(`${field} must be an integer between 1 and ${MAX_QUANTITY}`, { field });
-  }
-  return value;
-}
+// Re-published from the kernel contract so importers of this module keep one
+// import site for the whole money vocabulary.
+export { requireAmount, requireBps, requireQuantity, MAX_QUANTITY };
+export { CHARGE_TYPES, PRICING_MODELS, RECURRING_INTERVALS, MAX_INTERVAL_COUNT };
 
 /** @param {unknown} value @param {string} field — uppercase ISO-shaped currency code */
 export function requireCurrency(value, field = 'currency') {

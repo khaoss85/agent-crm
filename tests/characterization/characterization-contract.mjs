@@ -57,6 +57,9 @@ export const SURFACES = Object.freeze([
 export const CATEGORIES = Object.freeze([
   'enrichment', 'signals', 'scoring', 'routing', 'assignment', 'lifecycle',
   'audit-events-trace', 'storage-restart', 'hostile-input', 'architecture', 'helpers',
+  // Commercial Operations (LA0-Commercial). Additive: the Intelligence baseline
+  // predates these and never uses them.
+  'catalog', 'pricing', 'quote', 'versions', 'approval', 'concurrency', 'scale',
 ]);
 
 /**
@@ -198,10 +201,26 @@ export const LIMITATIONS = Object.freeze([
 ]);
 
 /**
- * @param {{domain: string, attachment: string, source: Record<string, string>,
- *   observations: ReturnType<typeof observation>[]}} input
+ * What the **Commercial** baseline promises not to cover. Same mechanism, its
+ * own honest list — Commercial has an Admin surface where Intelligence had
+ * none, so the Intelligence wording would be false of it.
  */
-export function buildBaseline({ domain, attachment, source, observations }) {
+export const COMMERCIAL_LIMITATIONS = Object.freeze([
+  ['DETERMINISTIC_FIXTURES_ONLY', 'every catalog provider is a checked-in deterministic fixture. No network call is made, so nothing here characterizes a real provider\'s latency, error shape or data quality'],
+  ['INCIDENTAL_NOT_ASSERTED', 'observations classified incidental are recorded and not compared. Row ordering nobody specified and internal id shapes are free to change; freezing them would block the refactor this baseline exists to enable'],
+  ['DEFECTS_NOT_FROZEN', 'observations classified defect_candidate are reproduced and documented but never asserted as must-stay. Each one is a recommendation for a separate pre-extraction fix'],
+  ['NOT_A_PERFORMANCE_BASELINE', 'no timing is captured. An extraction that preserves every value and doubles the latency passes this suite'],
+  ['CONCURRENCY_INVARIANTS_ONLY', 'races are frozen as deterministic invariants (exactly one version, exactly one decision, totals matching surviving lines), never as which contender won — the winner is scheduling, not behaviour'],
+  ['ADMIN_RENDER_NOT_MODELLED', 'the Admin quote screens are frozen through the data they read — the schema block, the module rows and the action metadata — not through a driven browser. Browser rendering behaviour stays with tests/admin-quotes.test.js'],
+  ['SCENARIO_EVIDENCE_SEPARATE', 'DX6 scenario evidence (lead-to-won claims CO-01, CO-03, CO-07) runs its own composition and is not re-frozen here; the B8 battery replays the scenario as separate proof'],
+  ['SINGLE_ATTACHMENT_SHAPE', 'a baseline records how Commercial was attached when it was generated. Comparing baselines generated under different attachment shapes is a comparison of two different applications, and the contract carries the shape so that cannot happen silently'],
+]);
+
+/**
+ * @param {{domain: string, attachment: string, source: Record<string, string>,
+ *   observations: ReturnType<typeof observation>[], limitations?: ReadonlyArray<[string, string]>}} input
+ */
+export function buildBaseline({ domain, attachment, source, observations, limitations = LIMITATIONS }) {
   const sorted = [...observations].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const seen = new Set();
   for (const entry of sorted) {
@@ -222,7 +241,7 @@ export function buildBaseline({ domain, attachment, source, observations }) {
       [classification]: sorted.filter((entry) => entry.classification === classification).length,
     }), {}),
     observations: sorted,
-    limitations: LIMITATIONS.map(([code, message]) => ({ code, message })),
+    limitations: limitations.map(([code, message]) => ({ code, message })),
   };
   // Over the asserted observations only: an incidental value changing must not
   // move the fingerprint, or "incidental" would mean nothing.

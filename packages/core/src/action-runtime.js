@@ -131,7 +131,6 @@ export function validateActionInput(schema, body) {
  *   modules: {get: (name: string) => any},
  *   core?: Record<string, Function>,
  *   pipelines?: {forModule: (name: string) => any, get: (name: string) => any, list: () => any[]},
- *   commercial?: any,
  *   module: string, action: string, recordId: string, input: unknown, actor: unknown
  * }} params
  */
@@ -215,11 +214,6 @@ export async function runRecordAction(params) {
           core: params.core ?? Object.freeze({}),
           // Pipeline definitions (ADR-014); read-only registry view.
           pipelines: params.pipelines ?? Object.freeze({ forModule: () => null, get: () => null, list: () => [] }),
-          // Commercial registries (ADR-016); read-only, frozen fallback.
-          commercial: params.commercial ?? Object.freeze({
-            getCatalogProvider: () => { throw new NotFoundError('Catalog provider', 'none registered'); },
-            getDiscountPolicy: () => { throw new NotFoundError('Discount policy', 'none registered'); },
-          }),
           // Optional domain packages (ADR-018 addendum); read-only registry
           // view, frozen fallback when no domain is registered.
           domains: params.domains ?? Object.freeze({
@@ -315,7 +309,6 @@ async function runExternalRecordAction(params, definition, validatedInput) {
     database,
     core: params.core ?? Object.freeze({}),
     pipelines: params.pipelines ?? Object.freeze({ forModule: () => null, get: () => null, list: () => [] }),
-    commercial: params.commercial ?? Object.freeze({}),
     signature: params.signature ?? Object.freeze({
       getSignatureProvider: () => { throw new NotFoundError('Signature provider', 'none registered'); },
     }),
@@ -353,7 +346,6 @@ async function runExternalRecordAction(params, definition, validatedInput) {
         input: validatedInput,
         actor,
         signature: params.signature ?? Object.freeze({}),
-        commercial: params.commercial ?? Object.freeze({}),
         config: params.config ?? {},
         step: ctx.step,
         now: ctx.now,
