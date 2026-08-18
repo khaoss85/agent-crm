@@ -1,0 +1,65 @@
+Command run from repository root on 2026-08-18 at commit 000aae8:
+timeout 600 node --test tests/delivery-handover-e2e.test.js 2>&1 | tail -80
+Last 80 lines of output (the run emitted fewer than 80; this is the complete tail):
+
+TAP version 13
+# (node:8123) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: an activated contract is planned and handed over to delivery
+ok 1 - an activated contract is planned and handed over to delivery
+  ---
+  duration_ms: 5278.663061
+  type: 'test'
+  ...
+# Subtest: the delivery package is optional, and its dependency is declared
+ok 2 - the delivery package is optional, and its dependency is declared
+  ---
+  duration_ms: 7209.284467
+  type: 'test'
+  ...
+# [accordo] commercial-contract.create-delivery-handover run f257aa51-bc0d-41c1-aff2-66a6ef19a5ad: failed to persist trace: database is locked
+# Subtest: an undeclared reach across the package boundary is refused
+ok 3 - an undeclared reach across the package boundary is refused
+  ---
+  duration_ms: 4433.22251
+  type: 'test'
+  ...
+# Subtest: the handover is atomic, idempotent and concurrency-safe
+ok 4 - the handover is atomic, idempotent and concurrency-safe
+  ---
+  duration_ms: 14708.515747
+  type: 'test'
+  ...
+# Subtest: ambiguity blocks the handover until a human decides it
+ok 5 - ambiguity blocks the handover until a human decides it
+  ---
+  duration_ms: 4612.082359
+  type: 'test'
+  ...
+# Subtest: handover refusals, dates and independence hold
+ok 6 - handover refusals, dates and independence hold
+  ---
+  duration_ms: 4515.403257
+  type: 'test'
+  ...
+# Subtest: audit, events and trace are exact, and reads stay exact past the list bound
+ok 7 - audit, events and trace are exact, and reads stay exact past the list bound
+  ---
+  duration_ms: 4734.784216
+  type: 'test'
+  ...
+# Subtest: hostile input stays inert data across the package boundary
+ok 8 - hostile input stays inert data across the package boundary
+  ---
+  duration_ms: 4829.971698
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 50421.086993

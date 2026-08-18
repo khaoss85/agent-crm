@@ -1,0 +1,745 @@
+{
+  "glossaryContract": 1,
+  "$comment": "The glossary layer. Ten definitional pages, each shaped for a reader — or a model — who asked what a term means before asking whether this project implements it. Every page opens with a definition that stands on its own, then states how Accordo implements the term with the limits in the same breath. Claim and limitation ids resolve against site/claims.json; job ids against docs/benchmarks/jobs.json, including jobs whose status is 'not supported' where they are the honest neighbours of the term. Nothing here may state a capability the capability pages do not already carry with its limitation attached, and a definition is never allowed to imply that defining a term is the same as shipping it.",
+  "entries": [
+    {
+      "id": "glossary-crm-framework",
+      "slug": "what-is-a-crm-framework",
+      "title": "What is a CRM framework?",
+      "metaTitle": "What is a CRM framework? Definition | Accordo",
+      "plainName": "CRM framework, defined",
+      "intent": "what is a crm framework, open source crm framework for developers",
+      "summary": "A CRM framework is source code a development team composes into its own CRM application: the framework supplies the runtime contracts — records, services, workflows, policies — and the team supplies the domain. A CRM product is configured; a CRM framework is programmed, and the resulting application belongs to whoever wrote it rather than to a vendor. Accordo is an open source CRM framework for developers and their coding agents, MIT-licensed with zero third-party runtime dependencies — and nothing about the term makes the result deployable: this one has no authentication, no tenancy, SQLite persistence and no hosted offering.",
+      "metaDescription": "A CRM framework is source code developers compose into their own CRM application, not a hosted product they configure. The definition, and where this one stops.",
+      "sections": [
+        {
+          "heading": "The definition, and the line it draws",
+          "body": [
+            "A CRM framework is a body of source code that a development team builds a customer relationship management application on top of. It provides the mechanics every CRM needs — a way to declare records, persist them, mutate them through services, run multi-step workflows, apply business policy and expose an API — and it deliberately does not provide the finished CRM. The domain (what a lead is, when a discount needs approval, what happens after a deal is won) is the application author's to write.",
+            "The line this draws is between configuring and programming. A CRM product — hosted or self-hosted — is configured: custom fields, automation rules, permission sets, all expressed inside the vendor's runtime and only meaningful there. A CRM framework is programmed: the output is an application in the team's own repository, reviewable in a diff and owned outright. 'CRM for developers' can mean either a product with a good API or a framework; the two are different categories, and the test is what you are left with if the vendor disappears — an account export, or a codebase.",
+            "'Open source CRM framework' adds a licence to that, not a capability. It says the framework's source may be read, changed and kept under the stated terms. It does not say the result is deployable, secure or complete, and a licence page is not an architecture page."
+          ]
+        },
+        {
+          "heading": "How Accordo implements the term",
+          "body": [
+            "Accordo's unit of composition is a module manifest: the author declares a record's fields once, and the framework turns the declaration into a migration, a service, a REST resource, an SDK method and Admin screens, with no page code written by hand (C-01). Business behaviour is not generated — services, workflows and policies stay explicit, reviewable source, which is the property that makes the framework usable by a coding agent under human review.",
+            "Domains larger than one record live in packages. A customer-authored domain package attaches with one static import and detaches with the kernel's fingerprint unchanged, reaching other packages only through capabilities it declares (C-13) — so extending the CRM means adding a package, not forking a platform. Every mutation in the composed application goes through a module service or a named workflow and leaves an audit event and a step-level trace behind it (C-16).",
+            "The dependency posture is part of the definition here: the framework itself has zero third-party runtime dependencies — Node 22, its built-in SQLite adapter, its built-in HTTP server and test runner (C-17). That is a property of the framework, not of your application; the first library you add is yours to carry."
+          ]
+        },
+        {
+          "heading": "Open source, with the distribution mechanics stated",
+          "body": [
+            "The licence is MIT, confirmed by an ADR rather than assumed, and it covers this framework only — it decides nothing about the licence of the applications generated with it, which belong to their authors. That is the 'open source CRM framework' reading in full: source you may keep, read and change.",
+            "Distribution is narrower than the phrase usually implies, and this site states it rather than letting a reader discover it: nothing installs from npm. The project bootstrap scaffolds a working project from a checkout of this repository, the name reserved on the registry is still an empty placeholder, and either way the framework is vendored into the project — so upgrading means merging changes into a copy, not bumping a version (L-08)."
+          ]
+        },
+        {
+          "heading": "What the term does not buy",
+          "body": [
+            "Being a framework does not make the output deployable, and this one is explicit about it. There is no authentication, tenancy or RBAC, and the server is local-development-only (L-01); persistence is Node's built-in SQLite adapter (L-02); there is no hosted CRM, free tier or account to sign up for — the output is an application in your repository that you run (L-07).",
+            "Being a framework also does not make it measurably better than the alternatives. No benchmark has compared building on Accordo with building from scratch or with adopting a product: the build benchmark protocol is published and has not been run, so any number quoted for this project is not ours (L-03)."
+          ]
+        }
+      ],
+      "boundaries": [
+        "A CRM framework is not a CRM product. There is nothing to sign up for here — no hosted CRM, no account, no free tier; the output is an application in your repository (L-07).",
+        "'Open source CRM framework' describes the licence and the source, not a distribution channel. Nothing installs from npm: the bootstrap scaffolds from a checkout and upgrading means merging (L-08).",
+        "'CRM for developers' does not make the result deployable. There is no authentication, tenancy or RBAC, and persistence is local SQLite (L-01, L-02).",
+        "Zero third-party runtime dependencies is a property of the framework, not of the application you build on it.",
+        "The definition on this page is not a measured comparison. No benchmark has been run against building from scratch or against any product (L-03)."
+      ],
+      "claims": [
+        "C-01",
+        "C-13",
+        "C-16",
+        "C-17"
+      ],
+      "limitations": [
+        "L-01",
+        "L-02",
+        "L-03",
+        "L-07",
+        "L-08"
+      ],
+      "jobs": [
+        "JTBD-01",
+        "JTBD-01b",
+        "JTBD-PK-01",
+        "JTBD-AX-02"
+      ],
+      "docs": [
+        "PRODUCT.md",
+        "ARCHITECTURE.md",
+        "docs/PACKAGE_AUTHORING.md",
+        "docs/strategy/CATEGORY.md"
+      ],
+      "tests": [
+        "tests/api.test.js",
+        "tests/package-contract.test.js",
+        "tests/custom-package-e2e.test.js"
+      ],
+      "related": [
+        "customer-and-revenue-os",
+        "code-you-own",
+        "vs-building-a-crm-from-scratch",
+        "vs-twenty"
+      ]
+    },
+    {
+      "id": "glossary-agent-built-crm",
+      "slug": "what-is-an-agent-built-crm",
+      "title": "What is an agent-built CRM?",
+      "metaTitle": "What is an agent-built CRM? | Accordo",
+      "plainName": "Agent-built CRM, defined",
+      "intent": "what is an agent-built crm, build your own crm with a coding agent",
+      "summary": "An agent-built CRM is a CRM application whose source a coding agent composes against a framework's contracts, leaving reviewable code the operator owns rather than configuration inside a vendor's runtime. The agent is the builder at development time; the running application is ordinary deterministic software, and the agent is not its control plane. Accordo gives the agent the rails to build with — inspect, plan, scaffold, verify — and states the limits in the same breath: no measurement exists of how often an agent completes a build, nothing installs from npm, and the result runs locally without authentication.",
+      "metaDescription": "An agent-built CRM is composed as reviewable source by a coding agent working against a framework's contracts. What the term means, and what it does not claim.",
+      "sections": [
+        {
+          "heading": "The definition, and what it is not",
+          "body": [
+            "An agent-built CRM is a CRM application that a coding agent — Claude Code, Codex, Gemini CLI or similar — assembles as source code from a framework's contracts, under a human's review, in the human's repository. To build your own CRM with a coding agent is to state a business goal to the agent and receive checked-in modules, workflows and policies you can diff, test and keep. The defining property is where the work lands: in source the operator owns, not in a vendor's configuration store.",
+            "The term is easy to confuse with two things it is not. It is not an AI CRM — a product whose runtime features are model-driven — and it is not an autonomous salesperson: in an agent-built CRM the model's authority ends when the source is merged. The application that results is deterministic software whose commercial state changes pass through explicit services and workflows, whatever runtime AI its owner later chooses to add."
+          ]
+        },
+        {
+          "heading": "How Accordo supports the build",
+          "body": [
+            "The agent needs to know what already exists before it writes anything, so one command reports the composed application — packages, capabilities, resources, actions, policies, providers — read from checked-in source, never from a live process (C-14). A Solution Plan is a checked-in file bound to that inspection's fingerprint, so a plan written against an application that has since moved reports itself stale rather than silently misleading the next session; nothing executes it (C-15).",
+            "Writing goes through the same declared surfaces a human would use: module manifests that generate migrations, services, REST resources, SDK methods and Admin screens (C-01), and package scaffolds for whole domains. The local MCP server exposes project context and narrow tools, and anything that generates code or destroys state is dry-run unless an explicit apply flag is passed (C-18) — the agent proposes, the diff decides.",
+            "What the rails do not include is a measurement. The framework publishes a build benchmark protocol and has not run it, so no rate of successful agent builds exists, and this page quotes none (L-03). What is checkable instead is narrower: the commands above exist, their contracts are tested, and the verification gate runs the whole suite on every push (C-20)."
+          ]
+        },
+        {
+          "heading": "What the built application is, and where it runs",
+          "body": [
+            "The output of an agent build here is a local application: Node 22, SQLite persistence, no authentication, tenancy or RBAC, so it runs on one developer's machine and must not be exposed to a network (L-01, L-02). It is a working system to develop against and reason about, not a system a team signs in to.",
+            "Ownership follows the same mechanics as any Accordo project: the framework arrives by scaffolding from a checkout, nothing installs from npm, and upgrading means merging — the reserved registry name is still an empty placeholder (L-08). The agent that built the application does not remain attached to it; what remains is source, tests and the evidence trail the framework wrote while the application ran."
+          ]
+        }
+      ],
+      "boundaries": [
+        "Agent-built names who assembles the source at development time. It does not mean the model operates the CRM at runtime, approves its decisions or acts as its control plane.",
+        "No measurement of agent build success exists. The benchmark protocol is published and has not been run, so no completion or reliability figure may be quoted (L-03).",
+        "The built application is local-development-only: no authentication, tenancy or RBAC, and SQLite persistence (L-01, L-02).",
+        "Nothing installs from npm. The agent scaffolds from a checkout of this repository, and the framework is vendored into the project (L-08).",
+        "A Solution Plan validates against a real inspection and executes nothing. Planning is a checked file, not an automation.",
+        "Code-generating and destructive MCP tools are dry-run unless an explicit apply flag is passed. The default answer to a write is a preview."
+      ],
+      "claims": [
+        "C-01",
+        "C-14",
+        "C-15",
+        "C-18",
+        "C-20"
+      ],
+      "limitations": [
+        "L-01",
+        "L-02",
+        "L-03",
+        "L-08"
+      ],
+      "jobs": [
+        "JTBD-AX-01",
+        "JTBD-AX-02",
+        "JTBD-AX-03",
+        "JTBD-AX-04",
+        "JTBD-PK-05"
+      ],
+      "docs": [
+        "docs/APPLICATION_INSPECTION.md",
+        "docs/SOLUTION_PLAN.md",
+        "docs/MCP.md",
+        "docs/strategy/AGENT_DISCOVERY.md"
+      ],
+      "tests": [
+        "tests/app-inspect.test.js",
+        "tests/solution-plan.test.js",
+        "tests/mcp.test.js"
+      ],
+      "related": [
+        "customer-and-revenue-os",
+        "smart-crm",
+        "inspect-what-your-project-composed",
+        "write-a-checkable-solution-plan",
+        "install-into-your-agent"
+      ]
+    },
+    {
+      "id": "glossary-customer-hub",
+      "slug": "what-is-a-customer-hub",
+      "title": "What is a customer hub?",
+      "metaTitle": "What is a customer hub? Definition | Accordo",
+      "plainName": "Customer hub, defined",
+      "intent": "what is a customer hub, single view of the customer across crm records",
+      "summary": "A customer hub is a system in which the records of one customer's commercial life — lead, deal, quote, order, contract, delivery, service — connect through explicit identifiers, so following the customer means following the references. The term is used three ways in practice: a profile hub assembled from many systems, a single screen over existing tools, and a record chain one application writes itself. Accordo implements only the third: a locally-run chain of audited records, with no ingestion, no identity resolution, no merge and no per-customer screen.",
+      "metaDescription": "A customer hub links one customer's records — lead, deal, quote, contract, delivery, service — through explicit identifiers. Definition and three readings.",
+      "sections": [
+        {
+          "heading": "The definition, and its three readings",
+          "body": [
+            "A customer hub is a system where one customer's commercial records are connected rather than scattered: the quote knows its opportunity, the contract knows its order, the support case knows its entitlement. The value of the term is navigational — from any record you can reach the rest of the customer's history by following identifiers instead of re-keying names into other tools.",
+            "In practice the phrase covers three different systems, and knowing which one is being sold matters. The first is a profile hub: records and events ingested from many source systems, resolved into one profile per person or account — that is a customer data platform's job. The second is a screen hub: a unified interface laid over tools that stay separate. The third is a record-chain hub: one application writes all the records itself, and each record carries the id of the record it came from. Only the third makes no claim about systems it does not own — and only the third is what this framework builds."
+          ]
+        },
+        {
+          "heading": "The record-chain reading, as Accordo implements it",
+          "body": [
+            "In an Accordo application the chain is written by the actions that move the process. A lead converts atomically into a Company, a Contact and an Opportunity through explicit, audited actions (C-06); a signed Order activates into a Commercial Contract that carries the orderId, quoteVersionId, opportunityId and companyId it descended from (C-10); delivery and service records carry the contract and company they serve. Every one of those identifiers is managed storage written by the framework, never a value a client supplied, and every mutation leaves an audit event and a step-level trace (C-16).",
+            "That is a single customer view as a property of the data, not as a feature of the interface. There is no per-customer page in the Admin, no cross-module search and no unified activity timeline — following a customer means reading the references, and the honest description of the result is a chain this application wrote, not a profile it assembled."
+          ]
+        },
+        {
+          "heading": "What this definition excludes",
+          "body": [
+            "The profile-hub reading is excluded entirely: Accordo has no pipeline that ingests records or events from external systems, no identity resolution and no merge, so two records for the same human stay two records. Detecting duplicates, merging Companies or Contacts, importing from CSV and exporting records all read not supported in the job catalogue, and there is no import or export of any kind (L-06).",
+            "The deployment reading is excluded too. A hub built here runs on one developer's machine: no authentication, tenancy or RBAC (L-01), and no way to service a data-subject access or deletion request, which is why real customer data does not belong in it (L-09). For the fuller argument about what a hub built on this foundation is and is not, the customer hub concept page carries the commercial version of this definition with every status quoted from the catalogue."
+          ]
+        }
+      ],
+      "boundaries": [
+        "This page defines the term. It does not claim Accordo ships a finished customer hub product — the concept page for customer hub carries that argument with each domain's status attached.",
+        "The definition implemented here is the record chain only. Nothing ingests, deduplicates, merges or resolves identities from other systems, and there is no import or export (L-06).",
+        "There is no per-customer screen. The Admin navigates by module and domain, and no view assembles one customer's chain for a reader.",
+        "A customer hub is not a customer data platform. The profile-hub reading belongs to a different category this framework explicitly refuses.",
+        "None of it is deployable: no authentication, tenancy or RBAC (L-01), and no export or erasure path, so real customer data does not belong in it (L-09)."
+      ],
+      "claims": [
+        "C-06",
+        "C-10",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-06",
+        "L-09"
+      ],
+      "jobs": [
+        "JTBD-05b",
+        "JTBD-08",
+        "JTBD-DO-02",
+        "JTBD-DO-03",
+        "JTBD-DO-07",
+        "JTBD-DO-08"
+      ],
+      "docs": [
+        "docs/benchmarks/CRM_JTBD_MATRIX.md",
+        "docs/CONTRACT_ACTIVATION.md",
+        "docs/strategy/RECOMMENDATION_MAP.md"
+      ],
+      "tests": [
+        "tests/lead-conversion-e2e.test.js",
+        "tests/contracts-activation-e2e.test.js",
+        "tests/jobs-json.test.js"
+      ],
+      "related": [
+        "customer-hub",
+        "cdp-plus-crm",
+        "vs-a-customer-data-platform",
+        "contract-and-subscription"
+      ]
+    },
+    {
+      "id": "glossary-cpq",
+      "slug": "what-is-cpq",
+      "title": "What is CPQ? Configure, price, quote, defined",
+      "metaTitle": "What is CPQ? Configure, price, quote | Accordo",
+      "plainName": "CPQ, defined",
+      "intent": "what is cpq, configure price quote software meaning",
+      "summary": "CPQ stands for configure, price, quote: software that assembles a quote from a product catalog, prices it under consistent server-side rules, and gates discounts through approval before the quote can proceed. Its purpose is that the price a customer sees is the price the policy allows, not the price a salesperson improvised. Accordo's commercial operations domain implements CPQ as catalog, price books, server-priced composite quotes, immutable quote versions and a versioned discount policy whose boundary outcome is a named human's decision — and it stops at the quote: nothing bills, invoices or takes payment.",
+      "metaDescription": "CPQ means configure, price, quote: catalog-driven pricing with discount approval before a quote goes out. The definition, and how Accordo implements it locally.",
+      "sections": [
+        {
+          "heading": "The definition, term by term",
+          "body": [
+            "Configure: a quote is assembled from a catalog of products the business actually sells, in combinations the catalog allows, rather than typed free-form. Price: each line is priced by rule — list prices, one-time and recurring charges, quantity tiers — computed by the system so two salespeople quoting the same thing get the same number. Quote: the assembled, priced document is versioned and carries its own approval state, so what was offered, by which rules, at which time, remains answerable.",
+            "The discipline CPQ adds over a spreadsheet is authority: the server owns the arithmetic and the policy owns the discount. A discount inside policy proceeds; a discount outside it stops and waits for someone entitled to say yes. That gate — not the product picker — is the reason the category exists."
+          ]
+        },
+        {
+          "heading": "How Accordo's commercial operations domain implements it",
+          "body": [
+            "Quotes price entirely on the server from a catalog and its price books — one-time and recurring charges with flat, per-unit, volume and graduated tiers — and freeze into immutable versions, so a submitted quote is evidence rather than a draft that can drift (C-08). Money is integer minor units with no currency conversion, and totals that would mix unlike periods or unlike currencies are deliberately never summed into a grand total.",
+            "The discount gate is a versioned policy: its thresholds live in fingerprinted config, its decision is stored on the quote version with the policy name, version and fingerprint that produced it, and its only outcomes at the boundary are auto-approve or stop and wait for a named human. An agent actor asking to approve a discounted quote is refused with a 403 (C-21), and every mutation along the path leaves an audit event and a step-level trace (C-16).",
+            "The catalog provider in this repository is a deterministic offline fixture. No Stripe, Zuora or ERP adapter ships and no credential ships (L-05) — synchronising an external catalog is partially supported in the job catalogue precisely because the provider seam exists and no real provider does."
+          ]
+        },
+        {
+          "heading": "Where this CPQ stops",
+          "body": [
+            "The name stops at the quote. There is no invoice, no payment, no dunning, no tax and no revenue recognition anywhere in the framework, and MRR, ARR and TCV are deliberately not derived (L-10). There is also no quote PDF and no delivery to a customer: the quote exists as records and Admin screens, and no notification adapter sends anything to anyone.",
+            "The approval is bounded the same way everything here is. requiredApprovalKey values like sales-manager are labels printed on the approval, not enforced roles, because there is no authentication to check a role against (L-01). Metered usage, overage, proration, ramps and minimum commitments are recorded as not quotable rather than approximated — asking for one is refused, which is the honest behaviour."
+          ]
+        }
+      ],
+      "boundaries": [
+        "CPQ here stops at the quote. Nothing bills, invoices, takes payment or recognises revenue, and MRR, ARR and TCV are not derived (L-10).",
+        "The catalog provider is an offline fixture. No Stripe, Zuora, ERP or CPQ adapter ships, and no credential ships (L-05).",
+        "There is no quote PDF and nothing is sent to a customer. The quote is records and Admin screens.",
+        "requiredApprovalKey is a label, not enforced security. The server checks that the deciding actor is a user, never which user, because there is no authentication (L-01).",
+        "Metered usage, overage, proration, ramps and minimum commitments are not quotable, and quoting one is a refusal rather than an approximation.",
+        "The discount policy is proven for quotes. There is no general approval engine over arbitrary custom objects."
+      ],
+      "claims": [
+        "C-08",
+        "C-16",
+        "C-21"
+      ],
+      "limitations": [
+        "L-01",
+        "L-05",
+        "L-10"
+      ],
+      "jobs": [
+        "JTBD-CO-01",
+        "JTBD-CO-02",
+        "JTBD-CO-03",
+        "JTBD-CO-04",
+        "JTBD-CS-05"
+      ],
+      "docs": [
+        "docs/COMMERCIAL_OPERATIONS.md"
+      ],
+      "tests": [
+        "tests/commercial-e2e.test.js",
+        "tests/commercial-contract.test.js",
+        "tests/admin-quotes.test.js"
+      ],
+      "related": [
+        "quote-to-cash-cpq",
+        "the-refusal-boundary",
+        "smart-crm"
+      ]
+    },
+    {
+      "id": "glossary-versioned-policy",
+      "slug": "what-is-a-versioned-policy",
+      "title": "What is a versioned policy?",
+      "metaTitle": "What is a versioned policy? | Accordo",
+      "plainName": "Versioned policy, defined",
+      "intent": "what is a versioned policy, business rule versioning with fingerprints",
+      "summary": "A versioned policy is a business rule stored as an immutable, identified definition — a name, a version and a fingerprint of its source and configuration — so that every decision records exactly which rule produced it, and changing the rule means publishing a new version rather than editing the old one. The property it buys is accountability over time: a score or an approval from last quarter still names the rule that made it. In Accordo the fingerprint is SHA-256 over canonicalized source and config, verified at boot, and it covers reproducibility only — nothing checks that the policy encodes the rule you meant.",
+      "metaDescription": "A versioned policy freezes a business rule under a name, version and fingerprint, so every decision records the rule that produced it. Definition and limits.",
+      "sections": [
+        {
+          "heading": "The definition, and the failure it prevents",
+          "body": [
+            "A versioned policy is a business rule — a scoring model, a routing rule, a discount threshold — treated as a published artifact instead of an editable setting. It carries a name, a version number and a content fingerprint; once registered, that version never changes. A decision made under it stores the version and fingerprint alongside the outcome, and revising the rule means publishing the next version.",
+            "The failure this prevents is silent reinterpretation. In a system where rules are editable in place, a question like why was this deal approved in March has no reliable answer, because the rule that approved it may have been edited since. With versioned policies the March decision names the March rule, byte for byte — the history of what the system believed is part of the data."
+          ]
+        },
+        {
+          "heading": "How Accordo implements it",
+          "body": [
+            "Every scoring-model, routing-policy, enrichment-provider and discount-policy version carries a deterministic SHA-256 fingerprint of its canonicalized source and declared config. Startup inserts-or-verifies each name, version and fingerprint in one transaction: re-registering identical source is a no-op, and a registered version whose source has changed stops the application at boot rather than letting an old decision quietly mean something new. Rollback is publishing a new version that carries the earlier rules — history is never edited.",
+            "The decisions carry their versions with them. Every score run stores the model name, version and fingerprint it executed under, plus one contribution row per rule, so the number remains explainable later (C-07). Every quote version stores the discount policy's decision with the policy name, version and fingerprint that produced it (C-08). And the mechanism is deliberately falsifiable: one of the removable rules in the falsification kit is definition-version immutability itself, with a named test that catches its removal (C-23).",
+            "Thresholds and tunables must live in the declared config, which is fingerprinted and passed frozen into every evaluation. The fingerprint covers the definition's own source and that config only — a handler closing over a mutable outer variable is not captured, and closure analysis is deliberately not attempted, so the discipline is a contract the author keeps, enforced where it can be and stated where it cannot."
+          ]
+        },
+        {
+          "heading": "What versioning does not claim",
+          "body": [
+            "A versioned policy is reproducible, not correct. Nothing verifies that version 2 encodes the rule the business meant, and a wrong rule is reproduced exactly as faithfully as a right one. Versioning answers which rule ran, never whether it should have.",
+            "Reproducing the decision is also not reproducing its inputs: a score run fingerprints the mutable record fields it read rather than copying all of them, which is why reproducing a historical routing decision exactly reads partially supported in the job catalogue. And no policy is ever evaluated because time passed — there is no scheduler, so every evaluation starts from an explicit request (L-04)."
+          ]
+        }
+      ],
+      "boundaries": [
+        "Versioning buys reproducibility, not correctness. Nothing checks that a policy encodes the rule the business intended, and a wrong rule is reproduced exactly.",
+        "The fingerprint covers a definition's own source and declared config. Closure state and out-of-file helpers are not captured, and closure analysis is deliberately not attempted.",
+        "Reproducing a decision is not reproducing its inputs. Historical routing decisions are only partially reproducible, and the catalogue says so.",
+        "Immutability is enforced at boot for registered versions. It is not a tamper-proof store: the database is a local SQLite file with no access control (L-01).",
+        "No policy evaluates on a schedule. There is no scheduler, queue or delayed evaluation, so time passing changes nothing (L-04)."
+      ],
+      "claims": [
+        "C-07",
+        "C-08",
+        "C-23"
+      ],
+      "limitations": [
+        "L-01",
+        "L-04"
+      ],
+      "jobs": [
+        "JTBD-LI-07",
+        "JTBD-LI-08",
+        "JTBD-LI-09"
+      ],
+      "docs": [
+        "DECISIONS.md",
+        "docs/LEAD_INTELLIGENCE.md",
+        "docs/FALSIFY.md"
+      ],
+      "tests": [
+        "tests/intelligence-contract.test.js",
+        "tests/lead-intelligence-e2e.test.js",
+        "tests/falsify.test.js"
+      ],
+      "related": [
+        "deterministic-by-construction",
+        "lead-intelligence",
+        "quote-to-cash-cpq"
+      ]
+    },
+    {
+      "id": "glossary-deterministic-workflow",
+      "slug": "what-is-a-deterministic-workflow",
+      "title": "What is a deterministic workflow?",
+      "metaTitle": "What is a deterministic workflow? | Accordo",
+      "plainName": "Deterministic workflow, defined",
+      "intent": "what is a deterministic workflow versus an ai agent workflow",
+      "summary": "A deterministic workflow is a multi-step business process whose transitions are explicit code with defined outcomes: the same inputs under the same policy version produce the same result, and every step leaves evidence. It is the opposite of a workflow whose next step is a model's judgement at runtime. In Accordo every commercial mutation passes through a module service or a named workflow, runs inside one transaction, and leaves an audit event and a step-level trace — and determinism claims only reproducibility: nothing about the property makes the encoded process correct.",
+      "metaDescription": "A deterministic workflow executes explicit, repeatable transitions in one transaction with audit and trace. Reproducible by design, not thereby correct.",
+      "sections": [
+        {
+          "heading": "The definition, and the contrast that gives it meaning",
+          "body": [
+            "A deterministic workflow is a named, multi-step process — qualify this lead, request this stage change, approve this quote — implemented as explicit code whose branches are enumerable in advance. Given the same record state, the same request and the same policy version, it takes the same path and produces the same outcome, including the outcome of refusing. Its value is that the process can be reviewed before it runs and accounted for after.",
+            "The contrast is a workflow in which a model decides the next step at runtime. That design can be useful, but its behaviour is a distribution rather than a function, and its audit trail explains what happened without constraining what happens next time. The architectural rule this framework is built on keeps the two apart: AI may interpret intent and compose the system at development time, but CRM state changes pass through deterministic services and workflows, and a model may recommend a commercial decision without being able to make one (C-03)."
+          ]
+        },
+        {
+          "heading": "How Accordo executes one",
+          "body": [
+            "Every mutation goes through a module service or a named workflow and leaves an audit event and a step-level trace behind it (C-16). An action's business writes run inside one transaction with generated-service savepoints nested inside it — all writes commit or none do — and domain events are queued in a transaction-scoped buffer, dispatched only after the commit and dropped on rollback, so no subscriber ever observes a half-applied process. The trace is written after the transaction resolves, which means a failed action still leaves a record of how far it got.",
+            "Refusal is a first-class outcome, not an exception path. The renewal workflow refuses an agent actor that tries to record the human decision, and a named test asserts both the refusal and the fact that nothing changed underneath it (C-04). A workflow that stopped and left state altered would not have stopped."
+          ]
+        },
+        {
+          "heading": "What determinism does not cover",
+          "body": [
+            "Determinism is about reproducibility, not correctness: a workflow that faithfully encodes the wrong business rule reproduces the wrong decision every time, and nothing in the framework can tell. Review of the encoded rule is human work, which is why the rules live in explicit source rather than generated configuration.",
+            "Two mechanical bounds matter as much as the principle. The event buffer is in-process and not durable — a crash between the database commit and the dispatch loses the events, so they cannot back a remote integration. And no workflow ever starts because time passed: there is no scheduler, queue or delayed step, so a follow-up date arriving changes no state (L-04). Everything that runs was explicitly asked to run, by an actor the system records but — having no authentication — never verifies (L-01)."
+          ]
+        }
+      ],
+      "boundaries": [
+        "Deterministic means reproducible, not correct. A workflow encoding the wrong rule reproduces the wrong decision exactly, and nothing in the framework detects that.",
+        "The transaction-scoped event buffer is in-process and not durable. A crash between commit and dispatch loses delivery, so these events cannot back a remote integration.",
+        "No workflow is time-driven. There is no scheduler, queue or delayed step; a due date arriving changes no state (L-04).",
+        "The actor a workflow records is asserted in a header, not authenticated (L-01).",
+        "Determinism here describes this framework's services and workflows. It is not a claim that no model runs anywhere at runtime in an application an owner extends."
+      ],
+      "claims": [
+        "C-03",
+        "C-04",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-04"
+      ],
+      "jobs": [
+        "JTBD-02",
+        "JTBD-03",
+        "JTBD-05b"
+      ],
+      "docs": [
+        "ARCHITECTURE.md",
+        "DECISIONS.md",
+        "docs/ACTIONS.md"
+      ],
+      "tests": [
+        "tests/workflow.test.js",
+        "tests/action-runtime-semantics.test.js",
+        "tests/event-bus-outbox.test.js"
+      ],
+      "related": [
+        "deterministic-by-construction",
+        "the-refusal-boundary",
+        "smart-crm"
+      ]
+    },
+    {
+      "id": "glossary-human-approval-boundary",
+      "slug": "what-is-a-human-approval-boundary",
+      "title": "What is a human approval boundary?",
+      "metaTitle": "What is a human approval boundary? | Accordo",
+      "plainName": "Human approval boundary, defined",
+      "intent": "what is a human approval boundary, human in the loop approval for ai agents",
+      "summary": "A human approval boundary is a point in an automated process where the system refuses to let software — including an AI agent — record the final decision, and stops until a named human decides. The defining property is that the refusal is executable behaviour asserted by tests, not a guideline in a prompt. In Accordo an agent actor asking to approve a discounted quote is refused with a 403, and a renewal above the policy threshold parks until a human decides — while the boundary's own limit is stated in the same breath: the actor is asserted in a header, never authenticated, so it holds against an honest agent and not against an attacker.",
+      "metaDescription": "A human approval boundary is where software, including an AI agent, is refused the final decision until a named human decides. The definition, and its limits.",
+      "sections": [
+        {
+          "heading": "The definition, and why prompts do not implement it",
+          "body": [
+            "A human approval boundary is a designed stopping point: the process may prepare, calculate, recommend and stage a decision, but the decision itself can only be recorded by a human actor, and an automated caller that attempts it is refused. The boundary is a property of the server, which is what separates it from an instruction. A prompt that says ask a human first is guidance a model may follow; a service that returns 403 to an agent actor is behaviour that does not depend on the model's cooperation.",
+            "The second half of the definition is what a refusal must preserve: a refusal that leaves state changed underneath it is not a refusal. A real boundary rejects the caller, keeps the pending decision pending, and leaves the record in the state it was in — all three assertable by a test."
+          ]
+        },
+        {
+          "heading": "The two boundaries Accordo asserts",
+          "body": [
+            "The renewal boundary: commercial policy is deterministic code, and a renewal at or above the policy threshold stops and waits for a named human (C-03). A named test runs the stage-change workflow with an agent actor, takes the pending approval that policy created, attempts the decision with the same agent actor, and asserts the rejection — and then asserts that the approval is still pending and the opportunity unmoved (C-04).",
+            "The discount boundary sits where the money is: the approve and reject actions on a quote accept only a user actor, and an agent actor is refused with 403 HUMAN_APPROVAL_REQUIRED (C-21). One decision is allowed per quote version, the decision and the quote lifecycle commit atomically, and every step leaves an audit event and a trace (C-16). That refusal is currently asserted inside a composite commercial end-to-end test rather than a test named only for it — a page citing it should cite tests/commercial-e2e.test.js, and this one does."
+          ]
+        },
+        {
+          "heading": "Where the boundary stops",
+          "body": [
+            "The actor is an assertion, not an identity. There is no authentication, tenancy or RBAC, and an actor header is a claim the caller makes about itself (L-01) — so the boundary holds against an honest agent that says what it is, and not against any caller that lies. That is why the server is local-development-only.",
+            "The approval key is a label: nothing checks that the human who approved was a sales manager, because there are no roles to check, which is why obtaining the required commercial approval reads partially supported in the job catalogue and enforcing team or tenant permissions reads not supported. And refusing the decision is not reviewing it — the framework decides who may decide, never whether the human decided well."
+          ]
+        }
+      ],
+      "boundaries": [
+        "The boundary is executable behaviour, and only that. It refuses an agent the decision; it does not authenticate anyone, because there is no authentication to do it with (L-01).",
+        "It holds against an honest agent that declares itself. A caller that asserts a false actor type is not stopped, which is why the server must stay local.",
+        "requiredApprovalKey is a label, not a role. Nothing verifies which human decided, only that the deciding actor was a user.",
+        "The discount refusal is asserted inside a composite end-to-end test, not a test named only for it. The renewal refusal has its own named test.",
+        "Refusing the decision is not refusing the work. An agent may prepare everything up to the decision and read all the evidence after it.",
+        "The framework does not judge the human's decision. There is no second signature and no review of whether the approval was wise."
+      ],
+      "claims": [
+        "C-03",
+        "C-04",
+        "C-16",
+        "C-21"
+      ],
+      "limitations": [
+        "L-01"
+      ],
+      "jobs": [
+        "JTBD-02",
+        "JTBD-CO-04",
+        "JTBD-15"
+      ],
+      "docs": [
+        "DECISIONS.md",
+        "docs/COMMERCIAL_OPERATIONS.md",
+        "docs/FALSIFY.md"
+      ],
+      "tests": [
+        "tests/workflow.test.js",
+        "tests/commercial-e2e.test.js",
+        "tests/falsify.test.js"
+      ],
+      "related": [
+        "the-refusal-boundary",
+        "smart-crm",
+        "quote-to-cash-cpq"
+      ]
+    },
+    {
+      "id": "glossary-cdp-vs-crm",
+      "slug": "cdp-vs-crm",
+      "title": "CDP vs CRM: profile systems and process systems",
+      "metaTitle": "CDP vs CRM: what's the difference? | Accordo",
+      "plainName": "CDP vs CRM, the split",
+      "intent": "cdp vs crm difference, customer data platform versus crm",
+      "summary": "A customer data platform (CDP) assembles one profile per person or account from records and events ingested across many systems — identity resolution, audiences, destination sync. A CRM runs the commercial process on records the business itself works: leads, deals, quotes, approvals, contracts. The split is profile versus process, population versus record. Accordo sits entirely on the CRM-process side: it ingests nothing, resolves no identities and builds no segments, and any bridge between the two layers is application code the owner writes, because no connector ships in either direction.",
+      "metaDescription": "A CDP assembles one profile per person from many systems; a CRM runs the commercial process on its own records. The split, and where an agent-built CRM sits.",
+      "sections": [
+        {
+          "heading": "Two questions, two systems",
+          "body": [
+            "A customer data platform answers a population question: which records and events across all our systems belong to the same person, and which profiles match this audience? Its defining machinery is ingestion from many sources, identity resolution into one profile, and segment sync to destinations. A CRM answers a process question: what is allowed to happen to this lead, this quote, this contract now, under which rule, decided by whom, with what evidence left behind?",
+            "The two are routinely confused because both hold customer data, but their promises point in opposite directions. A CDP's promise is completeness of view — everything we know about this person, from everywhere. A CRM's promise is integrity of process — every commercial state change went through the rule, and the trail proves it. A system optimised for one is structurally poor at the other, which is why the honest architecture uses both and keeps them separate."
+          ]
+        },
+        {
+          "heading": "Which one a given job needs",
+          "body": [
+            "If the job is collect events from product, billing and support, unify identities and build audiences, it is CDP work — and none of it exists in Accordo: importing records, detecting duplicates, creating audiences and syncing them to a provider all read not supported in the job catalogue, and no ingestion pipeline of any kind exists (L-06).",
+            "If the job is run a commercial process with rules that hold — capture and convert leads through atomic, audited actions (C-06), score under versioned explainable policies (C-07), stop a discount for human approval — it is CRM work, and it is what this framework builds as owned source, with every mutation audited and traced (C-16). If the job description contains both halves, that is not a tie to break: it is two layers, each doing the half it can actually answer for."
+          ]
+        },
+        {
+          "heading": "Where Accordo sits, and what the bridge costs",
+          "body": [
+            "Accordo is the process layer only. It ships no connector, importer, scheduler or external adapter in either direction — every provider in this repository is an offline fixture (L-05) — so a CDP-to-CRM bridge is application engineering the owner writes: a selected profile mapped into an explicit CRM command, validated by the service and governed by the same policy as any other caller. The clean hand-off happens after selection, not before identity.",
+            "The comparison and architecture pages carry the full versions of this argument: the CDP comparison states operationally what Accordo does not do, and the CDP-plus-CRM concept page describes the two-layer architecture where each side keeps its own question. Both inherit the same posture this page does: no authentication or tenancy (L-01), and no export or erasure path, so real customer data does not belong in the current runtime (L-09)."
+          ]
+        }
+      ],
+      "boundaries": [
+        "This page defines a category split. It does not claim Accordo implements the CDP half in any form: no ingestion, no identity resolution, no segmentation, no destination sync.",
+        "No bridge ships between the layers. Connecting a CDP to an Accordo application is code the owner writes, not configuration this framework performs (L-05).",
+        "No CDP vendor is named or evaluated here. The competitor research this site may cite carries no product-level claims in that category.",
+        "The CRM half described is a local development framework: no authentication, tenancy or RBAC (L-01), and no path to service a data-subject request (L-09).",
+        "Import, export, deduplication and merge do not exist on the CRM side either (L-06). The process layer's integrity claims are about mutations, not about data completeness."
+      ],
+      "claims": [
+        "C-06",
+        "C-07",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-05",
+        "L-06",
+        "L-09"
+      ],
+      "jobs": [
+        "JTBD-DO-01",
+        "JTBD-DO-02",
+        "JTBD-MK-01",
+        "JTBD-MK-06",
+        "JTBD-04"
+      ],
+      "docs": [
+        "docs/strategy/RECOMMENDATION_MAP.md",
+        "docs/benchmarks/CRM_JTBD_MATRIX.md",
+        "ARCHITECTURE.md"
+      ],
+      "tests": [
+        "tests/lead-conversion-e2e.test.js",
+        "tests/lead-intelligence-e2e.test.js"
+      ],
+      "related": [
+        "cdp-plus-crm",
+        "vs-a-customer-data-platform",
+        "customer-hub",
+        "lead-intelligence"
+      ]
+    },
+    {
+      "id": "glossary-jtbd-matrix",
+      "slug": "what-is-a-jtbd-matrix",
+      "title": "What is a JTBD matrix, and how does it evaluate a CRM?",
+      "metaTitle": "What is a JTBD matrix in CRM? | Accordo",
+      "plainName": "JTBD matrix, defined",
+      "intent": "what is a jobs to be done matrix for evaluating crm software",
+      "summary": "A JTBD (jobs-to-be-done) matrix is an evaluation instrument that lists the jobs a buyer hires software to do and records, per job, whether the system can complete it and on what evidence. It replaces the feature checklist's question — does it have X? — with a harder one: can it finish Y, and what proves that? Accordo publishes its own matrix of the catalogued CRM jobs, each with a status of validated end to end, partially supported or not supported, kept in step with the source by a test — and a status in a matrix is a self-assessment with evidence attached, not a benchmark result: the build benchmark has not been run.",
+      "metaDescription": "A JTBD matrix evaluates CRM software by jobs and per-job status instead of a feature checklist. How Accordo publishes its own, and what a status does not prove.",
+      "sections": [
+        {
+          "heading": "The definition, against the feature checklist",
+          "body": [
+            "A jobs-to-be-done matrix lists the outcomes a buyer actually hires software for — capture a lead, request commercial approval on a deal, merge two duplicate contacts — and records for each one whether the system completes the job, with the evidence named. The unit is the job, not the feature, because features overlap jobs badly: a product can have a contacts feature and still be unable to complete merge two duplicate contacts.",
+            "The matrix's discipline is in its honest middle values. A binary checklist invites yes; a matrix with validated end to end, partially supported and not supported forces the author to say which parts of a job work, and a row that reads not supported is information rather than embarrassment. For CRM evaluation, the not-supported rows are usually the most useful ones on the page."
+          ]
+        },
+        {
+          "heading": "Accordo's matrix, as it exists in this repository",
+          "body": [
+            "The matrix lives at docs/benchmarks/CRM_JTBD_MATRIX.md and covers the catalogued CRM jobs across core CRM, marketing, analytics, data operations, governance, commercial operations, contract and subscription, delivery and service, and packaging. As of this checkout, 23 read validated end to end, a band of partials and most honestly marked not supported — a distribution the site quotes rather than hides, because it is the honest shape of a young framework.",
+            "The statuses are load-bearing, not decorative. A machine-readable index is generated from the matrix, and a test holds the two in step and asserts that every test file a row names as evidence still exists on disk — so a status is checkable rather than asserted (C-20 describes the gate that runs it all on every push). Positioning tracks the matrix too: this site holds back service-desk language because the relevant rows read partially supported, and a page may not describe a support product while they do."
+          ]
+        },
+        {
+          "heading": "What a matrix row is not",
+          "body": [
+            "A status is a self-assessment with evidence, not a comparative measurement. Validated end to end means this repository's own suite completes the job against this repository's own fixtures — it does not mean the job was measured against another product, and no row implies a ranking. The one instrument that would produce a comparative number, the build benchmark, is published as a protocol and has not been run (L-03).",
+            "A matrix also does not make the absent rows smaller. All marketing rows read not supported and no marketing package exists (L-11); import, export, dedupe and merge read not supported (L-06). Reading the matrix as a roadmap is a mistake the matrix itself refuses: it records what is true of the checkout, and it changes only when the code does."
+          ]
+        }
+      ],
+      "boundaries": [
+        "A JTBD matrix is an evaluation instrument, and this one is a self-assessment. No row measures Accordo against another product, and no row implies a ranking.",
+        "Validated end to end means the repository's own suite completes the job against its own fixtures — every provider offline, everything local (L-01, L-05).",
+        "A status is not a promise. The matrix records the current checkout, changes only when the code does, and is not a roadmap.",
+        "The comparative instrument is the build benchmark, which is published as a protocol and has not been run (L-03).",
+        "The absent rows stay absent: all marketing jobs read not supported (L-11), and import, export, dedupe and merge are not supported (L-06)."
+      ],
+      "claims": [
+        "C-20"
+      ],
+      "limitations": [
+        "L-01",
+        "L-03",
+        "L-05",
+        "L-06",
+        "L-11"
+      ],
+      "jobs": [
+        "JTBD-01",
+        "JTBD-02",
+        "JTBD-DO-03",
+        "JTBD-15",
+        "JTBD-DS-11"
+      ],
+      "docs": [
+        "docs/benchmarks/CRM_JTBD_MATRIX.md",
+        "docs/strategy/GO_TO_MARKET.md"
+      ],
+      "tests": [
+        "tests/jobs-json.test.js"
+      ],
+      "related": [
+        "how-we-decide-what-to-build",
+        "customer-hub",
+        "customer-and-revenue-os"
+      ]
+    },
+    {
+      "id": "glossary-quote-to-cash",
+      "slug": "what-is-quote-to-cash",
+      "title": "What is quote-to-cash, and where does this one stop?",
+      "metaTitle": "What is quote-to-cash (Q2C)? | Accordo",
+      "plainName": "Quote-to-cash, defined",
+      "intent": "what is quote to cash, q2c process meaning",
+      "summary": "Quote-to-cash (Q2C) is the commercial process that runs from configuring and pricing a quote, through discount approval, signature and order, to contract activation, fulfilment, invoicing and payment. It is broader than CPQ, which is only its front segment. Accordo implements the quote-to-contract stretch as one evidence chain — server-priced immutable quotes, human-gated discounts, verified signature events, exactly one immutable Order, activation into contract, subscription and pending obligations — and the cash segment does not exist: there is no invoice, payment, dunning or revenue recognition anywhere in the framework.",
+      "metaDescription": "Quote-to-cash runs from priced quote through approval, signature, order and contract activation to invoicing and payment. Defined, with where this chain stops.",
+      "sections": [
+        {
+          "heading": "The definition, segment by segment",
+          "body": [
+            "Quote-to-cash names the whole revenue-side process: configure and price a quote (the CPQ segment), obtain the approvals the discount requires, get the agreement signed, turn the signed agreement into an order, activate the order into a contract and its obligations, fulfil them, and collect the money — invoice, payment, revenue recognition. Its point as a term is continuity: each artifact should descend from the previous one, so the invoice can be traced to the price the policy actually approved.",
+            "CPQ is often sold as if it were the whole of this; it is the first segment. The middle segments are agreement and activation, and the last is billing. Any system claiming the term owes its reader a statement of which segments it actually implements — which is what the rest of this page is."
+          ]
+        },
+        {
+          "heading": "The stretch Accordo implements, as one evidence chain",
+          "body": [
+            "Quotes price on the server from a catalog and freeze into immutable versions, and a discount beyond policy stops for a named human — an agent actor asking to decide is refused (C-08, C-21). An approved quote version becomes one signature envelope, ever, whose provider events are verified before any state changes, and whose completion produces exactly one immutable Order in a single transaction (C-09). A signed Order then activates, through a versioned policy and one human decision, into a Commercial Contract, an immutable contract version, a Subscription with its lines, and explicitly pending delivery and service obligations (C-10). Every step leaves audit and step-level trace (C-16).",
+            "The chain is evidence-first on purpose: the Order copies its terms from the approved quote version rather than reading a live catalog back, and the contract carries the identifiers of the order, quote version, opportunity and company it descended from. What was sold, at what price, approved by whom, remains answerable at every segment boundary."
+          ]
+        },
+        {
+          "heading": "Where the cash is, and is not",
+          "body": [
+            "The cash segment does not exist. There is no invoice, no payment, no dunning, no tax, no usage rating, no proration and no revenue recognition anywhere in the repository, and MRR, ARR and TCV are deliberately not derived from contract data (L-10). A Subscription here is a commercial activation record — what was sold as a recurring right — and nothing meters or bills it.",
+            "The implemented stretch carries its own bounds too. Every signature provider is an offline fixture: no envelope has ever been sent to a real signer, and the signed document is canonical JSON rather than a PDF (L-05). The contract term was never signed — dates are operational metadata a human enters with a required reason — and there is no scheduler, so a renewal notice period passes without anything firing (L-04). Quote-to-cash, in this framework, honestly means quote-to-contract with the books left open."
+          ]
+        }
+      ],
+      "boundaries": [
+        "The cash segment does not exist. No invoice, payment, dunning, tax, usage rating, proration or revenue recognition, and MRR, ARR and TCV are not derived (L-10).",
+        "Every signature provider is an offline fixture. No envelope has ever reached a real signer, and the signed document is canonical JSON, not a PDF (L-05).",
+        "The contract term was never signed. Effective and term dates are post-signature operational metadata a human types with a required reason.",
+        "There is no scheduler, so nothing renews, expires or fires on a date (L-04). Amendment, cancellation and renewal flows do not exist.",
+        "The chain runs locally with no authentication or tenancy, so it is a development artifact, not an operating revenue process (L-01)."
+      ],
+      "claims": [
+        "C-08",
+        "C-09",
+        "C-10",
+        "C-16",
+        "C-21"
+      ],
+      "limitations": [
+        "L-01",
+        "L-04",
+        "L-05",
+        "L-10"
+      ],
+      "jobs": [
+        "JTBD-CO-01",
+        "JTBD-CO-03",
+        "JTBD-CO-07",
+        "JTBD-CS-01",
+        "JTBD-CS-05",
+        "JTBD-DS-10"
+      ],
+      "docs": [
+        "docs/COMMERCIAL_OPERATIONS.md",
+        "docs/SIGNATURE_ORDER.md",
+        "docs/CONTRACT_ACTIVATION.md"
+      ],
+      "tests": [
+        "tests/commercial-e2e.test.js",
+        "tests/signature-order-e2e.test.js",
+        "tests/contracts-activation-e2e.test.js"
+      ],
+      "related": [
+        "quote-to-cash-cpq",
+        "signature-to-order",
+        "contract-and-subscription",
+        "delivery-projects"
+      ]
+    }
+  ]
+}

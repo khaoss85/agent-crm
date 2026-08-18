@@ -188,11 +188,11 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 
 | Channel | When | Status |
 |---|---|---|
-| Docs site on accordo.dev with stable slugs | **Now** | Public site and existing inventory live; Customer Hub, Smart CRM and CDP + CRM slugs are checked but await the stacked merge/deploy |
+| Docs site on accordo.dev with stable slugs | **Now** | Public site and existing inventory live; the Customer Hub, Smart CRM and CDP + CRM slugs are deployed and returned 200 on the production alias (docs/marketing/PENDING_HUMAN_SUBMISSION.md) |
 | `llms.txt` + `llms-full.txt` | **Now** (points at GitHub docs until the site exists) | Shipped in this PR |
 | Comparison pages: vs Twenty, vs Odoo, vs building from scratch, **vs a CDP** | **Now** — these are honest today and need no product change | **Running.** Four checked pages exist; named-competitor facts remain on the 90-day refresh gate |
-| "Customer hub" / "single customer view" content | **Now** | **Prepared in checked source;** public discovery follows the PR stack and deploy |
-| Compound `CDP + CRM` architecture content | **Now** | **Prepared in checked source;** positive two-layer answer, no connector claim |
+| "Customer hub" / "single customer view" content | **Now** | **Live.** Deployed with the production site; syndication and internal links continue |
+| Compound `CDP + CRM` architecture content | **Now** | **Live.** Deployed with the production site; positive two-layer answer, no connector claim |
 | Long-tail capability pages (CPQ, signature→order, delivery economics, SLA, Smart CRM) | **Now** | **Running.** Checked pages exist; continue the two-per-month cadence |
 | Recipes built from real transcripts | After #2 | Blocked by `ORGANIC_GROWTH` quality gates, correctly |
 

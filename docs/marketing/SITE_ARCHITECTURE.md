@@ -25,16 +25,27 @@ marketing page cannot pass that gate reliably, and a page that has to be argued 
 gate is a page that will eventually be argued past it wrongly. So content lives in JSON
 with evidence paths, and pages are a rendering of it.
 
-## 2. The five clusters
+## 2. The clusters
 
 | Cluster | Pillar | Spokes | Answers the question |
 |---|---|---|---|
 | **Capabilities** | `capabilities.html` | 6 | "can it do *my* commercial process?" |
 | **Agent tools** | `tools.html` | 8 | "what can my coding agent actually do here?" |
 | **Concepts** | `concepts.html` | 8 | "why is it built this way?" |
-| **Compare** | `compare.html` | 4 | "why this and not that?" |
-| **Jobs** *(exists)* | `jobs.html` | 60 | "is this specific job supported?" |
+| **Compare** | `compare.html` | 9 | "why this and not that?" |
+| **Glossary** | `glossary.html` | 10 | "what does this term mean, exactly — and where does it stop?" |
+| **Jobs** *(exists)* | `jobs.html` | 66 | "is this specific job supported?" |
 | **Answers** *(exists)* | `answers.html` | 15 | a direct question, directly answered |
+
+The spoke counts above are not free prose: `tests/site-pages.test.js` binds them
+to the pages the build actually emits, so a count that drifts fails the suite
+until this table is updated.
+
+Every cluster spoke also serves a plain-markdown variant at the same path with
+`.md`, generated from the same JSON source as the HTML; the blog publishes an
+RSS feed at `/feed.xml`; and a cluster entry may carry an optional `faq` block
+(2–4 pairs) that renders visibly and emits FAQPage structured data. All three
+are generator features — none adds a hand-maintained surface.
 
 **Capabilities is the commercial entry point and Jobs is its evidence.** A visitor
 searching "quote approval workflow" lands on a capability page; the JTBD rows that prove

@@ -4,7 +4,8 @@
 
 Repository: {{brand.repository}} — `git clone {{brand.repository}}.git`. Every repository
 path in this file links into that repository; the site serves only the pages and JSON
-endpoints named explicitly below.
+endpoints named explicitly below. Every cluster page (capabilities/, tools/, concepts/,
+compare/, glossary/) also serves a plain-markdown variant at the same path with `.md`.
 
 This file is written for a model reading at task time. It states what is true in the
 repository, and — with equal weight — what is not, because recommending this framework
@@ -144,6 +145,9 @@ has no answer here yet — not a plausible reconstruction.
 Evidence-backed articles are canonical on the project site. Syndicated copies may exist,
 but these URLs are the versions bound to this repository's claims and transcripts.
 
+- [When to use a CRM platform instead of this](blog/when-to-use-a-crm-platform-instead-of-this.html) — 2026-08-18; evidence C-01, C-03, C-04, C-16, C-18.
+- [What our inspector refuses to tell you](blog/what-our-inspector-refuses-to-tell-you.html) — 2026-08-18; evidence C-13, C-14, C-15.
+- [The sixteen ways we try to break a milestone before it merges](blog/the-sixteen-ways-we-try-to-break-a-milestone-before-it-merges.html) — 2026-08-18; evidence C-11, C-16, C-20.
 - [If a coding agent builds your CRM, what should it refuse to do?](blog/if-a-coding-agent-builds-your-crm-what-should-it-refuse-to-do.html) — 2026-08-09; evidence C-04, C-16, C-21.
 
 ## Commands an agent runs to check for itself
