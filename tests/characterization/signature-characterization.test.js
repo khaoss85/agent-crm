@@ -140,9 +140,10 @@ test('every behaviour-bearing file is owned by the digest, and the set cannot ro
 });
 
 test('the wiring seam owns every path that knows where Signature lives', () => {
-  // Everything under signature-* except the harness reaches the internals only
+  // Everything under signature-* except the harness (which owns the paths)
+  // and this test (which asserts ABOUT them) reaches the internals only
   // through the seam, so an extraction edits one file.
-  for (const file of ['signature-cases.mjs', 'run-signature-characterization.mjs', 'signature-characterization.test.js']) {
+  for (const file of ['signature-cases.mjs', 'run-signature-characterization.mjs']) {
     const source = readFileSync(join(repoRoot, 'tests/characterization', file), 'utf8');
     assert.doesNotMatch(source, /['"][^'"]*core\/src\/signature-(operations|registry)[^'"]*['"]/,
       `${file} reaches a Signature internal directly; it belongs in the harness`);

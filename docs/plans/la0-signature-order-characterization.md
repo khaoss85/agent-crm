@@ -227,5 +227,222 @@ Three candidate shapes were considered, mirroring the Intelligence LA0:
 - characterization runner green against its committed baseline;
 - no PR opened; branch pushed for the integrator.
 
-Sections 5+ (B7 route/webhook seam evidence, readiness statement, results) are
-appended as the work completes.
+## 5. What was frozen (results)
+
+Baseline: `tests/characterization/signature-baseline.json` —
+`legacyCharacterizationContract: 1`, domain `signature-order`, attachment
+`kernel-wired-action-and-fixed-provider-slot`, **108 observations / 1,209
+asserted values** (94 `contractual`, 3 `compatibility_required`, 2
+`incidental`, 1 `defect_candidate`, 8 `pre_extraction_evidence`). Generated
+twice; the two runs were byte-identical across every observed value.
+Regeneration: `node scripts/characterize-signature.mjs` (npm alias arrives at
+extraction time by design).
+
+Highlights, by family:
+
+- **provider contract**: required handlers, identity/config validation,
+  registration refusals (dup identity, `__proto__` name), Map-backed lookup
+  (`PROVIDER_AMBIGUOUS` on by-name with two versions), fixture fingerprints by
+  exact value; normalization refusals for envelopes/events/artifacts
+  (`PROVIDER_INVALID` 502, provider may never assert `preparing`/`failed`);
+  idempotency-key-is-a-lookup checks (`PROVIDER_ENVELOPE_MISMATCH` on hash,
+  signer set, envelope id; no-echo weaker guarantee accepted).
+- **document**: canonical JSON over ten shapes with exact serializations,
+  refusals (non-finite, function, non-plain object), an exact fixed-document
+  SHA-256, CRLF/LF and NFC/NFD and `1`/`"1"` divergence, hash-covers-exact-bytes,
+  `DOCUMENT_TOO_LARGE`, locale-independent `byteOrder`; the full parsed
+  document-package structure of a real envelope (ids tokenized positionally).
+- **envelope lifecycle**: the full 8×8 transition matrix (unknown state
+  included) cell by cell; `ENVELOPE_EXISTS` (409) on repeat request;
+  `HUMAN_APPROVAL_REQUIRED` (403) for agent actors with the exact message;
+  `VERSION_MISMATCH`; failed-envelope-cannot-resend; declined/voided terminal
+  facts (no order, signer evidence, quote.signatureStatus stays at its
+  finalize-time value — recorded with the note that downstream consumers read
+  the envelope).
+- **webhook**: applied/ignored/quarantined `effect`+`effectReason` values;
+  replay same-id-same-bytes = stable duplicate; same-id-different-bytes =
+  `EVENT_ID_CONFLICT` 409; out-of-order ignored; after-terminal ignored with
+  `envelope already completed (terminal)`; failed-processing redelivery
+  RESUMES (inbox row `processed:false, effect:pending` after fault, exactly
+  one complete order after retry); quarantine of unknown-envelope events and
+  their adoption at reconcile; HMAC verification outcome table with injected
+  clock — inclusive ±300 s boundary (300 in, 301 out, both sides), malformed
+  headers, wrong key/body, invalid-UTF-8 bytes verified as bytes; the HTTP
+  route's 401 `SIGNATURE_INVALID` that never echoes the payload; unknown and
+  `__proto__` provider names 404; oversized raw body refused at 64 KiB;
+  verified-but-hostile payload (`__proto__`/`constructor` keys) quarantined
+  with no prototype pollution.
+- **completion & Order**: request/finalize evidence dumps (envelope, signers,
+  parties snapshot, quote managed fields); the completed envelope, signed
+  artifact (signer evidence JSON, artifact linkage to its completion event,
+  provider-reported artifactHash), and the entire Order snapshot — order row,
+  lines, components (tier schedules and band breakdowns parsed), tiers,
+  grouped totals — with every amount in cents asserted by exact value;
+  exactly-one-order proof; instant-terminal `createEnvelope` answers complete
+  with artifact+order; immutability proven by mutating catalog prices,
+  deactivating offers and renaming every company, then re-reading byte-identical
+  evidence.
+- **external-operation semantics**: `DEFAULT_EXTERNAL_TIMEOUT_MS` (5000);
+  resolved/rejected/timed-out outcomes with exact messages; late settlement
+  abandoned with no unhandledRejection; `freezePhaseValue` (frozen plain JSON,
+  functions/cycles/non-plain refused, dangerous keys dropped); trace span
+  names/statuses for the successful request (`…intent/external/finalize`),
+  the failed request (`…external` failed + `…compensate` completed), and the
+  completion event run; provider outage → compensate → `failed` with
+  `failurePhase`/`failureCode`; provider timeout → `PROVIDER_TIMEOUT` 504.
+- **reconciliation**: terminal short-circuit (`terminal`), absent-at-provider
+  (`PROVIDER_ENVELOPE_ABSENT`, honest `failed`), foreign-envelope refusal
+  leaves state untouched, idempotency-key recovery after a real crash.
+- **races & restart**: a real killed child process (exit 9 during finalize)
+  → intent survives as `preparing` with no provider id → re-request refused →
+  reconcile recovers by idempotency key → exactly ONE envelope ever; two app
+  instances on one database ingesting the same completed event → one order,
+  one inbox row, no raw SQLite error (interleaving detail recorded as
+  incidental); webhook racing reconcile → one order, one artifact; full
+  restart → envelope/order/schema byte-identical, reconcile a safe no-op.
+- **audit/events/trace exactness**: exact per-entity audit deltas for the
+  request (envelope 3, signer 1, quote 1, rest 0) and the completion
+  (envelope 1, signer 1, event 2, artifact 1, order 1, line 1, component 3,
+  tier 3, total 2, quote 1); exact dispatched domain-event counts per stage;
+  a replay creates **zero** of everything; trace vocabulary and event-run
+  status counts.
+- **scale**: 520 inbox rows past the 500-row display bound — exact
+  `countWhere`, exact row lookup beyond the bound, bounded paged list.
+- **AX1/AX2**: `crm app inspect --json` exits 0, `valid`, and cites
+  `request-signature`, `signature-envelope` and `order` (the facts a Solution
+  Plan binds to); where the provider slot appears is recorded as
+  `pre_extraction_evidence`, because the extraction moves it.
+
+**Defect candidate (1), reproduced and not frozen**: signer `name`/`role`
+accept control characters — a newline is stored verbatim, and a NUL byte is
+accepted but **not stored byte-identically** (silent storage mutation), on
+data that becomes part of the signed document package. The identical class was
+already fixed for `record-signal` in `1e40d1e`, and `partner-scorecard`
+refuses control characters. Recommended: the same write-time refusal on signer
+text fields, as a separate pre-extraction fix.
+
+### Gaps — what could not be frozen, and why (declared, not discovered)
+
+- Ingest/reconcile timestamps (`receivedAt`, `failedAt`, reconcile-path
+  `sentAt`…) are wall-clock: `createSignatureOperations` does not receive the
+  injected app clock (`create-app.js` passes `now` to `runRecordAction` but
+  not to the signature operations), so these fields are asserted by presence
+  only. A small clock-injection improvement candidate — behaviour-visible only
+  in timestamps, deliberately not smuggled into this branch.
+- The fine interleaving of the two-connection race is scheduling-dependent and
+  recorded as `incidental`; the deterministic contract (one order, one winner,
+  no raw SQLite error) is what is asserted.
+- Only the deterministic fixture provider exists; no real provider's error
+  shapes, artifact formats or webhook cadence are characterized (none exists
+  to characterize — `docs/SIGNATURE_ORDER.md` claims none).
+- Admin is characterized at the data level (the reads its screens make, the
+  refusals on writes), not as rendered DOM — the repository-wide manual
+  browser gap (`QUALITY_GATES.md` §4).
+- AX2 is frozen as inspect-citability facts, not as a full
+  `solution check` round-trip: a plan is bound to a composition digest, and an
+  extraction *changes* the composition, so `PLAN_STALE` after the move is
+  designed behaviour, not a regression a characterization may freeze.
+
+## 6. B7 evidence — the Signature-owned HTTP seam (record only, nothing built)
+
+Where owned today (`apps/server/src/http-server.js`):
+
+- `POST /api/signature/providers/:provider/events` (:245-257): registered
+  with `{ rawBody: true, maxBodyBytes: 65_536 }` — the ONLY route in the
+  kernel server using the raw-body option; passes exact bytes to
+  `app.ingestSignatureEvent`, bounds headers through `safeSignatureHeaders`,
+  and constructs the actor itself: `{ type: 'system', id: 'signature:<provider>' }`.
+- `POST /api/signature/envelopes/:id/reconcile` (:262-266): plain JSON route
+  delegating to `app.reconcileSignature` with the caller's actor.
+- Both methods wired on the app object in `packages/app/src/create-app.js`
+  (:241-254); `SignatureRegistries` built from the fixed slot
+  `packages/signature/generated/index.js` (:142).
+
+**Why generated actions/resources do not suffice for the webhook** — four
+structural mismatches, each measured against the action runtime:
+
+1. **Identity.** A record action is addressed
+   `/api/modules/:module/records/:id/actions/:action` — by CRM record id. A
+   webhook's identity is `(provider, providerEventId)`, and the target
+   envelope may not exist locally at all (the quarantine case is contractual:
+   the event is evidence before it has a record to attach to).
+2. **Bytes.** Action input passes `readJson` → `validateActionInput` →
+   `sanitizeJsonSafe`: decoded, validated, re-shaped. Verification must see
+   the exact bytes the provider signed — a re-serialization would verify a
+   different document, and invalid UTF-8 would be silently replaced (both
+   frozen in the baseline).
+3. **Actor.** Actions take the authenticated caller's actor from headers. The
+   webhook caller is unauthenticated by design and authenticated by HMAC; the
+   route synthesizes the system actor itself and never trusts headers for it.
+4. **Refusal shape.** A verification failure must be a stable 401 that echoes
+   neither payload, signature nor key — not a validation error envelope that
+   reflects input back.
+
+**Could a declared action solve it?** For **reconcile — nearly yes**: it
+addresses an existing record (`signature-envelope`) by id, takes no raw body,
+uses the ordinary actor path, and its runtime shape is exactly an
+`externalOperation: 1` action (read-only intent, provider call, finalize).
+Two things stop it today: envelope records are read-only managed modules with
+`get`/`list` capabilities only (an action registration would make the module
+action-eligible, a public-surface change), and the operation lives on the app
+object, not the action registry. For **the webhook — no**: mismatches 1–4 are
+contract-level, not registration-level.
+
+**Would a package need a custom endpoint?** Yes — an extracted Signature
+package needs exactly one: the webhook. Reconcile could ride a declared action
+if the record-capability question above is answered; the webhook cannot.
+
+**The exact contract a generic package-route seam would need** (measured from
+what the signature route consumes today — this is the B7 shopping list):
+
+- **declaration**: method + path template, declared by the package and
+  namespaced/collision-checked at composition, visible in `app inspect` and
+  gone on detach (the matrix's detach/reattach proof);
+- **raw body**: an opt-in `rawBody` mode delivering unmodified bytes with a
+  package-declared `maxBodyBytes` bound (65 536 here);
+- **headers**: a package-declared allowlist, lowercased and size-bounded
+  before provider code sees them (today: `safeSignatureHeaders`);
+- **actor synthesis**: the declaration states the system-actor identity the
+  handler runs as (`signature:<provider>`); the seam must NOT hand the
+  handler an authenticated-user actor path;
+- **execution**: handler runs outside any transaction and reaches only the
+  package's own operations (which internally use `runExternalOperation` for
+  transaction discipline, trace and events);
+- **refusals**: kernel-normalized error envelope with stable codes, never
+  echoing the raw body — the 401/404/409 semantics frozen in this baseline;
+- **schema**: the endpoint published as package metadata (today the
+  `eventEndpoint` string in `signature.metadata()` — already the right shape).
+
+## 7. Readiness statement
+
+**No extraction was performed, no shared runtime/source file was modified, no
+package.json edit was made.** The branch adds exactly: this plan, five files
+under `tests/characterization/signature-*`, and
+`scripts/characterize-signature.mjs`.
+
+Before a Signature & Order extraction can start it needs, in order:
+
+1. **From Commercial's capability contract** (the §1 inventory is the spec):
+   guaranteed read access to `quote`, `quote-version`,
+   `quote-version-{line,component,total}` with the exact field shapes of
+   §1.2; the lifecycle semantics (`status === 'approved'`,
+   `currentVersionId`, `policyDecision`); snapshot immutability after
+   submission; the managed-write seam for the four signature-managed quote
+   fields (or an inversion where Commercial consumes signature events); and a
+   home for registering `request-signature` on the quote record. Note DX4's
+   finding: acting on **host-application** records is ordinary and passes
+   `package test` — the quote family is host-supplied manifests today, so the
+   hard requirement is the *semantic* contract, not a code seam. No code
+   import edge exists to design (§1.1).
+2. **From the kernel**: the package HTTP-route seam of §6 (webhook), an
+   answer for reconcile (declared action vs seam route), and either a public
+   `packages/core/index.js` export of `runExternalOperation`/
+   `withExternalTimeout` or an app-operations seam — neither is exported
+   today (§1.5), so the package could not run `ingestSignatureEvent`/
+   `reconcileSignature` at all.
+3. **The pre-extraction fix** for the signer control-character defect
+   candidate (§5), so the extraction PR does not mix a behaviour change with
+   a move — the exact sequencing lesson LA0 recorded for Lead Intelligence.
+4. Then: extraction against this baseline, with
+   `tests/characterization/signature-harness.mjs` as the only
+   characterization file the move edits.
