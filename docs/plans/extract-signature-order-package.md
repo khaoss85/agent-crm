@@ -83,6 +83,31 @@ observations moved — Signature (110 observations, asserted fingerprint
   the behaviour. Recorded here so the reviewer meets it as a decision, not a
   discovery.
 
+- **`signature-orders@1` (added during verification, forced by conformance).**
+  Moving the order family's ownership into this package turned Contract
+  Activation's existing actions on `order` into an undeclared record-level
+  dependency: `crm package test packages/contracts` fails
+  `declaration.action-targets` with `UNDECLARED_PACKAGE_RECORD_DEPENDENCY`,
+  and its own remediation text prescribes the fix — the owner offers a
+  capability, the consumer declares it in `requires`. So
+  `packages/signature/src/capability.js` offers **`signature-orders@1`**:
+  read-only signed-Order evidence sized to `loadActivationSource`'s measured
+  reads (order row, position-ordered lines, per-line components, grouped
+  totals, envelope, signed artifact; frozen rows, null for absent ids, no
+  write of any kind), and `packages/contracts` declares
+  `signature/signature-orders@1`. **Declaration only at runtime**: activation
+  keeps its byte-identical trusted managed-module reads (the DX4 doctrine the
+  `commercial-quote-binding` capability recorded — record access by module
+  name is the ordinary mechanism; what was missing was the declared edge).
+  Knock-on: contracts no longer composes alone, so the fixtures that used it
+  as the smallest composable package moved to `work` (project-doctor) or
+  compose the chain `commercial → signature → contracts`
+  (work-package-absence, the package-contract registry test). Contracts'
+  package `version: 4` is deliberately **not** bumped: the versioned
+  consumer-facing surfaces (capabilities, actions, resources) are unchanged,
+  and the new `requires` entry is a composability declaration — flagged here
+  for the reviewer to disagree with.
+
 ## The ADR-032 boundary accounting (what each of the five items adds)
 
 1. **`operations` validation** — `package-registry.js`:
@@ -132,3 +157,26 @@ cents); `crm package test packages/signature`; full battery — `verify`,
 `smoke`, `gtm:check`, `app inspect`, `doctor`, `project verify`, both
 scenarios; CI green on the exact head. PR opened and left unmerged for the
 independent review; PROJECT_STATUS/TASKS untouched.
+
+## Results of record
+
+- **Acceptance replays**: regenerated on the final composition — Signature
+  asserted fingerprint `fe1875bf9cb68a5b4e8f55f79127cbec57581b9cd0e0b668569422e3cee9c82f`
+  (110 observations) and Commercial `82c1f02fa3545f9c72abbc89121b26cb5562b3d792755f414275732310f3fcf2`
+  (107) byte-identical across the extraction; Intelligence `f80592be…` (151)
+  also unchanged. Non-asserted movement only: source digests, the
+  intelligence schema-block key list gaining the declared `operations` key,
+  and Commercial's `pre_extraction_evidence` probe `appMethodWired`
+  flipping to `false` because `create-app.js` no longer names `syncCatalog`
+  anywhere — the B7 residue ADR-032 exists to retire.
+- **Plan pins re-measured, never transcribed**: `lead-to-won` holds at the
+  repo composition `a0818b57…`; `govern-delivery-change` → `44c1f3e9…` (the
+  delivery project its own test composes); `activate-support-and-manage-cases`
+  and the verifier fixture → `f8b33cd5…` (the service scenario's
+  composition). Evidence documents follow their plans' recomputed
+  fingerprints; the verifier fixture reaches exit 0 through the real command.
+- **Tour counts re-measured**: 71 modules, 9 packages, 66 resources,
+  59 actions, 7 policies, 1 providers (the last fixed provider slot left
+  with the extraction), eleven limitations — swept onto C-22, README,
+  LAUNCH_PACKET, GO_TO_MARKET, the landing page, answers.json, concepts.json
+  and SKILL_PACKAGING.
