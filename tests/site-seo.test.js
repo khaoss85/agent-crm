@@ -241,7 +241,7 @@ test('the first article is discoverable by both people and coding agents', (t) =
   assert.ok(posting, 'the canonical article identifies itself as a BlogPosting');
   assert.equal(posting.headline, title);
   assert.equal(posting.datePublished, '2026-08-09');
-  assert.equal(posting.author?.name, 'Daniele Pelleri');
+  assert.equal(posting.author?.name, 'Aetha Editorial');
   assert.equal(posting.url, `${ORIGIN}/blog/${slug}.html`);
   const llmsEntry = `[${title}](blog/${slug}.html)`;
   assert.ok(site.read('llms.txt').includes(llmsEntry), 'the short retrieval surface links the canonical article');

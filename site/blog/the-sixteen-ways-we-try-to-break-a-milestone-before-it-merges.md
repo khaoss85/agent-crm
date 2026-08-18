@@ -3,7 +3,7 @@ title: The sixteen ways we try to break a milestone before it merges
 date: 2026-08-18
 claims: [C-11, C-16, C-20]
 transcript: docs/transcripts/2026-08-18-adversarial-categories-run.txt
-editor: Daniele Pelleri
+editor: Aetha Editorial
 summary: Every milestone in this repository is attacked against a standing checklist of adversarial categories before a human merges it. Here is the list, what three of the attacks look like in a real run, and what the list deliberately does not prove.
 ---
 

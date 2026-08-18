@@ -1018,7 +1018,7 @@ function blogPages({ posts, claims, standing, brand, origin }) {
           description: post.summary,
           datePublished: post.date,
           dateModified: post.date,
-          author: { '@type': 'Person', name: post.editor },
+          author: { '@type': 'Organization', name: post.editor },
           editor: { '@type': 'Person', name: post.editor },
           mainEntityOfPage: { '@type': 'WebPage', '@id': `${origin}/blog/${post.slug}.html` },
           url: `${origin}/blog/${post.slug}.html`,

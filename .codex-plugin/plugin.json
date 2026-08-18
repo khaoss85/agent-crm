@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Build custom CRMs and Customer Hubs as code. Smart CRM stays policy-governed; for CDP + CRM, Accordo is the process layer, not ingestion, identity resolution or segmentation.",
   "author": {
-    "name": "Daniele Pelleri",
+    "name": "Aetha",
     "url": "https://github.com/khaoss85"
   },
   "homepage": "https://accordo.dev",
@@ -27,7 +27,7 @@
   "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
     "displayName": "Accordo",
-    "developerName": "Daniele Pelleri",
+    "developerName": "Aetha",
     "shortDescription": "Build custom CRM and Customer Hub code",
     "longDescription": "Accordo is the open-source framework coding agents use to build custom CRMs and Customer Hubs. For Smart CRM, the agent composes while deterministic policy and human approval boundaries govern named decisions. For CDP + CRM, Accordo owns the process layer, not ingestion, identity resolution or segmentation, and ships no bridge runtime. The output is reviewable code in your repository with audit and trace. Pre-release: local SQLite, no authentication, tenancy or RBAC.",
     "category": "Productivity",

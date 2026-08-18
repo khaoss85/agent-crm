@@ -3,7 +3,7 @@ title: When to use a CRM platform instead of this
 date: 2026-08-18
 claims: [C-01, C-03, C-04, C-16, C-18]
 transcript: docs/strategy/COMPETITOR_MAP.md
-editor: Daniele Pelleri
+editor: Aetha Editorial
 summary: Most teams weighing this framework against a CRM platform should take the platform. A write-up of our competitor review, dated facts only, and the narrow case that remains.
 ---
 
