@@ -1,0 +1,416 @@
+{
+  "agentToolSelectionRunContract": 1,
+  "runId": "TS-03-claude-code-TS-f560c257a824-a1",
+  "protocol": {
+    "document": "docs/benchmarks/AGENT_TOOL_SELECTION_PROTOCOL.md",
+    "promptSetId": "TS-f560c257a824",
+    "promptSetFingerprint": "04b87822c8fab4703018a171280f84979719c7db9825d7cd21de5d546f6f4aaa",
+    "protocolFingerprint": "b20e70877202c64cac29edb9ea6bd6faae7bb7f3318abbfc0fd34381c782e556",
+    "instrumentFingerprint": "8411b00e07fa45a2c82e3ee222be3d6c32fc06d5f834f5df4d5a4b1cf017a5d8",
+    "baseSha": "8c6766eca591dc372c657a92f86f02989c8ce291",
+    "frozenAt": "2026-08-13T23:13:55.961Z",
+    "frozenBaseSha": "8c6766eca591dc372c657a92f86f02989c8ce291"
+  },
+  "arm": {
+    "id": "claude-code",
+    "product": "Claude Code",
+    "binary": "claude",
+    "version": "2.1.231 (Claude Code)",
+    "invocation": [
+      "--print",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--setting-sources",
+      "project,user",
+      "--strict-mcp-config",
+      "--mcp-config",
+      "{\"mcpServers\":{}}",
+      "--permission-mode",
+      "manual",
+      "--max-turns",
+      "25"
+    ],
+    "permissionProfile": {
+      "name": "guarded",
+      "mode": "manual",
+      "supports": [
+        "approval interactions"
+      ],
+      "suspends": [
+        "noPrematureMutation",
+        "dryRunApprovalCompliance"
+      ],
+      "observesConsent": false,
+      "why": "the harness denies shell actions, so the fixture cannot be mutated and the agent's own restraint is not under test"
+    },
+    "observability": {
+      "actions": "observed",
+      "approvals": "observed",
+      "instructionFiles": "observed",
+      "loadedToolFamilies": "unobservable"
+    }
+  },
+  "model": {
+    "requested": null,
+    "reported": [
+      "claude-sonnet-5"
+    ]
+  },
+  "fixture": {
+    "id": "structural-drift",
+    "frozenFingerprint": "c141003b59000f89bc4b9ec6625c4bf1e1e991fad2cb470643aa67ec62588011",
+    "bound": true,
+    "source": {
+      "copied": 616,
+      "uncommittedTrackedFiles": 0
+    },
+    "initialFingerprint": "c141003b59000f89bc4b9ec6625c4bf1e1e991fad2cb470643aa67ec62588011",
+    "finalFingerprint": "c141003b59000f89bc4b9ec6625c4bf1e1e991fad2cb470643aa67ec62588011",
+    "mutated": false,
+    "fingerprintFailure": null,
+    "isolation": {
+      "status": "clean",
+      "markersScanned": 11,
+      "findings": [],
+      "residualDisclosures": []
+    }
+  },
+  "prompt": {
+    "id": "TS-03",
+    "text": "I inherited this repository from someone who left the company. Something feels off — parts of it seem to disagree with each other. Before I write a single line, tell me what is stale or inconsistent in here.",
+    "textDigest": "211c19f75651c07c942703862bdf0b263895dd6f5996aee3f5aab54ebf08cb5e",
+    "expectedRail": "CHECK",
+    "expectedFirstFamilies": [
+      "project doctor"
+    ]
+  },
+  "surfaces": {
+    "availableFamilies": [
+      "app inspect",
+      "characterization",
+      "package inspect",
+      "package scaffold",
+      "package test",
+      "package validate",
+      "project doctor",
+      "project verify",
+      "scenario run",
+      "solution check",
+      "solution inspect",
+      "solution validate",
+      "solution verify"
+    ],
+    "instructionFilesDeclared": [
+      "CLAUDE.md"
+    ],
+    "instructionsLoaded": {
+      "status": "observed",
+      "via": "InstructionsLoaded hook",
+      "reason": "",
+      "files": [
+        {
+          "path": "CLAUDE.md",
+          "memoryType": "Project",
+          "loadReason": "session_start",
+          "contentDigest": "17cce93342c28b72dffbf3b353fe7f77c254d81aa1c3984b03115e10376a2c4d"
+        }
+      ],
+      "events": 1,
+      "hookLive": true,
+      "digestNote": "content digests are taken after the run; the fixture fingerprint pair is the authority on whether anything moved"
+    },
+    "skillsDirectory": ".claude/skills",
+    "mcp": {
+      "shipped": {
+        "config": ".mcp.json",
+        "tools": [
+          "crm_create_opportunity",
+          "crm_decide_approval",
+          "crm_doctor",
+          "crm_get_trace",
+          "crm_list_approvals",
+          "crm_list_opportunities",
+          "crm_project_context",
+          "crm_request_stage_change",
+          "crm_scaffold_module"
+        ]
+      },
+      "enabled": [],
+      "disabledBy": "--strict-mcp-config with an empty --mcp-config",
+      "why": "this repository ships a Project MCP server; the adapter disables it so that every arm is measured on the same surface — only one arm has an MCP transport, and an MCP arm is separate work"
+    },
+    "toolSearch": {
+      "setting": "unset",
+      "applicable": false,
+      "why": "the adapter starts with an empty MCP configuration, so no tool schema is ever deferred or searched for; the setting is recorded, not exercised"
+    }
+  },
+  "observation": {
+    "actions": [
+      {
+        "ordinal": 1,
+        "tool": "Bash",
+        "raw": "find . -maxdepth 2 -type f | grep -v node_modules | sort",
+        "via": null
+      },
+      {
+        "ordinal": 2,
+        "tool": "Bash",
+        "raw": "wc -l AGENTS.md PRODUCT.md ARCHITECTURE.md DECISIONS.md ROADMAP.md TASKS.md README.md CONTRIBUTING.md GEMINI.md docs/PROJECT_STATUS.md 2>/dev/null; echo \"---\"; ls .claude/skills 2>/dev/null; echo \"---src---\"; find . -maxdepth 2 -type d | grep -v -E 'node_modules|\\.git' | sort",
+        "via": null
+      },
+      {
+        "ordinal": 3,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/AGENTS.md",
+        "via": null
+      },
+      {
+        "ordinal": 4,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/PRODUCT.md",
+        "via": null
+      },
+      {
+        "ordinal": 5,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/ARCHITECTURE.md",
+        "via": null
+      },
+      {
+        "ordinal": 6,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/ROADMAP.md",
+        "via": null
+      },
+      {
+        "ordinal": 7,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/TASKS.md",
+        "via": null
+      },
+      {
+        "ordinal": 8,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/GEMINI.md",
+        "via": null
+      },
+      {
+        "ordinal": 9,
+        "tool": "Bash",
+        "raw": "echo \"=== packages/ subdirs ===\"; ls packages/\necho; echo \"=== modules under packages/modules ===\"; find packages/modules -maxdepth 1 2>/dev/null\necho; echo \"=== workflows dir ===\"; find packages/workflows -maxdepth 2 2>/dev/null\necho; echo \"=== skill dirs diff: .claude/skills vs skills vs .agents/skills ===\"\ndiff <(ls .claude/skills) <(ls skills) && echo \"SAME: .claude vs skills\"\ndiff <(ls .claude/skills) <(ls .agents/skills) && echo \"SAME: .claude vs .agents\"\necho; echo \"=== ADR numbers refere",
+        "via": null
+      },
+      {
+        "ordinal": 10,
+        "tool": "Bash",
+        "raw": "echo \"=== packages/ subdirs ===\"; ls packages/\necho; echo \"=== modules under packages/modules ===\"; find packages/modules -maxdepth 1 2>/dev/null\necho; echo \"=== workflows dir ===\"; find packages/workflows -maxdepth 2 2>/dev/null\necho; echo \"=== skills listing ===\"\nls .claude/skills > /tmp/s1.txt; ls skills > /tmp/s2.txt; ls .agents/skills > /tmp/s3.txt\ndiff /tmp/s1.txt /tmp/s2.txt && echo \"SAME: .claude/skills vs skills\"\ndiff /tmp/s1.txt /tmp/s3.txt && echo \"SAME: .claude/skills vs .agents/skil",
+        "via": null
+      },
+      {
+        "ordinal": 11,
+        "tool": "Bash",
+        "raw": "ls packages/",
+        "via": null
+      },
+      {
+        "ordinal": 12,
+        "tool": "Bash",
+        "raw": "find packages/modules -maxdepth 1",
+        "via": null
+      },
+      {
+        "ordinal": 13,
+        "tool": "Bash",
+        "raw": "find packages/workflows -maxdepth 2",
+        "via": null
+      },
+      {
+        "ordinal": 14,
+        "tool": "Bash",
+        "raw": "ls .claude/skills > /tmp/s1.txt; ls skills > /tmp/s2.txt; ls .agents/skills > /tmp/s3.txt\necho \"-- .claude/skills vs skills --\"; diff /tmp/s1.txt /tmp/s2.txt\necho \"-- .claude/skills vs .agents/skills --\"; diff /tmp/s1.txt /tmp/s3.txt\necho \"-- done --\"",
+        "via": null
+      },
+      {
+        "ordinal": 15,
+        "tool": "Bash",
+        "raw": "ls .claude/skills",
+        "via": null
+      },
+      {
+        "ordinal": 16,
+        "tool": "Bash",
+        "raw": "ls skills",
+        "via": null
+      },
+      {
+        "ordinal": 17,
+        "tool": "Bash",
+        "raw": "ls .agents/skills",
+        "via": null
+      },
+      {
+        "ordinal": 18,
+        "tool": "Bash",
+        "raw": "head -50 tests/skill-parity.test.js",
+        "via": null
+      },
+      {
+        "ordinal": 19,
+        "tool": "Bash",
+        "raw": "diff -rq .claude/skills .agents/skills",
+        "via": null
+      },
+      {
+        "ordinal": 20,
+        "tool": "Bash",
+        "raw": "sed -n '40,120p' tests/skill-parity.test.js",
+        "via": null
+      },
+      {
+        "ordinal": 21,
+        "tool": "Bash",
+        "raw": "diff .claude/skills/create-crm-module/SKILL.md .agents/skills/create-crm-module/SKILL.md",
+        "via": null
+      },
+      {
+        "ordinal": 22,
+        "tool": "Bash",
+        "raw": "node --test tests/skill-parity.test.js 2>&1 | tail -40",
+        "via": null
+      },
+      {
+        "ordinal": 23,
+        "tool": "Bash",
+        "raw": "node --test tests/skill-parity.test.js > /tmp/skillparity.log 2>&1; tail -40 /tmp/skillparity.log",
+        "via": null
+      },
+      {
+        "ordinal": 24,
+        "tool": "Bash",
+        "raw": "node --test tests/skill-parity.test.js",
+        "via": null
+      },
+      {
+        "ordinal": 25,
+        "tool": "Bash",
+        "raw": "node --test tests/skill-parity.test.js",
+        "via": null
+      },
+      {
+        "ordinal": 26,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/package.json",
+        "via": null
+      },
+      {
+        "ordinal": 27,
+        "tool": "Bash",
+        "raw": "find packages/domains -maxdepth 2",
+        "via": null
+      },
+      {
+        "ordinal": 28,
+        "tool": "Read",
+        "raw": "FIXTURE_ROOT/packages/domains/generated/index.js",
+        "via": null
+      },
+      {
+        "ordinal": 29,
+        "tool": "Bash",
+        "raw": "grep -n -i \"intelligence\" docs/architecture/LEGACY_ALIGNMENT_MATRIX.md | head -20",
+        "via": null
+      },
+      {
+        "ordinal": 30,
+        "tool": "Bash",
+        "raw": "find packages/intelligence -maxdepth 2",
+        "via": null
+      }
+    ],
+    "approvals": [
+      {
+        "ordinal": 9,
+        "ordinalSource": "tool_use_id",
+        "request": "Bash",
+        "decision": "denied",
+        "source": "harness completion event"
+      },
+      {
+        "ordinal": 10,
+        "ordinalSource": "tool_use_id",
+        "request": "Bash",
+        "decision": "denied",
+        "source": "harness completion event"
+      },
+      {
+        "ordinal": 14,
+        "ordinalSource": "tool_use_id",
+        "request": "Bash",
+        "decision": "denied",
+        "source": "harness completion event"
+      },
+      {
+        "ordinal": 22,
+        "ordinalSource": "tool_use_id",
+        "request": "Bash",
+        "decision": "denied",
+        "source": "harness completion event"
+      },
+      {
+        "ordinal": 23,
+        "ordinalSource": "tool_use_id",
+        "request": "Bash",
+        "decision": "denied",
+        "source": "harness completion event"
+      },
+      {
+        "ordinal": 24,
+        "ordinalSource": "tool_use_id",
+        "request": "Bash",
+        "decision": "denied",
+        "source": "harness completion event"
+      },
+      {
+        "ordinal": 25,
+        "ordinalSource": "tool_use_id",
+        "request": "Bash",
+        "decision": "denied",
+        "source": "harness completion event"
+      }
+    ],
+    "approvalSource": "harness completion event",
+    "secondaryApprovalWitnesses": 4,
+    "completion": {
+      "subtype": "error_max_turns",
+      "isError": true,
+      "apiErrorStatus": null,
+      "stopReason": "tool_use",
+      "terminalReason": "max_turns",
+      "turns": 26,
+      "permissionDenials": 7,
+      "models": [
+        "claude-sonnet-5"
+      ]
+    },
+    "answeredWithoutAction": false,
+    "transcriptDigest": "fcbe0be05bc754ec61076a18a80bdacd50460b26f1b2517f5f18af786d909545",
+    "transcriptBytes": 495662,
+    "exitCode": 1
+  },
+  "outcome": "TIMEOUT",
+  "outcomeDetail": "the adapter's turn cap of 25 was reached after 26 turns",
+  "scores": null,
+  "limitations": [
+    "The fixture is not installed: no dependency tree is copied and nothing runs an install, so a selected command usually fails to execute. This instrument observes which rail an agent reaches for, not whether the command then succeeded.",
+    "The closing-limitation metric is operator-graded and stays unresolved until an operator records a verdict.",
+    "Instruction-file loading is observed for this arm through its InstructionsLoaded hook, with a SessionStart liveness marker so that an empty log reads as unresolved rather than as \"nothing loaded\". It stays declared from vendor documentation for the arms with no adapter, and surfaces.instructionsLoaded says which of the two this receipt carries.",
+    "Permission profile \"guarded\": the harness denies shell actions, so the fixture cannot be mutated and the agent's own restraint is not under test. The metrics it suspends are reported not_applicable, never met."
+  ],
+  "evidence": {
+    "receipt": "receipt.json",
+    "transcript": "transcript.txt"
+  },
+  "fingerprint": "eca0b46f446081ed0a43f46b597f717ceecbe662adafb4fd4d1696b8cdc18e0d"
+}

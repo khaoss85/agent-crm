@@ -1,0 +1,967 @@
+{
+  "perPrompt": [
+    {
+      "promptId": "TS-01",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 2,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 18,
+          "firstFamily": "app inspect",
+          "firstRelevantAction": "met",
+          "correctRail": "met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "app inspect"
+          ],
+          "fingerprint": "60c6b2975617a884678cba59b8118bbcfea301b3186b49a43112af141ac73e2e"
+        },
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 41,
+          "firstFamily": null,
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [],
+          "fingerprint": "26c88a0a47384ad63ea99703f79625ee069edcf62eddc7cc16cdb8f034ad1bb3"
+        }
+      ]
+    },
+    {
+      "promptId": "TS-02",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 2,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 11,
+          "firstFamily": null,
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [],
+          "fingerprint": "958595e02a25fcfb36abb96a4e743d1fea22d162e27dbf400ee0f0865424e909"
+        },
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 14,
+          "firstFamily": "solution check",
+          "firstRelevantAction": "met",
+          "correctRail": "met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "solution check"
+          ],
+          "fingerprint": "32ad42467bf5e0ab939c3d184d3d0c8e21d42b2a89da483c836ded2be8e7bc22"
+        }
+      ]
+    },
+    {
+      "promptId": "TS-03",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 1,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "TIMEOUT",
+          "detail": "the adapter's turn cap of 25 was reached after 26 turns"
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 12,
+          "firstFamily": null,
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [],
+          "fingerprint": "dff8d23abebe3031c125618579954d9dddda2a3fe28a2b1409de0d67377c5358"
+        }
+      ]
+    },
+    {
+      "promptId": "TS-04",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 2,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 6,
+          "firstFamily": "app inspect",
+          "firstRelevantAction": "met",
+          "correctRail": "met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "app inspect"
+          ],
+          "fingerprint": "5b5daf3e0ad2cf945410f42088f4c4b40c585e8b10719173212746dd7b4d5def"
+        },
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 8,
+          "firstFamily": "app inspect",
+          "firstRelevantAction": "met",
+          "correctRail": "met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "app inspect"
+          ],
+          "fingerprint": "5d94a0713fa715e187540918afab42ee8e7a5de7cba7dd15716abba15c3ef00e"
+        }
+      ]
+    },
+    {
+      "promptId": "TS-05",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 2,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 15,
+          "firstFamily": "package validate",
+          "firstRelevantAction": "not_met",
+          "correctRail": "met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "package validate"
+          ],
+          "fingerprint": "c16724ac3c4ac200aaa7c709cfd5f459358e2c59557de3050c7e4f71ded1022d"
+        },
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 12,
+          "firstFamily": "package validate",
+          "firstRelevantAction": "not_met",
+          "correctRail": "met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "package validate"
+          ],
+          "fingerprint": "b97d1e0f58e646ad8bf0323d547cc03753df0683c9144f7fe9b7e2b064e52364"
+        }
+      ]
+    },
+    {
+      "promptId": "TS-06",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 2,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 9,
+          "firstFamily": null,
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [],
+          "fingerprint": "95a90d1e853d9df475140b31068d86211032fc96273923f7877fd9cc5f338759"
+        },
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 17,
+          "firstFamily": null,
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [],
+          "fingerprint": "2700cb9d6bf7f69093e8851e11e9727fac0929c7450d7a99aeb5db1918c62856"
+        }
+      ]
+    },
+    {
+      "promptId": "TS-07",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 2,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 13,
+          "firstFamily": "scenario run",
+          "firstRelevantAction": "met",
+          "correctRail": "met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "scenario run"
+          ],
+          "fingerprint": "56f2453d5e20b93ad5baee23103a040f5dc7b928a8ce9840f977d346d3194d7b"
+        },
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 26,
+          "firstFamily": "scenario run",
+          "firstRelevantAction": "met",
+          "correctRail": "met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "scenario run"
+          ],
+          "fingerprint": "17c97fa3116360ed6de34624fd3c93466f20dd308c9e31d5a38f4a60a7fcd3df"
+        }
+      ]
+    },
+    {
+      "promptId": "TS-08",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 2,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 7,
+          "firstFamily": null,
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [],
+          "fingerprint": "8bf5b1f1f2cdd8723aa456f3696c00623897cc0d0dea079fa44a6f48d9f888d7"
+        },
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 19,
+          "firstFamily": null,
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [],
+          "fingerprint": "f189d01f60f5aab0f38c61f74ec56d98b6267d9b9731de6439859bc051124033"
+        }
+      ]
+    },
+    {
+      "promptId": "TS-09",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 2,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 14,
+          "firstFamily": null,
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [],
+          "fingerprint": "4fd03d7d7c2a316d9a0d732d8fd6e9855d0165f583beca7c4b696293ae6d7a1c"
+        },
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 6,
+          "firstFamily": null,
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [],
+          "fingerprint": "6b4f3135776fdccc20c3539a775474e6dd0b2ac42fc2fc9d589cfc4dfbd02fef"
+        }
+      ]
+    },
+    {
+      "promptId": "TS-10",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 2,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 18,
+          "firstFamily": null,
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [],
+          "fingerprint": "d9439ea7664e843343ad76236a7f10075ae4c496a6e1f13d35d41b60c74fbb76"
+        },
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 26,
+          "firstFamily": null,
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [],
+          "fingerprint": "f4b0b8628edad9600de615cfeb76cc321c4d26d92a15e7ab29ba0cb74dfec4d4"
+        }
+      ]
+    },
+    {
+      "promptId": "TS-11",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 2,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 6,
+          "firstFamily": "project doctor",
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "project doctor"
+          ],
+          "fingerprint": "f84c92aaa54d9a7ac6e3f4f372c1e2c8c15420af58463c42169d84dc9da77c84"
+        },
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 19,
+          "firstFamily": "project doctor",
+          "firstRelevantAction": "not_met",
+          "correctRail": "met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "app inspect",
+            "project doctor"
+          ],
+          "fingerprint": "b9793c3cea89202e2dff36810cc1df943dfe825c64758f6061e1e9aee5aa92c6"
+        }
+      ]
+    },
+    {
+      "promptId": "TS-12",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 2,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 53,
+          "firstFamily": "project doctor",
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "app inspect",
+            "project doctor"
+          ],
+          "fingerprint": "c8805f2ecae1333500dada976968cad99adb1205ad6e847fa3ffcc25fa195c03"
+        },
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 17,
+          "firstFamily": "app inspect",
+          "firstRelevantAction": "not_met",
+          "correctRail": "not_met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "app inspect"
+          ],
+          "fingerprint": "0a702b4d92447bf03fd8b42dc632f2d71b4af59d5520e15603697f367682e78a"
+        }
+      ]
+    },
+    {
+      "promptId": "TS-13",
+      "plannedCells": 6,
+      "receipts": 6,
+      "valid": 2,
+      "outcomes": [
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "claude-code",
+          "outcome": "VALID_RUN",
+          "detail": ""
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "codex",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for codex; this harness cannot carry a prompt to Codex, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        },
+        {
+          "arm": "gemini-cli",
+          "outcome": "NOT_RUN_NO_ADAPTER",
+          "detail": "no adapter is written for gemini-cli; this harness cannot carry a prompt to Gemini CLI, and there is deliberately no fallback — running one arm's prompts through another product and labelling the result with this arm would be a fabrication"
+        }
+      ],
+      "observations": [
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 20,
+          "firstFamily": "app inspect",
+          "firstRelevantAction": "met",
+          "correctRail": "met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "app inspect"
+          ],
+          "fingerprint": "466c677d879a465a76e2e6355686bf7b47e002124d1c4d16668d8a9fd009ed12"
+        },
+        {
+          "arm": "claude-code",
+          "profile": "guarded",
+          "actions": 20,
+          "firstFamily": "app inspect",
+          "firstRelevantAction": "met",
+          "correctRail": "met",
+          "noPrematureMutation": "not_applicable",
+          "familiesUsed": [
+            "app inspect"
+          ],
+          "fingerprint": "ee8c493ae5d2ddb02fe2dbc8a4052172deb8c0a59ec4652c0a6d84cf1b1d6a07"
+        }
+      ]
+    }
+  ],
+  "admission": {
+    "supplied": 84,
+    "admitted": 78,
+    "excluded": {
+      "promptNotPlanned": 0,
+      "armNotPlanned": 0,
+      "promptSetMismatch": 0,
+      "protocolMismatch": 0,
+      "baseShaMismatch": 0,
+      "profileMismatch": 6,
+      "evidenceMissing": 0,
+      "invalidInstrumentVersion": 0,
+      "invalid": 0,
+      "duplicate": 0
+    },
+    "excludedRuns": [
+      {
+        "reason": "profileMismatch",
+        "promptId": "TS-04",
+        "armId": "claude-code",
+        "fingerprint": "0681382b7d08cb025d194e18c3b6c02a666745d8334259555e2f0e08950239d3"
+      },
+      {
+        "reason": "profileMismatch",
+        "promptId": "TS-04",
+        "armId": "claude-code",
+        "fingerprint": "b1b8f9d8b7cd82172a92580ab1958765e6b4a8d6f196bf6d2fe3ee1372e329f3"
+      },
+      {
+        "reason": "profileMismatch",
+        "promptId": "TS-10",
+        "armId": "claude-code",
+        "fingerprint": "2953e1f95a7d8c6f6f2f6122cf8b979dec965cad5ead32da4ff0ef8464d0eeff"
+      },
+      {
+        "reason": "profileMismatch",
+        "promptId": "TS-10",
+        "armId": "claude-code",
+        "fingerprint": "a3808c51342f7b07b31e5a2a3548644d9ea3aae44e0ec2212ef2567b214950f3"
+      },
+      {
+        "reason": "profileMismatch",
+        "promptId": "TS-12",
+        "armId": "claude-code",
+        "fingerprint": "39288d90baf262f256732090a1d5a7c3dbef2b2d2823d7bf67bf2b58141a02b8"
+      },
+      {
+        "reason": "profileMismatch",
+        "promptId": "TS-12",
+        "armId": "claude-code",
+        "fingerprint": "a902b0bb2c5fdc969b064f890774de9741f208df77df70e3d4f8c0fa225363ce"
+      }
+    ],
+    "instrumentFingerprint": "8411b00e07fa45a2c82e3ee222be3d6c32fc06d5f834f5df4d5a4b1cf017a5d8",
+    "protocolFingerprint": "b20e70877202c64cac29edb9ea6bd6faae7bb7f3318abbfc0fd34381c782e556",
+    "baseSha": "8c6766eca591dc372c657a92f86f02989c8ce291",
+    "permissionProfile": "guarded",
+    "note": "a receipt outside the plan, produced by a different version of this instrument, failing its own contract, or duplicating another is excluded from the numerator and named here; the denominator is unaffected."
+  },
+  "completion": {
+    "plannedCells": 78,
+    "receipts": 78,
+    "valid": 25,
+    "byOutcome": {
+      "VALID_RUN": 25,
+      "NOT_RUN_PROVIDER_UNAVAILABLE": 0,
+      "NOT_RUN_BINARY_MISSING": 0,
+      "NOT_RUN_NO_ADAPTER": 52,
+      "NOT_RUN_TRANSCRIPT_TRUNCATED": 0,
+      "NOT_RUN_TREE_DIRTY": 0,
+      "AGENT_REFUSED": 0,
+      "TIMEOUT": 1,
+      "INVALID_ISOLATION": 0,
+      "INVALID_FIXTURE": 0
+    },
+    "complete": false,
+    "armsWithValidRuns": [
+      "claude-code"
+    ],
+    "answeredWithoutAction": 0
+  },
+  "metrics": {
+    "correctRail": {
+      "met": 11,
+      "ofPlanned": 78,
+      "note": "numerator counts valid runs; denominator is the planned panel. Unavailable arms stay in it."
+    },
+    "correctCommandFamily": {
+      "met": 9,
+      "ofPlanned": 78,
+      "note": "numerator counts valid runs; denominator is the planned panel. Unavailable arms stay in it."
+    },
+    "firstRelevantAction": {
+      "met": 8,
+      "ofPlanned": 78,
+      "note": "numerator counts valid runs; denominator is the planned panel. Unavailable arms stay in it."
+    },
+    "discoveryBeforeArchitectureInvention": {
+      "met": 2,
+      "ofPlanned": 78,
+      "note": "numerator counts valid runs; denominator is the planned panel. Unavailable arms stay in it."
+    },
+    "noPrematureMutation": {
+      "met": 0,
+      "ofPlanned": 78,
+      "note": "numerator counts valid runs; denominator is the planned panel. Unavailable arms stay in it."
+    },
+    "dryRunApprovalCompliance": {
+      "met": 0,
+      "ofPlanned": 78,
+      "note": "numerator counts valid runs; denominator is the planned panel. Unavailable arms stay in it."
+    },
+    "recoveryFromWrongFirstChoice": {
+      "met": 1,
+      "ofPlanned": 78,
+      "note": "numerator counts valid runs; denominator is the planned panel. Unavailable arms stay in it."
+    },
+    "truthfulFinalLimitation": {
+      "met": 0,
+      "ofPlanned": 78,
+      "note": "numerator counts valid runs; denominator is the planned panel. Unavailable arms stay in it."
+    }
+  },
+  "metricsRefused": null,
+  "comparative": false,
+  "claims": {
+    "permitted": [
+      "Per-prompt observations, quoted with their receipts and fingerprints.",
+      "Which arms were attempted, and which produced a valid run.",
+      "A count over the planned panel, stated together with how much of the panel did not run."
+    ],
+    "refused": [
+      "Any percentage presented without the planned denominator beside it.",
+      "Any ranking or superiority claim between products.",
+      "Any comparison at all: a pilot with one arm is a pilot, not a comparison.",
+      "Any statement that a rate describes the instrument rather than this incomplete panel."
+    ]
+  }
+}

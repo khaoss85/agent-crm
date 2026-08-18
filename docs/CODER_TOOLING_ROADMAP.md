@@ -70,6 +70,13 @@ fails the build when it grows (`docs/strategy/EXTERNAL_REVIEW.md`).
 **AX3 depends on DX5, DX6, DX9 and DX10**, not the other way round. A benchmark
 whose evidence is prose is a benchmark nobody can check.
 
+One AX3 instrument exists and is a **pilot, not a public benchmark**:
+`docs/benchmarks/AGENT_TOOL_SELECTION_PROTOCOL.md` observes whether a coding agent given
+a job-shaped prompt selects the right rail, in the right order, without premature
+mutation. It adds no command, tool, runtime or routing layer, and it publishes nothing —
+its first run is recorded in `docs/benchmarks/TOOL_SELECTION_PILOT_2026-08-13.md`, where
+two of three arms were unavailable and no rate was derived.
+
 ### Review and maintenance
 
 | | Tool | What it answers |

@@ -35,6 +35,11 @@
     "bench:prepare": "node benchmarks/harness/prepare.js",
     "bench:record": "node benchmarks/harness/record.js",
     "bench:score": "node benchmarks/harness/score.js",
+    "bench:tools:probe": "node benchmarks/tool-selection/run.js probe",
+    "bench:tools:run": "node benchmarks/tool-selection/run.js run",
+    "bench:tools:rescore": "node benchmarks/tool-selection/run.js rescore",
+    "bench:tools:aggregate": "node benchmarks/tool-selection/run.js aggregate",
+    "bench:tools:freeze": "node benchmarks/tool-selection/run.js freeze",
     "characterize:intelligence": "node scripts/characterize-intelligence.mjs"
   },
   "keywords": [
