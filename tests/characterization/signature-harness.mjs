@@ -144,7 +144,7 @@ export const NEUTRAL_EXTERNAL_OPERATION_SOURCE = '../../packages/core/src/extern
 
 /** The Commercial wiring the journeys need to produce an approved quote. */
 export const COMMERCIAL_WIRING = Object.freeze({
-  actions: '../../core/src/commercial-actions.js',
+  domain: '../../commercial/src/index.js',
   starter: '../../../examples/starters/b2b-lead-qualification/commercial.js',
 });
 
@@ -168,18 +168,27 @@ export function signatureSchemaLocation(schema) {
   return null;
 }
 
-/** The starter manifests the signed-order journey needs, applied in order. */
+/**
+ * The record manifests the signed-order journey needs, applied in order. The
+ * quote/catalog family moved to `packages/commercial/modules/` with the
+ * Commercial extraction (#79); the signature/order family stays with the
+ * starter. Each entry is `[directory, name]` relative to the project root.
+ */
 export const SIGNATURE_MANIFESTS = Object.freeze([
-  'product.module.json', 'product-version.module.json', 'price-book.module.json',
-  'offer.module.json', 'price-component.module.json', 'price-tier.module.json',
-  'catalog-sync-run.module.json', 'quote.module.json', 'quote-line.module.json',
-  'quote-version.module.json', 'quote-version-line.module.json',
-  'quote-version-component.module.json', 'quote-version-total.module.json',
-  'quote-approval.module.json',
-  'signature-envelope.module.json', 'signature-signer.module.json',
-  'signature-event.module.json', 'signed-artifact.module.json',
-  'order.module.json', 'order-line.module.json', 'order-component.module.json',
-  'order-tier.module.json', 'order-total.module.json',
+  ...[
+    'product.module.json', 'product-version.module.json', 'price-book.module.json',
+    'offer.module.json', 'price-component.module.json', 'price-tier.module.json',
+    'catalog-sync-run.module.json', 'quote.module.json', 'quote-line.module.json',
+    'quote-version.module.json', 'quote-version-line.module.json',
+    'quote-version-component.module.json', 'quote-version-total.module.json',
+    'quote-approval.module.json',
+  ].map((name) => Object.freeze(['packages/commercial/modules', name])),
+  ...[
+    'signature-envelope.module.json', 'signature-signer.module.json',
+    'signature-event.module.json', 'signed-artifact.module.json',
+    'order.module.json', 'order-line.module.json', 'order-component.module.json',
+    'order-tier.module.json', 'order-total.module.json',
+  ].map((name) => Object.freeze(['examples/starters/b2b-lead-qualification', name])),
 ]);
 
 /** The fixed clock. Wall-clock leakage is handled by `stable()` masking. */
@@ -201,16 +210,19 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/core/src/external-operation.js',
   'packages/core/src/action-runtime.js',
   'packages/core/src/definition-fingerprint.js',
-  'packages/core/src/commercial-actions.js',
-  'packages/core/src/commercial-registry.js',
-  'packages/core/src/commercial-money.js',
-  'packages/core/src/catalog-sync.js',
+  'packages/core/src/money.js',
+  'packages/commercial/src/index.js',
+  'packages/commercial/src/actions.js',
+  'packages/commercial/src/registry.js',
+  'packages/commercial/src/money.js',
+  'packages/commercial/src/catalog-sync.js',
+  'packages/commercial/src/capability.js',
   'packages/app/src/create-app.js',
   'apps/server/src/http-server.js',
   'packages/sdk/src/index.js',
   'examples/starters/b2b-lead-qualification/signature.js',
   'examples/starters/b2b-lead-qualification/commercial.js',
-  ...SIGNATURE_MANIFESTS.map((name) => `examples/starters/b2b-lead-qualification/${name}`),
+  ...SIGNATURE_MANIFESTS.map(([dir, name]) => `${dir}/${name}`),
 ]);
 
 /**
@@ -228,26 +240,38 @@ export function unownedSignatureSource(rootDir) {
   for (const name of readdirSync(join(rootDir, starter))) {
     if (/^(signature|signed|order|quote)[^/]*\.module\.json$/.test(name)) found.push(`${starter}/${name}`);
   }
+  // The quote/catalog family the signed document snapshots moved to the
+  // commercial package with #79; every manifest there feeds this baseline.
+  for (const name of readdirSync(join(rootDir, 'packages/commercial/modules'))) {
+    if (name.endsWith('.module.json')) found.push(`packages/commercial/modules/${name}`);
+  }
   return found.filter((path) => !owned.has(path)).sort();
 }
 
 /**
- * Wire Signature the way a project does today: generated actions import the
- * kernel builders, and the fixed provider slots register the fixtures.
+ * Wire Signature the way a project does today: the `request-signature` action
+ * is registered by the project's generated-actions file importing the kernel
+ * builder, the fixture signature provider lives in the fixed
+ * `packages/signature/generated/` slot, and the Commercial domain the journey
+ * prices against arrives as a composed package (`createCommercialDomain`) —
+ * the post-#79 shape; the fixed `packages/commercial/generated` slot is gone.
  */
 export function wireSignature(root) {
   writeFileSync(join(root, 'packages/actions/generated/index.js'), [
     '// @ts-check',
-    `import { buildCommercialActions } from '${COMMERCIAL_WIRING.actions}';`,
     "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
-    'export const generatedActions = [...buildCommercialActions(), buildRequestSignatureAction()];',
+    '// The quote actions arrive with the composed commercial package.',
+    'export const generatedActions = [buildRequestSignatureAction()];',
     '',
   ].join('\n'));
-  writeFileSync(join(root, 'packages/commercial/generated/index.js'), [
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
     '// @ts-check',
+    `import { createCommercialDomain } from '${COMMERCIAL_WIRING.domain}';`,
     `import { fixtureSaasCatalogProvider, standardSalesDiscountV1, standardSalesDiscountV2 } from '${COMMERCIAL_WIRING.starter}';`,
-    'export const generatedCatalogProviders = [fixtureSaasCatalogProvider];',
-    'export const generatedDiscountPolicies = [standardSalesDiscountV1, standardSalesDiscountV2];',
+    'export const generatedDomains = [createCommercialDomain({',
+    '  catalogProviders: [fixtureSaasCatalogProvider],',
+    '  discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
+    '})];',
     '',
   ].join('\n'));
   writeFileSync(join(root, 'packages/signature/generated/index.js'), [
@@ -274,9 +298,8 @@ export function characterizationProject(t, { name = 'accordo-sig-la0-' } = {}) {
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
-  const starter = join(root, 'examples/starters/b2b-lead-qualification');
-  for (const manifest of SIGNATURE_MANIFESTS) {
-    const applied = cli(root, ['module', 'create', join(starter, manifest), '--apply']);
+  for (const [dir, manifest] of SIGNATURE_MANIFESTS) {
+    const applied = cli(root, ['module', 'create', join(root, dir, manifest), '--apply']);
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
   }
   wireSignature(root);

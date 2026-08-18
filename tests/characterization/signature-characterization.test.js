@@ -129,7 +129,7 @@ test('every behaviour-bearing file is owned by the digest, and the set cannot ro
     'packages/core/src/signature-registry.js',
     'packages/core/src/external-operation.js',
     'packages/core/src/action-runtime.js',
-    'packages/core/src/commercial-actions.js',
+    'packages/commercial/src/actions.js',
     'apps/server/src/http-server.js',
     'packages/app/src/create-app.js',
     'examples/starters/b2b-lead-qualification/signature.js',
