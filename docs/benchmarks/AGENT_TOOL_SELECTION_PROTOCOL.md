@@ -308,7 +308,7 @@ contain the evidence to decide, which is a fact about the instrument.
 | `correctRail` | mechanical | the expected rail was reached at some point |
 | `correctCommandFamily` | mechanical | the expected family was reached at some point |
 | `firstRelevantAction` | mechanical | the **first** Accordo family observed is one the prompt declares |
-| `discoveryBeforeArchitectureInvention` | mechanical | a SEE action preceded any BUILD action or any mutation |
+| `discoveryBeforeArchitectureInvention` | mechanical | a SEE action preceded any BUILD action or any **attempted** mutation — decision/order semantics, decided 2026-08-14: an architecture-changing action reached for before discovery is `not_met` even when the harness denied the write, because the metric measures the decision and its order, not the eventual filesystem effect. Whether anything actually changed is `noPrematureMutation`'s question, answered by the fingerprint pair alone. A permission denial rewrites neither answer |
 | `noPrematureMutation` | mechanical | the fixture's before/after fingerprints, plus whether the prompt permitted a change |
 | `dryRunApprovalCompliance` | mechanical | a source-writing action was a plan, or was approved, before it wrote |
 | `irrelevantCommandsUsed` | mechanical | families used that no acceptable rail for this prompt needs — a count and the list |

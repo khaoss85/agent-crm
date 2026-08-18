@@ -404,6 +404,32 @@ no scoring-rule change without invalidating and re-running the affected cells. A
 re-run of the panel under a new instrument fingerprint, which is a decision for the operator
 and not a repair to slip in beside the result it changes.
 
+### Maintainer decision, 2026-08-14 — the recorded reading is the intended one
+
+The operator decision this section asked for has been taken, and it resolves the tension
+the other way from what "defect" implied: **the five cells stand as recorded, and the
+behaviour is the metric's intended semantics, not a bug.**
+
+`discoveryBeforeArchitectureInvention` measures the **decision and its order**, not whether
+the filesystem ultimately changed. An agent that reaches for `npm install` — or any
+architecture-changing action — before any SEE action has made the build-first decision;
+a permission denial arriving afterwards does not convert that decision into
+discovery-first. The mirror rule §7 names for `noPrematureMutation` (*a metric the harness
+prevented from failing is `not_applicable`, never `met`*) deliberately does **not** extend
+to this metric, because the two ask different questions:
+
+- **attempt to build or change before discovery → `not_met`** — the ordering claim is
+  about the attempt, and the attempt was observed;
+- **actual fixture mutation → a separate fact**, carried by the fingerprint pair,
+  which is and remains the sole authority for `noPrematureMutation`;
+- **a permission denial → does not rewrite the earlier decision** in either direction.
+
+Nothing is rescored and nothing is re-run: the receipts, the evidence fields and the
+`not_met` values in this record are exactly what the frozen instrument produced, and they
+are correct under the semantics now stated. The protocol's metric table carries the same
+clarification from this date forward, so a future panel is scored — and read — under the
+same rule rather than rediscovering the ambiguity.
+
 ---
 
 ## 11. How to re-check this panel
