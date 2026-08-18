@@ -89,7 +89,7 @@
       <h2 id="how-h">Don't take the ledger's word for it.</h2>
       <div class="code">
 <pre><span class="c"># clone, install nothing, run everything</span>
-git clone <span class="s">&lt;repository&gt;</span> &amp;&amp; cd <span class="s">&lt;repository&gt;</span>
+git clone {{brand.repository}}.git my-crm &amp;&amp; cd my-crm
 npm run verify        <span class="c"># {{measured.tests}} tests</span>
 npm run smoke         <span class="c"># the approval demo, asserted</span>
 
@@ -104,6 +104,35 @@ npm run site:check</pre>
         own blind spots as machine-readable limitation codes — that it never opened the database,
         never contacted a provider, never read a secret, and can report no runtime or authorization
         state. A tool that lists what it cannot see is a tool you can reason about.
+      </p>
+    </section>
+
+    <section aria-labelledby="measured-h">
+      <p class="kicker">What has actually been measured</p>
+      <h2 id="measured-h">Two instruments, two different answers.</h2>
+      <p class="section-lede">
+        The <a href="{{brand.repository}}/blob/main/docs/strategy/CRM_BUILD_BENCHMARK.md">build
+        benchmark</a> — can an agent turn a CRM brief into a working application — is designed,
+        published and <strong>has not been run</strong>. No success rate exists, and any number you
+        see quoted for this project was invented somewhere else.
+      </p>
+      <p class="section-lede">
+        A narrower instrument has run: a
+        <a href="{{brand.repository}}/blob/main/benchmarks/tool-selection/panel-2026-08-13/PANEL.md">tool-selection
+        panel</a> asking whether a coding agent, given a plain business goal, picks the right
+        framework command instead of assembling an answer by hand. Its protocol was frozen and
+        fingerprinted before the first cell ran, every expected outcome was pre-registered in a
+        commit that precedes every run, and the receipts are all committed — including the 52
+        planned cells that could not run because two of the three agent products were not
+        installed, and one run that hit its turn cap. It contains no success rate <em>by
+        design</em>: one measured arm is a pilot, not a comparison, and the record says so about
+        itself. It measures agent behaviour on this repository, never framework capability, and it
+        licenses no ranking of any product.
+      </p>
+      <p class="section-lede">
+        That is the discipline the rest of this page rests on: the scoreboard is built and
+        published before the first result, the parts that hurt are committed next to the parts
+        that flatter, and a figure this project has not measured does not appear here.
       </p>
     </section>
   </div>

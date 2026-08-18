@@ -404,7 +404,9 @@ test('the ledger evidence is inlined ahead of anything optional, and the file is
 
   const full = readFileSync(join(root, 'site/assets/llms-full.txt'), 'utf8');
   assert.ok(full.includes('## The claims ledger: evidence for every entry'), 'the mandatory section is present');
-  assert.ok(full.length <= 40000, `llms-full.txt is ${full.length} characters, over its own stated budget`);
+  const statedBudget = Number(/const FULL_BUDGET = (\d+);/.exec(readFileSync(join(repo, 'scripts/generate-llms.js'), 'utf8'))?.[1]);
+  assert.ok(Number.isInteger(statedBudget) && statedBudget > 0, 'the generator states its own budget');
+  assert.ok(full.length <= statedBudget, `llms-full.txt is ${full.length} characters, over its own stated budget of ${statedBudget}`);
 
   // Every ledger id resolves in the evidence block — that is what "no substitute" means.
   const ledger = JSON.parse(readFileSync(join(root, 'site/claims.json'), 'utf8'));
@@ -442,7 +444,9 @@ test('a ledger too large for the budget fails the generator closed instead of dr
 
   const written = runGenerator(root);
   assert.equal(written.status, 1, 'the generator must refuse to publish an over-budget file');
-  assert.match(written.stderr, /is mandatory and overruns the 40,000-character budget/);
+  // The exact ceiling is a deliberate, documented constant that moves (it was raised for
+  // resolvable absolute links); what this test holds is the refusal, not the number.
+  assert.match(written.stderr, /is mandatory and overruns the [\d,]+-character budget/);
   assert.match(written.stderr, /compact a section above, raise FULL_BUDGET/);
   assert.equal(
     readFileSync(join(root, 'site/assets/llms-full.txt'), 'utf8'), before,
