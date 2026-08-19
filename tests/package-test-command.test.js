@@ -600,3 +600,20 @@ process.exit(0);
   assert.equal(early.report, null);
   assert.match(early.diagnostic, /No report was produced/);
 });
+
+test('a package applies its manifests reference-targets first, whatever the alphabet says', async () => {
+  // `quote-term.module.json` sorts BEFORE `quote.module.json`, and its
+  // `quoteId` reference targets the `quotes` table — applied alphabetically
+  // the factory refuses it ("apply the target module first"). The order must
+  // honour the rail's own doctrine: a manifest is never applied before the
+  // records its foreign keys point at.
+  const { packageManifests } = await import('../packages/cli/src/package-test-project.js');
+  const order = packageManifests(join(repoRoot, 'packages/commercial')).map((path) => path.split('/').pop());
+  const quote = order.indexOf('quote.module.json');
+  const quoteTerm = order.indexOf('quote-term.module.json');
+  assert.ok(quote !== -1 && quoteTerm !== -1, `both manifests are listed: ${order.join(', ')}`);
+  assert.ok(quote < quoteTerm, `quote must apply before quote-term (got: ${order.join(', ')})`);
+  // And the order stays a permutation of the alphabetical set — nothing is
+  // dropped or invented by the dependency pass.
+  assert.deepEqual([...order].sort(), readdirSync(join(repoRoot, 'packages/commercial/modules')).filter((name) => name.endsWith('.module.json')).sort());
+});
