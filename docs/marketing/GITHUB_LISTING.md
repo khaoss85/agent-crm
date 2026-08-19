@@ -16,10 +16,17 @@ paraphrase back to a user.
 
 **Next description** (kept below GitHub's limit so it survives being quoted in full):
 
-> Agent-native CRM framework for Claude Code, Codex and Gemini CLI. Author custom CRM and
-> Customer Hub source with deterministic workflows, human approvals, audit and trace. Smart
-> CRM is policy-governed; CDP + CRM means process layer—not ingestion, identity resolution or
-> segmentation.
+> Accordo — agent-native CRM framework for Claude Code, Codex and Gemini CLI. Author custom
+> CRM and Customer Hub source with deterministic workflows, human approvals, audit and trace.
+> Smart CRM is policy-governed; CDP + CRM means process layer—not ingestion, identity
+> resolution or segmentation.
+
+**The brand name has to be in this field.** GitHub's repository search indexes the name, the
+description and the topics — nothing else. Until 2026-08-19 the word "Accordo" was in none of
+the three: the repository is called `agent-crm`, the description opened with the category, and
+no topic carried the name. A search for `accordo crm` returned zero results, which means an
+agent told *"use Accordo"* by its own user could not find this repository at all. Every other
+retrieval surface in this project was tuned while the brand query itself resolved to nothing.
 
 **Website**: the landing page URL once a domain exists. Until then, leave empty rather than
 pointing at a placeholder.
@@ -27,6 +34,7 @@ pointing at a placeholder.
 **Topics** — ordered by how likely each is to be the term someone actually searches:
 
 ```
+accordo
 crm
 crm-framework
 customer-hub
@@ -45,9 +53,14 @@ workflow-engine
 audit-trail
 revenue-operations
 cpq
-javascript
 nodejs
 ```
+
+`accordo` leads the list and `javascript` is gone. The cap is twenty and it was full, so
+adding the brand name cost a topic: `javascript` was the one to lose, because GitHub already
+derives and displays the repository's language from its contents, making that topic the only
+one in the set carrying no information the page does not already show. `nodejs` stays — the
+runtime is a real constraint (Node 22.16+) rather than a restatement of the language.
 
 Rationale: the first five carry the user vocabulary without using the isolated `cdp` topic,
 which would imply a product category Accordo does not implement. The next group names the
