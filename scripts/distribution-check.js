@@ -125,6 +125,51 @@ if (serverJson && !/^[a-z0-9.-]+\/[a-z0-9-]+$/.test(serverJson.name ?? '')) {
   fail('server.json: name must be reverse-DNS namespace/identifier, e.g. io.github.<owner>/<server>');
 }
 
+/**
+ * The registry entry is the remote documentation server, never a published
+ * project server (ADR-034): the project MCP composes an application from the
+ * generated indexes of the tree it sits in, so a copy published from this
+ * repository would open a customer's database while composing a different CRM.
+ *
+ * What is checked here is the shape that keeps the entry honest — a reachable
+ * transport at a URL the ledger already records. Binding the host to
+ * `brand.json` is the same rule every other public surface obeys: a domain
+ * hardcoded in one more file is a domain that survives a rename.
+ */
+if (serverJson) {
+  if (serverJson.packages?.length) {
+    fail(
+      'server.json: a `packages` entry offers the registry an installable server. The project MCP '
+      + 'is not one (ADR-034) — it composes from the generated indexes of the project it runs '
+      + 'inside, so a published copy answers about the wrong application. Register the remote '
+      + 'documentation server instead.',
+    );
+  }
+  const remotes = Array.isArray(serverJson.remotes) ? serverJson.remotes : [];
+  if (remotes.length !== 1) {
+    fail(`server.json: expected exactly one remote entry, found ${remotes.length}`);
+  }
+  for (const remote of remotes) {
+    if (remote?.type !== 'streamable-http') {
+      fail(`server.json: remote transport is "${remote?.type}"; the deployed adapter is streamable-http (ADR-025)`);
+    }
+    let host = null;
+    try {
+      const url = new URL(remote?.url ?? '');
+      if (url.protocol !== 'https:') fail(`server.json: remote url must be https, got "${remote.url}"`);
+      host = url.host;
+    } catch {
+      fail(`server.json: remote url "${remote?.url}" is not an absolute URL`);
+    }
+    if (host && host !== brand.domain.value) {
+      fail(
+        `server.json: remote url points at "${host}", but site/brand.json records the domain as `
+        + `"${brand.domain.value}". The registry entry must resolve to the site the ledger names.`,
+      );
+    }
+  }
+}
+
 // ---------------------------------------------------------------- intent discovery
 
 /**
@@ -416,11 +461,11 @@ if (bootstrapExists) {
 if (brand.name.status !== 'chosen') {
   notes.push('The public name is undecided, so none of these manifests may be published: the plugin name namespaces every skill, and changing it later breaks installed users.');
 }
-// Keyed on the scoped package's own absence, not on npm.status: create-accordo
-// going live did not publish @accordo/mcp, and the MCP registry entry resolves
-// to the package it names, not to the brand's overall registry state.
-if (serverJson?.packages?.length && brand.npm.note?.includes('scope is still unclaimed')) {
-  notes.push(`server.json references the unpublished npm package "${serverJson.packages[0].identifier}". Publish the package before submitting to the MCP registry, or the entry resolves to nothing.`);
+// This note used to say the registry entry referenced an unpublished package.
+// The entry no longer references one, and per ADR-034 it never should again;
+// what remains true is that submitting it is a person's action.
+if (serverJson?.remotes?.length) {
+  notes.push(`server.json registers the remote documentation server at ${serverJson.remotes[0].url}. The entry needs no npm artifact; submitting it through mcp-publisher is a human step (MASTER_PLAN.md §10.4).`);
 }
 
 // ---------------------------------------------------------------- report
