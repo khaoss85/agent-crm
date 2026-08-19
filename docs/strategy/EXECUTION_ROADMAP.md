@@ -173,11 +173,33 @@ Each milestone below follows the standard per-phase format.
   `plan-renewal` (reads, writes nothing), `record-renewal-decision`,
   `request-commercial-followup`, `resolve-commercial-followup` (ADR-028,
   `docs/plans/m16a-renewal-expansion-operations.md`).
-- **Deliberately not delivered:** it renews nothing, cancels nothing, ends nothing,
-  signs nothing, prices nothing, invoices nothing, schedules nothing and
+- **Deliberately not delivered by M16a:** it renews nothing, cancels nothing, ends
+  nothing, signs nothing, prices nothing, invoices nothing, schedules nothing and
   recognises no churn. It moves **only** JTBD-CS-09 to *partially supported*, and
-  only its non-renew half. Amendment execution is **M16b** and stays deferred
-  until Commercial and Signature are reachable through capabilities.
+  only its non-renew half.
+
+### M16b — Renewal & amendment execution
+
+- **Outcome:** a governed **successor** commercial agreement executed from a
+  signed immutable Order, with immutable 1:1:1 lineage to the agreement it
+  replaces (ADR-034, `docs/plans/m16b-amendment-execution.md`,
+  `docs/RENEWAL_AMENDMENT.md`).
+- **Deliverables:** `contract-succession` (contracts) and `amendment-run`
+  (lifecycle); the `contracts-successor-activation@1` capability — the first in
+  this repository through which one package writes inside another's transaction;
+  five lifecycle actions over an explicit state table; a classification derived
+  from the line delta; a package-scoped Admin section with real-Chromium
+  evidence; and the `contract-renewal-execution` scenario.
+- **Deliberately not delivered:** billing, invoicing, payment, tax, revenue
+  recognition, MRR/ARR/TCV, any scheduler, automatic or clock-driven renewal,
+  renewal-notice delivery, customer notification, RBAC, cancellation, price
+  computation and any retroactive mutation. It moves **only** JTBD-CS-04 and
+  JTBD-CS-10 to *partially supported*; CS-03, CS-05, CS-06, CS-07 and CS-08 are
+  unchanged.
+- **The deferral it discharges:** M16a recorded that amendment execution waited
+  on Commercial and Signature becoming reachable through capabilities. Both were
+  extracted, and ADR-033 supplied the missing fact — a term the customer actually
+  signed.
 
 ### M16 — Analytics Studio v1
 

@@ -25,11 +25,17 @@ the application **refuses to start** and names the unmet edge.
 | `request-commercial-followup` | immutable handoff candidate | user |
 | `resolve-commercial-followup` | terminal transition with a reason | user |
 
-Four actions, and these are all of them. Expansion and contraction are two of
-the five `intent` values on `request-commercial-followup`, not separate records,
-and **nothing here records a successor** — there is no successor field, table or
-action, because a successor has to exist before it can be linked, and creating
-one is M16b.
+Expansion and contraction are two of the five `intent` values on
+`request-commercial-followup`, not separate records. **M16a records no
+successor** — there is no successor field, table or action in any of the four
+actions above, because a successor has to exist before it can be linked.
+
+**M16b adds the five that create one** (ADR-034,
+`docs/RENEWAL_AMENDMENT.md`): `plan-amendment` (writes nothing),
+`open-amendment-run`, `attach-successor-order`, `execute-amendment` and
+`abandon-amendment-run`. The successor agreement itself is written by Contracts
+through `contracts-successor-activation@1`, inside this package's transaction —
+so Lifecycle owns the renewal *cycle* and none of the commercial truth.
 
 ## Retrying is safe, and diverging is not
 
@@ -120,10 +126,20 @@ plus `baselineGroupCount` so "there is no single amount" is a stated fact rather
 than something to infer from four nulls. It is exactly what `plan-renewal`
 computes, frozen at the moment of the ask.
 
-## Why amendment execution is not here
+## Why amendment execution arrived late, and what it still is not
 
-A real amendment needs a new signed instrument and re-priced lines. Pricing
-lives in Commercial and signature in Signature, and both are still inside
-`packages/core` with no capability to reach them. That work is **M16b**, and it
-waits on those domains becoming reachable — a deferral by decision, recorded in
-`docs/plans/m16a-renewal-expansion-operations.md`.
+A real amendment needs a new signed instrument and re-priced lines. At M16a,
+pricing lived in Commercial and signature in Signature, both still inside
+`packages/core` with no capability to reach them — so the work was deferred by
+decision (`docs/plans/m16a-renewal-expansion-operations.md`). Both were extracted
+afterwards, and ADR-033 supplied the missing fact: a commercial term the customer
+actually signed. **M16b discharges that deferral** (ADR-034).
+
+What it still is not: a renewal produces a **successor agreement**, not an edit —
+no historical contract, version, line, subscription or obligation row is ever
+modified. Nothing renews automatically, because there is no scheduler; `autoRenew`
+and `renewalNoticeDays` stay recorded-only on both provenances. Nobody is
+notified. Nothing is billed, priced or cancelled. And a successor is built only
+from an Order whose signed document carried the term — an Order without one is
+refused `409 SUCCESSOR_TERMS_NOT_SIGNED`, because post-signature operational
+dates are never promoted into a signed renewal term.

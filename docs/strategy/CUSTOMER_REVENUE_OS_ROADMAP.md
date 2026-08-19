@@ -101,7 +101,7 @@ Read this before positioning anything.
 | Contracts & subscriptions | **implemented** — activation policy, contract versions, subscription lines, obligations |
 | Delivery | **implemented** — projects, work packages, milestones, economics, change, acceptance evidence |
 | Service | **implemented** — coverage, entitlements, cases, elapsed-time SLA evidence |
-| Renewal / expansion | **M16a merged** — term evidence, renewal/non-renewal intent, governed commercial handoff. It records intent and hands off; it renews, cancels and signs nothing, and records no successor. **M16b — amendment execution — deferred** until Commercial and Signature are reachable through capabilities |
+| Renewal / expansion / amendment | **M16a merged** — term evidence, renewal/non-renewal intent, governed commercial handoff; it records intent and hands off. **M16b implemented** — a governed successor commercial agreement executed from a signed immutable Order, with a classification derived from the line delta and immutable 1:1:1 lineage; it refuses to build one from post-signature operational dates, rewrites nothing historical, and still renews nothing automatically, cancels nothing, schedules nothing, prices nothing and notifies nobody (ADR-034) |
 | Marketing | **planned** — MK0–MK7, documentation only |
 | Analytics | **planned** — Analytics Studio |
 | **Customer data operations** (import/export, dedupe, identity, timeline) | **planned** — see the pillar below; largely *absent*, not partial |
