@@ -2327,3 +2327,74 @@ candidate: `catalog.sync` adopting the bounded writer in place of its raw
 not a new decision. The public `writeTrace`/`normalizeError` exports remain
 published API, exactly as the ADR records; the raw-byte webhook remains the
 explicit kernel adapter, untouched.
+
+## ADR-033 — A commercial term is signed only when the signed document carries it, and provenance never collapses
+
+**Status:** accepted. **Milestone:** signed commercial terms (M16b prerequisite).
+**Plan:** `docs/plans/signed-commercial-terms-v1.md`.
+
+### Context
+
+M12 recorded every contract term as post-signature operational metadata,
+honestly: the canonical document package (ADR-017) carried priced lines,
+parties and signers — no term. M16b amendment execution needs the opposite
+capability: terms the customer actually signed, carried with provenance that a
+consumer can trust without re-deriving it. Relabeling operational terms
+(rejected Option A) would make `termsSource` lie about history; deferring
+(Option C) was unnecessary because the term is representable without touching
+any existing row shape.
+
+The three LA0 baselines freeze every surface a naive design would use: the
+`quote`, `quote-version` and `order` family row shapes are asserted whole, the
+quote/opportunity action name lists are asserted, and every existing commercial
+action's input contract — `submit` included — is asserted field for field. The
+design that satisfies both the milestone and the freeze is **new sibling
+records plus behavior at existing gates**.
+
+### Decision
+
+1. **The term travels as an immutable snapshot chain.** `quote-term` is a
+   public-writable DRAFT (one per quote, binding nothing). `quote.submit`
+   validates it — canonical calendar round-trip, inclusive `termEndDate`,
+   bounded lengths, notice-requires-autoRenew — and freezes `quote-version-term`
+   (write-once, same transaction as the version). The canonical document gains
+   a `terms` section **only when the snapshot exists**; the `documentHash`
+   covers it; `documentContract` stays 1 because an optional additive key is
+   not a new shape, and a termless version canonicalizes to byte-identical
+   bytes. Verified completion — whose rebuild now includes the term — copies it
+   onto the Order as `order-term` (write-once, same transaction, stamped with
+   the `documentHash` it belongs to).
+2. **Activation consumes, never re-types.** An order carrying a term snapshot
+   refuses every manual term input (`409 SIGNED_TERMS_AUTHORITATIVE`) and
+   copies the snapshot verbatim as `termsSource: "signed-order-terms"`, with a
+   fixed provenance sentence instead of a collected `termsReason` — the
+   signature is the reason. An order without one runs the M12 operational path
+   input for input. `plan-activation` states which case applies before any
+   record exists.
+3. **Provenance is derived in one place and never collapses.**
+   `TERM_SOURCE_SIGNED` classifies the new source `true`; the runtime
+   exhaustiveness gate (ADR of M16a's capability) already refuses to open
+   `contract-lifecycle-source@2` for an unclassified source, so shipping the
+   enum without the classification is impossible. The capability's provenance
+   sentence derives from the same map as its `signed` flag. Admin renders
+   exactly one of three provenances: signed snapshot / post-signature
+   operational / absent-unknown.
+4. **History is never rewritten.** Existing orders have no `order-term` row and
+   stay operational or absent-unknown forever; the ADR-019 enum widen is a
+   declared revision-2 rebuild proven on populated tables; no backfill exists,
+   silent or otherwise.
+5. **Versioning follows the established doctrine.** `commercial-quotes@1` and
+   `signature-orders@1` gain one additive read each (`versionTerm`,
+   `orderTerm`) and keep their versions: the M16a precedent bumps a capability
+   when existing answers change shape, and none do. The package versions move
+   instead — commercial 2, signature 2, contracts 6 — because a package version
+   describes its composition contract.
+
+### Not modeled, deliberately
+
+Termination and non-renewal clauses (no document this repository produces
+carries them; inventing signed semantics for unsigned clauses is what this ADR
+exists to prevent), billing, tax, payment terms, revenue recognition, usage
+commitments, and any scheduler: `autoRenew`/`renewalNoticeDays` remain
+recorded-only on both provenances. Nothing here is a legal-assurance claim;
+the signature-provider limitation of ADR-017 is unchanged.

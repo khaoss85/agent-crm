@@ -120,17 +120,26 @@ stored with `quoteEligible: false` and a bounded `unsupportedReason`, no
 component rows are invented for it, and quoting it is a stable
 `409 OFFER_NOT_QUOTE_ELIGIBLE`.
 
-## Records (all read-only publicly)
+## Records
 
 `product`, `product-version`, `price-book`, `offer`, `price-component`,
 `price-tier`, `catalog-sync-run`, `quote`, `quote-line`, `quote-version`,
 `quote-version-line`, `quote-version-component`, `quote-version-total`,
-`quote-approval` — capabilities `get`/`list` only. No
+`quote-approval` — all read-only publicly, capabilities `get`/`list` only. No
 public create or update exists on any of them: records are produced solely by
 catalog sync and the quote actions through the trusted in-process
 `createManaged`/`applyManaged` path, so no client can forge a price, a total or
 a version. Correctness reads use exact `listWhere`/`countWhere` over
 manifest-declared indexes, never a paged scan.
+
+Signed commercial terms add two records. **`quote-term`** is the one
+public-writable record in this family — the DRAFT term of a quote (effective
+date, inclusive term boundaries, auto-renew, notice days), one row per quote,
+binding nothing: `quote.submit` validates it (canonical calendar round-trip,
+coherence rules, a refusal names the field) and freezes it into
+**`quote-version-term`** — write-once, fully managed, the values the signature
+document embeds and its hash covers. Editing the draft afterwards touches only
+future versions; a public write on the snapshot does not exist.
 
 ## Money and discounts
 
