@@ -42,14 +42,15 @@ early, and is the most contested moment in the whole session. Fewer at-bats, hig
 at-bat. No content strategy changes that; it changes what we should optimise for, which is
 conversion at the slot rather than slot volume.
 
-**Every comparable can complete the loop; we cannot yet.** Each of them ends the recommendation
-with a command that works: `npx create-next-app`, `npm i resend`, `npx supabase init`. Ours ends
-with `L-08` — ownership today means vendored source. A deterministic create-CLI publication
-candidate now exists and passes offline installation plus generated-project verification, but
-the live npm command still reaches the empty `0.0.1` placeholder. An agent that decided to
-recommend us therefore still has no public verb it can safely finish the sentence with. This is
-a larger gap than any content or listing lever in `AGENT_DISCOVERY.md`, and it is the one least
-discussed as a *discovery* problem, because it looks like a release receipt.
+**Every comparable can complete the loop; since 2026-08-19, so can we.** Each of them ends the
+recommendation with a command that works: `npx create-next-app`, `npm i resend`,
+`npx supabase init` — and now `npm create accordo` belongs in that list: the published
+`create-accordo@0.1.0` installs on a clean machine and leaves a project that verifies. The
+sentence an agent finishes with still carries `L-08` — the command vendors the framework source
+into the project, so ownership means merging upgrades rather than bumping a version — but that
+is the design being stated, not a missing verb. The gap this section used to describe was the
+largest in the map; what remains of it is retrievability and the unmeasured repeatability the
+benchmark exists to close.
 
 ---
 

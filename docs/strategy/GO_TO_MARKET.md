@@ -15,13 +15,14 @@ Written against `HEAD` on 2026-08-07 with 373 tests passing. Volatile facts live
 This project does not have a credibility problem or a quality problem. It has a **reachability
 problem** and a **mechanism problem**.
 
-- **Reachability**: the name, repository, site and agent manifests are public, but generic search
-  still does not surface Accordo and the live npm command remains an empty placeholder. The
-  compounding channels have started; the main conversion path has not.
-- **Mechanism**: the public promise is *"own the CRM it builds"*. Source bootstrap works and a
-  deterministic `create-accordo@0.1.0` publication candidate packs, installs and verifies from a
-  clean project, but it is not on the registry. Ownership still means vendored source rather
-  than a versioned dependency, and the gap remains `L-08` on every surface.
+- **Reachability**: the name, repository, site and agent manifests are public, and since
+  2026-08-19 the main conversion path is live — `npm create accordo` installs the published
+  `create-accordo@0.1.0` and scaffolds a verifying project. Generic search still does not
+  surface Accordo; the compounding channels have started and now have a real command to land on.
+- **Mechanism**: the public promise is *"own the CRM it builds"*, and the mechanism now matches
+  it end to end: the published create package scaffolds by copying the framework source into the
+  project. Ownership means vendored source rather than a versioned dependency — that is `L-08`
+  on every surface, stated as the design rather than a gap in it.
 
 So the strategy is:
 
@@ -280,8 +281,8 @@ marketplaces and registries, **(c)** the in-session agent surface.
 | Gemini CLI extension + gallery | b | `gemini-extension.json` + `GEMINI.md` at the repository root, topic `gemini-cli-extension`, and one git tag | **Live.** The official gallery feed listed `@khaoss85/accordo` at version `0.1.0` on 2026-08-09 and detected its context, skills and MCP surfaces | — |
 | Anthropic community marketplace | b | The same manifests, via the Console form | Ready | **Human submission**, and it should point at something installable first — the create-CLI |
 | MCP registry | b | `server.json` + a published npm package | `server.json` ready; `@accordo/mcp` returns 404, so the entry would resolve to nothing | Publish `@accordo/mcp` → human |
-| npm | a/b | Per-package manifests, rich keywords, provenance-signed publish | `accordo` and `create-accordo` remain empty 0.0.1 reservations; a deterministic `create-accordo@0.1.0` candidate now packs and installs offline but is not on the registry; the `@accordo` scope is unclaimed | Configure the exact trusted publisher, stage from reviewed `main`, inspect and approve with 2FA; then an npm org for scoped packages |
-| `npm create <name>` | b/c | A real create package | Candidate verified end to end; live command still reaches the placeholder | Human-approved staged publish and live receipt |
+| npm | a/b | Per-package manifests, rich keywords, provenance-signed publish | **`create-accordo@0.1.0` live since 2026-08-19** — staged via OIDC trusted publishing, approved with 2FA, receipt verified; `accordo` stays an empty 0.0.1 reservation by design (no framework library) and the `@accordo` scope is unclaimed | npm org for scoped packages, then `@accordo/mcp` through the same staged path |
+| `npm create <name>` | b/c | A real create package | **Live.** `npm create accordo` scaffolds a verifying project from the registry | — |
 | skills.sh | b/c | Nothing — it already walks `.claude/skills` and `.agents/skills` | **Live.** Public repository page and 12-skill Codex install verified 2026-08-09 | Generic search indexing: pending |
 | llms.txt / retrieval | a | Generated from the ledger, with a drift gate | **Built** — `llms.txt`, `llms-full.txt`, `jobs.json`, `answers.json`, sitemap, robots and JSON-LD, all generated and drift-checked | Deploy |
 | **In-session agent surface** | **c** | AGENTS.md, CLAUDE.md, skills ×2 harnesses, MCP config ×2, `app inspect`, harness compatibility | **Strongest layer** | **None — fully ours** |

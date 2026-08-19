@@ -74,10 +74,10 @@ before a commenter gets to say them.
 > - **Every provider is an offline fixture.** No DocuSign, no Stripe, no real enrichment source.
 >   A complete commercial spine with no connectors — the right order to build it in and the
 >   wrong order to sell it in. [C-06]
-> - **"Own the CRM it builds" means vendored source today**, not a versioned dependency. A
->   verified `create-accordo@0.1.0` publication candidate exists, but there is no published
->   create-command yet: the live npm name is still an empty `0.0.1` placeholder. Either way,
->   upgrading means merging source rather than bumping a version. [L-08]
+> - **"Own the CRM it builds" means vendored source**, not a versioned dependency.
+>   `npm create accordo` (the published `create-accordo@0.1.0`) scaffolds the project by copying
+>   the framework source into it — what it installs is the scaffolder, not a framework library —
+>   so upgrading means merging source rather than bumping a version. [L-08]
 > - **Do not put real customer data in it.** No auth, no tenancy, no export, no erasure path — so
 >   you could not service a data-subject access or deletion request. If you are in the EU that is
 >   disqualifying today, and it should be. (What does hold: lead scoring is deterministic,

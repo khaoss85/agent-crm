@@ -338,7 +338,7 @@ npm run tour
               <td>How you get the code <span class="muted">(today)</span></td>
               <td>You do not — you configure a running platform</td>
               <td>You write it</td>
-              <td><strong>The verified project bootstrap copies the source into your project.</strong> A deterministic <span class="mono">0.1.0</span> publication candidate exists; the live npm name is still an empty <span class="mono">0.0.1</span> reservation that installs nothing</td>
+              <td><strong><span class="mono">{{brand.createCommand}}</span> scaffolds it, copying the framework source into your project.</strong> The published <span class="mono">create-{{brand.slug}} 0.1.0</span> is the scaffolder; no framework library exists on the registry</td>
             </tr>
             <tr>
               <td>Process semantics</td>
@@ -490,15 +490,14 @@ npm run crm -- solution check my-plan.json
       <details>
         <summary>&ldquo;Own the CRM it builds&rdquo; — owned how, exactly?</summary>
         <p>
-          Today: by copying the source into your project. The project bootstrap copies the
-          framework packages and the app into a new directory and leaves you with a repository
-          that needs no hosted {{brand.name}} runtime. A deterministic <span class="mono">0.1.0</span>
-          publication candidate has passed pack, offline install, inspect, doctor, tests and smoke,
-          but it is not on the registry: the live <span class="mono">npm create</span> route still
-          reaches an empty <span class="mono">0.0.1</span> placeholder. Either path vendors the
-          framework source rather than adding a versioned dependency, so upgrading means merging
-          source rather than bumping a version. We would rather you learn that here than after you
-          have built on it.
+          By keeping the source in your repository. <span class="mono">{{brand.createCommand}}</span> —
+          the published <span class="mono">create-{{brand.slug}} 0.1.0</span>, staged from CI and approved by
+          a human before it went live — copies the framework packages and the app into a new directory
+          and leaves you with a repository that needs no hosted {{brand.name}} runtime; the same
+          bootstrap runs from a checkout. What the registry hands you is the scaffolder, not the
+          framework: either path vendors the framework source rather than adding a versioned
+          dependency, so upgrading means merging source rather than bumping a version. We would
+          rather you learn that here than after you have built on it.
         </p>
       </details>
 

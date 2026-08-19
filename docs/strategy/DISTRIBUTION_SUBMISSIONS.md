@@ -10,11 +10,12 @@ Three states are used throughout:
 - **Ready** — the artifact exists; one human step remains, spelled out here.
 - **Blocked** — a precondition is genuinely missing; the blocker is named.
 
-The blocker that dominates the list has narrowed: **a deterministic
-`create-accordo@0.1.0` candidate scaffolds and verifies a project, but the live
-registry still serves the empty `0.0.1` placeholder.** A green tarball is not a
-publication receipt. One-shot channels (Product Hunt, Show HN, Reddit) remain
-worth more after the human-staged release than before it.
+The blocker that dominated the list has cleared: **`create-accordo@0.1.0` is
+live on the registry** — staged through OIDC trusted publishing on 2026-08-19
+and approved with 2FA, with the receipt verified (`npm view create-accordo@0.1.0`
+returns the CI shasum, and a clean-directory `npm create accordo` scaffolds a
+project that verifies). One-shot channels (Product Hunt, Show HN, Reddit) are no
+longer waiting on the registry; Product Hunt still waits for the benchmark.
 
 Copy for any public surface must pass `GTM_TECHNICAL_EVIDENCE_HANDOFF.md`. The
 approved short descriptions at the end of this file already do.
@@ -56,25 +57,28 @@ prefer trusted publishing via GitHub Actions (OIDC), which needs neither token
 nor OTP and signs provenance — it cannot perform a package's *first* publish,
 which is exactly why these two were published by hand.
 
-### 2.2 Stage the real `create-accordo@0.1.0`
+### 2.2 Stage the real `create-accordo@0.1.0` — **done, 2026-08-19**
 
-The reviewed GTM release integration carries the manually triggered, token-free
-release path. After that integration reaches `main` through regular merges:
+All four steps ran and each left a receipt:
 
-1. In npm package settings, configure trusted publishing for repository
-   `khaoss85/agent-crm` and the exact workflow `stage-create-accordo.yml`, with
-   staged publishing allowed.
-2. Dispatch **Stage create-accordo on npm** with confirmation
-   `create-accordo@0.1.0`.
-3. Inspect the staged package, its file inventory and provenance, then approve
-   it with 2FA.
-4. Verify `npm view create-accordo@0.1.0` and run `npm create accordo` from a
-   clean directory before changing any public install copy.
+1. Trusted publishing configured for repository `khaoss85/agent-crm`, workflow
+   `stage-create-accordo.yml`, environment `npm-stage`, with **npm stage
+   publish** as the only allowed action. (Two failure modes worth keeping: a
+   `registry-url` in setup-node writes a placeholder-token `.npmrc` line that
+   preempts the OIDC exchange and dies `E401` after signing provenance; and
+   with no matching publisher config the registry refuses the exchange and npm
+   falls through to `ENEEDAUTH`.)
+2. **Stage create-accordo on npm** dispatched with confirmation
+   `create-accordo@0.1.0` — run 32224731197, staged id `35c22933-…`, provenance
+   in the Sigstore transparency log.
+3. The maintainer inspected and approved the staged version with 2FA.
+4. Receipt verified: `npm view create-accordo@0.1.0` returns the CI shasum
+   `69c2bc86…`, `latest` resolves to `0.1.0`, and `npm create accordo` in a
+   clean directory scaffolded a project whose `app inspect` answered.
 
-The checked-in source manifest remains private. The workflow assembles the only
-publishable directory, reruns repository and package verification, and calls
-`npm stage publish` through GitHub OIDC. Until step 4 has a live receipt, the
-public command is still the placeholder and must not be recommended.
+The workflow assembles the only publishable directory, reruns repository and
+package verification, and calls `npm stage publish` through GitHub OIDC; every
+future version goes through the same staged, human-approved path.
 
 ### 2.3 npm organization
 
@@ -126,11 +130,11 @@ npx skills add khaoss85/agent-crm             # skills.sh, indexes on install te
 | **MCP Registry** ([quickstart](https://modelcontextprotocol.io/registry/quickstart)) | The registry stores metadata only — the server package must already be on npm, with `mcpName` in `package.json` matching `server.json`, under namespace `io.github.khaoss85` | `@accordo/mcp` is published |
 | **Glama** ([hosting](https://glama.ai/mcp/hosting)) | Its evidenced ingestion paths use a connected GitHub repository, Dockerfile, npm package or PyPI package; Accordo has no dedicated Glama artifact or listing receipt | Publish `@accordo/mcp` or deliberately create a Glama deployment artifact, then submit through the account UI |
 | **Vercel templates** ([submit](https://vercel.com/templates/submit)) | Requires a deployable app with a demo URL. The one starter (`examples/starters/b2b-lead-qualification`) is an install script, not a deployable project | One deployable starter exists (Phase 10) |
-| **Anthropic community marketplace** ([submit](https://platform.claude.com/plugins/submit)) | Form submission; the plugin should point at a live install command before review | The candidate is verified; submit only after `create-accordo@0.1.0` is live and independently verified |
+| **Anthropic community marketplace** ([submit](https://platform.claude.com/plugins/submit)) | Form submission only — `create-accordo@0.1.0` is live and independently verified, so the install-command precondition is met | Human submits the form |
 | **Anthropic Connectors Directory** | The production read-only Streamable HTTP transport and privacy page are live; the review form remains external | Submit `https://accordo.dev/api/mcp` with the live privacy URL |
 | **ChatGPT / Codex plugin directory** | Same production transport; verified-developer and directory review remain external | Verified-developer submission |
-| **Awesome lists** (`awesome-mcp-servers`, `awesome-claude-code`) | These reject entries that cannot be installed and used | The real npm package or hosted Docs MCP is live, depending on the list |
-| **Product Hunt / Show HN / Reddit** | One-shot channels. A launch that ends at the placeholder spends the shot for a fraction of the return | Real npm package; Product Hunt additionally waits for the benchmark, and deploy claims wait for the production spine |
+| **Awesome lists** (`awesome-mcp-servers`, `awesome-claude-code`) | `create-accordo@0.1.0` and the hosted Docs MCP are both live; what remains is the PR to each list and its review | Human (or agent) opens the list PRs |
+| **Product Hunt / Show HN / Reddit** | One-shot channels — spend the shot once the story is strongest | The npm precondition is met; Product Hunt additionally waits for the benchmark, and deploy claims wait for the production spine |
 | **Paid search** | No brand volume; nothing to convert to | Phase 5 + a converting landing page |
 | **`CITATION.cff`** | Nothing citable — the benchmark has never been run | First benchmark results |
 

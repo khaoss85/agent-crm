@@ -265,10 +265,12 @@ Every clause maps to a row above: *constraining architecture* → 7 and 8;
   document, not results
 - production-ready or cloud-ready — there is no auth, tenancy or RBAC
 - marketplace availability — no registry, no publication, no remote install
-- **that anything installs from npm** — `accordo@0.0.1` and `create-accordo@0.0.1`
-  are empty name reservations. The project bootstrap is real *source* and is
-  proven by a test; `npm create accordo` still installs nothing, and the two
-  facts must never be merged into one sentence
+- **that the framework installs from npm as a library** — `accordo@0.0.1` is an
+  empty name reservation by design and the `@accordo` scope is unclaimed.
+  What became sayable on 2026-08-19, with a receipt: `npm create accordo`
+  installs the published `create-accordo@0.1.0` and scaffolds a working
+  project by *vendoring* the framework source into it. Scaffolder and
+  library are two facts that must never be merged into one sentence
 
 If one of these becomes true, it becomes a new row in this table with a command
 next to it, and only then may it be said.
