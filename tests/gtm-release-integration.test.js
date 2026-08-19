@@ -24,8 +24,18 @@ test('release instructions point at the integration outcome, not superseded bran
   const currentInstructions = `${pending}\n${submissions}\n${recommendation}`;
 
   assert.doesNotMatch(currentInstructions, /After PR #51 merges|PR #51 prepares|prepared in PR #52/i);
-  assert.match(pending, /After the reviewed GTM release integration reaches `main`/);
-  assert.match(submissions, /After that integration reaches `main` through regular merges/);
+
+  // These two files used to be pinned to the pending instruction they carried — "After the
+  // reviewed GTM release integration reaches `main`, configure trusted publishing …". That
+  // integration reached main, the workflow ran and the package went live, so the instruction
+  // now describes a registry state that no longer exists. What must be pinned is the property
+  // the instruction was serving: a runbook step that has been executed carries its receipt,
+  // and the receipt of a staged publish is the run that produced it.
+  assert.doesNotMatch(currentInstructions, /After (?:the reviewed GTM release integration|that integration) reaches `main`/);
+  for (const [name, source] of [['PENDING_HUMAN_SUBMISSION.md', pending], ['DISTRIBUTION_SUBMISSIONS.md', submissions]]) {
+    assert.match(source, /create-accordo@0\.1\.0/, `${name} no longer names the published version`);
+    assert.match(source, /run \d{8,}/, `${name} records the publication without citing the staging run that produced it`);
+  }
   assert.match(recommendation, /Promote the integrated Docs MCP/);
 });
 
