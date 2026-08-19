@@ -249,6 +249,14 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/commercial/src/money.js',
   'packages/commercial/src/catalog-sync.js',
   'packages/commercial/src/capability.js',
+  // Signed commercial terms: digest-owned, deliberately NOT in
+  // SIGNATURE_MANIFESTS - the baseline application's applied-manifest set is
+  // part of the frozen shape, and a baseline project without the term
+  // records signs exactly the pre-terms documents the asserted hashes pin.
+  'packages/commercial/src/terms.js',
+  'packages/commercial/modules/quote-term.module.json',
+  'packages/commercial/modules/quote-version-term.module.json',
+  'packages/signature/modules/order-term.module.json',
   'packages/app/src/create-app.js',
   'apps/server/src/http-server.js',
   'packages/sdk/src/index.js',

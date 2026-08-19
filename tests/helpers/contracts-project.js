@@ -22,6 +22,7 @@ export const COMMERCIAL_MANIFESTS = [
   'quote-version.module.json', 'quote-version-line.module.json',
   'quote-version-component.module.json', 'quote-version-total.module.json',
   'quote-approval.module.json',
+  'quote-term.module.json', 'quote-version-term.module.json',
 ];
 
 export const SIGNATURE_MANIFESTS = [
@@ -29,6 +30,7 @@ export const SIGNATURE_MANIFESTS = [
   'signature-event.module.json', 'signed-artifact.module.json',
   'order.module.json', 'order-line.module.json', 'order-component.module.json',
   'order-tier.module.json', 'order-total.module.json',
+  'order-term.module.json',
 ];
 
 export const DOMAIN_MANIFESTS = [

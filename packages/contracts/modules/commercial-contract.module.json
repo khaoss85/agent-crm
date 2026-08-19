@@ -1,7 +1,8 @@
 {
   "manifestVersion": 1,
   "name": "commercial-contract",
-  "description": "One active commercial agreement per activated signed order (M12). Its commercial content is copied from the immutable Order and never recalculated from the live catalog. No cancellation, suspension, renewal or amendment behavior exists in this milestone. The term is operational metadata recorded after signature (termsSource) — the signed document package carries no term, so it is never presented as a signed commercial term.",
+  "revision": 2,
+  "description": "One active commercial agreement per activated signed order (M12). Its commercial content is copied from the immutable Order and never recalculated from the live catalog. No cancellation, suspension, renewal or amendment behavior exists in this milestone. The term carries its provenance (termsSource): signed-order-terms means the term was part of the canonical document the customer signed and was copied from the immutable order term snapshot; post-signature-operational-activation means a human recorded it after signature and it is never presented as a signed commercial term.",
   "fields": [
     {
       "name": "sourceKey",
@@ -111,7 +112,8 @@
       "name": "termsSource",
       "type": "enum",
       "values": [
-        "post-signature-operational-activation"
+        "post-signature-operational-activation",
+        "signed-order-terms"
       ],
       "writable": "managed"
     },

@@ -1,6 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "contract-activation",
+  "revision": 2,
   "description": "One immutable activation run per signed order (ADR-018 addendum, M12): the policy that classified it, every component decision, every human override and the records it produced.",
   "fields": [
     {
@@ -80,7 +81,8 @@
       "name": "termsSource",
       "type": "enum",
       "values": [
-        "post-signature-operational-activation"
+        "post-signature-operational-activation",
+        "signed-order-terms"
       ],
       "writable": "managed"
     },

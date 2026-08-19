@@ -87,6 +87,8 @@ try {
     'quote-version-component.module.json',
     'quote-version-total.module.json',
     'quote-approval.module.json',
+    'quote-term.module.json',
+    'quote-version-term.module.json',
   ]) applyModule(root, join(root, 'packages', 'commercial', 'modules', manifest));
   for (const manifest of [
   ]) {
@@ -106,6 +108,7 @@ try {
     'order-component.module.json',
     'order-tier.module.json',
     'order-total.module.json',
+    'order-term.module.json',
   ]) {
     applyModule(root, join(root, 'packages', 'signature', 'modules', manifest));
   }
