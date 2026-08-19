@@ -40,6 +40,25 @@ had got wrong rather than merely lacked.
 | the report never said **which clock** produced the evidence | nothing in a funnel is a function of the current instant | `journey.clock` is published from the frozen registry. An SLA state is a function of the clock and of nothing else |
 | `limitations[]` was a **single global list** | with one journey, every limitation was true of every run | limitations carry a `scope`, and a journey declares its own. "No business-hours calendar" is meaningless for a lead funnel; "no external enrichment provider" is meaningless for a support case |
 
+### The third consumer, and what it did not need
+
+`contract-renewal-execution` (M16b) is the third, over a fourth composition —
+commercial, signature, contracts and lifecycle. It is unlike both predecessors in
+what it has to prove: its load-bearing outcome is a **refusal**, and a refusal a
+run could earn by never attempting the operation is worthless, so every one of
+its safety facts is produced by attempting the thing and publishing that it was
+refused.
+
+**Contract 1 needed nothing added for it.** `journey.fact` already carried a
+stated outcome, `journey.count` already carried the row counts, the frozen
+journey registry already owned the clock, and limitations were already
+journey-scoped. A third consumer that fits the contract unchanged is the
+strongest evidence the second consumer's changes were the right ones — and the
+one bound it did meet is real and worth stating: an observed value must be a
+lowercase token, so a provenance string carrying hyphens
+(`signed-order-terms`) is observed through a boolean the journey publishes
+beside it rather than by widening the grammar for one document.
+
 Four things did **not** change, and the second consumer is the reason we can say
 so rather than assume it:
 
@@ -272,6 +291,7 @@ nothing to check.
 |---|---|
 | `b2b-lead-qualification` | `JOURNEY_CLOCK_IS_WALL_CLOCK`, `ENRICHMENT_PROVIDER_IS_A_FIXTURE` |
 | `service-sla-escalation` | `SLA_IS_ELAPSED_TIME_NOT_A_CONTRACTUAL_JUDGEMENT`, `NOTHING_WAS_NOTIFIED_OR_ROUTED`, `ESCALATION_IS_MANUALLY_RECORDED`, `SERVICE_COVERAGE_IS_NOT_A_CONTRACT` |
+| `contract-renewal-execution` | `NOTHING_RENEWS_ON_A_CLOCK`, `A_SUCCESSOR_IS_NOT_A_LEGAL_RENEWAL`, `SIGNED_TERM_REQUIRED_AND_PROVEN_BY_REFUSAL`, `NOTHING_WAS_BILLED_OR_NOTIFIED` |
 
 No code appears in more than one list — not in both journeys, and not shadowing a
 global one. A limitation true of both journeys belongs in the global set; a

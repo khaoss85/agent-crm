@@ -269,8 +269,11 @@ test('every code this module can report is in the published list', () => {
 
 test('every shipped scenario is a valid document, and carries nothing runnable', () => {
   const shipped = readdirSync(new URL('../examples/scenarios/', import.meta.url)).sort();
-  assert.deepEqual(shipped, ['lead-to-won.scenario.json', 'service-sla-escalation.scenario.json'],
-    'a contract validated by exactly one consumer is not validated');
+  assert.deepEqual(shipped, [
+    'contract-renewal-execution.scenario.json',
+    'lead-to-won.scenario.json',
+    'service-sla-escalation.scenario.json',
+  ], 'a contract validated by exactly one consumer is not validated');
 
   for (const file of shipped) {
     const source = readFileSync(new URL(`../examples/scenarios/${file}`, import.meta.url), 'utf8');
