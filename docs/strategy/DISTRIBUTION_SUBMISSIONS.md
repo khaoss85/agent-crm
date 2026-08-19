@@ -172,7 +172,7 @@ npx skills add khaoss85/agent-crm             # skills.sh, indexes on install te
 | **Anthropic community marketplace** ([submit](https://platform.claude.com/plugins/submit)) | Form submission only — `create-accordo@0.1.0` is live and independently verified, so the install-command precondition is met | Human submits the form |
 | **Anthropic Connectors Directory** | The production read-only Streamable HTTP transport and privacy page are live; the review form remains external | Submit `https://accordo.dev/api/mcp` with the live privacy URL |
 | **ChatGPT / Codex plugin directory** | Same production transport; verified-developer and directory review remain external | Verified-developer submission |
-| **Awesome lists** (`awesome-mcp-servers`, `awesome-claude-code`) | `create-accordo@0.1.0` and the hosted Docs MCP are both live; what remains is the PR to each list and its review | Human (or agent) opens the list PRs |
+| **Awesome lists** (`awesome-mcp-servers`, `awesome-claude-code`) | Copy written and checked — `docs/marketing/AWESOME_LIST_SUBMISSIONS.md`. The first takes a PR and is ready now. The second takes an **issue form, not a PR**, and its rule is 14 days from the first commit: eligible **2026-08-21** | Human sends both; neither can be opened from this repository's session scope |
 | **Product Hunt / Show HN / Reddit** | One-shot channels — spend the shot once the story is strongest | The npm precondition is met; Product Hunt additionally waits for the benchmark, and deploy claims wait for the production spine |
 | **Paid search** | No brand volume; nothing to convert to | Phase 5 + a converting landing page |
 | **`CITATION.cff`** | Nothing citable — the benchmark has never been run | First benchmark results |
