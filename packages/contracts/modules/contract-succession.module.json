@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "contract-succession",
-  "description": "The immutable lineage between one commercial agreement and the successor agreement that replaces it (M16b, ADR-034). Written once, in the same transaction as the successor Contract, and never rewritten. Three UNIQUE columns carry the whole guarantee: a source contract has at most one successor, a successor has at most one predecessor, and a signed Order is consumed at most once. Nothing here amends, ends, cancels, bills or renews anything: the source contract row is not modified by this record's creation, and no scheduler exists.",
+  "description": "The immutable lineage between one commercial agreement and the successor agreement that replaces it (M16b, ADR-035). Written once, in the same transaction as the successor Contract, and never rewritten. Three UNIQUE columns carry the whole guarantee: a source contract has at most one successor, a successor has at most one predecessor, and a signed Order is consumed at most once. Nothing here amends, ends, cancels, bills or renews anything: the source contract row is not modified by this record's creation, and no scheduler exists.",
   "fields": [
     { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
     { "name": "sourceContractId", "type": "string", "unique": true, "writable": "managed" },

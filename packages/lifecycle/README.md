@@ -30,7 +30,7 @@ Expansion and contraction are two of the five `intent` values on
 successor** — there is no successor field, table or action in any of the four
 actions above, because a successor has to exist before it can be linked.
 
-**M16b adds the five that create one** (ADR-034,
+**M16b adds the five that create one** (ADR-035,
 `docs/RENEWAL_AMENDMENT.md`): `plan-amendment` (writes nothing),
 `open-amendment-run`, `attach-successor-order`, `execute-amendment` and
 `abandon-amendment-run`. The successor agreement itself is written by Contracts
@@ -133,7 +133,7 @@ pricing lived in Commercial and signature in Signature, both still inside
 `packages/core` with no capability to reach them — so the work was deferred by
 decision (`docs/plans/m16a-renewal-expansion-operations.md`). Both were extracted
 afterwards, and ADR-033 supplied the missing fact: a commercial term the customer
-actually signed. **M16b discharges that deferral** (ADR-034).
+actually signed. **M16b discharges that deferral** (ADR-035).
 
 What it still is not: a renewal produces a **successor agreement**, not an edit —
 no historical contract, version, line, subscription or obligation row is ever

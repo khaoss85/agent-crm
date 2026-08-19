@@ -721,7 +721,7 @@ export function createLifecyclePackage(options = {}) {
       buildRecordRenewalDecisionAction(options.modules),
       buildRequestCommercialFollowupAction(options.modules, { followUp }),
       buildResolveCommercialFollowupAction(options.modules),
-      // M16b (ADR-034): the execution counterpart of everything above.
+      // M16b (ADR-035): the execution counterpart of everything above.
       ...buildAmendmentActions(options.modules),
     ],
     policies: [],
@@ -747,7 +747,7 @@ export function createLifecyclePackage(options = {}) {
           : 'not composed. Without followUp enabled this package requires nothing from work, creates no task, and behaves exactly as it did before Work v1',
         baselineEvidence:
           'a follow-up carries its commercial baseline grouped by currency, charge type, interval AND interval count — quarterly is month x 3 and is not monthly. No total is computed across recurrences or currencies and no FX is applied; a single scalar amount is recorded only when the baseline holds exactly one kind of money',
-        // M16b (ADR-034). Function-free and additive: an older client ignores
+        // M16b (ADR-035). Function-free and additive: an older client ignores
         // it, and every M16a key above is untouched.
         amendment: {
           amendmentContract: 1,

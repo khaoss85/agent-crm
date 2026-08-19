@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "amendment-run",
-  "description": "One governed renewal/amendment round on a source commercial contract (M16b, ADR-034): what a human opened, which signed successor Order was attached to it, what the evidence said at that moment, and how the round ended. The recorded state is an OBSERVATION, never an authorisation — execution recomputes every fact authoritatively inside its own transaction, so a run that reads 'ready' authorises nothing on its own. No state here moves on a clock: there is no scheduler and no automatic renewal. Read-only publicly: a run exists only through the lifecycle package's actions.",
+  "description": "One governed renewal/amendment round on a source commercial contract (M16b, ADR-035): what a human opened, which signed successor Order was attached to it, what the evidence said at that moment, and how the round ended. The recorded state is an OBSERVATION, never an authorisation — execution recomputes every fact authoritatively inside its own transaction, so a run that reads 'ready' authorises nothing on its own. No state here moves on a clock: there is no scheduler and no automatic renewal. Read-only publicly: a run exists only through the lifecycle package's actions.",
   "fields": [
     { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
     { "name": "sourceContractId", "type": "string", "index": true, "writable": "managed" },

@@ -283,7 +283,7 @@ Setup: compose a project with the `work` package, apply `work-task.module.json` 
 
 Report any step that fails; do not mark the Work section browser-validated unless all 30 pass.
 
-## Renewal & amendment execution (M16b, ADR-034)
+## Renewal & amendment execution (M16b, ADR-035)
 
 **M16b-specific, scripted, and outside CI. 40 checks, all passing** — driven in
 real Chromium (**Chromium/141.0.7390.37**) on Node **22.16.0**, against a freshly

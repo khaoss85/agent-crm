@@ -1,6 +1,6 @@
 # ExecPlan — M16b Renewal & Amendment Execution from signed evidence
 
-**Milestone:** M16b. **ADR:** ADR-034. **Branch:**
+**Milestone:** M16b. **ADR:** ADR-035. **Branch:**
 `claude/milestone-16b-amendment-execution`, from `e2ab00c`.
 
 M16a records renewal *intent* and hands off. ADR-033 made a commercial term

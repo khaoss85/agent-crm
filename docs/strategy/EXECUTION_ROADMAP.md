@@ -182,7 +182,7 @@ Each milestone below follows the standard per-phase format.
 
 - **Outcome:** a governed **successor** commercial agreement executed from a
   signed immutable Order, with immutable 1:1:1 lineage to the agreement it
-  replaces (ADR-034, `docs/plans/m16b-amendment-execution.md`,
+  replaces (ADR-035, `docs/plans/m16b-amendment-execution.md`,
   `docs/RENEWAL_AMENDMENT.md`).
 - **Deliverables:** `contract-succession` (contracts) and `amendment-run`
   (lifecycle); the `contracts-successor-activation@1` capability — the first in

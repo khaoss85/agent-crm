@@ -54,7 +54,7 @@ export function resolvedNames(config = {}) {
     subscriptionLine: config.subscriptionLineModule ?? 'subscription-line',
     deliveryObligation: config.deliveryObligationModule ?? 'delivery-obligation',
     serviceObligation: config.serviceObligationModule ?? 'service-obligation',
-    // M16b (ADR-034): the immutable lineage between a source agreement and the
+    // M16b (ADR-035): the immutable lineage between a source agreement and the
     // successor agreement that replaces it.
     succession: config.contractSuccessionModule ?? 'contract-succession',
   };
@@ -483,7 +483,7 @@ export function buildActivateContractAction(config) {
 
 /**
  * **The one activation writer**, shared by `order.activate-contract` (M12) and
- * by successor activation (M16b, ADR-034).
+ * by successor activation (M16b, ADR-035).
  *
  * There is exactly one of these on purpose. A successor commercial agreement is
  * an ordinary activated contract — same records, same shapes, same source keys,

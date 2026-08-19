@@ -1,7 +1,7 @@
 // @ts-check
 
 /**
- * Renewal & amendment execution Admin (M16b, ADR-034).
+ * Renewal & amendment execution Admin (M16b, ADR-035).
  *
  * **Package-scoped, not package-owned.** The framework still has no seam for a
  * package to contribute an Admin extension — AX1 publishes that as

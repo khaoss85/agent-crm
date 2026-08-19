@@ -64,7 +64,7 @@ If the repository documents this skill names are absent, you are in a project bu
 
 Plan control, both axes of every classification with their reasons, each undecided axis highlighted with its own override editor that demands a reason, calendar term inputs carrying the term's provenance, one activation control that disables on submit, the human-actor caveat stated. After activation: evidence only — no control to progress, complete, bill, renew or cancel anything. The section renders only when `/api/schema` publishes the domain.
 
-## Renewal and amendment execution (M16b, ADR-034)
+## Renewal and amendment execution (M16b, ADR-035)
 
 A renewal or amendment does **not** edit the agreement. It produces a
 **successor agreement** — its own signed Order, its own document hash, its own

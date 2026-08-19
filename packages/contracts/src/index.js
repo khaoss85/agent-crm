@@ -38,7 +38,7 @@ export const CONTRACTS_DOMAIN = 'contracts';
 export const CONTRACTS_RESOURCES = Object.freeze([
   'commercial-contract', 'contract-version', 'contract-line', 'contract-activation',
   'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
-  // M16b (ADR-034): the immutable lineage between one agreement and the
+  // M16b (ADR-035): the immutable lineage between one agreement and the
   // successor agreement that replaces it. A record, not a mutation.
   'contract-succession',
 ]);
@@ -108,7 +108,7 @@ export function createContractsDomain(options = {}) {
       // provenance attached and its signed state DERIVED from that provenance
       // rather than asserted beside it (M16a).
       createContractLifecycleSourceCapability(options.modules),
-      // M16b (ADR-034). The only capability in this package that writes, and
+      // M16b (ADR-035). The only capability in this package that writes, and
       // it writes exactly one thing: a successor agreement built from a signed
       // immutable Order, plus the immutable lineage row beside it. It mutates
       // no historical record, accepts no client-supplied classification, and
@@ -160,7 +160,7 @@ export function createContractsDomain(options = {}) {
           endedTerm: 'a term that already ended is refused (TERM_ALREADY_ENDED) rather than recorded',
         },
         source: 'the signed immutable Order is the only commercial source for price, product and party; the live catalog is never read and no amount is recalculated. The term is the one exception and is explicitly NOT signed — see term.source',
-        // M16b (ADR-034). Function-free, additive: an older client ignores it.
+        // M16b (ADR-035). Function-free, additive: an older client ignores it.
         succession: {
           successionContract: 1,
           capability: 'contracts-successor-activation@1',

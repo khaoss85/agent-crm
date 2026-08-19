@@ -14,7 +14,7 @@ import { SIGNED_TERMS_NOTE, SIGNED_TERMS_SOURCE, signedTermFromSnapshot } from '
 import { termSignedState } from './lifecycle-capability.js';
 
 /**
- * **Successor activation and lineage (M16b, ADR-034).**
+ * **Successor activation and lineage (M16b, ADR-035).**
  *
  * A renewal or an amendment does not rewrite what was agreed. It produces a
  * *successor commercial agreement*: its own signed Order, its own signed

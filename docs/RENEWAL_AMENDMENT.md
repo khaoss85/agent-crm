@@ -1,6 +1,6 @@
 # Renewal and amendment execution
 
-**Milestone M16b. ADR-034. Packages: `contracts` (v7) and `lifecycle` (v2).**
+**Milestone M16b. ADR-035. Packages: `contracts` (v7) and `lifecycle` (v2).**
 
 M16a records renewal *intent* and hands the commercial work to a person. This is
 its execution counterpart: a **governed successor commercial agreement produced

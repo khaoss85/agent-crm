@@ -164,9 +164,9 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 | **skills.sh (Vercel Labs)** | `npx skills add khaoss85/agent-crm`; ranked by install telemetry ([repo](https://github.com/vercel-labs/skills)) | **Zero-submission** | **Now** | **Live — verified 2026-08-09**: the public repository page returns 200 and one publisher-verification install copied all 12 skills into a temporary Codex project. Generic `crm`, `build crm` and `accordo` search still omit the repository, so search indexing remains pending |
 | **Codex plugin** | `.codex-plugin/plugin.json` + self-hosted marketplace ([openai/plugins](https://github.com/openai/plugins)) | Self-hosted; no evidenced open submission to OpenAI's curated repo | **Now** | Mirror of the Claude plugin |
 | **Anthropic community marketplace** | Console form → `anthropics/claude-plugins-community` | **Gated** (form) | After #2 | Payload prepared |
-| **MCP Registry** | `server.json` + `mcp-publisher`; **requires the package published on npm first**, `mcpName` must match, namespace `io.github.khaoss85` ([quickstart](https://modelcontextprotocol.io/registry/quickstart)) | CLI + GitHub auth | After npm publish | Blocked by design, correctly |
+| **MCP Registry** | `server.json` + `mcp-publisher`, namespace `io.github.khaoss85` ([quickstart](https://modelcontextprotocol.io/registry/quickstart)). A **remote** entry needs no npm package: `remotes[]` with `streamable-http` and the live URL, `packages` omitted | CLI + GitHub auth | **Now** | Ready — the entry registers the hosted Docs MCP; the project server is not publishable and never will be (ADR-034) |
 | **Smithery** | Publish the existing Streamable HTTP URL; Smithery scans tools/resources and creates a directory page ([docs](https://smithery.ai/docs/build/publish)) | Account + namespace | **Done** | **Live:** `khaoss85/accordo`; scan found `accordo-docs@0.1.0`, three tools and 99 resources. The public page returns 200 and names only `search_docs`, `get_capability` and `check_job` |
-| **Glama** | Directory/hosting can ingest a GitHub repository, Dockerfile or npm package ([docs](https://glama.ai/mcp/hosting)) | Account + GitHub App or package | After `@accordo/mcp` or a dedicated deployment artifact | Mapped, not listed; do not imply the hosted Docs MCP has been ingested |
+| **Glama** | Directory/hosting can ingest a GitHub repository, Dockerfile or npm package ([docs](https://glama.ai/mcp/hosting)) | Account + GitHub App | **Now**, through the repository path — the npm path is closed by ADR-034 | Mapped, not listed; do not imply the hosted Docs MCP has been ingested |
 | **Anthropic Connectors Directory** | Hosted Docs MCP, supported auth mode, privacy policy, review | **Ready, not submitted** | **Now** | Production `tools/list` proves three read-only, non-destructive tools and the privacy page is live; review submission remains external |
 | **ChatGPT/Codex plugin directory** | Verified developer + MCP server + policies | **Ready, not submitted** | **Now** | Same production transport; verified-developer and review steps remain external |
 | **Claude Code plugin hints** | `<claude-code-hint>` on stderr under `CLAUDECODE=1`; **dropped unless listed in the official marketplace** | n/a | Post-traction | Correctly deferred |
@@ -232,7 +232,7 @@ budget decision for a human.
 
 The gap list, ordered by *effect on being recommended*, not by effort:
 
-1. ~~Publish the verified `create-accordo` candidate~~ — **done, 2026-08-19.** Staged through the OIDC workflow, approved with 2FA, receipt verified from a clean directory. Precondition #2 is closed; the next npm move is the org and `@accordo/mcp`.
+1. ~~Publish the verified `create-accordo` candidate~~ — **done, 2026-08-19.** Staged through the OIDC workflow, approved with 2FA, receipt verified from a clean directory. Precondition #2 is closed. The `accordo` org followed on the same day and stays deliberately empty: `@accordo/mcp` was investigated and refused, because the project MCP server composes from the generated indexes of the tree it runs in (ADR-034).
 2. **A deployable starter** — Vercel's gallery has no first-party CRM template
    and the submission needs a deploy target. Today's starter is an install
    script. Phase 10, but *one* deployable starter is worth more than three
@@ -301,9 +301,10 @@ llms.txt · Discussions · npm placeholders · comparison and intent pages.
 packages with provenance · deployable starter + Deploy Button · Vercel template
 submission · awesome lists · Anthropic community marketplace · docs site.
 
-**After the Docs MCP:** Smithery URL listing is done; Connectors Directory and
-ChatGPT/Codex directory are ready for external review. MCP Registry and Glama's
-package path still wait for a real `@accordo/mcp` artifact.
+**After the Docs MCP:** Smithery URL listing is done; Connectors Directory,
+ChatGPT/Codex directory and the MCP Registry are ready for external review — the
+registry entry is the remote endpoint, so it needed no npm artifact. Glama goes
+through the repository path; its package path is closed for good (ADR-034).
 
 **After the benchmark runs:** comparative claims · CITATION.cff · Product Hunt ·
 Show HN · Reddit · the first paid test.

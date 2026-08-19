@@ -629,7 +629,7 @@ test('the evidence is read-only through every generic surface, and writing needs
     ]);
   assert.deepEqual(schema.domains.lifecycle.provides, [], 'this package consumes; it offers nothing');
   assert.deepEqual([...schema.domains.lifecycle.actions].sort(), [
-    // M16b (ADR-034): the governed round and its execution.
+    // M16b (ADR-035): the governed round and its execution.
     'amendment-run.abandon-amendment-run', 'amendment-run.attach-successor-order',
     'amendment-run.execute-amendment',
     'commercial-contract.open-amendment-run', 'commercial-contract.plan-amendment',

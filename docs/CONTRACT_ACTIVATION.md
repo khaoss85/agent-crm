@@ -312,7 +312,7 @@ sources and the static import graph to prove it. Schema
 metadata is published additively under `/api/schema` → `domains.contracts`,
 including each policy's fingerprint and the explicit `notModeled` list.
 
-## Renewal and amendment (M16b, ADR-034)
+## Renewal and amendment (M16b, ADR-035)
 
 M12 activates one contract from one signed Order and stops there. Since M16b the
 same package can also produce a **successor agreement** — a second activation of

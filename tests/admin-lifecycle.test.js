@@ -4,7 +4,7 @@ import { AMENDMENT_DISCLAIMERS, renderAmendment } from '../apps/admin/public/adm
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
- * The Admin renewal & amendment section (M16b, ADR-034).
+ * The Admin renewal & amendment section (M16b, ADR-035).
  *
  * **Package-scoped, not package-owned**: the framework has no seam for a
  * package to contribute an Admin extension (AX1 publishes

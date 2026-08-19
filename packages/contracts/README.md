@@ -103,7 +103,7 @@ modules/                 eight read-only record manifests
 2. **A future-dated contract is `scheduled` and stays that way.** There is no
    scheduler here; nothing transitions it to `active` on its start date.
 
-## Renewal and amendment (M16b, ADR-034)
+## Renewal and amendment (M16b, ADR-035)
 
 Since M16b this package can also produce a **successor agreement**: a second
 activation of a second signed Order, written by the *same* activation writer,
