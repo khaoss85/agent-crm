@@ -195,7 +195,7 @@
         "L-08",
         "L-07"
       ],
-      "snippet": "You own the source: `npm create accordo` scaffolds a working project with the framework vendored in, so upgrading means merging rather than bumping a version."
+      "snippet": "You own the source: `npm create accordo` scaffolds a working project with the framework vendored in, not installed as a dependency — so upgrading means merging, not bumping a version."
     }
   ],
   "refused": [
