@@ -1,6 +1,6 @@
 ---
 name: build-service-operations
-description: Add or extend service operations in an Accordo project - activating the pending service obligations of an activated contract into an operational Service Coverage with immutable Entitlements through a versioned activation policy, and recording support cases over an explicit transition table with elapsed-time SLA evidence and manually recorded escalation. Use for service coverage, support entitlement, support case/ticket, first response, SLA target or evaluation, case escalation, ending coverage, or the Service Admin section. Do not use for a second legal contract, billing, invoicing, renewal or an authenticated customer portal (none of which exist), contract activation (build-contract-activation), delivery work (build-delivery-handover) or a single custom object (create-crm-module).
+description: Add or extend service operations in an Accordo project - activating the pending service obligations of an activated contract into an operational Service Coverage with immutable Entitlements through a versioned activation policy, and recording support cases over an explicit transition table with elapsed-time SLA evidence and manually recorded escalation. Use for service coverage, support entitlement, support case/ticket, first response, SLA target or evaluation, case escalation, ending coverage, or the Service Admin section. Do not use for a second legal contract, billing, invoicing or an authenticated customer portal (none of which exist), renewal or amendment execution (build-contract-activation), contract activation (build-contract-activation), delivery work (build-delivery-handover) or a single custom object (create-crm-module).
 requires:
   tier: generated-project
   command: "crm app inspect"
@@ -81,4 +81,4 @@ Fault injection after every write in each action's write graph · two connection
 
 ## Never build here
 
-Billing, invoicing, payment or billing eligibility · a second legal contract or any contract amendment · renewal or expansion · an authenticated customer or agent portal · RBAC or tenancy · email, chat, WhatsApp or telephony · a contact centre · attachment or file storage · a knowledge base · business-hours calendars · a scheduler, automatic escalation or notification · customer-success health scoring.
+Billing, invoicing, payment or billing eligibility · a second legal contract · contract amendment, renewal or expansion — those exist since M16b, in the contracts and lifecycle packages, and never here · an authenticated customer or agent portal · RBAC or tenancy · email, chat, WhatsApp or telephony · a contact centre · attachment or file storage · a knowledge base · business-hours calendars · a scheduler, automatic escalation or notification · customer-success health scoring.
