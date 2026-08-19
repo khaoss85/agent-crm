@@ -269,6 +269,18 @@ export function parseModuleRoute(hash) {
     if (pipelineName === null || !/^[a-z][a-z0-9-]*$/.test(pipelineName)) return { view: 'invalid' };
     return { view: 'pipeline', pipelineName };
   }
+  // Customer data routes: #/customer-data and #/customer-data/<resource>/<id>
+  // (ADR-037). Same canonical discipline as every other route here.
+  if (rawParts.length && rawParts[0] === 'customer-data') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length === 1) return { view: 'customer-data' };
+    if (rawParts.length !== 3) return { view: 'invalid' };
+    const resource = safeDecode(rawParts[1]);
+    const subjectId = safeDecode(rawParts[2]);
+    if (resource === null || !/^[a-z][a-z0-9-]*$/.test(resource)) return { view: 'invalid' };
+    if (subjectId === null || subjectId === '') return { view: 'invalid' };
+    return { view: 'customer-profile', resource, subjectId };
+  }
   // Quote builder routes: #/quotes and #/quotes/<id> (ADR-016). Same
   // canonical discipline; anything else is invalid, not a lookup.
   if (rawParts.length && rawParts[0] === 'quotes') {
