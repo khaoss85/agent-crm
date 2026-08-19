@@ -1,7 +1,7 @@
 {
   "counts": {
-    "not supported": 95,
-    "partially supported": 31,
+    "not supported": 93,
+    "partially supported": 33,
     "technically supported": 0,
     "total": 149,
     "validated end to end": 23
@@ -504,17 +504,23 @@
       "id": "JTBD-CS-03",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
       "status": "not supported",
-      "summary": "no amendment primitives",
+      "summary": "still no in-place amendment primitive, and M16b deliberately does not add one: a quantity change produces a successor agreement from its own signed Order, and the live subscription it succeeds is never modified. Reading this row as satisfied would mean claiming that seats moved on the subscription somebody is already on, which is exactly what M16b refuses to do",
       "tests": [],
       "title": "Amend seats or quantity on a live subscription"
     },
     {
-      "docs": [],
+      "docs": [
+        "docs/RENEWAL_AMENDMENT.md"
+      ],
       "id": "JTBD-CS-04",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
-      "status": "not supported",
-      "summary": "no amendment classification",
-      "tests": [],
+      "status": "partially supported",
+      "summary": "M16b executes a governed successor agreement from a signed Order and records the change with a classification derived from the immutable line delta — renewal, expansion, contraction, mixed, or commercial_change when a narrower label cannot be derived — never a client-supplied label. The exact per-line before/after travels with it, grouped by currency and full recurrence. Partial, and narrowly so: quantity direction is derivable only for components that carry a quantity, so a flat-fee line whose amount moved is honestly commercial_change rather than an expansion; a price uplift with no quantity movement is deliberately commercial_change too; nothing is billed, scheduled or notified, and no MRR/ARR/TCV is computed. Evidence: tests/lifecycle-amendment-execution-e2e.test.js, tests/lifecycle-amendment-execution.test.js, tests/admin-lifecycle.test.js, docs/RENEWAL_AMENDMENT.md",
+      "tests": [
+        "tests/admin-lifecycle.test.js",
+        "tests/lifecycle-amendment-execution-e2e.test.js",
+        "tests/lifecycle-amendment-execution.test.js"
+      ],
       "title": "Record an expansion or contraction, classified at the time of change"
     },
     {
@@ -551,7 +557,7 @@
       "id": "JTBD-CS-08",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
       "status": "not supported",
-      "summary": "the versioned-policy mechanism exists (ADR-015/016/018) and M12 uses it to classify. M16a added the renewal domain, but it declares no policy at all and computes no price: uplift needs pricing, which lives in Commercial and is unreachable from a package",
+      "summary": "unchanged by M16b. The versioned-policy mechanism exists (ADR-015/016/018) and M16b runs the *activation* policy over the successor's components, but it computes no price and applies no uplift: every amount is copied from the signed Order, the live catalog is never read, and a renewal whose amounts moved without a quantity moving is classified commercial_change rather than priced. Uplift needs pricing, which is Commercial's job on the quote that precedes the signature",
       "tests": [],
       "title": "Apply a versioned price-uplift policy at renewal"
     },
@@ -568,12 +574,18 @@
       "title": "Cancel or non-renew with an audited reason"
     },
     {
-      "docs": [],
+      "docs": [
+        "docs/RENEWAL_AMENDMENT.md"
+      ],
       "id": "JTBD-CS-10",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
-      "status": "not supported",
-      "summary": "no amendments exist; what M12 does record is the activation itself — who activated, from which order, under which policy version, and both classification axes with their reasons and any human override",
-      "tests": [],
+      "status": "partially supported",
+      "summary": "M16b records an immutable contract-succession row per amendment: source and successor contract, version, subscription and Order, the derived classification with its basis, the exact line delta, both terms with their provenance, the term continuity, the signed document hash, the deciding policy version and fingerprint, and who executed it when. Lineage is 1:1:1 and DB-enforced, so the chain is unambiguous. Partial: it is a *successor chain*, not a field-level amendment log — there is no in-place amendment to log — the chain is linear (one successor per agreement), and it starts at M16b: agreements succeeded before it exist have no lineage row and none is backfilled. Evidence: tests/lifecycle-amendment-execution-e2e.test.js, tests/lifecycle-amendment-execution.test.js, tests/admin-lifecycle.test.js, docs/RENEWAL_AMENDMENT.md",
+      "tests": [
+        "tests/admin-lifecycle.test.js",
+        "tests/lifecycle-amendment-execution-e2e.test.js",
+        "tests/lifecycle-amendment-execution.test.js"
+      ],
       "title": "Read a complete amendment history"
     },
     {

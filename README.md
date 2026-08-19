@@ -107,8 +107,8 @@ composition is deliberately empty — a project writes the composition it wants 
 same one CI runs on every push) into a directory it keeps, then inspects the result:
 
 ```text
-  modules       74        resources     69        policies       7
-  packages       9        actions       59        providers      1
+  modules       76        resources     71        policies       7
+  packages       9        actions       64        providers      1
 
   production posture — local development only: no authentication, tenancy or RBAC
                        exists, and actor headers are not identity

@@ -1,11 +1,11 @@
 ---
 name: build-contract-activation
-description: Add or extend contract activation in an Accordo project - turning a signed immutable Order into a Commercial Contract, Contract Version and Lines, a Subscription with its lines, and pending delivery/service obligations, through a versioned Order Activation Policy. Use for contract, subscription, obligation or activation-policy work, and for building a new optional domain package. Do not use for signature/order work (build-signature-order), catalog/quote/discount work (build-commercial-operations) or CRUD module changes (create-crm-module).
+description: Add or extend contract activation and renewal/amendment execution in an Accordo project - turning a signed immutable Order into a Commercial Contract, Contract Version and Lines, a Subscription with its lines and pending delivery/service obligations through a versioned Order Activation Policy, and executing a governed SUCCESSOR agreement from a later signed Order with immutable lineage. Use for contract, subscription, obligation, activation-policy, renewal, amendment, successor or contract-lineage work, and for building a new optional domain package. Do not use for signature/order work (build-signature-order), catalog/quote/discount work (build-commercial-operations), billing or cancellation (neither exists) or CRUD module changes (create-crm-module).
 requires:
   tier: generated-project
   command: "crm app inspect"
   projectSurface: ["packages/domains/generated/index.js", "packages/core/index.js"]
-  repositorySurface: ["ARCHITECTURE.md", "DECISIONS.md", "docs/CONTRACT_ACTIVATION.md", "docs/PACKAGE_AUTHORING.md"]
+  repositorySurface: ["ARCHITECTURE.md", "DECISIONS.md", "docs/CONTRACT_ACTIVATION.md", "docs/RENEWAL_AMENDMENT.md", "docs/PACKAGE_AUTHORING.md"]
   degradesTo: "the composed packages, capabilities and policies reported by `crm app inspect --json`, plus `crm package validate` for the contract a package must satisfy"
 ---
 
@@ -64,8 +64,43 @@ If the repository documents this skill names are absent, you are in a project bu
 
 Plan control, both axes of every classification with their reasons, each undecided axis highlighted with its own override editor that demands a reason, calendar term inputs carrying the term's provenance, one activation control that disables on submit, the human-actor caveat stated. After activation: evidence only — no control to progress, complete, bill, renew or cancel anything. The section renders only when `/api/schema` publishes the domain.
 
+## Renewal and amendment execution (M16b, ADR-035)
+
+A renewal or amendment does **not** edit the agreement. It produces a
+**successor agreement** — its own signed Order, its own document hash, its own
+term and its own Subscription — written by the *same* activation writer, plus
+one immutable `contract-succession` row naming what it replaces. Issue no
+`UPDATE` against any historical contract, version, line, subscription or
+obligation row.
+
+1. **Signed evidence or nothing.** Build a successor only from an Order carrying
+   the ADR-033 term snapshot (`order-term`, covered by the signed
+   `documentHash`). An Order whose signed document carried no term is refused
+   `409 SUCCESSOR_TERMS_NOT_SIGNED`. Never promote post-signature operational
+   dates into a signed renewal term, and never collapse the three provenances
+   (signed / post-signature operational / absent-unknown) into one badge.
+2. **Plan and execute are different things.** The plan writes nothing — no
+   record, no audit entry, no domain event. Execution is human-only and
+   recomputes every fact inside its own transaction, so a recorded `ready` is an
+   observation with a timestamp and never an authorisation.
+3. **One execution per source, enforced by the database.**
+   `contract-succession.sourceContractId`, `.successorContractId`,
+   `.successorOrderId` and `.executionRef` are each UNIQUE. No in-process lock.
+4. **Derive the classification; never accept one.** Match lines on
+   `offerLogicalKey|componentKey` and derive `renewal | expansion | contraction
+   | mixed | commercial_change` from the delta. Claim a narrow label only when
+   the evidence supports exactly one reading — a price movement with no quantity
+   movement is `commercial_change`, because nothing about it expanded.
+5. **Record continuity; block only incoherence.** `contiguous | gap | overlap |
+   unknown` against the source's inclusive end date. Overlap is a mid-term
+   amendment and a gap is a lapse; only a successor term starting before the
+   source term started is refused.
+6. **The round has an exit.** `planned → awaiting_signed_order | ready →
+   executed`, plus `abandoned` from any non-terminal state; both terminals never
+   regress and nothing in the table reads a clock.
+
 ## Do not implement here
 
-Billing, invoicing, payment, usage rating, proration, ramps, minimum commitments, tax, FX, revenue recognition, MRR/ARR/TCV, amendments, seat changes, renewal, cancellation, delivery execution, partner assignment, time/expense/margin, change requests, customer acceptance, service contracts, entitlements, SLA, support cases, a scheduler, a durable outbox, auth/tenancy/RBAC.
+Billing, invoicing, payment, usage rating, proration, ramps, minimum commitments, tax, FX, revenue recognition, MRR/ARR/TCV, seat changes on a live subscription, **automatic or scheduled renewal**, renewal-notice delivery, customer notification, cancellation, delivery execution, partner assignment, time/expense/margin, change requests, customer acceptance, service contracts, entitlements, SLA, support cases, a scheduler, a durable outbox, auth/tenancy/RBAC.
 
 Finish with `npm run verify` and the starter (`node examples/starters/b2b-lead-qualification/install.mjs`).

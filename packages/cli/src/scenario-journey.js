@@ -130,6 +130,45 @@ export const JOURNEYS = Object.freeze({
       }),
     ]),
   }),
+  'contract-renewal-execution': Object.freeze({
+    installer: 'examples/journeys/contract-renewal-execution/journey.mjs',
+    clock: JOURNEY_CLOCKS.injected,
+    describes: 'the checked-in renewal/amendment journey: it composes an application holding the commercial, '
+      + 'signature, contracts and lifecycle packages and nothing else, sells and signs one agreement carrying a '
+      + 'SIGNED commercial term and activates it, produces three further signed Orders — one for another customer, '
+      + 'one whose signed document carried no term, one for the same customer with its own signed term and a raised '
+      + 'quantity — plans the renewal read-only, refuses the Order with no signed term rather than promoting its '
+      + 'operational dates, refuses an agent actor at every writing step, refuses a wrong-customer pairing at attach '
+      + 'and parks a maturing one, executes the successor as a human into its own contract, subscription and one '
+      + 'immutable 1:1:1 lineage row carrying a classification DERIVED from the line delta, proves the source '
+      + 'agreement is byte-identical afterwards, and replays a lost response without producing a second successor',
+    limitations: Object.freeze([
+      Object.freeze({
+        code: 'NOTHING_RENEWS_ON_A_CLOCK',
+        message: 'the clock is injected so the two terms are fixed business facts, not because anything here is '
+          + 'time-dependent. There is no scheduler: autoRenew and renewalNoticeDays are recorded only on both '
+          + 'provenances, nothing fires on a boundary, and every transition in this run has a human actor',
+      }),
+      Object.freeze({
+        code: 'A_SUCCESSOR_IS_NOT_A_LEGAL_RENEWAL',
+        message: 'the successor agreement is evidence assembled from a signed Order — its own document hash, its own '
+          + 'term, its own subscription — not a legal opinion about what was renewed. It amends nothing in place, it '
+          + 'cancels nothing, and the signature-provider limitation of ADR-017 is unchanged',
+      }),
+      Object.freeze({
+        code: 'SIGNED_TERM_REQUIRED_AND_PROVEN_BY_REFUSAL',
+        message: 'a successor is built only from an Order carrying the ADR-033 term snapshot. The Order whose signed '
+          + 'document carried no term is attempted in this run and refused, and the refusal is published as a positive '
+          + 'fact — post-signature operational dates are never promoted into a signed renewal term',
+      }),
+      Object.freeze({
+        code: 'NOTHING_WAS_BILLED_OR_NOTIFIED',
+        message: 'no invoice, payment, tax, proration or revenue recognition exists to follow from an execution, no '
+          + 'MRR/ARR/TCV is derived anywhere, and no customer, signer or colleague is told that any of this happened. '
+          + 'Each is published as false by the journey and observed as false, rather than left unsaid',
+      }),
+    ]),
+  }),
 });
 
 /** A journey that has not finished in this long is a defect, not a slow machine. */

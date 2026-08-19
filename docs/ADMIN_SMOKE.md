@@ -282,3 +282,77 @@ Setup: compose a project with the `work` package, apply `work-task.module.json` 
 30. A subject genuinely **past** the bound renders 100 entries and discloses that the subject has more than 100, that these are the most recent, that the list is drawn oldest-first and therefore starts in the middle, and that earlier entries exist and are not shown.
 
 Report any step that fails; do not mark the Work section browser-validated unless all 30 pass.
+
+## Renewal & amendment execution (M16b, ADR-035)
+
+**M16b-specific, scripted, and outside CI. 40 checks, all passing** — driven in
+real Chromium (**Chromium/141.0.7390.37**) on Node **22.16.0**, against a freshly
+seeded project, twice from a clean database and a clean browser profile, with
+identical results both runs.
+
+**Browser automation is still manual.** The run was scripted rather than
+hand-driven — a zero-dependency Chrome DevTools Protocol driver over Node's
+built-in `WebSocket` — but **that script is not checked in and no CI job launches
+a browser**, so this remains a gate a human must re-run by hand. Landing a driver
+under `tests/browser/` and wiring it to a job with a preinstalled Chromium is
+still the only thing that would change that sentence. Nothing here re-runs or
+replaces the 37 / 22 / 24 / 30 checks above.
+
+The section is **package-scoped, not package-owned**: the framework has no seam
+for a package to contribute an Admin extension — AX1 publishes that as
+`ADMIN_EXTENSIONS_UNSUPPORTED` — so `apps/admin/public/admin-lifecycle.js` lives
+in the Admin app and renders only while `/api/schema` publishes
+`domains.lifecycle.amendment`.
+
+Setup: compose a project with the commercial, signature, contracts **and**
+lifecycle packages, apply their manifests (including
+`contract-succession.module.json` and `amendment-run.module.json`), drive one
+quote carrying a **signed term** through signature to an activated contract, then
+produce three more signed Orders for that project — one for the same customer
+with its own signed term and one quantity raised, one for the same customer whose
+signed document carried **no** term, and one for a different customer — and open
+`#/quotes/<sourceQuoteId>`.
+
+1. The section renders under the activated contract on the quote route.
+2. *"No invoice, payment or billing of any kind follows from executing a successor agreement. None of it is modeled."* renders verbatim.
+3. *"Nothing renews automatically. There is no scheduler: auto-renew and notice days are recorded only, and no date moves anything here."* renders verbatim.
+4. *"No customer, signer or colleague is notified. Executing a successor sends nothing to anybody."* renders verbatim.
+5. *"Executing requires a signed-in user actor. That is a human-actor boundary for audit — not Sales, Legal or Finance role enforcement."* renders verbatim.
+6. With no round open there is **exactly one** control on the whole section.
+7. Opening a round with an empty reason is refused **before any request leaves the browser** — the run table is unchanged.
+8. That refusal is **visible on screen**.
+9. Opening a round with a reason re-renders to state `planned`.
+10. Attaching a successor order belonging to **another customer** is refused, and the refusal is visible.
+11. That refusal parked nothing: the round is still `planned`, not `awaiting_signed_order`.
+12. Attaching an order whose signed document carried **no term** parks the round in `awaiting_signed_order`.
+13. The gap is named on screen as `SUCCESSOR_TERMS_NOT_SIGNED`.
+14. Its term renders as **absent** — never as "signed", and never as a decided "not signed".
+15. **No execute control exists** while the round is not ready.
+16. And the absence is explained rather than silent.
+17. Attaching the signed successor order moves the round to `ready`.
+18. **Both** signed-terms provenances render as separate blocks; neither collapses into the other.
+19. Each carries the package's own provenance sentence verbatim.
+20. The classification renders as `expansion`, with the basis the server derived.
+21. The screen states it was derived, **never chosen here**.
+22. **No control anywhere** offers a classification value.
+23. The exact line delta renders with before/after quantities (`qty 20` → `qty 30`).
+24. Term continuity renders as `contiguous`, with the inclusive-end-date rule stated.
+25. The baseline is grouped by currency and recurrence and says no MRR/ARR/TCV is computed.
+26. **No rendered value** anywhere in the section is an ARR/MRR/TCV figure. (The scan is over value cells, not prose: the disclosure has to be free to name them.)
+27. Everything up to here wrote **no lineage row** — planning and attaching create no successor.
+28. Exactly one execution control exists.
+29. **Three clicks produce exactly one successor** — the control disables in flight.
+30. The section re-renders to immutable evidence.
+31. And offers **no control at all** afterwards.
+32. The evidence states that the source agreement was not modified.
+33. The lineage names the successor contract, its order and the derived classification.
+34. Read back from the server, **the source contract still carries its own term, unchanged**, with its own `signed-order-terms` provenance.
+35. A direct route plus a full page reload restores the executed evidence.
+36. No element was created from record data — hostile text is text.
+37. No JavaScript dialog opened during the run.
+38. No uncaught JavaScript error and no console error during the run.
+39. No failed resource during the run.
+40. No 5xx response during the run.
+
+Report any step that fails; do not mark the renewal & amendment section
+browser-validated unless all 40 pass.

@@ -103,10 +103,23 @@ modules/                 eight read-only record manifests
 2. **A future-dated contract is `scheduled` and stays that way.** There is no
    scheduler here; nothing transitions it to `active` on its start date.
 
+## Renewal and amendment (M16b, ADR-035)
+
+Since M16b this package can also produce a **successor agreement**: a second
+activation of a second signed Order, written by the *same* activation writer,
+plus one immutable `contract-succession` row naming what it replaces
+(`contracts-successor-activation@1`, consumed by the lifecycle package). It is
+the only capability here that writes, it grants no storage handle, and it
+modifies **no** historical contract, version, line, subscription or obligation
+row. A successor is built only from an Order carrying the ADR-033 signed term
+snapshot; an Order whose signed document carried no term is refused `409
+SUCCESSOR_TERMS_NOT_SIGNED`. The whole model is in `docs/RENEWAL_AMENDMENT.md`.
+
 ## What it does not do
 
 Billing, invoicing, payment, usage rating, proration, tax, FX, revenue
-recognition, MRR/ARR/TCV, amendments, seat changes, renewal (there is no
-scheduler), cancellation, delivery execution, service activation, entitlements
+recognition, MRR/ARR/TCV, seat changes on a live subscription, automatic or
+scheduled renewal (there is no scheduler), renewal-notice delivery, customer
+notification, cancellation, delivery execution, service activation, entitlements
 and SLA. Obligations are recorded markers: nothing executes, schedules, staffs
 or completes them.

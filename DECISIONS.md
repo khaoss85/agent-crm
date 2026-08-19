@@ -2459,3 +2459,106 @@ behaviour depends on undeclared files in the caller's tree is a worse contract
 than no package; and renaming the registry entry away from
 `io.github.khaoss85/agent-crm`, because the namespace is what the repository
 owns and a stable name outlives a description.
+
+## ADR-035 — A renewal produces a successor agreement from signed evidence, and history is never rewritten
+
+**Status:** accepted. **Milestone:** M16b amendment execution.
+**Plan:** `docs/plans/m16b-amendment-execution.md`.
+
+### Context
+
+M16a recorded renewal *intent* and stopped: pricing lived in Commercial and
+signature in Signature, both still inside `packages/core` with no capability to
+reach them, so amendment execution would have needed a private import the
+package seam refuses. Both were extracted afterwards, and ADR-033 supplied the
+missing fact — a commercial term the customer actually signed, carried with
+provenance a consumer can trust without re-deriving it. The deferral is
+therefore dischargeable, and this ADR discharges it.
+
+The dangerous shape is obvious and had to be refused: relabelling an existing
+Contract's term and lines as "amended" would make a row that names
+`documentHash` H disagree, permanently and silently, with the document it cites.
+Two further shapes were compared in the plan. Amending in place is that lie;
+adding a second `contract-version` to the same Contract is the same lie with an
+extra indirection, because the term lives on the contract row and
+`subscription.contractId` is UNIQUE, so the successor could carry neither its
+own term nor its own subscription.
+
+### Decision
+
+1. **A renewal or amendment produces a successor *agreement*, not an edit.** The
+   successor is an ordinary M12 activation of its own signed Order — its own
+   `documentHash`, its own term, its own Contract, version, lines, Subscription
+   and obligations — written by the **same** `writeActivation()` that
+   `order.activate-contract` uses, plus one immutable `contract-succession` row
+   naming what it replaces. M16b issues no `UPDATE` against any pre-existing
+   contract, version, line, subscription or obligation row, and the successor
+   needs no new vocabulary: every M12/M13/M15 consumer already reads it.
+2. **One execution per source, enforced by the database.**
+   `contract-succession.sourceContractId`, `.successorContractId`,
+   `.successorOrderId` and `.executionRef` are each UNIQUE, on top of M12's
+   UNIQUE `commercial-contract.orderId` and `contract-activation.orderId`. There
+   is no in-process lock and no read-then-write window: the losing connection's
+   whole transaction rolls back and it receives a stable code, never driver
+   text. "No split lineage" is a schema fact rather than a discipline.
+3. **A successor term is claimed as signed only when it was signed.** Execution
+   refuses an Order carrying no `order-term` snapshot — the ADR-033 chain —
+   with `409 SUCCESSOR_TERMS_NOT_SIGNED`. Post-signature operational dates are
+   never promoted, and a source contract whose `termsSource` nobody classified
+   (`signed: null`) refuses too, rather than being reported either way. This is
+   the milestone's core invariant and it is proven by test, not asserted here.
+4. **Plan and execute are different things, and the plan authorises nothing.**
+   `commercial-contract.plan-amendment` writes no record, no audit entry and no
+   domain event. `amendment-run.execute-amendment` is human-only and recomputes
+   the signature evidence, the signed term, the customer coherence, the delta,
+   the classification, the term continuity and every refusal **inside its own
+   transaction**. A run recorded as `ready` is an observation with a timestamp,
+   not a licence: the suite proves a stale `ready` is refused after the evidence
+   moves underneath it.
+5. **The classification is derived by the package that owns the evidence.**
+   Contracts computes the line delta (matched on `offerLogicalKey|componentKey`)
+   and derives `renewal | expansion | contraction | mixed | commercial_change`
+   from it. Lifecycle — the orchestrator — never computes or supplies a label,
+   because a label handed across the boundary is a client-provided
+   classification. `planSuccession()` and `executeSuccession()` call one
+   derivation, so a plan and an execution cannot disagree. A narrower label is
+   claimed only when the evidence supports exactly one reading; a price movement
+   with no quantity movement is deliberately `commercial_change`, because
+   nothing about it expanded.
+6. **Term continuity is recorded, and blocks only when incoherent.** Measured
+   against the source's inclusive end date: `contiguous`, `gap`, `overlap`,
+   `unknown`. A mid-term amendment overlaps and a lapse-then-re-signing gaps —
+   refusing either would force somebody to falsify dates to record their own
+   history. Only a successor term starting **before** the source term started is
+   refused (`SUCCESSOR_TERM_PRECEDES_SOURCE`).
+7. **The cycle is a governed run with a closed state table.** `planned →
+   awaiting_signed_order | ready → executed`, and `abandoned` from any
+   non-terminal state; both terminals have empty transition rows and never
+   regress. `awaiting_signed_order` exists because "this order has not been
+   signed yet" is a wait, while "this order belongs to a different customer" is
+   a wrong pairing that waiting never fixes — the second is refused at attach
+   rather than parked. **No row in that table has a clock input.** A new round
+   may follow an abandoned one (`amendment-run:<contractId>:<round>`, UNIQUE);
+   a round that executed closes the agreement to further rounds permanently,
+   because the next round belongs to the successor.
+8. **One new capability, sized by its one consumer.**
+   `contracts-successor-activation@1` is offered by Contracts and required by
+   Lifecycle: plan, execute, and three frozen lineage reads. It is the only
+   capability in Contracts that writes, and it grants no storage handle.
+   Contracts moves to `version: 7` and Lifecycle to `version: 2`, because new
+   records, a new offered capability and a new required edge are all changes to
+   a composition contract. `contract-lifecycle-source@2`, `delivery-obligations@1`
+   and `service-obligations@1` answer byte-identically and keep their versions.
+
+### Not modeled, deliberately
+
+Billing, invoicing, payment, tax, usage rating, proration, revenue recognition,
+MRR/ARR/TCV, FX, any scheduler, automatic or clock-driven renewal, renewal
+notice delivery, customer notification of any kind, RBAC or role enforcement,
+cancellation, price computation and any live catalog read. `autoRenew` and
+`renewalNoticeDays` remain recorded-only on both provenances: nothing fires on
+them, and no notice is ever sent. Succeeding an agreement is **not** cancelling
+it, and the vocabulary reflects that — this milestone records "successor
+agreement executed", never "renewed", "amended", "cancelled" or "churned".
+ADR-017's signature-provider limitation is unchanged, and nothing here is a
+legal-assurance claim about the instrument that was signed.

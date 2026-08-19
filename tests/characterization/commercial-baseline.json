@@ -605,6 +605,7 @@
       "id": "architecture.commercial-internal-importers",
       "note": "Every file outside the package with a real import statement naming a Commercial source file. After the extraction the only sanctioned importer is the project composition file, which is generated per project and not checked in here.",
       "observed": [
+        "examples/journeys/contract-renewal-execution/journey.mjs",
         "examples/journeys/service-sla-escalation/journey.mjs",
         "examples/starters/b2b-lead-qualification/install.mjs"
       ],

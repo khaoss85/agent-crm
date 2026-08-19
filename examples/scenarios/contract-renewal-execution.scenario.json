@@ -1,0 +1,146 @@
+{
+  "scenarioContract": 1,
+  "id": "contract-renewal-execution",
+  "title": "A signed renewal becomes a governed successor agreement, and one that was never signed is refused",
+  "summary": "One commercial process, driven end to end against a real composed application holding the commercial, signature, contracts and lifecycle packages and nothing else. A quote carrying a commercial term is signed and activated, so the source agreement's term is the term the customer actually signed rather than dates typed in afterwards; three further signed Orders are produced — one for another customer, one whose signed document carried no term, and one for the same customer with its own signed term and one quantity raised; the renewal is planned read-only and the plan is proven to have written nothing; the Order with no signed term is refused rather than having its post-signature dates promoted; an agent actor is refused at every writing step; a wrong-customer pairing is refused at attach while a maturing one is parked; a human executes the successor into its own contract, version, lines and subscription plus one immutable 1:1:1 lineage row whose classification is DERIVED from the line delta; the source agreement is proven byte-identical afterwards; a lost response replays without producing a second successor; and nothing is billed, scheduled, cancelled or sent to anybody. Each step names the JTBD rows it exercises; every other row in the index is reported as not established.",
+  "journey": "contract-renewal-execution",
+  "steps": [
+    {
+      "id": "compose",
+      "narrative": "The checked-in renewal journey composes an application from manifests through the real module factory and drives the whole process in one application, asserting each guarantee and each refusal as it goes. Every claim below cites this step, so a journey that does not complete establishes nothing.",
+      "observe": [
+        { "kind": "journey.completed" }
+      ]
+    },
+    {
+      "id": "compose-narrowly",
+      "narrative": "The composition is commercial, signature, contracts and lifecycle, and nothing else. Lifecycle imports nothing from contracts and reaches it only through two declared capabilities, so an application without the delivery package, without service, without work, without intelligence and without a Lead module is the honest demonstration of that boundary rather than an assertion about it.",
+      "observe": [
+        { "kind": "package.composed", "package": "contracts" },
+        { "kind": "package.composed", "package": "lifecycle" },
+        { "kind": "capability.available", "capability": "contracts-successor-activation", "version": 1 },
+        { "kind": "capability.available", "capability": "contract-lifecycle-source", "version": 2 },
+        { "kind": "resource.present", "resource": "contract-succession" },
+        { "kind": "resource.present", "resource": "amendment-run" }
+      ]
+    },
+    {
+      "id": "signed-source",
+      "narrative": "The agreement being renewed carries a term the customer signed: a draft term on the quote, frozen into the immutable version at submit, embedded in the canonical document, covered by its hash, copied onto the Order and consumed verbatim at activation. Everything M16b does downstream depends on this being true rather than assumed.",
+      "observe": [
+        { "kind": "resource.present", "resource": "order-term" },
+        { "kind": "journey.fact", "fact": "sourceTermIsSignedOrderTerms", "is": "true" },
+        { "kind": "journey.fact", "fact": "sourceTermSigned", "is": "true" },
+        { "kind": "journey.count", "metric": "orderTerms", "atLeast": 2 }
+      ]
+    },
+    {
+      "id": "plan-writes-nothing",
+      "narrative": "Planning the renewal is a read. It computes the delta, the classification, the term continuity and every refusal, and writes no record, no audit entry and no domain event — proven by comparing every module's row count before and after rather than by asserting it about one table.",
+      "observe": [
+        { "kind": "action.present", "action": "commercial-contract.plan-amendment" },
+        { "kind": "journey.fact", "fact": "planWroteNothing", "is": "true" }
+      ]
+    },
+    {
+      "id": "refuse-the-unsigned-term",
+      "narrative": "The refusal this milestone exists for, attempted rather than described. An Order that was genuinely signed, whose signed document carried no commercial term, cannot become a successor agreement: its dates are post-signature operational metadata, and nothing here promotes them into a signed renewal term. Attaching it parks the round with the gap named, and executing from that state is refused.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "unsignedTermRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "executeFromParkedRefused", "is": "true" }
+      ]
+    },
+    {
+      "id": "refuse-the-wrong-pairing",
+      "narrative": "Two more refusals that make execution a decision rather than a default: an agent actor may prepare the plan and may not commit the business, and an Order belonging to a different customer is refused at attach rather than parked — parking it would promise a resolution that waiting can never bring.",
+      "observe": [
+        { "kind": "action.present", "action": "commercial-contract.open-amendment-run" },
+        { "kind": "action.present", "action": "amendment-run.attach-successor-order" },
+        { "kind": "journey.fact", "fact": "agentOpenRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "agentExecuteRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "strangerCustomerRefused", "is": "true" }
+      ]
+    },
+    {
+      "id": "execute-the-successor",
+      "narrative": "A human executes the successor. It is an ordinary activated contract — its own signed Order, its own document hash, its own term, its own version, lines and subscription — plus one immutable lineage row. Its term starts in the future, so it is recorded as scheduled and nothing transitions it, because there is no scheduler.",
+      "observe": [
+        { "kind": "action.present", "action": "amendment-run.execute-amendment" },
+        { "kind": "journey.count", "metric": "commercialContracts", "equals": 2 },
+        { "kind": "journey.count", "metric": "contractSuccessions", "equals": 1 },
+        { "kind": "journey.count", "metric": "subscriptions", "equals": 2 },
+        { "kind": "journey.fact", "fact": "successorTermIsSignedOrderTerms", "is": "true" },
+        { "kind": "journey.fact", "fact": "successorContractStatus", "is": "scheduled" },
+        { "kind": "journey.fact", "fact": "successorHasOwnSubscription", "is": "true" }
+      ]
+    },
+    {
+      "id": "classification-is-derived",
+      "narrative": "The change is classified from the immutable line delta by the package that owns both sides of it, and the label the plan reported and the label the execution recorded come from one derivation — so a plan and an execution cannot disagree about what changed. The term continuity is measured against the source's inclusive end date, which is what makes a successor starting the day after contiguous rather than one day late.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "classification", "is": "expansion" },
+        { "kind": "journey.fact", "fact": "classificationDerivedNotSupplied", "is": "true" },
+        { "kind": "journey.fact", "fact": "termContinuity", "is": "contiguous" },
+        { "kind": "journey.fact", "fact": "termContinuityGapDaysIsZero", "is": "true" }
+      ]
+    },
+    {
+      "id": "history-is-untouched",
+      "narrative": "The source agreement, its version, its lines, its subscription and its activation run are fingerprinted as bytes before the renewal and compared afterwards. A successor replaces an agreement going forward and rewrites nothing behind it, and the lineage between them is one-to-one and enforced by unique columns rather than by an in-process lock.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "historyUnchanged", "is": "true" },
+        { "kind": "journey.fact", "fact": "lineageIsOneToOne", "is": "true" }
+      ]
+    },
+    {
+      "id": "a-retry-is-safe",
+      "narrative": "A client whose response was lost repeats the identical ask and receives the result it already produced, rather than a refusal it has no way past. The repeat writes nothing, and afterwards the agreement is closed to further rounds permanently — a contract is succeeded exactly once, and the consumed Order cannot be activated standalone either.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "replayProducedNoSecondSuccessor", "is": "true" },
+        { "kind": "journey.fact", "fact": "secondRoundRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "consumedOrderRefused", "is": "true" },
+        { "kind": "journey.count", "metric": "amendmentRuns", "equals": 1 }
+      ]
+    },
+    {
+      "id": "nothing-else-happened",
+      "narrative": "Every write above was audited and traced, and everything this milestone does not do is published as a positive fact rather than left unsaid: nothing was scheduled, nobody was notified, nothing was billed, nothing was cancelled and no revenue figure was derived. There is no invoice, payment, renewal-schedule or notification module for any of it to have happened in.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "anythingScheduled", "is": "false" },
+        { "kind": "journey.fact", "fact": "anybodyNotified", "is": "false" },
+        { "kind": "journey.fact", "fact": "anythingBilled", "is": "false" },
+        { "kind": "journey.fact", "fact": "anythingCancelled", "is": "false" },
+        { "kind": "journey.fact", "fact": "revenueFigureDerived", "is": "false" },
+        { "kind": "journey.count", "metric": "auditEvents", "atLeast": 100 },
+        { "kind": "journey.count", "metric": "workflowRuns", "atLeast": 20 }
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "job": "JTBD-CS-04",
+      "steps": ["compose", "signed-source", "plan-writes-nothing", "execute-the-successor", "classification-is-derived"],
+      "note": "the row is recorded as partially supported and this run does not change that. What it shows is a real commercial change executed from signed evidence and classified from the immutable line delta, with the exact per-line before and after travelling with it. What it does not show, because none of it exists: any price computation, any uplift policy, any billing consequence, and any MRR/ARR/TCV figure. Quantity direction is derivable only for components that carry a quantity, so a change a narrower label cannot be derived for is recorded as commercial_change rather than guessed at."
+    },
+    {
+      "job": "JTBD-CS-10",
+      "steps": ["compose", "execute-the-successor", "history-is-untouched", "a-retry-is-safe"],
+      "note": "the row is recorded as partially supported and this run does not change that. What it shows is an immutable one-to-one lineage row between an agreement and the successor that replaces it, with both terms and their provenance, the derived classification, the exact delta and the deciding policy fingerprint — and the source agreement proven byte-identical afterwards. What it does not show: a field-level amendment log, because there is no in-place amendment to log, and a chain that branches, because a contract is succeeded exactly once."
+    },
+    {
+      "job": "JTBD-CS-01",
+      "steps": ["compose", "signed-source"],
+      "note": "the row is recorded as partially supported and this run does not change that. It does narrow the reason: the agreement this journey renews carries a term the customer signed rather than post-signature operational metadata, which is the specific gap the row's note names. The rest of the row is unchanged — nothing here makes the signature provider a qualified one, and no other part of the agreement became signed evidence because of this run."
+    },
+    {
+      "job": "JTBD-PK-02",
+      "steps": ["compose", "compose-narrowly"],
+      "note": "lifecycle reaches contracts only through the declared capabilities contracts/contract-lifecycle-source@2 and contracts/contracts-successor-activation@1, resolved in a composition holding four packages and no others — and the second of those is the first capability in this repository through which one package WRITES inside another's transaction without holding a storage handle. The same row is claimed by the other two scenarios over different capabilities and different package sets; three independent compositions is the point."
+    },
+    {
+      "job": "JTBD-AX-06",
+      "steps": ["refuse-the-unsigned-term", "refuse-the-wrong-pairing", "nothing-else-happened"],
+      "note": "unavailable capability reported honestly, as a positive fact rather than as silence: the run publishes that nothing was scheduled, nobody was notified, nothing was billed and nothing was cancelled, and each is observed. A refusal a run could earn by never attempting the operation would be worthless, so each refusal here is recorded by attempting it — including the one this milestone exists for, an Order that was signed but whose signed document carried no commercial term."
+    }
+  ]
+}

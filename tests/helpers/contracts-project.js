@@ -38,11 +38,14 @@ export const DOMAIN_MANIFESTS = [
   'contract-version.module.json', 'contract-line.module.json',
   'subscription.module.json', 'subscription-line.module.json',
   'delivery-obligation.module.json', 'service-obligation.module.json',
+  // M16b: the immutable lineage between an agreement and its successor.
+  'contract-succession.module.json',
 ];
 
 export const DOMAIN_MODULES = [
   'contract-activation', 'commercial-contract', 'contract-version', 'contract-line',
   'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
+  'contract-succession',
 ];
 
 /** The Delivery package's own record modules (M13). */
@@ -81,8 +84,12 @@ export const SERVICE_MODULES = [
 ];
 
 /** The Lifecycle package's own record modules (M16a). */
-export const LIFECYCLE_MANIFESTS = ['renewal-decision.module.json', 'commercial-followup.module.json'];
-export const LIFECYCLE_MODULES = ['renewal-decision', 'commercial-followup'];
+export const LIFECYCLE_MANIFESTS = [
+  'renewal-decision.module.json', 'commercial-followup.module.json',
+  // M16b: the governed renewal/amendment round.
+  'amendment-run.module.json',
+];
+export const LIFECYCLE_MODULES = ['renewal-decision', 'commercial-followup', 'amendment-run'];
 
 /** The Work package's own record modules (Work v1, ADR-030). */
 export const WORK_MANIFESTS = ['work-task.module.json', 'work-activity.module.json'];
@@ -254,14 +261,28 @@ export const POLICY = { policy: 'b2b-saas-order-activation', policyVersion: 1 };
  * which fixture offers the quote carries, so a test can compose the exact
  * classification mix it needs.
  */
-export async function signedOrder(root, app, { name = 'M12 Deal', offers = ['fixture:offer:enterprise', 'fixture:offer:support-annual', 'fixture:offer:api-monthly'], term = null } = {}) {
+export async function signedOrder(root, app, {
+  name = 'M12 Deal',
+  offers = ['fixture:offer:enterprise', 'fixture:offer:support-annual', 'fixture:offer:api-monthly'],
+  term = null,
+  // M16b: a successor Order must belong to the SAME customer as the agreement
+  // it succeeds, so a caller can hand back the company and contact an earlier
+  // journey created instead of minting a new party that would fail coherence.
+  company: existingCompany = null,
+  contact: existingContact = null,
+  // M16b: quantities are what the delta's expansion/contraction direction is
+  // derived from, so a test must be able to move exactly one of them.
+  quantities = {},
+  quantity = 20,
+  discountBps = 500,
+} = {}) {
   const actor = { type: 'user', id: 'e2e' };
   const { signatureFixture } = await import(pathToFileURL(join(root, 'examples/starters/b2b-lead-qualification/signature.js')).href);
   await app.syncCatalog({ provider: 'fixture-saas-catalog', actor });
   const book = app.modules.get('price-book').service.listWhere({ sourceKey: 'fixture:pb:standard-eur' })[0];
   const offerOf = (key) => app.modules.get('offer').service.listWhere({ logicalKey: key, active: true })[0];
-  const company = await app.services.companies.create({ name: `${name} SpA` }, { actor });
-  const contact = await app.services.contacts.create(
+  const company = existingCompany ?? await app.services.companies.create({ name: `${name} SpA` }, { actor });
+  const contact = existingContact ?? await app.services.contacts.create(
     { companyId: company.id, firstName: 'Mario', lastName: 'Rossi', email: `m.${Math.abs(hash(name))}@example.com` },
     { actor },
   );
@@ -271,7 +292,10 @@ export async function signedOrder(root, app, { name = 'M12 Deal', offers = ['fix
   );
   const quote = (await app.runAction({ module: 'opportunity', action: 'create-quote', recordId: opportunity.id, input: { priceBookId: book.id }, actor })).result.quote;
   for (const key of offers) {
-    await app.runAction({ module: 'quote', action: 'add-line', recordId: quote.id, input: { offerId: offerOf(key).id, quantity: 20, discountBps: 500 }, actor });
+    await app.runAction({
+      module: 'quote', action: 'add-line', recordId: quote.id,
+      input: { offerId: offerOf(key).id, quantity: quantities[key] ?? quantity, discountBps }, actor,
+    });
   }
   // Signed commercial terms: a draft term on the quote is frozen by submit
   // into the version snapshot, embedded in the signed document and covered by

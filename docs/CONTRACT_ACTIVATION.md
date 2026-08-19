@@ -26,7 +26,7 @@ adversarial review and both change what this milestone may claim:
    that stay scheduled forever: there is no scheduler in this framework.
 
 **No billing exists.** No invoicing, payment, usage rating, proration, ramp,
-tax, FX, revenue recognition, MRR/ARR/TCV, amendment, seat change, renewal,
+tax, FX, revenue recognition, MRR/ARR/TCV, seat change, automatic renewal,
 cancellation, delivery execution, service activation, entitlement or SLA. A
 Subscription here is a *commercial activation record* — what was sold as a
 recurring right, per period, exactly as signed — and nothing consumes it yet.
@@ -312,11 +312,32 @@ sources and the static import graph to prove it. Schema
 metadata is published additively under `/api/schema` → `domains.contracts`,
 including each policy's fingerprint and the explicit `notModeled` list.
 
+## Renewal and amendment (M16b, ADR-035)
+
+M12 activates one contract from one signed Order and stops there. Since M16b the
+same package can also produce a **successor agreement** — a second activation of
+a second signed Order, plus an immutable `contract-succession` row naming what it
+replaces — through `contracts-successor-activation@1`.
+
+Two things about it matter to a reader of this guide:
+
+- **It changes nothing here.** A successor is written by the *same* activation
+  writer and has the same shape as any other activated contract, so everything on
+  this page still describes it. M16b issues no `UPDATE` against any historical
+  contract, version, line, subscription or obligation row.
+- **It needs a signed term.** A successor is built only from an Order carrying
+  the ADR-033 `order-term` snapshot; an Order whose signed document carried no
+  term is refused `409 SUCCESSOR_TERMS_NOT_SIGNED`.
+
+The whole model, the derived classification, the state table and the refusal
+surface are in `docs/RENEWAL_AMENDMENT.md`.
+
 ## Not modeled — stated, not implied
 
 Billing, invoicing, payment, usage rating, proration, ramps, minimum
-commitments, tax, FX, revenue recognition, MRR/ARR/TCV, amendments, seat
-changes, renewal (there is no scheduler), cancellation, delivery execution,
+commitments, tax, FX, revenue recognition, MRR/ARR/TCV, seat changes on a live
+subscription, **automatic or scheduled renewal** (there is no scheduler),
+renewal-notice delivery, customer notification, cancellation, delivery execution,
 partner assignment, time and expense, margin, change requests, customer
 acceptance, service contracts, entitlements, SLA and support cases.
 
@@ -329,6 +350,7 @@ plan payload says so in its own `notModeled` list.
 `tests/admin-contracts.test.js`,
 `examples/starters/b2b-lead-qualification/install.mjs`,
 `packages/contracts/README.md`,
-`docs/plans/milestone-12-order-activation-subscription.md`. Agent
+`docs/plans/milestone-12-order-activation-subscription.md`,
+`docs/RENEWAL_AMENDMENT.md` (M16b successor activation). Agent
 instructions: `.claude/skills/build-contract-activation/SKILL.md` (this file is
 the Codex-readable mirror).

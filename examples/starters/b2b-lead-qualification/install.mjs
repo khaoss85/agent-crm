@@ -124,12 +124,15 @@ try {
     'subscription-line.module.json',
     'delivery-obligation.module.json',
     'service-obligation.module.json',
+    // M16b: the immutable lineage between an agreement and its successor.
+    'contract-succession.module.json',
   ]) {
     applyModule(root, join(root, 'packages', 'contracts', 'modules', manifest));
   }
-  // Renewal & expansion operations (M16a): intent evidence and a governed
-  // handoff. It renews nothing and signs nothing.
-  for (const manifest of ['renewal-decision.module.json', 'commercial-followup.module.json']) {
+  // Renewal, expansion and amendment operations (M16a + M16b): intent evidence,
+  // a governed handoff, and the governed round that executes a successor
+  // agreement from a signed order. It cancels nothing and schedules nothing.
+  for (const manifest of ['renewal-decision.module.json', 'commercial-followup.module.json', 'amendment-run.module.json']) {
     applyModule(root, join(root, 'packages', 'lifecycle', 'modules', manifest));
   }
   // Milestone 15 records live in the OPTIONAL service domain package.

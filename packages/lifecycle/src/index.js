@@ -3,22 +3,32 @@
 import {
   AppError, ValidationError, calendarDaysBetween, definePackage, requireCalendarDate,
 } from '../../core/index.js';
+import {
+  AMENDMENT_LIMITATIONS,
+  AMENDMENT_STATES,
+  AMENDMENT_TERMINAL,
+  AMENDMENT_TRANSITIONS,
+  SUCCESSOR_CAPABILITY,
+  buildAmendmentActions,
+} from './amendment.js';
 
 /**
- * **M16a — Renewal & Expansion Operations.**
+ * **Renewal, expansion and amendment operations (M16a + M16b).**
  *
  * The operational lifecycle *after* activation: what is coming up for renewal,
- * what a human decided about it, and what Commercial has been asked to do
- * next. Named `lifecycle` rather than `renewals` because non-renewal,
- * expansion and contraction all live here and none of them is a renewal.
+ * what a human decided about it, what Commercial has been asked to do next —
+ * and, since M16b, the governed execution of the successor agreement itself.
+ * Named `lifecycle` rather than `renewals` because non-renewal, expansion,
+ * contraction and amendment all live here and none of them is a renewal.
  *
- * **What it deliberately cannot do, and why.** A real amendment changes what
- * was agreed: a new signed instrument, re-priced lines, a new order. Pricing
- * lives in Commercial and signature in Signature, and both are still inside
- * `packages/core` with no capability to reach them. Building amendment
- * execution here would need a private import — exactly what the package seam
- * refuses — so M16a stops where those domains begin and hands off instead.
- * That is M16b, and it is deferred by decision rather than forgotten.
+ * **The deferral M16a recorded is discharged here.** M16a could not execute an
+ * amendment because pricing lived in Commercial and signature in Signature,
+ * both still inside `packages/core` with no capability to reach them — and
+ * reaching them would have needed a private import, which the package seam
+ * refuses. Both were extracted afterwards, and ADR-033 added the missing fact:
+ * a commercial term the customer actually signed. `amendment.js` is what that
+ * made buildable, and it still imports nothing: the successor agreement is
+ * written by Contracts through `contracts-successor-activation@1`.
  *
  * **The truth problem this package must not create.** M12 records activation
  * terms as *operational metadata*; `termsSource` exists because those dates
@@ -28,7 +38,7 @@ import {
  */
 
 export const LIFECYCLE_PACKAGE = 'lifecycle';
-export const LIFECYCLE_RESOURCES = Object.freeze(['renewal-decision', 'commercial-followup']);
+export const LIFECYCLE_RESOURCES = Object.freeze(['renewal-decision', 'commercial-followup', 'amendment-run']);
 export const SOURCE_CAPABILITY = Object.freeze({ package: 'contracts', capability: 'contract-lifecycle-source', version: 2 });
 
 /**
@@ -369,11 +379,16 @@ export function buildPlanRenewalAction(moduleNames) {
           subscriptionLineCount: subscriptionLines.length,
         },
         evidenceGaps: evidenceGaps(evidence),
-        approvalRequired: 'recording a decision, requesting a follow-up and resolving one all require actor.type === "user". No successor is recorded anywhere in M16a',
+        approvalRequired: 'recording a decision, requesting a follow-up and resolving one all require actor.type === "user". This action records nothing at all',
         limitations: [
           'NO_SCHEDULER — nothing fires on a boundary; this is asked, never pushed',
           'NOT_A_LEGAL_RENEWAL — no automatic or legal renewal is modelled or claimed',
-          'NO_SUCCESSOR_LINK — nothing here records or synthesizes a successor contract',
+          // M16b made a successor expressible, so the old flat "no successor
+          // exists anywhere" would now be false. What stays true, and is what a
+          // reader of THIS action needs, is that this action neither records
+          // one nor consults one: `commercial-contract.plan-amendment` is the
+          // read that answers succession questions.
+          'NO_SUCCESSOR_HERE — this action records and reads no successor; use commercial-contract.plan-amendment for succession evidence (M16b)',
           'TERMS_MAY_BE_UNSIGNED — see term.source; activation terms are operational metadata',
           'NO_REVENUE_RECOGNITION — no ARR, MRR, TCV or forecast is computed',
         ],
@@ -686,20 +701,28 @@ export function createLifecyclePackage(options = {}) {
   return definePackage({
     packageContract: 1,
     name: LIFECYCLE_PACKAGE,
-    version: 1,
-    label: 'Renewal and expansion operations',
+    // 2: M16b amendment execution. One new record (`amendment-run`), five new
+    // actions, and a new hard requirement on
+    // `contracts/contracts-successor-activation@1`. All three change the
+    // composition contract, so the version moved with them. The new edge adds
+    // no new package to any working composition: this package already hard-
+    // requires `contracts`, which has hard-required `signature` since M12.
+    version: 2,
+    label: 'Renewal, expansion and amendment operations',
     description:
-      'Reads a contract\'s term evidence, records human renewal and expansion intent, and hands governed follow-up work to Commercial. Renews nothing, cancels nothing and signs nothing.',
+      'Reads a contract\'s term evidence, records human renewal and expansion intent, hands governed follow-up work to Commercial, and executes a governed successor commercial agreement from a signed immutable Order. Cancels nothing, schedules nothing, prices nothing and notifies nobody.',
     resources: [...LIFECYCLE_RESOURCES],
     requires: followUp
-      ? [{ ...SOURCE_CAPABILITY }, { ...WORK_FOLLOW_UP_CAPABILITY }]
-      : [{ ...SOURCE_CAPABILITY }],
+      ? [{ ...SOURCE_CAPABILITY }, { ...SUCCESSOR_CAPABILITY }, { ...WORK_FOLLOW_UP_CAPABILITY }]
+      : [{ ...SOURCE_CAPABILITY }, { ...SUCCESSOR_CAPABILITY }],
     capabilities: [],
     actions: [
       buildPlanRenewalAction(options.modules),
       buildRecordRenewalDecisionAction(options.modules),
       buildRequestCommercialFollowupAction(options.modules, { followUp }),
       buildResolveCommercialFollowupAction(options.modules),
+      // M16b (ADR-035): the execution counterpart of everything above.
+      ...buildAmendmentActions(options.modules),
     ],
     policies: [],
     metadata() {
@@ -724,18 +747,65 @@ export function createLifecyclePackage(options = {}) {
           : 'not composed. Without followUp enabled this package requires nothing from work, creates no task, and behaves exactly as it did before Work v1',
         baselineEvidence:
           'a follow-up carries its commercial baseline grouped by currency, charge type, interval AND interval count — quarterly is month x 3 and is not monthly. No total is computed across recurrences or currencies and no FX is applied; a single scalar amount is recorded only when the baseline holds exactly one kind of money',
+        // M16b (ADR-035). Function-free and additive: an older client ignores
+        // it, and every M16a key above is untouched.
+        amendment: {
+          amendmentContract: 1,
+          capability: `${SUCCESSOR_CAPABILITY.capability}@${SUCCESSOR_CAPABILITY.version}`,
+          states: [...AMENDMENT_STATES],
+          terminal: [...AMENDMENT_TERMINAL],
+          transitions: AMENDMENT_TRANSITIONS,
+          model:
+            'executing a renewal or amendment produces a SUCCESSOR commercial agreement built from a signed immutable Order, with immutable '
+            + 'lineage to the agreement it replaces. No historical contract, version, line, subscription or obligation row is modified, and '
+            + 'the successor is shaped identically to any other activated contract',
+          authority:
+            'the recorded run state is an OBSERVATION of the evidence at readinessObservedAt, never an authorisation. Execution recomputes '
+            + 'the signature evidence, the signed term, the customer, the delta, the classification and every refusal inside its own '
+            + 'transaction, so a stale "ready" authorises nothing',
+          classification:
+            'derived by the contracts package from the immutable line delta and never supplied by a caller or stored from a client label. '
+            + 'renewal, expansion, contraction and mixed are claimed only when the evidence supports exactly one reading; everything else is '
+            + 'commercial_change with the same exact per-line delta attached',
+          rounds:
+            'identity is (contract, round), keyed amendment-run:<contractId>:<round> and UNIQUE. At most one run is open at a time; the round '
+            + 'advances only once the previous one is abandoned. A round that EXECUTED closes the agreement to further rounds permanently, '
+            + 'because a contract is succeeded exactly once and the next round belongs to its successor',
+          uniqueness:
+            'one execution per source agreement is a DATABASE fact, not an in-process lock: contract-succession.sourceContractId, '
+            + '.successorContractId, .successorOrderId and .executionRef are each UNIQUE',
+          humanApproval:
+            'opening, attaching, executing and abandoning all require actor.type === "user"; agent actors are refused 403 '
+            + 'HUMAN_APPROVAL_REQUIRED. A human-actor boundary for audit, not RBAC',
+          limitations: [...AMENDMENT_LIMITATIONS],
+        },
         wording: {
-          recorded: ['renewal decision recorded', 'non-renewal intent recorded', 'commercial follow-up requested'],
+          recorded: [
+            'renewal decision recorded', 'non-renewal intent recorded', 'commercial follow-up requested',
+            'successor agreement executed', 'amendment run abandoned',
+          ],
+          // "renewed" and "amended" stay off this list even now: what M16b
+          // produces is a successor agreement recorded from signed evidence.
+          // It is not a legal renewal, it cancels nothing, and calling an
+          // abandoned round a churn event would be the same lie in reverse.
           neverClaimed: ['renewed', 'amended', 'cancelled', 'churned', 'invoiced', 'signed'],
         },
         notModeled: [
-          'amendment execution', 'quoting', 'pricing', 'signature', 'billing', 'invoicing',
+          'quoting', 'pricing', 'signature', 'billing', 'invoicing', 'payment', 'tax',
           'cancellation', 'churn analytics', 'revenue recognition', 'ARR/MRR/TCV', 'FX',
-          'outreach', 'scheduling', 'automatic or legal renewal',
+          'outreach', 'customer notification', 'scheduling', 'automatic or legal renewal',
+          'retroactive amendment of a historical record',
         ],
         limitation:
-          'M16a plans and records. Commercial amendment execution is M16b and waits on Commercial and Signature becoming reachable through capabilities',
+          'M16a plans and records intent; M16b executes a governed successor agreement from a signed immutable Order and refuses to build one '
+          + 'from post-signature operational dates. Neither renews anything automatically: there is no scheduler, autoRenew and '
+          + 'renewalNoticeDays are recorded only, and nobody is notified',
       };
     },
   });
 }
+
+export {
+  AMENDMENT_LIMITATIONS, AMENDMENT_STATES, AMENDMENT_TERMINAL, AMENDMENT_TRANSITIONS,
+  SUCCESSOR_CAPABILITY, amendmentRunKey, buildAmendmentActions, executionRefOf, readinessFrom,
+} from './amendment.js';
