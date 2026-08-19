@@ -2686,3 +2686,111 @@ No snapshot → unchanged historical behaviour. Valid snapshot → **byte-identi
 outcome (all three LA0 baselines replay unmoved). Invalid snapshot → **fails
 closed**, where it previously passed silently. That last line is a deliberate
 behaviour change and the whole point of the ADR.
+
+## ADR-037 — The customer foundation links and projects existing records; it never becomes a second copy of them
+
+**Status:** accepted. **Milestone:** Customer Data Foundation v1.
+**Plan:** `docs/plans/customer-data-foundation-v1.md`.
+
+### Context
+
+Accordo can price, sign, activate, deliver, service and renew a customer, but
+it had no trustworthy answer to "who is this customer, where did that record
+come from, and is it the same person as that other record". Every package
+carries its own slice — Company and Contact in the host, party snapshots frozen
+on Orders and Contracts, subjects on Work tasks — and nothing tied them
+together or recorded provenance.
+
+The obvious shape is a master customer table that every package points at. That
+shape is wrong here, and the inventory says why: `contacts.email` is already
+`NOT NULL UNIQUE` in the core schema, nine packages already reference
+`companyId`/`contactId`, and the customer columns on `order` and
+`commercial-contract` are **immutable party snapshots frozen at signature** —
+evidence of what was signed, not the current truth about a person. A master
+table would duplicate mutable truth, fight the existing uniqueness rule and
+require a cascade rewrite across every package that already resolves those ids.
+
+### Decision
+
+**Existing business records remain the source records. The foundation adds four
+things beside them: identity, provenance, lineage and projection.**
+
+1. **Package-native, named `customer-data`.** Not core: customer identity,
+   dedupe policy and data-quality semantics are domain behaviour, and
+   `duplicate-candidate` fails the ADR-018 test for what core may own. Optional
+   like every other package — remove the composition line and the application
+   keeps working, with every row still on disk.
+2. **No master customer record.** Six records, none of which copies a business
+   record: an import run, its per-row receipts, external identities, duplicate
+   candidates, canonical links and data-quality issues. Every reference to a
+   record another package owns uses the **ADR-030 subject envelope**
+   (`subjectResource`/`subjectId`/`subjectOwner`/`subjectOwnerPackage`), so
+   this package takes no foreign key on, and stores no copy of, anybody else's
+   table.
+3. **Matching is deterministic and explainable, and never guesses.** Exact
+   external identity, then exact normalized email, then exact company name
+   **and** exact domain. Ambiguity is a first-class answer: the row resolves
+   `unresolved`, a duplicate candidate is recorded with the rule and evidence
+   that produced it, and no rule breaks a tie. There is no fuzzy comparison, no
+   score, no threshold and no ML.
+4. **Canonical identity is a LOGICAL link, decided by a human.** Linking writes
+   cluster membership; it deletes no row, rewrites no field, touches no other
+   package and cascades nowhere. Every linked record still exists and still
+   resolves, and the profile follows the cluster. Physical consolidation is
+   deliberately deferred to a named **Customer Data Operations v2** track,
+   together with global search, saved views, bulk actions, export at scale and
+   any retention or erasure workflow.
+5. **The profile is a projection, not a table.** It reads across whatever
+   packages are composed and stores nothing. A package that is not composed
+   reads **`available: false` with a reason** — never `[]` and never `0`,
+   because an empty list from an uninstalled package is a lie in the place a
+   reader is most likely to believe it. The profile states that it is **not** a
+   complete cross-channel timeline, because marketing, analytics and external
+   events are not represented.
+6. **Import: preview writes nothing, apply re-proves everything.** Preview
+   returns the receipts it would write and leaves the database byte-identical.
+   Apply recomputes the resolution inside its own transaction — a preview is
+   never an authorisation. The idempotency key is derived from the system, the
+   mapping fingerprint and the sorted row digests, so a retry of the same
+   payload returns the same run and a clock never enters it. Acceptance is an
+   explicit choice; under the default partial mode every rejected row carries a
+   receipt and `accepted + rejected + skipped === rows` is asserted rather than
+   assumed.
+
+### The one seam change: `core` joins the ADR-032 operation context
+
+The bounded application-operation context gains a sixth key, `core` — the
+ADR-013 adapters a **record action already receives** as `ctx.core`. It was
+added because a real consumer proved it necessary and both alternatives were
+measured and worse: the core module services cap `list()` at 500 with no email
+filter, so matching through `modules` becomes a correctness bug the moment a
+project has more contacts than that; and matching through `database` means a
+package writing raw SQL against core's tables and re-implementing core's own
+normalization. The rule the addition follows is the rule ADR-036 recorded: a
+key is added when a consumer proves it necessary, never in advance.
+`normalizeEmail` and `normalizeCompanyName` are published from `packages/core`
+for the same reason — so a package that *stores* a normalized form uses the
+identical rule the adapters *match* with.
+
+### Security and governance
+
+PII-capable data is involved. No raw source payload, credential or secret is
+stored anywhere — external identity keeps the identifier and its provenance and
+nothing else. Input is bounded (rows, fields, lengths) and control-safe using
+**the repository's existing strictest PII string policy**, the signer class from
+`packages/signature/src/operations.js`, reused rather than reinvented and proven
+identical code point by code point. Every human identity decision is audited
+with its actor and reason. Retention is limited to what the records above hold,
+and **erasure versus immutable evidence is explicitly unresolved and
+legal-policy dependent**: a signed Order's party snapshot is evidence of what
+was signed, and this milestone does not decide whether or how that may ever be
+removed. The Production Spine does not exist, so a human actor is an audit
+identity and not role enforcement, and the profile and Admin both say so.
+
+### Not modeled, deliberately
+
+A CDP, a warehouse or lakehouse, real-time activation, a probabilistic identity
+graph, ML entity resolution, arbitrary ETL, global full-text search, a consent
+platform, GDPR or any legal assurance, retention and erasure workflows, and a
+cross-channel timeline. **This is not a shipped CDP and is not described as one
+anywhere.**
