@@ -9,16 +9,16 @@
   "metric": {
     "name": "share_of_scope_changes_with_a_recorded_decision",
     "definition": "Proportion of delivery scope changes that carry an approved or rejected change request with a stated reason, over changes observed in the period.",
-    "baseline": "unknown — see evidence entry unavailable.no-prior-change-record",
+    "baseline": "unknown \u2014 see evidence entry unavailable.no-prior-change-record",
     "target": "stated by the delivery organization; this plan does not invent one"
   },
   "application": {
     "inspectionContract": 1,
-    "inspectionFingerprint": "48da1a76fe0b8315fc66b877437195c7201ebeb88651756f86d095ada55261ed",
+    "inspectionFingerprint": "febe3cea52020ee38cac5f8d7097d6a084da521ae9636914732500254dd59093",
     "packages": [
       {
         "name": "contracts",
-        "version": 5
+        "version": 6
       },
       {
         "name": "delivery",
@@ -109,7 +109,7 @@
     "inferences": [
       {
         "id": "infer.handoff-is-the-control-point",
-        "statement": "Because the package can raise a commercial candidate but cannot amend anything, the pending_commercial_followup state is the only place a commercial change can stall — so that is where a reviewer should look, not in the quote history.",
+        "statement": "Because the package can raise a commercial candidate but cannot amend anything, the pending_commercial_followup state is the only place a commercial change can stall \u2014 so that is where a reviewer should look, not in the quote history.",
         "citations": [
           "fact.commercial-boundary-enforced",
           "fact.no-amendment-runtime"

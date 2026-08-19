@@ -180,7 +180,7 @@ test('commercial-quotes@1 returns the immutable evidence shape a consumer copies
   `);
 
   assert.equal(built.__error, undefined, `phase errored: ${JSON.stringify(built.__error)}`);
-  assert.deepEqual(built.interface, ['capabilityContract', 'policies', 'quote', 'version', 'versionComponents', 'versionLines', 'versionTotals']);
+  assert.deepEqual(built.interface, ['capabilityContract', 'policies', 'quote', 'version', 'versionComponents', 'versionLines', 'versionTerm', 'versionTotals']);
   assert.equal(built.lifecycle.status, 'approved');
   assert.equal(built.lifecycle.currentVersionIsSignable, true, 'the capability names the one signable version');
   assert.equal(built.policyEvidence.policy, 'standard-sales-discount');

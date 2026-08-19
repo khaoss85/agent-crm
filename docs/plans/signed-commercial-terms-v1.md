@@ -182,4 +182,42 @@ left OPEN for independent review; PROJECT_STATUS/TASKS untouched.
 
 ## Results of record
 
-(recorded as they are produced)
+- **C0 confirmed live** before any design: the document builder carries no
+  term; terms enter only at `order.activate-contract`; `TERM_SOURCE_SIGNED`'s
+  own documentation anticipated a signed source. Option B implemented.
+- **LA0 acceptance**: both baselines regenerated on the final tree —
+  Signature asserted fingerprint
+  `fe1875bf9cb68a5b4e8f55f79127cbec57581b9cd0e0b668569422e3cee9c82f` (110
+  observations) and Commercial
+  `82c1f02fa3545f9c72abbc89121b26cb5562b3d792755f414275732310f3fcf2` (107)
+  **byte-identical** across the milestone; Intelligence `f80592be…` (151)
+  untouched. Non-asserted movement: source digests only (the new
+  `terms.js`, the three manifests, and the edited commercial/signature
+  sources joined `BEHAVIOUR_BEARING_SOURCE`; the baseline applications'
+  manifest sets deliberately did NOT gain the new records).
+- **Hash-path evidence** (`tests/signed-terms-e2e.test.js`): a termless
+  version's document has no `terms` key — the pre-terms bytes exactly; a
+  termed version's `document.terms` is asserted value for value and its
+  `documentHash` differs from the termless twin's; a different term is a
+  different `termsFingerprint` AND a different hash; a draft edit after
+  signature moves neither the version snapshot nor the order term.
+- **Backward compatibility**: the operational path replays input for input
+  (plan `requiredInputs`, refusal on missing dates, operational provenance,
+  `signed: false`); `tests/signed-terms-upgrade.test.js` proves the ADR-019
+  path — a genuine pre-terms project (single-value enum manifests, no term
+  tables) activates a contract, adopts revision 2 (enum-widen REBUILD) plus
+  the three new manifests, reads its history back byte-identical and still
+  `signed: false`, then carries a new signed journey on the same database.
+- **One framework defect found and fixed in scope** (`fix(cli)`): DX4
+  applied a package's manifests alphabetically, so `quote-term.module.json`
+  (< `quote.module.json`) hit the factory's "apply the target module first"
+  refusal and failed `modules.applied` for commercial and every package
+  composing it as a provider. `packageManifests` now orders in-set
+  reference targets first — the rail's own documented doctrine — with a
+  regression test. All seven first-party packages conform.
+- **Tour re-measured**: 74 modules, 9 packages, 69 resources, 59 actions,
+  7 policies, 1 providers — swept onto C-22, README, LAUNCH_PACKET,
+  GO_TO_MARKET, the landing template, answers/concepts and the regenerated
+  llms assets; `gtm:check` green.
+- Doctor: passed, 0 warnings. Package tests: commercial 24/0, signature
+  26/0, contracts 26/0 (others unchanged and green).
