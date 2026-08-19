@@ -8,6 +8,8 @@ import {
 } from './normalize.js';
 import { assertMatchResult } from './policy.js';
 
+export { MAX_ROWS };
+
 /**
  * **Customer import v1 — preview writes nothing, apply proves everything again.**
  *
@@ -205,10 +207,14 @@ export function resolveBatch({ request, policy, reader }) {
     // by external id and a later row keyed by the same person's email are the
     // same identity, and keying on "the first field present" would let the
     // second through.
+    // The company key identifies the ROW only when the row carries no stronger
+    // identity of its own: two different people at the same employer share a
+    // company name and are emphatically not duplicates of each other.
+    const identifiesByCompanyAlone = !row.externalId && !row.email;
     const batchKeys = [
       row.externalId ? `x:${row.externalId}` : null,
       row.email ? `e:${row.email}` : null,
-      row.normalizedCompanyName ? `c:${row.normalizedCompanyName}|${row.domain ?? ''}` : null,
+      identifiesByCompanyAlone && row.normalizedCompanyName ? `c:${row.normalizedCompanyName}|${row.domain ?? ''}` : null,
     ].filter(Boolean);
     const clash = batchKeys.map((key) => seenInBatch.get(key)).find((seen) => seen !== undefined);
     if (clash !== undefined) {
@@ -224,7 +230,9 @@ export function resolveBatch({ request, policy, reader }) {
 
     // …and two rows that RESOLVE to the same existing record are the same
     // identity too, however differently they were written.
-    const subjectKey = result.subject ? `s:${result.subject.resource}:${result.subject.id}` : null;
+    const subjectKey = result.subject && (identifiesByCompanyAlone || result.subject.resource !== 'company')
+      ? `s:${result.subject.resource}:${result.subject.id}`
+      : null;
     if (subjectKey && seenInBatch.has(subjectKey)) {
       receipts.push({
         index, outcome: 'rejected', reasonCode: REASON.DUPLICATE_IN_BATCH,

@@ -50,7 +50,7 @@ import { runExternalOperation } from './external-operation.js';
  *
  * @param {{database: any, modules: any, events: any, config?: Record<string, unknown>}} handles
  */
-export function createOperationRuntime({ database, modules, events, config }) {
+export function createOperationRuntime({ database, modules, events, config, core }) {
   if (!database || !modules || !events) {
     throw new ValidationError('operation runtime needs database, modules and events');
   }
@@ -60,6 +60,18 @@ export function createOperationRuntime({ database, modules, events, config }) {
     events,
     config: Object.freeze({ ...(config ?? {}) }),
     runExternal: runExternalOperation,
+    // The ADR-013 core adapters — the same frozen handle a record action already
+    // receives as `ctx.core`, added to this context by ADR-037 because a real
+    // consumer needed it and the alternatives were both worse. Customer Data
+    // matches an imported row against `contacts.email`, which core stores
+    // lowercased and globally UNIQUE; the adapter does that as an exact indexed
+    // read. Reaching the same rows through `modules` would have meant a
+    // 500-capped scan (a correctness bug the moment a project has more
+    // contacts than that), and reaching them through `database` would have
+    // meant a package writing raw SQL against core's tables and re-implementing
+    // core's own normalization. Neither is acceptable, so the sanctioned
+    // adapter is injected instead of being worked around.
+    core: core ?? Object.freeze({}),
   });
 }
 
