@@ -8,7 +8,7 @@ import {
   defineOrderActivationPolicy,
 } from './activation-policy.js';
 import { buildContractActions } from './activation.js';
-import { MAX_NOTICE_DAYS, MAX_TERM_DAYS, TERMS_NOTE, TERMS_SOURCE } from './dates.js';
+import { MAX_NOTICE_DAYS, MAX_TERM_DAYS, SIGNED_TERMS_NOTE, SIGNED_TERMS_SOURCE, TERMS_NOTE, TERMS_SOURCE } from './dates.js';
 import { definePackage } from '../../core/index.js';
 import { createDeliveryObligationsCapability } from './capabilities.js';
 import { createServiceObligationsCapability } from './service-capability.js';
@@ -68,7 +68,14 @@ export function createContractsDomain(options = {}) {
     // behaviour when Signature is absent, AX1's reported graph, and deployment
     // compatibility — so the version moved with it. Records, actions and every
     // offered capability are untouched.
-    version: 5,
+    // 6: signed commercial terms. `termsSource` widens with
+    // `signed-order-terms` (manifest revision 2 ×3, classified `true` in
+    // TERM_SOURCE_SIGNED), `activate-contract`'s term inputs become
+    // conditionally required — refused outright on an order that carries a
+    // signed term snapshot (`SIGNED_TERMS_AUTHORITATIVE`) — and the plan
+    // reports which provenance applies. Consumer-visible action contract and
+    // stored vocabulary both moved, so the version moved.
+    version: 6,
     label: 'Contracts and subscriptions',
     description: 'Activates a signed immutable Order into a commercial contract, a subscription and pending delivery/service obligations.',
     resources: [...CONTRACTS_RESOURCES],
@@ -110,10 +117,23 @@ export function createContractsDomain(options = {}) {
           maxTermDays: MAX_TERM_DAYS,
           maxRenewalNoticeDays: MAX_NOTICE_DAYS,
           renewalNotice: 'recorded only — no scheduler exists, so nothing fires on it; a notice period requires autoRenew',
-          // Provenance, stated in the machine-readable contract itself.
+          // Provenance, stated in the machine-readable contract itself. The
+          // keys below keep describing the OPERATIONAL fallback path — the
+          // one that needs human input and a reason — for every reader built
+          // against them; `signedTerms` states the other provenance.
           source: TERMS_SOURCE,
           limitation: TERMS_NOTE,
           requiresReason: true,
+          // A term that WAS signed: activation copies the order's term
+          // snapshot verbatim, refuses manual term inputs, and records this
+          // source instead. No reason is collected — the signature is the
+          // reason.
+          signedTerms: {
+            source: SIGNED_TERMS_SOURCE,
+            note: SIGNED_TERMS_NOTE,
+            requiresReason: false,
+            manualInputs: 'refused with 409 SIGNED_TERMS_AUTHORITATIVE when the order carries a signed term snapshot',
+          },
         },
         activationState: {
           states: ['scheduled', 'active'],
@@ -134,4 +154,7 @@ export function createContractsDomain(options = {}) {
 
 export { defineOrderActivationPolicy, COMMERCIAL_ACTIVATIONS, OBLIGATION_TYPES, OVERRIDABLE_COMMERCIAL, DIMENSIONS };
 export { buildContractActions } from './activation.js';
-export { requireTerm, requireCalendarDate, daysBetween, activationState, TERMS_SOURCE, TERMS_NOTE } from './dates.js';
+export {
+  requireTerm, requireCalendarDate, daysBetween, activationState,
+  TERMS_SOURCE, TERMS_NOTE, SIGNED_TERMS_SOURCE, SIGNED_TERMS_NOTE, signedTermFromSnapshot,
+} from './dates.js';

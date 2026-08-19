@@ -50,7 +50,7 @@ If the repository documents this skill names are absent, you are in a project bu
 
 1. One Order per completed signed Quote Version, keyed `order:quote-version:<id>` (DB-unique) — the guarantee that duplicate, concurrent or reconciled completions cannot produce two.
 2. **Copy, never recalculate.** Lines, components, tier schedules, band breakdowns and grouped totals come from the Quote Version snapshot; reading the live catalog here is a defect.
-3. Rebuild the document package from **immutable snapshot rows plus the party snapshot taken at request time** — never from live CRM records, or a rename would block completion forever — and refuse (`DOCUMENT_HASH_MISMATCH`) if it no longer hashes to what was signed. Canonicalize with one deterministic serializer; `localeCompare` in a hashed path is a defect.
+3. Rebuild the document package from **immutable snapshot rows plus the party snapshot taken at request time** — never from live CRM records, or a rename would block completion forever — and refuse (`DOCUMENT_HASH_MISMATCH`) if it no longer hashes to what was signed. The version's term snapshot (`quote-version-term`) is one of those rows: present it is embedded and hash-covered, absent the document has no `terms` key at all. Canonicalize with one deterministic serializer; `localeCompare` in a hashed path is a defect.
 4. The completion transition, artifact and full order snapshot commit in ONE transaction, or none of it does.
 5. Do not add fulfillment, billing, payment, invoice, tax, FX, amendment or cancellation state.
 

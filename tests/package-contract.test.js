@@ -150,16 +150,16 @@ test('the first-party contracts package conforms', () => {
     definition: createContractsDomain({ policies: [b2bSaasOrderActivationV1] }),
     dir: join(repoRoot, 'packages/contracts'),
     expected: {
-      // Version 5: the Signature & Order extraction added the declared
-      // `signature/signature-orders@1` requirement, and a package version
-      // describes its composition contract, including `requires`, not only
-      // its consumer-visible records/actions — the new required edge changes
-      // composability, absent-Signature startup behaviour, AX1's reported
-      // graph and deployment compatibility. (Version 4 was the
-      // `contract-lifecycle-source@2` move.) Every resource, action, offered
-      // capability and `packageContract: 1` are untouched by 5.
+      // Version 6: signed commercial terms — `termsSource` widened with
+      // `signed-order-terms` (manifest revision 2 on three records),
+      // `activate-contract`'s term inputs conditionally required and refused
+      // outright on an order carrying a signed term snapshot
+      // (`SIGNED_TERMS_AUTHORITATIVE`). (Version 5 was the declared
+      // `signature/signature-orders@1` requirement; version 4 the
+      // `contract-lifecycle-source@2` move.) Resources, offered capabilities
+      // and `packageContract: 1` are untouched by 6.
       name: 'contracts',
-      version: 5,
+      version: 6,
       resources: [
         'commercial-contract', 'contract-version', 'contract-line', 'contract-activation',
         'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
@@ -298,7 +298,7 @@ test('a customer-authored package conforms through the identical contract', () =
   assert.deepEqual(Object.keys(registry.metadata()), ['commercial', 'contracts', 'delivery', 'partner-scorecard', 'signature'],
     'metadata is published in name order, whatever the registration order was');
   assert.equal(registry.actions().length, 34, 'M14b2 added seven change and acceptance actions on top of M14b1\'s five; the extracted commercial (8) and signature (1) actions now arrive by composition');
-  assert.equal(registry.resources().length, 48);
+  assert.equal(registry.resources().length, 51, 'signed commercial terms added quote-term, quote-version-term and order-term');
 });
 
 test('the kernel never depends on a package, in either direction', () => {

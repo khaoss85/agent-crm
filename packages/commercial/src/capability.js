@@ -28,6 +28,7 @@ function resolvedNames(config = {}) {
     versionLine: config.versionLineModule ?? 'quote-version-line',
     versionComponent: config.versionComponentModule ?? 'quote-version-component',
     versionTotal: config.versionTotalModule ?? 'quote-version-total',
+    versionTerm: config.versionTermModule ?? 'quote-version-term',
   };
 }
 
@@ -126,6 +127,29 @@ export function createCommercialQuotesCapability(registries, config) {
         versionTotals(versionId) {
           return Object.freeze(service(modules, names.versionTotal).listWhere({ versionId })
             .map((row) => Object.freeze({ ...row })));
+        },
+
+        /**
+         * The version's immutable signed-term snapshot, or null — most
+         * versions predate terms and have none, and null is that historical
+         * fact, never an error. Additive on capability version 1: every
+         * pre-existing answer is byte-identical (the M16a precedent bumped a
+         * capability version because existing answers changed shape; a new
+         * read the next consumer opts into is the case its map-based design
+         * explicitly reserved for staying put). A project that never applied
+         * the quote-version-term manifest also answers null.
+         * @param {string} versionId
+         */
+        versionTerm(versionId) {
+          let terms = null;
+          try {
+            terms = modules.get(names.versionTerm)?.service ?? null;
+          } catch {
+            terms = null;
+          }
+          if (!terms || typeof versionId !== 'string' || versionId === '') return null;
+          const record = terms.listWhere({ versionId })[0] ?? null;
+          return record ? Object.freeze({ ...record }) : null;
         },
 
         /** Declared discount-policy identities with fingerprints, function-free. */

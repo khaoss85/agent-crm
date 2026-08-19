@@ -2,6 +2,7 @@
 
 import { AppError, ValidationError } from '../../core/index.js';
 import { normalizePolicyResult } from './registry.js';
+import { requireSignedTerm } from './terms.js';
 import {
   computeLineBreakdown,
   groupComponentTotals,
@@ -38,6 +39,7 @@ import {
  *   versionTotalModule?: string, approvalModule?: string,
  *   priceBookModule?: string, offerModule?: string, componentModule?: string,
  *   tierModule?: string, productVersionModule?: string,
+ *   quoteTermModule?: string, versionTermModule?: string,
  * }} CommercialActionConfig */
 
 /** @param {CommercialActionConfig} [config] */
@@ -55,6 +57,8 @@ function resolved(config = {}) {
     componentModule: config.componentModule ?? 'price-component',
     tierModule: config.tierModule ?? 'price-tier',
     productVersionModule: config.productVersionModule ?? 'product-version',
+    quoteTermModule: config.quoteTermModule ?? 'quote-term',
+    versionTermModule: config.versionTermModule ?? 'quote-version-term',
   };
 }
 
@@ -67,6 +71,21 @@ function trusted(modules, name) {
     });
   }
   return service;
+}
+
+/**
+ * A record module a project may not have applied. Terms shipped after the
+ * first commercial projects did: a project without the `quote-term` manifest
+ * keeps its exact pre-terms behaviour — submit sees no draft term and
+ * freezes no snapshot — rather than failing on a module lookup.
+ * @param {any} modules @param {string} name
+ */
+function optionalService(modules, name) {
+  try {
+    return modules.get(name)?.service ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Bounded JSON for server-generated evidence blobs (breakdowns, schedules). */
@@ -397,6 +416,26 @@ export function buildSubmitQuoteAction(config, registries) {
       if (lines.length === 0) {
         throw new AppError('A quote needs at least one active line before submission', { code: 'EMPTY_QUOTE', status: 409 });
       }
+
+      // The draft commercial term, when the quote carries one. It is validated
+      // HERE — at the gate where it becomes part of the immutable version and
+      // therefore of the signable document — and an incoherent draft refuses
+      // the whole submission with a field-level error rather than freezing a
+      // term nobody could honestly sign. A quote without a draft term submits
+      // exactly as it always did, and a project that never applied the
+      // quote-term manifest is indistinguishable from one that did and left it
+      // empty.
+      const draftTerms = optionalService(modules, cfg.quoteTermModule);
+      const draftTerm = draftTerms ? (draftTerms.listWhere({ quoteId: quote.id })[0] ?? null) : null;
+      const signedTerm = draftTerm
+        ? requireSignedTerm({
+          effectiveDate: draftTerm.effectiveDate,
+          termStartDate: draftTerm.termStartDate,
+          termEndDate: draftTerm.termEndDate,
+          autoRenew: draftTerm.autoRenew === 1 ? true : draftTerm.autoRenew === 0 ? false : draftTerm.autoRenew,
+          renewalNoticeDays: draftTerm.renewalNoticeDays ?? undefined,
+        })
+        : null;
       const { definition: policy, fingerprint } = registries.getDiscountPolicy(input.policy, input.version);
       const componentAmounts = quoteComponentAmounts(lines);
       const totals = groupComponentTotals(componentAmounts, quote.currency);
@@ -567,6 +606,29 @@ export function buildSubmitQuoteAction(config, registries) {
           },
           { actor },
         );
+      }
+      // The signed-term snapshot: write-once, same transaction as the version.
+      // From this row the canonical document builds its `terms` section, so
+      // the documentHash covers exactly these values — a term change after
+      // this moment is a new version with a new hash, like any priced line.
+      if (signedTerm) {
+        await trusted(modules, cfg.versionTermModule).createManaged(
+          {
+            versionId: version.id,
+            quoteId: quote.id,
+            sourceKey: `qvt:${version.id}`,
+            effectiveDate: signedTerm.effectiveDate,
+            termStartDate: signedTerm.termStartDate,
+            termEndDate: signedTerm.termEndDate,
+            termDays: signedTerm.termDays,
+            autoRenew: signedTerm.autoRenew,
+            renewalNoticeDays: signedTerm.renewalNoticeDays,
+            termsContract: signedTerm.termsContract,
+            termsFingerprint: signedTerm.termsFingerprint,
+          },
+          { actor },
+        );
+        step('quote.term-frozen', { versionId: version.id, termsFingerprint: signedTerm.termsFingerprint });
       }
       step('quote.version-created', { versionId: version.id, versionNumber, decision: result.decision, recurringGroups: totals.recurringTotals.length });
 

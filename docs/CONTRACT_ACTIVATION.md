@@ -8,12 +8,19 @@ obligations.
 **Two limitations before anything else**, because both were found by the
 adversarial review and both change what this milestone may claim:
 
-1. **The term is not signed.** The signed document package carries priced
-   lines, parties and signers — no term, no renewal clause, no notice period.
-   Everything M12 records about dates is **operational activation metadata**
-   (`termsSource: "post-signature-operational-activation"`), entered by a human
-   after signature with a required reason. This is not a signed commercial
-   agreement end to end, and nothing here says it is.
+1. **A term is signed only when the document carried one.** Since the
+   signed-commercial-terms milestone a quote may freeze a term into its
+   immutable version; the canonical document then embeds it, the
+   `documentHash` covers it, and verified completion copies it onto the Order
+   (`order-term`). Activating such an order **refuses manual term inputs**
+   (`SIGNED_TERMS_AUTHORITATIVE`) and copies the snapshot verbatim as
+   `termsSource: "signed-order-terms"`. An order whose signed document
+   carried no term keeps the original M12 rule: everything recorded about
+   dates is **operational activation metadata**
+   (`termsSource: "post-signature-operational-activation"`), entered by a
+   human after signature with a required reason, and never presented as part
+   of the signed agreement. The two provenances are never collapsed, and old
+   orders are never backfilled into claiming their terms were signed.
 2. **Nothing is active before it starts, and nothing starts it.** A term
    beginning in the future produces a `scheduled` contract and subscription
    that stay scheduled forever: there is no scheduler in this framework.
@@ -206,7 +213,20 @@ The business date comes from the application clock, which is injectable
 (`createAccordoApp({ clock })`) so a run is reproducible. The activation
 instant is a UTC timestamp; the term stays date-only.
 
-## The term (operational metadata, not a signed term)
+## The term (two provenances, stated on every record)
+
+Every contract, contract version and activation run stores `termsSource`:
+
+- **`signed-order-terms`** — the term was part of the canonical document the
+  customer signed. Activation copies the order's term snapshot verbatim,
+  collects no `termsReason` (the signature is the reason) and refuses manual
+  term inputs. `contract-lifecycle-source@2` derives `signed: true` from
+  this value through `TERM_SOURCE_SIGNED` — the map whose runtime
+  exhaustiveness gate refuses to open the capability for any declared source
+  nobody classified.
+- **`post-signature-operational-activation`** — the original M12 path,
+  unchanged, described below.
+
 
 Calendar dates, `YYYY-MM-DD`, validated by round-trip so `2026-02-30` and
 `2026-13-01` are refused rather than normalized into a different day. No time,

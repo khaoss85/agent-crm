@@ -2,7 +2,7 @@
 
 import { AppError } from '../../core/index.js';
 import { resolvedNames } from './activation.js';
-import { TERMS_SOURCE } from './dates.js';
+import { SIGNED_TERMS_SOURCE, TERMS_SOURCE } from './dates.js';
 
 /**
  * `contract-lifecycle-source@2` — the term and commercial evidence an
@@ -65,6 +65,12 @@ export const LIFECYCLE_SOURCE = Object.freeze({ name: 'contract-lifecycle-source
 export const TERM_SOURCE_SIGNED = Object.freeze({
   // Recorded by a human *after* signature; the signed document carries no term.
   [TERMS_SOURCE]: false,
+  // The day this map's own documentation anticipated: the term was part of
+  // the canonical document the customer signed — frozen at quote submission,
+  // covered by the documentHash, copied from the immutable order-term
+  // snapshot at activation. `termsSource` now tells the truth on its own,
+  // and this entry lets the derived claim agree with it.
+  [SIGNED_TERMS_SOURCE]: true,
 });
 
 /**
@@ -221,8 +227,15 @@ export function createContractLifecycleSourceCapability(moduleNames) {
                 : termSignedState(contract.termsSource) === null
                   ? 'UNCLASSIFIED_TERM_SOURCE'
                   : 'DERIVED_FROM_DECLARED_TERM_SOURCE',
-              provenanceNote:
-                'these dates are post-signature OPERATIONAL metadata recorded at activation (M12). They are not signed renewal terms, and nothing here should be reported as one',
+              // Derived from the SAME source as `signed`, so the sentence can
+              // never contradict the flag: a signed term is described as
+              // signed, an operational one as operational, and an
+              // unclassified source gets the gap named rather than a guess.
+              provenanceNote: termSignedState(contract.termsSource) === true
+                ? 'these dates are the SIGNED commercial term: part of the canonical document the customer signed (covered by its documentHash), frozen at quote submission and copied from the order term snapshot at activation'
+                : termSignedState(contract.termsSource) === false
+                  ? 'these dates are post-signature OPERATIONAL metadata recorded at activation (M12). They are not signed renewal terms, and nothing here should be reported as one'
+                  : 'this term names a provenance nobody classified; whether it was signed is unknown and must be surfaced as a gap, never asserted either way',
             }),
           });
         },

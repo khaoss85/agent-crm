@@ -27,12 +27,50 @@ const MAX_REASON = 300;
 const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
 /**
- * The only provenance an M12 term can honestly claim: a human recorded it
- * after the signature, and the signed document says nothing about it.
+ * The provenance an M12 term claims when no signed term exists: a human
+ * recorded it after the signature, and the signed document says nothing
+ * about it.
  */
 export const TERMS_SOURCE = 'post-signature-operational-activation';
 export const TERMS_NOTE =
   'Operational activation metadata recorded after signature by a human actor. The signed document package carries no term, renewal clause or notice period, so these values are not part of the signed agreement.';
+
+/**
+ * The provenance of a term that WAS signed: the quote version froze a term
+ * snapshot, the canonical document embedded it, the documentHash covered it,
+ * and verified completion copied it onto the Order (`order-term`). Activation
+ * copies that snapshot verbatim — no human re-types a signed value, and no
+ * `termsReason` is asked for, because the reason a signed term exists is the
+ * signature itself.
+ */
+export const SIGNED_TERMS_SOURCE = 'signed-order-terms';
+export const SIGNED_TERMS_NOTE =
+  'Signed commercial term: part of the canonical document the customer signed (covered by its documentHash), frozen at quote submission and copied from the immutable order term snapshot at activation.';
+export const SIGNED_TERMS_REASON =
+  'Carried verbatim from the signed order term snapshot; the signed document hash covers these values.';
+
+/**
+ * The term object for an activation whose Order carries a signed term
+ * snapshot — same shape `requireTerm` returns, so every consumer downstream
+ * of activation handles both provenances identically. The snapshot arrives
+ * hash-proven (activation refuses an order whose evidence disagrees on the
+ * signed document), so the values are copied, never re-validated into
+ * something they were not.
+ *
+ * @param {{effectiveDate: string, termStartDate: string, termEndDate: string, termDays: number, autoRenew: boolean | number, renewalNoticeDays: number}} snapshot
+ */
+export function signedTermFromSnapshot(snapshot) {
+  return {
+    effectiveDate: snapshot.effectiveDate,
+    termStartDate: snapshot.termStartDate,
+    termEndDate: snapshot.termEndDate,
+    termDays: snapshot.termDays,
+    autoRenew: snapshot.autoRenew === true || snapshot.autoRenew === 1,
+    renewalNoticeDays: snapshot.renewalNoticeDays ?? 0,
+    termsSource: SIGNED_TERMS_SOURCE,
+    termsReason: SIGNED_TERMS_REASON,
+  };
+}
 
 /**
  * Validate a calendar date and return it canonically. The value must round

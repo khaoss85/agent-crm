@@ -107,6 +107,7 @@ function resolvedNames(config = {}) {
     versionLine: config.versionLineModule ?? 'quote-version-line',
     versionComponent: config.versionComponentModule ?? 'quote-version-component',
     versionTotal: config.versionTotalModule ?? 'quote-version-total',
+    versionTerm: config.versionTermModule ?? 'quote-version-term',
     envelope: config.envelopeModule ?? 'signature-envelope',
     signer: config.signerModule ?? 'signature-signer',
     event: config.eventModule ?? 'signature-event',
@@ -116,6 +117,7 @@ function resolvedNames(config = {}) {
     orderComponent: config.orderComponentModule ?? 'order-component',
     orderTier: config.orderTierModule ?? 'order-tier',
     orderTotal: config.orderTotalModule ?? 'order-total',
+    orderTerm: config.orderTermModule ?? 'order-term',
   };
 }
 
@@ -155,6 +157,20 @@ function moduleQuotesReader(modules, names) {
     versionLines: (id) => trusted(modules, names.versionLine).listWhere({ versionId: id }),
     versionComponents: (id) => trusted(modules, names.versionComponent).listWhere({ versionId: id }),
     versionTotals: (id) => trusted(modules, names.versionTotal).listWhere({ versionId: id }),
+    // The version's signed-term snapshot, or null. Null is the ordinary case:
+    // every version submitted before terms existed, every project that never
+    // applied the quote-version-term manifest. The document builder adds a
+    // `terms` section only when this answers a row, so a termless version
+    // produces byte-identical canonical bytes.
+    versionTerm: (id) => {
+      let service = null;
+      try {
+        service = modules.get(names.versionTerm)?.service ?? null;
+      } catch {
+        service = null;
+      }
+      return service ? (service.listWhere({ versionId: id })[0] ?? null) : null;
+    },
   };
 }
 
@@ -190,6 +206,10 @@ function openCommercialQuotes(domains, modules, names) {
     versionLines: (id) => iface.versionLines(id),
     versionComponents: (id) => iface.versionComponents(id),
     versionTotals: (id) => iface.versionTotals(id),
+    // Additive on commercial-quotes@1: a composition carrying an older
+    // commercial package satisfies the same requirement without the method,
+    // and a version without a snapshot answers null either way.
+    versionTerm: (id) => (typeof iface.versionTerm === 'function' ? iface.versionTerm(id) : null),
   };
 }
 
@@ -317,12 +337,35 @@ export function snapshotParties({ services, version }) {
   return parties;
 }
 
+/**
+ * The `terms` section of the canonical document, from the version's frozen
+ * snapshot. Built here — the document is this package's contract — from
+ * values commercial froze at submission; present in a document ONLY when the
+ * version carries a snapshot, so every pre-terms document canonicalizes to
+ * byte-identical bytes and the hash algebra extends without reshaping.
+ * `documentContract` stays 1: an optional additive key is not a new shape.
+ * @param {any} snapshot
+ */
+function documentTermsSection(snapshot) {
+  return {
+    termsContract: snapshot.termsContract,
+    effectiveDate: snapshot.effectiveDate,
+    termStartDate: snapshot.termStartDate,
+    termEndDate: snapshot.termEndDate,
+    endDateInclusive: true,
+    termDays: snapshot.termDays,
+    autoRenew: snapshot.autoRenew === true || snapshot.autoRenew === 1,
+    renewalNoticeDays: snapshot.renewalNoticeDays,
+  };
+}
+
 export function buildDocumentPackage({ reader, quote, version, signers, parties }) {
   // Copied before sorting: the capability hands back frozen evidence rows.
   const lines = [...reader.versionLines(version.id)]
     .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
   const components = reader.versionComponents(version.id);
   const totals = reader.versionTotals(version.id);
+  const termSnapshot = typeof reader.versionTerm === 'function' ? reader.versionTerm(version.id) : null;
 
   const document = {
     documentContract: 1,
@@ -392,6 +435,10 @@ export function buildDocumentPackage({ reader, quote, version, signers, parties 
         `${b.kind}|${b.interval ?? ''}|${b.intervalCount ?? ''}`,
       )),
     signers: signers.map((signer) => ({ signerKey: signer.signerKey, name: signer.name, email: signer.email, role: signer.role, order: signer.order })),
+    // Signed commercial terms, only when the version froze a snapshot: the
+    // hash below then covers them, so what was signed and what the Order
+    // records can never silently diverge.
+    ...(termSnapshot ? { terms: documentTermsSection(termSnapshot) } : {}),
   };
   // The hash covers the exact canonical bytes, and those same bytes are what
   // the provider receives — never a second, possibly different serialization.
@@ -916,6 +963,32 @@ async function createCompletionEvidence({ modules, names, envelope, artifact, ev
       },
       { actor },
     );
+  }
+  // The signed commercial term, copied onto the Order in the same
+  // transaction — from the same version snapshot the rebuilt document (terms
+  // included) just proved against the signed documentHash. Absent when the
+  // signed document carried no term: absence is historical fact, and an old
+  // order is never backfilled into claiming its terms were signed.
+  const termSnapshot = typeof reader.versionTerm === 'function' ? reader.versionTerm(version.id) : null;
+  if (termSnapshot) {
+    await trusted(modules, names.orderTerm).createManaged(
+      {
+        sourceKey: `order-term:order:${order.id}`,
+        orderId: order.id,
+        quoteVersionId: version.id,
+        effectiveDate: termSnapshot.effectiveDate,
+        termStartDate: termSnapshot.termStartDate,
+        termEndDate: termSnapshot.termEndDate,
+        termDays: termSnapshot.termDays,
+        autoRenew: termSnapshot.autoRenew === true || termSnapshot.autoRenew === 1,
+        renewalNoticeDays: termSnapshot.renewalNoticeDays,
+        termsContract: termSnapshot.termsContract,
+        termsFingerprint: termSnapshot.termsFingerprint,
+        documentHash: envelope.documentHash,
+      },
+      { actor },
+    );
+    step('order.term-recorded', { orderId: order.id, termsFingerprint: termSnapshot.termsFingerprint });
   }
   await quotes.applyManaged(quote.id, { orderId: order.id, signatureStatus: 'completed' }, { actor });
   step('order.created', { orderId: order.id, lines: versionLines.length, totals: versionTotals.length });

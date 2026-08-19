@@ -50,6 +50,9 @@ export const COMMERCIAL_RESOURCES = Object.freeze([
   'product', 'product-version', 'price-book', 'offer', 'price-component', 'price-tier',
   'catalog-sync-run', 'quote', 'quote-line', 'quote-version', 'quote-version-line',
   'quote-version-component', 'quote-version-total', 'quote-approval',
+  // Signed commercial terms (M16b prerequisite): the per-quote draft term and
+  // the write-once per-version snapshot the signature document embeds.
+  'quote-term', 'quote-version-term',
 ]);
 
 /**
@@ -80,7 +83,13 @@ export function createCommercialDomain(options = {}) {
   const pkg = definePackage({
     packageContract: 1,
     name: COMMERCIAL_DOMAIN,
-    version: 1,
+    // Version 2: signed commercial terms — two new resources (`quote-term`,
+    // `quote-version-term`), `quote.submit` freezing the term snapshot, and
+    // the additive `versionTerm` read on `commercial-quotes@1`. A package
+    // version describes the composition contract, and the contract grew.
+    // Every pre-existing record, action contract and capability answer is
+    // byte-identical (held by the LA0-Commercial baseline).
+    version: 2,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',

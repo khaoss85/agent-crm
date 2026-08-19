@@ -1,0 +1,37 @@
+{
+  "manifestVersion": 1,
+  "name": "quote-term",
+  "description": "The draft commercial term of one quote: effective date, term boundaries (termEndDate inclusive), auto-renewal and notice period, as negotiated BEFORE signature. A draft binds nothing: quote.submit validates it and freezes a write-once quote-version-term snapshot, and only the human signature ceremony over the version's document makes it a signed fact. One row per quote; editing it affects only versions submitted afterwards.",
+  "fields": [
+    {
+      "name": "quoteId",
+      "type": "reference",
+      "references": "quotes",
+      "required": true,
+      "unique": true
+    },
+    {
+      "name": "effectiveDate",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "termStartDate",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "termEndDate",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "autoRenew",
+      "type": "boolean"
+    },
+    {
+      "name": "renewalNoticeDays",
+      "type": "integer"
+    }
+  ]
+}

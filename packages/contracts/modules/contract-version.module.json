@@ -1,6 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "contract-version",
+  "revision": 2,
   "description": "An immutable contract snapshot (M12). Version 1 is created at activation; it is readable without the catalog, the quote or any live CRM row.",
   "fields": [
     {
@@ -100,7 +101,8 @@
       "name": "termsSource",
       "type": "enum",
       "values": [
-        "post-signature-operational-activation"
+        "post-signature-operational-activation",
+        "signed-order-terms"
       ],
       "writable": "managed"
     },

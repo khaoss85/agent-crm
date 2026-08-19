@@ -36,7 +36,7 @@ test('signature-orders@1 returns the signed-Order evidence shape, fail-closed an
     context: { modules: app.modules },
   });
   assert.deepEqual(Object.keys(cap).sort(),
-    ['capabilityContract', 'envelope', 'order', 'orderComponents', 'orderLines', 'orderTotals', 'signedArtifact']);
+    ['capabilityContract', 'envelope', 'order', 'orderComponents', 'orderLines', 'orderTerm', 'orderTotals', 'signedArtifact']);
   assert.equal(cap.capabilityContract, 1);
 
   // 2 · provenance — the order names its evidence and all three rows agree on
@@ -73,6 +73,12 @@ test('signature-orders@1 returns the signed-Order evidence shape, fail-closed an
   try { lines[0].netAmountCents = -1; } catch { threw = true; }
   assert.equal(threw || lines[0].netAmountCents !== -1, true, 'the handed evidence cannot be mutated');
   assert.equal(cap.orderLines(order.id)[0].netAmountCents, netBefore, 'and storage never moved');
+
+  // An order whose signed document carried no term answers null for its
+  // term — the ordinary historical case, presented as absent-unknown and
+  // never as a decided term. (The signed-term positive path is proven by
+  // tests/signed-terms-e2e.test.js.)
+  assert.equal(cap.orderTerm(order.id), null);
 
   // Absent ids answer null, never a throw and never someone else's row.
   assert.equal(cap.order('no-such-order'), null);

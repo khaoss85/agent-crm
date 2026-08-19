@@ -9,7 +9,15 @@ import {
   normalizeClassification,
   normalizeOverrides,
 } from './activation-policy.js';
-import { TERMS_NOTE, TERMS_SOURCE, activationState, requireTerm } from './dates.js';
+import {
+  SIGNED_TERMS_NOTE,
+  SIGNED_TERMS_SOURCE,
+  TERMS_NOTE,
+  TERMS_SOURCE,
+  activationState,
+  requireTerm,
+  signedTermFromSnapshot,
+} from './dates.js';
 
 /**
  * Order → Commercial Contract activation (Milestone 12).
@@ -35,6 +43,7 @@ export function resolvedNames(config = {}) {
     orderLine: config.orderLineModule ?? 'order-line',
     orderComponent: config.orderComponentModule ?? 'order-component',
     orderTotal: config.orderTotalModule ?? 'order-total',
+    orderTerm: config.orderTermModule ?? 'order-term',
     envelope: config.envelopeModule ?? 'signature-envelope',
     artifact: config.artifactModule ?? 'signed-artifact',
     contract: config.contractModule ?? 'commercial-contract',
@@ -121,7 +130,27 @@ export function loadActivationSource(modules, names, order) {
   if (totals.length === 0) {
     throw new AppError('The order snapshot carries no grouped totals', { code: 'SOURCE_INCOMPLETE', status: 409 });
   }
-  return { envelope, artifact, lines, components, totals };
+
+  // The Order's signed commercial term, when its signed document carried one.
+  // Null is the ordinary historical case — orders signed before terms
+  // existed, projects that never applied the order-term manifest — and null
+  // means the operational path, never a guess. A snapshot that names a
+  // different signed document than the order's is refused like every other
+  // incoherent evidence pair.
+  let signedTerm = null;
+  try {
+    const service = modules.get(names.orderTerm)?.service ?? null;
+    signedTerm = service ? (service.listWhere({ orderId: order.id })[0] ?? null) : null;
+  } catch {
+    signedTerm = null;
+  }
+  if (signedTerm && signedTerm.documentHash !== order.documentHash) {
+    throw new AppError('The order term snapshot names a different signed document than the order', {
+      code: 'SOURCE_HASH_MISMATCH', status: 409,
+    });
+  }
+
+  return { envelope, artifact, lines, components, totals, signedTerm };
 }
 
 /**
@@ -193,7 +222,7 @@ function summarize(decisions) {
 }
 
 /** The machine-readable plan an agent can prepare and a human can approve. */
-function planPayload({ order, envelope, artifact, decisions, totals, existingContract, policy, fingerprint }) {
+function planPayload({ order, envelope, artifact, decisions, totals, existingContract, policy, fingerprint, signedTerm }) {
   const counts = summarize(decisions);
   return {
     orderId: order.id,
@@ -208,12 +237,31 @@ function planPayload({ order, envelope, artifact, decisions, totals, existingCon
     contractId: existingContract?.id ?? null,
     activatable: !existingContract && counts.ambiguous === 0,
     // Everything a caller must still decide, stated rather than defaulted.
-    requiredInputs: existingContract
+    // An order whose signed document carried a term needs NO term input: the
+    // signed snapshot is authoritative and manual values are refused.
+    requiredInputs: existingContract || signedTerm
       ? []
       : ['effectiveDate', 'termStartDate', 'termEndDate', 'termsReason'],
-    // The term is NOT part of what was signed, and the plan says so before a
-    // single record exists (ADR-018 addendum, review finding C1).
-    termsProvenance: { source: TERMS_SOURCE, note: TERMS_NOTE },
+    // Provenance, stated before a single record exists: either the term WAS
+    // signed (the order carries the snapshot the documentHash covers), or it
+    // is post-signature operational metadata a human must still supply — the
+    // plan never collapses the two (ADR-018 addendum, review finding C1).
+    termsProvenance: signedTerm
+      ? { source: SIGNED_TERMS_SOURCE, note: SIGNED_TERMS_NOTE }
+      : { source: TERMS_SOURCE, note: TERMS_NOTE },
+    // The signed term itself, when there is one, so the human approves what
+    // will actually be recorded rather than trusting the label.
+    signedTerm: signedTerm
+      ? {
+        effectiveDate: signedTerm.effectiveDate,
+        termStartDate: signedTerm.termStartDate,
+        termEndDate: signedTerm.termEndDate,
+        termDays: signedTerm.termDays,
+        autoRenew: signedTerm.autoRenew === true || signedTerm.autoRenew === 1,
+        renewalNoticeDays: signedTerm.renewalNoticeDays,
+        termsFingerprint: signedTerm.termsFingerprint,
+      }
+      : null,
     counts,
     components: decisions.map((decision) => ({
       orderLineId: decision.line.id,
@@ -283,7 +331,7 @@ export function buildPlanActivationAction(config) {
       const existingContract = trusted(modules, names.contract).listWhere({ orderId: order.id })[0] ?? null;
       step('activation.planned', { orderId: order.id, ...summarize(decisions) });
       return {
-        plan: planPayload({ order, envelope: source.envelope, artifact: source.artifact, decisions, totals: source.totals, existingContract, policy, fingerprint }),
+        plan: planPayload({ order, envelope: source.envelope, artifact: source.artifact, decisions, totals: source.totals, existingContract, policy, fingerprint, signedTerm: source.signedTerm }),
         policy: { name: policy.name, version: policy.version, fingerprint },
       };
     },
@@ -310,12 +358,16 @@ export function buildActivateContractAction(config) {
     input: [
       { name: 'policy', type: 'string', required: true, hint: 'Registered order activation policy name.' },
       { name: 'policyVersion', type: 'integer', required: true, hint: 'Explicit policy version.' },
-      { name: 'effectiveDate', type: 'string', required: true, hint: 'Calendar date YYYY-MM-DD.' },
-      { name: 'termStartDate', type: 'string', required: true, hint: 'Calendar date YYYY-MM-DD.' },
-      { name: 'termEndDate', type: 'string', required: true, hint: 'Calendar date YYYY-MM-DD, inclusive.' },
-      { name: 'autoRenew', type: 'boolean', required: false, hint: 'Recorded only — no scheduler exists in this milestone.' },
-      { name: 'renewalNoticeDays', type: 'integer', required: false, hint: 'Recorded only (0-365); requires autoRenew.' },
-      { name: 'termsReason', type: 'string', required: true, hint: 'Where this term came from: it is operational metadata recorded after signature, not a signed term.' },
+      // Conditionally required, enforced in execute by which provenance the
+      // order carries: an order WITH a signed term snapshot refuses every one
+      // of these (the signed values are authoritative); an order without one
+      // requires the dates and the reason exactly as M12 always did.
+      { name: 'effectiveDate', type: 'string', required: false, hint: 'Calendar date YYYY-MM-DD. Required when the order carries no signed term; refused when it does.' },
+      { name: 'termStartDate', type: 'string', required: false, hint: 'Calendar date YYYY-MM-DD. Required when the order carries no signed term; refused when it does.' },
+      { name: 'termEndDate', type: 'string', required: false, hint: 'Calendar date YYYY-MM-DD, inclusive. Required when the order carries no signed term; refused when it does.' },
+      { name: 'autoRenew', type: 'boolean', required: false, hint: 'Recorded only — no scheduler exists in this milestone. Refused when the order carries a signed term.' },
+      { name: 'renewalNoticeDays', type: 'integer', required: false, hint: 'Recorded only (0-365); requires autoRenew. Refused when the order carries a signed term.' },
+      { name: 'termsReason', type: 'string', required: false, hint: 'Where an OPERATIONAL term came from — required when the order carries no signed term, refused when it does (a signed term is its own reason).' },
       { name: 'classificationOverrides', type: 'json', required: false, hint: '[{orderComponentId, dimension: "commercial"|"obligations", value, reason}] — a human decision per dimension, with a reason.' },
     ],
     /** @param {any} ctx */
@@ -326,11 +378,32 @@ export function buildActivateContractAction(config) {
         throw new AppError('Activating a contract requires a human user actor', { code: 'HUMAN_APPROVAL_REQUIRED', status: 403 });
       }
       const { definition: policy, fingerprint } = domains.getPolicy('contracts', POLICY_KIND, input.policy, input.policyVersion);
-      const term = requireTerm(input);
 
       // The plan is recomputed here, inside the transaction, from the Order —
-      // a plan the caller computed earlier is never trusted.
+      // a plan the caller computed earlier is never trusted. It is loaded
+      // before the term is resolved, because which provenance applies is the
+      // Order's fact, not the caller's choice.
       const source = loadActivationSource(modules, names, order);
+
+      /** @type {ReturnType<typeof requireTerm> | ReturnType<typeof signedTermFromSnapshot>} */
+      let term;
+      if (source.signedTerm) {
+        // The signed snapshot is authoritative. A manual term value alongside
+        // it is refused rather than compared, merged or ignored: silently
+        // winning either way would let the stored provenance drift from what
+        // the caller believed they were recording.
+        const provided = ['effectiveDate', 'termStartDate', 'termEndDate', 'autoRenew', 'renewalNoticeDays', 'termsReason']
+          .filter((field) => input[field] !== undefined && input[field] !== null);
+        if (provided.length > 0) {
+          throw new AppError(
+            'This order carries a signed commercial term; manual term inputs are refused because the signed snapshot is authoritative',
+            { code: 'SIGNED_TERMS_AUTHORITATIVE', status: 409, details: { provided, termsFingerprint: source.signedTerm.termsFingerprint } },
+          );
+        }
+        term = signedTermFromSnapshot(source.signedTerm);
+      } else {
+        term = requireTerm(input);
+      }
 
       // Already activated is the first answer, before any classification work:
       // a retry deserves the same stable refusal whether or not it repeats the

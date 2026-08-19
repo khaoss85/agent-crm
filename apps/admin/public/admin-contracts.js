@@ -252,12 +252,34 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
   }
 
   // ---- term: three calendar dates the caller must state, never defaulted ----
-  const term = el('div', 'activation-term');
-  term.appendChild(el('h4', undefined, 'Operational activation term'));
-  // Said before the inputs, not in a footnote: these values were NOT signed.
+  // Which provenance applies is the Order's fact: an order whose signed
+  // document carried a term shows that term read-only (manual inputs are
+  // refused server-side); an order without one collects the operational term
+  // exactly as M12 always did. The two are never collapsed.
+  const signedTerm = plan.signedTerm ?? null;
+  const term = el('div', signedTerm ? 'activation-term activation-term-signed' : 'activation-term');
+  term.appendChild(el('h4', undefined, signedTerm ? 'Signed commercial term' : 'Operational activation term'));
+  // Said before the inputs, not in a footnote: whether these values were
+  // signed is stated by the plan's provenance, up front.
   term.appendChild(el('p', 'activation-terms-provenance',
     plan.termsProvenance?.note
       ?? 'Recorded after signature: the signed document carries no term, renewal clause or notice period.'));
+  if (signedTerm) {
+    for (const [label, value] of [
+      ['Effective date', signedTerm.effectiveDate],
+      ['Term', `${signedTerm.termStartDate} → ${signedTerm.termEndDate} (inclusive, ${signedTerm.termDays} day(s))`],
+      ['Auto-renew', signedTerm.autoRenew ? 'yes (recorded only)' : 'no'],
+      ['Renewal notice', `${signedTerm.renewalNoticeDays} day(s) (recorded only)`],
+      ['Term fingerprint', signedTerm.termsFingerprint],
+    ]) {
+      const row = el('p', 'activation-term-row');
+      row.appendChild(el('strong', undefined, `${label}: `));
+      row.appendChild(el('span', undefined, String(value ?? '—')));
+      term.appendChild(row);
+    }
+    term.appendChild(el('small', 'muted',
+      'These values are part of the canonical document the customer signed and are covered by its hash. Activation copies them verbatim; typing a different term here is refused by the server.'));
+  }
   const dateInput = (name, placeholder) => {
     const input = el('input');
     input.setAttribute('type', 'date');
@@ -278,7 +300,7 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
   const termsReason = el('input');
   termsReason.setAttribute('name', 'termsReason');
   termsReason.setAttribute('placeholder', 'Where this term came from (required)');
-  for (const [label, control] of [
+  if (!signedTerm) for (const [label, control] of [
     ['Effective date', effectiveDate],
     ['Term start', termStartDate],
     ['Term end (inclusive)', termEndDate],
@@ -291,7 +313,7 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
     row.appendChild(control);
     term.appendChild(row);
   }
-  term.appendChild(el('small', 'muted',
+  if (!signedTerm) term.appendChild(el('small', 'muted',
     `Dates are calendar dates (YYYY-MM-DD) with no time and no timezone; the end date is inclusive. ${domain.term?.renewalNotice ?? 'Auto-renew and notice days are recorded only'} — nothing in this milestone schedules, bills or renews anything. A term starting in the future is recorded as scheduled and ${domain.activationState?.limitation ?? 'nothing transitions it: there is no scheduler'}.`));
   result.appendChild(term);
 
@@ -309,12 +331,17 @@ function renderPlanResult({ order, plan, policy, appliedOverrides = [], domain, 
         body: JSON.stringify({
           policy: policy.name,
           policyVersion: policy.version,
-          effectiveDate: String(effectiveDate.value ?? ''),
-          termStartDate: String(termStartDate.value ?? ''),
-          termEndDate: String(termEndDate.value ?? ''),
-          autoRenew: Boolean(autoRenew.checked),
-          renewalNoticeDays: Number(noticeDays.value ?? 0),
-          termsReason: String(termsReason.value ?? '').trim(),
+          // A signed term is copied server-side from the order's snapshot;
+          // sending a manual value alongside it would be refused (409
+          // SIGNED_TERMS_AUTHORITATIVE), so the signed path sends none.
+          ...(signedTerm ? {} : {
+            effectiveDate: String(effectiveDate.value ?? ''),
+            termStartDate: String(termStartDate.value ?? ''),
+            termEndDate: String(termEndDate.value ?? ''),
+            autoRenew: Boolean(autoRenew.checked),
+            renewalNoticeDays: Number(noticeDays.value ?? 0),
+            termsReason: String(termsReason.value ?? '').trim(),
+          }),
           // The human decisions that made this plan activatable travel with
           // the activation: the server recomputes the plan from the Order and
           // must reach the same classification the human approved.
@@ -376,7 +403,13 @@ async function renderEvidence({ order, schema, domain, panel, el, fetchRows, mon
     ['Term', `${contract.termStartDate} → ${contract.termEndDate} (inclusive, ${contract.termDays} day(s))`],
     ['Auto-renew', contract.autoRenew ? 'yes (recorded only)' : 'no'],
     ['Renewal notice', `${contract.renewalNoticeDays} day(s) (recorded only)`],
-    ['Term source', `${contract.termsSource} — ${contract.termsReason ?? 'no reason recorded'}`],
+    // Exactly one of three provenances, never collapsed: signed snapshot /
+    // post-signature operational / absent-unknown.
+    ['Term source', contract.termsSource === 'signed-order-terms'
+      ? `signed commercial term (${contract.termsSource}) — part of the document the customer signed, covered by its hash`
+      : contract.termsSource === 'post-signature-operational-activation'
+        ? `post-signature operational (${contract.termsSource}) — NOT signed — ${contract.termsReason ?? 'no reason recorded'}`
+        : `unknown provenance (${contract.termsSource ?? 'absent'}) — treated as unknown, never reported as signed`],
     ['Version', version ? `v${version.versionNumber} · ${version.lineCount} line(s)` : '—'],
     ['Classification policy', `${contract.policy}@${contract.policyVersion}`],
     ['Policy fingerprint', contract.policyFingerprint],

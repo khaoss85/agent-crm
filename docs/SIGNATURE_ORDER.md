@@ -117,7 +117,14 @@ own evidence is recorded.
 A deterministic canonical JSON package is derived from the approved Quote
 Version: quote and version identity, parties, offer/product-version snapshot,
 every component with its tier schedule and band breakdown, grouped totals, the
-discount-policy decision, and the signer list.
+discount-policy decision, and the signer list — plus a `terms` section **only
+when the version froze a commercial-term snapshot** (`quote-version-term`).
+A termless version produces the exact pre-terms document, byte for byte: the
+optional key extends the hash algebra without reshaping it, and
+`documentContract` stays `1`. When present, the term is covered by the hash,
+and verified completion copies it onto the Order as the write-once
+`order-term` row — so what was signed and what the Order records can never
+silently diverge, and an order signed without a term is never backfilled.
 
 **The hash covers the exact bytes that are sent.** `canonicalJson` emits one
 deterministic serialization — object keys sorted by code unit, array order

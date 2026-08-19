@@ -44,6 +44,9 @@ export const SIGNATURE_DOMAIN = 'signature';
 export const SIGNATURE_RESOURCES = Object.freeze([
   'signature-envelope', 'signature-signer', 'signature-event', 'signed-artifact',
   'order', 'order-line', 'order-component', 'order-tier', 'order-total',
+  // The signed commercial term of one Order (M16b prerequisite): copied from
+  // the version's frozen snapshot at verified completion, write-once.
+  'order-term',
 ]);
 
 /**
@@ -96,7 +99,12 @@ export function createSignatureDomain(options = {}) {
   const pkg = definePackage({
     packageContract: 1,
     name: SIGNATURE_DOMAIN,
-    version: 1,
+    // Version 2: signed commercial terms — the `order-term` resource, the
+    // completion transaction copying the version's term snapshot onto the
+    // Order, and the additive `orderTerm` read on `signature-orders@1`. The
+    // composition contract grew; every pre-existing answer is byte-identical
+    // (held by the LA0-Signature baseline, fe1875bf…).
+    version: 2,
     label: 'Signature & Order',
     description:
       'Signature envelopes and immutable Orders: provider-backed envelope requests under a human-actor boundary, verified replay-proof webhook events, signed-artifact evidence, explicit reconciliation, and exactly one immutable Order per approved quote version — copied from the commercial snapshot, never re-read from the live catalog.',

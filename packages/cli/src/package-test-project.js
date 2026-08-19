@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { pluralizeTableName } from '../../core/src/module-manifest.js';
 
 /**
  * The throwaway project `crm package test` composes a package into.
@@ -200,14 +201,55 @@ export function closeManifestSet({ index, records, provided }) {
   };
 }
 
-/** Every module manifest a package ships, sorted so the apply order is stable. */
+/**
+ * Every module manifest a package ships, in a stable apply order that honours
+ * this file's own doctrine: a manifest is never applied before the records
+ * its foreign keys point at. A `reference` field names its target TABLE
+ * (`references`), and the factory refuses to apply it until the declaring
+ * module exists — so within one package the declaring manifest must come
+ * first, whatever the alphabet says (`quote-term.module.json` sorts before
+ * `quote.module.json`, and its `quoteId` reference would refuse). The order
+ * starts alphabetical and moves a manifest after its in-set targets; a cycle
+ * (impossible for applied manifests — the factory refuses required
+ * self-references and dangling targets) degrades to the alphabetical tail
+ * rather than hanging.
+ */
 export function packageManifests(dir) {
   const modulesDir = join(dir, 'modules');
   if (!existsSync(modulesDir)) return [];
-  return readdirSync(modulesDir)
+  const entries = readdirSync(modulesDir)
     .filter((name) => name.endsWith('.module.json'))
     .sort()
-    .map((name) => join(modulesDir, name));
+    .map((name) => {
+      const path = join(modulesDir, name);
+      let manifest = null;
+      try {
+        manifest = JSON.parse(readFileSync(path, 'utf8'));
+      } catch {
+        manifest = null; // a manifest that will not parse is the factory's problem
+      }
+      const table = typeof manifest?.table === 'string'
+        ? manifest.table
+        : typeof manifest?.name === 'string' ? pluralizeTableName(manifest.name) : null;
+      const references = (Array.isArray(manifest?.fields) ? manifest.fields : [])
+        .filter((field) => field?.type === 'reference' && typeof field?.references === 'string')
+        .map((field) => field.references);
+      return { path, table, references };
+    });
+  const declared = new Map(entries.filter((entry) => entry.table).map((entry) => [entry.table, entry]));
+  /** @type {string[]} */
+  const ordered = [];
+  const emitted = new Set();
+  const remaining = [...entries];
+  while (remaining.length > 0) {
+    const index = remaining.findIndex((entry) => entry.references.every(
+      (table) => !declared.has(table) || emitted.has(table) || declared.get(table) === entry,
+    ));
+    const next = remaining.splice(index === -1 ? 0 : index, 1)[0];
+    ordered.push(next.path);
+    if (next.table) emitted.add(next.table);
+  }
+  return ordered;
 }
 
 /**

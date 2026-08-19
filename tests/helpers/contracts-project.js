@@ -22,6 +22,7 @@ export const COMMERCIAL_MANIFESTS = [
   'quote-version.module.json', 'quote-version-line.module.json',
   'quote-version-component.module.json', 'quote-version-total.module.json',
   'quote-approval.module.json',
+  'quote-term.module.json', 'quote-version-term.module.json',
 ];
 
 export const SIGNATURE_MANIFESTS = [
@@ -29,6 +30,7 @@ export const SIGNATURE_MANIFESTS = [
   'signature-event.module.json', 'signed-artifact.module.json',
   'order.module.json', 'order-line.module.json', 'order-component.module.json',
   'order-tier.module.json', 'order-total.module.json',
+  'order-term.module.json',
 ];
 
 export const DOMAIN_MANIFESTS = [
@@ -252,7 +254,7 @@ export const POLICY = { policy: 'b2b-saas-order-activation', policyVersion: 1 };
  * which fixture offers the quote carries, so a test can compose the exact
  * classification mix it needs.
  */
-export async function signedOrder(root, app, { name = 'M12 Deal', offers = ['fixture:offer:enterprise', 'fixture:offer:support-annual', 'fixture:offer:api-monthly'] } = {}) {
+export async function signedOrder(root, app, { name = 'M12 Deal', offers = ['fixture:offer:enterprise', 'fixture:offer:support-annual', 'fixture:offer:api-monthly'], term = null } = {}) {
   const actor = { type: 'user', id: 'e2e' };
   const { signatureFixture } = await import(pathToFileURL(join(root, 'examples/starters/b2b-lead-qualification/signature.js')).href);
   await app.syncCatalog({ provider: 'fixture-saas-catalog', actor });
@@ -270,6 +272,13 @@ export async function signedOrder(root, app, { name = 'M12 Deal', offers = ['fix
   const quote = (await app.runAction({ module: 'opportunity', action: 'create-quote', recordId: opportunity.id, input: { priceBookId: book.id }, actor })).result.quote;
   for (const key of offers) {
     await app.runAction({ module: 'quote', action: 'add-line', recordId: quote.id, input: { offerId: offerOf(key).id, quantity: 20, discountBps: 500 }, actor });
+  }
+  // Signed commercial terms: a draft term on the quote is frozen by submit
+  // into the version snapshot, embedded in the signed document and covered by
+  // its hash. `term` is optional because most fixtures prove the pre-terms
+  // journey, which must stay byte-identical.
+  if (term) {
+    await app.modules.get('quote-term').service.create({ quoteId: quote.id, ...term }, { actor });
   }
   const submitted = await app.runAction({ module: 'quote', action: 'submit', recordId: quote.id, input: { policy: 'standard-sales-discount', version: 1 }, actor });
   if (submitted.result.version.decision === 'approval_required') {
