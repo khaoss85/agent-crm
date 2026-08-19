@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { PackageRegistry, validatePackageDefinition } from '../../packages/core/index.js';
-import { PRIVATE_IMPORT_RE, packageSources } from '../../packages/cli/src/package-sources.js';
+import { importsPrivateKernelPath, packageSources } from '../../packages/cli/src/package-sources.js';
 
 /**
  * The reusable **package conformance** checks.
@@ -78,7 +78,7 @@ export function assertPackageConforms({ definition, dir, expected, forbiddenImpo
   assert.ok(sources.length > 0, 'the package has source');
   for (const file of sources) {
     const source = readFileSync(file, 'utf8');
-    assert.equal(PRIVATE_IMPORT_RE.test(source), false, `${file} imports a private kernel path`);
+    assert.equal(importsPrivateKernelPath(source), false, `${file} imports a private kernel path`);
     for (const pattern of forbiddenImports) {
       assert.equal(pattern.test(source), false, `${file} matches a forbidden import ${pattern}`);
     }
