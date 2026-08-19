@@ -298,6 +298,19 @@ under `tests/browser/` and wiring it to a job with a preinstalled Chromium is
 still the only thing that would change that sentence. Nothing here re-runs or
 replaces the 37 / 22 / 24 / 30 checks above.
 
+**Not re-run for the signed-term integrity verifier (ADR-036).** That change was
+reviewed and merged with **no browser re-run at all**: the environment it was
+built in has no Chromium binary of any kind, so re-running this matrix there was
+impossible, and reporting checks nobody executed would be worse than the gap.
+The matrix itself is unchanged and still **40 checks** — counted in this
+document, not remembered. What a human re-running it should watch, because it is
+what the verifier changed: an agreement whose stored signed-term snapshot no
+longer matches its own fingerprint now **refuses server-side**
+(`TERMS_FINGERPRINT_MISMATCH` / `TERMS_SNAPSHOT_DIVERGED`), so the Admin
+activation and amendment panels must render that refusal as a server message and
+must not offer a control that would retry it. Every path with valid evidence is
+byte-identical, so checks 1–40 are expected to pass unchanged.
+
 The section is **package-scoped, not package-owned**: the framework has no seam
 for a package to contribute an Admin extension — AX1 publishes that as
 `ADMIN_EXTENSIONS_UNSUPPORTED` — so `apps/admin/public/admin-lifecycle.js` lives
