@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -301,4 +302,38 @@ test('every shipped scenario is a valid document, and carries nothing runnable',
     assert.ok(!source.includes('"env"'), file);
     assert.ok(!source.includes(repoRoot), `${file} must not carry a machine path`);
   }
+});
+
+/**
+ * Prose a reviewer reads must be prose a reviewer can see.
+ *
+ * `tests/agent-tool-selection-contract.test.js` found this once already — a raw
+ * NUL inside a template literal — and guarded the benchmark's own files. The
+ * gap it left is everything else: the Customer Data Foundation's ExecPlan
+ * quoted a control-character policy by embedding the class *literally*, so a
+ * document explaining that control characters are refused contained a NUL and a
+ * `0x1f`. Git classified the file as binary and no diff was readable, which is
+ * the worst possible outcome for a document whose whole purpose is review.
+ *
+ * The scan covers the checked-in prose and data this repository ships — never
+ * `tests/`, where a raw NUL in a hostile-input fixture is the point.
+ */
+test('no checked-in document carries a byte a reviewer cannot see', () => {
+  const INVISIBLE = [0x00, 0x0b, 0x0c, 0x1b, 0x7f];
+  const offenders = [];
+  const walk = (relative) => {
+    for (const entry of readdirSync(join(repoRoot, relative), { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+      const next = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) { walk(next); continue; }
+      if (!/\.(md|json)$/.test(entry.name)) continue;
+      const bytes = readFileSync(join(repoRoot, next));
+      for (const byte of INVISIBLE) {
+        if (bytes.includes(byte)) offenders.push(`${next}: 0x${byte.toString(16).padStart(2, '0')}`);
+      }
+    }
+  };
+  for (const root of ['docs', 'examples', 'packages']) walk(root);
+  assert.deepEqual(offenders, [],
+    'spell the byte as an escape — the same byte on disk, and a character a reviewer can see');
 });
