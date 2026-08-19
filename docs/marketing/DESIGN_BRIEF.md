@@ -91,11 +91,13 @@ The pitch: *"Don't trust our tests. Break them yourself, in one command."*
 ### 4.3 The composition, measured
 
 ```
-modules       70        resources     41        policies       7
-packages       6        actions       56        providers      5
+modules       71        resources     66        policies       7
+packages       9        actions       59        providers      1
 ```
 
-Composed and inspected in **7.2 seconds**, from manifests, by one command.
+Composed and inspected in seconds, from manifests, by one command — these
+values are `npm run tour`'s own output at the commit this brief was last
+regenerated from, never typed from memory; re-run the tour before quoting them.
 
 ### 4.4 The blind spots, published as data
 
