@@ -170,11 +170,42 @@ export function loadActivationSource(modules, names, order, domains = null) {
     const quotes = domains.capability({
       consumer: 'contracts', capability: 'commercial-quotes', version: 2, context: { modules },
     });
-    const outcome = quotes.verifySignedTerms({ scope: 'order', orderId: order.id, rows: signedTermRows });
+    // The signed bytes are the anchor: this package already holds the
+    // envelope and has already proven that the order, envelope and artifact
+    // agree on `documentHash`, so the `terms` section of those exact bytes is
+    // what a snapshot must match. Commercial owns the comparison; Contracts
+    // only supplies the evidence it legitimately holds.
+    const outcome = quotes.verifySignedTerms({
+      scope: 'order', orderId: order.id, rows: signedTermRows,
+      documentTerms: signedDocumentTerms(envelope),
+    });
     signedTerm = outcome ? outcome.row : null;
   }
 
   return { envelope, artifact, lines, components, totals, signedTerm };
+}
+
+/**
+ * The `terms` section of the document that was actually signed, read from the
+ * canonical bytes stored on the envelope — `null` when the signed document
+ * carried no term, which is the ordinary historical case.
+ *
+ * Unparseable or missing bytes are **not** silently treated as "no term":
+ * that would turn an unreadable document into a refusal for honest evidence
+ * and, worse, into a pass for a planted one. The verifier is told the document
+ * is unavailable and refuses.
+ *
+ * @param {any} envelope
+ */
+function signedDocumentTerms(envelope) {
+  const raw = envelope?.documentJson;
+  if (typeof raw !== 'string' || raw === '') return undefined;
+  try {
+    const document = JSON.parse(raw);
+    return Object.hasOwn(document ?? {}, 'terms') ? document.terms : null;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

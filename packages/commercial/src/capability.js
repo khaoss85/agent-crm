@@ -224,7 +224,12 @@ export function createCommercialQuotesVerifiedCapability(registries, config) {
          * ordinary historical case (ADR-033 backfills nothing, ever), and a
          * consumer must present it as unsigned, never as a verified term.
          *
-         * @param {{scope: 'quote-version'|'order', versionId?: string, orderId?: string, rows?: any[]}} request
+         * For `scope: 'order'` the caller must also pass `documentTerms`: the
+         * `terms` section of the signed document (or `null` when the signed
+         * document carried none). Row-to-row linkage alone cannot survive a
+         * writer that rewrites both rows, so the signed bytes are the anchor.
+         *
+         * @param {{scope: 'quote-version'|'order', versionId?: string, orderId?: string, rows?: any[], documentTerms?: any}} request
          */
         verifySignedTerms(request = /** @type {any} */ ({})) {
           if (request?.scope === 'quote-version') {
@@ -244,6 +249,9 @@ export function createCommercialQuotesVerifiedCapability(registries, config) {
               rows: Array.isArray(request.rows) ? request.rows : [],
               authoritativeFor: (versionId) => versionTermRows(versionId)[0] ?? null,
               orderId: String(request.orderId ?? ''),
+              // Absent on the request object means the caller never produced
+              // the signed document: that is refused, never downgraded.
+              documentTerms: Object.hasOwn(request, 'documentTerms') ? request.documentTerms : undefined,
             });
             return outcome ? Object.freeze({ verified: outcome.verified, row: Object.freeze({ ...outcome.row }) }) : null;
           }

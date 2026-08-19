@@ -45,6 +45,10 @@ export const SIGNED_TERM_FIELDS = Object.freeze([
 export const TERMS_FINGERPRINT_MISMATCH = 'TERMS_FINGERPRINT_MISMATCH';
 export const TERMS_SNAPSHOT_DIVERGED = 'TERMS_SNAPSHOT_DIVERGED';
 export const TERMS_SNAPSHOT_AMBIGUOUS = 'TERMS_SNAPSHOT_AMBIGUOUS';
+/** The snapshot is not what the signed document says — or says nothing at all. */
+export const TERMS_NOT_IN_SIGNED_DOCUMENT = 'TERMS_NOT_IN_SIGNED_DOCUMENT';
+/** The signed bytes are unavailable, so "signed" cannot be proven either way. */
+export const TERMS_DOCUMENT_UNAVAILABLE = 'TERMS_DOCUMENT_UNAVAILABLE';
 
 /**
  * Normalize a stored snapshot row into the exact tuple the fingerprint covers.
@@ -120,15 +124,67 @@ export function verifyMatchesAuthoritative(copy, authoritative, subject) {
 }
 
 /**
- * The `order-term` verification in full: exactly one snapshot, self-consistent,
- * and identical to the authoritative version snapshot it names.
+ * Verify the snapshot against **the signed document itself** — the third and
+ * only anchor outside the attacker's reach in the threat model this verifier
+ * exists for.
  *
- * `rows` and `authoritativeFor` are supplied by the capability, which is the
- * only thing holding storage handles — this function never reaches a database.
+ * Self-consistency and snapshot linkage both compare rows to other rows. An
+ * out-of-band writer — the exact threat ADR-036 names — can rewrite the order
+ * copy *and* the version snapshot together and recompute both fingerprints;
+ * the two questions then agree with each other about a term nobody signed.
+ * Worse, the same writer can INSERT a matching pair for an order whose signed
+ * document carried no term at all, manufacturing signed evidence from nothing.
  *
- * @param {{rows: any[], authoritativeFor: (versionId: string) => any, orderId: string}} input
+ * The canonical document is what the customer actually signed: its bytes are
+ * stored on the envelope, its hash is the `documentHash` the order, envelope
+ * and artifact must all agree on, and completion re-hashes the stored bytes
+ * before an Order exists. Comparing the snapshot to the `terms` section of
+ * those bytes is therefore a check a row-rewriter cannot satisfy without also
+ * forging the document and every hash that covers it.
+ *
+ * `documentTerms` is the parsed `terms` section (or `null` when the signed
+ * document carried none). Passing `undefined` is a programming error: a caller
+ * that cannot produce the document must say so, not silently downgrade the
+ * guarantee.
+ *
+ * @param {any} normalized the normalized snapshot tuple
+ * @param {any} documentTerms the signed document's `terms` section, or null
+ * @param {{orderId: string, quoteVersionId: string}} subject
  */
-export function verifyOrderTermRows({ rows, authoritativeFor, orderId }) {
+export function verifyMatchesSignedDocument(normalized, documentTerms, subject) {
+  if (documentTerms === undefined) {
+    refuse(TERMS_DOCUMENT_UNAVAILABLE,
+      'The signed document was not supplied, so this snapshot cannot be confirmed against what was signed',
+      { orderId: subject.orderId, quoteVersionId: subject.quoteVersionId });
+  }
+  if (documentTerms === null) {
+    refuse(TERMS_NOT_IN_SIGNED_DOCUMENT,
+      'The signed document carried no commercial term, so this snapshot is not evidence of a signed term',
+      { orderId: subject.orderId, quoteVersionId: subject.quoteVersionId });
+  }
+  const signed = normalizeSignedTerm(documentTerms);
+  const diverged = SIGNED_TERM_FIELDS.filter(
+    (field) => /** @type {any} */ (normalized)[field] !== /** @type {any} */ (signed)[field]);
+  if (diverged.length > 0) {
+    refuse(TERMS_NOT_IN_SIGNED_DOCUMENT,
+      'The signed-term snapshot does not match the term inside the signed document, so it is not the term that was signed',
+      { orderId: subject.orderId, quoteVersionId: subject.quoteVersionId, fields: Object.freeze([...diverged]) });
+  }
+  return Object.freeze(signed);
+}
+
+/**
+ * The `order-term` verification in full: exactly one snapshot, self-consistent,
+ * identical to the authoritative version snapshot it names, **and** identical
+ * to the term inside the document that was actually signed.
+ *
+ * `rows`, `authoritativeFor` and `documentTerms` are supplied by the caller,
+ * which is the only thing holding storage handles — this function never
+ * reaches a database.
+ *
+ * @param {{rows: any[], authoritativeFor: (versionId: string) => any, orderId: string, documentTerms?: any}} input
+ */
+export function verifyOrderTermRows({ rows, authoritativeFor, orderId, documentTerms }) {
   const snapshots = Array.isArray(rows) ? rows : [];
   if (snapshots.length === 0) return null; // absence is history, never a failure
   if (snapshots.length > 1) {
@@ -147,5 +203,8 @@ export function verifyOrderTermRows({ rows, authoritativeFor, orderId }) {
   }
   verifySelfConsistent(authoritative, { kind: 'quoteVersion', id: quoteVersionId });
   verifyMatchesAuthoritative(row, authoritative, { orderId, quoteVersionId });
+  // The anchor the other two questions cannot provide: both compare rows to
+  // rows, and a writer that can rewrite one can rewrite the other.
+  verifyMatchesSignedDocument(verified, documentTerms, { orderId, quoteVersionId });
   return { verified, row };
 }
