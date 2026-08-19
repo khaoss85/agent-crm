@@ -63,7 +63,10 @@ async function scene(t, options = {}) {
   const { app } = context;
 
   const source = await signedOrder(root, app, {
-    name: options.name ?? 'M16b Source', offers: OFFERS, term: SOURCE_TERM,
+    name: options.name ?? 'M16b Source',
+    offers: options.sourceOffers ?? OFFERS,
+    term: SOURCE_TERM,
+    quantities: options.sourceQuantities ?? {},
   });
   await app.runAction({
     module: 'order', action: 'activate-contract', recordId: source.order.id,
@@ -73,11 +76,12 @@ async function scene(t, options = {}) {
 
   const successor = options.successor === false ? null : await signedOrder(root, app, {
     name: `${options.name ?? 'M16b Source'} Renewal`,
-    offers: options.successorOffers ?? OFFERS,
+    offers: options.successorOffers ?? options.sourceOffers ?? OFFERS,
     term: options.successorTerm ?? SUCCESSOR_TERM,
     company: source.company,
     contact: source.contact,
     quantities: options.successorQuantities ?? {},
+    ...(options.successorDiscountBps === undefined ? {} : { discountBps: options.successorDiscountBps }),
   });
   return { root, context, app, source, contract, successor };
 }
@@ -270,9 +274,14 @@ test('the classification is derived from the delta, and a price move is never ca
   }
   // Grouped, never summed into one number, and no MRR/ARR/TCV anywhere.
   assert.ok(Array.isArray(plan.delta.baselineDelta) && plan.delta.baselineDelta.length > 0);
-  const serialized = JSON.stringify(plan);
-  for (const forbidden of ['MRR', 'ARR', 'TCV', 'annualRecurring', 'totalContractValue']) {
-    assert.equal(serialized.includes(forbidden), false, `${forbidden} must not appear anywhere in a plan`);
+  // No derived revenue figure exists anywhere in the payload. The scan is over
+  // FIELD NAMES rather than the serialized text, because the disclosure prose
+  // must be free to say "no MRR, ARR or TCV is computed" — a scan that forbade
+  // the words would forbid the disclosure and reward silence.
+  assert.ok(plan.notModeled.includes('MRR/ARR/TCV'), 'the omission is stated, not implied');
+  for (const key of everyKey(plan)) {
+    assert.equal(/mrr|\barr\b|tcv|annualrecurring|totalcontractvalue|annualvalue/i.test(key), false,
+      `${key} is a derived revenue figure this milestone does not compute`);
   }
 });
 
@@ -287,15 +296,38 @@ test('a contraction, a mixed change and a pure price move each get the label the
   })).result.succession;
   assert.equal(c.classification, 'contraction');
 
+  // Two quantity-bearing components moving in opposite directions. The seat
+  // component of the enterprise offer and the per-1k-call component of the API
+  // offer are the two lines whose quantity is a real number on both sides; a
+  // flat fee's quantity is 0 by construction, which is why the pure price case
+  // below is deliberately not called a contraction.
   const mixed = await scene(t, {
     db: 'mixed', name: 'M16b Mixed',
-    successorQuantities: { 'fixture:offer:enterprise': 30, 'fixture:offer:support-annual': 10 },
+    sourceOffers: ['fixture:offer:enterprise', 'fixture:offer:api-monthly'],
+    successorQuantities: { 'fixture:offer:enterprise': 30, 'fixture:offer:api-monthly': 10 },
   });
   const m = (await mixed.app.runAction({
     module: 'commercial-contract', action: 'plan-amendment', recordId: mixed.contract.id,
     input: { successorOrderId: mixed.successor.order.id, ...POLICY }, actor: ACTOR,
   })).result.succession;
   assert.equal(m.classification, 'mixed');
+  assert.match(m.classificationBasis, /both directions/);
+
+  // The case the milestone must NOT flatter: the same lines, the same
+  // quantities, a different discount. Money moved and nothing expanded, so the
+  // narrower label is left unclaimed and the exact delta travels anyway.
+  const priced = await scene(t, {
+    db: 'priced', name: 'M16b Priced', successorDiscountBps: 0,
+  });
+  const p = (await priced.app.runAction({
+    module: 'commercial-contract', action: 'plan-amendment', recordId: priced.contract.id,
+    input: { successorOrderId: priced.successor.order.id, ...POLICY }, actor: ACTOR,
+  })).result.succession;
+  assert.equal(p.classification, 'commercial_change',
+    'a price uplift at renewal is not an expansion: nothing about it expanded');
+  assert.match(p.classificationBasis, /without changing quantity/);
+  assert.ok(p.delta.lines.some((line) => line.status === 'changed' && line.changedFields.join() === 'netAmountCents'));
+  assert.equal(p.coherent, true, 'and it is still executable — an unclaimable label never blocks');
 
   const added = await scene(t, {
     db: 'added', name: 'M16b Added',
@@ -598,7 +630,11 @@ test('two connections race one execution: exactly one winner, no partial success
     const message = String(entry.reason?.message ?? '');
     assert.equal(/SQLITE_|UNIQUE constraint failed|no such table/i.test(message), false,
       `a driver string reached the client: ${message}`);
-    assert.ok(['ORDER_ALREADY_ACTIVATED', 'CONFLICTING_SUCCESSOR', 'AMENDMENT_RUN_TERMINAL', 'SUCCESSOR_ORDER_ALREADY_CONSUMED', 'SQLITE_BUSY_STABLE']
+    // CONFLICT is the framework's own normalized busy-database refusal — a
+    // sentence, never a driver string — and it is as valid a "you lost" as the
+    // business codes beside it.
+    assert.ok(['ORDER_ALREADY_ACTIVATED', 'CONFLICTING_SUCCESSOR', 'AMENDMENT_RUN_TERMINAL',
+      'SUCCESSOR_ORDER_ALREADY_CONSUMED', 'CONFLICT']
       .includes(entry.reason?.code ?? ''), `unexpected code ${entry.reason?.code}: ${message}`);
   }
   const lineage = first.app.modules.get('contract-succession').service.list({ limit: 10 });
@@ -720,6 +756,21 @@ test('the successor survives a restart, and an old M16a database upgrades in pla
 });
 
 /* ----------------------------------------------------------------- helpers */
+
+/** Every field name anywhere in a payload, however deeply nested. */
+function everyKey(value, seen = new Set()) {
+  if (Array.isArray(value)) {
+    for (const entry of value) everyKey(entry, seen);
+    return seen;
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, entry] of Object.entries(value)) {
+      seen.add(key);
+      everyKey(entry, seen);
+    }
+  }
+  return seen;
+}
 
 /**
  * A whole-row fingerprint of every commercial record, so "history is untouched"
