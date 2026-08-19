@@ -301,8 +301,8 @@ test('a status outside the vocabulary is a hard error', () => {
     const matrix = join(work, 'docs', 'benchmarks', 'CRM_JTBD_MATRIX.md');
     // Target a real row, not the status legend at the top of the document.
     const text = readFileSync(matrix, 'utf8').replace(
-      '| JTBD-DO-01 | Import records from CSV | **not supported** |',
-      '| JTBD-DO-01 | Import records from CSV | **mostly works** |',
+      '| JTBD-DO-04 | Export records | **not supported** |',
+      '| JTBD-DO-04 | Export records | **mostly works** |',
     );
     assert.ok(text.includes('**mostly works**'), 'the fixture row moved — update this test');
     writeFileSync(matrix, text);
