@@ -248,4 +248,59 @@ flow, AX1/AX2/DX4/DX5/DX10, and **all three LA0 replays byte-identical**
 
 ## Results of record
 
-(recorded as they are produced)
+| Gate | Result |
+|---|---|
+| `npm run verify` | pass on the exact head |
+| `npm run smoke` | pass |
+| `npm run gtm:check` | pass |
+| `app inspect --json` | the package reports 6 resources, 3 actions, 3 operations, 1 capability, 1 fingerprinted policy |
+| `project doctor --json` | passed — 9 passed, 0 warning, 0 failed |
+| `package test packages/customer-data --json` | 25 passed, 0 failed, 3 not applicable |
+| `scenario run customer-identity-governance` | passed — 56 observations, 7 JTBD rows established |
+| `scenario run lead-to-won` / `service-sla-escalation` / `contract-renewal-execution` | all passed, unchanged |
+| `solution check` (AX2) | valid, no problems |
+| `solution verify` (DX10) | **incomplete, deliberately** — 8 requirements proven, 3 PARTIAL with stated gaps |
+| Real Chromium | 32/32, twice from a clean project, database and browser profile, plus once more on the final head |
+| LA0 replays | all three asserted fingerprints byte-identical: `fe1875bf…`, `82c1f02f…`, `f80592be…` |
+
+### Defects this work found
+
+1. **Admin — a preview discarded the operator's typed rows.** The panel
+   re-renders after a preview, and the re-render rebuilt the import form empty,
+   so Apply refused the operator's own import as *paste the rows*. The primary
+   flow of the surface was unusable. Found by the real-Chromium run, not by any
+   unit test, because the fake DOM re-render happened to be invisible to the
+   assertions. Fixed with a draft that survives the render, and a regression
+   test that previews and then applies.
+2. **Admin — an unreadable list rendered as zero.** `rowsOf()` swallowed a
+   failed read into `[]`, so an unreachable queue read *Import runs (0)* — the
+   exact empty-truth this foundation refuses in the profile. Fixed: a list that
+   could not be read says so, and says it is not a claim that there are none.
+3. **DX4 — a doc comment failed conformance.** Both source-boundary rules are
+   regular expressions over source text, and a comment writing a path in
+   backticks after the word *from* matched as an import: a conforming package
+   failed conformance for the sentence explaining why it was conforming.
+   Comments are now stripped by a scanner that respects strings, templates and
+   regular expressions, so a `//` inside a URL cannot blind it to what follows.
+   Both directions are regression-tested.
+
+### Deliberate re-records
+
+- The three LA0 baselines, because `operation-runtime.js`, `create-app.js` and
+  `http-server.js` are in the behaviour-bearing set and all three changed. The
+  whole diff is three source digests; every asserted fingerprint and every
+  observation count is unchanged.
+- `docs/benchmarks/jobs.json` and `site/assets/llms*.txt`, because both are
+  generated from the JTBD matrix and three rows moved.
+
+### Not done, and why
+
+- **`operation.present` was not added to the DX6 observation vocabulary.** This
+  package's principal surface is three ADR-032 operations and the closed
+  vocabulary cannot observe one. Widening it is a framework change outside this
+  milestone's scope; the gap is recorded in `docs/SCENARIO_EVIDENCE.md` and in
+  ADR-037, and the second package to declare an operation is when it should be
+  closed.
+- Everything under **Customer Data Operations v2**: global search, saved views,
+  bulk actions, export at scale, physical merge or consolidation, and any
+  retention or erasure workflow.

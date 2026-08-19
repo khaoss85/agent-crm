@@ -2794,3 +2794,31 @@ graph, ML entity resolution, arbitrary ETL, global full-text search, a consent
 platform, GDPR or any legal assurance, retention and erasure workflows, and a
 cross-channel timeline. **This is not a shipped CDP and is not described as one
 anywhere.**
+
+### Evidence, and what the evidence could not reach
+
+The fourth checked-in journey and scenario, `customer-identity-governance`,
+composes **the customer-data package and nothing else** — which is not a
+convenience: with no other package present, the profile's `available: false` is
+an *observed* fact rather than a rendering detail, and it is the strongest form
+this decision's fifth point can take. The journey earns its safety facts by
+attempting them: it drives a genuinely ambiguous row and publishes that no tie
+was broken, attempts an agent actor, an out-of-candidate canonical record and a
+reasonless decision, and searches every text column of every table in the
+database for a field the mapping does not know.
+
+Three JTBD rows move to *partially supported* on stated readings — DO-01 (no
+CSV: bounded JSON rows), DO-02 (import only, nothing fuzzy), DO-03 (logical
+link, no physical merge) — and DG-04, DO-07 and DO-08 are guarded in the matrix
+against inheriting anything from them.
+
+**One thing the evidence could not reach, recorded rather than hidden.** This
+package's principal surface is three ADR-032 *application operations*, and the
+DX6 observation vocabulary has no `operation.present`: it can observe a package,
+a resource, a module, an action, a capability and a policy, but not a declared
+operation. The scenario therefore proves the operations *work* through
+`journey.fact` and proves the package's *shape* through its resources, policy
+and record actions. Widening a closed vocabulary is a framework change and was
+deliberately left outside this milestone; `docs/SCENARIO_EVIDENCE.md` records
+the gap, and the second package to declare an operation is when it should be
+closed.
