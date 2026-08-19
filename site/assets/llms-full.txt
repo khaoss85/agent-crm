@@ -98,7 +98,7 @@ The complete evidence for every id is listed further down this file, always.
 
 ## CRM job coverage
 
-Of 149 catalogued CRM jobs: 23 validated end to end, 31 partially supported, 95 not supported. Status is conservative by policy —
+Of 149 catalogued CRM jobs: 23 validated end to end, 33 partially supported, 93 not supported. Status is conservative by policy —
 a job counts as validated end to end only when a test or a checked-in example proves it, so
 these numbers understate what can be built rather than overstate it.
 
@@ -276,6 +276,7 @@ The remaining documents, one line each in `llms.txt` if you need to know what th
 - [docs/MODULE_MANIFEST.md]({{brand.repository}}/blob/main/docs/MODULE_MANIFEST.md)
 - [docs/PACKAGE_AUTHORING.md]({{brand.repository}}/blob/main/docs/PACKAGE_AUTHORING.md)
 - [docs/RENAME_SURFACE.md]({{brand.repository}}/blob/main/docs/RENAME_SURFACE.md)
+- [docs/RENEWAL_AMENDMENT.md]({{brand.repository}}/blob/main/docs/RENEWAL_AMENDMENT.md)
 - [docs/SCENARIO_EVIDENCE.md]({{brand.repository}}/blob/main/docs/SCENARIO_EVIDENCE.md)
 - [docs/SERVICE_OPERATIONS.md]({{brand.repository}}/blob/main/docs/SERVICE_OPERATIONS.md)
 - [docs/SIGNATURE_ORDER.md]({{brand.repository}}/blob/main/docs/SIGNATURE_ORDER.md)
