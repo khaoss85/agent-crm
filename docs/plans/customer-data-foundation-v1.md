@@ -216,7 +216,7 @@ provider · no GDPR or legal assurance. **Real Chromium** for the main flow.
 
 No raw payload, no credential, no secret stored. Bounded input (rows, fields,
 lengths). **Control-safe strings reuse the existing strictest PII policy** —
-`/[ --  ]/`, the signer policy from
+`/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/`, the signer policy from
 `packages/signature/src/operations.js` — not a new one. Services and prepared
 statements only; no raw SQL from input; no file path at all in v1. Every human
 identity decision is audited. Retention limitation documented; **erasure versus
