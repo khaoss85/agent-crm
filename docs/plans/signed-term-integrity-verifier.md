@@ -56,7 +56,7 @@ that has not migrated; every in-repository consumer of signed terms moves to
 |---|---|---|---|
 | 1 | Signature `buildDocumentPackage` | before the document is canonicalized and hashed | `quote-version-term` self-consistency |
 | 2 | Signature completion evidence | before `order-term` is written | the same snapshot, again inside the transaction |
-| 3 | Contracts `loadActivationSource` | before activation reads terms as signed | `order-term` self-consistency **and** linkage |
+| 3 | Contracts `loadActivationSource` | before activation reads terms as signed | `order-term` self-consistency, linkage **and** the signed document |
 | 4 | Contracts `contract-lifecycle-source@2` | before `signed: true` is derived | via 3 |
 | 5 | M16b `planSuccession` / `executeSuccession` | before plan output and before any write | via 3 |
 | 6 | Admin | renders only what 3–5 already verified | — |
@@ -70,3 +70,30 @@ A mismatch fails **before** business writes and before any provider call.
 - invalid snapshot → **fails closed**, where it previously passed silently.
 
 **No backfill, ever.** Nothing infers signed provenance from later operational dates.
+
+
+## Review addendum — the third question
+
+The independent review proved that self-consistency and linkage both compare a
+row to another row, while the threat model is a writer that can rewrite rows.
+Two forgeries were accepted as signed evidence before the fix: the order copy
+and the version snapshot rewritten together with both fingerprints recomputed,
+and a consistent pair INSERTed for an order whose signed document carried no
+term at all — the second manufacturing signed terms out of nothing.
+
+Verification is now anchored to the `terms` section of the canonical document
+the customer signed (`TERMS_NOT_IN_SIGNED_DOCUMENT`), and a caller that cannot
+produce those bytes is refused (`TERMS_DOCUMENT_UNAVAILABLE`) rather than
+silently downgraded. Contracts supplies the section from the envelope it
+already holds and has already hash-checked. Both forgeries are regression
+tests.
+
+The consumption guard was widened too: it discovers every `packages/*/src` and
+`apps/*/{public,src}` from the filesystem instead of scanning a hardcoded list
+of five roots — a new package escaped it entirely — and the stored field names
+`termStartDate` / `termEndDate` / `termDays` are consumption markers, so a
+consumer that destructures a row it was handed can no longer slip past.
+
+The M16b browser matrix was re-run in real Chromium 141 (twice, 40/40 both
+runs) and gained check 41 for the corrupted-snapshot refusal; the claim that
+this environment had no browser binary was wrong.

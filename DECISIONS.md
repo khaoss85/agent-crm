@@ -2591,18 +2591,39 @@ Term-fingerprint semantics belong to **Commercial**, which owns
 declared capability. **No other package recomputes a fingerprint**, and nothing
 moved into `packages/core`: this is domain semantics, not runtime mechanics.
 
-An `order-term` is a *copy*, so verification is two questions, both Commercial's:
+An `order-term` is a *copy*, so verification is three questions, all
+Commercial's:
 
 1. **self-consistency** — do the row's own values still hash to the fingerprint
    it carries?
 2. **linkage** — are those values the ones the authoritative `quote-version-term`
    froze for the version the row names?
+3. **the signed document** — are they the values inside the canonical document
+   the customer actually signed?
 
-A forgery satisfies (1) by recomputing over its own lie; only (2) catches it.
-Both are required. Refusals are `TERMS_FINGERPRINT_MISMATCH`,
-`TERMS_SNAPSHOT_DIVERGED` and `TERMS_SNAPSHOT_AMBIGUOUS`, and they name **ids and
-field names only** — echoing the planted value would put attacker-controlled text
-into an operator's console.
+A forgery satisfies (1) by recomputing over its own lie, and (2) catches that
+one. But (1) and (2) both compare a row to another row, and the threat this
+verifier models is a writer that can rewrite rows: rewriting the order copy
+**and** the version snapshot together, recomputing both fingerprints, satisfies
+(1) and (2) about a term nobody signed, and the same writer can INSERT a
+consistent pair for an order whose signed document carried no term at all,
+manufacturing signed evidence from nothing. Both were reachable, and both are
+why (3) exists.
+
+The canonical document is the anchor the first two questions cannot be: it is
+what the customer signed, its bytes are stored on the envelope, and its hash is
+the `documentHash` the order, envelope and artifact must already agree on — so
+satisfying (3) means forging the document and every hash that covers it, not
+one more row. A caller that cannot produce the signed document is refused
+(`TERMS_DOCUMENT_UNAVAILABLE`) rather than silently given the weaker guarantee;
+Contracts supplies it from the envelope it already holds and has already
+hash-checked, so Commercial keeps the comparison and no package gains an edge.
+
+All three are required. Refusals are `TERMS_FINGERPRINT_MISMATCH`,
+`TERMS_SNAPSHOT_DIVERGED`, `TERMS_SNAPSHOT_AMBIGUOUS`,
+`TERMS_NOT_IN_SIGNED_DOCUMENT` and `TERMS_DOCUMENT_UNAVAILABLE`, and they name
+**ids and field names only** — echoing the planted value would put
+attacker-controlled text into an operator's console.
 
 Verification happens before a consumer may describe terms as signed: Signature
 verifies the version snapshot **before the document is canonicalized and
