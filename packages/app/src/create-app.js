@@ -12,12 +12,11 @@ import { createApprovalModule } from '../../modules/approval/src/index.js';
 import { generatedModules } from '../../modules/generated/index.js';
 import { generatedActions } from '../../actions/generated/index.js';
 import { generatedPipelines } from '../../pipelines/generated/index.js';
-import { generatedSignatureProviders } from '../../signature/generated/index.js';
 import { generatedDomains } from '../../domains/generated/index.js';
 import { PipelineRegistry } from '../../core/src/pipeline-registry.js';
-import { SignatureRegistries } from '../../core/src/signature-registry.js';
-import { createSignatureOperations } from '../../core/src/signature-operations.js';
 import { PackageRegistry } from '../../core/src/package-registry.js';
+import { createOperationRuntime, composePackageOperations } from '../../core/src/operation-runtime.js';
+import { ValidationError } from '../../core/src/errors.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
 import { ActionRegistry } from '../../core/src/action-registry.js';
 import { runRecordAction } from '../../core/src/action-runtime.js';
@@ -121,13 +120,6 @@ export function createAccordoApp(options = {}) {
   const pipelines = new PipelineRegistry({ moduleExists: (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name) });
   for (const definition of generatedPipelines) pipelines.register(definition);
 
-  // Signature provider registry (ADR-017): the same declared-definition
-  // fingerprint mechanism. The fingerprint proves provider CODE and declared
-  // config integrity — never remote-service behavior, which is why every
-  // provider result is re-validated into the normalized contract.
-  const signature = new SignatureRegistries({ signatureProviders: generatedSignatureProviders });
-  signature.persistFingerprints(database);
-
   // Optional domain packages (ADR-018 addendum). The kernel knows only the
   // generic contract: a package contributes actions and versioned policies,
   // and the application composes it here. With none registered, everything
@@ -147,28 +139,22 @@ export function createAccordoApp(options = {}) {
   // deterministic and a malformed action stops startup.
   for (const definition of domains.actions()) actions.register(definition);
 
-  // ── B7 seam residue, recorded not generic ─────────────────────────────────
-  // Catalog synchronization is Commercial-owned code
-  // (packages/commercial/src/catalog-sync.js), but its attachment — the
-  // `app.syncCatalog` method the kernel HTTP route calls — is still wired here
-  // by name, because no package can contribute an HTTP route or an application
-  // operation today. This is the measured seam pressure recorded in
-  // docs/plans/extract-commercial-operations-package.md §B7 (Signature's
-  // ingest/reconcile operations are the second case); it is one named lookup,
-  // not a seam, and it goes away the day the seam exists. Without the package
-  // composed, `app.syncCatalog` is absent and the route answers its honest
-  // 404.
-  const commercialPackage = generatedDomains.find(
-    (pkg) => pkg && pkg.name === 'commercial' && typeof pkg.createCatalogSyncOperation === 'function',
-  );
-  const syncCatalogOperation = commercialPackage
-    ? commercialPackage.createCatalogSyncOperation({
-      database,
-      events,
-      modules,
-      config: { catalogTimeoutMs: /** @type {any} */ (options).catalogTimeoutMs },
-    })
-    : undefined;
+  // ── Declared application operations (ADR-032) ─────────────────────────────
+  // Packages contribute bounded application-scoped operations, and the
+  // composition attaches each declared alias generically. This factory no
+  // longer looks any package up by name: the names live in the package
+  // declarations, where names belong. Without the owning package composed,
+  // an alias is simply absent and its route answers an honest 404.
+  const operationRuntime = createOperationRuntime({
+    database,
+    modules,
+    events,
+    config: {
+      catalogTimeoutMs: /** @type {any} */ (options).catalogTimeoutMs,
+      signatureTimeoutMs: /** @type {any} */ (options).signatureTimeoutMs,
+    },
+  });
+  const { aliases: operationAliases } = composePackageOperations({ registry: domains, runtime: operationRuntime });
 
   const notificationProvider = new MemoryNotificationProvider();
   providers.register({
@@ -219,46 +205,8 @@ export function createAccordoApp(options = {}) {
     services,
     actions,
     pipelines,
-    signature,
     domains,
     actionEligibleCoreModules: [...ACTION_ELIGIBLE_CORE_MODULES].sort(),
-    /**
-     * Synchronize a catalog provider's normalized catalog into immutable
-     * commercial records (ADR-016) — present only while the commercial
-     * package is composed; the B7 residue above explains the wiring. Provider
-     * call happens outside the write transaction; reconciliation is atomic; a
-     * CatalogSyncRun records the evidence and a trace is written best-effort.
-     * @type {undefined | ((params: {provider: string, input?: unknown, actor?: unknown}) => Promise<any>)}
-     */
-    syncCatalog: syncCatalogOperation,
-    /**
-     * Ingest one provider-verified signature event (ADR-017). Verification
-     * happens before any state is touched; the inbox is idempotent by provider
-     * event id; a verified completion atomically creates the signed artifact
-     * evidence and exactly one immutable Order.
-     * @param {{provider: string, rawBody: string, headers?: Record<string, unknown>, actor?: unknown}} params
-     */
-    ingestSignatureEvent(params) {
-      return app._signatureOperations.ingestSignatureEvent(params);
-    },
-    /**
-     * Reconcile one signature envelope against its provider (ADR-017): the
-     * documented recovery for a lost webhook, a provider success whose local
-     * finalization failed, or a restart mid-flight. No scheduler exists in
-     * this milestone — reconciliation is always explicit.
-     * @param {{envelopeId: string, actor?: unknown}} params
-     */
-    reconcileSignature(params) {
-      return app._signatureOperations.reconcileSignature(params);
-    },
-    _signatureOperations: createSignatureOperations({
-      database,
-      events,
-      modules,
-      services,
-      signature,
-      config: { signatureTimeoutMs: /** @type {any} */ (options).signatureTimeoutMs },
-    }),
     /**
      * Run a code-first record action atomically (ADR-011/012): the business
      * writes commit or roll back together and domain events become visible only
@@ -276,7 +224,6 @@ export function createAccordoApp(options = {}) {
         services,
         core: coreAdapters,
         pipelines,
-        signature,
         domains,
         now,
         config: app.config,
@@ -405,6 +352,18 @@ export function createAccordoApp(options = {}) {
       };
     },
   };
+
+  // Generic alias attachment (ADR-032): a declared app method may add
+  // application surface, never replace it — an alias that would shadow an
+  // existing key is a composition defect and stops startup.
+  for (const alias of operationAliases) {
+    if (alias.appMethod in app) {
+      throw new ValidationError(
+        `package "${alias.package}" operation "${alias.name}": appMethod "${alias.appMethod}" would shadow an existing application key`,
+      );
+    }
+    /** @type {any} */ (app)[alias.appMethod] = alias.fn;
+  }
 
   return app;
 }

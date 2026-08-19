@@ -1,9 +1,13 @@
 // @ts-check
 
 import { createHash } from 'node:crypto';
-import { AppError, NotFoundError, ValidationError, normalizeError } from './errors.js';
-import { runExternalOperation, withExternalTimeout } from './external-operation.js';
-import { nowIso } from './time.js';
+import {
+  AppError,
+  NotFoundError,
+  ValidationError,
+  normalizeError,
+  withTimeout,
+} from '../../core/index.js';
 import {
   MAX_SIGNERS,
   TERMINAL_ENVELOPE_STATES,
@@ -12,7 +16,7 @@ import {
   normalizeProviderArtifact,
   normalizeProviderEnvelope,
   normalizeProviderEvent,
-} from './signature-registry.js';
+} from './registry.js';
 
 /**
  * Signature and Order operations (ADR-017).
@@ -127,6 +131,83 @@ function trusted(modules, name) {
   return service;
 }
 
+/** 'quote-version' → 'QuoteVersion': the generated service's NotFound label. */
+function pascalName(moduleName) {
+  return String(moduleName).split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+}
+
+/**
+ * The quote/version evidence reads as ONE interface with two providers, both
+ * mirroring the `commercial-quotes@1` method names exactly:
+ *
+ * - the capability itself (the action path): the declared, versioned edge the
+ *   Commercial extraction sized from this domain's measured consumption;
+ * - the module registry (the app-operation completion path): the ADR-032
+ *   bounded operation context deliberately carries `modules` — "the same
+ *   handles the operation code holds today" — and no capability resolver, so
+ *   completion keeps its byte-identical reads while the declared `requires`
+ *   edge carries the dependency.
+ */
+function moduleQuotesReader(modules, names) {
+  return {
+    quote: (id) => trusted(modules, names.quote).get(id),
+    version: (id) => trusted(modules, names.version).get(id),
+    versionLines: (id) => trusted(modules, names.versionLine).listWhere({ versionId: id }),
+    versionComponents: (id) => trusted(modules, names.versionComponent).listWhere({ versionId: id }),
+    versionTotals: (id) => trusted(modules, names.versionTotal).listWhere({ versionId: id }),
+  };
+}
+
+/**
+ * Open `commercial-quotes@1` through the package registry — the consumer
+ * identity is registry-proven, the reads run inside this transaction via the
+ * caller's modules view, and an application without the commercial package
+ * refuses composition long before this line can run. The capability answers
+ * null for an unknown id; the generated services throw — the wrapper restores
+ * the exact refusal the callers have always produced.
+ */
+function openCommercialQuotes(domains, modules, names) {
+  /** @type {any} */
+  let iface;
+  try {
+    iface = domains.capability({
+      consumer: 'signature', capability: 'commercial-quotes', version: 1, context: { modules },
+    });
+  } catch (error) {
+    if (error instanceof AppError && error.status !== 404) throw error;
+    throw new AppError(
+      'The signature package requires the commercial package capability commercial-quotes@1, which is not available',
+      { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+    );
+  }
+  const require_ = (record, moduleName, id) => {
+    if (!record) throw new NotFoundError(pascalName(moduleName), String(id));
+    return record;
+  };
+  return {
+    quote: (id) => require_(iface.quote(id), names.quote, id),
+    version: (id) => require_(iface.version(id), names.version, id),
+    versionLines: (id) => iface.versionLines(id),
+    versionComponents: (id) => iface.versionComponents(id),
+    versionTotals: (id) => iface.versionTotals(id),
+  };
+}
+
+/** Open `commercial-quote-binding@1` — the declared edge for the one bounded write. */
+function openCommercialBinding(domains) {
+  try {
+    return domains.capability({
+      consumer: 'signature', capability: 'commercial-quote-binding', version: 1, context: {},
+    });
+  } catch (error) {
+    if (error instanceof AppError && error.status !== 404) throw error;
+    throw new AppError(
+      'The signature package requires the commercial package capability commercial-quote-binding@1, which is not available',
+      { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+    );
+  }
+}
+
 function toJson(value, label = 'evidence') {
   const text = JSON.stringify(value);
   if (text.length > 200_000) {
@@ -236,12 +317,12 @@ export function snapshotParties({ services, version }) {
   return parties;
 }
 
-export function buildDocumentPackage({ modules, names, quote, version, signers, parties }) {
-  const lines = trusted(modules, names.versionLine)
-    .listWhere({ versionId: version.id })
+export function buildDocumentPackage({ reader, quote, version, signers, parties }) {
+  // Copied before sorting: the capability hands back frozen evidence rows.
+  const lines = [...reader.versionLines(version.id)]
     .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
-  const components = trusted(modules, names.versionComponent).listWhere({ versionId: version.id });
-  const totals = trusted(modules, names.versionTotal).listWhere({ versionId: version.id });
+  const components = reader.versionComponents(version.id);
+  const totals = reader.versionTotals(version.id);
 
   const document = {
     documentContract: 1,
@@ -318,8 +399,8 @@ export function buildDocumentPackage({ modules, names, quote, version, signers, 
 }
 
 /** Load the quote version and validate it is signable for this quote. */
-function requireApprovedVersion(modules, names, quote, quoteVersionId) {
-  const version = trusted(modules, names.version).get(quoteVersionId);
+function requireApprovedVersion(reader, quote, quoteVersionId) {
+  const version = reader.version(quoteVersionId);
   if (version.quoteId !== quote.id) {
     throw new AppError('The quote version belongs to another quote', { code: 'VERSION_MISMATCH', status: 409 });
   }
@@ -331,11 +412,11 @@ function requireApprovedVersion(modules, names, quote, quoteVersionId) {
   if (version.policyDecision === 'reject') {
     throw new AppError('The quote version was rejected by its discount policy', { code: 'VERSION_NOT_APPROVED', status: 409 });
   }
-  const lineCount = trusted(modules, names.versionLine).countWhere({ versionId: version.id });
+  const lineCount = reader.versionLines(version.id).length;
   if (lineCount === 0) {
     throw new AppError('The quote version carries no commercial snapshot', { code: 'VERSION_SNAPSHOT_INCOMPLETE', status: 409 });
   }
-  if (trusted(modules, names.versionTotal).countWhere({ versionId: version.id }) === 0) {
+  if (reader.versionTotals(version.id).length === 0) {
     throw new AppError('The quote version carries no grouped totals', { code: 'VERSION_SNAPSHOT_INCOMPLETE', status: 409 });
   }
   return { version, lineCount };
@@ -345,7 +426,10 @@ function requireApprovedVersion(modules, names, quote, quoteVersionId) {
  * quote.request-signature — the external-operation action.
  * @param {Record<string, string>} [config]
  */
-export function buildRequestSignatureAction(config) {
+export function buildRequestSignatureAction(config, registries) {
+  if (!registries || typeof registries.getSignatureProvider !== 'function') {
+    throw new ValidationError('buildRequestSignatureAction needs the signature registries — compose the package rather than registering the action bare');
+  }
   const names = resolvedNames(config);
   return {
     module: names.quote,
@@ -365,15 +449,18 @@ export function buildRequestSignatureAction(config) {
     ],
 
     /** Transaction A: local intent only — no remote call has happened yet. */
-    intent({ record: quote, input, actor, modules, services, signature, now, step }) {
+    intent({ record: quote, input, actor, modules, services, domains, now, step }) {
       // Sending for signature is a real external side effect: a human user
       // actor must own it. This is a HUMAN-ACTOR boundary, not Sales/Legal
       // role enforcement — real roles need the Production Spine.
       if (!actor || typeof actor !== 'object' || /** @type {any} */ (actor).type !== 'user') {
         throw new AppError('Requesting a signature requires a human user actor', { code: 'HUMAN_APPROVAL_REQUIRED', status: 403 });
       }
-      const { definition: provider, fingerprint } = signature.getSignatureProvider(input.provider, input.providerVersion);
-      const { version } = requireApprovedVersion(modules, names, quote, input.quoteVersionId);
+      const { definition: provider, fingerprint } = registries.getSignatureProvider(input.provider, input.providerVersion);
+      // Every quote/version read below goes through commercial-quotes@1 — the
+      // declared, registry-proven edge onto the commercial package.
+      const reader = openCommercialQuotes(domains, modules, names);
+      const { version } = requireApprovedVersion(reader, quote, input.quoteVersionId);
       const signers = normalizeSigners(input.signers);
 
       const envelopes = trusted(modules, names.envelope);
@@ -388,7 +475,7 @@ export function buildRequestSignatureAction(config) {
         );
       }
       const parties = snapshotParties({ services, version });
-      const { documentBytes, documentHash } = buildDocumentPackage({ modules, names, quote, version, signers, parties });
+      const { documentBytes, documentHash } = buildDocumentPackage({ reader, quote, version, signers, parties });
       const idempotencyKey = `env:quote-version:${version.id}`;
       const requestedAt = now();
       const envelope = envelopes.createManaged(
@@ -447,8 +534,8 @@ export function buildRequestSignatureAction(config) {
     },
 
     /** No transaction is open here, and no database handle is reachable. */
-    async external({ intent, signature, step }) {
-      const { definition: provider } = signature.getSignatureProvider(intent.provider, intent.providerVersion);
+    async external({ intent, step }) {
+      const { definition: provider } = registries.getSignatureProvider(intent.provider, intent.providerVersion);
       const raw = await provider.createEnvelope({
         idempotencyKey: intent.idempotencyKey,
         documentHash: intent.documentHash,
@@ -474,7 +561,7 @@ export function buildRequestSignatureAction(config) {
     },
 
     /** Transaction B: persist the provider's answer. */
-    async finalize({ intent, external, actor, modules, services, managed, now, step }) {
+    async finalize({ intent, external, actor, modules, domains, managed, now, step }) {
       const envelopes = trusted(modules, names.envelope);
       await envelopes.applyManaged(
         intent.envelopeId,
@@ -484,7 +571,7 @@ export function buildRequestSignatureAction(config) {
       // Every state change goes through ONE code path, so a terminal answer
       // creates its artifact and its order exactly like a webhook would.
       const outcome = await applyProviderState({
-        modules, services, names,
+        modules, names,
         envelope: envelopes.get(intent.envelopeId),
         provider: intent.provider,
         state: external.envelope,
@@ -492,7 +579,20 @@ export function buildRequestSignatureAction(config) {
         eventId: null, actor, now, step,
       });
       const envelope = envelopes.get(intent.envelopeId);
-      await managed(envelope.quoteId, { signatureEnvelopeId: envelope.id, signatureStatus: envelope.status });
+      // The one bounded cross-domain write, through its declared edge:
+      // commercial-quote-binding@1 names the fields, and the write itself
+      // stays the quote record's own managed path — exactly the capability's
+      // written contract, never a second write mechanism.
+      const binding = openCommercialBinding(domains);
+      const linkage = { signatureEnvelopeId: envelope.id, signatureStatus: envelope.status };
+      for (const field of Object.keys(linkage)) {
+        if (!binding.fields.includes(field)) {
+          throw new AppError(`The commercial quote-binding capability no longer allows the "${field}" field`, {
+            code: 'QUOTE_BINDING_FIELD_REFUSED', status: 500,
+          });
+        }
+      }
+      await managed(envelope.quoteId, linkage);
       step('signature.sent', { envelopeId: envelope.id, status: envelope.status });
       return { envelope: envelopeSummary(envelope), signers: intent.signers.length, orderId: outcome.orderId ?? null };
     },
@@ -569,7 +669,7 @@ async function linkQuarantinedEvents({ modules, names, envelope, actor, step }) 
   return orphans.length;
 }
 
-async function applyProviderState({ modules, services, names, envelope, provider, state, artifact, eventId, actor, now, step }) {
+async function applyProviderState({ modules, names, envelope, provider, state, artifact, eventId, actor, now, step }) {
   const envelopes = trusted(modules, names.envelope);
   await linkQuarantinedEvents({ modules, names, envelope, actor, step });
   if (!canTransition(envelope.status, state.status)) {
@@ -599,7 +699,7 @@ async function applyProviderState({ modules, services, names, envelope, provider
   let signedArtifact = null;
   if (state.status === 'completed') {
     const evidence = await createCompletionEvidence({
-      modules, services, names, envelope, provider, artifact, eventId, actor, now, step,
+      modules, names, envelope, provider, artifact, eventId, actor, now, step,
     });
     signedArtifact = evidence.artifact;
     order = evidence.order;
@@ -617,11 +717,11 @@ async function applyProviderState({ modules, services, names, envelope, provider
  * from the approved Quote Version snapshot. Runs inside the caller's
  * transaction, so everything here commits together or not at all.
  */
-async function createCompletionEvidence({ modules, services, names, envelope, artifact, eventId, actor, now, step }) {
+async function createCompletionEvidence({ modules, names, envelope, artifact, eventId, actor, now, step }) {
   const quotes = trusted(modules, names.quote);
-  const quote = quotes.get(envelope.quoteId);
-  const versions = trusted(modules, names.version);
-  const version = versions.get(envelope.quoteVersionId);
+  const reader = moduleQuotesReader(modules, names);
+  const quote = reader.quote(envelope.quoteId);
+  const version = reader.version(envelope.quoteVersionId);
   if (version.quoteId !== envelope.quoteId) {
     throw new AppError('The envelope points at a version of another quote', { code: 'SIGNATURE_STATE_CORRUPT', status: 409 });
   }
@@ -637,7 +737,7 @@ async function createCompletionEvidence({ modules, services, names, envelope, ar
   // what was sent for signature: proof that nothing in the commercial evidence
   // moved between the request and the signature.
   const rebuilt = buildDocumentPackage({
-    modules, names, quote, version,
+    reader, quote, version,
     signers: signers.map((signer) => ({ signerKey: signer.signerKey, name: signer.name, email: signer.email, role: signer.role, order: signer.signingOrder })),
     // The parties snapshot taken at request time — never a fresh read of
     // mutable CRM rows, which would make a rename block completion forever.
@@ -695,11 +795,10 @@ async function createCompletionEvidence({ modules, services, names, envelope, ar
     return { artifact: signedArtifact, order: existingOrder };
   }
 
-  const versionLines = trusted(modules, names.versionLine)
-    .listWhere({ versionId: version.id })
+  const versionLines = [...reader.versionLines(version.id)]
     .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
-  const versionComponents = trusted(modules, names.versionComponent).listWhere({ versionId: version.id });
-  const versionTotals = trusted(modules, names.versionTotal).listWhere({ versionId: version.id });
+  const versionComponents = reader.versionComponents(version.id);
+  const versionTotals = reader.versionTotals(version.id);
 
   // Party identity comes from the snapshot taken at request time, so the order
   // renders its customer without reading — or depending on — live CRM rows.
@@ -828,10 +927,15 @@ async function createCompletionEvidence({ modules, services, names, envelope, ar
  * Both follow the external-operation contract, so neither holds a transaction
  * open across a provider call.
  *
- * @param {{database: any, events: any, modules: any, services?: any, signature: any, config?: Record<string, any>}} deps
+ * @param {{database: any, events: any, modules: any, registries: any, runExternal: Function, config?: Record<string, any>}} deps
+ *   `runExternal` is the External Operation sequencer (ADR-017) the ADR-032
+ *   bounded operation context injects — the contract without the private module.
  */
 export function createSignatureOperations(deps) {
-  const { database, events, modules, services, signature } = deps;
+  const { database, events, modules, registries, runExternal } = deps;
+  if (typeof runExternal !== 'function') {
+    throw new ValidationError('createSignatureOperations needs the injected runExternal sequencer — compose the package rather than wiring it by hand');
+  }
   const names = resolvedNames(deps.config ?? {});
   const timeoutMs = deps.config?.signatureTimeoutMs;
 
@@ -845,7 +949,7 @@ export function createSignatureOperations(deps) {
    */
   async function ingestSignatureEvent(params) {
     const providerName = typeof params.provider === 'string' ? params.provider : '';
-    const { definition: provider, fingerprint } = signature.getSignatureProviderByName(providerName);
+    const { definition: provider, fingerprint } = registries.getSignatureProviderByName(providerName);
     // Bytes end to end: verification must see exactly what the provider signed.
     const rawBody = Buffer.isBuffer(params.rawBody) ? params.rawBody : String(params.rawBody ?? '');
     const actor = params.actor ?? { type: 'system', id: `signature:${provider.name}` };
@@ -855,7 +959,7 @@ export function createSignatureOperations(deps) {
     /** @type {any} */
     let verified;
     try {
-      verified = await withExternalTimeout(
+      verified = await withTimeout(
         Promise.resolve(provider.verifyEvent({ rawBody, headers: params.headers ?? {}, config: provider.config ?? {} })),
         Number.isSafeInteger(timeoutMs) ? timeoutMs : 2_000,
         `signature provider "${provider.name}" verifyEvent`,
@@ -876,7 +980,7 @@ export function createSignatureOperations(deps) {
       .update(Buffer.isBuffer(params.rawBody) ? params.rawBody : Buffer.from(rawBody, 'utf8'))
       .digest('hex');
 
-    const { result } = await runExternalOperation({
+    const { result } = await runExternal({
       database,
       events,
       name: 'signature.event',
@@ -970,7 +1074,7 @@ export function createSignatureOperations(deps) {
         }
         const envelope = trusted(modules, names.envelope).get(intent.envelopeId);
         const outcome = await applyProviderState({
-          modules, services, names, envelope, provider,
+          modules, names, envelope, provider,
           state: { status: event.status, sequence: event.sequence, signers: event.signers, completedAt: event.occurredAt },
           artifact: external, eventId: intent.eventId, actor, now, step,
         });
@@ -999,7 +1103,7 @@ export function createSignatureOperations(deps) {
    */
   async function reconcileSignature(params) {
     const actor = params.actor ?? { type: 'system', id: 'signature-reconcile' };
-    const { result } = await runExternalOperation({
+    const { result } = await runExternal({
       database,
       events,
       name: 'signature.reconcile',
@@ -1028,7 +1132,7 @@ export function createSignatureOperations(deps) {
       },
       async external({ intent, step }) {
         if (intent.terminal) return null;
-        const { definition: provider } = signature.getSignatureProvider(intent.provider, intent.providerVersion);
+        const { definition: provider } = registries.getSignatureProvider(intent.provider, intent.providerVersion);
         // Look the envelope up by provider id when known, and otherwise by the
         // deterministic idempotency key — which is exactly how a provider
         // success whose local finalization failed is recovered.
@@ -1083,7 +1187,7 @@ export function createSignatureOperations(deps) {
         }
         const current = envelopes.get(envelope.id);
         const outcome = await applyProviderState({
-          modules, services, names, envelope: current, provider: intent.provider,
+          modules, names, envelope: current, provider: intent.provider,
           state, artifact: external.artifact, eventId: null, actor, now, step,
         });
         return { envelopeId: envelope.id, ...outcome };

@@ -210,10 +210,6 @@ function buildRouter(app) {
     // Lead Intelligence registries (ADR-015): safe, function-free metadata —
     // provider/model/policy identities, fingerprints and target data, never
     // executable rules. Additive: an older client ignores it.
-    // Signature providers and the envelope/order contract (ADR-017). Never a
-    // verification secret, an executable handler, a raw provider payload or an
-    // internal storage path. Additive; function-free.
-    ...(app.signature ? { signature: app.signature.metadata() } : {}),
     // Optional domain packages (ADR-018 addendum). Additive and function-free;
     // absent entirely when no domain is registered.
     ...(app.domains && app.domains.size > 0 ? { domains: app.domains.metadata() } : {}),

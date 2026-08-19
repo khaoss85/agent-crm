@@ -26,6 +26,16 @@ function commercialBlock(schema) {
   return schema?.commercial ?? schema?.domains?.commercial;
 }
 
+/**
+ * The signature schema block, same seam rule as the commercial one above: the
+ * ambient top-level key before the Signature extraction, the package's own
+ * contribution under `domains` after it.
+ * @param {any} schema
+ */
+function signatureBlock(schema) {
+  return schema?.signature ?? schema?.domains?.signature;
+}
+
 /** Server-generated evidence blobs; malformed data degrades to empty, never throws. */
 function parseJson(text, fallback) {
   if (typeof text !== 'string' || text === '') return fallback;
@@ -426,7 +436,7 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
     const panel = el('div', 'quote-signature');
     panel.appendChild(el('h3', undefined, 'Signature'));
     mount.appendChild(panel);
-    if (!schema.signature) {
+    if (!signatureBlock(schema)) {
       panel.appendChild(el('p', 'muted', 'Signature is not enabled in this project.'));
       return;
     }
@@ -451,7 +461,7 @@ export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
       const form = el('div', 'signature-request');
       form.appendChild(el('p', 'muted', 'Sending for signature is a real external side effect: it requires a human user actor. This is a human-actor boundary, not Sales or Legal role enforcement — real roles need the Production Spine.'));
       const providerSelect = el('select');
-      for (const provider of schema.signature.providers ?? []) {
+      for (const provider of (signatureBlock(schema).providers ?? [])) {
         const option = el('option', undefined, `${provider.label} (v${provider.version})`);
         option.setAttribute('value', `${provider.name}@${provider.version}`);
         providerSelect.appendChild(option);

@@ -186,12 +186,15 @@ generatedDomains.push(duplicateService());
 
 test('a boundary violation in a COMPOSED package fails; in a candidate it only warns', async (t) => {
   const root = project(t);
-  // `contracts` offers a capability and requires none, so it composes alone.
+  // `work` offers a capability and requires none, so it composes alone.
+  // (`contracts` played this part until the Signature & Order extraction gave
+  // it a declared record-level dependency on `signature` — it no longer
+  // composes alone.)
   writeFileSync(join(root, 'packages/domains/generated/index.js'), `// @ts-check
-import { createContractsDomain } from '../../contracts/src/index.js';
-export const generatedDomains = [createContractsDomain()];
+import { createWorkPackage } from '../../work/src/index.js';
+export const generatedDomains = [createWorkPackage()];
 `);
-  writeFileSync(join(root, 'packages/contracts/src/sneaky.js'),
+  writeFileSync(join(root, 'packages/work/src/sneaky.js'),
     "import { something } from '../../core/src/errors.js';\nexport { something };\n");
 
   const composed = await run(root);
@@ -199,12 +202,12 @@ export const generatedDomains = [createContractsDomain()];
   const graded = byId(composed.report, 'packages.source-boundary');
   assert.equal(graded.status, 'failed');
   assert.equal(graded.authority, 'authoring-rule');
-  assert.deepEqual(graded.evidence.violations, ['packages/contracts/src/sneaky.js']);
-  assert.deepEqual(graded.evidence.scanned, ['packages/contracts']);
+  assert.deepEqual(graded.evidence.violations, ['packages/work/src/sneaky.js']);
+  assert.deepEqual(graded.evidence.scanned, ['packages/work']);
 
   // The same violation in a package the application does not compose is
   // advisory: it is a real finding, and it is not a fact about what is running.
-  rmSync(join(root, 'packages/contracts/src/sneaky.js'));
+  rmSync(join(root, 'packages/work/src/sneaky.js'));
   writeFileSync(join(root, 'examples/custom-packages/partner-scorecard/src/sneaky.js'),
     "import { something } from '../../../../packages/core/src/errors.js';\nexport { something };\n");
   const candidate = await run(root);
@@ -575,10 +578,10 @@ test('the CLI exit codes are the contract', (t) => {
   assert.equal(runCli(['project', 'doctor', '--root', root, '--json']).exitCode, 0);
 
   writeFileSync(join(root, 'packages/domains/generated/index.js'), `// @ts-check
-import { createContractsDomain } from '../../contracts/src/index.js';
-export const generatedDomains = [createContractsDomain()];
+import { createWorkPackage } from '../../work/src/index.js';
+export const generatedDomains = [createWorkPackage()];
 `);
-  writeFileSync(join(root, 'packages/contracts/src/sneaky.js'), "import x from '../../core/src/errors.js';\nexport default x;\n");
+  writeFileSync(join(root, 'packages/work/src/sneaky.js'), "import x from '../../core/src/errors.js';\nexport default x;\n");
   const failed = runCli(['project', 'doctor', '--root', root, '--json']);
   assert.equal(failed.exitCode, 1);
   assert.equal(JSON.parse(failed.stdout).status, 'failed');

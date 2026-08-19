@@ -5,7 +5,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { COMMERCIAL_MANIFESTS, DOMAIN_MANIFESTS, SERVICE_MANIFESTS, STARTER_MANIFESTS, activatedContract, boot } from './helpers/contracts-project.js';
+import { COMMERCIAL_MANIFESTS, DOMAIN_MANIFESTS, SERVICE_MANIFESTS, SIGNATURE_MANIFESTS, activatedContract, boot } from './helpers/contracts-project.js';
 
 /**
  * The ADR-019 upgrade, on data that predates it.
@@ -61,17 +61,15 @@ export { boot } from './tests/helpers/contracts-project.js';
 
 function composition(root, { withService }) {
   writeFileSync(join(root, 'packages/actions/generated/index.js'), [
-    "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
-    '// The quote actions arrive with the commercial package composition below.',
-    'export const generatedActions = [buildRequestSignatureAction()];', '',
-  ].join('\n'));
-  writeFileSync(join(root, 'packages/signature/generated/index.js'), [
-    "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
-    'export const generatedSignatureProviders = [fixtureSignatureProvider];', '',
+    '// Quote actions arrive with the commercial package, request-signature',
+    '// with the signature package - both composed below.',
+    'export const generatedActions = [];', '',
   ].join('\n'));
   writeFileSync(join(root, 'packages/domains/generated/index.js'), [
     "import { createCommercialDomain } from '../../commercial/src/index.js';",
     "import { fixtureSaasCatalogProvider, standardSalesDiscountV1, standardSalesDiscountV2 } from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
+    "import { createSignatureDomain } from '../../signature/src/index.js';",
+    "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
     "import { createContractsDomain } from '../../contracts/src/index.js';",
     "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
     ...(withService ? [
@@ -83,6 +81,7 @@ function composition(root, { withService }) {
     '    catalogProviders: [fixtureSaasCatalogProvider],',
     '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
     '  }),',
+    '  createSignatureDomain({ signatureProviders: [fixtureSignatureProvider] }),',
     '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
     ...(withService ? ['  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1] }),'] : []),
     '];', '',
@@ -118,9 +117,8 @@ test('a shipped M12 project adopts M15 without losing a single obligation', asyn
   }
   writeFileSync(manifestPath, `${JSON.stringify(original, null, 2)}\n`);
 
-  const starter = join(root, 'examples/starters/b2b-lead-qualification');
   for (const manifest of COMMERCIAL_MANIFESTS) apply(join(root, 'packages/commercial/modules', manifest));
-  for (const manifest of STARTER_MANIFESTS) apply(join(starter, manifest));
+  for (const manifest of SIGNATURE_MANIFESTS) apply(join(root, 'packages/signature/modules', manifest));
   for (const manifest of DOMAIN_MANIFESTS) apply(join(root, 'packages/contracts/modules', manifest));
   composition(root, { withService: false });
 

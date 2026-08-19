@@ -37,6 +37,11 @@ function makeRepo() {
   git(['init', '--quiet']);
   git(['config', 'user.email', 'benchmark@example.test']);
   git(['config', 'user.name', 'Benchmark']);
+  // Hermetic against the host's global git config: an environment that
+  // enforces commit signing through a helper (commit.gpgsign=true with
+  // gpg.ssh.program) must not be able to fail this fixture's commits — the
+  // same line public-evidence.test.js already carries for the same reason.
+  git(['config', 'commit.gpgsign', 'false']);
   writeFileSync(join(root, 'README.md'), '# fixture\n');
   git(['add', '-A']);
   git(['commit', '--quiet', '-m', 'fixture']);

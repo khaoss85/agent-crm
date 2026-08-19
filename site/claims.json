@@ -296,7 +296,7 @@
     },
     {
       "id": "C-22",
-      "text": "One command composes the whole thing and then inspects it: 71 modules, 8 packages, 57 resources, 59 actions, 7 policies and 2 providers, applied from manifests and driven end to end — then it prints the eleven things the inspector says it cannot see.",
+      "text": "One command composes the whole thing and then inspects it: 71 modules, 9 packages, 66 resources, 59 actions, 7 policies and 1 providers, applied from manifests and driven end to end — then it prints the eleven things the inspector says it cannot see.",
       "evidence": {
         "tests": [
           "tests/app-inspect.test.js",

@@ -125,9 +125,10 @@ test('more than 500 individual values are asserted, not a summary count', () => 
 
 test('every behaviour-bearing file is owned by the digest, and the set cannot rot', () => {
   for (const file of [
-    'packages/core/src/signature-operations.js',
-    'packages/core/src/signature-registry.js',
+    'packages/signature/src/operations.js',
+    'packages/signature/src/registry.js',
     'packages/core/src/external-operation.js',
+    'packages/core/src/operation-runtime.js',
     'packages/core/src/action-runtime.js',
     'packages/commercial/src/actions.js',
     'apps/server/src/http-server.js',
@@ -149,10 +150,14 @@ test('the wiring seam owns every path that knows where Signature lives', () => {
       `${file} reaches a Signature internal directly; it belongs in the harness`);
     assert.doesNotMatch(source, /['"][^'"]*core\/src\/external-operation[^'"]*['"]/, file);
   }
-  assert.match(SIGNATURE_SOURCE.operations, /signature-operations\.js$/);
-  assert.match(SIGNATURE_SOURCE.registry, /signature-registry\.js$/);
-  // Today the domain still lives in the kernel — this flips at extraction.
-  assert.equal(existsSync(join(repoRoot, 'packages/core/src/signature-operations.js')), true);
+  assert.match(SIGNATURE_SOURCE.operations, /packages\/signature\/src\/operations\.js$/);
+  assert.match(SIGNATURE_SOURCE.registry, /packages\/signature\/src\/registry\.js$/);
+  // Post-extraction the seam points into the package, and the kernel must no
+  // longer carry the domain at all.
+  assert.equal(existsSync(join(repoRoot, 'packages/core/src/signature-operations.js')), false,
+    'the extraction is not done while the kernel still carries a Signature file');
+  assert.equal(existsSync(join(repoRoot, 'packages/signature/generated/index.js')), false,
+    'the fixed provider slot is replaced by composition, not kept alongside it');
 });
 
 test('an observation with an unknown category, classification or surface is refused', () => {

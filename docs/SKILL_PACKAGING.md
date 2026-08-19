@@ -101,8 +101,8 @@ Tier 2 is not hypothetical. A project produced by
 `examples/starters/b2b-lead-qualification/install.mjs` carries `packages/`,
 `apps/`, `examples/`, `tests/` and `package.json` — and carries no
 `ARCHITECTURE.md`, no `DECISIONS.md`, no `AGENTS.md` and no `docs/` at all. In
-that project `crm app inspect --json` reports `valid: true`, six packages, 71 records, 59 actions,
-ten resolved capabilities, zero problems and the eleven standing limitations. Every
+that project `crm app inspect --json` reports `valid: true`, nine packages, 71 records, 59 actions,
+fourteen resolved capabilities, zero problems and the eleven standing limitations. Every
 `projectSurface` path declared by a tier-2 skill resolves there; every
 `repositorySurface` path it declares does not. That asymmetry is the whole point
 of separating the two fields.
@@ -122,7 +122,7 @@ repository than in a customer's project. The command is right in both.
 | `create-crm-workflow` | 2 — `generated-project` | reads the workflow engine and an existing workflow in the project's own source |
 | `build-lead-intelligence` | 2 — `generated-project` | registers a provider or policy in `packages/intelligence/generated/index.js` |
 | `build-commercial-operations` | 2 — `generated-project` | composes `createCommercialDomain` in `packages/domains/generated/index.js` and uses the package's pricing helpers |
-| `build-signature-order` | 2 — `generated-project` | registers in `packages/signature/generated/index.js` |
+| `build-signature-order` | 2 — `generated-project` | composes `createSignatureDomain` in `packages/domains/generated/index.js` |
 | `build-contract-activation` | 2 — `generated-project` | authors a domain package against `packages/core/index.js` and the static composition file |
 | `build-delivery-handover` | 2 — `generated-project` | needs the `contracts/delivery-obligations@1` capability to resolve, which the report tells it |
 | `build-custom-domain-package` | 2 — `generated-project` | authors and then runs `crm package validate` — the same validator startup runs |

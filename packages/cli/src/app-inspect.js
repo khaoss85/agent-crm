@@ -60,7 +60,6 @@ const COMPOSITION = Object.freeze([
   { key: 'modules', path: 'packages/modules/generated/index.js', exportName: 'generatedModules' },
   { key: 'actions', path: 'packages/actions/generated/index.js', exportName: 'generatedActions' },
   { key: 'pipelines', path: 'packages/pipelines/generated/index.js', exportName: 'generatedPipelines' },
-  { key: 'signature', path: 'packages/signature/generated/index.js', exportName: null },
 ]);
 
 /** Handwritten kernel modules. They are composed by the kernel, not by a project. */
@@ -252,6 +251,11 @@ export async function inspectApplication({ rootDir: requested }) {
       provides: (pkg.capabilities ?? [])
         .map((entry) => ({ name: entry.name, version: entry.version, description: entry.description ?? null }))
         .sort((a, b) => compare(`${a.name}@${a.version}`, `${b.name}@${b.version}`)),
+      // Declared application-scoped operations (ADR-032): additive, and gone
+      // when the package detaches.
+      operations: (pkg.operations ?? [])
+        .map((entry) => ({ name: entry.name, ...(entry.appMethod ? { appMethod: entry.appMethod } : {}) }))
+        .sort((a, b) => compare(a.name, b.name)),
       policies: [...composition.policies.values()]
         .filter((entry) => entry.domain === pkg.name)
         .map((entry) => `${entry.kind}/${entry.definition.name}@${entry.definition.version}`)
@@ -503,7 +507,6 @@ function collectProviders(loaded, problems, rootDir) {
       });
     }
   };
-  push('signature', 'signature-provider', loaded.signature?.generatedSignatureProviders);
   push('pipelines', 'pipeline', loaded.pipelines?.generatedPipelines);
   void rootDir;
   return rows.sort((a, b) => compare(

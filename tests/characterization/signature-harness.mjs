@@ -76,7 +76,7 @@ export const SIGNATURE_LIMITATIONS = Object.freeze([
   ['WALL_CLOCK_FIELDS_MASKED', 'ingest/reconcile timestamps (receivedAt, sentAt, failedAt, …) come from the wall clock — createSignatureOperations does not receive the injected app clock — so they are asserted by presence, not value. completedAt/acceptedAt come from the deterministic fixture event and are asserted by value'],
   ['ADMIN_DATA_NOT_PIXELS', 'the Admin surface is characterized as the data its reads return (records, capabilities, refusal statuses), not as rendered DOM. Browser behaviour is the repository-wide manual gap QUALITY_GATES §4 records'],
   ['ARTIFACT_BYTES_NOT_STORED', 'artifactHash is provider-reported and the artifact bytes are never downloaded or hashed locally; this baseline freezes exactly that weaker guarantee and no stronger one'],
-  ['SINGLE_ATTACHMENT_SHAPE', 'the baseline records how Signature was attached when generated (kernel-wired action + fixed provider slot). Comparing baselines generated under different attachment shapes compares two different applications; the contract carries the shape so that cannot happen silently'],
+  ['SINGLE_ATTACHMENT_SHAPE', 'the baseline records how Signature was attached when generated. Comparing baselines generated under different attachment shapes compares two different applications; the contract carries the shape so that cannot happen silently'],
 ]);
 
 /**
@@ -108,13 +108,16 @@ export function buildSignatureBaseline({ observations, source }) {
 }
 
 /**
- * How Signature & Order is attached to a project **today**: the
- * `request-signature` action is registered by the project's generated-actions
- * file importing a kernel module, the provider lives in the fixed
- * `packages/signature/generated/` slot, and the webhook/reconcile routes are
- * owned by `apps/server`. The extraction changes exactly this shape.
+ * How Signature & Order is attached to a project **today**: one composition
+ * entry in `packages/domains/generated/index.js` (`createSignatureDomain`).
+ * The `request-signature` action and the two application operations arrive
+ * with the package (ADR-032); the webhook/reconcile routes stay kernel-owned,
+ * delegating to the composed operations. Before the extraction this was a
+ * kernel action import plus the fixed provider slot — `ATTACHMENT` records
+ * which shape produced a baseline so a comparison across the move is never
+ * silently comparing two different applications.
  */
-export const ATTACHMENT = 'kernel-wired-action-and-fixed-provider-slot';
+export const ATTACHMENT = 'composed-domain-package';
 
 /**
  * **Every path that knows where Signature & Order lives today, in one place.**
@@ -123,8 +126,8 @@ export const ATTACHMENT = 'kernel-wired-action-and-fixed-provider-slot';
  * `tests/characterization/signature-*` changes.
  */
 export const SIGNATURE_SOURCE = Object.freeze({
-  operations: '../../packages/core/src/signature-operations.js',
-  registry: '../../packages/core/src/signature-registry.js',
+  operations: '../../packages/signature/src/operations.js',
+  registry: '../../packages/signature/src/registry.js',
   /** Patterns for the architecture-evidence cases, kept in the seam. */
   greps: Object.freeze([
     'signature-operations.js', 'signature-registry.js', 'signature/generated',
@@ -148,6 +151,12 @@ export const COMMERCIAL_WIRING = Object.freeze({
   starter: '../../../examples/starters/b2b-lead-qualification/commercial.js',
 });
 
+/** Where the composed signature package and its fixture provider live. */
+export const SIGNATURE_WIRING = Object.freeze({
+  domain: '../../signature/src/index.js',
+  starter: '../../../examples/starters/b2b-lead-qualification/signature.js',
+});
+
 /** Load the Signature internals through the seam. */
 export async function loadSignatureInternals() {
   const operations = await import(SIGNATURE_SOURCE.operations);
@@ -156,9 +165,29 @@ export async function loadSignatureInternals() {
   return { operations, registry, externalOperation };
 }
 
-/** Where the published schema block lives — the location is the seam's business. */
+/**
+ * Where the published schema block lives — the location is the seam's
+ * business, the CONTENTS are the contract. Under `domains`, the package
+ * registry spreads its own composition envelope (contract version, resources,
+ * requires, provides, actions, operations, …) around the package's metadata;
+ * those keys are the registry's publication about ANY package — reserved, so
+ * a package can never redeclare them — and are frozen elsewhere (AX1,
+ * conformance), never part of the ADR-017 block this baseline compares. The
+ * seam strips them so the block observation keeps comparing exactly the
+ * domain contract it always compared.
+ */
+const COMPOSITION_ENVELOPE_KEYS = Object.freeze([
+  'packageContract', 'version', 'label', 'description',
+  'resources', 'requires', 'provides', 'actions', 'policies', 'operations',
+]);
+
 export function signatureSchemaBlock(schema) {
-  return schema?.signature ?? schema?.domains?.signature?.metadata ?? schema?.domains?.signature;
+  if (schema?.signature) return schema.signature;
+  const block = schema?.domains?.signature?.metadata ?? schema?.domains?.signature;
+  if (!block || typeof block !== 'object') return block;
+  const out = { ...block };
+  for (const key of COMPOSITION_ENVELOPE_KEYS) delete out[key];
+  return out;
 }
 
 export function signatureSchemaLocation(schema) {
@@ -188,7 +217,7 @@ export const SIGNATURE_MANIFESTS = Object.freeze([
     'signature-event.module.json', 'signed-artifact.module.json',
     'order.module.json', 'order-line.module.json', 'order-component.module.json',
     'order-tier.module.json', 'order-total.module.json',
-  ].map((name) => Object.freeze(['examples/starters/b2b-lead-qualification', name])),
+  ].map((name) => Object.freeze(['packages/signature/modules', name])),
 ]);
 
 /** The fixed clock. Wall-clock leakage is handled by `stable()` masking. */
@@ -205,9 +234,12 @@ export const FIXTURE_COMPLETED_AT = '2026-08-05T12:00:00.000Z';
  * changes what this baseline sees and must stale it.
  */
 export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
-  'packages/core/src/signature-operations.js',
-  'packages/core/src/signature-registry.js',
+  'packages/signature/src/index.js',
+  'packages/signature/src/operations.js',
+  'packages/signature/src/registry.js',
+  'packages/signature/src/capability.js',
   'packages/core/src/external-operation.js',
+  'packages/core/src/operation-runtime.js',
   'packages/core/src/action-runtime.js',
   'packages/core/src/definition-fingerprint.js',
   'packages/core/src/money.js',
@@ -234,7 +266,13 @@ export function unownedSignatureSource(rootDir) {
   const owned = new Set(BEHAVIOUR_BEARING_SOURCE);
   const found = [];
   for (const name of readdirSync(join(rootDir, 'packages/core/src'))) {
-    if (/signature|external-operation/i.test(name)) found.push(`packages/core/src/${name}`);
+    if (/signature|external-operation|operation-runtime/i.test(name)) found.push(`packages/core/src/${name}`);
+  }
+  for (const name of readdirSync(join(rootDir, 'packages/signature/src'))) {
+    if (/\.(mjs|js)$/.test(name)) found.push(`packages/signature/src/${name}`);
+  }
+  for (const name of readdirSync(join(rootDir, 'packages/signature/modules'))) {
+    if (name.endsWith('.module.json')) found.push(`packages/signature/modules/${name}`);
   }
   const starter = 'examples/starters/b2b-lead-qualification';
   for (const name of readdirSync(join(rootDir, starter))) {
@@ -249,35 +287,31 @@ export function unownedSignatureSource(rootDir) {
 }
 
 /**
- * Wire Signature the way a project does today: the `request-signature` action
- * is registered by the project's generated-actions file importing the kernel
- * builder, the fixture signature provider lives in the fixed
- * `packages/signature/generated/` slot, and the Commercial domain the journey
- * prices against arrives as a composed package (`createCommercialDomain`) —
- * the post-#79 shape; the fixed `packages/commercial/generated` slot is gone.
+ * Wire Signature the way a project does today: both domains arrive as
+ * composed packages, and the action, providers and application operations
+ * travel with them. No fixed slot remains for either.
  */
 export function wireSignature(root) {
   writeFileSync(join(root, 'packages/actions/generated/index.js'), [
     '// @ts-check',
-    "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
-    '// The quote actions arrive with the composed commercial package.',
-    'export const generatedActions = [buildRequestSignatureAction()];',
+    '// Quote actions arrive with the commercial package, request-signature',
+    '// with the signature package - both composed below.',
+    'export const generatedActions = [];',
     '',
   ].join('\n'));
   writeFileSync(join(root, 'packages/domains/generated/index.js'), [
     '// @ts-check',
     `import { createCommercialDomain } from '${COMMERCIAL_WIRING.domain}';`,
     `import { fixtureSaasCatalogProvider, standardSalesDiscountV1, standardSalesDiscountV2 } from '${COMMERCIAL_WIRING.starter}';`,
-    'export const generatedDomains = [createCommercialDomain({',
-    '  catalogProviders: [fixtureSaasCatalogProvider],',
-    '  discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
-    '})];',
-    '',
-  ].join('\n'));
-  writeFileSync(join(root, 'packages/signature/generated/index.js'), [
-    '// @ts-check',
-    "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
-    'export const generatedSignatureProviders = [fixtureSignatureProvider];',
+    `import { createSignatureDomain } from '${SIGNATURE_WIRING.domain}';`,
+    `import { fixtureSignatureProvider } from '${SIGNATURE_WIRING.starter}';`,
+    'export const generatedDomains = [',
+    '  createCommercialDomain({',
+    '    catalogProviders: [fixtureSaasCatalogProvider],',
+    '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
+    '  }),',
+    '  createSignatureDomain({ signatureProviders: [fixtureSignatureProvider] }),',
+    '];',
     '',
   ].join('\n'));
 }

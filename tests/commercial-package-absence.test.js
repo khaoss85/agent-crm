@@ -191,12 +191,13 @@ test('the kernel carries no Commercial source, and the one recorded residue is a
   assert.doesNotMatch(readFileSync(join(repoRoot, 'packages/cli/src/app-inspect.js'), 'utf8'), /commercial/i,
     'AX1 must discover the package rather than keep a fixed slot');
 
-  // The B7 residue in create-app is an ATTACHMENT of package-owned code, not a
-  // bridge to kernel-owned code: the factory may look the composed package up
-  // by name, but it must not import Commercial source, construct its
-  // registries, or read a fixed definition slot.
+  // The B7 residue is GONE (ADR-032): the factory no longer looks the package
+  // up by name at all. `app.syncCatalog` is the package's own declared
+  // operation alias, attached generically by the composition — no static
+  // import, no kernel-side construction, and no domain name in create-app.
   const factory = readFileSync(join(repoRoot, 'packages/app/src/create-app.js'), 'utf8');
   assert.doesNotMatch(factory, /from '[^']*commercial[^']*'/, 'no static import of any Commercial file');
   assert.doesNotMatch(factory, /CommercialRegistries|createCatalogSync\(/, 'no kernel-side construction of the domain');
-  assert.match(factory, /createCatalogSyncOperation/, 'the attachment reaches only the package-exposed operation');
+  assert.doesNotMatch(factory, /commercial/i, 'no domain-named lookup survives the operations seam');
+  assert.match(factory, /composePackageOperations/, 'operations are attached generically through the ADR-032 seam');
 });

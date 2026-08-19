@@ -1,5 +1,5 @@
 {
-  "attachment": "kernel-wired-action-and-fixed-provider-slot",
+  "attachment": "composed-domain-package",
   "counts": {
     "compatibility_required": 3,
     "contractual": 96,
@@ -45,7 +45,7 @@
     },
     {
       "code": "SINGLE_ATTACHMENT_SHAPE",
-      "message": "the baseline records how Signature was attached when generated (kernel-wired action + fixed provider slot). Comparing baselines generated under different attachment shapes compares two different applications; the contract carries the shape so that cannot happen silently"
+      "message": "the baseline records how Signature was attached when generated. Comparing baselines generated under different attachment shapes compares two different applications; the contract carries the shape so that cannot happen silently"
     }
   ],
   "observations": [
@@ -81,9 +81,7 @@
       "classification": "pre_extraction_evidence",
       "id": "architecture.app-signature-consumers",
       "note": "Every file that reads the ambient app.signature registry handle, in code.",
-      "observed": [
-        "apps/server/src/http-server.js"
-      ],
+      "observed": [],
       "surface": "sdk"
     },
     {
@@ -109,7 +107,7 @@
       "note": "The evidence behind the neutral-helper verdict: the generic action runtime imports it for any externalOperation action; signature-operations.js is today its only other direct caller.",
       "observed": [
         "packages/core/src/action-runtime.js",
-        "packages/core/src/signature-operations.js"
+        "packages/core/src/operation-runtime.js"
       ],
       "surface": "sdk"
     },
@@ -148,7 +146,7 @@
       "id": "architecture.schema-signature-block-present",
       "note": "Published today as an ambient `signature` block on /api/schema. After extraction it should be the package's own schema contribution — a deliberate migration, not a behaviour change to hide.",
       "observed": {
-        "foundAt": "schema.signature",
+        "foundAt": "schema.domains.signature",
         "present": true
       },
       "surface": "schema"
@@ -158,10 +156,7 @@
       "classification": "pre_extraction_evidence",
       "id": "architecture.signature-generated-slot-dependants",
       "note": "Who depends on the fixed project-owned provider slot packages/signature/generated/.",
-      "observed": [
-        "packages/app/src/create-app.js",
-        "packages/cli/src/app-inspect.js"
-      ],
+      "observed": [],
       "surface": "app-inspect"
     },
     {
@@ -169,13 +164,7 @@
       "classification": "pre_extraction_evidence",
       "id": "architecture.signature-internal-importers",
       "note": "Every file with a real import statement naming a Signature internal. Scanner limits: LEXICAL_NOT_SYNTACTIC — comments and literals are stripped, but no AST is built; ALIASING_NOT_TRACKED — a consumer that copies the field to another name first is not followed; DYNAMIC_KEYS_NOT_RESOLVED — a computed property name built at runtime is not evaluated.",
-      "observed": [
-        "examples/journeys/service-sla-escalation/journey.mjs",
-        "examples/starters/b2b-lead-qualification/install.mjs",
-        "examples/starters/b2b-lead-qualification/signature.js",
-        "packages/app/src/create-app.js",
-        "packages/core/src/signature-operations.js"
-      ],
+      "observed": [],
       "surface": "sdk"
     },
     {
@@ -2776,19 +2765,10 @@
     }
   ],
   "source": {
-    "apps/server/src/http-server.js": "afe47f374127ec22ee431f5076136d3ef63e56f2df42ed44515b2ccb5d42c021",
+    "apps/server/src/http-server.js": "386586132eb149cbf93267f1c902674e81149d52a437bfcb095f5786f68d4d9a",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
-    "examples/starters/b2b-lead-qualification/order-component.module.json": "8883bbb80b1a2068f25004c45c6ed5506acbe9126f10823b7ffdfae5704cf746",
-    "examples/starters/b2b-lead-qualification/order-line.module.json": "03e6f0dbdf3106203bf16b330304ad5fd499e5c41cd10e0415da09f3705573ac",
-    "examples/starters/b2b-lead-qualification/order-tier.module.json": "6d86fb6c0453df866d5004d4e6120c1e93aa8ac04607d0b66809d25345e8bd97",
-    "examples/starters/b2b-lead-qualification/order-total.module.json": "2d829f70a33f821a996cbf2453486723d07c15aaf54d21239a1f2c894eb7cbfd",
-    "examples/starters/b2b-lead-qualification/order.module.json": "23c4860ad08b04a537f73e8c1b05ed86f8250a6c6bd6ed9f8555029cc63f7fed",
-    "examples/starters/b2b-lead-qualification/signature-envelope.module.json": "ae47f69988592b890ffeec5261595d5d5529e386116f6e428798fdcafca1dba3",
-    "examples/starters/b2b-lead-qualification/signature-event.module.json": "2158484e29c6f76ff4708e055f46fce142ec963677388e9a3ad1c3422ffa7eb0",
-    "examples/starters/b2b-lead-qualification/signature-signer.module.json": "a463d01186ff8b60778565d37bdb0332b13fdf9f8033f90636e0cabb4bfb53f6",
-    "examples/starters/b2b-lead-qualification/signature.js": "dafc3487e8fca7b0242e74659b2e5fea3778dd1c011b2e2a8713ccdcf9195efa",
-    "examples/starters/b2b-lead-qualification/signed-artifact.module.json": "8f783ce318c59d86be6987290382db542c5023d95e65986667b47d612e1f4e53",
-    "packages/app/src/create-app.js": "a71b83e7d65d2acf176cc5115ee773ecb52889f62ce8c115d8665db437e2f88f",
+    "examples/starters/b2b-lead-qualification/signature.js": "e2f34c4e71f9a03f8ced77ba23b9a09c3da8ab6b9731db91cee12cf778ba4765",
+    "packages/app/src/create-app.js": "9123b5ef368086f467fc0894baf0bb2e16554207b687469737b713dac3c8c3ca",
     "packages/commercial/modules/catalog-sync-run.module.json": "509281aedba609303861b1097d4b9c7239fd85dcfb9b2d8c54e9c570aee0fc29",
     "packages/commercial/modules/offer.module.json": "3eb3c85338d22f8a8962ed0c0c0fe79da0007e8c4e66a44aad14d9b8bbca22c4",
     "packages/commercial/modules/price-book.module.json": "35793cdd5dca999c30760f055622b607d1e68b215b4f9ceaf8fac63ce1b0a670",
@@ -2806,15 +2786,27 @@
     "packages/commercial/src/actions.js": "ff96a1de7311aa398ae9fc951f0c1aadc53c0d26e86baf7994866c38ccfbe1c9",
     "packages/commercial/src/capability.js": "eecf075298574d0fc0d8b1a22bb95702405c36479cdf1c2add633f849857f121",
     "packages/commercial/src/catalog-sync.js": "f9ac765ce30ebde27e35aa9f441f417dd1da640a70a98dbb7a013b900489bdb4",
-    "packages/commercial/src/index.js": "b3175983605a733ff99db16d5a417f4e5d6ceab2304ab32e36915ae24499cdb6",
+    "packages/commercial/src/index.js": "e91b1cfdf8a0650aa789b043dc847c68d7867a9445812a48beacace2db8c4e21",
     "packages/commercial/src/money.js": "5a2716542ebac08388b75d425c0c8c7b91b3dbc8ec756e42927d6d9b203d5a86",
     "packages/commercial/src/registry.js": "b10cf6027eb889385ac9169502cfebf91036108af22ae631735ae60dacc4c07b",
-    "packages/core/src/action-runtime.js": "8824d7698d2380dd74f9d2c842f04814ed16cccf4cf4fe6bc49d9917d0b6cc9f",
+    "packages/core/src/action-runtime.js": "45bf0027248180f2fc9ea9edf5a5e0b82c7dbfa84d9b9b76568ea4c2f897d1f6",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
     "packages/core/src/external-operation.js": "a42f0be7e894cdce0c1ee1845e04930dddd64fe68a32929e965c2c8a57ec9fbe",
     "packages/core/src/money.js": "67d7c03a14cf053e1e6f52d73ed2ca96608a8c3992615fe6a6738bcfc930e705",
-    "packages/core/src/signature-operations.js": "6c2910004aceb14a6d9a4a6678bd14a0375d6da59da7b8ae4aaebc476d6cf845",
-    "packages/core/src/signature-registry.js": "14985af898df5939fac4a16cc5a0242426d732ac767e7bb8227a9ce643da6869",
-    "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325"
+    "packages/core/src/operation-runtime.js": "66e5bd5435d80732c58acd901b58da227dfc353b722d71a68a72e3bf3a0405c1",
+    "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325",
+    "packages/signature/modules/order-component.module.json": "8883bbb80b1a2068f25004c45c6ed5506acbe9126f10823b7ffdfae5704cf746",
+    "packages/signature/modules/order-line.module.json": "03e6f0dbdf3106203bf16b330304ad5fd499e5c41cd10e0415da09f3705573ac",
+    "packages/signature/modules/order-tier.module.json": "6d86fb6c0453df866d5004d4e6120c1e93aa8ac04607d0b66809d25345e8bd97",
+    "packages/signature/modules/order-total.module.json": "2d829f70a33f821a996cbf2453486723d07c15aaf54d21239a1f2c894eb7cbfd",
+    "packages/signature/modules/order.module.json": "23c4860ad08b04a537f73e8c1b05ed86f8250a6c6bd6ed9f8555029cc63f7fed",
+    "packages/signature/modules/signature-envelope.module.json": "ae47f69988592b890ffeec5261595d5d5529e386116f6e428798fdcafca1dba3",
+    "packages/signature/modules/signature-event.module.json": "2158484e29c6f76ff4708e055f46fce142ec963677388e9a3ad1c3422ffa7eb0",
+    "packages/signature/modules/signature-signer.module.json": "a463d01186ff8b60778565d37bdb0332b13fdf9f8033f90636e0cabb4bfb53f6",
+    "packages/signature/modules/signed-artifact.module.json": "8f783ce318c59d86be6987290382db542c5023d95e65986667b47d612e1f4e53",
+    "packages/signature/src/capability.js": "ad1c90779f4757cab59ee33e414e2799b0fd0c1e5878ea946d141a73c9090a81",
+    "packages/signature/src/index.js": "407463c2f3d9f1026339b06641c7e8037b0ce9310ec9ef3ead8cfa6a53c68763",
+    "packages/signature/src/operations.js": "2383a9b762c25652cf11245b61c5a7488b06fb80fb45f84839042097075107c6",
+    "packages/signature/src/registry.js": "685721b7345a76bdbaa5fd4495243b99c3d8dd4c465538799530ace4e5b35bdd"
   }
 }

@@ -384,7 +384,7 @@ function compose(root) {
     'signature-event.module.json', 'signed-artifact.module.json',
     'order.module.json', 'order-line.module.json', 'order-component.module.json',
     'order-tier.module.json', 'order-total.module.json',
-  ]) applyModule(root, join(starter, manifest));
+  ]) applyModule(root, join(root, 'packages', 'signature', 'modules', manifest));
   for (const manifest of [
     'contract-activation.module.json', 'commercial-contract.module.json',
     'contract-version.module.json', 'contract-line.module.json',
@@ -400,17 +400,9 @@ function compose(root) {
 
   writeFileSync(join(root, 'packages', 'actions', 'generated', 'index.js'), [
     '// @ts-check',
-    "import { buildRequestSignatureAction } from '../../core/src/signature-operations.js';",
-    '',
-    '// The quote actions arrive with the commercial package below.',
-    'export const generatedActions = [buildRequestSignatureAction()];',
-    '',
-  ].join('\n'));
-  writeFileSync(join(root, 'packages', 'signature', 'generated', 'index.js'), [
-    '// @ts-check',
-    "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
-    '',
-    'export const generatedSignatureProviders = [fixtureSignatureProvider];',
+    '// Quote actions arrive with the commercial package, request-signature',
+    '// with the signature package - both composed below.',
+    'export const generatedActions = [];',
     '',
   ].join('\n'));
   // The composition file is the ONLY place a project names its packages.
@@ -423,6 +415,8 @@ function compose(root) {
     '  standardSalesDiscountV1,',
     '  standardSalesDiscountV2,',
     "} from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
+    "import { createSignatureDomain } from '../../signature/src/index.js';",
+    "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
     "import { createContractsDomain } from '../../contracts/src/index.js';",
     "import { createServicePackage } from '../../service/src/index.js';",
     "import { b2bSaasOrderActivationV1, b2bSaasOrderActivationV2 } from '../../../examples/starters/b2b-lead-qualification/contracts.js';",
@@ -436,6 +430,7 @@ function compose(root) {
     '    catalogProviders: [fixtureSaasCatalogProvider],',
     '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
     '  }),',
+    '  createSignatureDomain({ signatureProviders: [fixtureSignatureProvider] }),',
     '  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),',
     '  createServicePackage({ policies: [b2bServiceActivationV1, b2bServiceActivationPremiumOnlyV1] }),',
     '];',

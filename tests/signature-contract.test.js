@@ -16,8 +16,8 @@ import {
   normalizeProviderEvent,
   validateSignatureProvider,
   verifyHmacSignature,
-} from '../packages/core/src/signature-registry.js';
-import { byteOrder, canonicalDocument, canonicalJson, normalizeSigners } from '../packages/core/src/signature-operations.js';
+} from '../packages/signature/src/registry.js';
+import { byteOrder, canonicalDocument, canonicalJson, normalizeSigners } from '../packages/signature/src/operations.js';
 import { validateActionInput } from '../packages/core/src/action-runtime.js';
 import { validateActionDefinition } from '../packages/core/src/action-registry.js';
 import { freezePhaseValue, withExternalTimeout } from '../packages/core/src/external-operation.js';
