@@ -60,7 +60,15 @@ export function createContractsDomain(options = {}) {
     // any declared `termsSource` is unclassified, and reports `signed: null`
     // instead of a confident `false` for a source nobody decided about — both
     // observable changes to what a consumer is told, so the version moved.
-    version: 4,
+    // 5: the Signature & Order extraction added the declared
+    // `signature/signature-orders@1` requirement. "A package version describes
+    // its composition contract, including `requires`, not only its
+    // consumer-visible records/actions": the new required edge changes
+    // composability (contracts no longer composes without signature), startup
+    // behaviour when Signature is absent, AX1's reported graph, and deployment
+    // compatibility — so the version moved with it. Records, actions and every
+    // offered capability are untouched.
+    version: 5,
     label: 'Contracts and subscriptions',
     description: 'Activates a signed immutable Order into a commercial contract, a subscription and pending delivery/service obligations.',
     resources: [...CONTRACTS_RESOURCES],

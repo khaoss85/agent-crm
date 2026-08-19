@@ -150,16 +150,16 @@ test('the first-party contracts package conforms', () => {
     definition: createContractsDomain({ policies: [b2bSaasOrderActivationV1] }),
     dir: join(repoRoot, 'packages/contracts'),
     expected: {
-      // Version 4: M15 added `service-obligations@1` and M16a added the
-      // read-only `contract-lifecycle-source@1`. The post-merge audit moved
-      // that one capability to @2 — it now refuses to open while any declared
-      // `termsSource` is unclassified, and reports `signed: null` rather than a
-      // confident `false` for a source nobody decided about. A capability whose
-      // answers changed shape gets a new version, so the package version moved
-      // with it. Every M12 resource, action and `delivery-obligations@1` are
-      // untouched, and `packageContract: 1` did not move.
+      // Version 5: the Signature & Order extraction added the declared
+      // `signature/signature-orders@1` requirement, and a package version
+      // describes its composition contract, including `requires`, not only
+      // its consumer-visible records/actions — the new required edge changes
+      // composability, absent-Signature startup behaviour, AX1's reported
+      // graph and deployment compatibility. (Version 4 was the
+      // `contract-lifecycle-source@2` move.) Every resource, action, offered
+      // capability and `packageContract: 1` are untouched by 5.
       name: 'contracts',
-      version: 4,
+      version: 5,
       resources: [
         'commercial-contract', 'contract-version', 'contract-line', 'contract-activation',
         'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
