@@ -1,0 +1,65 @@
+{
+  "manifestVersion": 1,
+  "name": "quote-version-term",
+  "description": "The immutable term snapshot of one quote version, frozen by quote.submit in the same transaction as the version itself and never rewritten. These are the exact values the canonical signature document embeds and the document hash covers, so a term change after submission is a new version with a new hash. Absent for versions submitted without a draft term.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "versionId",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "quoteId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "effectiveDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termStartDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termEndDate",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "termDays",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "autoRenew",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "renewalNoticeDays",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "termsContract",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "termsFingerprint",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

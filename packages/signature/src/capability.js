@@ -24,6 +24,7 @@ function resolvedNames(config = {}) {
     orderLine: config.orderLineModule ?? 'order-line',
     orderComponent: config.orderComponentModule ?? 'order-component',
     orderTotal: config.orderTotalModule ?? 'order-total',
+    orderTerm: config.orderTermModule ?? 'order-term',
     envelope: config.envelopeModule ?? 'signature-envelope',
     artifact: config.artifactModule ?? 'signed-artifact',
   };
@@ -94,7 +95,7 @@ export function createSignatureOrdersCapability(config) {
     name: 'signature-orders',
     version: 1,
     description:
-      'Read a signed immutable Order and its evidence: the order row, position-ordered lines, per-line price components, grouped totals, the signature envelope and the signed artifact. Grants no write, no envelope lifecycle, no provider access and no storage handle.',
+      'Read a signed immutable Order and its evidence: the order row, position-ordered lines, per-line price components, grouped totals, the signed commercial term when the signed document carried one, the signature envelope and the signed artifact. Grants no write, no envelope lifecycle, no provider access and no storage handle.',
     /** @param {{modules?: any, consumer?: string}} context */
     create(context = {}) {
       const modules = requireModules(context, 'signature-orders@1');
@@ -125,6 +126,28 @@ export function createSignatureOrdersCapability(config) {
         orderTotals(orderId) {
           return Object.freeze(service(modules, names.orderTotal).listWhere({ orderId })
             .map((row) => Object.freeze({ ...row })));
+        },
+
+        /**
+         * The Order's signed commercial term, or null. Null is the ordinary
+         * historical case — every order whose signed document carried no term
+         * — and a consumer must present it as absent-unknown, never as a
+         * decided term. Additive on capability version 1: every pre-existing
+         * answer is byte-identical; a new read the next consumer opts into is
+         * not a changed answer shape (the M16a precedent that bumps a
+         * version). A project without the order-term manifest answers null.
+         * @param {string} orderId
+         */
+        orderTerm(orderId) {
+          if (typeof orderId !== 'string' || orderId === '') return null;
+          let terms = null;
+          try {
+            terms = modules.get(names.orderTerm)?.service ?? null;
+          } catch {
+            terms = null;
+          }
+          const record = terms ? (terms.listWhere({ orderId })[0] ?? null) : null;
+          return record ? Object.freeze({ ...record }) : null;
         },
 
         /** The signature envelope named by the order's provenance, or null. @param {string} envelopeId */
