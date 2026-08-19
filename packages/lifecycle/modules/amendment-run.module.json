@@ -1,0 +1,36 @@
+{
+  "manifestVersion": 1,
+  "name": "amendment-run",
+  "description": "One governed renewal/amendment round on a source commercial contract (M16b, ADR-034): what a human opened, which signed successor Order was attached to it, what the evidence said at that moment, and how the round ended. The recorded state is an OBSERVATION, never an authorisation — execution recomputes every fact authoritatively inside its own transaction, so a run that reads 'ready' authorises nothing on its own. No state here moves on a clock: there is no scheduler and no automatic renewal. Read-only publicly: a run exists only through the lifecycle package's actions.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "sourceContractId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "round", "type": "integer", "writable": "managed" },
+    {
+      "name": "state",
+      "type": "enum",
+      "values": ["planned", "awaiting_signed_order", "ready", "executed", "abandoned"],
+      "index": true,
+      "writable": "managed"
+    },
+    { "name": "reason", "type": "string", "writable": "managed" },
+    { "name": "decisionId", "type": "string", "writable": "managed" },
+    { "name": "followupId", "type": "string", "writable": "managed" },
+    { "name": "successorOrderId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "readinessGapsJson", "type": "string", "writable": "managed" },
+    { "name": "readinessObservedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "observedClassification", "type": "string", "writable": "managed" },
+    { "name": "openedBy", "type": "string", "writable": "managed" },
+    { "name": "openedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "attachedBy", "type": "string", "writable": "managed" },
+    { "name": "attachedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "successionId", "type": "string", "writable": "managed" },
+    { "name": "successorContractId", "type": "string", "writable": "managed" },
+    { "name": "executedClassification", "type": "string", "writable": "managed" },
+    { "name": "executedBy", "type": "string", "writable": "managed" },
+    { "name": "executedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "abandonReason", "type": "string", "writable": "managed" },
+    { "name": "abandonedBy", "type": "string", "writable": "managed" },
+    { "name": "abandonedAt", "type": "timestamp", "writable": "managed" }
+  ]
+}

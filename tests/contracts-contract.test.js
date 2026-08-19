@@ -102,13 +102,13 @@ test('the contracts domain declares its resources, limits and human boundary', (
   const metadata = built.metadata();
   // Resources are declared on the package itself now — that is what makes a
   // collision between two packages detectable before boot.
-  assert.equal(built.resources.length, 8);
+  assert.equal(built.resources.length, 9);
   assert.ok(built.resources.includes('delivery-obligation'));
   // …and the package offers exactly one capability to other packages.
   assert.deepEqual(built.capabilities.map((entry) => `${entry.name}@${entry.version}`).sort(),
-    ['contract-lifecycle-source@2', 'delivery-obligations@1', 'service-obligations@1'],
-    'each addition is additive: M15 added the service half, M16a added the read-only lifecycle source, '
-    + 'and delivery-obligations@1 is untouched by both');
+    ['contract-lifecycle-source@2', 'contracts-successor-activation@1', 'delivery-obligations@1', 'service-obligations@1'],
+    'each addition is additive: M15 added the service half, M16a added the read-only lifecycle source, M16b added '
+    + 'successor activation, and delivery-obligations@1 is untouched by all three');
   assert.deepEqual(metadata.classification.commercialActivation, [...COMMERCIAL_ACTIVATIONS]);
   assert.deepEqual(metadata.classification.obligations, [...OBLIGATION_TYPES]);
   assert.deepEqual(metadata.classification.dimensions, ['commercial', 'obligations']);
@@ -122,8 +122,16 @@ test('the contracts domain declares its resources, limits and human boundary', (
   assert.ok(metadata.humanApproval.includes('not Sales/Legal/Finance role enforcement'));
   assert.ok(metadata.source.includes('never read'));
   // The things this milestone does NOT do are part of the published contract.
-  for (const absent of ['billing', 'invoicing', 'MRR/ARR/TCV', 'renewal', 'cancellation', 'SLA']) {
+  for (const absent of ['billing', 'invoicing', 'MRR/ARR/TCV', 'automatic or scheduled renewal', 'cancellation', 'SLA']) {
     assert.ok(metadata.notModeled.includes(absent), absent);
+  }
+  // 'amendments' and the flat 'renewal' left the list at M16b, because they
+  // stopped being true: this package now activates a successor agreement. What
+  // replaced them is the narrower claim that is still true — nothing renews on
+  // a clock, and nothing here cancels anything.
+  for (const gone of ['amendments', 'renewal']) {
+    assert.equal(metadata.notModeled.includes(gone), false,
+      `${gone} may not be declared absent once M16b executes a successor agreement`);
   }
   assert.equal(metadata.term.renewalNotice.includes('no scheduler'), true);
   // A malformed policy never reaches the registry.

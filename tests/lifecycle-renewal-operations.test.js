@@ -45,13 +45,22 @@ const contractModuleDouble = (service, values = DECLARED_TERM_SOURCES) => ({
 test('the package declares only what it owns, and reaches Contracts only by capability', () => {
   const pkg = createLifecyclePackage();
   assert.equal(pkg.name, 'lifecycle');
-  assert.deepEqual([...pkg.resources].sort(), ['commercial-followup', 'renewal-decision']);
+  assert.deepEqual([...pkg.resources].sort(), ['amendment-run', 'commercial-followup', 'renewal-decision']);
   // The contract is the project's host record here: acted on, never owned.
   assert.equal(pkg.resources.includes('commercial-contract'), false,
     'the contract belongs to Contracts; claiming it would be a collision and a lie');
-  assert.deepEqual(pkg.requires, [{ package: 'contracts', capability: 'contract-lifecycle-source', version: 2 }]);
-  assert.deepEqual(pkg.capabilities, [], 'M16a offers nothing yet; it consumes');
+  assert.deepEqual(pkg.requires, [
+    { package: 'contracts', capability: 'contract-lifecycle-source', version: 2 },
+    // M16b: the write path lives in Contracts, and this is the only way here.
+    { package: 'contracts', capability: 'contracts-successor-activation', version: 1 },
+  ]);
+  assert.deepEqual(pkg.capabilities, [], 'this package offers nothing; it consumes');
   assert.deepEqual(pkg.actions.map((a) => `${a.module}.${a.name}`).sort(), [
+    'amendment-run.abandon-amendment-run',
+    'amendment-run.attach-successor-order',
+    'amendment-run.execute-amendment',
+    'commercial-contract.open-amendment-run',
+    'commercial-contract.plan-amendment',
     'commercial-contract.plan-renewal',
     'commercial-contract.record-renewal-decision',
     'commercial-contract.request-commercial-followup',
@@ -67,7 +76,11 @@ test('the metadata refuses the words that would be lies', () => {
   for (const forbidden of ['renewed', 'amended', 'cancelled', 'churned', 'invoiced', 'signed']) {
     assert.ok(meta.wording.neverClaimed.includes(forbidden), `${forbidden} must be listed as never claimed`);
   }
-  for (const absent of ['amendment execution', 'billing', 'invoicing', 'revenue recognition', 'ARR/MRR/TCV', 'FX']) {
+  // 'amendment execution' left this list at M16b, because it stopped being
+  // true. Everything that is still absent stays named.
+  assert.equal(meta.notModeled.includes('amendment execution'), false,
+    'M16b executes amendments, so claiming otherwise would be the lie in the other direction');
+  for (const absent of ['billing', 'invoicing', 'revenue recognition', 'ARR/MRR/TCV', 'FX', 'customer notification', 'automatic or legal renewal']) {
     assert.ok(meta.notModeled.includes(absent), `${absent} must be declared not modelled`);
   }
   assert.match(meta.termProvenance, /may never have been signed/);
@@ -339,11 +352,28 @@ test('plan-renewal declares itself as writing nothing', () => {
 });
 
 test('every writing action is a confirmed human decision', () => {
-  const writing = createLifecyclePackage().actions.filter((a) => a.name !== 'plan-renewal');
+  const reads = new Set(['plan-renewal', 'plan-amendment']);
+  const writing = createLifecyclePackage().actions.filter((a) => !reads.has(a.name));
   for (const action of writing) {
     assert.equal(action.confirm, true, `${action.name} must be confirmed`);
+  }
+  // A free-text reason is required where the human's *decision itself* is the
+  // record: opening a round, recording intent, asking for work, closing it.
+  // `attach-successor-order` and `execute-amendment` are deliberately not on
+  // this list — what a human supplies there is evidence identity (which signed
+  // Order, which policy version), and a prose box beside it would be
+  // decoration that reads as governance.
+  const reasoned = new Set([
+    'record-renewal-decision', 'request-commercial-followup',
+    'resolve-commercial-followup', 'open-amendment-run', 'abandon-amendment-run',
+  ]);
+  for (const action of writing.filter((a) => reasoned.has(a.name))) {
     assert.ok(action.input.some((i) => i.name === 'reason' || i.name === 'summary'),
       `${action.name} must require a human reason`);
+  }
+  for (const action of writing.filter((a) => !reasoned.has(a.name))) {
+    assert.ok(['attach-successor-order', 'execute-amendment'].includes(action.name),
+      `${action.name} writes without a stated reason and is not one of the two evidence-identity actions`);
   }
 });
 

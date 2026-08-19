@@ -623,7 +623,10 @@ test('the evidence is read-only through every generic surface, and writing needs
   const schema = await client.request('/api/schema');
   assert.equal(schema.domains.lifecycle.packageContract, 1);
   assert.deepEqual(schema.domains.lifecycle.requires,
-    [{ package: 'contracts', capability: 'contract-lifecycle-source', version: 2 }]);
+    [
+      { package: 'contracts', capability: 'contract-lifecycle-source', version: 2 },
+      { package: 'contracts', capability: 'contracts-successor-activation', version: 1 },
+    ]);
   assert.deepEqual(schema.domains.lifecycle.provides, [], 'M16a consumes; it offers nothing yet');
   assert.deepEqual(schema.domains.lifecycle.actions, [
     'commercial-contract.plan-renewal', 'commercial-contract.record-renewal-decision',

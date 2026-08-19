@@ -54,11 +54,14 @@ export function resolvedNames(config = {}) {
     subscriptionLine: config.subscriptionLineModule ?? 'subscription-line',
     deliveryObligation: config.deliveryObligationModule ?? 'delivery-obligation',
     serviceObligation: config.serviceObligationModule ?? 'service-obligation',
+    // M16b (ADR-034): the immutable lineage between a source agreement and the
+    // successor agreement that replaces it.
+    succession: config.contractSuccessionModule ?? 'contract-succession',
   };
 }
 
 /** Trusted read-only managed storage handle; a CRUD-writable module is refused. */
-function trusted(modules, name) {
+export function trusted(modules, name) {
   const service = modules.get(name).service;
   if (typeof service.createManaged !== 'function') {
     throw new AppError(`Module "${name}" is not a read-only managed record module — regenerate it from the current manifest`, {
@@ -68,7 +71,7 @@ function trusted(modules, name) {
   return service;
 }
 
-function toJson(value, label) {
+export function toJson(value, label) {
   const text = JSON.stringify(value);
   if (text.length > MAX_JSON) {
     throw new AppError(`The ${label} exceeds the storable bound`, { code: 'EVIDENCE_TOO_LARGE', status: 409 });
@@ -207,7 +210,7 @@ export function classifyComponents({ policy, fingerprint, order, components, ove
 }
 
 /** @param {any[]} decisions */
-function summarize(decisions) {
+export function summarize(decisions) {
   const counts = { subscriptionLines: 0, delivery: 0, service: 0, noObligation: 0, ambiguous: 0 };
   for (const decision of decisions) {
     if (decision.ambiguousDimensions.length > 0) counts.ambiguous += 1;
@@ -371,7 +374,7 @@ export function buildActivateContractAction(config) {
       { name: 'classificationOverrides', type: 'json', required: false, hint: '[{orderComponentId, dimension: "commercial"|"obligations", value, reason}] — a human decision per dimension, with a reason.' },
     ],
     /** @param {any} ctx */
-    async execute({ record: order, input, actor, modules, domains, managed, now, step }) {
+    async execute({ record: order, input, actor, modules, domains, now, step }) {
       // Activating a commercial commitment is a human decision. An agent may
       // prepare the plan and the inputs; it may not commit the business.
       if (!actor || typeof actor !== 'object' || /** @type {any} */ (actor).type !== 'user') {
@@ -441,322 +444,10 @@ export function buildActivateContractAction(config) {
       }
 
       const activatedAt = now();
-      // State follows the business date, never the wish: a term that starts
-      // next month is `scheduled`, and NOTHING flips it — there is no
-      // scheduler in this framework, which the schema and the Admin state.
-      const businessDate = activatedAt.slice(0, 10);
-      const state = activationState(term, businessDate);
-      if (state === 'ended') {
-        throw new AppError('The term ended before this activation', {
-          code: 'TERM_ALREADY_ENDED', status: 409,
-          details: { termEndDate: term.termEndDate, businessDate },
-        });
-      }
-      const counts = summarize(decisions);
-      const activations = trusted(modules, names.activation);
-      const activation = await activations.createManaged(
-        {
-          sourceKey: `activation:order:${order.id}`,
-          orderId: order.id,
-          quoteId: order.quoteId,
-          quoteVersionId: order.quoteVersionId,
-          envelopeId: source.envelope.id,
-          signedArtifactId: source.artifact.id,
-          policy: policy.name,
-          policyVersion: policy.version,
-          policyFingerprint: fingerprint,
-          documentHash: order.documentHash,
-          sourceFingerprint: order.sourceFingerprint,
-          effectiveDate: term.effectiveDate,
-          termStartDate: term.termStartDate,
-          termEndDate: term.termEndDate,
-          termsSource: term.termsSource,
-          termsReason: term.termsReason,
-          activationState: state,
-          subscriptionLineCount: counts.subscriptionLines,
-          deliveryObligationCount: counts.delivery,
-          serviceObligationCount: counts.service,
-          noObligationCount: counts.noObligation,
-          overrideCount: decisions.reduce(
-            (total, decision) => total + (decision.commercialOverride ? 1 : 0) + (decision.obligationsOverride ? 1 : 0),
-            0,
-          ),
-          decisionsJson: toJson(
-            decisions.map((decision) => ({
-              orderComponentId: decision.component.id,
-              componentKey: decision.component.componentKey,
-              policyCommercialActivation: decision.policyDecision.commercialActivation,
-              policyObligations: decision.policyDecision.obligations,
-              policyReason: decision.policyDecision.reason,
-              commercialActivation: decision.commercialActivation,
-              obligations: decision.obligations,
-              commercialOverrideReason: decision.commercialOverride?.reason ?? null,
-              obligationsOverrideReason: decision.obligationsOverride?.reason ?? null,
-            })),
-            'activation decisions',
-          ),
-          activatedBy: String(/** @type {any} */ (actor).id ?? 'unknown'),
-          activatedAt,
-        },
-        { actor },
-      );
-
-      const contract = await contracts.createManaged(
-        {
-          sourceKey: `contract:order:${order.id}`,
-          orderId: order.id,
-          quoteId: order.quoteId,
-          quoteVersionId: order.quoteVersionId,
-          envelopeId: source.envelope.id,
-          signedArtifactId: source.artifact.id,
-          opportunityId: order.opportunityId,
-          companyId: order.companyId,
-          contactId: order.contactId,
-          // Copied from the Order's own party snapshot: the contract renders
-          // its customer without reading a live CRM row.
-          customerName: order.customerName,
-          customerEmail: order.customerEmail,
-          currency: order.currency,
-          status: state,
-          effectiveDate: term.effectiveDate,
-          termStartDate: term.termStartDate,
-          termEndDate: term.termEndDate,
-          termDays: term.termDays,
-          autoRenew: term.autoRenew,
-          renewalNoticeDays: term.renewalNoticeDays,
-          termsSource: term.termsSource,
-          termsReason: term.termsReason,
-          policy: policy.name,
-          policyVersion: policy.version,
-          policyFingerprint: fingerprint,
-          documentHash: order.documentHash,
-          artifactHash: order.artifactHash,
-          sourceFingerprint: order.sourceFingerprint,
-          activationId: activation.id,
-          activatedAt,
-        },
-        { actor },
-      );
-
-      const versions = trusted(modules, names.contractVersion);
-      const version = await versions.createManaged(
-        {
-          sourceKey: `contract-version:${contract.id}:1`,
-          contractId: contract.id,
-          versionNumber: 1,
-          orderId: order.id,
-          quoteVersionId: order.quoteVersionId,
-          documentHash: order.documentHash,
-          artifactHash: order.artifactHash,
-          customerName: order.customerName,
-          customerEmail: order.customerEmail,
-          companyId: order.companyId,
-          contactId: order.contactId,
-          currency: order.currency,
-          effectiveDate: term.effectiveDate,
-          termStartDate: term.termStartDate,
-          termEndDate: term.termEndDate,
-          termDays: term.termDays,
-          autoRenew: term.autoRenew,
-          renewalNoticeDays: term.renewalNoticeDays,
-          termsSource: term.termsSource,
-          termsReason: term.termsReason,
-          // The Order's grouped totals, copied verbatim. They are period sums
-          // of what was signed — never MRR, ARR or TCV.
-          totalsJson: order.totalsJson,
-          oneTimeNetCents: order.oneTimeNetCents,
-          recurringGroupCount: order.recurringGroupCount,
-          lineCount: source.components.length,
-          policy: policy.name,
-          policyVersion: policy.version,
-          policyFingerprint: fingerprint,
-          activationId: activation.id,
-          activatedAt,
-        },
-        { actor },
-      );
-      await contracts.applyManaged(contract.id, { currentVersionId: version.id }, { actor });
-
-      // One Subscription per contract in v1, created only when at least one
-      // component was explicitly classified as a subscription.
-      let subscription = null;
-      if (counts.subscriptionLines > 0) {
-        subscription = await trusted(modules, names.subscription).createManaged(
-          {
-            sourceKey: `subscription:contract:${contract.id}`,
-            contractId: contract.id,
-            contractVersionId: version.id,
-            orderId: order.id,
-            status: state,
-            currency: order.currency,
-            startDate: term.termStartDate,
-            endDate: term.termEndDate,
-            lineCount: counts.subscriptionLines,
-            activationId: activation.id,
-            activatedAt,
-          },
-          { actor },
-        );
-      }
-
-      const contractLines = trusted(modules, names.contractLine);
-      const subscriptionLines = trusted(modules, names.subscriptionLine);
-      const deliveryObligations = trusted(modules, names.deliveryObligation);
-      const serviceObligations = trusted(modules, names.serviceObligation);
-      let position = 0;
-      for (const decision of decisions) {
-        position += 1;
-        const { line, component } = decision;
-        const contractLine = await contractLines.createManaged(
-          {
-            sourceKey: `contract-line:${version.id}:${component.id}`,
-            contractId: contract.id,
-            contractVersionId: version.id,
-            orderId: order.id,
-            orderLineId: line.id,
-            orderComponentId: component.id,
-            productId: line.productId,
-            productVersionId: line.productVersionId,
-            offerId: line.offerId,
-            offerLogicalKey: line.offerLogicalKey,
-            offerRevision: line.offerRevision,
-            offerName: line.offerName,
-            sku: line.sku,
-            componentId: component.componentId,
-            componentKey: component.componentKey,
-            label: component.label,
-            chargeType: component.chargeType,
-            pricingModel: component.pricingModel,
-            interval: component.interval,
-            intervalCount: component.intervalCount,
-            quantity: component.quantity,
-            unitAmountCents: component.unitAmountCents,
-            flatAmountCents: component.flatAmountCents,
-            tiersJson: component.tiersJson,
-            tierBreakdownJson: component.tierBreakdownJson,
-            listAmountCents: component.listAmountCents,
-            discountAmountCents: component.discountAmountCents,
-            netAmountCents: component.netAmountCents,
-            currency: order.currency,
-            provider: component.provider,
-            externalPriceId: component.externalPriceId,
-            sourcePricingModel: component.sourcePricingModel,
-            // Dimension 1: what the money is, with the policy's own answer.
-            commercialActivation: decision.commercialActivation,
-            policyCommercialActivation: decision.policyDecision.commercialActivation,
-            commercialOverridden: Boolean(decision.commercialOverride),
-            commercialOverrideReason: decision.commercialOverride?.reason ?? null,
-            // Dimension 2: what we owe beyond the money, likewise.
-            obligationsJson: toJson(decision.obligations, 'obligations'),
-            policyObligationsJson: toJson(decision.policyDecision.obligations, 'policy obligations'),
-            obligationsOverridden: Boolean(decision.obligationsOverride),
-            obligationsOverrideReason: decision.obligationsOverride?.reason ?? null,
-            classificationReason: decision.classificationReason,
-            classificationPolicy: policy.name,
-            classificationPolicyVersion: policy.version,
-            classificationPolicyFingerprint: fingerprint,
-            overriddenBy: decision.overridden ? String(/** @type {any} */ (actor).id ?? 'unknown') : null,
-            position,
-          },
-          { actor },
-        );
-
-        // The two axes are written independently: the same component can be a
-        // recurring commitment AND a future obligation (annual support is
-        // exactly that), and an exclusive branch would silently drop one.
-        if (decision.commercialActivation === 'subscription') {
-          await subscriptionLines.createManaged(
-            {
-              sourceKey: `subscription-line:${subscription.id}:${component.id}`,
-              subscriptionId: subscription.id,
-              contractId: contract.id,
-              contractLineId: contractLine.id,
-              orderComponentId: component.id,
-              componentKey: component.componentKey,
-              label: component.label,
-              chargeType: component.chargeType,
-              pricingModel: component.pricingModel,
-              interval: component.interval,
-              intervalCount: component.intervalCount,
-              quantity: component.quantity,
-              unitAmountCents: component.unitAmountCents,
-              flatAmountCents: component.flatAmountCents,
-              tiersJson: component.tiersJson,
-              tierBreakdownJson: component.tierBreakdownJson,
-              netAmountCents: component.netAmountCents,
-              currency: order.currency,
-              startDate: term.termStartDate,
-              endDate: term.termEndDate,
-              provider: component.provider,
-              externalPriceId: component.externalPriceId,
-              sourcePricingModel: component.sourcePricingModel,
-              status: state,
-              activationId: activation.id,
-            },
-            { actor },
-          );
-        }
-        if (decision.obligations.includes('delivery')) {
-          await deliveryObligations.createManaged(
-            {
-              sourceKey: `delivery-obligation:${contract.id}:${component.id}`,
-              contractId: contract.id,
-              contractLineId: contractLine.id,
-              orderId: order.id,
-              orderComponentId: component.id,
-              status: 'pending_handover',
-              label: component.label,
-              componentKey: component.componentKey,
-              sku: line.sku,
-              chargeType: component.chargeType,
-              interval: component.interval,
-              intervalCount: component.intervalCount,
-              quantity: component.quantity,
-              netAmountCents: component.netAmountCents,
-              currency: order.currency,
-              productId: line.productId,
-              productVersionId: line.productVersionId,
-              provider: component.provider,
-              activationId: activation.id,
-            },
-            { actor },
-          );
-        }
-        if (decision.obligations.includes('service')) {
-          await serviceObligations.createManaged(
-            {
-              sourceKey: `service-obligation:${contract.id}:${component.id}`,
-              contractId: contract.id,
-              contractLineId: contractLine.id,
-              orderId: order.id,
-              orderComponentId: component.id,
-              status: 'pending_activation',
-              label: component.label,
-              componentKey: component.componentKey,
-              sku: line.sku,
-              chargeType: component.chargeType,
-              interval: component.interval,
-              intervalCount: component.intervalCount,
-              quantity: component.quantity,
-              netAmountCents: component.netAmountCents,
-              currency: order.currency,
-              activationId: activation.id,
-            },
-            { actor },
-          );
-        }
-        // An empty obligations list creates a Contract Line and nothing else:
-        // the decision that a component owes nothing further is itself
-        // recorded, and is not the same as never having decided.
-      }
-
-      await activations.applyManaged(
-        activation.id,
-        { contractId: contract.id, contractVersionId: version.id, subscriptionId: subscription?.id ?? null, status: 'completed' },
-        { actor },
-      );
-      // The Order itself is never modified: only its managed link is set.
-      const updatedOrder = await managed(order.id, { contractId: contract.id, activatedAt });
+      const written = await writeActivation({
+        order, source, term, policy, fingerprint, decisions, actor, modules, names, activatedAt,
+      });
+      const { activation, contract, version, subscription, state, counts, order: updatedOrder } = written;
 
       step('contract.activated', {
         contractId: contract.id,
@@ -788,6 +479,353 @@ export function buildActivateContractAction(config) {
       };
     },
   };
+}
+
+/**
+ * **The one activation writer**, shared by `order.activate-contract` (M12) and
+ * by successor activation (M16b, ADR-034).
+ *
+ * There is exactly one of these on purpose. A successor commercial agreement is
+ * an ordinary activated contract — same records, same shapes, same source keys,
+ * same immutability — plus a lineage row written beside it. Duplicating the
+ * write path so that a "renewal contract" could diverge from an "activation
+ * contract" is precisely the drift this milestone must not create: every M12,
+ * M13 and M15 consumer already reads what this produces, and none of them needs
+ * to learn a second shape.
+ *
+ * It is a **pure writer**: every refusal that depends on the *source* has
+ * already been made by the caller, and the only refusal left here is the one
+ * that depends on the business date (`TERM_ALREADY_ENDED`). It does not open a
+ * transaction — it runs inside the caller's — so a failure anywhere in it rolls
+ * back everything the caller wrote too.
+ *
+ * @param {{order: any, source: any, term: any, policy: any, fingerprint: string,
+ *   decisions: any[], actor: any, modules: any, names: ReturnType<typeof resolvedNames>,
+ *   activatedAt: string}} request
+ */
+export async function writeActivation({
+  order, source, term, policy, fingerprint, decisions, actor, modules, names, activatedAt,
+}) {
+  // State follows the business date, never the wish: a term that starts
+  // next month is `scheduled`, and NOTHING flips it — there is no
+  // scheduler in this framework, which the schema and the Admin state.
+  const businessDate = activatedAt.slice(0, 10);
+  const state = activationState(term, businessDate);
+  if (state === 'ended') {
+    throw new AppError('The term ended before this activation', {
+      code: 'TERM_ALREADY_ENDED', status: 409,
+      details: { termEndDate: term.termEndDate, businessDate },
+    });
+  }
+  const counts = summarize(decisions);
+  const contracts = trusted(modules, names.contract);
+  const activations = trusted(modules, names.activation);
+  const activation = await activations.createManaged(
+    {
+      sourceKey: `activation:order:${order.id}`,
+      orderId: order.id,
+      quoteId: order.quoteId,
+      quoteVersionId: order.quoteVersionId,
+      envelopeId: source.envelope.id,
+      signedArtifactId: source.artifact.id,
+      policy: policy.name,
+      policyVersion: policy.version,
+      policyFingerprint: fingerprint,
+      documentHash: order.documentHash,
+      sourceFingerprint: order.sourceFingerprint,
+      effectiveDate: term.effectiveDate,
+      termStartDate: term.termStartDate,
+      termEndDate: term.termEndDate,
+      termsSource: term.termsSource,
+      termsReason: term.termsReason,
+      activationState: state,
+      subscriptionLineCount: counts.subscriptionLines,
+      deliveryObligationCount: counts.delivery,
+      serviceObligationCount: counts.service,
+      noObligationCount: counts.noObligation,
+      overrideCount: decisions.reduce(
+        (total, decision) => total + (decision.commercialOverride ? 1 : 0) + (decision.obligationsOverride ? 1 : 0),
+        0,
+      ),
+      decisionsJson: toJson(
+        decisions.map((decision) => ({
+          orderComponentId: decision.component.id,
+          componentKey: decision.component.componentKey,
+          policyCommercialActivation: decision.policyDecision.commercialActivation,
+          policyObligations: decision.policyDecision.obligations,
+          policyReason: decision.policyDecision.reason,
+          commercialActivation: decision.commercialActivation,
+          obligations: decision.obligations,
+          commercialOverrideReason: decision.commercialOverride?.reason ?? null,
+          obligationsOverrideReason: decision.obligationsOverride?.reason ?? null,
+        })),
+        'activation decisions',
+      ),
+      activatedBy: String(/** @type {any} */ (actor).id ?? 'unknown'),
+      activatedAt,
+    },
+    { actor },
+  );
+
+  const contract = await contracts.createManaged(
+    {
+      sourceKey: `contract:order:${order.id}`,
+      orderId: order.id,
+      quoteId: order.quoteId,
+      quoteVersionId: order.quoteVersionId,
+      envelopeId: source.envelope.id,
+      signedArtifactId: source.artifact.id,
+      opportunityId: order.opportunityId,
+      companyId: order.companyId,
+      contactId: order.contactId,
+      // Copied from the Order's own party snapshot: the contract renders
+      // its customer without reading a live CRM row.
+      customerName: order.customerName,
+      customerEmail: order.customerEmail,
+      currency: order.currency,
+      status: state,
+      effectiveDate: term.effectiveDate,
+      termStartDate: term.termStartDate,
+      termEndDate: term.termEndDate,
+      termDays: term.termDays,
+      autoRenew: term.autoRenew,
+      renewalNoticeDays: term.renewalNoticeDays,
+      termsSource: term.termsSource,
+      termsReason: term.termsReason,
+      policy: policy.name,
+      policyVersion: policy.version,
+      policyFingerprint: fingerprint,
+      documentHash: order.documentHash,
+      artifactHash: order.artifactHash,
+      sourceFingerprint: order.sourceFingerprint,
+      activationId: activation.id,
+      activatedAt,
+    },
+    { actor },
+  );
+
+  const versions = trusted(modules, names.contractVersion);
+  const version = await versions.createManaged(
+    {
+      sourceKey: `contract-version:${contract.id}:1`,
+      contractId: contract.id,
+      versionNumber: 1,
+      orderId: order.id,
+      quoteVersionId: order.quoteVersionId,
+      documentHash: order.documentHash,
+      artifactHash: order.artifactHash,
+      customerName: order.customerName,
+      customerEmail: order.customerEmail,
+      companyId: order.companyId,
+      contactId: order.contactId,
+      currency: order.currency,
+      effectiveDate: term.effectiveDate,
+      termStartDate: term.termStartDate,
+      termEndDate: term.termEndDate,
+      termDays: term.termDays,
+      autoRenew: term.autoRenew,
+      renewalNoticeDays: term.renewalNoticeDays,
+      termsSource: term.termsSource,
+      termsReason: term.termsReason,
+      // The Order's grouped totals, copied verbatim. They are period sums
+      // of what was signed — never MRR, ARR or TCV.
+      totalsJson: order.totalsJson,
+      oneTimeNetCents: order.oneTimeNetCents,
+      recurringGroupCount: order.recurringGroupCount,
+      lineCount: source.components.length,
+      policy: policy.name,
+      policyVersion: policy.version,
+      policyFingerprint: fingerprint,
+      activationId: activation.id,
+      activatedAt,
+    },
+    { actor },
+  );
+  await contracts.applyManaged(contract.id, { currentVersionId: version.id }, { actor });
+
+  // One Subscription per contract in v1, created only when at least one
+  // component was explicitly classified as a subscription.
+  let subscription = null;
+  if (counts.subscriptionLines > 0) {
+    subscription = await trusted(modules, names.subscription).createManaged(
+      {
+        sourceKey: `subscription:contract:${contract.id}`,
+        contractId: contract.id,
+        contractVersionId: version.id,
+        orderId: order.id,
+        status: state,
+        currency: order.currency,
+        startDate: term.termStartDate,
+        endDate: term.termEndDate,
+        lineCount: counts.subscriptionLines,
+        activationId: activation.id,
+        activatedAt,
+      },
+      { actor },
+    );
+  }
+
+  const contractLines = trusted(modules, names.contractLine);
+  const subscriptionLines = trusted(modules, names.subscriptionLine);
+  const deliveryObligations = trusted(modules, names.deliveryObligation);
+  const serviceObligations = trusted(modules, names.serviceObligation);
+  let position = 0;
+  for (const decision of decisions) {
+    position += 1;
+    const { line, component } = decision;
+    const contractLine = await contractLines.createManaged(
+      {
+        sourceKey: `contract-line:${version.id}:${component.id}`,
+        contractId: contract.id,
+        contractVersionId: version.id,
+        orderId: order.id,
+        orderLineId: line.id,
+        orderComponentId: component.id,
+        productId: line.productId,
+        productVersionId: line.productVersionId,
+        offerId: line.offerId,
+        offerLogicalKey: line.offerLogicalKey,
+        offerRevision: line.offerRevision,
+        offerName: line.offerName,
+        sku: line.sku,
+        componentId: component.componentId,
+        componentKey: component.componentKey,
+        label: component.label,
+        chargeType: component.chargeType,
+        pricingModel: component.pricingModel,
+        interval: component.interval,
+        intervalCount: component.intervalCount,
+        quantity: component.quantity,
+        unitAmountCents: component.unitAmountCents,
+        flatAmountCents: component.flatAmountCents,
+        tiersJson: component.tiersJson,
+        tierBreakdownJson: component.tierBreakdownJson,
+        listAmountCents: component.listAmountCents,
+        discountAmountCents: component.discountAmountCents,
+        netAmountCents: component.netAmountCents,
+        currency: order.currency,
+        provider: component.provider,
+        externalPriceId: component.externalPriceId,
+        sourcePricingModel: component.sourcePricingModel,
+        // Dimension 1: what the money is, with the policy's own answer.
+        commercialActivation: decision.commercialActivation,
+        policyCommercialActivation: decision.policyDecision.commercialActivation,
+        commercialOverridden: Boolean(decision.commercialOverride),
+        commercialOverrideReason: decision.commercialOverride?.reason ?? null,
+        // Dimension 2: what we owe beyond the money, likewise.
+        obligationsJson: toJson(decision.obligations, 'obligations'),
+        policyObligationsJson: toJson(decision.policyDecision.obligations, 'policy obligations'),
+        obligationsOverridden: Boolean(decision.obligationsOverride),
+        obligationsOverrideReason: decision.obligationsOverride?.reason ?? null,
+        classificationReason: decision.classificationReason,
+        classificationPolicy: policy.name,
+        classificationPolicyVersion: policy.version,
+        classificationPolicyFingerprint: fingerprint,
+        overriddenBy: decision.overridden ? String(/** @type {any} */ (actor).id ?? 'unknown') : null,
+        position,
+      },
+      { actor },
+    );
+
+    // The two axes are written independently: the same component can be a
+    // recurring commitment AND a future obligation (annual support is
+    // exactly that), and an exclusive branch would silently drop one.
+    if (decision.commercialActivation === 'subscription') {
+      await subscriptionLines.createManaged(
+        {
+          sourceKey: `subscription-line:${subscription.id}:${component.id}`,
+          subscriptionId: subscription.id,
+          contractId: contract.id,
+          contractLineId: contractLine.id,
+          orderComponentId: component.id,
+          componentKey: component.componentKey,
+          label: component.label,
+          chargeType: component.chargeType,
+          pricingModel: component.pricingModel,
+          interval: component.interval,
+          intervalCount: component.intervalCount,
+          quantity: component.quantity,
+          unitAmountCents: component.unitAmountCents,
+          flatAmountCents: component.flatAmountCents,
+          tiersJson: component.tiersJson,
+          tierBreakdownJson: component.tierBreakdownJson,
+          netAmountCents: component.netAmountCents,
+          currency: order.currency,
+          startDate: term.termStartDate,
+          endDate: term.termEndDate,
+          provider: component.provider,
+          externalPriceId: component.externalPriceId,
+          sourcePricingModel: component.sourcePricingModel,
+          status: state,
+          activationId: activation.id,
+        },
+        { actor },
+      );
+    }
+    if (decision.obligations.includes('delivery')) {
+      await deliveryObligations.createManaged(
+        {
+          sourceKey: `delivery-obligation:${contract.id}:${component.id}`,
+          contractId: contract.id,
+          contractLineId: contractLine.id,
+          orderId: order.id,
+          orderComponentId: component.id,
+          status: 'pending_handover',
+          label: component.label,
+          componentKey: component.componentKey,
+          sku: line.sku,
+          chargeType: component.chargeType,
+          interval: component.interval,
+          intervalCount: component.intervalCount,
+          quantity: component.quantity,
+          netAmountCents: component.netAmountCents,
+          currency: order.currency,
+          productId: line.productId,
+          productVersionId: line.productVersionId,
+          provider: component.provider,
+          activationId: activation.id,
+        },
+        { actor },
+      );
+    }
+    if (decision.obligations.includes('service')) {
+      await serviceObligations.createManaged(
+        {
+          sourceKey: `service-obligation:${contract.id}:${component.id}`,
+          contractId: contract.id,
+          contractLineId: contractLine.id,
+          orderId: order.id,
+          orderComponentId: component.id,
+          status: 'pending_activation',
+          label: component.label,
+          componentKey: component.componentKey,
+          sku: line.sku,
+          chargeType: component.chargeType,
+          interval: component.interval,
+          intervalCount: component.intervalCount,
+          quantity: component.quantity,
+          netAmountCents: component.netAmountCents,
+          currency: order.currency,
+          activationId: activation.id,
+        },
+        { actor },
+      );
+    }
+    // An empty obligations list creates a Contract Line and nothing else:
+    // the decision that a component owes nothing further is itself
+    // recorded, and is not the same as never having decided.
+  }
+
+  await activations.applyManaged(
+    activation.id,
+    { contractId: contract.id, contractVersionId: version.id, subscriptionId: subscription?.id ?? null, status: 'completed' },
+    { actor },
+  );
+  // The Order itself is never modified: only its managed link is set.
+  const updatedOrder = await trusted(modules, names.order)
+    .applyManaged(order.id, { contractId: contract.id, activatedAt }, { actor });
+
+  return { activation, contract, version, subscription, state, counts, order: updatedOrder };
 }
 
 /** @param {ContractModuleConfig} [config] */

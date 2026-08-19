@@ -13,6 +13,7 @@ import { definePackage } from '../../core/index.js';
 import { createDeliveryObligationsCapability } from './capabilities.js';
 import { createServiceObligationsCapability } from './service-capability.js';
 import { createContractLifecycleSourceCapability } from './lifecycle-capability.js';
+import { CLASSIFICATIONS, CONTINUITIES, NOT_MODELED, createSuccessorActivationCapability } from './succession.js';
 
 /**
  * The Contracts domain package (Milestone 12) — the first domain built under
@@ -37,6 +38,9 @@ export const CONTRACTS_DOMAIN = 'contracts';
 export const CONTRACTS_RESOURCES = Object.freeze([
   'commercial-contract', 'contract-version', 'contract-line', 'contract-activation',
   'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
+  // M16b (ADR-034): the immutable lineage between one agreement and the
+  // successor agreement that replaces it. A record, not a mutation.
+  'contract-succession',
 ]);
 export const ACTIVATION_POLICY_KIND = 'order-activation-policy';
 
@@ -75,7 +79,15 @@ export function createContractsDomain(options = {}) {
     // signed term snapshot (`SIGNED_TERMS_AUTHORITATIVE`) — and the plan
     // reports which provenance applies. Consumer-visible action contract and
     // stored vocabulary both moved, so the version moved.
-    version: 6,
+    // 7: M16b successor activation. One new record (`contract-succession`),
+    // one new offered capability (`contracts-successor-activation@1`) and the
+    // shared activation writer behind both `order.activate-contract` and a
+    // successor execution. Records and offered capabilities both moved, so the
+    // composition contract moved. Nothing existing changed shape: every M12
+    // record, every M12 action input and all three previously offered
+    // capabilities answer byte-identically, which is why none of THEIR versions
+    // moved with it.
+    version: 7,
     label: 'Contracts and subscriptions',
     description: 'Activates a signed immutable Order into a commercial contract, a subscription and pending delivery/service obligations.',
     resources: [...CONTRACTS_RESOURCES],
@@ -96,6 +108,12 @@ export function createContractsDomain(options = {}) {
       // provenance attached and its signed state DERIVED from that provenance
       // rather than asserted beside it (M16a).
       createContractLifecycleSourceCapability(options.modules),
+      // M16b (ADR-034). The only capability in this package that writes, and
+      // it writes exactly one thing: a successor agreement built from a signed
+      // immutable Order, plus the immutable lineage row beside it. It mutates
+      // no historical record, accepts no client-supplied classification, and
+      // refuses an Order whose signed document carried no commercial term.
+      createSuccessorActivationCapability(options.modules),
     ],
     actions: buildContractActions(options.modules),
     policies,
@@ -142,9 +160,45 @@ export function createContractsDomain(options = {}) {
           endedTerm: 'a term that already ended is refused (TERM_ALREADY_ENDED) rather than recorded',
         },
         source: 'the signed immutable Order is the only commercial source for price, product and party; the live catalog is never read and no amount is recalculated. The term is the one exception and is explicitly NOT signed — see term.source',
+        // M16b (ADR-034). Function-free, additive: an older client ignores it.
+        succession: {
+          successionContract: 1,
+          capability: 'contracts-successor-activation@1',
+          model:
+            'a renewal or amendment produces a SUCCESSOR agreement — its own signed Order, its own document hash, its own term and its own '
+            + 'subscription — plus one immutable contract-succession row naming what it replaces. No historical contract, version, line, '
+            + 'subscription or obligation row is modified, and the successor is shaped identically to any other activated contract',
+          uniqueness:
+            'enforced by the database, not by an in-process lock: contract-succession.sourceContractId, .successorContractId and '
+            + '.successorOrderId are each UNIQUE, so a contract has at most one successor, at most one predecessor, and a signed Order is '
+            + 'consumed at most once',
+          signedTermRequired:
+            'a successor agreement is built ONLY from an order carrying the signed term snapshot (order-term, covered by the signed '
+            + 'documentHash). An order whose signed document carried no term is refused 409 SUCCESSOR_TERMS_NOT_SIGNED: post-signature '
+            + 'operational dates are never promoted to signed renewal terms',
+          classification: {
+            values: [...CLASSIFICATIONS],
+            derivation:
+              'derived from the immutable line delta and never supplied by a caller. A narrower label is claimed only when the evidence '
+              + 'supports exactly one reading; everything else is commercial_change with the same exact per-line delta attached. A price '
+              + 'movement with no quantity movement is deliberately commercial_change, not expansion',
+          },
+          termContinuity: {
+            values: [...CONTINUITIES],
+            rule:
+              'measured against the source term\'s INCLUSIVE end date. contiguous means the successor starts the day after. Overlap and gap '
+              + 'are recorded, never refused — a mid-term amendment overlaps and a lapse-then-re-signing gaps. Only a successor term that '
+              + 'starts before the source term started is refused (SUCCESSOR_TERM_PRECEDES_SOURCE)',
+          },
+          humanApproval:
+            'executing a successor requires actor.type === "user"; agent actors are refused 403 HUMAN_APPROVAL_REQUIRED. A human-actor '
+            + 'boundary, not Sales/Legal/Finance role enforcement',
+          notModeled: [...NOT_MODELED],
+        },
         notModeled: [
           'billing', 'invoicing', 'payment', 'usage rating', 'proration', 'tax', 'FX',
-          'revenue recognition', 'MRR/ARR/TCV', 'amendments', 'seat changes', 'renewal',
+          'revenue recognition', 'MRR/ARR/TCV', 'seat changes',
+          'automatic or scheduled renewal', 'renewal notice delivery', 'customer notification',
           'cancellation', 'delivery execution', 'service activation', 'entitlements', 'SLA',
         ],
       };
