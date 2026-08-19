@@ -1,0 +1,186 @@
+{
+  "scenarioContract": 1,
+  "id": "customer-identity-governance",
+  "title": "Two source systems describe the same customer, the framework refuses to guess, and a human decides",
+  "summary": "One customer-data process, driven end to end against a real composed application holding the customer-data package over the host's own Company and Contact and nothing else. A bounded import is previewed and proven to write nothing while receipting every row; applied, it creates real host records and keeps the source identifier beside the record it names; retried identically it returns the same run rather than a second one, because the key is derived from the payload and not from a clock. A second source system presents the same company, matches it exactly on normalized name and domain, and creates no parallel record. Then a genuinely ambiguous row is attempted, and the foundation does the thing that distinguishes it from a CDP: it reports every candidate, breaks no tie, and leaves durable evidence for a person. An agent, an out-of-candidate canonical record and a reasonless decision are each refused; a human records the canonical link, and the run proves both business rows are byte-identical afterwards, both still exist and both still read a profile onto one cluster of one canonical and one alias. Re-parenting a record already in a cluster is refused. The consolidated profile reads from both sides, and every uncomposed package reads not available with a reason rather than as an empty truth. No raw provider payload is stored anywhere, and the run searches the whole database to say so. Each step names the JTBD rows it exercises; every other row in the index is reported as not established.",
+  "journey": "customer-identity-governance",
+  "steps": [
+    {
+      "id": "compose",
+      "narrative": "The checked-in customer-identity journey composes an application from manifests through the real module factory and drives the whole process in one application, asserting each guarantee and each refusal as it goes. Every claim below cites this step, so a journey that does not complete establishes nothing.",
+      "observe": [
+        { "kind": "journey.completed" }
+      ]
+    },
+    {
+      "id": "compose-narrowly",
+      "narrative": "The composition is the customer-data package over the host's own Company and Contact, and nothing else: no commercial, no signature, no contracts, no lifecycle, no delivery, no service, no work, no intelligence. The package declares no requirements at all, so an application holding it alone is the honest demonstration of that boundary rather than an assertion about it — and the absence is load-bearing, because it is what makes the profile's not-available a real observation later.",
+      "observe": [
+        { "kind": "package.composed", "package": "customer-data" },
+        { "kind": "capability.available", "capability": "customer-identity", "version": 1 },
+        { "kind": "resource.present", "resource": "customer-import-run" },
+        { "kind": "resource.present", "resource": "customer-import-row" },
+        { "kind": "resource.present", "resource": "external-identity" },
+        { "kind": "resource.present", "resource": "duplicate-candidate" },
+        { "kind": "resource.present", "resource": "canonical-link" },
+        { "kind": "resource.present", "resource": "data-quality-issue" },
+        { "kind": "policy.present", "policy": "deterministic-customer-match", "version": 1 }
+      ]
+    },
+    {
+      "id": "preview-writes-nothing",
+      "narrative": "A preview resolves the batch and returns the receipts the apply would produce, and writes nothing at all — not a business record, not even an import run. The run compares every row count across every module before and after rather than trusting the word. Every row is receipted, including the one that will fail, so a row can never vanish between the screen and the database.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "previewWroteNothing", "is": "true" },
+        { "kind": "journey.fact", "fact": "everyRowReceipted", "is": "true" }
+      ]
+    },
+    {
+      "id": "apply-and-reconcile",
+      "narrative": "The apply recomputes the resolution authoritatively rather than replaying what the preview decided, and the two agree — which is what makes a preview worth reading. Accepted plus rejected plus skipped always equals the row count, so no row is silently dropped. The accepted row becomes a real host Company and Contact; this package adds no shadow customer table beside them.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "receiptsReconcile", "is": "true" },
+        { "kind": "journey.fact", "fact": "previewMatchedTheApply", "is": "true" },
+        { "kind": "journey.count", "metric": "importRows", "atLeast": 5 },
+        { "kind": "journey.count", "metric": "companies", "atLeast": 1 },
+        { "kind": "journey.count", "metric": "contacts", "atLeast": 1 }
+      ]
+    },
+    {
+      "id": "idempotent-by-payload",
+      "narrative": "The identical import, applied twice, is one run. The key is derived from the source system, the mapping fingerprint and the sorted row digests — never from a clock and never from a random value — and the journey runs on an injected clock so a payload-derived key cannot hide behind a lucky retry. A retried import that had produced a second run would double every record it created.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "replayIsTheSameRun", "is": "true" },
+        { "kind": "journey.count", "metric": "importRuns", "atLeast": 1 }
+      ]
+    },
+    {
+      "id": "exact-match-across-systems",
+      "narrative": "A second source system presents the same company. The match is exact — normalized name and exact domain — so the row reuses the record that is already there instead of creating a parallel one, and each system's identifier is kept beside the record it actually names: the CRM row named a person, the billing row named an organization, and neither identifier is hoisted onto the other's record to make a tidier picture. They are one customer because the Contact belongs to that Company, which is a relationship the host already had.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "matchRuleIsCompanyNameDomain", "is": "true" },
+        { "kind": "journey.fact", "fact": "secondSystemCreatedNoDuplicate", "is": "true" },
+        { "kind": "journey.fact", "fact": "carriesBothSystems", "is": "true" },
+        { "kind": "journey.fact", "fact": "identifierWasHoisted", "is": "false" },
+        { "kind": "journey.count", "metric": "externalIdentities", "atLeast": 2 }
+      ]
+    },
+    {
+      "id": "refuse-the-guess",
+      "narrative": "The refusal this foundation exists for, and the run earns it by attempting it. Three companies genuinely share a normalized name and domain. A row matching them is left unresolved rather than resolved: every candidate is reported, no rule breaks the tie, no subject is chosen, and every pair becomes durable evidence stamped with the fingerprint of the rules that produced it. Nothing here scores, guesses or learns, and a refusal a run could earn by never attempting the operation would be worthless.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "ambiguousRowOutcome", "is": "skipped" },
+        { "kind": "journey.fact", "fact": "noTieWasBroken", "is": "true" },
+        { "kind": "journey.fact", "fact": "candidateRuleIsCompanyNameDomain", "is": "true" },
+        { "kind": "journey.fact", "fact": "probabilisticMatchUsed", "is": "false" },
+        { "kind": "journey.count", "metric": "ambiguousRowCandidateCount", "equals": 3 },
+        { "kind": "journey.count", "metric": "duplicateCandidates", "equals": 3 }
+      ]
+    },
+    {
+      "id": "only-a-human-decides",
+      "narrative": "Three attempts that must fail, each made rather than assumed: an agent actor is refused outright, a canonical record that is not one of the two in the candidate is refused, and a decision with no reason is refused. Identity is a judgement, and a judgement nobody made and nobody can explain is not one.",
+      "observe": [
+        { "kind": "action.present", "action": "duplicate-candidate.link-canonical-identity" },
+        { "kind": "action.present", "action": "duplicate-candidate.dismiss-duplicate-candidate" },
+        { "kind": "journey.fact", "fact": "agentLinkRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "strangerCanonicalRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "reasonlessLinkRefused", "is": "true" }
+      ]
+    },
+    {
+      "id": "the-link-destroys-nothing",
+      "narrative": "The human links the two as one customer, and the run proves what that link did not do. Both business rows are fingerprinted as bytes before and after and are identical; both records still exist; the cluster records exactly one canonical and one alias under one cluster key; and every link carries who decided and why. A logical canonical merge that rewrote a business record would not be a logical merge, and nothing here deletes, re-points or cascades.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "bothRecordsStillExist", "is": "true" },
+        { "kind": "journey.fact", "fact": "bothRecordsUnchanged", "is": "true" },
+        { "kind": "journey.fact", "fact": "clusterIsOneCanonicalOneAlias", "is": "true" },
+        { "kind": "journey.fact", "fact": "decisionIsAudited", "is": "true" },
+        { "kind": "journey.fact", "fact": "anythingDeleted", "is": "false" },
+        { "kind": "journey.fact", "fact": "anythingMergedPhysically", "is": "false" },
+        { "kind": "journey.count", "metric": "canonicalLinks", "equals": 2 }
+      ]
+    },
+    {
+      "id": "a-decision-is-not-overwritten",
+      "narrative": "Two ways a previous human decision could be silently undone, both refused. The decided candidate cannot be decided again — it has left the unresolved state and the action's own transition table says so — and a *different* candidate that happens to contain an already-clustered record cannot re-parent it. Overwriting an identity decision without anybody deciding anything is the failure mode that makes an identity graph untrustworthy.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "redecideRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "relinkRefused", "is": "true" }
+      ]
+    },
+    {
+      "id": "one-profile-read-from-either-side",
+      "narrative": "The consolidated profile is read from the canonical record and from the alias, and both name the same cluster with both members: the alias is not swallowed by the decision, it still resolves and still reads its own profile. The profile creates nothing, and it states in its own payload that it is not a complete cross-channel customer timeline.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "bothSidesReadOneCustomer", "is": "true" }
+      ]
+    },
+    {
+      "id": "absence-reads-as-absence",
+      "narrative": "This composition holds no other package at all, which is what makes the claim observable rather than argued: every section of the profile whose owning package is not composed reads not available, with a reason, and with a null count and null items — never as a zero. A zero would be a claim that there are none, and this run is entitled to make no such claim.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "absentSectionsExplainThemselves", "is": "true" }
+      ]
+    },
+    {
+      "id": "nothing-was-hoarded-or-activated",
+      "narrative": "The import rows carried a field the mapping does not know. The run searches every text column of every table in the database for it and finds nothing: no raw provider payload is stored. And the omissions are published as positive facts rather than left unsaid — nothing was activated or exported, no search index was built, and no consent, retention or erasure claim was made, because none of that exists here.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "rawPayloadStored", "is": "false" },
+        { "kind": "journey.fact", "fact": "anythingActivatedOrExported", "is": "false" },
+        { "kind": "journey.fact", "fact": "anySearchIndexBuilt", "is": "false" },
+        { "kind": "journey.fact", "fact": "anyConsentOrErasureClaimed", "is": "false" }
+      ]
+    },
+    {
+      "id": "quality-findings-are-evidence",
+      "narrative": "The rejected and unresolved rows produced explainable data-quality findings. An agent cannot govern one; a human resolves one with a reason, and the finding and its evidence are kept afterwards. Resolving a finding is a recorded decision about it, never an erasure of it, and every write above was audited and traced.",
+      "observe": [
+        { "kind": "action.present", "action": "data-quality-issue.govern-data-quality-issue" },
+        { "kind": "journey.fact", "fact": "agentGovernRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "findingKeptAfterGoverning", "is": "true" },
+        { "kind": "journey.count", "metric": "dataQualityIssues", "atLeast": 1 },
+        { "kind": "journey.count", "metric": "auditEvents", "atLeast": 20 },
+        { "kind": "journey.count", "metric": "workflowRuns", "atLeast": 5 }
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "job": "JTBD-DO-01",
+      "steps": ["compose", "compose-narrowly", "preview-writes-nothing", "apply-and-reconcile", "idempotent-by-payload"],
+      "note": "the row is recorded as partially supported and this run is what makes it so. What it shows is a bounded import with a fingerprinted mapping, a preview that provably writes nothing, a per-row receipt carrying an outcome and a reason code, counts that always reconcile, and an idempotency key derived from the payload rather than a clock. What it does not show, because none of it exists: CSV or any file format at all — the rows are a bounded JSON array a caller hands in — no file upload, no delimiter, encoding or header inference, no column mapping UI, no streaming, no scheduled or resumable import, and no import above the declared row cap."
+    },
+    {
+      "job": "JTBD-DO-02",
+      "steps": ["compose", "compose-narrowly", "exact-match-across-systems", "refuse-the-guess", "quality-findings-are-evidence"],
+      "note": "the row is recorded as partially supported and this run is what makes it so. What it shows is deterministic duplicate detection on import under a versioned fingerprinted policy: exact rules in a fixed precedence, a match that reuses an existing record across two source systems, and ambiguity that becomes a durable candidate carrying its rule and its evidence rather than a decision. What it does not show, because none of it exists: any fuzzy, phonetic, probabilistic or machine-learned matching, any score or threshold, any tie-break, and any detection on manual entry — this is detection on import only."
+    },
+    {
+      "job": "JTBD-DO-03",
+      "steps": ["compose", "only-a-human-decides", "the-link-destroys-nothing", "a-decision-is-not-overwritten", "one-profile-read-from-either-side"],
+      "note": "the row is recorded as partially supported and this run is what makes it so, on a deliberately narrow reading. What it shows is a **logical** canonical merge: a human decision, recorded with its actor and reason, that two records are one customer — after which both records still exist byte-identical, both still resolve, both read one profile, and a previous decision cannot be silently overwritten. What it does not show, because it is not implemented and is deliberately deferred: any **physical** merge. No record is deleted, no reference is re-pointed, no field is survivorship-resolved, and nothing is unmergeable-by-audit — an operator who wants two rows to become one row does not get that here."
+    },
+    {
+      "job": "JTBD-DO-08",
+      "steps": ["compose", "one-profile-read-from-either-side", "absence-reads-as-absence"],
+      "note": "the row is recorded as partially supported and this run does not change that. What it adds is a second, independent projection over the same problem: one read-only consolidated profile per customer, spanning whatever packages the application composes, in which a package that is not composed reads not available with a reason rather than as an empty result. What it still does not show, because none of it exists: any unified customer timeline. The profile is a projection over Accordo-managed records, it says so in its own payload, and no email, call, meeting, marketing or communications event appears on it — there are none to appear. No other row is promoted by inheritance from this one."
+    },
+    {
+      "job": "JTBD-PK-02",
+      "steps": ["compose", "compose-narrowly"],
+      "note": "the customer-data package declares no requirements at all and composes alone, publishing the customer-identity@1 capability while importing no other package's source. The same row is claimed by the other scenarios over different capabilities and different compositions; a package that needs nothing is the boundary seen from its limit, and four independent compositions is the point."
+    },
+    {
+      "job": "JTBD-PK-04",
+      "steps": ["compose", "compose-narrowly", "absence-reads-as-absence"],
+      "note": "the row is recorded as partially supported and this run does not change that. This composition omits every other package, and everything here still works — which is the removability claim seen from the other side, and here it is stronger than an omission: the absent packages are *observed* as absent by the profile rather than merely unused. It is still not evidence about removing a package from a project that already has its data, which is what the row's own wording asks for."
+    },
+    {
+      "job": "JTBD-AX-06",
+      "steps": ["refuse-the-guess", "only-a-human-decides", "a-decision-is-not-overwritten", "absence-reads-as-absence", "nothing-was-hoarded-or-activated"],
+      "note": "unavailable capability reported honestly, as a positive fact rather than as silence: the run publishes that no probabilistic match was used, that nothing was merged physically, deleted, activated, exported or indexed, and that no consent or erasure claim was made — and each refusal is recorded by attempting the operation, because safety evidence a run can earn by doing nothing is worthless. The profile's not-available sections are the same discipline applied to a read."
+    }
+  ]
+}

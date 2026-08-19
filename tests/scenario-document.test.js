@@ -271,6 +271,7 @@ test('every shipped scenario is a valid document, and carries nothing runnable',
   const shipped = readdirSync(new URL('../examples/scenarios/', import.meta.url)).sort();
   assert.deepEqual(shipped, [
     'contract-renewal-execution.scenario.json',
+    'customer-identity-governance.scenario.json',
     'lead-to-won.scenario.json',
     'service-sla-escalation.scenario.json',
   ], 'a contract validated by exactly one consumer is not validated');
