@@ -2843,3 +2843,40 @@ and record actions. Widening a closed vocabulary is a framework change and was
 deliberately left outside this milestone; `docs/SCENARIO_EVIDENCE.md` records
 the gap, and the second package to declare an operation is when it should be
 closed.
+
+### Review amendment — a read that decides something is never a display page
+
+Raised in independent review of the implementing PR, fixed in it, and recorded
+here because it revises how the fifth point above must be read.
+
+The generated record service offers two reads and they are not
+interchangeable. `list()` is a bounded **display** page: it clamps whatever
+limit it is given into `1..500` and returns the newest rows first.
+`listWhere()`/`countWhere()` are the complete exact-match correctness queries
+(ADR-015), and the generated source says so beside them. This package asked
+`list({ limit: 1000 })` in nine places and believed the answer. The bound is
+not exotic — 250 decided duplicate pairs write 500 canonical-link rows — and
+past it, measured on a real application:
+
+- the profile reported `linked: false`, *"no canonical identity decision has
+  been recorded for this record; it stands for itself"*, for a record a human
+  **had** linked; and
+- `ALREADY_IN_CANONICAL_CLUSTER` — the guard whose stated job is to refuse a
+  decision that would "silently rewrite an earlier one" — stopped firing, so
+  one record became canonical of one cluster and alias of another.
+
+So: **every read in this package that decides something is complete by
+construction**, through one helper that says why. A cluster read from a page is
+a cluster that loses members as the table grows, and a guard that stops firing
+at scale is not a guard.
+
+The same review found the fifth point held in only one direction. `available:
+false` was scrupulous, but a *composed* package whose record declares no
+reference this projection can follow reported `count: 0` — which reads as "this
+customer has none", and was false: a quote names an **opportunity**, not a
+company. Absence is therefore honest in both directions now. The profile
+follows the opportunity reference (a record it has already resolved for this
+customer, not a guess); a section it genuinely cannot reach reads `available:
+false` with that reason rather than a zero; and every readable section publishes
+`countIsComplete`, so a number taken from a bounded page is reported as a floor
+instead of a total.

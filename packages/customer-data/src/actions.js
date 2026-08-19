@@ -2,7 +2,7 @@
 
 import { AppError, ValidationError } from '../../core/index.js';
 import { safeString } from './normalize.js';
-import { orderedPair, resolvedNames, subjectFields, subjectKey, subjectOf, trusted } from './store.js';
+import { deciding, orderedPair, resolvedNames, subjectFields, subjectKey, subjectOf, trusted } from './store.js';
 
 /**
  * **The human decisions — the only writes in this package a person makes.**
@@ -76,9 +76,12 @@ export function buildCustomerDataActions(config) {
         const links = trusted(modules, names.link);
         // A record already inside a cluster cannot be silently re-parented:
         // that would rewrite a previous human decision without a decision.
+        // The read is a COMPLETE one, not a page: a guard that stops firing
+        // once the table outgrows a display bound is not a guard.
         for (const member of [canonical, alias]) {
-          const existing = links.list({ limit: 1000 }).find((row) => row.status === 'active'
-            && row.subjectResource === member.resource && row.subjectId === member.id);
+          const existing = deciding(links, {
+            subjectResource: member.resource, subjectId: member.id, status: 'active',
+          })[0];
           if (existing) {
             throw new AppError(
               'one of these records already belongs to a canonical identity cluster, so this decision would silently rewrite an earlier one',

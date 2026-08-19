@@ -1,7 +1,7 @@
 // @ts-check
 
 import { REASON } from './import.js';
-import { subjectKey, trusted } from './store.js';
+import { deciding, subjectKey, trusted } from './store.js';
 
 /**
  * **Data-quality detectors: explainable findings, not a rules engine.**
@@ -67,10 +67,11 @@ export function detectIssues({ resolution, modules, names }) {
   // the same `system:externalId` cannot both be right, and the import path
   // cannot create that state — but a restore, a migration or a second writer
   // can, so it is detected rather than assumed impossible.
-  const identities = trusted(modules, names.identity).list({ limit: 1000 });
+  // A complete read: a detector that only inspects the newest page of the table
+  // reports "no conflict" for a conflict that is merely older than the page.
+  const identities = deciding(trusted(modules, names.identity), { status: 'active' });
   const bySourceKey = new Map();
   for (const row of identities) {
-    if (row.status !== 'active') continue;
     const key = row.sourceKey;
     const seen = bySourceKey.get(key);
     if (seen && subjectKey({ resource: seen.subjectResource, id: seen.subjectId }) !== subjectKey({ resource: row.subjectResource, id: row.subjectId })) {
@@ -99,9 +100,8 @@ export function detectIssues({ resolution, modules, names }) {
 export function detectOrphans({ modules, core, names }) {
   const found = [];
   if (!core || typeof core.findContactByEmail !== 'function') return found;
-  const identities = trusted(modules, names.identity).list({ limit: 1000 });
+  const identities = deciding(trusted(modules, names.identity), { status: 'active' });
   for (const row of identities) {
-    if (row.status !== 'active') continue;
     if (row.subjectResource !== 'company' && row.subjectResource !== 'contact') continue;
     const service = modules.get(row.subjectResource === 'company' ? 'company' : 'contact')?.service;
     if (!service || typeof service.get !== 'function') continue;

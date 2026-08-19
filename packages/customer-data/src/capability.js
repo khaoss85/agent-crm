@@ -2,7 +2,7 @@
 
 import { AppError } from '../../core/index.js';
 import { canonicalClusterFor } from './profile.js';
-import { resolvedNames, subjectKey, subjectOf, trusted } from './store.js';
+import { deciding, newestFirst, resolvedNames, subjectOf, trusted } from './store.js';
 
 /**
  * `customer-identity@1` — the one capability this package offers, because it
@@ -55,9 +55,12 @@ export function createCustomerIdentityCapability(config) {
          */
         externalIdentities(subject) {
           if (!subject || typeof subject.resource !== 'string' || typeof subject.id !== 'string') return Object.freeze([]);
-          return Object.freeze(trusted(modules, names.identity).list({ limit: 1000 })
-            .filter((row) => row.status === 'active'
-              && row.subjectResource === subject.resource && row.subjectId === subject.id)
+          // A complete read: a consumer asking "what does the outside world
+          // call this record" must not be told "nothing" because the answer is
+          // older than one display page of the identity table.
+          return Object.freeze(deciding(trusted(modules, names.identity), {
+            subjectResource: subject.resource, subjectId: subject.id, status: 'active',
+          })
             .map((row) => Object.freeze({
               system: row.system,
               externalId: row.externalId,
@@ -85,11 +88,17 @@ export function createCustomerIdentityCapability(config) {
          */
         openDuplicateCandidates(subject) {
           if (!subject || typeof subject.resource !== 'string' || typeof subject.id !== 'string') return Object.freeze([]);
-          const key = subjectKey(subject);
-          return Object.freeze(trusted(modules, names.candidate).list({ limit: 1000 })
-            .filter((row) => row.status === 'unresolved'
-              && (subjectKey({ resource: row.leftResource, id: row.leftId }) === key
-                || subjectKey({ resource: row.rightResource, id: row.rightId }) === key))
+          // A candidate names two records, so both sides are asked for
+          // completely and unioned by id.
+          const candidates = trusted(modules, names.candidate);
+          const rows = new Map();
+          for (const side of [
+            { leftResource: subject.resource, leftId: subject.id },
+            { rightResource: subject.resource, rightId: subject.id },
+          ]) {
+            for (const row of deciding(candidates, { ...side, status: 'unresolved' })) rows.set(row.id, row);
+          }
+          return Object.freeze(newestFirst([...rows.values()])
             .map((row) => Object.freeze({
               id: row.id,
               left: subjectOf(row, 'left'),

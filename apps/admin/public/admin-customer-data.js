@@ -406,8 +406,13 @@ export function createCustomerDataView({ doc, mount, client, navigate = () => {}
       row.setAttribute('data-section', key);
       row.setAttribute('data-available', String(Boolean(section.available)));
       row.appendChild(el('span', 'fact-label', `${label}: `));
-      row.appendChild(el('span', 'fact-value',
-        section.available ? `${section.count}` : 'not available'));
+      // A count read from a bounded page is a floor, not a total, and the row
+      // says which of the two it is rather than showing both as one number.
+      const valueEl = el('span', 'fact-value', section.available
+        ? (section.countIsComplete === false ? `at least ${section.count}` : `${section.count}`)
+        : 'not available');
+      if (section.available && section.countIsComplete === false && section.countNote) valueEl.title = section.countNote;
+      row.appendChild(valueEl);
       if (!section.available) row.appendChild(el('span', 'muted customer-profile-unavailable', ` — ${section.reason}`));
       sections.appendChild(row);
     }

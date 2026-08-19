@@ -188,7 +188,9 @@ export function createCustomerDataPackage(options = {}) {
         profile: {
           readOnly: true,
           completeTimeline: false,
-          absence: 'a package that is not composed reads "not available" — never as an empty result',
+          absence: 'a package that is not composed — or one whose record declares no reference this projection can follow — '
+            + 'reads "not available" with the reason, never as an empty result',
+          counts: 'every readable section states countIsComplete: a count taken from a bounded display page is reported as a floor, not as a total',
         },
         deferred: {
           track: 'Customer Data Operations v2',

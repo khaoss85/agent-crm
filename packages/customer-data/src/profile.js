@@ -1,6 +1,6 @@
 // @ts-check
 
-import { optional, subjectKey, subjectOf, trusted } from './store.js';
+import { deciding, newestFirst, optional, subjectKey, subjectOf, trusted } from './store.js';
 
 /**
  * **The consolidated profile: a projection, never a table.**
@@ -49,8 +49,12 @@ const NOT_AVAILABLE = (label, owner) => Object.freeze({
  * @param {{modules: any, names: any, subject: {resource: string, id: string}}} input
  */
 export function canonicalClusterFor({ modules, names, subject }) {
-  const links = trusted(modules, names.link).list({ limit: 1000 }).filter((row) => row.status === 'active');
-  const mine = links.find((row) => row.subjectResource === subject.resource && row.subjectId === subject.id);
+  // Complete reads, not display pages: a cluster that loses members once the
+  // link table outgrows a page would deny a human decision that was recorded.
+  const links = trusted(modules, names.link);
+  const mine = deciding(links, {
+    subjectResource: subject.resource, subjectId: subject.id, status: 'active',
+  })[0];
   if (!mine) {
     return Object.freeze({
       clusterKey: null,
@@ -60,8 +64,7 @@ export function canonicalClusterFor({ modules, names, subject }) {
       note: 'no canonical identity decision has been recorded for this record; it stands for itself',
     });
   }
-  const members = links
-    .filter((row) => row.clusterKey === mine.clusterKey)
+  const members = deciding(links, { clusterKey: mine.clusterKey, status: 'active' })
     .map((row) => Object.freeze({ ...subjectOf(row), role: row.role, decisionId: row.decisionId, decidedAt: row.decidedAt }))
     .sort((a, b) => (a.role === b.role ? subjectKey(a).localeCompare(subjectKey(b)) : a.role === 'canonical' ? -1 : 1));
   return Object.freeze({
@@ -80,14 +83,16 @@ export function canonicalClusterFor({ modules, names, subject }) {
  */
 export function profileFor({ modules, core, names, subject }) {
   const cluster = canonicalClusterFor({ modules, names, subject });
-  const memberKeys = new Set(cluster.members.map((member) => subjectKey(member)));
 
   // Identity: the host records themselves, read through their own services.
   const identity = readIdentity({ modules, subject, cluster });
 
-  // External identities for every member of the cluster.
-  const identities = trusted(modules, names.identity).list({ limit: 1000 })
-    .filter((row) => row.status === 'active' && memberKeys.has(subjectKey({ resource: row.subjectResource, id: row.subjectId })))
+  // External identities for every member of the cluster. Asked per member as a
+  // complete query rather than filtered out of one page of the whole table.
+  const identityService = trusted(modules, names.identity);
+  const identities = newestFirst(cluster.members.flatMap((member) => deciding(identityService, {
+    subjectResource: member.resource, subjectId: member.id, status: 'active',
+  })))
     .map((row) => Object.freeze({
       system: row.system, externalId: row.externalId, subject: subjectOf(row),
       firstObservedAt: row.firstObservedAt, lastObservedAt: row.lastObservedAt,
@@ -98,6 +103,21 @@ export function profileFor({ modules, core, names, subject }) {
   if (identity.company?.id) companyIds.add(identity.company.id);
   if (identity.contact?.id) contactIds.add(identity.contact.id);
 
+  // The customer's own opportunities are resolved first, because a quote names
+  // an opportunity rather than a company. Following that one explicit reference
+  // is how a commercial record reaches the customer it belongs to — and it is a
+  // reference, not a guess: the hop goes through records this profile has
+  // already resolved for this customer.
+  const opportunityService = optional(modules, 'opportunity');
+  let opportunityRead = null;
+  if (opportunityService && typeof opportunityService.list === 'function') {
+    try {
+      opportunityRead = readSectionRows(opportunityService, { companyIds, contactIds, opportunityIds: new Set() });
+    } catch { opportunityRead = null; }
+  }
+  const opportunityIds = new Set((opportunityRead?.rows ?? []).map((row) => row.id));
+  const references = { companyIds, contactIds, opportunityIds };
+
   const sections = {};
   for (const section of SECTIONS) {
     const service = optional(modules, section.module);
@@ -105,18 +125,42 @@ export function profileFor({ modules, core, names, subject }) {
       sections[section.key] = NOT_AVAILABLE(section.label, section.owner);
       continue;
     }
-    let rows = [];
+    let read;
     try {
-      rows = service.list({ limit: 500 }).filter((row) => belongsToCustomer(row, companyIds, contactIds));
+      read = section.key === 'opportunities' && opportunityRead
+        ? opportunityRead
+        : readSectionRows(service, references);
     } catch {
       sections[section.key] = Object.freeze({
         available: false, reason: `${section.label} could not be read from this application`, items: null, count: null,
       });
       continue;
     }
+    if (!read.readable) {
+      // The package IS composed — but it declares no reference this projection
+      // knows how to follow, so the honest answer is that it cannot be read
+      // from here. Reporting `0` would say the customer has none, which is a
+      // different and probably untrue statement.
+      sections[section.key] = Object.freeze({
+        available: false,
+        reason: `the ${section.owner} package is composed, but its ${section.label} record declares no company, contact or `
+          + 'opportunity reference this profile can follow, so they cannot be read from here — this is not a claim that there are none',
+        items: null,
+        count: null,
+      });
+      continue;
+    }
+    const rows = read.rows;
     sections[section.key] = Object.freeze({
       available: true,
       count: rows.length,
+      // A count is a claim. When the owning module declares no field this
+      // projection can query on, the only read available is a bounded display
+      // page, and a number taken from a page is not a count of the table.
+      countIsComplete: read.complete,
+      ...(read.complete ? {} : {
+        countNote: `${section.label} were read from a bounded page of the owning module, so this count is at least this many, not exactly this many`,
+      }),
       items: Object.freeze(rows.slice(0, 50).map((row) => Object.freeze({
         id: row.id, status: row.status ?? null, name: row.name ?? row.title ?? row.customerName ?? null,
       }))),
@@ -124,14 +168,22 @@ export function profileFor({ modules, core, names, subject }) {
     });
   }
 
-  const issues = trusted(modules, names.issue).list({ limit: 1000 })
-    .filter((row) => row.status === 'open' && memberKeys.has(subjectKey({ resource: row.subjectResource, id: row.subjectId })))
+  const issueService = trusted(modules, names.issue);
+  const issues = newestFirst(cluster.members.flatMap((member) => deciding(issueService, {
+    subjectResource: member.resource, subjectId: member.id, status: 'open',
+  })))
     .map((row) => Object.freeze({ kind: row.kind, evidence: row.evidence, detectedAt: row.detectedAt, subject: subjectOf(row) }));
 
-  const candidates = trusted(modules, names.candidate).list({ limit: 1000 })
-    .filter((row) => row.status === 'unresolved'
-      && (memberKeys.has(subjectKey({ resource: row.leftResource, id: row.leftId }))
-        || memberKeys.has(subjectKey({ resource: row.rightResource, id: row.rightId }))))
+  // A candidate names two records, so each member is asked for on both sides
+  // and the two answers are unioned by id rather than double-counted.
+  const candidateService = trusted(modules, names.candidate);
+  const candidateRows = new Map();
+  for (const member of cluster.members) {
+    for (const side of [{ leftResource: member.resource, leftId: member.id }, { rightResource: member.resource, rightId: member.id }]) {
+      for (const row of deciding(candidateService, { ...side, status: 'unresolved' })) candidateRows.set(row.id, row);
+    }
+  }
+  const candidates = newestFirst([...candidateRows.values()])
     .map((row) => Object.freeze({
       left: subjectOf(row, 'left'), right: subjectOf(row, 'right'), rule: row.rule, evidence: row.evidence,
     }));
@@ -181,13 +233,58 @@ function readIdentity({ modules, subject, cluster }) {
 }
 
 /**
+ * One section's rows for this customer.
+ *
+ * Preferred path: the **complete** exact-match query, asked once per reference
+ * shape this projection understands. A generated module that declares none of
+ * them is not readable from here at all, and says so — a `0` would be a claim
+ * that the customer has none. A handwritten service with no exact query leaves
+ * only the bounded display page, which is returned but flagged, because a
+ * number taken from a page is not a count of the table.
+ *
+ * @param {any} service
+ * @param {{companyIds: Set<string>, contactIds: Set<string>, opportunityIds: Set<string>}} references
+ */
+function readSectionRows(service, references) {
+  const shapes = [
+    { companyId: [...references.companyIds] },
+    { contactId: [...references.contactIds] },
+    { opportunityId: [...references.opportunityIds] },
+    { subjectResource: 'company', subjectId: [...references.companyIds] },
+    { subjectResource: 'contact', subjectId: [...references.contactIds] },
+  ];
+  if (typeof service.listWhere === 'function') {
+    const byId = new Map();
+    let queryable = false;
+    for (const filters of shapes) {
+      if (!Object.values(filters).some((value) => Array.isArray(value) && value.length > 0)) continue;
+      try {
+        for (const row of service.listWhere(filters)) byId.set(row.id, row);
+        queryable = true;
+      } catch {
+        // The module does not declare this reference shape. Try the next one.
+      }
+    }
+    return queryable
+      ? { readable: true, rows: newestFirst([...byId.values()]), complete: true }
+      : { readable: false };
+  }
+  return {
+    readable: true,
+    rows: service.list({ limit: 500 }).filter((row) => belongsToCustomer(row, references)),
+    complete: false,
+  };
+}
+
+/**
  * Does this row belong to the customer? Only by explicit reference — this
  * never guesses from a name or an email string, because a projection that
  * guesses is a projection that quietly attributes somebody else's contract.
  */
-function belongsToCustomer(row, companyIds, contactIds) {
+function belongsToCustomer(row, { companyIds, contactIds, opportunityIds }) {
   if (row.companyId && companyIds.has(row.companyId)) return true;
   if (row.contactId && contactIds.has(row.contactId)) return true;
+  if (row.opportunityId && opportunityIds.has(row.opportunityId)) return true;
   if (row.subjectResource === 'company' && companyIds.has(row.subjectId)) return true;
   if (row.subjectResource === 'contact' && contactIds.has(row.subjectId)) return true;
   return false;

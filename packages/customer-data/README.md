@@ -145,6 +145,14 @@ A section whose owning package is **not composed** reads:
 Never a zero. A zero would be a claim that there are none, which an application
 that cannot see the package is not entitled to make.
 
+The same holds for a package that **is** composed but whose record declares no
+company, contact or opportunity reference this projection can follow: it reads
+`available: false` naming that as the reason, rather than a `0` it has not
+earned. And every readable section publishes `countIsComplete` — `true` when
+the count came from the complete exact-match query, `false` when the owning
+module offers only a bounded display page, in which case the count is a floor
+and the section says so.
+
 And it says so about itself: `completeTimeline: false`. This is a projection
 over Accordo-managed records, **not** a cross-channel customer timeline. No
 email, call, meeting, marketing or communications event appears on it, because
