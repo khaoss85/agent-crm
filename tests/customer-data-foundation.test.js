@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROWS, boot, project } from './helpers/customer-data-project.js';
 
@@ -439,4 +440,44 @@ test('exact reads stay exact past the paged bound', async (t) => {
   assert.equal(preview.receipts[0].matchRule, 'external-identity',
     'an exact identifier read must not degrade past the page bound');
   assert.equal(preview.receipts[0].outcome, 'accepted');
+});
+
+/**
+ * The PII string policy is the signer's, reused — and that is a claim, so it is
+ * checked.
+ *
+ * ADR-037 and the package README both say this package "reuses the existing
+ * strictest PII string policy rather than inventing one", identical code point
+ * by code point. Two separate literals in two packages are exactly the pair
+ * that drifts silently: someone widens one, both files still look right on
+ * their own, and the claim in the ADR quietly becomes false. Comparing the
+ * *literals* is what "code point by code point" means, so that is what this
+ * compares — not two behaviours that happen to agree on the cases anybody
+ * thought to try.
+ */
+test('the control-character policy is the signer package\', character for character', () => {
+  const literal = (path) => {
+    const source = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+    const match = /CONTROL_RE\s*=\s*(\/\[[^\n]*?\/)\s*;/.exec(source);
+    assert.ok(match, `${path} must declare CONTROL_RE as a regular-expression literal`);
+    return match[1];
+  };
+  const signer = literal('packages/signature/src/operations.js');
+  const customerData = literal('packages/customer-data/src/normalize.js');
+  assert.equal(customerData, signer,
+    'reusing a policy means the same literal — widen one and this fails, which is the point');
+
+  // And it is the literal both documents name, so a pair that drifted together
+  // still fails.
+  assert.equal(signer, '/[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]/');
+
+  // Behaviour, not only text: one representative of every class it names is
+  // actually refused, so a literal that parses to something else cannot pass.
+  const policy = new RegExp(customerData.slice(1, -1));
+  for (const code of [0x0000, 0x001f, 0x007f, 0x009f, 0x2028, 0x2029]) {
+    assert.match(String.fromCodePoint(code), policy,
+      `U+${code.toString(16).padStart(4, '0').toUpperCase()} must be inside the class`);
+  }
+  // And an ordinary character is not.
+  assert.doesNotMatch('ada@northwind.example', policy);
 });
