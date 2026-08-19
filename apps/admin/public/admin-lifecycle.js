@@ -47,19 +47,16 @@ const ABSENT_LABEL = 'absent — unknown provenance';
 const LIST_LIMIT = 100;
 
 /**
- * Which run the operator is looking at, per contract.
+ * **This section holds no client-side selection, deliberately.**
  *
- * It has to live outside the render closure, for the reason a real browser
- * found in the Service section: the parent's `withBusy` re-renders the whole
- * quote detail on every successful write, building a brand new section, so a
- * selection kept in a local would be destroyed by every successful action.
+ * The Service section had to keep one outside its render closure, because the
+ * parent's `withBusy` re-renders the whole quote detail on every successful
+ * write and a selection kept in a local was destroyed by every successful
+ * action. Here there is nothing to select: at most one round is open on a
+ * contract at a time and a contract is succeeded exactly once, so *which* round
+ * to show is derived from the server's rows on every render. A selection this
+ * screen does not need is a selection that cannot go stale.
  */
-const SELECTED_RUN = new Map();
-
-/** Forget every selection. A browser gets this from a reload; a test does not. */
-export function resetAmendmentSelection() {
-  SELECTED_RUN.clear();
-}
 
 /** Invoke a package action over the Admin's own thin request client. */
 function runAction(client, module, id, action, input) {
@@ -208,10 +205,8 @@ export async function renderAmendment({ contract, schema, mount, el, client, mon
     return;
   }
 
+  // Which round to show is derived from the server's rows, never remembered.
   const open = runs.find((row) => row.state !== 'executed' && row.state !== 'abandoned') ?? null;
-  const executed = runs.find((row) => row.state === 'executed') ?? null;
-  const selected = open ?? executed ?? runs[runs.length - 1] ?? null;
-  SELECTED_RUN.set(contract.id, selected?.id ?? null);
 
   panel.appendChild(fact(el, 'Rounds recorded', runs.length));
   panel.appendChild(el('p', 'muted amendment-round-rule', meta.amendment.rounds));

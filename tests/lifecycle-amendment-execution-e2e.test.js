@@ -755,6 +755,68 @@ test('the successor survives a restart, and an old M16a database upgrades in pla
   assert.equal(second.app.modules.get('contract-succession').service.list({ limit: 10 }).length, 1);
 });
 
+test('the new evidence is read-only through every generic surface, over the real HTTP routes', async (t) => {
+  const { app, context, contract, successor } = await scene(t, { db: 'boundary' });
+  const { client, agentClient } = context;
+  const run = await readyRun(app, contract, successor.order);
+  const executed = (await app.runAction({
+    module: 'amendment-run', action: 'execute-amendment', recordId: run.id, input: { ...POLICY }, actor: ACTOR,
+  })).result;
+
+  const refusedRoute = async (method, path, body) => {
+    await assert.rejects(() => client.request(path, { method, body }), (error) => error.status === 404,
+      `${method} ${path} must not be a route`);
+  };
+  for (const [module, id, forged] of [
+    ['amendment-run', run.id, { state: 'ready', sourceContractId: 'forged', successorOrderId: 'forged' }],
+    ['contract-succession', executed.succession.id, { classification: 'renewal', sourceContractId: 'forged' }],
+  ]) {
+    // Readable…
+    assert.ok((await client.request(`/api/modules/${module}/records`)).items.length > 0);
+    assert.ok((await client.request(`/api/modules/${module}/records/${id}`)).id);
+    // …and not writable, not even with an empty body. A client that could set
+    // `state` could authorise its own execution, and a client that could set
+    // `classification` could label a change the evidence does not support —
+    // which is the whole thing this milestone refuses to let anybody do.
+    await refusedRoute('POST', `/api/modules/${module}/records`, {});
+    await refusedRoute('POST', `/api/modules/${module}/records`, forged);
+    await refusedRoute('PATCH', `/api/modules/${module}/records/${id}`, {});
+    await refusedRoute('PATCH', `/api/modules/${module}/records/${id}`, forged);
+    await refusedRoute('DELETE', `/api/modules/${module}/records/${id}`);
+  }
+
+  // The stored evidence is exactly what the server derived, after all of that.
+  const lineage = app.modules.get('contract-succession').service.get(executed.succession.id);
+  assert.equal(lineage.classification, 'renewal');
+  assert.equal(lineage.sourceContractId, contract.id);
+  assert.equal(app.modules.get('amendment-run').service.get(run.id).state, 'executed');
+
+  // Every writing action is a human decision, over the real route.
+  for (const [module, action, recordId, input] of [
+    ['commercial-contract', 'open-amendment-run', contract.id, { reason: 'bot' }],
+    ['amendment-run', 'attach-successor-order', run.id, { successorOrderId: successor.order.id }],
+    ['amendment-run', 'execute-amendment', run.id, { ...POLICY }],
+    ['amendment-run', 'abandon-amendment-run', run.id, { reason: 'bot' }],
+  ]) {
+    await assert.rejects(
+      () => agentClient.request(`/api/modules/${module}/records/${recordId}/actions/${action}`, { method: 'POST', body: input }),
+      (error) => error.status === 403 && error.code === 'HUMAN_APPROVAL_REQUIRED',
+      `${module}.${action} must refuse an agent over HTTP`,
+    );
+  }
+  assert.equal(app.modules.get('contract-succession').service.list({ limit: 50 }).length, 1,
+    'the agent wrote nothing while being refused');
+
+  // AX1 publishes the new edge and the new actions, function-free.
+  const schema = await client.request('/api/schema');
+  assert.equal(schema.domains.lifecycle.amendment.amendmentContract, 1);
+  assert.equal(schema.domains.contracts.succession.successionContract, 1);
+  assert.ok(schema.domains.lifecycle.requires.some((entry) => entry.package === 'contracts'
+    && entry.capability === 'contracts-successor-activation' && entry.version === 1));
+  assert.ok(schema.domains.contracts.provides.some((entry) => entry.name === 'contracts-successor-activation'));
+  assert.equal(JSON.stringify(schema.domains), JSON.stringify(JSON.parse(JSON.stringify(schema.domains))));
+});
+
 /* ----------------------------------------------------------------- helpers */
 
 /** Every field name anywhere in a payload, however deeply nested. */

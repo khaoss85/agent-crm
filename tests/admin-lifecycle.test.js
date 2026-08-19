@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  AMENDMENT_DISCLAIMERS, renderAmendment, resetAmendmentSelection,
-} from '../apps/admin/public/admin-lifecycle.js';
+import { AMENDMENT_DISCLAIMERS, renderAmendment } from '../apps/admin/public/admin-lifecycle.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -144,7 +142,6 @@ const LINEAGE = {
 async function render({
   runs = [], successions = [], plan = COHERENT_PLAN, schema = SCHEMA, planError = null, listError = null,
 } = {}) {
-  resetAmendmentSelection();
   const doc = createFakeDocument();
   const mount = createMount();
   const el = (tag, className, text) => {
