@@ -2786,12 +2786,13 @@
     "packages/commercial/modules/quote-version.module.json": "b3a209f5f45c1486f942e145437e69f091cd3bd77972485386607af0dc5f3bc9",
     "packages/commercial/modules/quote.module.json": "08a6d9a8e48d2d412837a8a52c6fae22520b3add5a82275901ce4754c31386b0",
     "packages/commercial/src/actions.js": "d256803ff214681f88c5fe74b1991c0d6c0da7c0dbb1bd04a1daff9c3f7f5cbb",
-    "packages/commercial/src/capability.js": "b0204ec578ed4293553aca22bcf2261d208524a64a4804b1026a5d51e803fb8d",
+    "packages/commercial/src/capability.js": "2bc00faae90a8c0ebe5768c00a8e55525e9e720b69bacf21905bd9e82d4d2279",
     "packages/commercial/src/catalog-sync.js": "f9ac765ce30ebde27e35aa9f441f417dd1da640a70a98dbb7a013b900489bdb4",
-    "packages/commercial/src/index.js": "dba639a47e002af7417423ffab966f275dcee72eaa0529c220d03bec279477ea",
+    "packages/commercial/src/index.js": "449f4c95e5b4c9bf35cf63664a4aa371a17941ac25101d836025652be01929fe",
     "packages/commercial/src/money.js": "5a2716542ebac08388b75d425c0c8c7b91b3dbc8ec756e42927d6d9b203d5a86",
     "packages/commercial/src/registry.js": "b10cf6027eb889385ac9169502cfebf91036108af22ae631735ae60dacc4c07b",
     "packages/commercial/src/terms.js": "7adceb41a3ca613fc14cafda70517aee5d5da645faed9fd02121376032e56efd",
+    "packages/commercial/src/verify-terms.js": "8b41b570d083d745d2ea866a3f0de9de24bcc974178a1688feb6007d50103744",
     "packages/core/src/action-runtime.js": "45bf0027248180f2fc9ea9edf5a5e0b82c7dbfa84d9b9b76568ea4c2f897d1f6",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
     "packages/core/src/external-operation.js": "a42f0be7e894cdce0c1ee1845e04930dddd64fe68a32929e965c2c8a57ec9fbe",
@@ -2809,8 +2810,8 @@
     "packages/signature/modules/signature-signer.module.json": "a463d01186ff8b60778565d37bdb0332b13fdf9f8033f90636e0cabb4bfb53f6",
     "packages/signature/modules/signed-artifact.module.json": "8f783ce318c59d86be6987290382db542c5023d95e65986667b47d612e1f4e53",
     "packages/signature/src/capability.js": "190733860a2f046703a792a37764a516b54aef334d7a700463bcce28758cf87f",
-    "packages/signature/src/index.js": "34c398f1660fa92a317acb522bbdf1e99c95beb4b528b14e133462ac7c2970df",
-    "packages/signature/src/operations.js": "ffe418326539638e7711832ef15c6d867e3adafef3f3f3f8ec5c9a2959dbe252",
+    "packages/signature/src/index.js": "0e23bde8df5a7c626f3fb301140802c22fcc345dd385265a5c1225ef1b734198",
+    "packages/signature/src/operations.js": "cd0408309bd8369b7fb0880185d522da27e688fd0cbfa2f2f884260309eadef3",
     "packages/signature/src/registry.js": "685721b7345a76bdbaa5fd4495243b99c3d8dd4c465538799530ace4e5b35bdd"
   }
 }

@@ -159,7 +159,7 @@ test('the first-party contracts package conforms', () => {
       // actions and all three earlier capabilities are untouched by 7, and
       // `packageContract: 1` has never moved.
       name: 'contracts',
-      version: 7,
+      version: 8,
       resources: [
         'commercial-contract', 'contract-version', 'contract-line', 'contract-activation',
         'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
@@ -170,7 +170,10 @@ test('the first-party contracts package conforms', () => {
       // record both actions target — into the signature package, so the
       // record-level dependency that always existed is now declarable, and
       // declared. The reads themselves did not move.
-      requires: ['signature/signature-orders@1'],
+      // ADR-036: Contracts asks Commercial to verify a signed-term snapshot
+      // before describing it as signed, so the composition contract gained a
+      // second required capability.
+      requires: ['commercial/commercial-quotes@2', 'signature/signature-orders@1'],
       provides: [
         'contract-lifecycle-source@2', 'contracts-successor-activation@1',
         'delivery-obligations@1', 'service-obligations@1',

@@ -1,8 +1,8 @@
 {
   "implementationEvidenceContract": 1,
   "plan": "examples/solution-plans/activate-support-and-manage-cases.plan.json",
-  "planFingerprint": "69242897667928b286dcf79edae0225a08410fbcb8c71450ce7dd20092ff2e43",
-  "applicationInspectionFingerprint": "c894a9860ea47ce9daf1e6f26bb82ec0b34f03f1b61ef463bac7f08201ce2f2c",
+  "planFingerprint": "9b13e552e36995411c126ef4c12e2762979fd7293f30b5bd6f0affe5ec5d468d",
+  "applicationInspectionFingerprint": "16dad15f97bfbdbe492dc58898261a43789a0dc051a6278b83e54a0bc9fc3b5f",
   "requirements": [
     {
       "requirementId": "step:step.plan-before-activating",

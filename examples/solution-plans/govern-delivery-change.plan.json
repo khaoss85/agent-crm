@@ -14,11 +14,11 @@
   },
   "application": {
     "inspectionContract": 1,
-    "inspectionFingerprint": "832f913a3d173bb2c84af09ecb3015fc5a1148aa43bc78244a6091962e40497a",
+    "inspectionFingerprint": "bc086dda2b78a0c74e68e869a066b32c199a97aa9240f87fcde40afa7c2d27df",
     "packages": [
       {
         "name": "contracts",
-        "version": 7
+        "version": 8
       },
       {
         "name": "delivery",

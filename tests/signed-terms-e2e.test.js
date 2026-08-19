@@ -76,7 +76,7 @@ test('a signed term travels draft → version snapshot → document hash → Ord
   assert.equal(orderTerm.termDays, 365);
 
   // …and both capabilities hand it to consumers, frozen.
-  const quotesCap = app.domains.capability({ consumer: 'signature', capability: 'commercial-quotes', version: 1, context: { modules: app.modules } });
+  const quotesCap = app.domains.capability({ consumer: 'signature', capability: 'commercial-quotes', version: 2, context: { modules: app.modules } });
   const viaQuotes = quotesCap.versionTerm(versionId);
   assert.equal(viaQuotes.termsFingerprint, snapshot.termsFingerprint);
   assert.equal(Object.isFrozen(viaQuotes), true);

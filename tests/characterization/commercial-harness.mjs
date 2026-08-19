@@ -133,6 +133,9 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   // part of the frozen shape, and a baseline project without the term
   // records proves exactly the pre-terms behaviour the asserted values pin.
   'packages/commercial/src/terms.js',
+  // The signed-term verifier (ADR-036): it decides whether a snapshot may be
+  // treated as signed at all, so it is behaviour-bearing by definition.
+  'packages/commercial/src/verify-terms.js',
   'packages/commercial/modules/quote-term.module.json',
   'packages/commercial/modules/quote-version-term.module.json',
   'packages/core/src/money.js',
