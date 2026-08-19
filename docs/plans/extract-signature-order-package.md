@@ -102,11 +102,21 @@ observations moved — Signature (110 observations, asserted fingerprint
   Knock-on: contracts no longer composes alone, so the fixtures that used it
   as the smallest composable package moved to `work` (project-doctor) or
   compose the chain `commercial → signature → contracts`
-  (work-package-absence, the package-contract registry test). Contracts'
-  package `version: 4` is deliberately **not** bumped: the versioned
-  consumer-facing surfaces (capabilities, actions, resources) are unchanged,
-  and the new `requires` entry is a composability declaration — flagged here
-  for the reviewer to disagree with.
+  (work-package-absence, the package-contract registry test, the harness
+  fixture composition in `benchmarks/tool-selection/fixtures.js`). Contracts' package
+  version was first left at 4 on the argument that the versioned
+  consumer-facing surfaces (capabilities, actions, resources) were unchanged
+  — flagged here for the reviewer to disagree with, and **the reviewer did**:
+  the no-bump call is REJECTED, and contracts ships at **version 5**. The
+  recorded rationale, verbatim: "A package version describes its composition
+  contract, including `requires`, not only its consumer-visible
+  records/actions." The new required edge changes composability, startup
+  behaviour when Signature is absent, AX1's reported graph, and deployment
+  compatibility. The bump swept exactly the surfaces where the version
+  identity legitimately moved (the conformance expectation, the three plans
+  pinning contracts in `plan.application.packages`, their evidence documents)
+  and nothing else; no schema or data migration exists, and version/drift
+  checks are untouched.
 
 ## The ADR-032 boundary accounting (what each of the five items adds)
 
@@ -116,10 +126,17 @@ observations moved — Signature (110 observations, asserted fingerprint
    declared in the action-registry field shapes, `create` function;
    `package-composition.js`: cross-package `appMethod` collision refusal.
 2. **`packages/core/src/operation-runtime.js`** — one generic module, zero
-   domain vocabulary: builds the bounded context `{database, modules, events,
-   config, runExternal, trace}` (trace = bounded best-effort writer over the
-   same `workflow_runs`/`trace_spans` rows) and composes declared operations
-   into `{name → fn}` plus alias list.
+   domain vocabulary: builds the bounded context and composes declared
+   operations into an alias list. **Shipped narrower than the ADR's six-key
+   sketch, by reviewer decision**: the v1 context is the CLOSED, frozen key
+   set `{config, database, events, modules, runExternal}` — each key audited
+   against the two real consumers, and the injected bounded trace writer
+   (which neither consumer uses: catalog sync persists via the public
+   `writeTrace` it already imports, the signature operations via
+   `runExternalOperation`) is NOT shipped. The ADR-032 implementation
+   addendum in `DECISIONS.md` records the audit and defers the writer to its
+   first real consumer; `tests/package-operations-seam.test.js` asserts the
+   exact key list with `trace` explicitly absent.
 3. **`create-app.js`** — generic composition + alias attachment replacing
    BOTH named residues (the Commercial `createCatalogSyncOperation` lookup and
    the entire named Signature wiring); alias shadow refusal against existing
