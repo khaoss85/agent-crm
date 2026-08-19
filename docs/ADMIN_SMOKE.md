@@ -285,10 +285,11 @@ Report any step that fails; do not mark the Work section browser-validated unles
 
 ## Renewal & amendment execution (M16b, ADR-035)
 
-**M16b-specific, scripted, and outside CI. 40 checks, all passing** — driven in
-real Chromium (**Chromium/141.0.7390.37**) on Node **22.16.0**, against a freshly
-seeded project, twice from a clean database and a clean browser profile, with
-identical results both runs.
+**M16b-specific, scripted, and outside CI. 41 checks, all passing** — checks
+1–40 for the milestone itself and check 41 for the ADR-036 signed-term
+verifier — driven in real Chromium (**Chromium/141.0.7390.37**) on Node
+**22.16.0**, against a freshly seeded project, twice from a clean database and
+a clean browser profile, with identical results both runs.
 
 **Browser automation is still manual.** The run was scripted rather than
 hand-driven — a zero-dependency Chrome DevTools Protocol driver over Node's
@@ -298,18 +299,39 @@ under `tests/browser/` and wiring it to a job with a preinstalled Chromium is
 still the only thing that would change that sentence. Nothing here re-runs or
 replaces the 37 / 22 / 24 / 30 checks above.
 
-**Not re-run for the signed-term integrity verifier (ADR-036).** That change was
-reviewed and merged with **no browser re-run at all**: the environment it was
-built in has no Chromium binary of any kind, so re-running this matrix there was
-impossible, and reporting checks nobody executed would be worse than the gap.
-The matrix itself is unchanged and still **40 checks** — counted in this
-document, not remembered. What a human re-running it should watch, because it is
-what the verifier changed: an agreement whose stored signed-term snapshot no
-longer matches its own fingerprint now **refuses server-side**
-(`TERMS_FINGERPRINT_MISMATCH` / `TERMS_SNAPSHOT_DIVERGED`), so the Admin
-activation and amendment panels must render that refusal as a server message and
-must not offer a control that would retry it. Every path with valid evidence is
-byte-identical, so checks 1–40 are expected to pass unchanged.
+**Re-run for the signed-term integrity verifier (ADR-036), plus one new check.**
+The independent review re-ran this matrix in real Chromium
+(**Chromium/141.0.7390.37**, `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`)
+on Node **22.16.0**, **twice**, each run against a freshly seeded project, a
+clean database and a clean browser profile: **40 / 40 passed both times**, with
+identical results. An earlier draft of this section said the environment had
+"no browser binary of any kind" — that was wrong. It was concluded from a
+`PATH` lookup; the Playwright-managed Chromium is installed at
+`PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers` and needs no download.
+
+The verifier changed one thing this matrix had never covered, so **check 41**
+is added — run twice, passing both times:
+
+41. An agreement whose stored signed-term snapshot no longer matches its own
+    fingerprint (planted by direct SQL, the threat ADR-036 models) is refused
+    **server-side**, and specifically:
+    a. the refusal is visible on screen, naming the term as not the one signed;
+    b. no execute, retry or force control is offered anywhere in the section;
+    c. no planted value is echoed back into the page;
+    d. the round does not park — it stays `planned` with no successor attached,
+       and **no successor lineage row is written**;
+    e. no dialog, console error, uncaught error, failed resource or 5xx.
+
+    **Where the refusal renders**, precisely: the amendment panel deliberately
+    throws into the quote detail's shared `field-error` line rather than
+    swallowing the failure (`admin-lifecycle.js` says so in its own header), so
+    the message appears there — on the same screen, immediately — and **not**
+    inside `.amendment-section`, whose own `.amendment-error` element stays
+    empty. An earlier draft of this section predicted the panels themselves
+    would render it; they do not, and that is the design, not a defect.
+
+Every path with valid evidence is byte-identical, which the two clean 40/40
+runs confirm rather than assume
 
 The section is **package-scoped, not package-owned**: the framework has no seam
 for a package to contribute an Admin extension — AX1 publishes that as
@@ -368,4 +390,4 @@ signed document carried **no** term, and one for a different customer — and op
 40. No 5xx response during the run.
 
 Report any step that fails; do not mark the renewal & amendment section
-browser-validated unless all 40 pass.
+browser-validated unless all 41 pass.
