@@ -40,11 +40,11 @@ appears in exactly one of the two sections, never both.
 |---|---|---|
 | **DX2** | Skill portability: `crm agent skills sync\|check` | one canonical semantic source per skill plus deterministic adapters for Claude Code, Codex, Gemini and generic AGENTS-compatible agents, with a drift check in `verify`. **The portable mirrors and the distribution exist; the mechanism does not.** `GEMINI.md` and `gemini-extension.json` are checked in, the `.claude/` and `.agents/` copies are byte-identical, each skill declares a `requires` block (`tier: repository \| generated-project \| any-project`, the surfaces it reads and what it `degradesTo`), `skills/` is the published subset that holds no `tier: repository` skill, and `scripts/distribution-check.js` and `tests/skill-parity.test.js` enforce both. What is missing is DX2 itself: there is no canonical source the mirrors are generated **from**, no sync command, no adapter generation and no CI drift gate. Project Doctor detects a disagreement and by design never writes one away. The mirrors agree today because people aligned them by hand |
 
-### The first extraction
+### The extractions — complete
 
-| | Tool | Why it waits |
+| | Tool | Status |
 |---|---|---|
-| **—** | remaining legacy-domain extraction | the extraction path is proven twice on the same LA0-first pattern — **Lead Intelligence** (PR #38) and **Commercial Operations** — each with zero asserted characterization observations moved. `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` records **Signature & Order** as the one legacy domain still in core, already characterized; its extraction waits on the signer input-integrity fix and on the package application-operation decision the matrix's seam evidence motivates |
+| **—** | legacy-domain extraction | proven three times on the same LA0-first pattern — **Lead Intelligence** (PR #38), **Commercial Operations** (PR #79) and **Signature & Order** (PR #84) — each with zero asserted characterization observations moved. The last one implemented the ADR-032 operations seam within its five-item boundary, and `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` records no `needs_extraction` row: every former legacy domain is package-native, and Pipeline stays in core as a reusable runtime capability |
 
 ### Before an AX3 public benchmark
 

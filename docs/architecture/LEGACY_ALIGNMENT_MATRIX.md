@@ -23,6 +23,12 @@ Commercial exception: `app.syncCatalog`, `app.ingestSignatureEvent` and
 `app.reconcileSignature` are now package-declared operations attached
 generically, the enumerated HTTP routes delegate to them, and the raw-body
 webhook stays a hand-written kernel endpoint on ADR-032's measured grounds.
+One consequence crossed a package boundary: `order` ownership moved into the
+signature package, so Contract Activation's actions on it became a declarable
+record-level dependency — signature offers `signature-orders@1`, contracts
+declares it, and contracts moved to **version 5**, because a package version
+describes its composition contract, including `requires`, not only its
+consumer-visible records and actions.
 
 Pipeline is in `packages/core/src/` too and belongs there. It is a reusable
 runtime capability rather than a domain, and it is in the matrix so that a reader
