@@ -17,12 +17,12 @@
     "note": "Public since 2026-08-08, confirmed against the GitHub API rather than assumed. Flipping this one field is what turns indexing on: meta robots, robots.txt, the sitemap reference, both calls to action, the status banner and the codeRepository property in the structured data all follow it. vercel.json drops X-Robots-Tag in the same commit, and scripts/site-check.js refuses to let the two disagree."
   },
   "npm": {
-    "status": "names-reserved",
+    "status": "published",
     "scope": "@accordo",
     "createCommand": "npm create accordo",
     "sourceScaffolds": true,
-    "publicationCandidate": "verified-unpublished",
-    "note": "The two unscoped names are held, the scope is not. `accordo@0.0.1` and `create-accordo@0.0.1` were published by the founder on 2026-08-09 as placeholders and confirmed against the registry here; `@accordo/mcp` and `@accordo/core` still return 404. Three facts stay separate: sourceScaffolds records that the checked-in bootstrap works; publicationCandidate records that scripts/assemble-create-accordo.js deterministically assembles a publishable 0.1.0 tarball and tests/create-accordo-package.test.js packs it twice, installs it offline and runs the generated project; status describes the live registry, which remains names-reserved. Therefore `npm create accordo` still reaches the empty 0.0.1 placeholder and no public document may claim otherwise. The checked-in source manifest remains private; only the bounded assembly is publishable, through the manual OIDC and human-approved staged workflow."
+    "publicationCandidate": "published",
+    "note": "`create-accordo@0.1.0` is live: staged from CI through OIDC trusted publishing on 2026-08-19 (run 32224731197, provenance in the Sigstore transparency log) and approved by the founder with 2FA, then confirmed against the registry from this environment — the published shasum 69c2bc86eed9261f6f5ae293914065cedc1b17c1 matches the CI assembly and `latest` resolves to 0.1.0. So `npm create accordo` now scaffolds a working project. Three facts still stay separate: the framework arrives vendored, not as a dependency — upgrading means merging; the unscoped `accordo` name remains an empty 0.0.1 reservation, deliberately, because nothing installs the framework as a library; and the `@accordo` scope is still unclaimed (`@accordo/mcp` returns 404). Publication remains a staged, human-approved action for every future version."
   },
   "license": {
     "status": "confirmed",

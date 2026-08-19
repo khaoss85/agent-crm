@@ -30,17 +30,16 @@ and it is a chain: a break at any link makes every link above it worthless.
 
 | # | Precondition | What it means concretely | Us, today |
 |---|---|---|---|
-| 1 | **Retrievable** | The agent can find us at task time: web search, npm search, a registry, a skills index, or memorized prevalence | Partial — public repo, topics, site. No npm, no registry, no docs site |
-| 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **Candidate proven, channel not live.** The assembled `create-accordo@0.1.0` tarball installs offline and leaves a verified project; `npm create accordo` still reaches the `0.0.1` placeholder until human-approved staging and a registry receipt |
+| 1 | **Retrievable** | The agent can find us at task time: web search, npm search, a registry, a skills index, or memorized prevalence | Partial — public repo, topics, site, and the live npm package page. No MCP-registry entry, no docs site |
+| 2 | **Installable** | One unambiguous command that succeeds on a clean machine and leaves a working project | **Live since 2026-08-19.** `npm create accordo` installs the published `create-accordo@0.1.0` (staged via OIDC, human-approved with 2FA) and scaffolds a project that verifies; the receipt was checked from a clean directory |
 | 3 | **Verifiable** | The agent can prove to itself the thing worked — tests, an inspect command, a deterministic contract | **Yes, and this is our strongest link** — `crm app inspect`, `crm package test`, `crm project verify`, `crm scenario run`, `solution validate`, and a whole test suite measured against the commit it ran at (`site/claims.json` `measuredAgainst`) |
 | 4 | **Repeatable** | It works the same way the next time, for a different user, with a different model | Partial — deterministic by construction, but unmeasured across models (benchmark designed, never run) |
 
-**The binding constraint remains the live half of #2.** The candidate works; the
-command users and agents can actually run still resolves to the empty `0.0.1`
-placeholder. We could win every listing in section 3 tomorrow and convert almost
-none of it until the reviewed candidate is staged, approved and verified live.
-Every hour spent on one-shot distribution before that receipt is an hour spent
-filling a bucket with a hole in it.
+**Precondition #2 closed on 2026-08-19.** The command users and agents actually
+run now resolves to the published package and leaves a verifying project. The
+binding constraint moves up the chain to #1 — retrievability at task time — and
+sideways to #4, the unmeasured repeatability the benchmark exists to measure.
+The listings in section 3 now convert into something runnable.
 
 This is not an argument for silence. It is an argument for **sequence**:
 sections 3 and 4 mark, per row, whether the action pays off *now* or only after
@@ -176,9 +175,9 @@ wait for the create-CLI. **Gated**: needs a human (account, form, payment).
 
 | Channel | When | Status |
 |---|---|---|
-| npm `accordo` + `create-accordo` | **Now** | Names reserved; deterministic `create-accordo@0.1.0` candidate verified, blocked on trusted-publisher configuration, manual staging and human 2FA approval |
-| npm `@accordo/*` scoped packages with rich keywords | After #2 | Org not created |
-| npm **provenance-signed** publishes (`--provenance` from CI) | After #2 | Not configured — cheap trust signal, agents and humans both read the badge |
+| npm `accordo` + `create-accordo` | **Now** | **`create-accordo@0.1.0` live** (2026-08-19), provenance-signed through the staged OIDC workflow; `accordo` remains a deliberate 0.0.1 reservation — no framework library |
+| npm `@accordo/*` scoped packages with rich keywords | Next | Org not created |
+| npm **provenance-signed** publishes (`--provenance` from CI) | **Now** | **Done for create-accordo** — trusted publishing signs provenance into the Sigstore transparency log; the badge renders on the package page |
 | GitHub topics, description, social preview | **Now** | **Done** |
 | GitHub **Discussions** (RFCs, Q&A — indexed, and answers get retrieved) | **Now** | Enabled in this pass |
 | `CITATION.cff` (makes the benchmark citable) | After benchmark runs | Not started |
@@ -233,7 +232,7 @@ budget decision for a human.
 
 The gap list, ordered by *effect on being recommended*, not by effort:
 
-1. **Publish the verified `create-accordo` candidate through the staged OIDC workflow** — the remaining half of precondition #2. Source and tarball work; the live registry command does not yet.
+1. ~~Publish the verified `create-accordo` candidate~~ — **done, 2026-08-19.** Staged through the OIDC workflow, approved with 2FA, receipt verified from a clean directory. Precondition #2 is closed; the next npm move is the org and `@accordo/mcp`.
 2. **A deployable starter** — Vercel's gallery has no first-party CRM template
    and the submission needs a deploy target. Today's starter is an install
    script. Phase 10, but *one* deployable starter is worth more than three
@@ -298,8 +297,8 @@ asking a real question.
 Gemini extension + gallery topic + tag · skills.sh layout · Codex mirror ·
 llms.txt · Discussions · npm placeholders · comparison and intent pages.
 
-**The moment the real `create-accordo` is live on npm:** npm scoped packages
-with provenance · deployable starter + Deploy Button · Vercel template
+**Unlocked now that `create-accordo` is live on npm (2026-08-19):** npm scoped
+packages with provenance · deployable starter + Deploy Button · Vercel template
 submission · awesome lists · Anthropic community marketplace · docs site.
 
 **After the Docs MCP:** Smithery URL listing is done; Connectors Directory and

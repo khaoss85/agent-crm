@@ -172,10 +172,10 @@
       "id": "concept-code-you-own",
       "slug": "code-you-own",
       "title": "What ownership actually means here, and where it stops",
-      "plainName": "Ownership means copying source today",
+      "plainName": "Ownership means vendored source",
       "intent": "own the CRM source my coding agent builds, without a vendor runtime underneath",
-      "summary": "Ownership here means the source is yours to keep, read and change, and today it means copying it. The project bootstrap scaffolds from a checkout of the repository and the published package is still an empty name reservation; either way the framework is vendored into the project, so upgrading means merging rather than bumping a version. What you get is MIT, Node 22 and a checkout with zero third-party runtime dependencies. What you do not get is the npm create story the roadmap describes, and that gap is L-08 on every surface rather than sold around.",
-      "metaDescription": "Ownership means MIT source you keep and change. The bootstrap scaffolds from a checkout, nothing is published to npm, and upgrading means merging.",
+      "summary": "Ownership here means the source is yours to keep, read and change. `npm create accordo` — the published `create-accordo@0.1.0` — scaffolds a project with the framework source vendored in, and the same bootstrap runs from a checkout. Either way upgrading means merging rather than bumping a version, because a versioned framework dependency does not exist. What you get is MIT, Node 22 and zero third-party runtime dependencies. What you do not get is a framework library on npm — the `accordo` name is an empty reservation — and that boundary is L-08 on every surface rather than sold around.",
+      "metaDescription": "Ownership means MIT source you keep and change. npm create accordo scaffolds a project with the framework vendored in, and upgrading means merging.",
       "sections": [
         {
           "heading": "What you are left with if this project disappears",
@@ -188,7 +188,7 @@
         {
           "heading": "Where ownership stops today",
           "body": [
-            "L-08 states it without softening, and it is two facts rather than one. the repository's project bootstrap scaffolds a project that boots, reports valid from app inspect and exits 0 from project doctor — run from a checkout of the repository, offline, with no install. The package published under the reserved npm name is still an empty placeholder, so the `npm create` route installs nothing until a human publishes it. Either way the framework is vendored into the project: you own the result outright, a versioned framework dependency does not exist, and upgrading means merging, not bumping.",
+            "L-08 states it without softening, and it is two facts rather than one. `npm create accordo` — the published `create-accordo@0.1.0` — scaffolds a project that boots, reports valid from app inspect and exits 0 from project doctor; the same bootstrap runs from a checkout of the repository, offline, with no install. But what the registry hands you is a scaffolder, not the framework: the framework source is copied into the project, you own the result outright, a versioned framework dependency does not exist, and upgrading means merging, not bumping.",
             "GO_TO_MARKET.md §1 calls this a mechanism problem rather than a credibility problem, and it has one consequence for language that is worth stating on the page rather than in a style guide: the sentence 'the framework is a dependency you could remove' was removed from this site because today the code arrives by copying, not by installing, and that sentence may not come back through a comparison page.",
             "The plan records two honest endings and no third. Either an ejection proof lands — an application in its own package that depends on the framework, verifies green, and documents what survives deleting the dependency — or L-08 is accepted permanently. Neither the examples/ejected application nor the test that would prove it exists in this tree today."
           ]
@@ -209,7 +209,7 @@
         }
       ],
       "boundaries": [
-        "Ownership is not installation. The bootstrap scaffolds from a checkout, the reserved `npm create` name still installs nothing, and there is no versioned framework dependency — upgrading means merging changes into a copy.",
+        "Ownership is not installation. `npm create accordo` installs a scaffolder, not the framework: the framework source is copied into the project, and there is no versioned framework dependency — upgrading means merging changes into a copy.",
         "Neither half of the ejection proof exists yet: there is no examples/ejected application and no test asserting a project still verifies green once the framework dependency is deleted.",
         "Zero third-party runtime dependencies describes the framework, not your application. Everything you add, you carry.",
         "The MIT confirmation covers this framework only. It decides nothing about a future managed offering and nothing about the licence of the code you generate.",

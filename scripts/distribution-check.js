@@ -311,11 +311,17 @@ if (asserted.length) {
  *   true   npm create accordo installs nothing
  *   FALSE  npm create accordo creates a project
  *
- * So the wall is mechanical rather than remembered. While the registry status is
- * anything short of `published`, the package manifest must carry `private: true`
- * — npm refuses to publish a private package, so the repository cannot drift
- * into a publishable state without somebody editing the brand token in the same
- * commit and having to think about what they are asserting.
+ * So the wall is mechanical rather than remembered: the source manifest carries
+ * `private: true` unconditionally — npm refuses to publish a private package,
+ * so a direct `npm publish` from the repository stays impossible in every
+ * registry state. Publication does not lower the wall, because the published
+ * artifact was never this manifest: scripts/assemble-create-accordo.js builds
+ * the one publishable directory and strips `private` from the manifest it
+ * writes there. An earlier version of this check demanded the opposite once
+ * npm.status said published, reasoning "npm cannot have published a private
+ * package" — true of the artifact, wrong about the source, and acting on it
+ * would have reopened the direct-publish hole at the exact moment the name
+ * started resolving to something real.
  */
 const bootstrapManifestPath = 'packages/create-accordo/package.json';
 const bootstrapBinPath = 'packages/create-accordo/bin/create-accordo.js';
@@ -351,27 +357,27 @@ if (bootstrapExists) {
     if (typeof bootstrapManifest.bin?.['create-accordo'] !== 'string') {
       fail(`${bootstrapManifestPath}: declares no create-accordo bin, so \`npm create accordo\` would have nothing to run even once published`);
     }
-    if (brand.npm.status !== 'published' && bootstrapManifest.private !== true) {
+    if (bootstrapManifest.private !== true) {
       fail(
-        `${bootstrapManifestPath} is not private, but site/brand.json records npm.status as `
-        + `"${brand.npm.status}". Publishing is a human decision (MASTER_PLAN.md §10.4): while the `
-        + 'registry holds only a name reservation, this manifest stays `private: true` so that no '
-        + 'accidental publish turns the placeholder into something that installs.',
-      );
-    }
-    if (brand.npm.status === 'published' && bootstrapManifest.private === true) {
-      fail(
-        `site/brand.json says npm.status is "published", but ${bootstrapManifestPath} is still `
-        + '`private: true` — npm cannot have published it. One of the two is wrong, and a status '
-        + 'field that outruns the package is how a document starts claiming `npm create accordo` works.',
+        `${bootstrapManifestPath} is not private. Publishing is a human decision (MASTER_PLAN.md `
+        + '§10.4) and it is made per-version through the staged workflow, never from this manifest: '
+        + 'the assembly strips `private` from the copy it publishes, and the source stays '
+        + '`private: true` in every registry state so a direct `npm publish` from the repository '
+        + 'remains impossible.',
       );
     }
   }
 
-  if (brand.npm.status !== 'published') {
-    if (brand.npm.publicationCandidate === 'verified-unpublished') {
+  // The release-path integrity rules apply in every registry state: before the
+  // first publish they protect the candidate, and after it they protect every
+  // future version, which travels through the same staged workflow.
+  {
+    if (brand.npm.status !== 'published' && brand.npm.publicationCandidate !== 'verified-unpublished') {
+      fail('site/brand.json: npm.publicationCandidate must say verified-unpublished while the registry is only a name reservation');
+    }
+    {
       for (const path of [assemblyPath, packageReadmePath, packageTestPath, stageWorkflowPath]) {
-        if (!existsSync(join(root, path))) fail(`site/brand.json records a verified publication candidate, but ${path} is missing`);
+        if (!existsSync(join(root, path))) fail(`site/brand.json records a staged release path, but ${path} is missing`);
       }
       if (existsSync(join(root, stageWorkflowPath))) {
         const workflow = readFileSync(join(root, stageWorkflowPath), 'utf8');
@@ -392,16 +398,16 @@ if (bootstrapExists) {
           }
         }
       }
-    } else {
-      fail('site/brand.json: npm.publicationCandidate must say verified-unpublished while the registry is only a name reservation');
     }
-    notes.push(
-      'create-accordo scaffolds a working project FROM THIS REPOSITORY (packages/create-accordo), '
-      + 'and its deterministic publication candidate packs, installs offline and creates a working project. '
-      + `The published \`${brand.npm.createCommand ?? 'npm create accordo'}\` `
-      + 'still reaches an empty 0.0.1 placeholder and installs nothing. Both sentences are true; only '
-      + 'the first may be claimed of this repository. Registry publication remains a human-approved staged action.',
-    );
+    notes.push(brand.npm.status === 'published'
+      ? `\`${brand.npm.createCommand ?? 'npm create accordo'}\` is live: the published create package scaffolds `
+        + 'a working project with the framework vendored in. The framework itself has no npm library, and every '
+        + 'future version travels through the same staged, human-approved workflow.'
+      : 'create-accordo scaffolds a working project FROM THIS REPOSITORY (packages/create-accordo), '
+        + 'and its deterministic publication candidate packs, installs offline and creates a working project. '
+        + `The published \`${brand.npm.createCommand ?? 'npm create accordo'}\` `
+        + 'still reaches an empty 0.0.1 placeholder and installs nothing. Both sentences are true; only '
+        + 'the first may be claimed of this repository. Registry publication remains a human-approved staged action.');
   }
 }
 
@@ -410,7 +416,10 @@ if (bootstrapExists) {
 if (brand.name.status !== 'chosen') {
   notes.push('The public name is undecided, so none of these manifests may be published: the plugin name namespaces every skill, and changing it later breaks installed users.');
 }
-if (brand.npm.status !== 'published' && serverJson?.packages?.length) {
+// Keyed on the scoped package's own absence, not on npm.status: create-accordo
+// going live did not publish @accordo/mcp, and the MCP registry entry resolves
+// to the package it names, not to the brand's overall registry state.
+if (serverJson?.packages?.length && brand.npm.note?.includes('scope is still unclaimed')) {
   notes.push(`server.json references the unpublished npm package "${serverJson.packages[0].identifier}". Publish the package before submitting to the MCP registry, or the entry resolves to nothing.`);
 }
 
@@ -424,7 +433,9 @@ if (failures.length) {
   console.error(`\ndistribution-check failed: ${failures.length} problem(s).`);
   process.exitCode = 1;
 } else {
-  console.log(`\ndistribution-check passed: ${manifests.length} manifests valid, prepared and deliberately unpublished.`);
+  console.log(brand.npm.status === 'published'
+    ? `\ndistribution-check passed: ${manifests.length} manifests valid; the create package is live and everything else stays deliberately unpublished.`
+    : `\ndistribution-check passed: ${manifests.length} manifests valid, prepared and deliberately unpublished.`);
 }
 
 /** @param {string} message */

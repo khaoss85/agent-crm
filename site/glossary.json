@@ -32,7 +32,7 @@
           "heading": "Open source, with the distribution mechanics stated",
           "body": [
             "The licence is MIT, confirmed by an ADR rather than assumed, and it covers this framework only — it decides nothing about the licence of the applications generated with it, which belong to their authors. That is the 'open source CRM framework' reading in full: source you may keep, read and change.",
-            "Distribution is narrower than the phrase usually implies, and this site states it rather than letting a reader discover it: nothing installs from npm. The project bootstrap scaffolds a working project from a checkout of this repository, the name reserved on the registry is still an empty placeholder, and either way the framework is vendored into the project — so upgrading means merging changes into a copy, not bumping a version (L-08)."
+            "Distribution is narrower than the phrase usually implies, and this site states it rather than letting a reader discover it: what installs from npm is a scaffolder, not the framework. `npm create accordo` — the published `create-accordo@0.1.0` — scaffolds a working project by copying the framework source into it, and the same bootstrap runs from a checkout of this repository. Either way the framework is vendored into the project — so upgrading means merging changes into a copy, not bumping a version (L-08)."
           ]
         },
         {
@@ -116,7 +116,7 @@
           "heading": "What the built application is, and where it runs",
           "body": [
             "The output of an agent build here is a local application: Node 22, SQLite persistence, no authentication, tenancy or RBAC, so it runs on one developer's machine and must not be exposed to a network (L-01, L-02). It is a working system to develop against and reason about, not a system a team signs in to.",
-            "Ownership follows the same mechanics as any Accordo project: the framework arrives by scaffolding from a checkout, nothing installs from npm, and upgrading means merging — the reserved registry name is still an empty placeholder (L-08). The agent that built the application does not remain attached to it; what remains is source, tests and the evidence trail the framework wrote while the application ran."
+            "Ownership follows the same mechanics as any Accordo project: the framework arrives vendored — `npm create accordo` scaffolds the project and copies the framework source into it, and the same bootstrap runs from a checkout — so upgrading means merging, because no versioned framework dependency exists (L-08). The agent that built the application does not remain attached to it; what remains is source, tests and the evidence trail the framework wrote while the application ran."
           ]
         }
       ],

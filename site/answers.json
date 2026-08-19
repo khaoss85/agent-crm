@@ -186,7 +186,7 @@
     {
       "slug": "what-do-i-own-and-how-do-i-install-it",
       "question": "What do I actually own, and how do I install it?",
-      "answer": "You own the source, and today that means copying it: there is a project bootstrap that runs from a checkout of the repository and no published package: the repository's bootstrap command scaffolds a project that boots, inspects and passes the project doctor, while the reserved `npm create` name still reaches an empty placeholder and installs nothing. Either way the framework is vendored into the project, so upgrading means merging, not bumping a version (L-08). What you are left with is a Node application with zero third-party runtime dependencies — Node 22 and a checkout, no build step, no bundler (C-17) — though that property belongs to the framework, not to whatever you add on top of it. A domain package you author attaches and detaches with the kernel's fingerprint unchanged and reaches another package only through a declared capability (C-13), and the scaffold that starts one writes an empty package and nothing else — no business logic, no composition, no global identity-uniqueness check — but there is no registry, marketplace, publication or sandboxing, package code runs with the host process's authority, and detaching leaves its data behind. There is nothing to sign up for: no hosted CRM, no free tier, no account (L-07).",
+      "answer": "You own the source, and you get it by scaffolding: `npm create accordo` — the published `create-accordo@0.1.0` — scaffolds a project that boots, inspects and passes the project doctor, and it does so by copying the framework source into your repository; the same bootstrap also runs from a checkout. What does not exist is a framework dependency: the framework is vendored into the project, so upgrading means merging, not bumping a version (L-08). What you are left with is a Node application with zero third-party runtime dependencies — Node 22 and a checkout, no build step, no bundler (C-17) — though that property belongs to the framework, not to whatever you add on top of it. A domain package you author attaches and detaches with the kernel's fingerprint unchanged and reaches another package only through a declared capability (C-13), and the scaffold that starts one writes an empty package and nothing else — no business logic, no composition, no global identity-uniqueness check — but there is no registry, marketplace, publication or sandboxing, package code runs with the host process's authority, and detaching leaves its data behind. There is nothing to sign up for: no hosted CRM, no free tier, no account (L-07).",
       "claims": [
         "C-17",
         "C-13"
@@ -195,7 +195,7 @@
         "L-08",
         "L-07"
       ],
-      "snippet": "You own the source, and today that means copying it: a bootstrap that scaffolds from a checkout, no published package, and upgrading means merging rather than bumping a version."
+      "snippet": "You own the source: `npm create accordo` scaffolds a working project with the framework vendored in, not installed as a dependency — so upgrading means merging, not bumping a version."
     }
   ],
   "refused": [

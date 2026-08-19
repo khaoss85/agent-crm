@@ -113,10 +113,10 @@ test('the release workflow redirects JSON-only assembly output', (t) => {
   assert.equal(report.package.version, '0.1.0');
 });
 
-test('public copy distinguishes the verified candidate from the live npm placeholder', () => {
+test('public copy tracks the published create package without conflating it with the framework', () => {
   const brand = JSON.parse(readFileSync(join(repoRoot, 'site/brand.json'), 'utf8'));
   assert.equal(brand.npm.sourceScaffolds, true);
-  assert.equal(brand.npm.status, 'names-reserved');
+  assert.equal(brand.npm.status, 'published');
 
   const surfaces = Object.fromEntries([
     'site/templates/index.html',
@@ -129,11 +129,17 @@ test('public copy distinguishes the verified candidate from the live npm placeho
   ].map((path) => [path, readFileSync(join(repoRoot, path), 'utf8')]));
 
   for (const [path, source] of Object.entries(surfaces)) {
-    assert.match(source, /candidate/i, `${path} omits the verified publication candidate`);
-    assert.match(source, /(not (?:on the registry|published)|placeholder|registry unchanged)/i,
-      `${path} lets a candidate read as a live npm release`);
+    assert.match(source, /0\.1\.0/, `${path} omits the published 0.1.0`);
+    // The pre-publication sentences, verbatim: each was true until the registry
+    // receipt landed and each is a lie about the live command now.
+    assert.doesNotMatch(source, /installs nothing|still (?:reaches|serves) the (?:empty )?(?:`?0\.0\.1`? )?placeholder|registry unchanged|candidate .{0,40}not on the registry/i,
+      `${path} still describes the pre-publication registry`);
     assert.doesNotMatch(source, /there is no create-project CLI|\bno create-command\b/i,
       `${path} says the source bootstrap does not exist`);
+    // The opposite overclaim: the scaffolder is on the registry, the framework
+    // library is not, and no surface may blur that line.
+    assert.doesNotMatch(source, /npm i(?:nstall)? accordo(?![-\w])/i,
+      `${path} tells a user to install the framework as a library`);
   }
 
   const site = surfaces['site/templates/index.html'];
