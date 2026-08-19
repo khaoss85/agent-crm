@@ -65,7 +65,18 @@ export function subjectFields(subject, prefix = 'subject') {
   };
 }
 
-/** Read a subject envelope back off a stored row. */
+/**
+ * Read a subject envelope back off a stored row.
+ *
+ * The stored label is a **display snapshot taken when the row was written**.
+ * It is never refreshed, so it goes stale the moment somebody renames the
+ * source record — and this foundation's whole claim is that the source record
+ * remains the truth. It is therefore published as `labelSnapshot`, never as
+ * `label`, with `labelIsAuthoritative: false` beside it: a consumer that wants
+ * the customer's current name reads the source record, which every subject
+ * envelope names exactly so that it can. This is the contract `packages/work`
+ * already states for the identically-named field it stores.
+ */
 export function subjectOf(row, prefix = 'subject') {
   if (!row) return null;
   return Object.freeze({
@@ -73,7 +84,8 @@ export function subjectOf(row, prefix = 'subject') {
     id: row[`${prefix}Id`],
     owner: row[`${prefix}Owner`],
     ownerPackage: row[`${prefix}OwnerPackage`] ?? null,
-    label: row[`${prefix}Label`] ?? null,
+    labelSnapshot: row[`${prefix}Label`] ?? null,
+    labelIsAuthoritative: false,
   });
 }
 

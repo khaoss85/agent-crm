@@ -379,7 +379,10 @@ export function createCustomerDataView({ doc, mount, client, navigate = () => {}
     identityBox.appendChild(el('h4', undefined, 'Canonical identity'));
     identityBox.appendChild(el('p', 'muted customer-profile-canonical-note', profile.canonicalIdentity?.note ?? ''));
     for (const member of profile.canonicalIdentity?.members ?? []) {
-      identityBox.appendChild(el('p', 'customer-profile-member', `${member.role}: ${member.resource} ${member.label ?? member.id}`));
+      // The stored label is a decision-time snapshot, never refreshed, so it is
+      // shown as one: the id is the fact, the snapshot is context.
+      const shown = member.labelSnapshot ? `${member.labelSnapshot} (name at decision time)` : member.id;
+      identityBox.appendChild(el('p', 'customer-profile-member', `${member.role}: ${member.resource} ${shown}`));
     }
     panel.appendChild(identityBox);
 

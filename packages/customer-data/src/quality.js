@@ -76,7 +76,7 @@ export function detectIssues({ resolution, modules, names }) {
     if (seen && subjectKey({ resource: seen.subjectResource, id: seen.subjectId }) !== subjectKey({ resource: row.subjectResource, id: row.subjectId })) {
       issues.push({
         kind: 'conflicting_external_identity',
-        subject: { resource: row.subjectResource, id: row.subjectId, owner: row.subjectOwner, ownerPackage: row.subjectOwnerPackage, label: row.subjectLabel },
+        subject: { resource: row.subjectResource, id: row.subjectId, owner: row.subjectOwner, ownerPackage: row.subjectOwnerPackage, labelSnapshot: row.subjectLabel, labelIsAuthoritative: false },
         detector: DETECTOR,
         evidence: `external identity ${key} is active against more than one record`,
       });
@@ -110,7 +110,7 @@ export function detectOrphans({ modules, core, names }) {
     if (!exists) {
       found.push({
         kind: 'orphaned_reference',
-        subject: { resource: row.subjectResource, id: row.subjectId, owner: 'host', ownerPackage: null, label: row.subjectLabel },
+        subject: { resource: row.subjectResource, id: row.subjectId, owner: 'host', ownerPackage: null, labelSnapshot: row.subjectLabel, labelIsAuthoritative: false },
         detector: DETECTOR,
         evidence: `external identity ${row.sourceKey} points at a ${row.subjectResource} that no longer resolves`,
       });
