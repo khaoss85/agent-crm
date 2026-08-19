@@ -803,6 +803,16 @@ export function createSuccessorActivationCapability(moduleNames) {
             overrides: request.classificationOverrides ?? null,
           });
           if (derived.refusals.length > 0) throw asError(derived.refusals[0]);
+          if (!derived.decisions) {
+            // Unreachable through the declared consumer, which always brings the
+            // registry handle. A caller that reaches it gets a sentence rather
+            // than a TypeError on the next line — the same fail-closed posture
+            // every other boundary in this file takes.
+            throw new AppError(
+              `${SUCCESSION_CAPABILITY.name} requires the caller's domains view to resolve the activation policy`,
+              { code: 'CAPABILITY_CONTEXT_INVALID', status: 500 },
+            );
+          }
 
           const now = typeof context.now === 'function' ? context.now : () => new Date().toISOString();
           const activatedAt = now();
