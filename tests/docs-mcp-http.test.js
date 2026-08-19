@@ -197,6 +197,29 @@ test('the Vercel entry and config keep one server authority and include the corp
   assert.match(config.buildCommand, /assemble-docs-mcp-runtime\.js/);
 });
 
+test('the registry entry points at this endpoint, and never at a published project server', () => {
+  const server = JSON.parse(readFileSync(new URL('../server.json', import.meta.url), 'utf8'));
+  const brand = JSON.parse(readFileSync(new URL('../site/brand.json', import.meta.url), 'utf8'));
+
+  // ADR-034: the project MCP composes an application from the generated indexes of the tree it
+  // runs inside, so a copy published to npm would open a customer's database while answering
+  // about a different CRM. The registry gets the documentation server, which is standalone
+  // because its corpus is bundled and it opens nothing.
+  assert.equal(server.packages, undefined, 'a package entry would offer the registry an installable project server');
+  assert.equal(server.remotes.length, 1);
+  assert.equal(server.remotes[0].type, 'streamable-http');
+  assert.equal(server.remotes[0].url, `https://${brand.domain.value}/api/mcp`);
+  assert.ok(existsSync(new URL('../api/mcp.js', import.meta.url)), 'the registered URL has no Function behind it');
+
+  // The description is a first-contact retrieval surface, so it states what the corpus answers
+  // about — not what the CRM runtime does. CRM_DB_PATH belonged to the project server and must
+  // not survive into an entry that opens no database.
+  assert.doesNotMatch(JSON.stringify(server), /CRM_DB_PATH/);
+  for (const tool of ['search_docs', 'get_capability', 'check_job']) {
+    assert.match(server.description, new RegExp(tool), `the entry omits ${tool}`);
+  }
+});
+
 test('runtime corpus assembly is deterministic and excludes every ExecPlan', (t) => {
   const firstRoot = mkdtempSync(join(tmpdir(), 'accordo-docs-mcp-runtime-a-'));
   const secondRoot = mkdtempSync(join(tmpdir(), 'accordo-docs-mcp-runtime-b-'));

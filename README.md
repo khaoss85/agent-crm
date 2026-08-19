@@ -9,7 +9,7 @@ audit and trace built in.
 The name is chosen and the domain registered. `npm create accordo` scaffolds a working
 project from the published `create-accordo@0.1.0`; the `accordo` package itself remains
 an empty `0.0.1` name reservation — nothing installs the framework as a library — and
-the `@accordo` scope is unclaimed. No trademark screen has been run, and the project is
+the `@accordo` scope is claimed and deliberately empty. No trademark screen has been run, and the project is
 not deployable to production. What that means precisely is in
 [Where it stops](#where-it-stops), which is worth reading before the rest.
 

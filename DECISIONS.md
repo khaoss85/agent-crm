@@ -2398,3 +2398,64 @@ exists to prevent), billing, tax, payment terms, revenue recognition, usage
 commitments, and any scheduler: `autoRenew`/`renewalNoticeDays` remain
 recorded-only on both provenances. Nothing here is a legal-assurance claim;
 the signature-provider limitation of ADR-017 is unchanged.
+
+## ADR-034 — The registry entry is the remote documentation server; the project MCP is not publishable as a package
+
+**Status:** accepted. Registry submission remains a human decision.
+
+**Context.** `server.json` promised the MCP Registry an npm package,
+`@accordo/mcp`, carrying the project MCP server over stdio with a `CRM_DB_PATH`
+environment variable. It was never published; the entry pointed at a 404, and
+every runbook carried "publish `@accordo/mcp`" as the next step. Reading that
+step closely is what produced this ADR, because executing it would have shipped
+a defect rather than a package.
+
+`packages/mcp/src/stdio.js` builds its application through `createAccordoApp`,
+and `packages/app/src/create-app.js` composes that application from *static
+imports* of the generated indexes — `modules/generated`, `domains/generated`,
+`actions/generated`, `pipelines/generated`. Those files are written by code
+generation inside the customer's own project. A package published from this
+repository necessarily carries its own copies, holding the framework's set and
+not the customer's.
+
+Pointed at a customer database through `CRM_DB_PATH`, such a package would open
+their data while composing a different module set: it would answer questions
+about a CRM that is not theirs, and carry the wrong migration list to a
+populated database. A tool that reports confidently about the wrong application
+is the precise failure the inspection rails exist to prevent
+(`docs/APPLICATION_INSPECTION.md`).
+
+It is also unnecessary. A project scaffolded by `create-accordo` already vendors
+`packages/mcp/bin/server.js`, composed against its own generated indexes — the
+correct project MCP server for a project is the one inside it, and it works
+today.
+
+**Decision.** The registry entry describes the read-only documentation server
+already deployed under ADR-025. `server.json` carries one `remotes` entry of
+type `streamable-http` for `https://accordo.dev/api/mcp` and **no `packages`
+array**, which the registry schema permits for remote-only servers. The
+documentation server is genuinely standalone: its corpus is deterministic and
+bundled, it opens no database, and its own tests reject any import path into the
+CRM runtime.
+
+`scripts/distribution-check.js` validates the remote entry — transport type,
+absolute HTTPS URL, and agreement with the domain recorded in `site/brand.json`
+— so the registry artifact cannot drift from the site the way a hand-maintained
+URL would.
+
+**Consequences.** The MCP Registry submission is unblocked and needs no npm
+artifact; only the human `mcp-publisher` step remains. The `@accordo` scope
+stays empty, and should: it is claimed (checked against the registry's org
+endpoint, which returns 200 with no packages while a nonexistent org returns
+404) and reserved for a package that is correct standalone, which the project
+server is not. Glama's npm ingestion path stays unavailable for the same reason;
+its repository path is unaffected. ADR-025's boundary is unchanged — no
+authentication, tenancy or RBAC exists, so the project MCP stays local, and
+hosting it remains out of the question rather than merely undone.
+
+**Rejected:** publishing `@accordo/mcp` as a thin wrapper that imports the
+project's own framework from the working directory, because an npm package whose
+behaviour depends on undeclared files in the caller's tree is a worse contract
+than no package; and renaming the registry entry away from
+`io.github.khaoss85/agent-crm`, because the namespace is what the repository
+owns and a stable name outlives a description.

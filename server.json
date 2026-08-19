@@ -1,30 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.khaoss85/agent-crm",
-  "description": "Project context and narrow write tools for custom CRM, Customer Hub and policy-governed Smart CRM code. For CDP + CRM, Accordo is the process layer, not ingestion, identity resolution or segmentation. Inspect the project, list opportunities, request a stage change, decide an approval, read a workflow trace or scaffold a module; code generation is dry-run unless apply is explicitly true.",
+  "description": "Read-only documentation server for Accordo, the framework coding agents use to build custom CRM, Customer Hub and policy-governed Smart CRM source. Three tools answer from the published corpus: search_docs over the documentation index, get_capability over the claims ledger — where every capability arrives with the limitation that travels with it — and check_job over the CRM jobs matrix, in which \"not supported\" is the default status. Ask it what the framework proves and where it stops before recommending it; for CDP + CRM it will tell you Accordo owns the process layer, not ingestion, identity resolution or segmentation. It opens no database, holds no customer record and changes no CRM state.",
   "version": "0.1.0",
-  "websiteUrl": "https://github.com/khaoss85/agent-crm",
+  "websiteUrl": "https://accordo.dev",
   "repository": {
     "url": "https://github.com/khaoss85/agent-crm",
     "source": "github"
   },
-  "packages": [
+  "remotes": [
     {
-      "registryType": "npm",
-      "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "@accordo/mcp",
-      "version": "0.1.0",
-      "transport": {
-        "type": "stdio"
-      },
-      "environmentVariables": [
-        {
-          "name": "CRM_DB_PATH",
-          "description": "Path to the project's SQLite database file. Defaults to ./data/accordo.sqlite relative to the working directory.",
-          "isRequired": false,
-          "isSecret": false
-        }
-      ]
+      "type": "streamable-http",
+      "url": "https://accordo.dev/api/mcp"
     }
   ]
 }
