@@ -8,7 +8,6 @@ import { fileURLToPath } from 'node:url';
 import { PackageRegistry, definePackage } from '../packages/core/index.js';
 import { resolvePackageComposition } from '../packages/core/src/package-composition.js';
 import { createOperationRuntime, composePackageOperations } from '../packages/core/src/operation-runtime.js';
-import { createDatabase } from '../packages/core/src/database.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -101,15 +100,20 @@ test('composition calls each create() exactly once and refuses a factory that re
   );
 });
 
-test('the bounded operation context is frozen and carries exactly the declared handles', () => {
+test('the bounded operation context is frozen, and its key set is CLOSED', () => {
   const config = { probeTimeoutMs: 5 };
   const runtime = createOperationRuntime({ database: { d: 1 }, modules: { m: 1 }, events: { e: 1 }, config });
 
-  // Exactly the ADR-032 contract: no action registry, no workflow engine, no
-  // provider registry, no package registry, no capability resolver.
-  assert.deepEqual(Object.keys(runtime).sort(), ['config', 'database', 'events', 'modules', 'runExternal', 'trace']);
+  // Exactly the applicationOperations v1 contract — the keys the two real
+  // consumers use and nothing else (the ADR-032 implementation addendum in
+  // DECISIONS.md records the audit). Closed on purpose: an operation receives
+  // only documented capabilities, any additional field is non-contractual,
+  // and no action registry, workflow engine, provider registry, package
+  // registry, capability resolver — or unused extension point such as a
+  // trace writer — reaches an operation through it.
+  assert.deepEqual(Object.keys(runtime).sort(), ['config', 'database', 'events', 'modules', 'runExternal']);
   assert.equal(typeof runtime.runExternal, 'function');
-  assert.equal(typeof runtime.trace, 'function');
+  assert.equal('trace' in runtime, false, 'the deferred trace extension point is not shipped in v1');
   assert.equal(Object.isFrozen(runtime), true);
   assert.equal(Object.isFrozen(runtime.config), true);
 
@@ -120,61 +124,6 @@ test('the bounded operation context is frozen and carries exactly the declared h
 
   assert.throws(() => createOperationRuntime({ database: {}, modules: {} }),
     (error) => /operation runtime needs database, modules and events/.test(error.message));
-});
-
-test('the bounded trace writer persists within its bounds and stays best-effort', (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'accordo-seam-trace-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const database = createDatabase({ path: join(dir, 'trace.sqlite') });
-  t.after(() => database.close());
-  const runtime = createOperationRuntime({ database, modules: {}, events: {} });
-
-  // A bounded run persists as the same workflow_runs/trace_spans rows every
-  // run surface reads.
-  const startedAt = new Date().toISOString();
-  assert.equal(runtime.trace({
-    runId: 'run_seam_ok', workflowName: 'probe.ok', status: 'completed',
-    input: { a: 1 }, output: { b: 2 }, startedAt,
-    steps: [{ name: 'one', status: 'completed', output: { x: 1 } }],
-  }), true);
-  const ok = database.raw.prepare("SELECT * FROM workflow_runs WHERE id = 'run_seam_ok'").get();
-  assert.equal(ok.status, 'completed');
-  assert.deepEqual(JSON.parse(ok.input_json), { a: 1 });
-  assert.equal(database.raw.prepare("SELECT COUNT(*) AS n FROM trace_spans WHERE run_id = 'run_seam_ok'").get().n, 1);
-
-  // The bounds the raw export never had: at most 200 steps, text sliced to
-  // 2000, a failed status coerced to the persisted vocabulary.
-  assert.equal(runtime.trace({
-    runId: 'run_seam_big', workflowName: 'probe.big', status: 'failed',
-    error: 'e'.repeat(10_000), startedAt,
-    steps: Array.from({ length: 500 }, (_, i) => ({ name: `${'n'.repeat(5_000)}${i}`, status: 'completed' })),
-  }), true);
-  const big = database.raw.prepare("SELECT * FROM workflow_runs WHERE id = 'run_seam_big'").get();
-  assert.equal(big.error.length, 2_000);
-  const spans = database.raw.prepare("SELECT COUNT(*) AS n, MAX(LENGTH(name)) AS widest FROM trace_spans WHERE run_id = 'run_seam_big'").get();
-  assert.equal(spans.n, 200);
-  assert.ok(spans.widest <= 2_000);
-
-  // JSON-unsafe input is recorded as unserializable, never thrown.
-  const cyclic = {}; cyclic.self = cyclic;
-  assert.equal(runtime.trace({
-    runId: 'run_seam_cycle', workflowName: 'probe.cycle', status: 'completed', input: cyclic, startedAt, steps: [],
-  }), true);
-  assert.deepEqual(
-    JSON.parse(database.raw.prepare("SELECT input_json FROM workflow_runs WHERE id = 'run_seam_cycle'").get().input_json),
-    { unserializable: true },
-  );
-
-  // Best-effort by contract: a run the writer cannot persist answers false and
-  // never throws — a missing workflowName, a shape the schema refuses (the
-  // writer accepts the same run shape writeTrace persists, so runId and
-  // startedAt are the caller's to provide), or a broken database.
-  assert.equal(runtime.trace({ status: 'completed' }), false);
-  assert.equal(runtime.trace({ runId: 'run_seam_late', workflowName: 'probe.late', status: 'completed', steps: [] }), false,
-    'a run without startedAt is refused by the schema and swallowed, not thrown');
-  const broken = createOperationRuntime({ database: { raw: null }, modules: {}, events: {} });
-  assert.equal(broken.trace({ runId: 'r', workflowName: 'probe.broken', status: 'completed', startedAt, steps: [] }), false);
-  assert.equal(database.raw.prepare("SELECT COUNT(*) AS n FROM workflow_runs WHERE id IN ('run_seam_late')").get().n, 0);
 });
 
 test('a declared alias attaches generically, and a shadowing alias stops startup', (t) => {

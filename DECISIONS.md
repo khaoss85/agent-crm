@@ -2285,3 +2285,45 @@ the raw-byte trust boundary reviewable in one place. The cost is one more
 declared list on the package contract and one more generic runtime module —
 paid only when the PR that pays it also retires two hand-wired attachments and
 closes a private-API gap without widening the public surface.
+
+### ADR-032 implementation addendum — applicationOperations v1 as shipped
+
+**Status:** accepted (implementation record; the direction above is unchanged).
+Written by the Signature extraction PR on a reviewer decision: *do not ship an
+unused generic extension point.*
+
+The ADR's bounded-context specification names six keys. The implementation
+audited each against the only authority a v1 contract has — the two real,
+shipped consumers (Commercial's catalog sync; Signature's ingest/reconcile) —
+and shipped **exactly the keys they use**:
+
+| Key | catalog sync | signature ops | v1 verdict |
+|---|---|---|---|
+| `database` | uses | uses | ships |
+| `modules` | uses | uses | ships |
+| `events` | uses | uses | ships |
+| `config` | uses (`catalogTimeoutMs`) | uses (`signatureTimeoutMs`) | ships |
+| `runExternal` | — | **requires** (the ADR-017 export-gap closure) | ships |
+| `trace` | — | — | **not shipped in v1** |
+
+The trace paragraph above answered "do both consumers write traces" — yes —
+but writing traces is not consuming an injected writer: catalog sync persists
+its `catalog.sync` run through the public `writeTrace` export it already
+imports, and the Signature operations get their runs from
+`runExternalOperation` itself. An injected bounded writer therefore had zero
+consumers on the day it would have shipped, and a generic extension point with
+zero consumers is exactly what this repository refuses to ship. Tracing stays
+internal to the existing runtime/external-operation machinery.
+
+The v1 context key set is **closed**: `{config, database, events, modules,
+runExternal}`, frozen, asserted key-exact by
+`tests/package-operations-seam.test.js`. An operation receives only the
+documented capabilities; any additional field is non-contractual, and a
+handler must not probe for undocumented ones. The bounded trace writer remains
+the accepted *direction* — it is added under this ADR, with its bounds as
+specified above, when the first real consumer migrates onto it (the natural
+candidate: `catalog.sync` adopting the bounded writer in place of its raw
+`writeTrace` call). That future change is an implementation step of this ADR,
+not a new decision. The public `writeTrace`/`normalizeError` exports remain
+published API, exactly as the ADR records; the raw-byte webhook remains the
+explicit kernel adapter, untouched.

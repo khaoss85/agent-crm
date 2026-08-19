@@ -2,10 +2,9 @@
 
 import { ValidationError } from './errors.js';
 import { runExternalOperation } from './external-operation.js';
-import { writeTrace, sanitizeJsonSafe } from './action-runtime.js';
 
 /**
- * The generic application-operation runtime (ADR-032).
+ * The generic application-operation runtime (ADR-032, applicationOperations v1).
  *
  * A package may declare bounded, application-scoped operations —
  * provider-addressed, transaction-disciplined, traced — and the composition
@@ -14,7 +13,9 @@ import { writeTrace, sanitizeJsonSafe } from './action-runtime.js';
  * receives, and composes declared operations into an attachable surface. No
  * domain name appears here; the names live in the package declarations.
  *
- * The bounded context, exactly the ADR-032 contract:
+ * The bounded context — exactly the keys the two real consumers use, and
+ * nothing else (the ADR-032 implementation addendum in DECISIONS.md records
+ * the audit):
  *
  *   database     the application database handle the operation code held
  *                before the seam existed
@@ -28,63 +29,19 @@ import { writeTrace, sanitizeJsonSafe } from './action-runtime.js';
  *                discipline WITHOUT `runExternalOperation` becoming public
  *                API — the contract travels with the seam, the module stays
  *                private, and no third path to it exists
- *   trace        a bounded, best-effort trace writer (below)
  *
  * The context is deliberately NOT the raw kernel: no action registry, no
  * workflow engine, no provider registry, no package registry and no
- * capability resolver reach an operation through it.
- */
-
-/** Bounds on what the injected trace writer will persist. */
-const MAX_TRACE_STEPS = 200;
-const MAX_TRACE_TEXT = 2_000;
-
-/**
- * Build the bounded trace writer: the same `workflow_runs`/`trace_spans` rows
- * every run surface reads, with the bounds the raw export never had — JSON-safe
- * input/output, size-bounded step lists and messages, and best-effort
- * semantics stated in the contract rather than re-invented per caller.
- * Operation run names are package-declared, never kernel-derived.
+ * capability resolver reach an operation through it. Tracing is not a context
+ * key either: both shipped consumers persist their runs through the existing
+ * runtime/external-operation machinery, and an extension point with zero
+ * consumers is not shipped — the ADR's bounded trace writer is deferred to
+ * the addendum until a first real consumer migrates onto it.
  *
- * @param {any} database
+ * The key set is CLOSED: an operation receives exactly the documented
+ * capabilities, and any additional field would be non-contractual. A test
+ * (`tests/package-operations-seam.test.js`) freezes the exact key list.
  */
-function createBoundedTraceWriter(database) {
-  return function trace(run) {
-    try {
-      if (!run || typeof run !== 'object' || typeof run.workflowName !== 'string' || run.workflowName === '') {
-        return false;
-      }
-      const bounded = (value) => {
-        try {
-          return sanitizeJsonSafe(value ?? null, 'trace');
-        } catch {
-          return { unserializable: true };
-        }
-      };
-      const text = (value) => (typeof value === 'string' ? value.slice(0, MAX_TRACE_TEXT) : value ?? null);
-      writeTrace(database, {
-        runId: run.runId,
-        workflowName: run.workflowName.slice(0, MAX_TRACE_TEXT),
-        status: run.status === 'failed' ? 'failed' : 'completed',
-        input: bounded(run.input),
-        output: bounded(run.output),
-        error: text(run.error),
-        startedAt: run.startedAt,
-        steps: (Array.isArray(run.steps) ? run.steps : []).slice(0, MAX_TRACE_STEPS).map((step) => ({
-          name: typeof step?.name === 'string' ? step.name.slice(0, MAX_TRACE_TEXT) : 'step',
-          status: step?.status === 'failed' ? 'failed' : 'completed',
-          output: bounded(step?.output ?? null),
-          error: text(step?.error),
-        })),
-      });
-      return true;
-    } catch {
-      // Best-effort by contract: a trace that cannot be persisted never turns
-      // a committed business result into a failure.
-      return false;
-    }
-  };
-}
 
 /**
  * Build the bounded operation context. Called once per application instance;
@@ -103,7 +60,6 @@ export function createOperationRuntime({ database, modules, events, config }) {
     events,
     config: Object.freeze({ ...(config ?? {}) }),
     runExternal: runExternalOperation,
-    trace: createBoundedTraceWriter(database),
   });
 }
 
