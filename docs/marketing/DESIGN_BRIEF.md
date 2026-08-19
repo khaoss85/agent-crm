@@ -91,8 +91,8 @@ The pitch: *"Don't trust our tests. Break them yourself, in one command."*
 ### 4.3 The composition, measured
 
 ```
-modules       71        resources     66        policies       7
-packages       9        actions       59        providers      1
+modules       76        resources     71        policies       7
+packages       9        actions       64        providers      1
 ```
 
 Composed and inspected in seconds, from manifests, by one command — these
