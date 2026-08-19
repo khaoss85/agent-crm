@@ -24,8 +24,18 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
 /** Records whose rows are signed-term evidence. */
 const SIGNED_TERM_RECORDS = ['quote-version-term', 'order-term'];
-/** Reads that mean "somebody is about to treat this as a term". */
-const CONSUMPTION_MARKERS = [/versionTerm\b/, /orderTerm\b/, /signedTerm\b/, /termsFingerprint\b/];
+/**
+ * Reads that mean "somebody is about to treat this as a term".
+ *
+ * The stored field names are markers too, not only the accessor names: a
+ * consumer that destructures `{ termStartDate, termEndDate }` off a row it was
+ * handed is consuming signed-term evidence just as much as one that calls
+ * `orderTerm()`, and an earlier version of this guard missed exactly that.
+ */
+const CONSUMPTION_MARKERS = [
+  /versionTerm\b/, /orderTerm\b/, /signedTerm\b/, /termsFingerprint\b/,
+  /termStartDate\b/, /termEndDate\b/, /termDays\b/,
+];
 
 /**
  * Files that touch signed-term evidence and do **not** call the verifier, each
@@ -59,6 +69,23 @@ const EXEMPT = new Map([
     'renders what the verified server response already decided; the browser verifies nothing'],
   ['apps/admin/public/admin-lifecycle.js',
     'renders what the verified server response already decided; the browser verifies nothing'],
+  // The five below read the CONTRACT's own term columns — a projection only an
+  // activation that already verified the evidence could have written — and
+  // never a `quote-version-term` or `order-term` row. Same standing reason as
+  // `lifecycle-capability.js`: re-verifying a copy of a decision is not
+  // verifying the evidence, and the evidence was verified before the column
+  // existed. They were invisible to this guard until its markers covered the
+  // stored field names; they are listed rather than hidden.
+  ['packages/contracts/src/capabilities.js',
+    'delivery-obligations@1 exposes the contract row\'s term columns to Delivery; it reads no term record'],
+  ['packages/contracts/src/service-capability.js',
+    'service-obligations@1 exposes the same contract columns to Service; it reads no term record'],
+  ['packages/delivery/src/dates.js',
+    'bounds a delivery target date against the contract\'s term end, and states in its own text that delivery dates were never signed'],
+  ['packages/delivery/src/handover-policy.js',
+    'passes the contract row\'s term columns into the handover policy context; it reads no term record'],
+  ['packages/lifecycle/src/index.js',
+    'reads term provenance through contract-lifecycle-source@2, which reports the already-verified contract projection'],
 ]);
 
 /** Files that must contain a verifier call. */
@@ -85,8 +112,43 @@ function sourceFiles(dir) {
   return found;
 }
 
+/**
+ * Every place a consumer could appear, **discovered rather than listed**.
+ *
+ * A fixed root list is a guard with a hole the size of the next package: this
+ * repository adds packages routinely, and a new one reading `order-term` would
+ * never have been scanned at all. The roots are therefore derived from the
+ * filesystem on every run, so a package that does not exist yet is covered the
+ * day it does.
+ */
+function consumerRoots() {
+  const roots = [];
+  for (const pkg of readdirSync(join(repoRoot, 'packages'))) {
+    const src = join(repoRoot, 'packages', pkg, 'src');
+    try { if (statSync(src).isDirectory()) roots.push(`packages/${pkg}/src`); } catch { /* no src */ }
+  }
+  for (const app of readdirSync(join(repoRoot, 'apps'))) {
+    const pub = join(repoRoot, 'apps', app, 'public');
+    try { if (statSync(pub).isDirectory()) roots.push(`apps/${app}/public`); } catch { /* no public */ }
+    const src = join(repoRoot, 'apps', app, 'src');
+    try { if (statSync(src).isDirectory()) roots.push(`apps/${app}/src`); } catch { /* no src */ }
+  }
+  return roots.sort();
+}
+
+test('the guard scans every package that exists, not a list somebody remembered', () => {
+  const roots = consumerRoots();
+  // The packages this wave's evidence chain actually runs through must all be
+  // in scope; the assertion is that discovery found them, not that a list did.
+  for (const required of ['packages/commercial/src', 'packages/signature/src', 'packages/contracts/src',
+    'packages/lifecycle/src', 'packages/delivery/src', 'apps/admin/public']) {
+    assert.ok(roots.includes(required), `${required} is not being scanned: ${roots.join(', ')}`);
+  }
+  assert.ok(roots.length >= 9, `expected every package's src to be scanned, found ${roots.length}`);
+});
+
 test('every file that consumes signed-term evidence verifies it, or is listed with its reason', () => {
-  const roots = ['packages/commercial/src', 'packages/signature/src', 'packages/contracts/src', 'packages/lifecycle/src', 'apps/admin/public'];
+  const roots = consumerRoots();
   /** @type {string[]} */
   const consumers = [];
   for (const root of roots) {
