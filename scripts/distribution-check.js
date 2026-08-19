@@ -18,7 +18,7 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { collectDiscoverySurfaces, validateDiscoverySurfaces } from './distribution-intent.js';
+import { collectDiscoverySurfaces, validateDiscoverySurfaces, validateRegistryDescription } from './distribution-intent.js';
 
 const root = process.cwd();
 const failures = [];
@@ -137,6 +137,7 @@ if (serverJson && !/^[a-z0-9.-]+\/[a-z0-9-]+$/.test(serverJson.name ?? '')) {
  * hardcoded in one more file is a domain that survives a rename.
  */
 if (serverJson) {
+  for (const failure of validateRegistryDescription(serverJson)) fail(failure);
   if (serverJson.packages?.length) {
     fail(
       'server.json: a `packages` entry offers the registry an installable server. The project MCP '
@@ -465,7 +466,7 @@ if (brand.name.status !== 'chosen') {
 // The entry no longer references one, and per ADR-034 it never should again;
 // what remains true is that submitting it is a person's action.
 if (serverJson?.remotes?.length) {
-  notes.push(`server.json registers the remote documentation server at ${serverJson.remotes[0].url}. The entry needs no npm artifact; submitting it through mcp-publisher is a human step (MASTER_PLAN.md §10.4).`);
+  notes.push(`server.json registers the remote documentation server at ${serverJson.remotes[0].url}. The entry needs no npm artifact, and submission runs through .github/workflows/publish-mcp-registry.yml — dispatch-only, OIDC-authenticated, and refusing to advertise an endpoint that is not answering.`);
 }
 
 // ---------------------------------------------------------------- report
