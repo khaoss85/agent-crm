@@ -36,7 +36,7 @@ If the repository documents this skill names are absent, you are in a project bu
 1. Storage modules are **read-only publicly** (every field `writable: "managed"` → capabilities `get`/`list`, no public create/update). Never add a public write path to a commercial record; use the trusted `createManaged`/`applyManaged` from action code.
 2. Every price and total is **server-derived** from catalog data. A client may send `offerId`, `quantity` and `discountBps` — never an amount, a tier or a total.
 3. Use `computeComponentAmount`/`computeLineBreakdown`/`groupComponentTotals` from `packages/commercial/src/money.js` (the neutral value bounds — `requireAmount`, `requireBps`, `requireQuantity` — are public kernel API in `packages/core/index.js`). Do not hand-roll money arithmetic and never use floating-point percentages. Respect quantity semantics: **flat fees are charged once per line**, per-unit multiplies, volume prices the whole quantity at the reached tier, graduated prices each band.
-4. **Never combine unlike periods.** Persist and display the one-time total plus one total per `(currency, interval, intervalCount)`. Do not derive ARR/MRR/TCV — contract term is not modeled.
+4. **Never combine unlike periods.** Persist and display the one-time total plus one total per `(currency, interval, intervalCount)`. Do not derive ARR/MRR/TCV — a term records calendar dates, never an annualization basis.
 5. Guard draft edits with `expectedRevision` (optimistic concurrency) and gate every action with `fromStates`. A quote binds one price book and one currency; a mismatched, inactive, incomplete or quote-ineligible offer is refused. A draft line re-prices only from its pinned offer revision.
 6. Never delete records: soft-remove draft lines.
 
