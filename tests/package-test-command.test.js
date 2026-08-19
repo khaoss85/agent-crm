@@ -670,3 +670,38 @@ test('stripping comments never swallows a string or a regular expression', () =>
   assert.equal(stripComments('a; /* b */ c;').split('\n').length, 1, 'line structure is preserved');
   assert.equal(stripComments('a\n// x\nb').split('\n').length, 3);
 });
+
+/**
+ * Review finding, added rather than found broken: this scanner is a hand-rolled
+ * lexer sitting *inside* a conformance authority, so the question is not
+ * whether it parses JavaScript but what it does when it is wrong. Only the two
+ * comment branches replace anything — every string, template and regular
+ * expression is copied through verbatim — so a mis-lex can raise a false
+ * accusation but can never hide a real violation. These are the inputs designed
+ * to blind it, and the rule they pin is that direction.
+ */
+test('a mis-lex can only over-report: no construct hides a real kernel import', () => {
+  const violation = "import { x } from '../../core/src/kernel.js';";
+  const decoys = [
+    ["a URL string", "const u = 'https://x.test//y';"],
+    ['a regex holding escaped slashes', 'const re = /a\\/\\/b/g;'],
+    ['a regex character class holding quotes', "const re = /['\"\\/]/;"],
+    ['a chain of divisions', 'const n = a / b / c;'],
+    ['an apostrophe inside a line comment', "// don't do this"],
+    ['a template with a nested expression and a slash pair', "const s = `a ${b ? 'c' : 'd'} //e`;"],
+    ['a nested template literal', 'const s = `a ${`b`} c`;'],
+    ['a string holding a block-comment opener', "const s = '/*';"],
+    ['a trailing comment on a code line', 'const a = 1; // note'],
+    ['a regex that never closes on its line', 'const re = /abc'],
+  ];
+  for (const [what, decoy] of decoys) {
+    assert.equal(importsPrivateKernelPath(`${decoy}\n${violation}`), true,
+      `${what} must not blind the scanner to the import on the next line`);
+    assert.deepEqual(importSpecifiers(`${decoy}\n${violation}`), ['../../core/src/kernel.js'],
+      `${what} must not swallow the specifier either`);
+  }
+
+  // And the other direction still holds: prose is prose, in either comment form.
+  assert.equal(importsPrivateKernelPath(`/* import { x } from '../../core/src/kernel.js'; */`), false);
+  assert.equal(importsPrivateKernelPath(`// import { x } from '../../core/src/kernel.js';`), false);
+});
