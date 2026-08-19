@@ -104,13 +104,15 @@ export function createSignatureDomain(options = {}) {
     // Order, and the additive `orderTerm` read on `signature-orders@1`. The
     // composition contract grew; every pre-existing answer is byte-identical
     // (held by the LA0-Signature baseline, fe1875bf…).
-    version: 2,
+    // 3: requires commercial-quotes@2 — the signed-term verifier is required for
+    // correctness before a document is hashed, so the composition contract moved.
+    version: 3,
     label: 'Signature & Order',
     description:
       'Signature envelopes and immutable Orders: provider-backed envelope requests under a human-actor boundary, verified replay-proof webhook events, signed-artifact evidence, explicit reconciliation, and exactly one immutable Order per approved quote version — copied from the commercial snapshot, never re-read from the live catalog.',
     resources: [...SIGNATURE_RESOURCES],
     requires: [
-      { package: 'commercial', capability: 'commercial-quotes', version: 1 },
+      { package: 'commercial', capability: 'commercial-quotes', version: 2 },
       { package: 'commercial', capability: 'commercial-quote-binding', version: 1 },
     ],
     // The one thing this package offers other packages: read-only signed-Order

@@ -84,7 +84,7 @@ export function toJson(value, label) {
  * refusal — an Order whose signature evidence is missing or incoherent is
  * never activated on the assumption that it is probably fine.
  */
-export function loadActivationSource(modules, names, order) {
+export function loadActivationSource(modules, names, order, domains = null) {
   if (order.status !== 'accepted') {
     throw new AppError(`The order is ${order.status}, not accepted`, { code: 'ORDER_NOT_ACTIVATABLE', status: 409 });
   }
@@ -140,20 +140,72 @@ export function loadActivationSource(modules, names, order) {
   // means the operational path, never a guess. A snapshot that names a
   // different signed document than the order's is refused like every other
   // incoherent evidence pair.
-  let signedTerm = null;
+  let signedTermRows = [];
   try {
     const service = modules.get(names.orderTerm)?.service ?? null;
-    signedTerm = service ? (service.listWhere({ orderId: order.id })[0] ?? null) : null;
+    signedTermRows = service ? service.listWhere({ orderId: order.id }) : [];
   } catch {
-    signedTerm = null;
+    signedTermRows = [];
   }
+  let signedTerm = signedTermRows[0] ?? null;
   if (signedTerm && signedTerm.documentHash !== order.documentHash) {
     throw new AppError('The order term snapshot names a different signed document than the order', {
       code: 'SOURCE_HASH_MISMATCH', status: 409,
     });
   }
+  // **The signed-term verifier (M-1).** A fingerprint nobody recomputes is a
+  // decoration: before these dates may be described as signed — activated,
+  // derived `signed: true`, planned or executed into a successor — Commercial
+  // re-derives the canonical fingerprint from the row's own values and proves
+  // the row still matches the quote version it was copied from. The authority
+  // is Commercial's alone (`commercial-quotes@2`); this package recomputes
+  // nothing. Absence stays absence, and history is never rewritten.
+  if (signedTermRows.length > 0) {
+    if (!domains || typeof domains.capability !== 'function') {
+      throw new AppError(
+        'Signed commercial terms cannot be verified without the package registry, so they will not be treated as signed',
+        { code: 'TERMS_VERIFIER_UNAVAILABLE', status: 500 },
+      );
+    }
+    const quotes = domains.capability({
+      consumer: 'contracts', capability: 'commercial-quotes', version: 2, context: { modules },
+    });
+    // The signed bytes are the anchor: this package already holds the
+    // envelope and has already proven that the order, envelope and artifact
+    // agree on `documentHash`, so the `terms` section of those exact bytes is
+    // what a snapshot must match. Commercial owns the comparison; Contracts
+    // only supplies the evidence it legitimately holds.
+    const outcome = quotes.verifySignedTerms({
+      scope: 'order', orderId: order.id, rows: signedTermRows,
+      documentTerms: signedDocumentTerms(envelope),
+    });
+    signedTerm = outcome ? outcome.row : null;
+  }
 
   return { envelope, artifact, lines, components, totals, signedTerm };
+}
+
+/**
+ * The `terms` section of the document that was actually signed, read from the
+ * canonical bytes stored on the envelope — `null` when the signed document
+ * carried no term, which is the ordinary historical case.
+ *
+ * Unparseable or missing bytes are **not** silently treated as "no term":
+ * that would turn an unreadable document into a refusal for honest evidence
+ * and, worse, into a pass for a planted one. The verifier is told the document
+ * is unavailable and refuses.
+ *
+ * @param {any} envelope
+ */
+function signedDocumentTerms(envelope) {
+  const raw = envelope?.documentJson;
+  if (typeof raw !== 'string' || raw === '') return undefined;
+  try {
+    const document = JSON.parse(raw);
+    return Object.hasOwn(document ?? {}, 'terms') ? document.terms : null;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -325,7 +377,7 @@ export function buildPlanActivationAction(config) {
     /** @param {any} ctx */
     async execute({ record: order, input, modules, domains, step }) {
       const { definition: policy, fingerprint } = domains.getPolicy('contracts', POLICY_KIND, input.policy, input.policyVersion);
-      const source = loadActivationSource(modules, names, order);
+      const source = loadActivationSource(modules, names, order, domains);
       const overrides = normalizeOverrides(
         input.classificationOverrides,
         new Set(source.components.map(({ component }) => component.id)),
@@ -386,7 +438,7 @@ export function buildActivateContractAction(config) {
       // a plan the caller computed earlier is never trusted. It is loaded
       // before the term is resolved, because which provenance applies is the
       // Order's fact, not the caller's choice.
-      const source = loadActivationSource(modules, names, order);
+      const source = loadActivationSource(modules, names, order, domains);
 
       /** @type {ReturnType<typeof requireTerm> | ReturnType<typeof signedTermFromSnapshot>} */
       let term;

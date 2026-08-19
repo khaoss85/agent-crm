@@ -4,7 +4,9 @@ import { definePackage } from '../../core/index.js';
 import { CommercialRegistries } from './registry.js';
 import { buildCommercialActions } from './actions.js';
 import { createCatalogSync } from './catalog-sync.js';
-import { createCommercialQuotesCapability, createCommercialQuoteBindingCapability } from './capability.js';
+import {
+  createCommercialQuotesCapability, createCommercialQuotesVerifiedCapability, createCommercialQuoteBindingCapability,
+} from './capability.js';
 
 /**
  * The Commercial Operations domain package (ADR-016, extracted under ADR-018).
@@ -89,13 +91,18 @@ export function createCommercialDomain(options = {}) {
     // version describes the composition contract, and the contract grew.
     // Every pre-existing record, action contract and capability answer is
     // byte-identical (held by the LA0-Commercial baseline).
-    version: 2,
+    // 3: offers commercial-quotes@2 alongside @1 — the authoritative signed-term
+    // verifier is a new required method with a stronger guarantee (ADR-036).
+    version: 3,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',
     resources: [...COMMERCIAL_RESOURCES],
     capabilities: [
       createCommercialQuotesCapability(registries, config),
+      // @2 adds the authoritative signed-term verifier; @1 stays offered
+      // byte-identical for any consumer that has not migrated (ADR-036).
+      createCommercialQuotesVerifiedCapability(registries, config),
       createCommercialQuoteBindingCapability(),
     ],
     actions: buildCommercialActions(config, registries),
@@ -170,4 +177,7 @@ export function createCommercialDomain(options = {}) {
 export { CommercialRegistries } from './registry.js';
 export { buildCommercialActions } from './actions.js';
 export { createCatalogSync } from './catalog-sync.js';
-export { createCommercialQuotesCapability, createCommercialQuoteBindingCapability, QUOTE_BINDING_FIELDS } from './capability.js';
+export {
+  createCommercialQuotesCapability, createCommercialQuotesVerifiedCapability,
+  createCommercialQuoteBindingCapability, QUOTE_BINDING_FIELDS,
+} from './capability.js';
