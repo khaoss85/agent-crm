@@ -397,18 +397,23 @@ browser-validated unless all 41 pass.
 **Foundation-specific, scripted, and outside CI. 32 checks, all passing** —
 
 > **Independently re-run at review** (a different person, a different driver,
-> on the reviewed head): **31 of 32 pass, three times, with identical results.**
-> The one miss is check 30 and it is the harness, not the product: headless
-> Chromium requests `/favicon.ico` on every navigation, this server has never
-> served one, and the resulting 404 is logged as a console error. It is
-> browser-initiated, predates this milestone and is unrelated to the diff —
-> recorded here rather than quietly filtered, so the next person is not
-> surprised by it. Every product check passed, including the two the review
-> was asked to confirm specifically: the preview **keeps the operator's typed
-> rows** (13), and **no absent section renders as a zero count** (25). The link
-> decision was driven through the real Admin control, and the two source
-> companies both still existed afterwards (20), with exactly one canonical and
-> one alias recorded (21).
+> a fresh browser profile per run): **32 of 32 pass, three times on the final
+> head, with identical results.** Every product check passed, including the two
+> the review was asked to confirm specifically: the preview **keeps the
+> operator's typed rows** (13), and **no absent section renders as a zero
+> count** (25). The link decision was driven through the real Admin control,
+> and the two source companies both still existed afterwards (20), with exactly
+> one canonical and one alias recorded (21).
+>
+> One observation worth writing down rather than leaving for the next person to
+> rediscover: **this server does not serve `/favicon.ico`** — confirmed
+> directly with `curl` (404), and the page declares no icon link, so headless
+> Chromium requests it implicitly. Whether that 404 lands as a console error
+> *before* a run reads its health counters is timing-dependent in this harness:
+> it surfaced in an earlier set of three runs and in none of these three. It is
+> browser-initiated, predates this milestone and is unrelated to the diff — the
+> flakiness is in the observation, not in the product, and neither result should
+> be read as evidence about this change.
 driven in real Chromium (**Chromium/141.0.7390.37**) on Node **22.16.0**,
 against a freshly seeded project, twice from a clean database and a clean
 browser profile, with identical results both runs.

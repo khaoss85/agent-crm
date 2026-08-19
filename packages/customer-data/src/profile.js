@@ -154,9 +154,9 @@ export function profileFor({ modules, core, names, subject }) {
     sections[section.key] = Object.freeze({
       available: true,
       count: rows.length,
-      // A count is a claim. When the owning module declares no field this
-      // projection can query on, the only read available is a bounded display
-      // page, and a number taken from a page is not a count of the table.
+      // A count is a claim. When the owning service offers no exact query at
+      // all — a handwritten core module — the only read available is a bounded
+      // display page, and a number taken from a page is not a count of a table.
       countIsComplete: read.complete,
       ...(read.complete ? {} : {
         countNote: `${section.label} were read from a bounded page of the owning module, so this count is at least this many, not exactly this many`,
