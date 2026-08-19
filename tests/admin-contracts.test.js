@@ -405,3 +405,73 @@ test('hostile server text renders as text, and the section disappears without th
   assert.equal(anyByClass(without, 'contract-activation'), null, 'no section without the package');
   assert.ok(!without.textContent.includes('Contract activation'));
 });
+
+test('a signed term renders read-only, and the activation sends no term input at all', async () => {
+  const signedPlan = {
+    ...RESOLVED_PLAN,
+    requiredInputs: [],
+    termsProvenance: {
+      source: 'signed-order-terms',
+      note: 'Signed commercial term: part of the canonical document the customer signed (covered by its documentHash), frozen at quote submission and copied from the immutable order term snapshot at activation.',
+    },
+    signedTerm: {
+      effectiveDate: '2026-09-01', termStartDate: '2026-09-01', termEndDate: '2027-08-31',
+      termDays: 365, autoRenew: true, renewalNoticeDays: 60, termsFingerprint: 'f'.repeat(64),
+    },
+  };
+  const client = stubClient({ plans: [signedPlan] });
+  const mount = await render(client);
+  await byClass(mount, 'div', 'activation-plan').__plan();
+  const result = byClass(mount, 'div', 'activation-result');
+  const text = mount.textContent;
+
+  assert.ok(text.includes('Signed commercial term'), 'the section says what the term IS');
+  assert.ok(!text.includes('Operational activation term'), 'the two provenances are never collapsed');
+  assert.ok(text.includes('part of the canonical document the customer signed'), text);
+  assert.ok(text.includes('2026-09-01 → 2027-08-31 (inclusive, 365 day(s))'));
+  assert.ok(text.includes('f'.repeat(64)), 'the term fingerprint is evidence');
+  assert.ok(text.includes('typing a different term here is refused by the server'));
+  // The controls exist as detached objects for the handler's sake, but the
+  // signed path never mounts them: nothing term-shaped is typable.
+  const mountedTermInputs = byClass(mount, 'div', 'activation-term activation-term-signed').findAll('input');
+  assert.equal(mountedTermInputs.length, 0, 'the signed term section carries no input');
+
+  await result.__activate();
+  const activate = client.calls.filter((call) => call.method === 'POST').at(-1);
+  assert.equal(activate.path, '/api/modules/order/records/ord1/actions/activate-contract');
+  assert.deepEqual(JSON.parse(activate.body), {
+    policy: 'b2b-saas-order-activation', policyVersion: 1,
+  }, 'no term field travels: the server copies the signed snapshot');
+});
+
+test('the contract facts state exactly one of three term provenances', async () => {
+  // Signed.
+  const signedContract = { ...CONTRACT, termsSource: 'signed-order-terms', termsReason: 'Carried verbatim from the signed order term snapshot; the signed document hash covers these values.' };
+  let client = stubClient({
+    order: { ...ORDER, contractId: 'ct1', activatedAt: '2026-08-06T09:00:00.000Z' },
+    rows: { ...ACTIVATED_ROWS, 'commercial-contract': [signedContract] },
+  });
+  let text = (await render(client)).textContent;
+  assert.ok(text.includes('signed commercial term (signed-order-terms)'), text);
+  assert.ok(text.includes('part of the document the customer signed'), text);
+
+  // Operational (the existing case, restated as the trichotomy's second arm).
+  client = stubClient({
+    order: { ...ORDER, contractId: 'ct1', activatedAt: '2026-08-06T09:00:00.000Z' },
+    rows: ACTIVATED_ROWS,
+  });
+  text = (await render(client)).textContent;
+  assert.ok(text.includes('post-signature operational (post-signature-operational-activation)'), text);
+  assert.ok(text.includes('NOT signed'), text);
+
+  // Absent/unknown: an unclassifiable row is presented as a gap, never as
+  // either decided provenance.
+  const unknownContract = { ...CONTRACT, termsSource: null, termsReason: null };
+  client = stubClient({
+    order: { ...ORDER, contractId: 'ct1', activatedAt: '2026-08-06T09:00:00.000Z' },
+    rows: { ...ACTIVATED_ROWS, 'commercial-contract': [unknownContract] },
+  });
+  text = (await render(client)).textContent;
+  assert.ok(text.includes('unknown provenance (absent)'), text);
+  assert.ok(text.includes('never reported as signed'), text);
+});
