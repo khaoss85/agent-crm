@@ -584,8 +584,8 @@
     },
     {
       "id": "L-08",
-      "headline": "Ownership today means copying source, not installing a dependency.",
-      "text": "There is a project bootstrap and there is no published package, and the two are different facts. The repository's bootstrap command scaffolds a project that boots, reports `valid` from `app inspect` and exits 0 from `project doctor`, offline and with no install — run from a checkout of this repository. The package published under the reserved npm name is still an empty 0.0.1 placeholder, so the `npm create` route installs nothing until a human publishes it. Either way the framework is vendored into the project rather than depended on by version: you own the result outright, and upgrading means merging, not bumping.",
+      "headline": "Ownership means vendored source: there is no framework dependency to bump.",
+      "text": "The `npm create` route works — the published create package, 0.1.0, scaffolds a project that boots, reports `valid` from `app inspect` and exits 0 from `project doctor` — but what it installs is a scaffolder, not the framework. The framework source is copied into the new project, so you own the result outright, a versioned framework dependency does not exist, and upgrading means merging changes into your copy, not bumping a number. The framework's own npm name remains an empty 0.0.1 reservation, deliberately: nothing installs the framework as a library, and the scope is unclaimed.",
       "evidence": {
         "tests": [
           "tests/project-bootstrap.test.js"
@@ -596,9 +596,9 @@
         ],
         "repoFacts": [
           "the project bootstrap writes a project from an empty directory, dry-run unless --apply",
-          "tests/project-bootstrap.test.js bootstraps into a temporary directory and then runs app inspect, project doctor and the generated project's own checks against the result",
+          "tests/create-accordo-package.test.js packs the publication twice, byte-identically, installs it offline and runs the generated project's own checks",
           "site/brand.json records the registry status and the source status as two separate fields, and scripts/distribution-check.js fails if either disagrees with the tree",
-          "the published 0.0.1 tarball is an empty name reservation and this repository publishes nothing"
+          "publication is staged from CI through OIDC trusted publishing and goes live only after a human approves the staged version with 2FA"
         ]
       },
       "surfaces": [

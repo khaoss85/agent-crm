@@ -268,10 +268,16 @@ tenancy or RBAC.
 ## 10. Outcome and follow-up
 
 Implementation, public-copy review, the original adversarial review, merge and
-production promotion are complete. The JSON receipt fix is merged; the next
-dispatch reached npm and proved the repository path, then stopped at `E401`
-because the external trusted-publisher relationship did not authorize it. After
-the canonical-bin follow-up merges, configure that relationship for the exact
-repository, workflow, environment and stage-only action; rerun, inspect the stage
-and approve it with 2FA. Only the resulting registry receipt authorizes changing
-`site/brand.json` to `published` or using `npm create accordo` in public copy.
+production promotion are complete — and so, since 2026-08-19, is the
+publication itself. The path earned its receipts one failure at a time: the
+JSON receipt fix merged; a dispatch reached npm and died `E401` because
+setup-node's `registry-url` wrote a placeholder-token `.npmrc` line that
+preempted the OIDC exchange (fixed by configuring no registry at all); the next
+died `ENEEDAUTH` because the trusted-publisher relationship did not yet allow
+the stage action; run `32224731197` then staged clean — provenance in the
+Sigstore transparency log — and the maintainer approved the staged version with
+2FA. The registry receipt was verified from a clean environment (`npm view`
+returns the CI shasum; `npm create accordo` scaffolds a verifying project), and
+only then did `site/brand.json` flip to `published`. The source manifest stays
+`private: true` in every registry state: the wall against a direct repository
+publish outlives the publication it was built to gate.

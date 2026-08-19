@@ -6,11 +6,12 @@ An open-source framework that Claude Code, Codex and Gemini CLI use to generate 
 application as code you own — deterministic workflows, policy-gated human approvals,
 audit and trace built in.
 
-The name is chosen and the domain registered. The npm names hold empty `0.0.1`
-placeholders, while the real package and the `@accordo` scope remain unpublished; no
-trademark screen has been run. The project is **pre-launch** and is not deployable to
-production. What that means precisely is in [Where it stops](#where-it-stops), which is
-worth reading before the rest.
+The name is chosen and the domain registered. `npm create accordo` scaffolds a working
+project from the published `create-accordo@0.1.0`; the `accordo` package itself remains
+an empty `0.0.1` name reservation — nothing installs the framework as a library — and
+the `@accordo` scope is unclaimed. No trademark screen has been run, and the project is
+not deployable to production. What that means precisely is in
+[Where it stops](#where-it-stops), which is worth reading before the rest.
 
 ```text
 Business request
@@ -187,15 +188,15 @@ evidence is required to leave it.
   deterministic, versioned and explainable, not a model's judgement about a person.
 - **This is a framework, not a product you sign up for.** There is no hosted CRM, no free
   tier, no account. The output is an application you run.
-- **Ownership today means copying source, not installing a dependency.** There is now a project
-  bootstrap: `node packages/create-accordo/bin/create-accordo.js <dir> --apply` copies the
-  framework into an empty directory and writes a project that boots, reports `valid` from
-  `app inspect` and exits 0 from `project doctor` — no install, no network
-  (`tests/project-bootstrap.test.js`). **It runs from a checkout of this repository.** The
-  `create-accordo` package on the npm registry is still the empty `0.0.1` name reservation, so
-  `npm create accordo` installs nothing and will go on installing nothing until a human publishes.
-  Either way the framework is vendored into the project, so you own the result outright — and
-  upgrading means merging, not bumping a version.
+- **Ownership means vendored source: there is no framework dependency to bump.**
+  `npm create accordo` — the published `create-accordo@0.1.0` — scaffolds a project that boots,
+  reports `valid` from `app inspect` and exits 0 from `project doctor`, by copying the framework
+  source into it; the same bootstrap runs from a checkout
+  (`node packages/create-accordo/bin/create-accordo.js <dir> --apply`, no install, no network —
+  `tests/project-bootstrap.test.js`). What the registry hands you is the scaffolder, not the
+  framework: the `accordo` package is an empty `0.0.1` name reservation, deliberately. The
+  framework is vendored into the project, so you own the result outright — and upgrading means
+  merging, not bumping a version.
 
 ## Architecture in five folders
 
