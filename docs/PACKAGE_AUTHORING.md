@@ -477,10 +477,12 @@ See `docs/strategy/OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md` and the
 ## Moving an existing domain into a package
 
 Three domains — Lead Intelligence, Commercial Operations, and Signature & Order
-— predate this seam and still live in `packages/core/src/`. Their status against
-every horizontal capability is recorded in
-`docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` as `needs_extraction`: the gap is
-structural, and no amount of care inside a core file closes it.
+— predated this seam and have each since been extracted onto it, LA0-first,
+with zero asserted characterization observations moved (PRs #38, #79, #84).
+`docs/architecture/LEGACY_ALIGNMENT_MATRIX.md` records no `needs_extraction`
+row today; the closed entries stay in the matrix as the record of the
+structural gap they described, which no amount of care inside a core file
+could close.
 
 **Do not extract one as part of another piece of work.** A behavior-preserving
 extraction is its own PR, its own review and its own acceptance criterion, and
