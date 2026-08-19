@@ -2443,6 +2443,17 @@ absolute HTTPS URL, and agreement with the domain recorded in `site/brand.json`
 — so the registry artifact cannot drift from the site the way a hand-maintained
 URL would.
 
+The registry also caps `description` at 100 characters, which was found by
+validating against the live API rather than by reading a schema: the entry this
+repository had carried for weeks was ~440 characters and would have been
+refused with HTTP 422 at publish time. That cap collides with the
+intent-discovery gate, which requires every first-contact surface to carry four
+intent signals and the CDP boundary — impossible in 100 characters. The registry
+entry therefore leaves that gate and gets a narrower contract of its own
+(`validateRegistryDescription`): stay inside the limit, name the domain, and
+never claim the CRM work a read-only documentation server cannot do. The full
+vocabulary lives where there is room, and `websiteUrl` sends a reader there.
+
 **Consequences.** The MCP Registry submission is unblocked and needs no npm
 artifact; only the human `mcp-publisher` step remains. The `@accordo` scope
 stays empty, and should: it is claimed (checked against the registry's org

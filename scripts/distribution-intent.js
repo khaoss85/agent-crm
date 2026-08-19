@@ -41,10 +41,51 @@ export function collectDiscoverySurfaces(input) {
     ['Gemini extension', joinCopy(input.geminiExtension?.description)],
     ['root package', joinCopy(input.rootPackage?.description, input.rootPackage?.keywords)],
     ['create-accordo package', joinCopy(input.createPackage?.description, input.createPackage?.keywords)],
-    ['MCP Registry server', joinCopy(input.serverJson?.description)],
     ['skills.sh goal skill', joinCopy(input.goalSkillDescription)],
   ];
 }
+
+/**
+ * The MCP Registry description is a discovery surface too, and it is the one
+ * surface that physically cannot carry the vocabulary: the registry rejects a
+ * `description` longer than 100 characters (HTTP 422, checked against
+ * `registry.modelcontextprotocol.io` — the entry this repository carried before
+ * that check was run would have been refused). Five signals plus the CDP
+ * boundary do not fit in 100 characters, and padding them in would leave a
+ * truncated, unpublishable entry rather than a discoverable one.
+ *
+ * So it gets its own contract, narrower and checkable: name the framework, say
+ * it is CRM-shaped, and point at the site — where the full intent vocabulary
+ * already lives and where `websiteUrl` sends a reader. What must never happen is
+ * this field making a capability claim it has no room to bound.
+ *
+ * @param {any} serverJson
+ * @returns {string[]}
+ */
+export function validateRegistryDescription(serverJson) {
+  /** @type {string[]} */
+  const failures = [];
+  const description = typeof serverJson?.description === 'string' ? serverJson.description : '';
+  if (!description) return ['MCP Registry server: no description to validate'];
+  if (description.length > REGISTRY_DESCRIPTION_LIMIT) {
+    failures.push(
+      `MCP Registry server: description is ${description.length} characters; the registry refuses `
+      + `anything over ${REGISTRY_DESCRIPTION_LIMIT} (422 on publish)`,
+    );
+  }
+  if (!/\bcrm\b/i.test(description)) {
+    failures.push('MCP Registry server: description does not say what domain this is for');
+  }
+  // The registry entry serves a documentation surface. An unbounded capability
+  // verb here reads as "this server does your CRM", which is the one thing the
+  // remote server cannot do — it opens no database (ADR-034).
+  if (/\b(builds?|generates?|manages?|runs?) your\b/i.test(description)) {
+    failures.push('MCP Registry server: description claims the server does CRM work; it serves documentation');
+  }
+  return failures;
+}
+
+export const REGISTRY_DESCRIPTION_LIMIT = 100;
 
 /** @param {Array<[string, string]>} surfaces */
 export function validateDiscoverySurfaces(surfaces) {

@@ -1,0 +1,94 @@
+name: Publish MCP registry entry
+
+# The MCP Registry entry for the remote documentation server (ADR-034). It is
+# dispatch-only and confirmation-gated for the same reason the npm release is:
+# this writes a URL into a public registry that agents will follow, and that is
+# not something a push should be able to do by accident.
+#
+# Authentication is GitHub Actions OIDC. The registry derives the
+# `io.github.<owner>` namespace from the workflow's own identity, so the
+# repository proves the namespace and no long-lived credential exists to leak.
+#
+# MASTER_PLAN.md §10.4 reserves external submissions to a human. The maintainer
+# directed this one explicitly on 2026-08-19; the rule is unchanged for every
+# submission nobody has asked for.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type publish-mcp-registry to submit server.json to the MCP Registry
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Refuse anything except the reviewed default branch
+        run: |
+          test "${{ inputs.confirmation }}" = "publish-mcp-registry"
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Check the entry against this repository's own rules
+        run: npm run distribution:check
+
+      - name: Install the publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher --help > /dev/null
+
+      # Validation speaks for the registry's own rules rather than for ours, and
+      # it has already caught one thing static review missed: `description` is
+      # capped at 100 characters and a longer entry is refused with HTTP 422.
+      - name: Validate against the live registry
+        run: ./mcp-publisher validate server.json
+
+      # The endpoint the entry advertises must be answering before its URL is
+      # handed to strangers. A registry entry pointing at a dead host is the
+      # exact failure this change set out to remove.
+      - name: Refuse to advertise an endpoint that is not answering
+        run: |
+          url="$(node -p "JSON.parse(require('fs').readFileSync('server.json','utf8')).remotes[0].url")"
+          echo "probing $url"
+          body="$(curl -fsS -X POST "$url" \
+            -H 'content-type: application/json' \
+            -H 'accept: application/json, text/event-stream' \
+            -H 'mcp-protocol-version: 2026-07-28' \
+            -H 'mcp-method: tools/list' \
+            --max-time 30 \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"accordo-registry-publish","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}}}}')"
+          node --input-type=module -e '
+            const body = JSON.parse(process.argv[1]);
+            const tools = body?.result?.tools ?? [];
+            const names = tools.map((tool) => tool.name).sort();
+            const expected = ["check_job", "get_capability", "search_docs"];
+            if (JSON.stringify(names) !== JSON.stringify(expected)) {
+              throw new Error(`endpoint served [${names}], expected [${expected}]`);
+            }
+            if (!tools.every((tool) => tool.annotations?.readOnlyHint === true)) {
+              throw new Error("the advertised endpoint exposes a tool that is not read-only");
+            }
+            console.log(`endpoint answered with ${names.length} read-only tools`);
+          ' "$body"
+
+      - name: Authenticate through GitHub Actions OIDC
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish
+        run: ./mcp-publisher publish server.json

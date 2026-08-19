@@ -4,7 +4,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
-import { collectDiscoverySurfaces, validateDiscoverySurfaces } from '../scripts/distribution-intent.js';
+import {
+  collectDiscoverySurfaces,
+  validateDiscoverySurfaces,
+  validateRegistryDescription,
+  REGISTRY_DESCRIPTION_LIMIT,
+} from '../scripts/distribution-intent.js';
 
 const root = process.cwd();
 const githubListing = readFileSync(join(root, 'docs/marketing/GITHUB_LISTING.md'), 'utf8');
@@ -94,4 +99,31 @@ test('the prepared GitHub description carries the whole bounded agent-native int
   assert.match(description, /Smart CRM is policy-governed/i);
   assert.match(description, /CDP \+ CRM means process layer—not ingestion, identity resolution or segmentation/i);
   assert.doesNotMatch(description, /coding agents use to build/i);
+});
+
+test('the registry description obeys the registry\'s own limit and claims no CRM work', () => {
+  const server = manifests.serverJson;
+
+  // Checked against registry.modelcontextprotocol.io, not inferred: a longer
+  // description is refused with HTTP 422 at publish time. The entry this
+  // repository carried before that check was run was ~440 characters and would
+  // have been rejected, which is why the limit is a gate and not a comment.
+  assert.ok(
+    server.description.length <= REGISTRY_DESCRIPTION_LIMIT,
+    `description is ${server.description.length} characters`,
+  );
+  assert.deepEqual(validateRegistryDescription(server), []);
+
+  // Five intent signals do not fit in 100 characters. What must still hold is
+  // that the field names its domain and never promises the CRM work this
+  // read-only documentation server cannot do (ADR-034).
+  assert.match(server.description, /\bcrm\b/i);
+  assert.deepEqual(
+    validateRegistryDescription({ description: 'Builds your CRM for you, end to end, with agents.' }),
+    ['MCP Registry server: description claims the server does CRM work; it serves documentation'],
+  );
+  assert.deepEqual(
+    validateRegistryDescription({ description: `${'x'.repeat(101)} CRM` }),
+    [`MCP Registry server: description is ${105} characters; the registry refuses anything over ${REGISTRY_DESCRIPTION_LIMIT} (422 on publish)`],
+  );
 });

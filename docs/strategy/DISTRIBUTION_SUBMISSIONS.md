@@ -101,23 +101,25 @@ before one exists.
 `https://accordo.dev/api/mcp`, `streamable-http`, no `packages` array, which the
 registry schema permits for remote-only servers. No npm artifact is involved.
 
-1. **Confirm the endpoint answers first** — the registry will hand this URL to
-   strangers, and an agent environment cannot check it (the egress proxy blocks
-   `accordo.dev`). From a normal machine:
-   ```bash
-   curl -sS -X POST https://accordo.dev/api/mcp \
-     -H 'content-type: application/json' \
-     -H 'accept: application/json, text/event-stream' \
-     -H 'mcp-protocol-version: 2026-07-28' -H 'mcp-method: tools/list' \
-     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"check","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}}}'
-   ```
-   Expect exactly three read-only tools: `search_docs`, `get_capability`,
-   `check_job`.
-2. Install `mcp-publisher` ([quickstart](https://modelcontextprotocol.io/registry/quickstart)).
-3. Authenticate as the GitHub identity that owns the `io.github.khaoss85`
-   namespace.
-4. `mcp-publisher publish` from the repository root, then read back the entry
-   and confirm it resolves to the endpoint rather than to a 404.
+Submission runs through **`.github/workflows/publish-mcp-registry.yml`** —
+dispatch it from `main` with the confirmation `publish-mcp-registry`. It needs
+no token and no interactive login: the registry derives the `io.github.khaoss85`
+namespace from the workflow's own OIDC identity, so the repository proves the
+namespace and nothing long-lived exists to leak.
+
+The workflow refuses in three places before it writes anything public:
+
+1. `npm run distribution:check` — the entry against this repository's rules.
+2. `mcp-publisher validate` — the entry against the **registry's** rules, which
+   is the check that caught the 100-character `description` cap that static
+   review had missed for weeks.
+3. A live `tools/list` probe of the advertised URL, asserting exactly
+   `search_docs`, `get_capability`, `check_job`, all read-only. A registry entry
+   pointing at a dead host is the failure this whole change removed; the
+   workflow will not create it.
+
+Afterwards, read the entry back from the registry and confirm it resolves to
+the endpoint rather than to a 404.
 
 `scripts/distribution-check.js` holds the shape: exactly one remote,
 `streamable-http`, an absolute HTTPS URL whose host equals the domain in

@@ -211,13 +211,12 @@ test('the registry entry points at this endpoint, and never at a published proje
   assert.equal(server.remotes[0].url, `https://${brand.domain.value}/api/mcp`);
   assert.ok(existsSync(new URL('../api/mcp.js', import.meta.url)), 'the registered URL has no Function behind it');
 
-  // The description is a first-contact retrieval surface, so it states what the corpus answers
-  // about — not what the CRM runtime does. CRM_DB_PATH belonged to the project server and must
-  // not survive into an entry that opens no database.
+  // CRM_DB_PATH belonged to the project server and must not survive into an entry for a server
+  // that opens no database. The description cannot carry much else: the registry caps it at 100
+  // characters (tests/distribution-intent.test.js holds that limit against the live API), so the
+  // three tools are named by the server itself at tools/list, not by the entry.
   assert.doesNotMatch(JSON.stringify(server), /CRM_DB_PATH/);
-  for (const tool of ['search_docs', 'get_capability', 'check_job']) {
-    assert.match(server.description, new RegExp(tool), `the entry omits ${tool}`);
-  }
+  assert.equal(server.websiteUrl, `https://${brand.domain.value}`, 'the entry must point a reader at the site the vocabulary lives on');
 });
 
 test('runtime corpus assembly is deterministic and excludes every ExecPlan', (t) => {

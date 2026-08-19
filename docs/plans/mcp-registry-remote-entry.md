@@ -90,19 +90,39 @@ accepts a remote entry (`remotes[]`, `type: "streamable-http"`, `url`) with the
 - It changes no runtime behaviour of either MCP server. Both keep their tools,
   their transports and their tests.
 
+## 5b. What validating against the live registry changed
+
+Both facts below were found by running `mcp-publisher validate` against
+`registry.modelcontextprotocol.io`, not by reading the schema — and the first one
+means the entry as originally written could never have been published:
+
+1. **`description` is capped at 100 characters.** The long-standing entry was
+   ~440 and is refused with HTTP 422. The replacement is 81.
+2. That cap is incompatible with the intent-discovery gate, which requires four
+   intent signals plus the CDP boundary on every first-contact surface. The
+   registry entry now has its own narrower contract instead
+   (`validateRegistryDescription`), and the gate no longer asks it for what does
+   not fit.
+
+The endpoint itself was verified once network access allowed it: `tools/list`
+returned exactly `search_docs`, `get_capability` and `check_job`, all with
+`readOnlyHint: true`.
+
 ## 6. Verification
 
 - `npm run gtm:check` — the distribution gate reads the new `server.json` shape.
 - `node --test tests/distribution-intent.test.js tests/docs-mcp-http.test.js` —
   the registry copy and the endpoint contract still agree.
 - `npm run verify` — the full suite, from a clean checkout of HEAD.
-- **Not proven here:** that the endpoint is answering right now. `accordo.dev`
-  is blocked by this environment's egress proxy, so no request was made from
-  here; the last recorded check is in `PENDING_HUMAN_SUBMISSION.md`. The tests
-  bind `server.json` to the brand domain and to the presence of `api/mcp.js` —
-  they prove the entry is internally consistent, never that the deployment is
-  up. Confirming the endpoint answers is therefore step 1 of the human
-  submission runbook, before `mcp-publisher` writes the URL somewhere public.
+- `mcp-publisher validate server.json` against the live registry — the only
+  check that speaks for the registry's own rules rather than for this
+  repository's reading of them. It is the check that caught the 100-character
+  cap.
+- The live endpoint answered `tools/list` with exactly three read-only tools
+  when checked directly on 2026-08-19. The tests still bind `server.json` only
+  to the brand domain and to the presence of `api/mcp.js`: they prove the entry
+  is internally consistent, never that the deployment is up, and a deployment
+  can go down after any green build.
 
 ## 7. Outcome
 
