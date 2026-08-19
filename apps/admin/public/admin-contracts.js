@@ -3,6 +3,7 @@
 import { formatMinorUnits } from './admin-core.js';
 import { renderDeliveryHandover } from './admin-delivery.js';
 import { renderServiceOperations } from './admin-service.js';
+import { renderAmendment } from './admin-lifecycle.js';
 
 /**
  * Contract activation Admin (Milestone 12, ADR-018 domain package).
@@ -61,6 +62,10 @@ export async function renderActivation({ order, schema, mount, el, client, fetch
       // the same contract in its own section. It renders only when the server
       // publishes it.
       await renderServiceOperations({ contract, schema, mount, el, client, fetchRows, money, withBusy, busy });
+      // Renewal & amendment execution (M16b) is a fourth, independent package,
+      // hanging off the same activated contract in its own section. It renders
+      // only when the server publishes `domains.lifecycle.amendment`.
+      await renderAmendment({ contract, schema, mount, el, client, fetchRows, money, withBusy, busy });
     }
     return;
   }

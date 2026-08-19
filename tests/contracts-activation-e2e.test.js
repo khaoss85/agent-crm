@@ -367,7 +367,11 @@ test('activation is atomic, idempotent under concurrency, and source-validated',
   assert.equal(app.modules.get('commercial-contract').service.list().length, 0, 'no refused source produced a contract');
 
   // ---- fault injection at every significant write ----
-  for (const moduleName of DOMAIN_MODULES) {
+  // `contract-succession` is deliberately excluded: an M12 activation never
+  // writes it. It is M16b's lineage record, written only by a successor
+  // execution, and its own fault-injection loop lives in
+  // tests/lifecycle-amendment-execution-e2e.test.js.
+  for (const moduleName of DOMAIN_MODULES.filter((name) => name !== 'contract-succession')) {
     const { order } = await signedOrder(root, app, { name: `Fault ${moduleName}` });
     const service = app.modules.get(moduleName).service;
     const realCreate = service.createManaged.bind(service);
