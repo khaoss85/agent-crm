@@ -2319,7 +2319,28 @@ The v1 context key set is **closed**: `{config, database, events, modules,
 runExternal}`, frozen, asserted key-exact by
 `tests/package-operations-seam.test.js`. An operation receives only the
 documented capabilities; any additional field is non-contractual, and a
-handler must not probe for undocumented ones. The bounded trace writer remains
+handler must not probe for undocumented ones.
+
+> **Amended by ADR-037 (Customer Data Foundation v1): the set is now six keys.**
+> `core` — the ADR-013 adapters a record action already receives as `ctx.core`
+> — joined the context because a real consumer proved it necessary, which is
+> the only ground this addendum accepts. The measurement, re-run independently
+> at review: the core `contact` module service exposes **no filtered read at
+> all** (`get` and `list` only, no `listWhere`) and `list` hard-caps at **500**
+> rows, so matching an imported row's email through `modules` is not merely
+> expensive — past 500 contacts it cannot find the record, which is a
+> correctness bug; and matching through `database` means a package writing raw
+> SQL against core's tables and re-implementing `normalizeEmail`, a second
+> normalization authority that can drift from the first (the failure mode
+> ADR-036 closed for term fingerprints). "Worse" therefore meant *incorrect*,
+> not *more code*. The addition changes no power: `core` is a frozen,
+> enumerated six-method adapter (`findContactByEmail`,
+> `findCompaniesByNormalizedName`, `createCompany`, `createContact`,
+> `createOpportunity`, `enterOpportunityPipeline`) that reaches no action
+> registry, workflow engine, provider registry, package registry or capability
+> resolver. `trace` remains **not shipped**, for the reason below, and the
+> key-exact test still asserts its absence. The rule stands unchanged: a key
+> is added when a consumer proves it necessary, never in advance. The bounded trace writer remains
 the accepted *direction* — it is added under this ADR, with its bounds as
 specified above, when the first real consumer migrates onto it (the natural
 candidate: `catalog.sync` adopting the bounded writer in place of its raw

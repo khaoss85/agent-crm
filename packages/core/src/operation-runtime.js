@@ -13,9 +13,9 @@ import { runExternalOperation } from './external-operation.js';
  * receives, and composes declared operations into an attachable surface. No
  * domain name appears here; the names live in the package declarations.
  *
- * The bounded context — exactly the keys the two real consumers use, and
- * nothing else (the ADR-032 implementation addendum in DECISIONS.md records
- * the audit):
+ * The bounded context — exactly the keys real consumers have proved they
+ * need, and nothing else (the ADR-032 implementation addendum in DECISIONS.md
+ * records the audit, and its ADR-037 amendment records the sixth key):
  *
  *   database     the application database handle the operation code held
  *                before the seam existed
@@ -38,9 +38,23 @@ import { runExternalOperation } from './external-operation.js';
  * consumers is not shipped — the ADR's bounded trace writer is deferred to
  * the addendum until a first real consumer migrates onto it.
  *
+ *   core         the ADR-013 core adapters — the same frozen, enumerated
+ *                handle a record action receives as `ctx.core`. Added by
+ *                ADR-037 because a real consumer proved it necessary: the
+ *                core contact service exposes no filtered read and caps
+ *                `list` at 500, so matching an imported email through
+ *                `modules` is a correctness bug past that bound, and matching
+ *                through `database` means raw SQL plus a duplicate
+ *                normalization authority. It grants no new power — no action
+ *                registry, workflow engine, provider registry, package
+ *                registry or capability resolver is reachable through it.
+ *
  * The key set is CLOSED: an operation receives exactly the documented
- * capabilities, and any additional field would be non-contractual. A test
- * (`tests/package-operations-seam.test.js`) freezes the exact key list.
+ * capabilities, and any additional field would be non-contractual. A key joins
+ * it only when a consumer proves it necessary, never in advance, and the
+ * joining is recorded in the ADR rather than only in code. A test
+ * (`tests/package-operations-seam.test.js`) freezes the exact key list — and
+ * still asserts that `trace`, removed for having no consumer, stays absent.
  */
 
 /**
