@@ -27,10 +27,14 @@ jobs:
           git fetch origin main
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
 
+      # No registry-url on purpose. setup-node's registry-url writes an .npmrc line
+      # that reads a NODE_AUTH_TOKEN which nothing sets, so npm finds a placeholder
+      # token, prefers it over the OIDC trusted-publisher exchange, and dies E401
+      # at upload — after signing provenance. Trusted publishing wants no token
+      # configured at all; npm defaults to registry.npmjs.org without help.
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
-          registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
       - name: Use an npm CLI that supports trusted staged publishing
