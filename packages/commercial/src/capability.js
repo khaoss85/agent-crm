@@ -1,6 +1,9 @@
 // @ts-check
 
 import { AppError } from '../../core/index.js';
+import {
+  TERMS_SNAPSHOT_AMBIGUOUS, verifyOrderTermRows, verifySelfConsistent,
+} from './verify-terms.js';
 
 /**
  * What Commercial Operations offers to **other packages** — two capabilities,
@@ -157,6 +160,98 @@ export function createCommercialQuotesCapability(registries, config) {
           return registries.metadata().discountPolicies;
         },
       };
+    },
+  };
+}
+
+/**
+ * `commercial-quotes@2` — everything `@1` reads, plus the **authoritative
+ * signed-term verifier** every consumer of signed terms must call before
+ * treating a snapshot as signed evidence (`verify-terms.js`).
+ *
+ * **Why a new version rather than an additive method on `@1`.** The doctrine
+ * this repository now records (ADR-036) bumps a capability when a new method
+ * becomes required for correctness or a stronger semantic guarantee arrives.
+ * Both are true here: `verifySignedTerms` is not an optional convenience —
+ * a consumer that skips it can describe a corrupted row as signed — and `@2`
+ * carries a guarantee `@1` never made. `@1` stays offered, byte-identical, so
+ * a consumer that has not migrated keeps exactly the answers it had; the
+ * registry keys capabilities `name@version`, so both compose side by side.
+ *
+ * @param {any} registries the package's CommercialRegistries instance
+ * @param {Record<string, string>} [config] module renames
+ */
+export function createCommercialQuotesVerifiedCapability(registries, config) {
+  const base = createCommercialQuotesCapability(registries, config);
+  const names = resolvedNames(config);
+  return {
+    name: 'commercial-quotes',
+    version: 2,
+    description:
+      'Everything commercial-quotes@1 reads, plus verifySignedTerms: the authoritative check that a signed-term snapshot still matches '
+      + 'its own canonical fingerprint and the quote version it was copied from. A consumer that describes terms as signed calls it first.',
+    /** @param {{modules?: any, consumer?: string}} context */
+    create(context = {}) {
+      const modules = requireModules(context, 'commercial-quotes@2');
+      const inner = base.create(context);
+      const versionTermRows = (versionId) => {
+        let terms = null;
+        try {
+          terms = modules.get(names.versionTerm)?.service ?? null;
+        } catch {
+          terms = null;
+        }
+        if (!terms || typeof versionId !== 'string' || versionId === '') return [];
+        return terms.listWhere({ versionId });
+      };
+
+      return Object.freeze({
+        ...inner,
+        capabilityContract: 1,
+
+        /**
+         * Verify a signed-term snapshot. Read-only: it loads evidence, checks
+         * it and answers — it never repairs, rewrites or creates a row, and it
+         * hands back no storage handle and no fingerprint function.
+         *
+         * `scope: 'quote-version'` verifies Commercial's own authoritative
+         * snapshot for a version. `scope: 'order'` verifies a copied
+         * `order-term` **row the caller already holds** — Signature owns that
+         * record, so the caller passes the rows and this decides — against its
+         * own fingerprint *and* against the authoritative version snapshot.
+         *
+         * Answers `null` when there is no snapshot at all: absence is the
+         * ordinary historical case (ADR-033 backfills nothing, ever), and a
+         * consumer must present it as unsigned, never as a verified term.
+         *
+         * @param {{scope: 'quote-version'|'order', versionId?: string, orderId?: string, rows?: any[]}} request
+         */
+        verifySignedTerms(request = /** @type {any} */ ({})) {
+          if (request?.scope === 'quote-version') {
+            const rows = versionTermRows(request.versionId ?? '');
+            if (rows.length === 0) return null;
+            if (rows.length > 1) {
+              throw new AppError(
+                'This quote version carries more than one signed-term snapshot, so which term was frozen cannot be decided from the evidence',
+                { code: TERMS_SNAPSHOT_AMBIGUOUS, status: 409, details: Object.freeze({ quoteVersionId: request.versionId ?? null, count: rows.length }) },
+              );
+            }
+            const verified = verifySelfConsistent(rows[0], { kind: 'quoteVersion', id: String(request.versionId ?? '') });
+            return Object.freeze({ verified, row: Object.freeze({ ...rows[0] }) });
+          }
+          if (request?.scope === 'order') {
+            const outcome = verifyOrderTermRows({
+              rows: Array.isArray(request.rows) ? request.rows : [],
+              authoritativeFor: (versionId) => versionTermRows(versionId)[0] ?? null,
+              orderId: String(request.orderId ?? ''),
+            });
+            return outcome ? Object.freeze({ verified: outcome.verified, row: Object.freeze({ ...outcome.row }) }) : null;
+          }
+          throw new AppError('verifySignedTerms needs an explicit scope of "quote-version" or "order"', {
+            code: 'CAPABILITY_REQUEST_INVALID', status: 400,
+          });
+        },
+      });
     },
   };
 }

@@ -87,7 +87,10 @@ export function createContractsDomain(options = {}) {
     // record, every M12 action input and all three previously offered
     // capabilities answer byte-identically, which is why none of THEIR versions
     // moved with it.
-    version: 7,
+    // 8: the composition contract gained a required capability — Contracts now
+    // requires `commercial-quotes@2` for signed-term verification, so a project
+    // composing Contracts without Commercial no longer starts (ADR-036).
+    version: 8,
     label: 'Contracts and subscriptions',
     description: 'Activates a signed immutable Order into a commercial contract, a subscription and pending delivery/service obligations.',
     resources: [...CONTRACTS_RESOURCES],
@@ -97,7 +100,14 @@ export function createContractsDomain(options = {}) {
     // itself through the same trusted managed-module path it always used, and
     // the conformance rail requires the record-level dependency to be declared
     // through a capability of the owning package (DX4).
-    requires: [{ package: 'signature', capability: 'signature-orders', version: 1 }],
+    requires: [
+      { package: 'signature', capability: 'signature-orders', version: 1 },
+      // The signed-term verifier (M-1): before this package describes a term
+      // as signed it asks Commercial — the owner of the fingerprint semantics
+      // — to prove the snapshot still matches itself and the quote version it
+      // was copied from. Contracts recomputes no fingerprint of its own.
+      { package: 'commercial', capability: 'commercial-quotes', version: 2 },
+    ],
     // Additive: `delivery-obligations@1` is untouched, and the package now also
     // offers the service half of the same idea to the optional Service package.
     capabilities: [

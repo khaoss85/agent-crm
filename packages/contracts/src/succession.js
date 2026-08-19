@@ -590,7 +590,9 @@ export function createSuccessorActivationCapability(moduleNames) {
         /** @type {any} */
         let evidence = null;
         try {
-          evidence = loadActivationSource(modules, names, order);
+          // Verified through `commercial-quotes@2` inside this read, so a plan
+          // and an execution both refuse a corrupted snapshot (M-1).
+          evidence = loadActivationSource(modules, names, order, domains);
         } catch (error) {
           if (!(error instanceof AppError)) throw error;
           refusals.push(refusal(error.code ?? 'SOURCE_INCOHERENT', error.message, error.status ?? 409,

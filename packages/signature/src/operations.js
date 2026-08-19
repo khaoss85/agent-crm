@@ -187,12 +187,12 @@ function openCommercialQuotes(domains, modules, names) {
   let iface;
   try {
     iface = domains.capability({
-      consumer: 'signature', capability: 'commercial-quotes', version: 1, context: { modules },
+      consumer: 'signature', capability: 'commercial-quotes', version: 2, context: { modules },
     });
   } catch (error) {
     if (error instanceof AppError && error.status !== 404) throw error;
     throw new AppError(
-      'The signature package requires the commercial package capability commercial-quotes@1, which is not available',
+      'The signature package requires the commercial package capability commercial-quotes@2, which is not available',
       { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
     );
   }
@@ -206,10 +206,14 @@ function openCommercialQuotes(domains, modules, names) {
     versionLines: (id) => iface.versionLines(id),
     versionComponents: (id) => iface.versionComponents(id),
     versionTotals: (id) => iface.versionTotals(id),
-    // Additive on commercial-quotes@1: a composition carrying an older
-    // commercial package satisfies the same requirement without the method,
-    // and a version without a snapshot answers null either way.
-    versionTerm: (id) => (typeof iface.versionTerm === 'function' ? iface.versionTerm(id) : null),
+    // `commercial-quotes@2`: Commercial verifies its own snapshot against the
+    // canonical fingerprint before answering, so a corrupted version term
+    // refuses HERE — before the document is canonicalized, before its hash is
+    // taken and before any provider is called (M-1).
+    versionTerm: (id) => {
+      const outcome = iface.verifySignedTerms({ scope: 'quote-version', versionId: id });
+      return outcome ? outcome.row : null;
+    },
   };
 }
 
