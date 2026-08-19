@@ -35,7 +35,7 @@ const CANDIDATE = {
 const ISSUE = { id: 'iss1', status: 'open', kind: 'invalid_email', evidence: 'import row 3 carried an email that is not a valid address shape' };
 const RUN = { id: 'run1', system: 'crm-export', rowCount: 5, acceptedCount: 3, rejectedCount: 1, skippedCount: 1, acceptance: 'partial' };
 
-function stubClient({ withPackage = true, rows = {}, profile = null, onPost = () => {} } = {}) {
+function stubClient({ withPackage = true, rows = {}, profile = null, onPost = () => {}, unreadableModules = false } = {}) {
   const calls = [];
   return {
     calls,
@@ -62,6 +62,7 @@ function stubClient({ withPackage = true, rows = {}, profile = null, onPost = ()
       }
       if (options.method === 'POST') { onPost(path, options); return { ok: true, result: {} }; }
       const module = /\/api\/modules\/([^/]+)\/records/.exec(path)?.[1];
+      if (unreadableModules) throw new Error('the server is unreachable');
       const table = { 'customer-import-run': [RUN], 'duplicate-candidate': [CANDIDATE], 'data-quality-issue': [ISSUE], ...rows };
       return { items: table[module] ?? [] };
     },
@@ -126,6 +127,59 @@ test('a preview states plainly that it wrote nothing, and shows every receipt', 
   assert.equal(posted.length, 1);
   assert.equal(posted[0].path, '/api/customer-data/import/preview');
   assert.deepEqual(JSON.parse(posted[0].body).rows.length, 2);
+});
+
+test('applying after a preview reuses the rows the operator typed once', async () => {
+  // The primary flow is *preview, read the receipts, then apply the same rows*.
+  // A preview re-renders the panel; if the draft did not survive that render the
+  // operator's own import would come back as "paste the rows to import".
+  const client = stubClient();
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerDataView({ doc, mount, client }).render();
+
+  const control = (tag, name) => mount.findAll(tag).find((node) => node.getAttribute('name') === name);
+  const button = (action) => mount.findAll('button').find((node) => node.getAttribute('data-action') === action);
+  const ROWS_JSON = JSON.stringify([{ email: 'a@b.example' }, { email: 'bad' }]);
+
+  control('input', 'system').value = 'crm-export';
+  control('textarea', 'rows').value = ROWS_JSON;
+  control('select', 'acceptance').value = 'all_or_nothing';
+
+  button('preview-customer-import').dispatch('click');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  // The re-rendered form still carries the draft, visibly.
+  assert.equal(control('input', 'system').value, 'crm-export');
+  assert.equal(control('textarea', 'rows').value, ROWS_JSON);
+  assert.equal(control('select', 'acceptance').value, 'all_or_nothing');
+
+  // And Apply — on the freshly rendered button — sends exactly those rows.
+  button('apply-customer-import').dispatch('click');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const applied = client.calls.filter((call) => call.path === '/api/customer-data/import/apply').at(-1);
+  assert.ok(applied, 'the apply was actually sent');
+  const body = JSON.parse(applied.body);
+  assert.equal(body.system, 'crm-export');
+  assert.equal(body.acceptance, 'all_or_nothing');
+  assert.deepEqual(body.rows, JSON.parse(ROWS_JSON), 'apply carries the same rows the preview did');
+});
+
+test('a list that could not be read says so, and never renders as zero', async () => {
+  const mount = await render(stubClient({ unreadableModules: true }));
+  const text = mount.textContent;
+
+  for (const label of ['Import runs', 'Duplicate candidates', 'Data quality']) {
+    assert.ok(text.includes(`${label} (could not be read)`), `${label} must not claim a count it does not have`);
+  }
+  assert.ok(text.includes('That is not a claim that there are none.'));
+  assert.doesNotMatch(text, /Import runs \(0\)/);
+  assert.doesNotMatch(text, /\(0 unresolved\)/);
+  assert.doesNotMatch(text, /\(0 open\)/);
+
+  // The limits still render: the surface stays honest in its failure state too.
+  for (const sentence of CUSTOMER_DATA_DISCLAIMERS) assert.ok(text.includes(sentence));
 });
 
 test('a duplicate candidate offers a human decision, never an automatic one', async () => {

@@ -61,6 +61,15 @@ export function createCustomerDataView({ doc, mount, client, navigate = () => {}
   };
 
   let busy = [];
+  /**
+   * What the operator typed, kept across re-renders.
+   *
+   * The whole point of this surface is *preview, read the receipts, then
+   * apply the same rows*. A preview re-renders the panel, so without this the
+   * form would come back empty and Apply would refuse the operator's own
+   * import as "paste the rows" — the primary flow would be unusable.
+   */
+  const draft = { system: '', rows: '', acceptance: '' };
   const withBusy = async (work) => {
     for (const control of busy) control.disabled = true;
     try {
@@ -121,7 +130,13 @@ export function createCustomerDataView({ doc, mount, client, navigate = () => {}
     }
     // Set explicitly: a control whose value depends on the browser's implicit
     // first-option selection is a control that sends '' somewhere else.
-    acceptance.value = (meta.import?.acceptance ?? ['partial'])[0];
+    acceptance.value = draft.acceptance || (meta.import?.acceptance ?? ['partial'])[0];
+    systemInput.value = draft.system;
+    rowsInput.value = draft.rows;
+    for (const [key, control] of [['system', systemInput], ['rows', rowsInput], ['acceptance', acceptance]]) {
+      control.addEventListener('input', () => { draft[key] = String(control.value ?? ''); });
+      control.addEventListener('change', () => { draft[key] = String(control.value ?? ''); });
+    }
     for (const [label, control] of [['Source system', systemInput], ['Rows (JSON)', rowsInput], ['Acceptance', acceptance]]) {
       const row = el('p', 'customer-data-field');
       row.appendChild(el('strong', undefined, `${label}: `));
@@ -129,7 +144,15 @@ export function createCustomerDataView({ doc, mount, client, navigate = () => {}
       importBox.appendChild(row);
     }
 
+    /** Snapshot the live controls, so the draft survives the re-render that follows. */
+    const capture = () => {
+      draft.system = String(systemInput.value ?? '');
+      draft.rows = String(rowsInput.value ?? '');
+      draft.acceptance = String(acceptance.value ?? '');
+    };
+
     const parseRows = () => {
+      capture();
       const raw = String(rowsInput.value ?? '').trim();
       if (raw === '') throw new Error('Paste the rows to import as a JSON array.');
       let parsed;
@@ -187,12 +210,15 @@ export function createCustomerDataView({ doc, mount, client, navigate = () => {}
     }
 
     // ── runs, candidates, issues ──────────────────────────────────────────
-    const [runs, candidates, issues] = await Promise.all([
+    const [runsRead, candidatesRead, issuesRead] = await Promise.all([
       rowsOf('customer-import-run'), rowsOf('duplicate-candidate'), rowsOf('data-quality-issue'),
     ]);
+    const runs = runsRead.items;
+    const candidates = candidatesRead.items;
+    const issues = issuesRead.items;
 
     const runBox = el('div', 'customer-data-runs');
-    runBox.appendChild(el('h4', undefined, `Import runs (${runs.length})`));
+    listHeading(runBox, runsRead, 'Import runs', String(runs.length));
     for (const run of runs.slice(0, 20)) {
       const row = el('p', 'customer-data-run');
       row.setAttribute('data-run', String(run.id));
@@ -204,7 +230,7 @@ export function createCustomerDataView({ doc, mount, client, navigate = () => {}
 
     const candidateBox = el('div', 'customer-data-candidates');
     const open = candidates.filter((row) => row.status === 'unresolved');
-    candidateBox.appendChild(el('h4', undefined, `Duplicate candidates (${open.length} unresolved)`));
+    listHeading(candidateBox, candidatesRead, 'Duplicate candidates', `${open.length} unresolved`);
     candidateBox.appendChild(el('p', 'muted', 'Deciding these is a human judgement. Linking is a logical canonical merge: nothing is deleted.'));
     for (const candidate of open.slice(0, 20)) {
       const row = el('div', 'customer-data-candidate');
@@ -254,7 +280,7 @@ export function createCustomerDataView({ doc, mount, client, navigate = () => {}
 
     const issueBox = el('div', 'customer-data-issues');
     const openIssues = issues.filter((row) => row.status === 'open');
-    issueBox.appendChild(el('h4', undefined, `Data quality (${openIssues.length} open)`));
+    listHeading(issueBox, issuesRead, 'Data quality', `${openIssues.length} open`);
     issueBox.appendChild(el('p', 'muted', 'Resolving a finding records who decided and why. The finding and its evidence are kept.'));
     for (const issue of openIssues.slice(0, 20)) {
       const row = el('div', 'customer-data-issue');
@@ -294,13 +320,37 @@ export function createCustomerDataView({ doc, mount, client, navigate = () => {}
 
   let lastPreview = null;
 
+  /**
+   * Read one owned record list.
+   *
+   * A list that could not be read is **not** an empty list. Returning `[]` on
+   * failure would render "Import runs (0)" over a queue that may be full —
+   * exactly the empty-truth this foundation refuses everywhere else — so the
+   * failure is carried out and rendered as *could not be read*.
+   *
+   * @param {string} module
+   * @returns {Promise<{items: any[], unreadable: string | null}>}
+   */
   async function rowsOf(module) {
     try {
       const response = await client.request(`/api/modules/${module}/records?limit=100`);
-      return response.items ?? [];
-    } catch {
-      return [];
+      return { items: response.items ?? [], unreadable: null };
+    } catch (error) {
+      return { items: [], unreadable: error?.message ?? 'the request failed' };
     }
+  }
+
+  /** Heading + an honest line when the list could not be read at all. */
+  function listHeading(box, read, label, countText) {
+    if (read.unreadable) {
+      box.appendChild(el('h4', undefined, `${label} (could not be read)`));
+      const line = el('p', 'field-error customer-data-unreadable',
+        `This list could not be read, so it is not shown. That is not a claim that there are none. (${read.unreadable})`);
+      line.setAttribute('data-unreadable', label);
+      box.appendChild(line);
+      return;
+    }
+    box.appendChild(el('h4', undefined, `${label} (${countText})`));
   }
 
   /**

@@ -391,3 +391,69 @@ signed document carried **no** term, and one for a different customer — and op
 
 Report any step that fails; do not mark the renewal & amendment section
 browser-validated unless all 41 pass.
+
+## Customer data foundation (Customer Data Foundation v1, ADR-037)
+
+**Foundation-specific, scripted, and outside CI. 32 checks, all passing** —
+driven in real Chromium (**Chromium/141.0.7390.37**) on Node **22.16.0**,
+against a freshly seeded project, twice from a clean database and a clean
+browser profile, with identical results both runs.
+
+**Browser automation is still manual**, exactly as the M16b section above says:
+the run was scripted with the same zero-dependency Chrome DevTools Protocol
+driver, that script is not checked in, and no CI job launches a browser. Nothing
+here re-runs or replaces the checks above.
+
+The section is **package-scoped, not package-owned** — the framework has no seam
+for a package to contribute an Admin extension (AX1 publishes that as
+`ADMIN_EXTENSIONS_UNSUPPORTED`), so `apps/admin/public/admin-customer-data.js`
+lives in the Admin app and renders only while `/api/schema` publishes
+`domains['customer-data']`.
+
+Setup: compose a project with the customer-data package alone — **deliberately
+without commercial**, so the profile has a genuinely absent package to report —
+apply its six manifests, create two companies named `Globex Srl` on domain
+`globex.example`, and open `#/customer-data`. Import these three rows, which
+produce one of every outcome:
+
+```json
+[{"externalId":"CRM-1","email":"ada@northwind.example","firstName":"Ada","lastName":"Byron","companyName":"Northwind Ltd","domain":"northwind.example"},
+ {"email":"not..valid@x.example"},
+ {"companyName":"Globex Srl","domain":"globex.example"}]
+```
+
+1. The section renders with `data-contract="1"`.
+2. *"Matching is exact only. Nothing here scores, guesses or learns: when the evidence is ambiguous the row is left unresolved for a person."* renders verbatim.
+3. *"Linking two records is a logical canonical merge. Both records still exist, both still resolve, and nothing is deleted, rewritten or merged away."* renders verbatim.
+4. *"No warehouse, no activation and no external system is written. An import reads rows you hand it and nothing else."* renders verbatim.
+5. *"Deciding here requires a signed-in user actor. That is a human-actor boundary for audit — not Sales, Legal or Finance role enforcement."* renders verbatim.
+6. *"None of this is a GDPR, consent, retention or erasure claim. Erasure against immutable signed evidence is deliberately unresolved."* renders verbatim.
+7. **The word CDP appears nowhere on the page**, and neither does "customer data platform".
+8. The deferred work has one named home on screen: `Customer Data Operations v2`.
+9. A preview states plainly that it wrote nothing.
+10. And it **really** wrote nothing: the import-run count is unchanged after it.
+11. Every row has a receipt on screen — row 0, row 1 and row 2.
+12. The rejected row names its reason code (`INVALID_EMAIL`).
+13. The preview **keeps the rows the operator typed**, so applying the previewed import is one click and not a retype.
+14. Applying renders the run with its counts (`crm-export · 3 rows · …`).
+15. The accepted row created a real business record — one contact `ada@northwind.example`.
+16. The ambiguous row became a duplicate candidate, naming the rule `company-name-domain`.
+17. The candidate offers **both** human decisions: link, and not-the-same-customer.
+18. **No control anywhere** resolves candidates automatically.
+19. Linking with a reason clears the candidate from the unresolved queue.
+20. **Both linked companies still exist afterwards** — the link is logical, and it deleted nothing.
+21. The cluster records exactly one `canonical` and one `alias`.
+22. The canonical record's profile renders.
+23. It reports the cluster and states that nothing was deleted.
+24. An **absent** package reads *not available* with the reason that it is not composed.
+25. And **no** absent section renders as a zero count.
+26. The profile refuses to call itself a cross-channel customer timeline.
+27. The **alias** side still resolves to a profile of its own — a logical merge does not swallow the other record.
+28. And that profile names the same canonical cluster.
+29. No JavaScript dialog opened during the run.
+30. No uncaught JavaScript error and no console error during the run.
+31. No failed resource during the run.
+32. No 5xx response during the run.
+
+Report any step that fails; do not mark the customer data section
+browser-validated unless all 32 pass.
