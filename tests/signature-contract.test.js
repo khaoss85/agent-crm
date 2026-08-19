@@ -17,7 +17,7 @@ import {
   validateSignatureProvider,
   verifyHmacSignature,
 } from '../packages/signature/src/registry.js';
-import { byteOrder, canonicalDocument, canonicalJson, normalizeSigners } from '../packages/signature/src/operations.js';
+import { buildDocumentPackage, byteOrder, canonicalDocument, canonicalJson, normalizeSigners } from '../packages/signature/src/operations.js';
 import { validateActionInput } from '../packages/core/src/action-runtime.js';
 import { validateActionDefinition } from '../packages/core/src/action-registry.js';
 import { freezePhaseValue, withExternalTimeout } from '../packages/core/src/external-operation.js';
@@ -162,6 +162,41 @@ test('the document package canonicalizes to stable bytes, locale-independently',
   refuses(() => canonicalJson({ when: new Date() }), /non-plain object/);
   refuses(() => canonicalJson({ n: Number.NaN }), /non-finite/);
   refuses(() => canonicalDocument({ big: 'x'.repeat(250_000) }), /exceeds the storable bound/);
+});
+
+test('a document builds with an older commercial reader that has no versionTerm, and it is byte-identical to a termless one', () => {
+  // The signed-terms no-bump rests on ONE load-bearing guard: signature reads
+  // `versionTerm` off `commercial-quotes@1` behind `typeof … === 'function'`,
+  // so a composition carrying an OLDER commercial package — one that offers
+  // the capability without the new method — degrades to "no signed term"
+  // rather than throwing. This test locks that guard: remove it (call
+  // `reader.versionTerm` unconditionally) and the older-reader build throws.
+  const base = {
+    versionLines: () => [{ id: 'l1', position: 0, offerLogicalKey: 'k', offerRevision: 1, offerName: 'n', productVersionId: 'pv', sku: 's', quantity: 1, discountBps: 0, listAmountCents: 100, discountAmountCents: 0, netAmountCents: 100 }],
+    versionComponents: () => [{ id: 'c1', versionLineId: 'l1', componentKey: 'base', label: 'Base', chargeType: 'one_time', pricingModel: 'flat', interval: null, intervalCount: null, quantity: 1, unitAmountCents: 100, listAmountCents: 100, discountAmountCents: 0, netAmountCents: 100 }],
+    versionTotals: () => [{ kind: 'one_time', interval: null, intervalCount: null, netAmountCents: 100 }],
+  };
+  const quote = { id: 'q1', priceBookId: 'pb', currency: 'EUR' };
+  const version = { id: 'v1', versionNumber: 1, submittedAt: '2026-09-01T00:00:00.000Z', policy: 'p', policyVersion: 1, policyFingerprint: 'f'.repeat(64), policyDecision: 'approved', maxLineDiscountBps: 0, effectiveDiscountBps: 0 };
+  const signers = [{ signerKey: 'sk', name: 'A', email: 'a@e.example', role: 'customer', order: 0 }];
+  const parties = [];
+
+  // Older provider: the reader object simply has no `versionTerm` property.
+  const older = buildDocumentPackage({ reader: base, quote, version, signers, parties });
+  // Newer provider on a termless version: the method exists and answers null.
+  const newerTermless = buildDocumentPackage({ reader: { ...base, versionTerm: () => null }, quote, version, signers, parties });
+
+  assert.equal('terms' in JSON.parse(older.documentBytes), false, 'an older reader yields a document with no terms key at all');
+  assert.equal(older.documentHash, newerTermless.documentHash, 'older-provider and termless-newer bytes are identical — the guard degrades, never diverges');
+
+  // And a version that DID freeze a term still embeds it and moves the hash,
+  // so the guard is not merely swallowing everything.
+  const termed = buildDocumentPackage({
+    reader: { ...base, versionTerm: () => ({ termsContract: 1, effectiveDate: '2026-09-01', termStartDate: '2026-09-01', termEndDate: '2027-08-31', termDays: 365, autoRenew: true, renewalNoticeDays: 60 }) },
+    quote, version, signers, parties,
+  });
+  assert.equal('terms' in JSON.parse(termed.documentBytes), true);
+  assert.notEqual(termed.documentHash, older.documentHash);
 });
 
 test('webhook verification is constant-time, replay-bounded and fail-closed', () => {
