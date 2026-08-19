@@ -2562,3 +2562,95 @@ it, and the vocabulary reflects that — this milestone records "successor
 agreement executed", never "renewed", "amended", "cancelled" or "churned".
 ADR-017's signature-provider limitation is unchanged, and nothing here is a
 legal-assurance claim about the instrument that was signed.
+
+## ADR-036 — A stored fingerprint nobody recomputes is a decoration; and when a package version moves versus a capability version
+
+**Status:** accepted. **Plan:** `docs/plans/signed-term-integrity-verifier.md`.
+Closes the Medium finding (M-1) of the M16b independent review.
+
+### Context
+
+ADR-033 made a commercial term signed evidence: the quote version freezes a
+snapshot, the canonical document embeds it, the `documentHash` covers it, and
+verified completion copies it onto the Order. Every snapshot carries a canonical
+`termsFingerprint`. **Nothing ever recomputed it.**
+
+The M16b review proved the consequence: a direct-SQL mutation of `order_terms`
+that leaves `document_hash` intact propagates through activation,
+`contract-lifecycle-source`, M16b succession and Admin as a *signed* term. The
+public surface was never the hole — every write path to these managed records is
+closed, and both records are HTTP-404 for POST/PATCH/DELETE. The hole was
+**evidence integrity**: a fingerprint that is stored and never checked proves
+nothing, and the honest name for it is a decoration.
+
+### Decision — the verifier, and where the authority lives
+
+Term-fingerprint semantics belong to **Commercial**, which owns
+`quote-version-term` and the canonical tuple. The verifier lives there
+(`packages/commercial/src/verify-terms.js`) and is reached only through a
+declared capability. **No other package recomputes a fingerprint**, and nothing
+moved into `packages/core`: this is domain semantics, not runtime mechanics.
+
+An `order-term` is a *copy*, so verification is two questions, both Commercial's:
+
+1. **self-consistency** — do the row's own values still hash to the fingerprint
+   it carries?
+2. **linkage** — are those values the ones the authoritative `quote-version-term`
+   froze for the version the row names?
+
+A forgery satisfies (1) by recomputing over its own lie; only (2) catches it.
+Both are required. Refusals are `TERMS_FINGERPRINT_MISMATCH`,
+`TERMS_SNAPSHOT_DIVERGED` and `TERMS_SNAPSHOT_AMBIGUOUS`, and they name **ids and
+field names only** — echoing the planted value would put attacker-controlled text
+into an operator's console.
+
+Verification happens before a consumer may describe terms as signed: Signature
+verifies the version snapshot **before the document is canonicalized and
+hashed**, so a corrupt term never reaches a provider call; Contracts verifies the
+order snapshot inside `loadActivationSource`, the single read that activation,
+`contract-lifecycle-source` and both M16b succession paths already share.
+`tests/signed-terms-consumption-guard.test.js` fails when a new file consumes
+signed-term evidence without either verifying or being listed with its reason —
+the omission was a class, so the guard is structural rather than remembered.
+
+### Decision — package version versus capability version
+
+The blanket "additive reads never need a bump" is **not** doctrine, and is
+retired here.
+
+A **package version** moves when its *composition contract* moves: the
+requires/provides graph, the resource/action/operation surface composition
+relies on, or startup/absence behaviour. A **capability version** moves when its
+shape changes and a consumer relies on it, **a new method becomes required for
+correctness**, or a **stronger semantic guarantee** is introduced. No bump is
+acceptable only for optional metadata, or a field declared additive and ignored
+by existing consumers, with no new consumer requirement and no stronger
+guarantee. *A test file changing is never a reason to bump anything.*
+
+Applied here: the verifier is required for correctness and carries a stronger
+guarantee, so it ships as **`commercial-quotes@2`**. `@1` remains offered,
+byte-identical, for any consumer that has not migrated — the registry keys
+offered capabilities `name@version` (`package-composition.js`), so both compose
+side by side, verified by reading the registry rather than assumed. Commercial,
+Signature and Contracts move a package version because each one's composition
+contract genuinely moved (a new offered capability; a new required capability).
+Lifecycle does not: it consumes succession, and nothing in its own composition
+contract changed.
+
+### Recorded invariants (M16b, restated so they are citable)
+
+- **Linear successor, v1.** One executed successor per source cycle; no
+  branching successor graph; an abandoned round may be replaced; an executed
+  successor may itself become the source of a later cycle; historical source
+  records are never rewritten. This is a **v1 business invariant**, not a
+  universal law — a future milestone may model branching, and would say so.
+- **No signed-term backfill, ever.** A record without a snapshot stays unsigned,
+  operational, or absent-unknown. Signed provenance is never inferred from
+  later operational dates, and no migration invents one.
+
+### Compatibility — an intentional tightening
+
+No snapshot → unchanged historical behaviour. Valid snapshot → **byte-identical**
+outcome (all three LA0 baselines replay unmoved). Invalid snapshot → **fails
+closed**, where it previously passed silently. That last line is a deliberate
+behaviour change and the whole point of the ADR.
