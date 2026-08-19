@@ -627,11 +627,16 @@ test('the evidence is read-only through every generic surface, and writing needs
       { package: 'contracts', capability: 'contract-lifecycle-source', version: 2 },
       { package: 'contracts', capability: 'contracts-successor-activation', version: 1 },
     ]);
-  assert.deepEqual(schema.domains.lifecycle.provides, [], 'M16a consumes; it offers nothing yet');
-  assert.deepEqual(schema.domains.lifecycle.actions, [
+  assert.deepEqual(schema.domains.lifecycle.provides, [], 'this package consumes; it offers nothing');
+  assert.deepEqual([...schema.domains.lifecycle.actions].sort(), [
+    // M16b (ADR-034): the governed round and its execution.
+    'amendment-run.abandon-amendment-run', 'amendment-run.attach-successor-order',
+    'amendment-run.execute-amendment',
+    'commercial-contract.open-amendment-run', 'commercial-contract.plan-amendment',
+    // M16a: planning and intent evidence, unchanged.
     'commercial-contract.plan-renewal', 'commercial-contract.record-renewal-decision',
     'commercial-contract.request-commercial-followup', 'commercial-followup.resolve-commercial-followup',
-  ], 'exactly the four actions that exist — no expansion-intent action and no successor action');
+  ], 'exactly the actions that exist — still no expansion-intent action, and the successor arrives as an executed agreement rather than a recorded link');
 });
 
 test('a retry after a restart still replays, over rows a previous process wrote', async (t) => {

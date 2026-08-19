@@ -150,19 +150,20 @@ test('the first-party contracts package conforms', () => {
     definition: createContractsDomain({ policies: [b2bSaasOrderActivationV1] }),
     dir: join(repoRoot, 'packages/contracts'),
     expected: {
-      // Version 6: signed commercial terms — `termsSource` widened with
-      // `signed-order-terms` (manifest revision 2 on three records),
-      // `activate-contract`'s term inputs conditionally required and refused
-      // outright on an order carrying a signed term snapshot
-      // (`SIGNED_TERMS_AUTHORITATIVE`). (Version 5 was the declared
-      // `signature/signature-orders@1` requirement; version 4 the
-      // `contract-lifecycle-source@2` move.) Resources, offered capabilities
-      // and `packageContract: 1` are untouched by 6.
+      // Version 7: M16b successor activation — one new record
+      // (`contract-succession`) and one new offered capability
+      // (`contracts-successor-activation@1`), behind the same activation
+      // writer `order.activate-contract` already used. (Version 6 was signed
+      // commercial terms; 5 the declared `signature/signature-orders@1`
+      // requirement; 4 the `contract-lifecycle-source@2` move.) The two M12
+      // actions and all three earlier capabilities are untouched by 7, and
+      // `packageContract: 1` has never moved.
       name: 'contracts',
-      version: 6,
+      version: 7,
       resources: [
         'commercial-contract', 'contract-version', 'contract-line', 'contract-activation',
         'subscription', 'subscription-line', 'delivery-obligation', 'service-obligation',
+        'contract-succession',
       ],
       actions: ['order.activate-contract', 'order.plan-activation'],
       // The Signature & Order extraction moved ownership of `order` — the
@@ -170,7 +171,10 @@ test('the first-party contracts package conforms', () => {
       // record-level dependency that always existed is now declarable, and
       // declared. The reads themselves did not move.
       requires: ['signature/signature-orders@1'],
-      provides: ['contract-lifecycle-source@2', 'delivery-obligations@1', 'service-obligations@1'],
+      provides: [
+        'contract-lifecycle-source@2', 'contracts-successor-activation@1',
+        'delivery-obligations@1', 'service-obligations@1',
+      ],
     },
     // Contracts must reach none of the packages that consume it.
     forbiddenImports: [/from '[^']*delivery\//, /from '[^']*\/service\//, /from '[^']*\/lifecycle\//],
@@ -238,19 +242,31 @@ test('the first-party lifecycle package conforms and consumes without offering',
     definition: createLifecyclePackage(),
     dir: join(repoRoot, 'packages/lifecycle'),
     expected: {
+      // Version 2: M16b amendment execution — one new record, five new actions
+      // and a second declared edge into Contracts. It offers nothing still: the
+      // successor agreement is written by the package that owns it.
       name: 'lifecycle',
-      version: 1,
-      resources: ['renewal-decision', 'commercial-followup'],
+      version: 2,
+      resources: ['renewal-decision', 'commercial-followup', 'amendment-run'],
       // Exactly what ships. `record-expansion-intent` and `record-successor`
-      // were described in the plan and never built; expansion and contraction
-      // are intents on the follow-up, and no successor is modelled at all.
+      // were described in the M16a plan and never built; expansion and
+      // contraction are intents on the follow-up, and the successor arrived at
+      // M16b as an executed agreement rather than as a recorded link.
       actions: [
+        'amendment-run.abandon-amendment-run',
+        'amendment-run.attach-successor-order',
+        'amendment-run.execute-amendment',
+        'commercial-contract.open-amendment-run',
+        'commercial-contract.plan-amendment',
         'commercial-contract.plan-renewal',
         'commercial-contract.record-renewal-decision',
         'commercial-contract.request-commercial-followup',
         'commercial-followup.resolve-commercial-followup',
       ],
-      requires: ['contracts/contract-lifecycle-source@2'],
+      requires: [
+        'contracts/contract-lifecycle-source@2',
+        'contracts/contracts-successor-activation@1',
+      ],
       provides: [],
     },
     // It reaches Contracts only through the declared capability, and never
@@ -298,7 +314,7 @@ test('a customer-authored package conforms through the identical contract', () =
   assert.deepEqual(Object.keys(registry.metadata()), ['commercial', 'contracts', 'delivery', 'partner-scorecard', 'signature'],
     'metadata is published in name order, whatever the registration order was');
   assert.equal(registry.actions().length, 34, 'M14b2 added seven change and acceptance actions on top of M14b1\'s five; the extracted commercial (8) and signature (1) actions now arrive by composition');
-  assert.equal(registry.resources().length, 51, 'signed commercial terms added quote-term, quote-version-term and order-term');
+  assert.equal(registry.resources().length, 52, 'M16b added contract-succession to the contracts package; signed commercial terms added quote-term, quote-version-term and order-term before it');
 });
 
 test('the kernel never depends on a package, in either direction', () => {

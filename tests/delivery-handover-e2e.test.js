@@ -45,10 +45,10 @@ test('an activated contract is planned and handed over to delivery', async (t) =
   assert.deepEqual(schema.domains.delivery.requires, [
     { package: 'contracts', capability: 'delivery-obligations', version: 1 },
   ]);
-  // Contracts provides two capabilities since M15; delivery declares and uses
+  // Contracts provides four capabilities since M16b; delivery declares and uses
   // exactly one of them, which is the boundary this asserts.
   assert.deepEqual(schema.domains.contracts.provides.map((entry) => `${entry.name}@${entry.version}`).sort(),
-    ['contract-lifecycle-source@2', 'delivery-obligations@1', 'service-obligations@1']);
+    ['contract-lifecycle-source@2', 'contracts-successor-activation@1', 'delivery-obligations@1', 'service-obligations@1']);
   assert.deepEqual(schema.domains.delivery.actions, [
     'commercial-contract.create-delivery-handover', 'commercial-contract.plan-delivery-handover',
     // M14a: the execution transitions live in the same package.

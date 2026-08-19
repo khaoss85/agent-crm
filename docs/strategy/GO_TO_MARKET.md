@@ -196,7 +196,7 @@ Sourcing, caveats and the places the alternative genuinely wins are maintained i
 | Content pillars and editorial calendar | `docs/marketing/CONTENT_PILLARS.md` | ✅ |
 | Per-channel production plan — unit of work, cadence, effort, who, and the blocker where there is one | `docs/marketing/CONTENT_PRODUCTION.md` | ✅ |
 | CI job holding public claims to the same standard as the code | `.github/workflows/ci.yml` → `public-claims` | ✅ |
-| The tour — one command composing 74 modules, 9 packages, 69 resources, 59 actions, 7 policies and 1 providers, then printing every limitation code | `scripts/tour.js`, `npm run tour` | ✅ (0.1) |
+| The tour — one command composing 76 modules, 9 packages, 71 resources, 64 actions, 7 policies and 1 providers, then printing every limitation code | `scripts/tour.js`, `npm run tour` | ✅ (0.1) |
 | Skill portability contract — a `requires` block per skill (`tier`, surfaces, `degradesTo`) and a published subset that holds no repository-only skill, both gated | `docs/SKILL_PACKAGING.md`, `skills/`, `scripts/distribution-check.js` | ✅ (1.3) |
 | `llms.txt` and `llms-full.txt` generated from the ledger, the docs and the job index, with a drift check | `scripts/generate-llms.js` | ✅ (1.10) |
 | Rename inventory and executor — five casings, four blast-radius groups, held-back set, dry-run by default | `scripts/brand-set.js`, `docs/RENAME_SURFACE.md` | ✅ |
