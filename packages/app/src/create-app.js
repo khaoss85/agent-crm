@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createDatabase } from '../../core/src/database.js';
+import { createSpine } from './spine.js';
 import { AuditLog } from '../../core/src/audit.js';
 import { EventBus } from '../../core/src/event-bus.js';
 import { ModuleRegistry } from '../../core/src/module-registry.js';
@@ -55,6 +56,15 @@ export function createAccordoApp(options = {}) {
   });
   const events = new EventBus();
   const audit = new AuditLog(database);
+
+  // Production Spine v1 (ADR-038), opt-in and LOUD about being off.
+  //
+  // When `options.spine` is absent the application behaves exactly as it did
+  // before this milestone — no identity verification, no tenancy, no
+  // authorization — and `app inspect` publishes that in as many words. A
+  // security boundary that is disabled quietly is worse than one that does not
+  // exist, so the absence is reported rather than assumed.
+  const spine = options.spine ? createSpine({ database, audit, now, config: options.spine }) : null;
   const modules = new ModuleRegistry();
   const providers = new ProviderRegistry();
 
@@ -201,6 +211,7 @@ export function createAccordoApp(options = {}) {
     database,
     events,
     audit,
+    spine,
     modules,
     providers,
     workflows,
@@ -217,7 +228,8 @@ export function createAccordoApp(options = {}) {
      *
      * @param {{module: string, action: string, recordId: string, input?: unknown, actor?: unknown}} params
      */
-    runAction({ module, action, recordId, input, actor }) {
+    runAction(params) {
+      const { module, action, recordId, input, actor } = params;
       return runRecordAction({
         database,
         events,
@@ -234,6 +246,12 @@ export function createAccordoApp(options = {}) {
         recordId,
         input,
         actor,
+        // When the spine is composed every action is authorized before it runs.
+        // Passing the whole spine rather than a boolean keeps the decision in
+        // one place: the runtime asks, it never decides.
+        spine,
+        identity: params.identity,
+        organizationId: params.organizationId,
       });
     },
     now,
