@@ -102,27 +102,30 @@ try {
   compose(root);
   const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
 
-  // ---- two tenants, two databases -------------------------------------
-  // **This journey builds the two databases itself**, and that is the honest
-  // description of v1: `database-per-tenant` is a strategy an operator DECLARES
-  // and must then implement by pointing each application at its own file. The
-  // framework does not do it for you — `createTenantStorage` is defined and
-  // nothing calls it — so two organizations inside ONE application share one
-  // database and can read and write each other's records and audit rows. The
-  // published schema says exactly that (`TENANT_ISOLATION_NOT_ENFORCED`), and
-  // everything below proves isolation for the one-application-per-tenant
-  // deployment only.
-  const spineConfig = {
+  // ---- two tenants, two instances, two data planes ---------------------
+  // **The framework does the binding, not this journey.** Each application is
+  // configured with the one tenant it serves, and takes its CRM database from
+  // that binding — there is no database path to pass, because passing one is
+  // refused. Two organizations inside ONE application is not a configuration
+  // this milestone accepts, which is why there are two `createAccordoApp`
+  // calls below and not one.
+  //
+  // The control plane — Organizations and Memberships — is deliberately SHARED
+  // between them, exactly as a deployment provisioning many tenants has it. So
+  // the isolation proven below is isolation of the data plane, with both
+  // instances able to see that the other tenant exists and neither able to act
+  // for it.
+  const spineFor = (tenantId, name) => ({
     mode: 'production',
-    tenantStrategy: { strategy: 'database-per-tenant' },
+    tenant: { id: tenantId, storageRoot: join(root, 'tenants'), provision: { name } },
     identityVerifier: () => { throw new Error('not used in-process'); },
-  };
-  const tenantA = createAccordoApp({ dbPath: join(root, 'data', 'tenant-a.sqlite'), clock: () => NOW, spine: spineConfig });
-  const tenantB = createAccordoApp({ dbPath: join(root, 'data', 'tenant-b.sqlite'), clock: () => NOW, spine: spineConfig });
+  });
+  const tenantA = createAccordoApp({ clock: () => NOW, spine: spineFor('tenant-a', 'Tenant A') });
+  const tenantB = createAccordoApp({ clock: () => NOW, spine: spineFor('tenant-b', 'Tenant B') });
 
   try {
-    const orgA = tenantA.spine.organizations.create({ slug: 'tenant-a', name: 'Tenant A' });
-    const orgB = tenantB.spine.organizations.create({ slug: 'tenant-b', name: 'Tenant B' });
+    const orgA = tenantA.spine.boundOrganization;
+    const orgB = tenantB.spine.boundOrganization;
     tenantA.spine.memberships.bootstrapOwner({ organizationId: orgA.id, subject: 'alice' });
     tenantB.spine.memberships.bootstrapOwner({ organizationId: orgB.id, subject: 'mallory' });
 
@@ -166,11 +169,44 @@ try {
     // A membership in one tenant means nothing in the other.
     const membershipDoesNotCross = tenantB.spine.memberships.find({ organizationId: orgB.id, subject: 'alice' }) === null;
 
-    // A genuine owner of B, pointed at A's organization id.
+    // A genuine owner of B, pointed at A's organization id — refused for being
+    // another tenant entirely, before any permission or membership is weighed.
     const mallory = identity(tenantB, 'mallory', orgB.id);
     const foreignOwnerRefused = tenantB.spine.decide({
       identity: mallory, organizationId: orgA.id, permission: 'records.read',
-    }).code === 'ORGANIZATION_MISMATCH';
+    }).reason === 'TENANT_NOT_BOUND';
+
+    // And the same owner asking A's OWN instance is not found there: 404, not
+    // 403, because confirming that A exists is itself the disclosure.
+    const foreignOwnerNotFoundOnA = refuses(
+      () => tenantA.spine.authorize({ identity: mallory, organizationId: orgB.id, permission: 'records.read' }),
+      (error) => error.status === 404,
+    );
+
+    // Both instances share one control plane and hold different data planes.
+    // Seeing that another tenant exists is not authority over its data.
+    const controlPlaneShared = tenantA.controlPlaneDatabase.path === tenantB.controlPlaneDatabase.path;
+    const dataPlanesSeparate = tenantA.database.path !== tenantB.database.path;
+    const dataPlaneIsNotControlPlane = tenantA.database.path !== tenantA.controlPlaneDatabase.path;
+    const tenantDatabaseHasNoMemberships = refuses(
+      () => tenantA.database.raw.prepare('SELECT * FROM spine_memberships').all(),
+      (error) => /no such table/.test(error.message),
+    );
+
+    // **The refusal this model is built on, performed rather than asserted.**
+    // Serving two tenants from one process is not a limitation to be documented
+    // and worked around; it is a configuration that will not start.
+    const twoTenantsInOneApplicationRefused = refuses(
+      () => createAccordoApp({
+        clock: () => NOW,
+        spine: {
+          mode: 'production',
+          identityVerifier: () => { throw new Error('not used in-process'); },
+          tenant: { id: 'tenant-a', storageRoot: join(root, 'tenants'), tenants: ['tenant-a', 'tenant-b'] },
+        },
+      }),
+      (error) => error.code === 'SPINE_MULTIPLE_DATA_PLANE_BINDINGS',
+    );
 
     // ---- an authorized manager decides ---------------------------------
     const managerMayDecide = tenantA.spine.decide({
@@ -269,10 +305,10 @@ try {
 
     console.log(JSON.stringify({
       ok: true,
-      summary: 'Composed two tenants AS TWO SEPARATE APPLICATIONS with two databases, because that is what '
-        + 'the declared database-per-tenant strategy actually requires of an operator in v1 — the framework '
-        + 'does not wire it, and two organizations inside one application share one database and are NOT '
-        + 'isolated, which the schema publishes as TENANT_ISOLATION_NOT_ENFORCED; created identically '
+      summary: 'Composed two tenants as TWO BOUND INSTANCES over one shared control plane, which is the '
+        + 'model this milestone enforces: one instance, one tenant, one storage binding. Two organizations '
+        + 'inside one application is a configuration the framework REFUSES at startup, and that refusal was '
+        + 'attempted and recorded rather than assumed; created identically '
         + 'named records in both and proved neither can reach the other by id, by collection or by write; '
         + 'proved a membership in one tenant means nothing in the other and that a genuine owner of B pointed '
         + 'at A is refused for the organization, not for the record; let an authorized manager decide and '
@@ -307,9 +343,15 @@ try {
       crmDataPlaneIsolationEnforced: spineBlock.tenantIsolation.crmDataPlaneEnforced,
       tenantStorageBoundaryWired: spineBlock.tenantIsolation.storageBoundaryWired,
       controlPlaneScoped: spineBlock.tenantIsolation.controlPlaneScoped,
-      isolationProvenForSeparateApplicationsOnly: true,
-      unenforcedIsolationPublished:
-        spineBlock.limitations.some((line) => line.startsWith('TENANT_ISOLATION_NOT_ENFORCED')),
+      sharedDatabaseMultiTenancyClaimed: spineBlock.tenantIsolation.sharedDatabaseMultiTenancy,
+      multipleOrganizationsInOneInstance: spineBlock.tenantIsolation.multipleOrganizationsInOneInstance,
+      postgresImplemented: spineBlock.tenantIsolation.postgresImplemented,
+      foreignOwnerNotFoundOnA,
+      controlPlaneShared,
+      dataPlanesSeparate,
+      dataPlaneIsNotControlPlane,
+      tenantDatabaseHasNoMemberships,
+      twoTenantsInOneApplicationRefused,
       assertedActorsAllowed: spineBlock.allowsAssertedActors,
       crossTenantByIdRefused,
       crossTenantByListRefused,

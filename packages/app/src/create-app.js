@@ -1,6 +1,8 @@
 // @ts-check
 
 import { createDatabase } from '../../core/src/database.js';
+import { resolveTenantBinding } from '../../core/src/tenant-binding.js';
+import { resolveRuntimeMode } from '../../core/src/runtime-mode.js';
 import { createSpine } from './spine.js';
 import { AuditLog } from '../../core/src/audit.js';
 import { EventBus } from '../../core/src/event-bus.js';
@@ -42,29 +44,86 @@ export function createAccordoApp(options = {}) {
   // anything from the current instant read it here, so a test can pin "today"
   // and a run is reproducible. Defaults to the wall clock.
   const now = resolveClock(options.clock);
+
+  // A generated module carries an append-only, ordered `migrations` list: its
+  // create migration plus one per revision it has evolved through (ADR-019).
+  // `migration` is the pre-evolution single-migration shape, still honoured so
+  // a project generated before this contract keeps booting unchanged.
+  const moduleMigrations = generatedModules.flatMap((generated) => (
+    Array.isArray(generated.migrations) ? generated.migrations
+      : generated.migration ? [generated.migration] : []
+  ));
+
+  /**
+   * **Where a tenant's CRM data lives (ADR-038, amended).**
+   *
+   * Two shapes, and no third:
+   *
+   * - **No spine** — the historical composition, byte-for-byte unchanged. One
+   *   combined database at `dbPath`, no identity verification, no tenancy, no
+   *   authorization. `app inspect` and `/api/schema` publish that in as many
+   *   words, because a security boundary that is off *quietly* is worse than
+   *   one that does not exist.
+   * - **Spine composed** — the data plane comes from the tenant binding and
+   *   from nowhere else, and the control plane is a **different database**.
+   *   `dbPath` is refused rather than merged, because two answers to "where
+   *   does this tenant's data live" is precisely the shape of the defect this
+   *   amendment closes: the previous version checked a tenant strategy for
+   *   presence, then opened the shared database anyway.
+   *
+   * There is no branch in which a spine-composed application can reach the
+   * unscoped shared database. That is not a rule applied at each call site; the
+   * only handle to a data plane this function ever constructs is the bound one.
+   */
+  const binding = options.spine
+    ? resolveTenantBinding({
+      mode: resolveRuntimeMode({
+        mode: /** @type {any} */ (options.spine).mode,
+        env: /** @type {any} */ (options.spine).env,
+        identityVerifier: /** @type {any} */ (options.spine).identityVerifier,
+        tenantStrategy: /** @type {any} */ (options.spine).tenant,
+      }).mode,
+      tenant: /** @type {any} */ (options.spine).tenant,
+      dataPlanePathConfigured: options.dbPath !== undefined,
+    })
+    : null;
+
   const database = createDatabase({
-    path: options.dbPath,
+    path: binding ? binding.storage.dataPlanePath : options.dbPath,
     busyTimeoutMs: options.busyTimeoutMs,
-    // A generated module carries an append-only, ordered `migrations` list: its
-    // create migration plus one per revision it has evolved through (ADR-019).
-    // `migration` is the pre-evolution single-migration shape, still honoured so
-    // a project generated before this contract keeps booting unchanged.
-    moduleMigrations: generatedModules.flatMap((generated) => (
-      Array.isArray(generated.migrations) ? generated.migrations
-        : generated.migration ? [generated.migration] : []
-    )),
+    // A bound tenant database receives the CRM plane only. It has no
+    // `spine_memberships` table at all, so a coding error that tried to read
+    // one from tenant-reachable storage fails loudly instead of finding rows.
+    plane: binding ? 'data' : 'combined',
+    moduleMigrations,
   });
+
+  // The control plane is a separate file with a separate schema: Organizations
+  // and Memberships, and not one CRM table. The separation is what makes
+  // "tenant data never mixes with membership data" checkable rather than
+  // promised — each write that crossed it would hit a table that is not there.
+  const controlPlaneDatabase = binding
+    ? createDatabase({
+      path: binding.storage.controlPlanePath,
+      busyTimeoutMs: options.busyTimeoutMs,
+      plane: 'control',
+    })
+    : null;
+
   const events = new EventBus();
   const audit = new AuditLog(database);
 
   // Production Spine v1 (ADR-038), opt-in and LOUD about being off.
-  //
-  // When `options.spine` is absent the application behaves exactly as it did
-  // before this milestone — no identity verification, no tenancy, no
-  // authorization — and `app inspect` publishes that in as many words. A
-  // security boundary that is disabled quietly is worse than one that does not
-  // exist, so the absence is reported rather than assumed.
-  const spine = options.spine ? createSpine({ database, audit, now, config: options.spine }) : null;
+  const spine = options.spine
+    ? createSpine({
+      database: controlPlaneDatabase,
+      dataPlane: database,
+      audit,
+      now,
+      binding,
+      config: options.spine,
+    })
+    : null;
   const modules = new ModuleRegistry();
   const providers = new ProviderRegistry();
 
@@ -264,8 +323,19 @@ export function createAccordoApp(options = {}) {
       externalTimeoutMs: /** @type {any} */ (options).signatureTimeoutMs,
     },
     notifications: notificationProvider,
+    /**
+     * The control-plane database, or null when no spine is composed.
+     *
+     * Exposed beside `database` so the separation is *inspectable* rather than
+     * asserted: two files, two schemas, and a test can prove a CRM row lives in
+     * one and cannot exist in the other.
+     */
+    controlPlaneDatabase,
+    /** The resolved tenant binding, or null. Frozen at startup. */
+    tenantBinding: binding,
     close() {
       database.close();
+      controlPlaneDatabase?.close();
     },
     doctor() {
       return {

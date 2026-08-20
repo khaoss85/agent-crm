@@ -16,7 +16,13 @@ import { AppError, ConflictError } from './errors.js';
  * }} AccordoDatabase
  */
 
-const MIGRATIONS = [
+/**
+ * **The tenant CRM data plane.** Every record, audit row, workflow run and
+ * trace span a tenant's users can reach. One database file per tenant when a
+ * tenant binding is configured (ADR-038), and these migrations are the only
+ * ones that file ever receives.
+ */
+const DATA_PLANE_MIGRATIONS = [
   {
     version: 1,
     name: 'initial_crm_schema',
@@ -164,6 +170,21 @@ const MIGRATIONS = [
       ) STRICT;
     `,
   },
+];
+
+/**
+ * **The control plane.** Organizations and Memberships — the tenant of the
+ * SOFTWARE and the people who may act inside it. Deliberately a separate list
+ * from the data plane, so a control-plane database has no CRM table and a
+ * tenant database has no membership table: a stray write across the boundary
+ * raises `no such table` instead of quietly succeeding, which is what turns a
+ * convention into an enforcement.
+ *
+ * A legacy single-file project applied this as version 5 of one combined list.
+ * It still does — `plane: 'combined'` is the default — so nothing that boots
+ * today stops booting.
+ */
+const CONTROL_PLANE_MIGRATIONS = [
   {
     version: 5,
     name: 'production_spine_identity',
@@ -210,6 +231,26 @@ const MIGRATIONS = [
 ];
 
 /**
+ * Which migrations a database receives.
+ *
+ * `combined` is the historical single-file shape and remains the default, so
+ * every existing composition is byte-for-byte unaffected. A spine with a
+ * tenant binding opens two databases and asks for one plane each.
+ */
+const MIGRATION_PLANES = Object.freeze({
+  combined: [...DATA_PLANE_MIGRATIONS, ...CONTROL_PLANE_MIGRATIONS],
+  data: DATA_PLANE_MIGRATIONS,
+  control: CONTROL_PLANE_MIGRATIONS,
+});
+
+/** The migration versions each plane owns, published so a test can pin them. */
+export const MIGRATION_VERSIONS = Object.freeze({
+  combined: Object.freeze(MIGRATION_PLANES.combined.map((m) => m.version)),
+  data: Object.freeze(DATA_PLANE_MIGRATIONS.map((m) => m.version)),
+  control: Object.freeze(CONTROL_PLANE_MIGRATIONS.map((m) => m.version)),
+});
+
+/**
  * True for the SQLite "database is locked / busy" family of errors — another
  * connection holds the write lock and the busy timeout expired.
  * @param {unknown} error
@@ -224,10 +265,17 @@ function isBusyError(error) {
 }
 
 /**
- * @param {{path?: string, moduleMigrations?: Array<{name: string, sql: string}>, busyTimeoutMs?: number}} [options]
+ * @param {{path?: string, moduleMigrations?: Array<{name: string, sql: string}>, busyTimeoutMs?: number, plane?: 'combined'|'data'|'control'}} [options]
  * @returns {AccordoDatabase}
  */
 export function createDatabase(options = {}) {
+  // Which plane this file is. Defaults to the historical combined shape, so a
+  // caller that does not know about planes keeps the database it always got.
+  const plane = options.plane ?? 'combined';
+  const migrations = MIGRATION_PLANES[plane];
+  if (!migrations) {
+    throw new Error(`Unknown migration plane "${plane}": expected combined, data or control.`);
+  }
   const requestedPath = options.path ?? process.env.CRM_DB_PATH ?? './data/accordo.sqlite';
   const dbPath = requestedPath === ':memory:' ? requestedPath : resolve(requestedPath);
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
@@ -249,7 +297,7 @@ export function createDatabase(options = {}) {
     raw.prepare('SELECT version FROM schema_migrations').all().map((row) => Number(row.version)),
   );
 
-  for (const migration of MIGRATIONS) {
+  for (const migration of migrations) {
     if (applied.has(migration.version)) continue;
     raw.exec('BEGIN IMMEDIATE;');
     try {
@@ -375,6 +423,8 @@ export function createDatabase(options = {}) {
   return {
     raw,
     path: dbPath,
+    /** Which migration plane this file received. Published so a test can pin it. */
+    plane,
     close: () => raw.close(),
     transaction: (fn) => {
       begin();

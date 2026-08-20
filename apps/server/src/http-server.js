@@ -12,6 +12,8 @@ import {
   normalizeError,
 } from '../../../packages/core/src/errors.js';
 import { isExposableGeneratedModule } from '../../../packages/core/src/generated-module-contract.js';
+import { stripServerControlledKeys } from '../../../packages/core/src/actor.js';
+import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js';
 
 const DEFAULT_PUBLIC_DIR = resolve(
   fileURLToPath(new URL('../../admin/public', import.meta.url)),
@@ -108,6 +110,31 @@ export function createHttpServer(app, options = {}) {
 
   // Node's own reap would destroy a request this server has already accepted.
   server.on('timeout', reapIdleConnection);
+
+  /**
+   * **A local-development runtime may only listen on loopback.**
+   *
+   * Local mode accepts asserted, unverified identities — anyone who can reach
+   * the socket can claim to be anyone. That is a reasonable trade on a loopback
+   * interface and a catastrophe on any other, so the address is checked at the
+   * moment of binding rather than trusted at the moment of configuring.
+   *
+   * An omitted host means "every interface", which is the worst case and not
+   * the safe one, so it is refused in local mode too. Wrapping `listen` rather
+   * than asking callers to check keeps the guard on the one path every server
+   * must take.
+   */
+  const listen = server.listen.bind(server);
+  server.listen = /** @type {any} */ ((...args) => {
+    const mode = app?.spine?.mode?.mode ?? null;
+    if (mode) {
+      const host = args.find((arg, index) => index > 0 && typeof arg === 'string')
+        ?? (typeof args[0] === 'object' && args[0] !== null ? /** @type {any} */ (args[0]).host : undefined);
+      assertBindAddress(mode, host);
+    }
+    return listen(...args);
+  });
+
   return server;
 }
 
@@ -284,7 +311,11 @@ function buildRouter(app) {
     }
     // A preview writes nothing, so it needs no human boundary — but it is
     // still recorded as the actor who asked.
-    return app.previewCustomerImport({ ...(body ?? {}), actor });
+    // The caller's own `actor` (or tenant, or identity) is REMOVED, not
+    // overridden. Overriding works only while this spread stays in this order,
+    // and a security property that depends on the order of an object literal is
+    // one refactor away from being gone.
+    return app.previewCustomerImport({ ...stripServerControlledKeys(body), actor });
   });
 
   router.add('POST', '/api/customer-data/import/apply', async ({ body, actor, identity, organizationId }) => {
@@ -292,7 +323,7 @@ function buildRouter(app) {
     if (typeof app.applyCustomerImport !== 'function') {
       throw new NotFoundError('Operation', 'customer data import');
     }
-    return app.applyCustomerImport({ ...(body ?? {}), actor });
+    return app.applyCustomerImport({ ...stripServerControlledKeys(body), actor });
   });
 
   router.add('GET', '/api/customer-data/profile/:resource/:id', async ({ params, identity, organizationId }) => {
@@ -531,7 +562,10 @@ function buildRouter(app) {
     gate(app, identity, organizationId, 'records.write');
     return respond(201, await app.seedDemo());
   });
-  router.add('POST', '/api/demo/run', async () => app.runDemo());
+  router.add('POST', '/api/demo/run', async ({ identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.write');
+    return app.runDemo();
+  });
 
   return router;
 }
@@ -541,6 +575,10 @@ function buildRouter(app) {
  *
  * A no-op when no spine is composed — and `app inspect` publishes that fact, so
  * the no-op is never a silent one.
+ *
+ * `authorize` refuses another tenant with **404** before it considers a
+ * permission at all, so this one call carries both the tenant boundary and the
+ * permission boundary and they cannot be applied in the wrong order.
  *
  * @param {any} app @param {any} identity @param {string|null} organizationId @param {string} permission
  */

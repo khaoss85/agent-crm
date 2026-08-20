@@ -37,11 +37,22 @@ export const ORGANIZATION_IS_NOT_A_COMPANY =
  * by attacking the product, so it renders as an error beside the declaration
  * rather than as a footnote below it.
  */
+export const SINGLE_TENANT_POSTURE =
+  'ONE TENANT PER INSTANCE — this application serves exactly one Organization, and its CRM data lives '
+  + 'in a database bound to that Organization alone. There is no tenant switcher because there is no '
+  + 'second tenant to switch to: another Organization means another deployed instance. A request '
+  + 'verified for any other Organization is refused as not found.';
+
+/**
+ * Shown if a runtime ever reports that the bound data plane is not enforced.
+ *
+ * It should never render. It exists because the failure it describes — a spine
+ * that came up without a real storage binding — is one an operator must see
+ * rather than infer, and a screen that can only say "fine" cannot report it.
+ */
 export const TENANT_ISOLATION_WARNING =
-  'DECLARED, NOT ENFORCED — this build does not isolate CRM data by Organization. Every Organization '
-  + 'in this application shares one database, so a member of one Organization can read and write '
-  + 'another\'s CRM records and audit rows. Memberships themselves ARE scoped correctly. Do not put '
-  + 'two real tenants in one application.';
+  'TENANT ISOLATION NOT ENFORCED — this runtime reports that its CRM data plane is not bound to a '
+  + 'single tenant. Do not put real customer data in it, and do not expose it.';
 
 /**
  * @param {{doc: any, mount: any, client: any}} deps
@@ -142,15 +153,28 @@ export function createSpineView({ doc, mount, client }) {
     const permissionList = el('p', 'spine-permissions', permissions.join(', ') || 'none');
     permissionList.setAttribute('data-permission-count', String(permissions.length));
     orgBox.appendChild(permissionList);
-    orgBox.appendChild(fact('Tenant strategy (declared)', context.tenantStrategyDeclared));
+    orgBox.appendChild(fact('Tenant strategy', context.tenantStrategy));
 
-    // The declared strategy is not the delivered one. Rendered as an error next
-    // to the declaration, so the two facts cannot be read apart.
+    // The bound tenant, stated as bound. An operator reading this screen needs
+    // to know not just which Organization they are in, but that this instance
+    // cannot serve another one — otherwise the absence of a tenant switcher
+    // looks like a missing feature rather than the security posture.
+    const bound = context.boundTenant ?? null;
+    const boundRow = fact('Bound tenant', bound?.slug);
+    boundRow.setAttribute('data-bound-tenant', String(bound?.slug ?? ''));
+    orgBox.appendChild(boundRow);
+
     const isolation = context.tenantIsolation ?? null;
+    const posture = el('p', 'muted spine-single-tenant-posture', SINGLE_TENANT_POSTURE);
+    posture.setAttribute('data-crm-data-plane-enforced', String(isolation?.crmDataPlaneEnforced === true));
+    posture.setAttribute('data-shared-database-multi-tenancy', String(isolation?.sharedDatabaseMultiTenancy === true));
+    orgBox.appendChild(posture);
+
+    // Should never render. See the constant: a screen that can only say "fine"
+    // cannot report the one failure an operator most needs to see.
     if (isolation && isolation.crmDataPlaneEnforced !== true) {
       const gap = el('p', 'error spine-tenant-isolation-gap', TENANT_ISOLATION_WARNING);
       gap.setAttribute('data-crm-data-plane-enforced', 'false');
-      gap.setAttribute('data-control-plane-scoped', String(isolation.controlPlaneScoped === true));
       orgBox.appendChild(gap);
     }
     panel.appendChild(orgBox);

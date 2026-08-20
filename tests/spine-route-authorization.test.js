@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
 
@@ -51,19 +54,20 @@ const verifier = ({ headers }) => {
 };
 
 async function scene(t, { roles = { vic: 'viewer' } } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-routes-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const app = createAccordoApp({
-    dbPath: ':memory:',
     spine: {
       mode: 'production',
       identityVerifier: verifier,
-      tenantStrategy: { strategy: 'database-per-tenant' },
+      tenant: { id: 'acme', storageRoot: root, provision: { name: 'Acme' } },
     },
   });
   const server = createHttpServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => { server.close(); app.close(); });
 
-  const organization = app.spine.organizations.create({ name: 'Acme', slug: 'acme' });
+  const organization = app.spine.boundOrganization;
   app.spine.memberships.bootstrapOwner({ organizationId: organization.id, subject: 'alice' });
   const owner = app.spine.defineIdentity({
     kind: 'verified-user', subject: 'alice', issuer: 'https://issuer.test',
