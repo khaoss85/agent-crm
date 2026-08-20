@@ -101,8 +101,8 @@ export function createSpineStore({ database, audit, now = () => new Date().toISO
          VALUES (?, ?, ?, ?, ?, ?)`,
       ).run(id, cleanSlug, cleanName, provenance, stamp, stamp);
       audit?.record?.({
-        entity: 'spine_organization', entityId: id, action: 'created',
-        actor: { type: 'system', id: 'spine' }, metadata: { slug: cleanSlug, provenance },
+        entityType: 'spine_organization', entityId: id, action: 'created',
+        actor: { type: 'system', id: 'spine' }, data: { slug: cleanSlug, provenance },
       });
       return organizations.get(id);
     },
@@ -232,9 +232,9 @@ export function createSpineStore({ database, audit, now = () => new Date().toISO
            WHERE id = ?`,
         ).run(role, cleanIssuer, identity.subject ?? null, cleanReason, stamp, existing.id);
         audit?.record?.({
-          entity: 'spine_membership', entityId: existing.id, action: 'role_changed',
+          entityType: 'spine_membership', entityId: existing.id, action: 'role_changed',
           actor: { type: 'user', id: identity.subject ?? 'unknown' },
-          metadata: { organizationId, subject: cleanSubject, from: existing.role, to: role, reason: cleanReason },
+          data: { organizationId, subject: cleanSubject, from: existing.role, to: role, reason: cleanReason },
         });
         return memberships.find({ organizationId, subject: cleanSubject });
       }
@@ -247,9 +247,9 @@ export function createSpineStore({ database, audit, now = () => new Date().toISO
          VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
       ).run(id, organizationId, cleanSubject, cleanIssuer, role, identity.subject ?? null, cleanReason, stamp, stamp);
       audit?.record?.({
-        entity: 'spine_membership', entityId: id, action: 'granted',
+        entityType: 'spine_membership', entityId: id, action: 'granted',
         actor: { type: 'user', id: identity.subject ?? 'unknown' },
-        metadata: { organizationId, subject: cleanSubject, role, reason: cleanReason },
+        data: { organizationId, subject: cleanSubject, role, reason: cleanReason },
       });
       return memberships.find({ organizationId, subject: cleanSubject });
     },
@@ -292,9 +292,9 @@ export function createSpineStore({ database, audit, now = () => new Date().toISO
       raw.prepare(`UPDATE spine_memberships SET status = 'suspended', granted_reason = ?, updated_at = ? WHERE id = ?`)
         .run(cleanReason, now(), existing.id);
       audit?.record?.({
-        entity: 'spine_membership', entityId: existing.id, action: 'suspended',
+        entityType: 'spine_membership', entityId: existing.id, action: 'suspended',
         actor: { type: 'user', id: identity.subject ?? 'unknown' },
-        metadata: { organizationId, subject: cleanSubject, reason: cleanReason },
+        data: { organizationId, subject: cleanSubject, reason: cleanReason },
       });
       return memberships.find({ organizationId, subject: cleanSubject });
     },
@@ -345,9 +345,9 @@ export function createSpineStore({ database, audit, now = () => new Date().toISO
       ).run(id, organizationId, cleanSubject, identityString(issuer, 'membership.issuer'), role,
         'bootstrapped as the first member of a new organization', stamp, stamp);
       audit?.record?.({
-        entity: 'spine_membership', entityId: id, action: 'bootstrapped',
+        entityType: 'spine_membership', entityId: id, action: 'bootstrapped',
         actor: { type: 'system', id: 'spine' },
-        metadata: { organizationId, subject: cleanSubject, role },
+        data: { organizationId, subject: cleanSubject, role },
       });
       return memberships.find({ organizationId, subject: cleanSubject });
     },
