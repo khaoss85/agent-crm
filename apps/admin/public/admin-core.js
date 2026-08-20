@@ -269,6 +269,10 @@ export function parseModuleRoute(hash) {
     if (pipelineName === null || !/^[a-z][a-z0-9-]*$/.test(pipelineName)) return { view: 'invalid' };
     return { view: 'pipeline', pipelineName };
   }
+  // Production Spine (ADR-038): one route, #/spine. Identity, tenancy and
+  // authorization are a single screen — there is nothing to drill into,
+  // because there is no credential to show.
+  if (rawParts.length === 1 && rawParts[0] === 'spine') return { view: 'spine' };
   // Customer data routes: #/customer-data and #/customer-data/<resource>/<id>
   // (ADR-037). Same canonical discipline as every other route here.
   if (rawParts.length && rawParts[0] === 'customer-data') {
