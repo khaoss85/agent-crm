@@ -81,9 +81,11 @@ passes on the current tree **without requiring any file to move**. It is not, an
 here is the measured reason: the tree at `aa1359f` contains 35 `MOVE_PRIVATE`
 paths and 5 `PUBLIC_REDACTED_REPLACEMENT` paths, all of them still present
 publicly — so rule 2 fails on 40 paths today. Rule 5 also has live work to do:
-three private-designated documents are linked from **12 files that stay public**
-(`MASTER_PLAN.md` from nine, `GO_TO_MARKET.md` from four, `CATEGORY.md` from
-three, counting each file once per target).
+five private-designated documents are referenced from **16 files that stay
+public** (`MASTER_PLAN.md` from ten, `GO_TO_MARKET.md` from five, `CATEGORY.md`
+from four, `CLOUD_JTBD.md` and `AGENT_CRM_CLOUD.md` from one each, counting each
+file once per target — see `REPOSITORY_BOUNDARY.md` §4 for the counting rule and
+the enumeration).
 
 Any gate strong enough to be worth adding therefore fails on files this phase is
 explicitly forbidden to move. A gate authored now would have to be born disabled

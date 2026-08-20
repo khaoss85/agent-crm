@@ -209,17 +209,35 @@ below is authored in the migration task, **before** step 6 removes its source:
    written in this PR; they replace the Cloud design documents publicly.
 
 **Inbound links that must be rewritten in the same step**, re-measured against
-`aa1359f`. Three private-designated documents are linked from files that **stay
-public** — **12 distinct files**, not the 8 the first pass counted. The first
-count missed `packages/docs-mcp/README.md`, `DECISIONS.md`, `site/claims.json`
-and two historical documents that remain public and would therefore carry a
-broken link:
+`aa1359f`. **The counting rule, because it decided the number:** a reference is
+any occurrence of the private document's filename in a file that stays public —
+a Markdown link, a bare backticked path, or a prose citation alike. A reader
+told "the specification is in `X.md`" is left just as stranded as one who clicks
+a dead link, so the narrower "only Markdown links count" rule would have
+under-reported this table twice.
 
-| Private-designated document | Linked from files that stay public |
+**Five** private-designated documents are referenced from files that stay
+public, across **16 distinct files** — not the three documents and 8 files the
+first pass counted, and not the 12 the second pass counted:
+
+| Private-designated document | Referenced from files that stay public |
 |---|---|
-| `MASTER_PLAN.md` | `README.md` · `ROADMAP.md` · `PRODUCT.md` · `AGENTS.md` · `CONTRIBUTING.md` · `DECISIONS.md` · `docs/PROJECT_STATUS.md` · `packages/docs-mcp/README.md` · `docs/plans/first-gtm-article.md` — **9 files** |
-| `GO_TO_MARKET.md` | `README.md` · `site/claims.json` · `docs/marketing/CORRECTIONS.md` · `docs/plans/gtm-smart-crm-intent.md` — **4 files** |
-| `CATEGORY.md` | `PRODUCT.md` · `DECISIONS.md` · `site/claims.json` — **3 files** |
+| `MASTER_PLAN.md` | `README.md` · `ROADMAP.md` · `PRODUCT.md` · `AGENTS.md` · `CONTRIBUTING.md` · `DECISIONS.md` · `docs/PROJECT_STATUS.md` · `packages/docs-mcp/README.md` · `docs/plans/first-gtm-article.md` · `docs/plans/mcp-registry-remote-entry.md` — **10 files** |
+| `GO_TO_MARKET.md` | `README.md` · `site/claims.json` · `docs/marketing/CORRECTIONS.md` · `docs/plans/gtm-smart-crm-intent.md` · `docs/plans/gtm-customer-hub-intent.md` — **5 files** |
+| `CATEGORY.md` | `PRODUCT.md` · `DECISIONS.md` · `site/claims.json` · `docs/plans/first-gtm-article.md` — **4 files** |
+| `CLOUD_JTBD.md` | `docs/benchmarks/CRM_JTBD_MATRIX.md` — **1 file** |
+| `AGENT_CRM_CLOUD.md` | `docs/RENAME_SURFACE.md` — **1 file** |
+
+The last two rows correct a claim the previous pass made in this section: that
+the Cloud design documents carry no link debt. They do. `CRM_JTBD_MATRIX.md` is
+`KEEP_PUBLIC` and tells its reader that the fifteen Cloud operator jobs are
+"specified in `CLOUD_JTBD.md`" — so the public matrix would point at a document
+the reader cannot open, which is precisely the failure §4 exists to prevent. Its
+replacement is the public `MANAGED_CLOUD_EDITION.md` scope section, and the
+matrix row must be repointed in migration step 5. `RENAME_SURFACE.md` is the
+weaker case and still a real one: it is a dated rename record that discusses
+`AGENT_CRM_CLOUD.md` *as a filename*, so it takes the historical-record rule
+below rather than a repoint.
 
 Three of those sources need a rule rather than an edit, because rewriting them
 would falsify a record:
@@ -241,8 +259,7 @@ Links from files that are themselves `MOVE_PRIVATE` (`docs/marketing/LAUNCH_PACK
 Every other public link into `docs/strategy/` — `CRM_BUILD_BENCHMARK`,
 `RECOMMENDATION_MAP`, `DATA_GOVERNANCE`, `CODING_AGENT_DX_NORTH_STAR`,
 `EXECUTION_ROADMAP` — points at a document that stays public, and needs no
-rewrite. `AGENT_CRM_CLOUD.md` and `CLOUD_JTBD.md` are not linked from any public
-entry-point file, so their replacement carries no link debt.
+rewrite.
 
 ## 5. Migration manifest — the order a human executes
 
