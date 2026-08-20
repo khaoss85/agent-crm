@@ -2880,3 +2880,134 @@ customer, not a guess); a section it genuinely cannot reach reads `available:
 false` with that reason rather than a zero; and every readable section publishes
 `countIsComplete`, so a number taken from a bounded page is reported as a floor
 instead of a total.
+
+
+## ADR-038 — The framework authenticates nobody, and owns every decision that follows
+
+**Status:** accepted. **Milestone:** Production Spine v1.
+**Plan:** `docs/plans/production-spine-v1.md`.
+
+### Context
+
+The repository holds customer identities, external identifiers, canonical
+links, signed commercial terms, contracts, subscriptions, delivery, service and
+work records — real PII-capable data — behind a runtime with no authentication,
+no tenancy and no authorization. Three facts made that concrete rather than
+rhetorical:
+
+1. `normalizeActor()` returned `SYSTEM_ACTOR` — the most privileged identity in
+   the framework — for `null`, a string, or an unknown `type`. **The safest
+   input produced the strongest identity.**
+2. `actorFromRequest()` read `x-actor-type` and `x-actor-id` and, when they were
+   absent, invented `{type: 'user', id: 'api-user'}`. Any caller was any user,
+   and a missing header produced a valid-*looking* one.
+3. No record, table, service or action carried a tenant at all.
+
+Every "a human decided" in this codebase meant *an actor object said so*.
+
+### Decision
+
+**The framework authenticates nobody. It owns everything after that.**
+
+A deployment adapter verifies the request and supplies a bounded, versioned
+identity context. The framework owns the contract, the tenant selection,
+membership, the authorization decision, the audit evidence and a fail-closed
+boundary. Four options were compared:
+
+- **A — trust the headers, add role strings.** Rejected: authorization over an
+  unauthenticated identity is decoration that makes the audit log *more*
+  confident and no more true.
+- **B — passwords, sessions and credentials in core.** Rejected for v1: it makes
+  the framework an identity provider, which is a security scope of its own.
+- **C — verified identity adapter + framework authorization boundary.**
+  **Chosen.** The framework never learns a secret, and the one thing it must own
+  — the decision — it owns completely.
+- **D — a provider-specific auth package.** Rejected as a kernel dependency. No
+  vendor name appears in `packages/core`, and a reference adapter may live
+  outside it later.
+
+### The four identity kinds, which never blur
+
+`verified-user` · `system` (bounded authority: a webhook may reconcile, it may
+never approve a discount) · `asserted-local` (accepted only in explicit
+local-development mode) · `anonymous` (authorizes nothing, and is the one kind
+with no subject, because inventing one would be the same fail-open this ADR
+removes).
+
+**No token, credential or secret enters the contract, the audit log, the trace
+or an error message.** The contract carries a *fingerprint* of the claims the
+adapter accepted, so a decision can be tied to its evidence without the
+evidence being stored.
+
+### An Accordo Organization is not a CRM Company
+
+A **Company** is a customer recorded *inside* one tenant's data. An
+**Organization** is the tenant — a customer of the software. The distinction is
+in the table names (`spine_organizations`), the store, the schema block, the
+Admin and this ADR, because blurring it would make "grant someone access to a
+Company" sound reasonable, and from there one tenant's customer list leaks into
+another tenant's authorization model.
+
+### Permissions, and why not the two obvious shapes
+
+Eleven **bounded semantic permissions** bundled into roles. A fixed role enum is
+immediately inflexible; one permission per method looks rigorous, produces
+hundreds of unreadable keys, and ends with everyone granted all of them. `owner`
+is an explicit list rather than "all permissions", so adding a permission later
+cannot silently widen an existing role.
+
+`requiredApprovalKey` values stay **descriptive labels**. Promoting them into
+enforced permissions would change the meaning of records already written.
+
+Membership administration carries two non-negotiable rules: **nobody grants a
+permission they do not hold** (otherwise `admin.memberships.manage` is silently
+equivalent to all of them), and **the last active administrator cannot demote or
+suspend themselves** (not to protect them, but to stop an organization becoming
+permanently unadministrable).
+
+### The mode is explicit, and production fails startup
+
+Two modes, no default. The mode is **never inferred** from localhost,
+`NODE_ENV`, an interface address or a missing config: a proxy, a container
+network or a misread `X-Forwarded-For` all make a production request look local.
+An unset mode is an error, because "I forgot to configure it" and "I meant the
+permissive one" must not be the same input. Production **fails startup** without
+an identity verifier and a tenant strategy — a refused boot is investigated, a
+refused request at 3am is retried.
+
+Local-development mode keeps today's developer experience through a **real
+membership row** an operator can list and revoke, not an invisible branch inside
+the authorizer. An assertion is never promoted to a verification.
+
+### Tenancy: the honest choice, and what it is not
+
+Row-level tenancy — an `organization_id` on every mutable table — is the right
+long-term answer and was **not** attempted here: **86+ tables** (76 module
+manifests plus 10 core), a backfill of every shipped database, every unique
+constraint reworked and every correctness path rescoped. A half-migrated version
+of that is worse than none, because it *looks* isolated.
+
+v1 takes a **versioned TenantStorage boundary: one database per tenant.** Two
+tenants cannot cross-read because they are not in the same database, not because
+a `WHERE` clause was remembered. A tenant id is untrusted input on a filesystem
+path, so traversal, absolute paths, NUL, uppercase and over-length are refused
+and the resolved path is proven to be inside the root anyway.
+
+**This is explicitly not shared-database multi-tenancy, and nothing in this
+repository may describe it as such.** Row-level tenancy in PostgreSQL is Spine
+v2.
+
+### The spine is opt-in, and its absence is loud
+
+`createAccordoApp({ spine })` turns it on. An application composed without it
+behaves exactly as before — and `/api/schema` publishes that in the same field,
+rather than omitting it. A reader who has to infer the absence of a security
+boundary from a missing key will eventually infer wrong.
+
+### What this is not
+
+Not production readiness. PostgreSQL and shared-database tenancy, durable jobs
+and outbox, a scheduler, a secret manager, backups and restore, a deployment
+control plane and remote-safe MCP are all still absent, and are named as Spine
+v2, v3 and v4 in `ROADMAP.md` with explicit ownership rather than left as
+scattered blockers. No SOC2, GDPR or compliance posture is claimed or assessed.
