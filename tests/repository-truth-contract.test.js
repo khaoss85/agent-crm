@@ -587,6 +587,28 @@ test('an unmoved tests tree reads test_tree_current=true and the counts read cur
   assert.equal(facts.get('measurement.test_count').value, 7);
 });
 
+test('a commit that only moves the tests tree does not restate the document', async () => {
+  // Found by running the gate on its own branch: `HEAD:tests` was published as
+  // evidence, so the commit adding this very file made the committed document
+  // stale with no fact value moved. A gate that fails on every green PR gets
+  // regenerated without being read, which is a slower way to lose the same
+  // truth. The verdict is a fact; the transient hash behind it is not evidence.
+  const before = await bundle();
+  before.measurement = {
+    sha: 'abc1234', tests: 7, testFiles: 1, ancestor: 'true', treeCurrent: 'false',
+    measuredTree: 'a'.repeat(40), headTree: 'b'.repeat(40),
+  };
+  const after = structuredClone(before);
+  after.measurement.headTree = 'c'.repeat(40);
+  assert.equal(canonical(buildFacts(before).facts), canonical(buildFacts(after).facts));
+  assert.deepEqual(diffDocuments({ facts: buildFacts(before).facts }, { facts: buildFacts(after).facts }), []);
+
+  // And the verdict itself is still a fact that can move.
+  const moved = structuredClone(before);
+  moved.measurement.treeCurrent = 'true';
+  assert.notEqual(canonical(buildFacts(before).facts), canonical(buildFacts(moved).facts));
+});
+
 test('a tree git cannot speak for refuses the measurement instead of guessing', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'accordo-truth-nogit-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

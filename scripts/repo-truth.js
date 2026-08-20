@@ -1101,9 +1101,16 @@ export function buildFacts(bundle) {
       // check is what stops one being written.
       value: measurement.treeCurrent,
       authority: 'measurement.git',
+      // **`HEAD:tests` is deliberately not published here.** It moves on every
+      // commit that touches `tests/` — including the commit that adds the test
+      // proving this rule — so publishing it would make the document stale
+      // against itself on a commit where no fact moved at all, and a gate that
+      // cries wolf on every green PR gets regenerated without being read. What
+      // is published is the half that is fixed by the measured commit, plus the
+      // comparison. The answer is the fact's own value.
       evidence: [
         `measuredTree:${String(measurement.measuredTree ?? '').slice(0, 12) || 'unknown'}`,
-        `headTree:${String(measurement.headTree ?? '').slice(0, 12) || 'unknown'}`,
+        'git rev-parse <sha>:tests versus HEAD:tests',
       ],
       scope: 'measurement',
       status: measurement.treeCurrent === 'unknown' ? 'unknown' : 'current',

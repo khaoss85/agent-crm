@@ -386,7 +386,7 @@
       "value": "false",
       "authority": "measurement.git",
       "evidence": [
-        "headTree:f41904c246ca",
+        "git rev-parse <sha>:tests versus HEAD:tests",
         "measuredTree:8f11127f1598"
       ],
       "scope": "measurement",
@@ -662,5 +662,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "de54212628ae072dd3857220386919390cecac21e2b12474bdb6e47824e4f6be"
+  "fingerprint": "cf37ff8bc6c689ab20e8ef12df766e51a2466ab583ca75a6a61ca21fe31d1810"
 }
