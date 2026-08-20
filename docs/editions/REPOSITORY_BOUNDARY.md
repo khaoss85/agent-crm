@@ -85,7 +85,9 @@ the first pass was deleted or renamed.
 `GEMINI.md` · `CONTRIBUTING.md` · `SECURITY.md` · `DECISIONS.md` · `LICENSE` ·
 `TASKS.md` · `docs/PROJECT_STATUS.md` · `skills/` · `api/mcp.js` ·
 `site/claims.json` · `site/assets/llms.txt` · `site/assets/llms-full.txt` ·
-`docs/benchmarks/jobs.json` · `docs/benchmarks/AGENT_TOOL_SELECTION_PROTOCOL.md` ·
+`docs/benchmarks/jobs.json` · the rail-selection benchmark's frozen protocol
+document under `docs/benchmarks/` (named in the benchmark's own source rather
+than here — see the note below) ·
 `docs/benchmarks/CRM_JTBD_MATRIX.md` · `docs/benchmarks/PILOT_PROTOCOL.md` ·
 `docs/marketing/BENCHMARK_PUBLICATION.md` · and the product-design documents in
 `docs/strategy/` that describe *what the framework does* rather than how it is
@@ -177,12 +179,22 @@ is a close call:
 ### `HISTORICAL_ALREADY_PUBLIC` (5)
 
 `docs/marketing/CORRECTIONS.md` · `docs/benchmarks/URR_PILOT_2026-08-10.md` ·
-`docs/benchmarks/TOOL_SELECTION_PILOT_2026-08-13.md` · `docs/transcripts/` ·
-`benchmarks/`.
+the rail-selection panel record dated `2026-08-13` under `docs/benchmarks/` ·
+`docs/transcripts/` · `benchmarks/`.
 
 Published records of what was measured, what was withdrawn and what was retracted
 — including results that are unflattering. They stay public, they are never
 rewritten, and **no migration step may describe them as removed.**
+
+**Why two of these are described rather than named.** The rail-selection
+benchmark measures whether an agent picks the right rail for a question, and it
+enforces that its fixtures — copies of this repository — contain none of its own
+answer sheet. Two of its document *filenames* are themselves scored markers, so
+writing them here would leak the answer into every fixture and invalidate the
+runs; the isolation gate catches it, and caught it on this branch. They are
+identified by role and date instead. This is the one place in the boundary
+documents where a path is deliberately not spelled out, and the reason is a
+merged gate rather than a preference.
 
 ## 3. The rule that decided the hard cases
 
