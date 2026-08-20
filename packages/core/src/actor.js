@@ -33,9 +33,28 @@ import { ValidationError } from './errors.js';
  *   `agent` actors keep working exactly as before.
  * - Anything else becomes {@link ANONYMOUS_ACTOR} — the least privileged
  *   identity, which holds no membership and therefore authorizes nothing.
- * - {@link SYSTEM_ACTOR} is reachable only by asking for it, through
- *   {@link trustedSystemActor}, which is named so that `grep trustedSystemActor`
- *   is a complete audit of every place the framework claims its own authority.
+ * - {@link SYSTEM_ACTOR} is never *fallen back to*. The sanctioned way to ask
+ *   for it is {@link trustedSystemActor}, which takes a reason so the call site
+ *   states why it is entitled to.
+ *
+ * ### What that does and does not prove
+ *
+ * A review checked the audit claim rather than accepting it, and the honest
+ * statement is narrower than "grep is a complete audit". Two things are true:
+ *
+ * - **Nothing in this framework claims system authority today.**
+ *   `trustedSystemActor` has zero production call sites, and no module outside
+ *   this file references {@link SYSTEM_ACTOR}. That is the strongest available
+ *   state — the privileged path exists and nothing needs it — and it is worth
+ *   re-measuring rather than assuming, because the number that matters is zero
+ *   and zero is the easiest number to stop being true.
+ * - **Grep alone does not bound it.** {@link SYSTEM_ACTOR} is exported, and a
+ *   deliberately well-formed `{type: 'system', id: 'x'}` normalizes to a system
+ *   actor by design — the signature webhook depends on exactly that. So an
+ *   audit of framework self-authority is `trustedSystemActor` **plus** direct
+ *   {@link SYSTEM_ACTOR} references **plus** hand-built system actors.
+ *   `tests/actor-fails-closed.test.js` pins the first two at their counts, so
+ *   the day one of them stops being zero is a day a test says so.
  */
 
 /**
