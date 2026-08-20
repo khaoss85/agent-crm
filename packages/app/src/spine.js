@@ -109,7 +109,11 @@ export function createSpine({ database, audit, now, config = {} }) {
     const existing = store.memberships.find({ organizationId: org.id, subject });
     if (existing) return existing;
     return store.memberships.listFor({ organizationId: org.id, limit: 1 }).length === 0
-      ? store.memberships.bootstrapOwner({ organizationId: org.id, subject })
+      ? store.memberships.bootstrapOwner({
+        organizationId: org.id,
+        subject,
+        reason: 'local-development mode: an asserted developer identity, recorded rather than hidden',
+      })
       : store.memberships.grant({
         organizationId: org.id,
         subject,
@@ -191,6 +195,15 @@ export function createSpine({ database, audit, now, config = {} }) {
   return Object.freeze({
     spineContract: SPINE_CONTRACT,
     mode,
+    /**
+     * The deployment adapter's verifier, or null in local-development mode.
+     *
+     * Exposed here rather than on the app object so there is exactly one place
+     * the request boundary can find it — and so that "is this request
+     * verified?" and "what does the mode allow?" are answered by the same
+     * object rather than by two that could disagree.
+     */
+    verifyRequest: typeof config.identityVerifier === 'function' ? config.identityVerifier : null,
     organizations: store.organizations,
     memberships: store.memberships,
     localOrganization,
