@@ -192,3 +192,49 @@ test('an application with no spine composed is unchanged', async (t) => {
   });
   assert.equal(created.status, 201, 'a spineless application keeps its historical behaviour exactly');
 });
+
+/**
+ * Review finding. `requiredPermission` reached the runtime but was never
+ * checked where every other contractual field is checked. Two consequences:
+ *
+ *   - a typo failed closed at *request* time rather than at registration, so a
+ *     permanently unreachable action was discoverable only in production —
+ *     against this repository's own rule that a process boots correctly
+ *     configured or does not boot; and
+ *   - the stated floor was only a default. A package could declare
+ *     `records.read` on a record action, and since every record action mutates
+ *     a record, that silently handed every `viewer` a write.
+ */
+test('a record action may ask for more than the floor, never less', async () => {
+  const { validateActionDefinition } = await import('../packages/core/src/action-registry.js');
+  const deps = { moduleExists: () => true };
+  const register = (definition) => validateActionDefinition(definition, deps);
+  const base = {
+    actionContract: 1,
+    module: 'thing',
+    name: 'do-it',
+    label: 'Do it',
+    description: 'A record action used to exercise the permission declaration.',
+    input: [],
+    execute: () => ({}),
+  };
+
+  assert.throws(
+    () => register({ ...base, requiredPermission: 'reocrds.write' }),
+    /requiredPermission must be one of/,
+    'an unknown permission is caught at registration, not at the first request',
+  );
+  assert.throws(
+    () => register({ ...base, requiredPermission: 'records.read' }),
+    /may not require only "records.read"/,
+    'a mutating action may not drop below the write floor',
+  );
+
+  // Stronger than the floor is exactly what the declaration is for.
+  assert.doesNotThrow(() => register({ ...base, name: 'decide-it', requiredPermission: 'approvals.decide' }),
+    'a stronger permission is exactly what the declaration is for');
+
+  // And declaring nothing at all stays legal — the default applies.
+  assert.doesNotThrow(() => register({ ...base, name: 'plain-it' }),
+    'an action that declares nothing keeps the records.write default');
+});
