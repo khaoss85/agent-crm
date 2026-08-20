@@ -3379,8 +3379,19 @@ the two together is the v2 question. It costs about half a second, and it was
 confirmed green on a simulated pull-request merge commit as well as on the branch
 tip.
 
-Three rules were narrower than they read, and are fixed with the mutation that
+Four rules were narrower than they read, and are fixed with the mutation that
 must fail each one:
+
+- **A declared-absence fact could outlive the code.** `SPINE_NOT_MODELED` is a
+  hand-maintained list of English strings, and a regex over it only ever answers
+  "does the list still say this". Deleting the sentence refused the fact; *building*
+  the thing and leaving the sentence standing moved nothing, so
+  `spine.durable_jobs.implemented` and `spine.secrets_backups.implemented` were the
+  two facts in this document that a claim could survive — Option B wearing Option C's
+  clothes. Each now carries a second authority derived from the code, a namespace
+  probe over the reference composition on the same two-authorities-must-agree rule as
+  `billing.implemented`; `spine.postgresql.implemented` already had one in the
+  manifest's production dependencies.
 
 - **Angle brackets hid any machine code.** `findUnknownCodes` stripped
   `<[A-Z][A-Z0-9_]*>` from every line before looking, so

@@ -239,11 +239,33 @@ export const NAMESPACE_PROBES = Object.freeze({
  * `SPINE_NOT_MODELED` and the frozen journey registry's limitation codes are
  * *declarations in source*, not silence. A keyword that matches nothing is a
  * failure (`TRUTH_AUTHORITY_UNAVAILABLE`), never a default.
+ *
+ * **Every one of them carries a second authority, derived from the code rather
+ * than from the sentence.** `SPINE_NOT_MODELED` is still a hand-maintained list
+ * of English strings, and a regex over it can only ever answer "does the list
+ * still say this". Deleting the sentence refuses the fact — that half was
+ * always safe — but *implementing* the thing and leaving the sentence standing
+ * moved nothing at all, which is a claim surviving the code it describes: the
+ * exact failure this contract exists to close, inside the contract. So
+ * PostgreSQL is checked against the manifest's production dependencies, and
+ * durable jobs and secrets/backups against a namespace probe over the reference
+ * composition, on the same rule as `billing.implemented`: two authorities must
+ * agree, or neither answer is published.
  */
 const DECLARED_ABSENCE = Object.freeze({
   'spine.postgresql.implemented': { in: 'SPINE_NOT_MODELED', match: /postgresql/i },
-  'spine.durable_jobs.implemented': { in: 'SPINE_NOT_MODELED', match: /durable jobs|outbox|scheduler/i },
-  'spine.secrets_backups.implemented': { in: 'SPINE_NOT_MODELED', match: /secret manager|backups/i },
+  'spine.durable_jobs.implemented': {
+    in: 'SPINE_NOT_MODELED',
+    match: /durable jobs|outbox|scheduler/i,
+    // Not `follow-up` or `work-task`: those records exist and a person moves
+    // every one of them, which is precisely the boundary this fact states.
+    absentPrefixes: ['scheduler', 'job', 'jobs', 'outbox', 'cron', 'timer', 'reminder', 'queue', 'worker', 'dispatcher'],
+  },
+  'spine.secrets_backups.implemented': {
+    in: 'SPINE_NOT_MODELED',
+    match: /secret manager|backups/i,
+    absentPrefixes: ['secret', 'secrets', 'backup', 'backups', 'restore', 'vault', 'credential', 'key-rotation'],
+  },
 });
 
 /** Journey limitation codes that declare a product boundary. */
@@ -978,15 +1000,18 @@ export function buildFacts(bundle) {
   }
 
   // ── product limits ───────────────────────────────────────────────────────
+  const compositionNames = () => [
+    ...composition.resources,
+    ...composition.capabilities.map((entry) => String(entry).split('@')[0]),
+    ...composition.policies.map((entry) => String(entry).split('/').pop()),
+    ...composition.packages.flatMap((pkg) => pkg.actions.map((action) => String(action).split('.')[0])),
+  ];
+  const probeFor = (prefixes) => compositionNames()
+    .find((name) => prefixes.some((prefix) => name === prefix || String(name).startsWith(`${prefix}-`)));
+
   if (!composition.problems.length) {
     for (const [id, prefixes] of Object.entries(NAMESPACE_PROBES)) {
-      const names = [
-        ...composition.resources,
-        ...composition.capabilities.map((entry) => String(entry).split('@')[0]),
-        ...composition.policies.map((entry) => String(entry).split('/').pop()),
-        ...composition.packages.flatMap((pkg) => pkg.actions.map((action) => String(action).split('.')[0])),
-      ];
-      const hit = names.find((name) => prefixes.some((prefix) => name === prefix || String(name).startsWith(`${prefix}-`)));
+      const hit = probeFor(prefixes);
       add({
         id,
         value: hit ? 'implemented' : 'absent',
@@ -995,6 +1020,27 @@ export function buildFacts(bundle) {
         scope: 'repository',
         limitations: ['REFERENCE_COMPOSITION_NOT_THE_PROJECT'],
       });
+    }
+
+    // The second authority on the two declared-absence facts that had only a
+    // sentence behind them. Deleting the sentence already refused the fact;
+    // *building* the thing and leaving the sentence standing moved nothing,
+    // which is a claim outliving the code it describes.
+    for (const [id, rule] of Object.entries(DECLARED_ABSENCE)) {
+      if (!rule.absentPrefixes) continue;
+      const existing = facts.find((fact) => fact.id === id);
+      if (!existing) continue;
+      const hit = probeFor(rule.absentPrefixes);
+      if (hit) {
+        refuse(
+          id,
+          `${id}: ${rule.in} still declares this absent, but the reference composition now carries "${hit}", `
+            + `which the namespace probe (${rule.absentPrefixes.join('|')}) reads as the thing being present. `
+            + 'Two authorities must agree before a boundary fact may stand — update the declaration or the probe',
+        );
+      } else {
+        existing.evidence = [...existing.evidence, `namespace-probe:${rule.absentPrefixes.join('|')}`].sort(compare);
+      }
     }
   }
 

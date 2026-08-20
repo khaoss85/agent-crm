@@ -516,6 +516,28 @@ test('a rail whose dispatch line is deleted contradicts its handler, end to end'
   problemNaming(problems, 'project-doctor-command.js');
 });
 
+test('building the thing SPINE_NOT_MODELED says is absent contradicts the sentence', async () => {
+  // The half of the declared-absence rule that v1 did not have. Deleting the
+  // sentence already refused the fact; shipping a scheduler and leaving the
+  // sentence standing moved nothing at all — a claim outliving the code it
+  // describes, which is the failure this contract exists to close.
+  for (const [id, resource] of [
+    ['spine.durable_jobs.implemented', 'job-run'],
+    ['spine.secrets_backups.implemented', 'secret-binding'],
+  ]) {
+    const mutated = await bundle();
+    mutated.composition.resources = [...mutated.composition.resources, resource];
+    const { facts, problems } = buildFacts(mutated);
+    assert.ok(codes(problems).includes('TRUTH_AUTHORITIES_CONTRADICT'), `${id} published an answer anyway`);
+    assert.equal(facts.some((fact) => fact.id === id), false, `${id} stood while its authorities disagreed`);
+    problemNaming(problems, resource);
+  }
+  // And the boundary the fact actually states still holds: follow-up tasks and
+  // work tasks exist, a person moves every one of them, and neither is a job.
+  const clean = buildFacts(await bundle());
+  assert.equal(clean.facts.find((fact) => fact.id === 'spine.durable_jobs.implemented').value, 'absent');
+});
+
 test('a package the composition no longer holds contradicts its own factory', async () => {
   const mutated = await bundle();
   mutated.composition.packages = mutated.composition.packages.filter((entry) => entry.name !== 'work');

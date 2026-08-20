@@ -142,7 +142,14 @@ rather than an observation of silence.
   - **declared-absence** — the value comes from a list the source *declares* as not
     modelled (`SPINE_NOT_MODELED`, `TENANT_LIMITATIONS`, the frozen journey
     registry's limitation codes). Reading a declaration is not inferring from
-    silence, and a declaration that has gone is a failure, not a default.
+    silence, and a declaration that has gone is a failure, not a default. **Every
+    declared-absence fact also carries a second authority read from the code** —
+    the manifest's production dependencies for PostgreSQL, a namespace probe for
+    durable jobs and for secrets/backups, the journey limitation code for billing
+    — because a hand-maintained English sentence only ever answers "does the list
+    still say this". Deleting the sentence refuses the fact; *building* the thing
+    and leaving the sentence standing has to fail too, or the claim outlives the
+    code, which is what this whole contract is against.
   - **namespace-probe** — a product area is `absent` when **no** resource, action,
     capability or policy in the reference composition carries any of the prefixes the
     contract declares for it. The prefixes are published in the fact's own evidence,
