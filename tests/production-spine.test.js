@@ -499,3 +499,106 @@ test('a caller cannot point the HTTP boundary at another tenant', async (t) => {
   const body = await own.json();
   assert.equal(body.items.every((m) => m.organizationId === b.id), true);
 });
+
+// ------------------------------------------- migration and concurrency
+
+test('an existing project with no spine tables upgrades cleanly and keeps its data', async (t) => {
+  // C12: a database written before ADR-038 must keep booting. The migration is
+  // additive — it creates tables, it does not touch a single existing row.
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'spine-upgrade-'));
+  const dbPath = join(dir, 'old.sqlite');
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // 1. An "old" project: no spine composed, so nothing spine-aware runs.
+  const before = createAccordoApp({ dbPath });
+  const company = await before.services.companies.create({ name: 'Legacy Ltd' }, { actor: { type: 'user', id: 'old' } });
+  const auditBefore = before.audit.list({ limit: 500 }).length;
+  before.close();
+
+  // 2. The same database, reopened by a build that HAS the spine.
+  const after = createAccordoApp({ dbPath, spine: { mode: 'local-development' } });
+  t.after(() => after.close());
+  assert.equal(after.services.companies.get(company.id).name, 'Legacy Ltd', 'existing rows survive untouched');
+  assert.equal(after.audit.list({ limit: 500 }).length >= auditBefore, true, 'existing audit survives');
+
+  // 3. And the historical actor is NOT retroactively treated as verified.
+  const identity = after.spine.identityFor({ actor: { type: 'user', id: 'old' } });
+  assert.equal(identity.kind, 'asserted-local');
+  assert.notEqual(identity.kind, 'verified-user');
+
+  // 4. The local organization carries its provenance, so nobody later mistakes
+  //    it for one an operator configured.
+  assert.equal(after.spine.localOrganization().provenance, 'local-development-migration');
+});
+
+test('a restart preserves organizations, memberships and their reasons', async (t) => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'spine-restart-'));
+  const dbPath = join(dir, 'spine.sqlite');
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const first = createAccordoApp({ dbPath, spine: PROD });
+  const org = first.spine.organizations.create({ slug: 'tenant-a', name: 'Tenant A' });
+  first.spine.memberships.bootstrapOwner({ organizationId: org.id, subject: 'alice' });
+  first.spine.memberships.grant({
+    organizationId: org.id, subject: 'vic', role: 'viewer',
+    reason: 'read-only for the quarterly audit', identity: verified('alice', org.id), mode: first.spine.mode,
+  });
+  first.close();
+
+  const second = createAccordoApp({ dbPath, spine: PROD });
+  t.after(() => second.close());
+  const reopened = second.spine.organizations.bySlug('tenant-a');
+  assert.equal(reopened.id, org.id);
+  const vic = second.spine.memberships.find({ organizationId: org.id, subject: 'vic' });
+  assert.equal(vic.role, 'viewer');
+  assert.equal(vic.grantedBySubject, 'alice', 'who granted it survives the restart');
+  assert.match(vic.grantedReason, /quarterly audit/, 'and why');
+  // The decision is the same after a restart as before it.
+  assert.equal(second.spine.decide({ identity: verified('vic', org.id), organizationId: org.id, permission: 'records.write' }).allowed, false);
+});
+
+test('two connections to one tenant agree, and neither can reach the other tenant', async (t) => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'spine-concurrent-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // Two connections to tenant A, one to tenant B.
+  const a1 = createAccordoApp({ dbPath: join(dir, 'a.sqlite'), spine: PROD });
+  const a2 = createAccordoApp({ dbPath: join(dir, 'a.sqlite'), spine: PROD });
+  const b1 = createAccordoApp({ dbPath: join(dir, 'b.sqlite'), spine: PROD });
+  t.after(() => { a1.close(); a2.close(); b1.close(); });
+
+  const org = a1.spine.organizations.create({ slug: 'tenant-a', name: 'A' });
+  a1.spine.memberships.bootstrapOwner({ organizationId: org.id, subject: 'alice' });
+
+  // The second connection sees the first's writes, and decides identically.
+  assert.equal(a2.spine.organizations.bySlug('tenant-a').id, org.id);
+  assert.equal(
+    a2.spine.decide({ identity: verified('alice', org.id), organizationId: org.id, permission: 'records.write' }).allowed,
+    true,
+    'two connections to one tenant must not disagree about authorization',
+  );
+
+  // A duplicate organization slug is refused by the database, not by a race.
+  assert.throws(
+    () => a2.spine.organizations.create({ slug: 'tenant-a', name: 'A again' }),
+    (error) => error.code === 'CONFLICT',
+  );
+
+  // Tenant B knows nothing of A's organization or its members.
+  assert.equal(b1.spine.organizations.bySlug('tenant-a'), null);
+  assert.equal(b1.spine.memberships.find({ organizationId: org.id, subject: 'alice' }), null);
+  assert.equal(
+    b1.spine.decide({ identity: verified('alice', org.id), organizationId: org.id, permission: 'records.read' }).code,
+    'MEMBERSHIP_MISSING',
+    'a membership in another tenant’s database is not a membership here',
+  );
+});
