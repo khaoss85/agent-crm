@@ -238,7 +238,11 @@ try {
     }).code === 'ASSERTED_IDENTITY_REFUSED';
 
     // ---- no credential anywhere ----------------------------------------
-    const TOKEN = [Buffer.from('{"alg":"HS256"}').toString('base64url'), Buffer.from('{"sub":"NOT-A-REAL-SECRET"}').toString('base64url'), 'signature'].join('.');
+    // Built rather than written down: a literal JWT-shaped string in the
+    // repository would trip a secret scanner, which is a poor signal from a
+    // milestone whose claim is that no credential is stored anywhere.
+    const b64 = (value) => Buffer.from(value).toString('base64url');
+    const TOKEN = [b64('{"alg":"HS256"}'), b64('{"sub":"NOT-A-REAL-SECRET"}'), 'signature'].join('.');
     const withClaims = tenantA.spine.defineIdentity({
       kind: 'verified-user', subject: 'alice', issuer: 'https://issuer.test',
       method: 'oidc-id-token', organizationId: orgA.id, claims: { sub: 'alice', raw: TOKEN },
