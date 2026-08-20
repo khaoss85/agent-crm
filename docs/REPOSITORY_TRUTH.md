@@ -225,8 +225,9 @@ Bound: `README.md`, `PRODUCT.md`, `AGENTS.md`, `CLAUDE.md`, `TASKS.md`,
 `docs/PROJECT_STATUS.md`, `docs/CODER_TOOLING_ROADMAP.md`, `docs/QUALITY_GATES.md`,
 this file, `docs/strategy/EXECUTION_ROADMAP.md`,
 `docs/benchmarks/CRM_JTBD_MATRIX.md`, `docs/benchmarks/jobs.json`,
-`site/claims.json`, `site/assets/llms.txt`, `site/assets/llms-full.txt` and every
-`examples/scenarios/*.scenario.json`.
+`site/claims.json`, `site/assets/llms.txt`, `site/assets/llms-full.txt`, every
+`examples/scenarios/*.scenario.json`, and one source file —
+`packages/cli/src/app-inspect.js`, for the reason in the section above.
 
 Excluded **by path rule, never by heuristic**: `DECISIONS.md` (dated ADRs),
 `docs/plans/**`, `benchmarks/**`, `docs/transcripts/**`, `site/blog/**`,
