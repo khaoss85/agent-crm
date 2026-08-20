@@ -3429,6 +3429,20 @@ must fail each one:
   naming three things that had not moved. In a contract about documents that
   state what is no longer true, its own diagnostic may not.
 
+**The suite itself was flaky, and CI proved it rather than a person guessing.**
+`82976f1` ran `verify` twice, on two runners, at one commit: 1527/1527 pass on
+one, 1526/1527 on the other. The single failure was not an assertion — it was
+the `t.after` of a fixture test, `ENOTEMPTY: rmdir '<fixture>/.git'`, after every
+assertion in that test had already passed. A gate whose own suite is red on one
+runner and green on another is a gate people re-run instead of read, which is
+the habit this ADR exists to break, reproduced inside its own tests. Throwaway
+directories now remove with `maxRetries`/`retryDelay` and, failing that, leave a
+note on stderr rather than failing a run whose assertions all passed; no
+assertion was touched. Every git call in the file also runs with `gc.auto=0` and
+`maintenance.auto=false`, on the hypothesis that a detached auto-gc is the
+writer — a hypothesis, because the race did not reproduce locally in 75 rounds
+under three concurrent workers, and it is named as one rather than asserted.
+
 Two published inventories disagreed with their contents and are corrected:
 `docs/REPOSITORY_TRUTH.md` listed ten of the eleven `limitations[]` codes,
 dropping `CODE_VOCABULARY_INCLUDES_COMMENTS`, and `README.md`'s "Where it stops"

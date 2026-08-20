@@ -360,7 +360,10 @@ npm run crm -- project verify --json
   in `packages/cli/src/app-inspect.js`, in no bound surface and covered by no
   fact, so restoring it in a clean clone left `--check` green. That file is now
   bound, and the citation grammar takes `// truth: id=value` on a bound `.js`
-  surface.
+  surface. CI then caught the suite being flaky at one commit — 1527/1527 on one
+  runner, 1526/1527 on the other, failing only in a fixture's `t.after` — and the
+  throwaway directories now retry their removal and never fail a run whose
+  assertions passed.
 
 ### Three things the work changed about the plan
 
