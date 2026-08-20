@@ -31,8 +31,9 @@
  * stated in the output of every run rather than left for a reader to work out.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -101,7 +102,7 @@ export function scoreRun(directory) {
 
   const gates = [
     gateOne(record),
-    gateTwo(projectDir, prompt),
+    gateTwo(projectDir, prompt, record),
     gateThree(projectDir, prompt),
     gateFour(projectDir),
   ];
@@ -185,8 +186,9 @@ function gateOne(record) {
  * reviewer, so anything it asserts beyond "something was composed" is left to the operator.
  * @param {string} projectDir
  * @param {any} prompt
+ * @param {any} record
  */
-function gateTwo(projectDir, prompt) {
+function gateTwo(projectDir, prompt, record) {
   const gate = { ...EDITION_L_GATES[1], outcome: 'needs-operator', earned: 0, why: '' };
   const cli = findCli(projectDir);
   if (!cli) {
@@ -207,23 +209,90 @@ function gateTwo(projectDir, prompt) {
     return gate;
   }
 
-  const counts = {
-    modules: report.modules?.length ?? 0,
-    resources: report.resources?.length ?? 0,
-    actions: report.actions?.length ?? 0,
-  };
-  const composed = counts.modules + counts.resources + counts.actions;
-  if (composed === 0) {
+  const counts = composition(report);
+  if (counts.composed === 0) {
     gate.outcome = 'fail';
     gate.why = 'The composed application is empty: no modules, resources or actions.';
     return gate;
   }
 
+  // Everything above is mechanical and is decided before the record is consulted, so no verdict
+  // can turn an empty or unreadable project into a pass. What remains is the judgement the scorer
+  // refuses to make, and below is the only place an operator's answer to it is allowed to count.
+  const observed = `${counts.modules} modules, ${counts.resources} resources, ${counts.actions} actions`;
+  const verdict = latestVerdict(record);
+
+  if (!verdict) {
+    gate.why =
+      `Composed ${observed}. Whether that matches the brief — `
+      + `"${prompt?.expect ?? 'no expectation on file'}" — is a judgement this scorer does not `
+      + 'make. Record it: node benchmarks/harness/record.js <runDir> verdict pass|fail "<why>".';
+    return gate;
+  }
+
+  // A verdict describes a composition someone looked at. If the project has moved since, it is
+  // evidence about a different application, and carrying it forward would be the quiet kind of
+  // wrong this whole instrument exists to avoid.
+  const judged = verdict.observed;
+  if (!judged || judged.modules !== counts.modules || judged.resources !== counts.resources
+    || judged.actions !== counts.actions) {
+    gate.why =
+      `A verdict was recorded against ${judged ? formatCounts(judged) : 'an unrecorded composition'}, `
+      + `but the project now composes ${observed}. The verdict is stale: judge it again.`;
+    return gate;
+  }
+
+  gate.outcome = verdict.outcome;
+  if (verdict.outcome === 'pass') gate.earned = gate.weight;
   gate.why =
-    `Composed ${counts.modules} modules, ${counts.resources} resources, ${counts.actions} actions. `
-    + `Whether that matches the brief — "${prompt?.expect ?? 'no expectation on file'}" — is a `
-    + 'judgement this scorer does not make.';
+    `Composed ${observed}. Operator verdict ${verdict.outcome.toUpperCase()} at ${verdict.at}: `
+    + `"${verdict.reason}" — attested, not measured.`;
   return gate;
+}
+
+/** @param {any} report */
+function composition(report) {
+  const counts = {
+    modules: report?.modules?.length ?? 0,
+    resources: report?.resources?.length ?? 0,
+    actions: report?.actions?.length ?? 0,
+  };
+  return { ...counts, composed: counts.modules + counts.resources + counts.actions };
+}
+
+/** @param {{modules: number, resources: number, actions: number}} counts */
+function formatCounts(counts) {
+  return `${counts.modules} modules, ${counts.resources} resources, ${counts.actions} actions`;
+}
+
+/**
+ * The last verdict wins, and every earlier one stays in the record. Re-judging after a fix is
+ * legitimate; erasing the judgement that came before it is not.
+ * @param {any} record
+ */
+function latestVerdict(record) {
+  const verdicts = Array.isArray(record?.verdicts) ? record.verdicts : [];
+  return verdicts.length ? verdicts[verdicts.length - 1] : null;
+}
+
+/**
+ * What a run project composes, as the scorer sees it. Exported so the recorder captures the same
+ * numbers by the same route: two definitions of "composition" would drift, and the one that
+ * drifted would be the one deciding whether a verdict still applies.
+ *
+ * @param {string} projectDir
+ * @returns {{modules: number, resources: number, actions: number, composed: number} | null}
+ */
+export function observeComposition(projectDir) {
+  const cli = findCli(projectDir);
+  if (!cli) return null;
+  const inspect = spawnSync(
+    process.execPath,
+    ['--no-warnings', cli, 'app', 'inspect', '--json', '--root', projectDir],
+    { encoding: 'utf8', cwd: projectDir, timeout: 120_000 },
+  );
+  const report = parseTrailingJson(inspect.stdout ?? '');
+  return report ? composition(report) : null;
 }
 
 /**
@@ -255,7 +324,6 @@ function gateThree(projectDir, prompt) {
   }
 
   const corpus = tests.map((path) => readFileSync(path, 'utf8')).join('\n');
-  const found = boundaries.filter((token) => corpus.includes(token));
   const missing = boundaries.filter((token) => !corpus.includes(token));
 
   if (missing.length > 0) {
@@ -266,10 +334,128 @@ function gateThree(projectDir, prompt) {
     return gate;
   }
 
+  // Naming the edge is necessary and is not sufficient, which is what this gate used to treat it
+  // as. A file containing only the two numbers satisfied a substring search and earned the
+  // largest weight in the protocol without a CRM having been built. So the numbers are now the
+  // entry condition, and the gate goes on to ask the only question that distinguishes a test from
+  // a mention: if the rule changes, does the suite notice?
+  const sources = sourcesNaming(projectDir, boundaries);
+  if (sources.length === 0) {
+    gate.why =
+      `The tests name ${boundaries.join(' / ')}, but no non-test source in the project does, so `
+      + 'this scorer cannot find the rule to perturb and will not guess whether the suite asserts '
+      + 'it. Read the transcript and judge G3 by hand.';
+    return gate;
+  }
+
+  const falsified = falsifyBoundary(projectDir, sources, boundaries);
+  if (falsified.error) {
+    gate.why = `The boundary could not be perturbed to test the suite against it: ${falsified.error}.`;
+    return gate;
+  }
+  if (falsified.suiteStillPassed) {
+    gate.outcome = 'fail';
+    gate.why =
+      `The tests name ${boundaries.join(' / ')}, but changing the boundary in `
+      + `${sources.length} source file(s) left the suite green. A suite that passes with the rule `
+      + 'moved has not asserted the rule.';
+    return gate;
+  }
+
   gate.outcome = 'pass';
   gate.earned = gate.weight;
-  gate.why = `Boundary values ${found.join(' / ')} appear in ${tests.length} test file(s).`;
+  gate.why =
+    `Boundary values ${boundaries.join(' / ')} appear in ${tests.length} test file(s), and moving `
+    + `the boundary in ${sources.length} source file(s) turned the suite red — the rule is `
+    + 'asserted, not merely mentioned.';
   return gate;
+}
+
+/**
+ * Non-test project files that state one of the boundary values. These are where the rule is most
+ * likely to live, and the only places worth perturbing: rewriting a test to see the suite fail
+ * would prove nothing about the code.
+ *
+ * @param {string} projectDir
+ * @param {string[]} boundaries
+ * @returns {string[]} paths relative to projectDir
+ */
+function sourcesNaming(projectDir, boundaries) {
+  /** @type {string[]} */
+  const found = [];
+  const skip = new Set(['node_modules', '.git', 'data', 'dist', 'coverage']);
+  /** @param {string} dir */
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = readdirSync(join(projectDir, dir), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const relative = dir ? `${dir}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (!skip.has(entry.name)) walk(relative);
+        continue;
+      }
+      if (!/\.(js|mjs|cjs|json)$/.test(entry.name)) continue;
+      if (/(^|\/)tests?(\/|$)/.test(relative) || /\.test\.[cm]?js$/.test(entry.name)) continue;
+      if (entry.name === 'package-lock.json') continue;
+      let text;
+      try {
+        text = readFileSync(join(projectDir, relative), 'utf8');
+      } catch {
+        continue;
+      }
+      if (boundaries.some((token) => text.includes(token))) found.push(relative);
+    }
+  };
+  walk('');
+  return found;
+}
+
+/**
+ * Move the boundary and see whether the suite notices — on a copy, always. The run artifact is
+ * evidence, and a scorer that edits the thing it is scoring has stopped being a scorer.
+ *
+ * @param {string} projectDir
+ * @param {string[]} sources
+ * @param {string[]} boundaries
+ */
+function falsifyBoundary(projectDir, sources, boundaries) {
+  const workspace = mkdtempSync(join(tmpdir(), 'accordo-benchmark-g3-'));
+  const copy = join(workspace, 'project');
+  try {
+    cpSync(projectDir, copy, { recursive: true });
+    let rewritten = 0;
+    for (const relative of sources) {
+      const path = join(copy, relative);
+      const before = readFileSync(path, 'utf8');
+      let after = before;
+      for (const token of boundaries) {
+        // A boundary moved far enough that no rounding, tier or tolerance in the project could
+        // still land on it, and not a value derived from another boundary in the same set.
+        after = after.split(token).join(String(Number(token) + 7_777_700));
+      }
+      if (after !== before) {
+        writeFileSync(path, after);
+        rewritten += 1;
+      }
+    }
+    if (rewritten === 0) return { error: 'no source file changed when the boundary was rewritten' };
+
+    const run = spawnSync('npm', ['test', '--silent'], {
+      encoding: 'utf8',
+      cwd: copy,
+      timeout: 900_000,
+      env: suiteEnv(),
+    });
+    return { suiteStillPassed: run.status === 0 };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -288,7 +474,7 @@ function gateFour(projectDir) {
     encoding: 'utf8',
     cwd: projectDir,
     timeout: 900_000,
-    env: { ...process.env, npm_config_yes: 'true' },
+    env: suiteEnv(),
   });
 
   if (run.status === 0) {
@@ -332,6 +518,27 @@ export function boundaryTokens(text) {
   if (unique.length === 0) return [];
   if (unique.length === 1) return [String(unique[0]), String(unique[0] - 100)];
   return unique.map(String);
+}
+
+/**
+ * The environment a scored suite must run in.
+ *
+ * Node's test runner exports `NODE_TEST_CONTEXT` to its children, and a child `node --test`
+ * started with it inherited reports through the parent's channel instead of exiting on its own
+ * result: it returned 0 with the boundary moved and a test failing. A gate reading that would
+ * have called an unasserted rule asserted. `NODE_OPTIONS` is dropped for the neighbouring reason —
+ * a loader or coverage flag aimed at this harness has no business inside the project being
+ * measured.
+ *
+ * This matters beyond the test suite: any wrapper that sets these — CI, an outer runner, an agent
+ * harness — would otherwise make G3 and G4 read a false green.
+ */
+function suiteEnv() {
+  const env = { ...process.env, npm_config_yes: 'true' };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.NODE_OPTIONS;
+  delete env.NODE_V8_COVERAGE;
+  return env;
 }
 
 /** @param {string} projectDir */

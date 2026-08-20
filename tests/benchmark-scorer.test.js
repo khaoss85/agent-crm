@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { scoreRun, boundaryTokens, EDITION_L_GATES, EDITION_L_TOTAL } from '../benchmarks/harness/score.js';
+import { appendEntry, readRecord, summarise } from '../benchmarks/harness/record.js';
 
 /** @param {any} result @param {string} id */
 const gate = (result, id) => result.gates.find((/** @type {any} */ entry) => entry.id === id);
@@ -126,7 +127,10 @@ test('G3 fails a project whose tests never assert the stated boundary', () => {
   }
 });
 
-test('G3 passes when the boundary and the value below it are both asserted', () => {
+test('G3 refuses a project that only names the boundary without asserting it', () => {
+  // This case used to PASS and earn the protocol's largest weight. Two test names containing the
+  // right digits satisfied a substring search, so an untouched scaffold plus this file scored 60
+  // of 75 with no CRM built. It is pinned here as a failure because that is the defect.
   const directory = makeRun({ promptId: 'P02', project: true });
   try {
     writeFileSync(
@@ -136,8 +140,65 @@ test('G3 passes when the boundary and the value below it are both asserted', () 
       + "test('2500000 waits for a human', () => {});\n",
     );
     const result = scoreRun(directory);
+    // No non-test source states the boundary, so the scorer has nothing to perturb and says so
+    // rather than guessing in either direction.
+    assert.equal(gate(result, 'G3').outcome, 'needs-operator');
+    assert.equal(gate(result, 'G3').earned, 0);
+    assert.match(gate(result, 'G3').why, /cannot find the rule to perturb/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('G3 fails a suite that stays green when the rule it claims to test is moved', { timeout: 300_000 }, () => {
+  const directory = makeRun({ promptId: 'P02', project: true });
+  const projectDir = join(directory, 'project');
+  try {
+    // A rule in source, and a test that names the boundary while asserting nothing about it.
+    writeFileSync(join(projectDir, 'policy.js'), 'export const APPROVAL_THRESHOLD_CENTS = 2500000;\nexport const JUST_UNDER = 2499900;\n');
+    writeFileSync(
+      join(projectDir, 'approval.test.js'),
+      "import test from 'node:test';\n"
+      + "test('threshold is 2500000 and 2499900 is below it', () => {});\n",
+    );
+    writeFileSync(join(projectDir, 'package.json'), `${JSON.stringify({
+      name: 'g3-mention-only', private: true, type: 'module',
+      scripts: { test: 'node --test' },
+    }, null, 2)}\n`);
+
+    const result = scoreRun(directory);
+    assert.equal(gate(result, 'G3').outcome, 'fail');
+    assert.equal(gate(result, 'G3').earned, 0);
+    assert.match(gate(result, 'G3').why, /left the suite green/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('G3 passes a suite that goes red when the boundary moves', { timeout: 300_000 }, () => {
+  const directory = makeRun({ promptId: 'P02', project: true });
+  const projectDir = join(directory, 'project');
+  try {
+    writeFileSync(join(projectDir, 'policy.js'), 'export const APPROVAL_THRESHOLD_CENTS = 2500000;\n');
+    writeFileSync(
+      join(projectDir, 'approval.test.js'),
+      "import test from 'node:test';\n"
+      + "import assert from 'node:assert/strict';\n"
+      + "import { APPROVAL_THRESHOLD_CENTS } from './policy.js';\n"
+      + "test('2500000 needs approval and 2499900 does not', () => {\n"
+      + "  assert.equal(APPROVAL_THRESHOLD_CENTS, 2500000);\n"
+      + "  assert.ok(2499900 < APPROVAL_THRESHOLD_CENTS);\n"
+      + '});\n',
+    );
+    writeFileSync(join(projectDir, 'package.json'), `${JSON.stringify({
+      name: 'g3-asserted', private: true, type: 'module',
+      scripts: { test: 'node --test' },
+    }, null, 2)}\n`);
+
+    const result = scoreRun(directory);
     assert.equal(gate(result, 'G3').outcome, 'pass');
     assert.equal(gate(result, 'G3').earned, 25);
+    assert.match(gate(result, 'G3').why, /asserted, not merely mentioned/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -151,6 +212,79 @@ test('G3 asks for an operator when the prompt states no boundary to check', () =
     const result = scoreRun(directory);
     assert.equal(gate(result, 'G3').outcome, 'needs-operator');
     assert.equal(gate(result, 'G3').earned, 0, 'an unjudged gate earns nothing');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('G2 stays unjudged until an operator records a verdict, and the verdict is what decides it', () => {
+  // The half that was missing. G2 refuses to judge whether a composed model answers the brief —
+  // correctly — but until now there was nowhere for the human's answer to go, so every run was
+  // permanently unscoreable and the instrument could not emit the verdict it exists to emit.
+  const composed = { modules: 3, resources: 2, actions: 4, composed: 9 };
+  const directory = makeRun({ promptId: 'P02', project: true });
+  try {
+    writeFileSync(join(directory, 'project', 'package.json'), '{"name":"x","private":true}\n');
+
+    const unjudged = readRecord(directory);
+    assert.deepEqual(unjudged.verdicts, [], 'a record written before verdicts existed still reads');
+
+    const { entry } = appendEntry(
+      directory, 'verdict', 'Lead, Deal and the approval object are all present and named as the brief names them.',
+      () => '2026-08-20T00:00:00.000Z', 'pass', () => composed,
+    );
+    assert.equal(entry.gate, 'G2');
+    assert.deepEqual(entry.observed, composed, 'the verdict records what was judged, not just that it was');
+
+    const record = readRecord(directory);
+    assert.equal(record.verdicts.length, 1);
+    assert.match(summarise(record), /G2 pass \(operator\)/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a verdict cannot overrule a mechanical failure, and cannot be recorded against nothing', () => {
+  const directory = makeRun({ promptId: 'P02', project: true });
+  try {
+    // No CLI, so G2 fails mechanically. The operator adjudicates only what the scorer left open.
+    assert.throws(
+      () => appendEntry(directory, 'verdict', 'looks right to me', () => 'now', 'pass', () => null),
+      /composes nothing this scorer can read/,
+    );
+    assert.throws(
+      () => appendEntry(directory, 'verdict', 'looks right to me', () => 'now', 'pass',
+        () => ({ modules: 0, resources: 0, actions: 0, composed: 0 })),
+      /composes nothing this scorer can read/,
+    );
+    // And an outcome is not optional: "verdict" without pass|fail is a note, not a judgement.
+    assert.throws(
+      () => appendEntry(directory, 'verdict', 'unsure', () => 'now', undefined, () => ({ modules: 1, resources: 1, actions: 1, composed: 3 })),
+      /a verdict needs an outcome/,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a verdict recorded against a different composition goes stale rather than travelling', () => {
+  const directory = makeRun({ promptId: 'P02', project: true });
+  try {
+    writeFileSync(join(directory, 'run.json'), `${JSON.stringify({
+      runId: 'stale-run', promptId: 'P02', edition: 'L', frameworkSha: 'x',
+      agentProduct: 'a', modelVersion: 'm', interventions: [], approvals: [],
+      verdicts: [{
+        at: '2026-08-20T00:00:00.000Z', gate: 'G2', outcome: 'pass',
+        reason: 'judged when the project had a Deal object',
+        observed: { modules: 99, resources: 99, actions: 99, composed: 297 },
+      }],
+    }, null, 2)}\n`);
+
+    const result = scoreRun(directory);
+    // The project here composes nothing readable, so the mechanical failure still wins — which is
+    // itself the first rule. The stale path is asserted directly below.
+    assert.equal(gate(result, 'G2').outcome, 'fail');
+    assert.equal(gate(result, 'G2').earned, 0);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
