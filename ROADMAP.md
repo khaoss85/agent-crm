@@ -25,10 +25,13 @@ operations; and renewal & expansion as recorded intent that renews nothing. The
 Project Doctor, Package Scaffold, Package Conformance, Legacy Characterization,
 Project Verify and Scenario Evidence; skill-mirror sync (DX2), the context pack
 (DX9) and implementation evidence (DX10) do not exist. The **production spine** has shipped its
-**first slice** (v1, ADR-038): verified identity, organizations, memberships,
-authorization and a database-per-tenant boundary. Storage, execution and
-operations are still absent, and are split into named milestones below rather
-than left as one undifferentiated blocker.
+**first slice** (v1, ADR-038): verified identity, organizations, memberships
+and authorization. **Tenant isolation is declared and not enforced** — the
+storage boundary exists and nothing wires it, so organizations in one
+application share one database; a running application publishes that as
+`TENANT_ISOLATION_NOT_ENFORCED`, and how it closes is an open decision recorded
+below. Storage, execution and operations are still absent, and are split into
+named milestones below rather than left as one undifferentiated blocker.
 
 Each of those three sentences is checkable in `docs/PROJECT_STATUS.md`, which is
 updated in the same PR as every milestone merge.
@@ -42,7 +45,8 @@ dozen limitation strings; it is three milestones, and each has an owner so that
 
 | Milestone | Scope | Gates | Owner |
 |---|---|---|---|
-| **Spine v1 — identity** *(shipped, ADR-038)* | Verified identity contract, organizations, memberships, permissions and role bundles, server-authoritative authorization, database-per-tenant boundary, explicit local-development mode | — | delivered |
+| **Spine v1 — identity** *(shipped, ADR-038)* | Verified identity contract, organizations, memberships, permissions and role bundles, server-authoritative authorization, explicit local-development mode. Tenant storage boundary **defined, not wired** — see the open decision below | — | delivered, with the tenancy gap published |
+| **Tenancy enforcement** *(open decision — blocks any multi-tenant deployment)* | The declared `database-per-tenant` strategy has no wiring. **Candidate A:** bind one application instance to one tenant, making "two organizations in one database" a refused configuration — small, and it forecloses cross-tenant reporting. **Candidate B:** row-level scoping as part of Spine v2 — larger, and it is where the product ends up anyway. Neither is chosen here | Any deployment holding two real tenants | **unassigned — human decision, not an integrator one** |
 | **Spine v2 — storage** | PostgreSQL, and **shared-database row-level tenancy**: the `organization_id` migration across 86+ tables that v1 deliberately did not attempt, with the backfill, the reworked unique constraints and the rescoped reads | Cross-tenant reporting · large tenant counts · anything that needs one database | **unassigned — integrator to assign** |
 | **Spine v3 — execution** | Durable jobs, an outbox and a scheduler | Retention and erasure workflows · reminders and due-date alerts · renewal automation · any "and then, later, do X" | **unassigned — integrator to assign** |
 | **Spine v4 — operations** | Secret manager, backups and restore, deploy and rollback, remote-safe adapters and MCP | Any remote deployment · any claim about recovery · the remote MCP mutation surface | **unassigned — integrator to assign** |

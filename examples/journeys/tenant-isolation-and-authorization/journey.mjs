@@ -103,7 +103,15 @@ try {
   const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
 
   // ---- two tenants, two databases -------------------------------------
-  // The isolation model of v1: not a WHERE clause anybody could forget.
+  // **This journey builds the two databases itself**, and that is the honest
+  // description of v1: `database-per-tenant` is a strategy an operator DECLARES
+  // and must then implement by pointing each application at its own file. The
+  // framework does not do it for you — `createTenantStorage` is defined and
+  // nothing calls it — so two organizations inside ONE application share one
+  // database and can read and write each other's records and audit rows. The
+  // published schema says exactly that (`TENANT_ISOLATION_NOT_ENFORCED`), and
+  // everything below proves isolation for the one-application-per-tenant
+  // deployment only.
   const spineConfig = {
     mode: 'production',
     tenantStrategy: { strategy: 'database-per-tenant' },
@@ -261,7 +269,10 @@ try {
 
     console.log(JSON.stringify({
       ok: true,
-      summary: 'Composed two tenants as two databases under one production-mode spine; created identically '
+      summary: 'Composed two tenants AS TWO SEPARATE APPLICATIONS with two databases, because that is what '
+        + 'the declared database-per-tenant strategy actually requires of an operator in v1 — the framework '
+        + 'does not wire it, and two organizations inside one application share one database and are NOT '
+        + 'isolated, which the schema publishes as TENANT_ISOLATION_NOT_ENFORCED; created identically '
         + 'named records in both and proved neither can reach the other by id, by collection or by write; '
         + 'proved a membership in one tenant means nothing in the other and that a genuine owner of B pointed '
         + 'at A is refused for the organization, not for the record; let an authorized manager decide and '
@@ -286,9 +297,19 @@ try {
       // as booleans, because an observed value may only be a lowercase token
       // and both of these carry hyphens.
       mode: spineBlock.mode,
-      tenantStrategy: spineBlock.tenantStrategy,
+      tenantStrategyDeclared: spineBlock.tenantStrategyDeclared,
       modeIsProduction: spineBlock.mode === 'production',
-      tenantStrategyIsDatabasePerTenant: spineBlock.tenantStrategy === 'database-per-tenant',
+      tenantStrategyDeclaredDatabasePerTenant: spineBlock.tenantStrategyDeclared === 'database-per-tenant',
+
+      // The gap, published by the runtime and carried into the evidence rather
+      // than left for a reader to discover. Isolation below is proven for TWO
+      // APPLICATIONS; it is not a property the framework enforces.
+      crmDataPlaneIsolationEnforced: spineBlock.tenantIsolation.crmDataPlaneEnforced,
+      tenantStorageBoundaryWired: spineBlock.tenantIsolation.storageBoundaryWired,
+      controlPlaneScoped: spineBlock.tenantIsolation.controlPlaneScoped,
+      isolationProvenForSeparateApplicationsOnly: true,
+      unenforcedIsolationPublished:
+        spineBlock.limitations.some((line) => line.startsWith('TENANT_ISOLATION_NOT_ENFORCED')),
       assertedActorsAllowed: spineBlock.allowsAssertedActors,
       crossTenantByIdRefused,
       crossTenantByListRefused,

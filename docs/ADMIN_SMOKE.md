@@ -479,7 +479,7 @@ browser-validated unless all 32 pass.
 
 ## Identity, tenancy and authorization (Production Spine v1, ADR-038)
 
-**Spine-specific, scripted, and outside CI. 31 checks, all passing** — driven in
+**Spine-specific, scripted, and outside CI. 32 checks, all passing** — driven in
 real Chromium (**Chromium/141.0.7390.37**) on Node **22.16.0**, against three
 freshly seeded servers, twice from a clean fixture and a clean browser profile,
 with identical results both runs.
@@ -502,7 +502,7 @@ side by side.
 2. The mode reads `production`.
 3. The identity renders as `verified-user`, with the issuer that verified it.
 4. **No** local-development warning appears in production mode.
-5. The tenant is named, with its strategy (`database-per-tenant`).
+5. The tenant is named, with its strategy labelled **(declared)** — never bare, because the declared strategy is not the delivered one.
 6. *"An Organization is a tenant of this software … They are never the same thing."* renders verbatim.
 7. The owner sees the member list rather than a refusal.
 8. The owner's permissions include `admin.memberships.manage`.
@@ -529,6 +529,7 @@ side by side.
 29. No uncaught JavaScript error and no console error during the run.
 30. No failed resource during the run.
 31. No 5xx response during the run.
+32. **The unenforced-isolation warning renders**, as an *error* rather than a footnote — added after the review measured that the declared strategy is not enforced. It states that every Organization in this application shares one database, that a member of one can read and write another's CRM records and audit rows, and that memberships themselves ARE scoped correctly.
 
 **A harness correction worth recording.** The first run passed 30/31, and the
 one failure exposed that the harness was overwriting the actor header on
@@ -540,4 +541,4 @@ non-disclosure of tenant A rather than a status code, which is the property that
 actually matters.
 
 Report any step that fails; do not mark the identity and access section
-browser-validated unless all 31 pass.
+browser-validated unless all 32 pass.

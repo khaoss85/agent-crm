@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import {
-  NO_SPINE_WARNING, ORGANIZATION_IS_NOT_A_COMPANY, createSpineView,
+  NO_SPINE_WARNING, ORGANIZATION_IS_NOT_A_COMPANY, TENANT_ISOLATION_WARNING, createSpineView,
 } from '../apps/admin/public/admin-spine.js';
 
 /**
@@ -31,7 +31,16 @@ function stubClient({ context = {}, members = [], failMembers = false, noSpine =
           spineContract: 1,
           mode: 'production',
           warning: null,
-          tenantStrategy: 'database-per-tenant',
+          tenantStrategyDeclared: 'database-per-tenant',
+          tenantIsolation: {
+            declaredStrategy: 'database-per-tenant',
+            controlPlaneScoped: true,
+            crmDataPlaneEnforced: false,
+            storageBoundaryWired: false,
+            crossTenantCrmReadPossible: true,
+            crossTenantCrmWritePossible: true,
+            crossTenantAuditReadPossible: true,
+          },
           roles: ROLES,
           permissions: ['records.read', 'records.write', 'admin.memberships.manage'],
           identity: { kind: 'verified-user', subject: 'alice', issuer: 'https://issuer.test', method: 'oidc-id-token' },
@@ -56,6 +65,56 @@ const render = async (client) => {
   await createSpineView({ doc: createFakeDocument(), mount, client }).render();
   return mount;
 };
+
+/** The unenforced-isolation warning node, by its own class hook. */
+const gapNode = (mount) =>
+  mount.findAll('p').find((node) => node.classList.contains('spine-tenant-isolation-gap'));
+
+test('the declared tenant strategy never renders as a delivered guarantee', async () => {
+  // Review finding F-2. The screen used to print "Tenant strategy:
+  // database-per-tenant" beside a real Organization, which an operator reads as
+  // "my tenants are isolated". They are not: the boundary is unwired and every
+  // Organization in one application shares one database. The declaration and
+  // the gap now render together, and the gap renders as an error.
+  const mount = await render(stubClient());
+  const text = mount.textContent;
+
+  assert.match(text, /Tenant strategy \(declared\)/,
+    'the strategy must be labelled as declared, not stated bare');
+  assert.ok(text.includes(TENANT_ISOLATION_WARNING),
+    'the unenforced-isolation warning must render beside the declaration');
+  assert.match(text, /shares one database/,
+    'the operator must be told the concrete consequence, not a code');
+  assert.match(text, /Memberships themselves ARE scoped correctly/,
+    'and told what does hold, so the warning is not read as "nothing works"');
+
+  const gap = gapNode(mount);
+  assert.ok(gap, 'the gap has its own hook so a browser check can assert it');
+  assert.equal(gap.classList.contains('error'), true,
+    'it is an error, not a muted footnote — the same rule the local-mode warning follows');
+  assert.equal(gap.getAttribute('data-crm-data-plane-enforced'), 'false');
+  assert.equal(gap.getAttribute('data-control-plane-scoped'), 'true');
+});
+
+test('a runtime that did enforce isolation would render no gap warning', async () => {
+  // The other direction: this screen must not become a warning nobody can
+  // clear. When the runtime reports enforcement, the warning is absent.
+  const mount = await render(stubClient({
+    context: {
+      tenantIsolation: {
+        declaredStrategy: 'database-per-tenant',
+        controlPlaneScoped: true,
+        crmDataPlaneEnforced: true,
+        storageBoundaryWired: true,
+        crossTenantCrmReadPossible: false,
+        crossTenantCrmWritePossible: false,
+        crossTenantAuditReadPossible: false,
+      },
+    },
+  }));
+  assert.equal(mount.textContent.includes(TENANT_ISOLATION_WARNING), false);
+  assert.equal(gapNode(mount), undefined);
+});
 
 test('an application with no spine says so, rather than rendering an empty screen', async () => {
   // The failure this prevents: an operator opens the security screen, sees

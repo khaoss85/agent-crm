@@ -63,7 +63,8 @@ beside it rather than by widening the grammar for one document.
 
 `tenant-isolation-and-authorization` (Production Spine v1, ADR-038) is the
 fifth, over a sixth composition — and the composition is the emptiest yet: **no
-domain packages at all**, two tenants as two databases. That is deliberate. The
+domain packages at all**, two tenants composed by the journey as two separate
+applications with two databases. That is deliberate. The
 properties under test belong to the framework, so proving them over a
 composition holding nothing shows they do not depend on any package being
 present.
@@ -79,6 +80,26 @@ positive facts.
 and fourth consumers met, in the same place: an observed value may only be a
 lowercase token, so `database-per-tenant` is observed through a boolean the
 journey publishes beside it.
+
+**A correction the review forced, and the reason it belongs here.** The run
+originally observed `tenantStrategyIsDatabasePerTenant` and narrated *"isolation
+is two databases, not a filter anybody could forget to write"*. Both were true
+of the run and false of the framework: the journey composes the two
+applications and the two database files itself, and nothing in the product does
+that for an operator. Two organizations inside **one** application share one
+database, and the review measured the owner of one reading and writing the
+other's records and audit rows. The observation is now
+`tenantStrategyDeclaredDatabasePerTenant`, sitting beside
+`crmDataPlaneIsolationEnforced: false`, `tenantStorageBoundaryWired: false` and
+`isolationProvenForSeparateApplicationsOnly: true`, and the step narrative says
+which of the two things it proves.
+
+This is the failure mode a scenario is meant to catch and did not: **a run can
+prove a property of its own composition and be read as proving a property of
+the framework.** The discriminator is cheap to apply — if the journey had to
+build the arrangement by hand, the arrangement is part of the claim, not part
+of the product — and it is worth applying to every future journey that composes
+more than one application.
 
 One claim was written and then deliberately removed. `JTBD-DG-07` (restrict
 sensitive fields by role) was cited with a note explaining that v1 authorizes
