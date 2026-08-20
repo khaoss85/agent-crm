@@ -1,0 +1,123 @@
+{
+  "manifestVersion": 1,
+  "name": "customer-import-run",
+  "description": "One customer-data import. A preview run writes nothing at all, so every row here belongs to an applied run. The idempotency key is business-derived from the system, the mapping fingerprint and the canonical digest of the rows - never from a clock or a random value - so a retry of the same payload returns this same run, and a different payload under the same key is a conflict rather than an adoption.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "idempotencyKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "system",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "mapping",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "mappingVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "mappingFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "acceptance",
+      "type": "enum",
+      "values": [
+        "partial",
+        "all_or_nothing"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "applied",
+        "refused"
+      ],
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "rowCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "acceptedCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "rejectedCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "skippedCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "candidateCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "issueCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "actorType",
+      "type": "enum",
+      "values": [
+        "user",
+        "agent",
+        "system"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "actorId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "appliedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

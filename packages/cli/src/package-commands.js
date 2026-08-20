@@ -4,7 +4,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PackageRegistry, validatePackageDefinition } from '../../core/index.js';
-import { PRIVATE_IMPORT_RE, packageSources } from './package-sources.js';
+import { importsPrivateKernelPath, packageSources } from './package-sources.js';
 
 /**
  * `crm package validate|inspect` — the agent-facing surface of the domain
@@ -113,7 +113,7 @@ export async function validatePackageCommand({ packagePath }) {
 
   // The public-import rule: a package may not reach into kernel internals.
   const privateImports = packageSources(dir)
-    .filter((file) => PRIVATE_IMPORT_RE.test(readFileSync(file, 'utf8')))
+    .filter((file) => importsPrivateKernelPath(readFileSync(file, 'utf8')))
     .map((file) => file.slice(dir.length + 1));
   for (const file of privateImports) {
     problems.push(`${file} imports a private kernel path (packages/core/src/…); import from packages/core/index.js instead`);

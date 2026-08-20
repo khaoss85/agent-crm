@@ -104,16 +104,27 @@ test('the bounded operation context is frozen, and its key set is CLOSED', () =>
   const config = { probeTimeoutMs: 5 };
   const runtime = createOperationRuntime({ database: { d: 1 }, modules: { m: 1 }, events: { e: 1 }, config });
 
-  // Exactly the applicationOperations v1 contract — the keys the two real
-  // consumers use and nothing else (the ADR-032 implementation addendum in
-  // DECISIONS.md records the audit). Closed on purpose: an operation receives
-  // only documented capabilities, any additional field is non-contractual,
-  // and no action registry, workflow engine, provider registry, package
-  // registry, capability resolver — or unused extension point such as a
-  // trace writer — reaches an operation through it.
-  assert.deepEqual(Object.keys(runtime).sort(), ['config', 'database', 'events', 'modules', 'runExternal']);
+  // Exactly the applicationOperations contract — the keys real consumers use
+  // and nothing else (the ADR-032 implementation addendum in DECISIONS.md
+  // records the audit). Still closed on purpose: an operation receives only
+  // documented capabilities, any additional field is non-contractual, and no
+  // action registry, workflow engine, provider registry, package registry,
+  // capability resolver — or unused extension point such as a trace writer —
+  // reaches an operation through it.
+  //
+  // `core` joined the set under ADR-037, and it is the shape of that addition
+  // that keeps the contract honest: it is not a new power, it is the ADR-013
+  // adapter a record action already receives as `ctx.core`, given to
+  // application operations because a real consumer needed an exact indexed
+  // read of a core record and the alternatives were a 500-capped scan or raw
+  // SQL from a package. A key is added when a consumer proves it necessary,
+  // never in advance.
+  assert.deepEqual(Object.keys(runtime).sort(), ['config', 'core', 'database', 'events', 'modules', 'runExternal']);
   assert.equal(typeof runtime.runExternal, 'function');
   assert.equal('trace' in runtime, false, 'the deferred trace extension point is not shipped in v1');
+  // Absent adapters are an empty frozen object, never undefined: an operation
+  // that probes for `core` gets a shape, not a crash.
+  assert.equal(Object.isFrozen(createOperationRuntime({ database: {}, modules: {}, events: {} }).core), true);
   assert.equal(Object.isFrozen(runtime), true);
   assert.equal(Object.isFrozen(runtime.config), true);
 

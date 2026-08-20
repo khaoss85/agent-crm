@@ -258,6 +258,35 @@ function buildRouter(app) {
     return app.reconcileSignature({ envelopeId: params.id, actor });
   });
 
+  // Customer Data Foundation (ADR-037). Three enumerated routes, the same
+  // adapter pattern the signature routes follow: the kernel owns the path and
+  // delegates to the composed application operation, and without the package
+  // composed each answers an honest 404. ADR-032 deliberately refused to build
+  // arbitrary path registration for packages, so an enumerated adapter is the
+  // sanctioned shape rather than a shortcut around one.
+  router.add('POST', '/api/customer-data/import/preview', async ({ body, actor }) => {
+    if (typeof app.previewCustomerImport !== 'function') {
+      throw new NotFoundError('Operation', 'customer data import');
+    }
+    // A preview writes nothing, so it needs no human boundary — but it is
+    // still recorded as the actor who asked.
+    return app.previewCustomerImport({ ...(body ?? {}), actor });
+  });
+
+  router.add('POST', '/api/customer-data/import/apply', async ({ body, actor }) => {
+    if (typeof app.applyCustomerImport !== 'function') {
+      throw new NotFoundError('Operation', 'customer data import');
+    }
+    return app.applyCustomerImport({ ...(body ?? {}), actor });
+  });
+
+  router.add('GET', '/api/customer-data/profile/:resource/:id', async ({ params }) => {
+    if (typeof app.readCustomerProfile !== 'function') {
+      throw new NotFoundError('Operation', 'customer profile');
+    }
+    return app.readCustomerProfile({ resource: params.resource, id: params.id });
+  });
+
   // Uniform resource surface for generated modules (ADR-008). Only modules
   // that fully satisfy the generated-module contract are served; anything
   // else — unknown names, handwritten core modules, malformed or hand-edited

@@ -1,0 +1,280 @@
+{
+  "solutionPlanContract": 1,
+  "revision": 1,
+  "goal": {
+    "id": "govern-customer-identity",
+    "statement": "Bring customer records in from more than one source system, know which of them are the same customer, and let a person decide the ones the rules cannot — without ever destroying a record to do it.",
+    "outcome": "A sales team that can trust who a customer is: every imported row has a receipt, every duplicate is either an exact match or an open question with its evidence attached, every identity decision names who made it and why, and nothing was deleted, merged away or exported anywhere."
+  },
+  "metric": {
+    "name": "share_of_imported_rows_resolved_without_a_human",
+    "definition": "Proportion of imported rows that an exact rule matched or created, over all rows accepted in the period. The complement is the queue a person actually has to work.",
+    "baseline": "unknown — see evidence entry unavailable.no-prior-import-history",
+    "target": "stated by the organization; this plan does not invent one"
+  },
+  "application": {
+    "inspectionContract": 1,
+    "inspectionFingerprint": "6b29d66d065311ac75c26f3d9436e31625523e61aefdcdf1337a864f66d58697",
+    "packages": [
+      {
+        "name": "customer-data",
+        "version": 1
+      }
+    ],
+    "capabilities": [
+      {
+        "name": "customer-identity",
+        "version": 1,
+        "status": "resolved"
+      }
+    ],
+    "modules": [
+      {
+        "name": "customer-import-run",
+        "revision": 1
+      },
+      {
+        "name": "customer-import-row",
+        "revision": 1
+      },
+      {
+        "name": "external-identity",
+        "revision": 1
+      },
+      {
+        "name": "duplicate-candidate",
+        "revision": 1
+      },
+      {
+        "name": "canonical-link",
+        "revision": 1
+      },
+      {
+        "name": "data-quality-issue",
+        "revision": 1
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "id": "decision.use-customer-data-package",
+      "type": "configure",
+      "target": "customer-data.import",
+      "rationale": "The customer-data package already owns import provenance, external identifiers, duplicate evidence, canonical decisions and quality findings, and it requires nothing. Using it is configuration of what exists, not new modelling — and critically it adds no master customer table, so Company and Contact stay the records the rest of the application already uses.",
+      "rungsTried": [
+        1
+      ]
+    },
+    {
+      "id": "decision.keep-matching-deterministic",
+      "type": "configure",
+      "target": "customer-data.match-policy",
+      "rationale": "Which rules make two records the same customer is a business decision, so it belongs in a versioned, fingerprinted policy rather than in a score nobody can explain. Every rule is exact and no rule breaks a tie: a wrongly merged customer is expensive and nearly invisible, and an open question a person can answer is cheaper than a confident mistake.",
+      "rungsTried": [
+        1,
+        2
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "id": "step.preview-before-importing",
+      "decisionId": "decision.use-customer-data-package",
+      "description": "Read what a batch of rows would do before writing anything. A preview records nothing at all — not a business record, not an import run — so it is safe to run as often as it takes to agree on the mapping.",
+      "requiresCapabilities": [
+        "customer-identity"
+      ],
+      "approvals": [],
+      "verifies": [
+        "metric.rows-resolved-share"
+      ]
+    },
+    {
+      "id": "step.apply-the-import",
+      "decisionId": "decision.use-customer-data-package",
+      "description": "Apply the batch in one transaction, recomputing the resolution authoritatively rather than trusting the preview. Every row gets a receipt with an outcome and a reason code, the counts always reconcile, and the idempotency key is derived from the payload so a retried import is the same run.",
+      "requiresCapabilities": [
+        "customer-identity"
+      ],
+      "approvals": [],
+      "verifies": [
+        "metric.rows-resolved-share"
+      ]
+    },
+    {
+      "id": "step.decide-the-ambiguous-ones",
+      "decisionId": "decision.keep-matching-deterministic",
+      "description": "A human works the duplicate queue. Linking two records as one customer is a logical canonical merge with a required reason: both records still exist, both still resolve, and nothing is deleted, re-pointed or cascaded. An agent cannot make the decision, and a decision already made is not silently overwritten.",
+      "requiresCapabilities": [
+        "customer-identity"
+      ],
+      "approvals": [],
+      "verifies": [
+        "metric.rows-resolved-share"
+      ]
+    },
+    {
+      "id": "step.read-one-profile",
+      "decisionId": "decision.use-customer-data-package",
+      "description": "Read one consolidated profile per customer across the packages this application composes. It creates nothing, and a package that is not composed reads not available with a reason rather than as an empty result.",
+      "requiresCapabilities": [
+        "customer-identity"
+      ],
+      "approvals": [],
+      "verifies": [
+        "metric.rows-resolved-share"
+      ]
+    }
+  ],
+  "approvals": [],
+  "evidence": {
+    "observedFacts": [
+      {
+        "id": "fact.package-requires-nothing",
+        "statement": "The customer-data package declares no dependencies and offers one read-only capability, so it composes into an application that holds nothing else.",
+        "source": "app inspect: packages[] customer-data@1, capabilities[] customer-identity@1",
+        "citations": []
+      },
+      {
+        "id": "fact.no-master-customer-table",
+        "statement": "The package owns an import log, its receipts, external identifiers, duplicate evidence, canonical decisions and quality findings. None of them duplicates a business record: Company and Contact remain the host application's records.",
+        "source": "app inspect: resources[]; packages/customer-data/src/index.js",
+        "citations": []
+      },
+      {
+        "id": "fact.matching-is-a-fingerprinted-policy",
+        "statement": "Matching runs under deterministic-customer-match@1, a versioned policy with a content-addressed fingerprint stamped onto every receipt and candidate it produced.",
+        "source": "app inspect: policies[] customer-match-policy deterministic-customer-match@1",
+        "citations": []
+      },
+      {
+        "id": "fact.linking-is-logical",
+        "statement": "Linking two records writes a canonical/alias cluster beside them. Both records still exist, both still resolve, and nothing is deleted, rewritten or cascaded.",
+        "source": "schema domains.customer-data.canonicalIdentity; packages/customer-data/src/actions.js",
+        "citations": []
+      },
+      {
+        "id": "fact.absence-reads-as-absence",
+        "statement": "A profile section whose owning package is not composed reads available: false with a reason and a null count, never as a zero.",
+        "source": "schema domains.customer-data.profile.absence",
+        "citations": []
+      }
+    ],
+    "assumptions": [
+      {
+        "id": "assume.sources-export-bounded-batches",
+        "statement": "The organization's source systems can export customer rows in bounded batches of at most 500, rather than as a continuous stream.",
+        "citations": []
+      },
+      {
+        "id": "assume.a-person-works-the-queue",
+        "statement": "Somebody is accountable for the duplicate queue. Nothing here escalates, reminds or expires an open candidate, so an unworked queue simply stays open.",
+        "citations": []
+      }
+    ],
+    "derivedMetrics": [
+      {
+        "id": "metric.rows-resolved-share",
+        "statement": "The share of rows resolved without a person is computable from the receipts alone, because every row stores its outcome, its reason code and the rule that matched it.",
+        "citations": [
+          "fact.matching-is-a-fingerprinted-policy",
+          "fact.no-master-customer-table"
+        ]
+      }
+    ],
+    "inferences": [
+      {
+        "id": "infer.an-open-question-beats-a-guess",
+        "statement": "An ambiguous row should stay unresolved with its candidates attached rather than be resolved by a tie-break, because a wrongly merged customer is expensive to find and nearly impossible to undo.",
+        "citations": [
+          "fact.matching-is-a-fingerprinted-policy",
+          "assume.a-person-works-the-queue"
+        ]
+      }
+    ],
+    "recommendations": [
+      {
+        "id": "rec.use-the-existing-package",
+        "statement": "Configure the customer-data package rather than modelling customer identity anywhere else: a second model would split the evidence, and this one keeps the business records where they already are.",
+        "citations": [
+          "fact.no-master-customer-table",
+          "fact.package-requires-nothing"
+        ]
+      },
+      {
+        "id": "rec.never-call-it-a-merge",
+        "statement": "State that linking is logical wherever it is offered. An operator who reads 'merge' will expect one row afterwards, and this application deliberately leaves two.",
+        "citations": [
+          "fact.linking-is-logical",
+          "infer.an-open-question-beats-a-guess"
+        ]
+      },
+      {
+        "id": "rec.state-what-the-profile-is-not",
+        "statement": "Show the not-available reason wherever the profile is read. A section rendered as empty will be read as a claim that there is nothing, which an application that cannot see the owning package is not entitled to make.",
+        "citations": [
+          "fact.absence-reads-as-absence"
+        ]
+      }
+    ],
+    "unavailableEvidence": [
+      {
+        "id": "unavailable.no-prior-import-history",
+        "statement": "No baseline for how many rows resolve without a person exists, because no import has been recorded in this application yet.",
+        "reason": "Customer imports begin with this package; nothing recorded an import before it, and reconstructing a resolution history would be an invention rather than evidence.",
+        "citations": []
+      },
+      {
+        "id": "unavailable.no-way-to-know-who-a-customer-really-is",
+        "statement": "Whether two records genuinely describe the same legal entity cannot be established here, only whether the stated fields match exactly.",
+        "reason": "No registry, no company-number lookup and no external identity provider is integrated, so 'the same customer' is what a person decided or what an exact rule observed, and nothing here can check it against the world.",
+        "citations": []
+      },
+      {
+        "id": "unavailable.no-consent-or-lawful-basis",
+        "statement": "Whether the organization may hold, keep or erase any of this data cannot be answered by this application.",
+        "reason": "No consent, purpose, lawful-basis or retention concept exists in this framework, and erasure against immutable signed evidence is deliberately unresolved. Nothing here is a GDPR or legal-assurance claim.",
+        "citations": []
+      }
+    ]
+  },
+  "limitations": [],
+  "acceptance": {
+    "checks": [
+      "a preview writes no record, no import run, no audit row and no event",
+      "accepted plus rejected plus skipped always equals the row count, and every rejected row carries a reason code",
+      "the same import applied twice returns the same run, and creates no second one",
+      "an ambiguous row is left unresolved with every candidate reported, and no rule breaks the tie",
+      "linking two records requires a signed-in user actor and a reason, and both records are byte-identical afterwards",
+      "a record already inside a canonical cluster cannot be re-parented by deciding another candidate",
+      "a profile section for a package that is not composed reads not available with a reason, never as a zero"
+    ],
+    "jtbdRows": [
+      "JTBD-DO-01",
+      "JTBD-DO-02",
+      "JTBD-DO-03"
+    ],
+    "artifacts": [
+      {
+        "kind": "package",
+        "path": "packages/customer-data/src/index.js",
+        "description": "The Customer Data Foundation package definition, its three application operations and its declared capability."
+      },
+      {
+        "kind": "policy",
+        "path": "packages/customer-data/src/policy.js",
+        "description": "The deterministic match policy: three exact rules in a fixed precedence, and no tie-break."
+      },
+      {
+        "kind": "admin-view",
+        "path": "apps/admin/public/admin-customer-data.js",
+        "description": "The package-scoped customer data section: import preview and apply, receipts, the duplicate queue, the data-quality queue and the read-only profile."
+      },
+      {
+        "kind": "test",
+        "path": "tests/customer-data-faults.test.js",
+        "description": "Fault injection, two-connection races, restart, detach/reattach, hostile input and an old-database upgrade."
+      }
+    ]
+  }
+}

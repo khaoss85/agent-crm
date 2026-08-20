@@ -1,0 +1,149 @@
+{
+  "manifestVersion": 1,
+  "name": "duplicate-candidate",
+  "description": "Two records a deterministic rule says may be the same customer, with the rule and its evidence recorded. Nothing here is ever resolved automatically: an ambiguous match stays unresolved until a human decides, and no rule breaks a tie by picking one.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "leftResource",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "leftId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "leftOwner",
+      "type": "enum",
+      "values": [
+        "host",
+        "package"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "leftOwnerPackage",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "leftLabel",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "rightResource",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "rightId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "rightOwner",
+      "type": "enum",
+      "values": [
+        "host",
+        "package"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "rightOwnerPackage",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "rightLabel",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "rule",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "evidence",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "unresolved",
+        "linked",
+        "dismissed"
+      ],
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "detectedByRunId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "detectedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "decisionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedByType",
+      "type": "enum",
+      "values": [
+        "user"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "decidedById",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

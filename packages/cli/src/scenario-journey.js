@@ -169,6 +169,56 @@ export const JOURNEYS = Object.freeze({
       }),
     ]),
   }),
+  'customer-identity-governance': Object.freeze({
+    installer: 'examples/journeys/customer-identity-governance/journey.mjs',
+    clock: JOURNEY_CLOCKS.injected,
+    describes: 'the checked-in customer-identity journey: it composes an application holding the customer-data '
+      + 'package over the host\'s own Company and Contact and nothing else, previews a bounded import and proves it '
+      + 'wrote nothing while receipting every row, applies it into real host records with the source identifier held '
+      + 'beside them, retries the identical import and gets the same run, imports the SAME customer from a second '
+      + 'source system and matches it exactly on normalized name and domain without creating a parallel record, then '
+      + 'attempts a genuinely ambiguous row and proves the foundation refuses to guess — reporting every candidate, '
+      + 'breaking no tie and leaving durable evidence for a person — refuses an agent, an out-of-candidate canonical '
+      + 'and a reasonless decision, records the human canonical link and proves it deleted, rewrote and cascaded '
+      + 'nothing with both source rows byte-identical and both still resolving onto one cluster of one canonical and '
+      + 'one alias, refuses to silently re-parent a record already in a cluster, reads the consolidated profile from '
+      + 'both sides where an uncomposed package reads not available rather than empty, proves no raw provider payload '
+      + 'was stored anywhere, and governs a data-quality finding as a human while keeping the finding and its evidence',
+    limitations: Object.freeze([
+      Object.freeze({
+        code: 'MATCHING_IS_EXACT_ONLY',
+        message: 'every rule is an exact comparison on normalized values. Nothing scores, guesses, learns or breaks a '
+          + 'tie, so this run is not evidence about fuzzy matching, probabilistic identity resolution or machine-learning '
+          + 'entity resolution — none of which exist here. An ambiguous row is left unresolved for a person, and this '
+          + 'run attempts one so that the refusal is a fact rather than an absence',
+      }),
+      Object.freeze({
+        code: 'CANONICAL_IDENTITY_IS_A_LOGICAL_LINK',
+        message: 'linking records a human decision. Every linked record still exists, still resolves and is never '
+          + 'deleted, rewritten, re-parented or cascaded, and the run fingerprints both business rows as bytes before '
+          + 'and after to prove it. Physical merge or consolidation is not implemented and is deliberately deferred',
+      }),
+      Object.freeze({
+        code: 'THIS_IS_NOT_A_CDP_OR_A_WAREHOUSE',
+        message: 'the import reads the bounded rows it is handed and nothing else. There is no warehouse, no streaming, '
+          + 'no real-time activation, no arbitrary ETL, no global search index, and no external system is ever written. '
+          + 'No raw provider payload is stored, and the run searches the whole database to prove it',
+      }),
+      Object.freeze({
+        code: 'NO_CONSENT_RETENTION_OR_ERASURE_CLAIM',
+        message: 'nothing here is a GDPR, consent, retention or erasure claim, and no consent, purpose or lawful-basis '
+          + 'concept exists in this framework. Erasure against immutable signed evidence is deliberately unresolved, and '
+          + 'governing a data-quality finding records a decision and erases nothing',
+      }),
+      Object.freeze({
+        code: 'THE_PROFILE_IS_A_PROJECTION_NOT_A_TIMELINE',
+        message: 'the profile is a read-only projection over the packages this application composes. It creates '
+          + 'nothing, it is not a complete cross-channel customer timeline, and a package that is not composed reads '
+          + '"not available" with a reason rather than as an empty result — which this composition, holding no other '
+          + 'package at all, is what makes observable',
+      }),
+    ]),
+  }),
 });
 
 /** A journey that has not finished in this long is a defect, not a slow machine. */

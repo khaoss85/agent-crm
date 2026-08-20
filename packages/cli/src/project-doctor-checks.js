@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join, posix as posixPath, relative, resolve, sep } from 'node:path';
 import { readModuleState } from '../../core/src/module-evolution.js';
-import { PRIVATE_IMPORT_RE, importSpecifiers, packageSources } from './package-sources.js';
+import { importSpecifiers, importsPrivateKernelPath, packageSources } from './package-sources.js';
 import { repoRelative, safeMessage } from './safe-text.js';
 
 /**
@@ -257,7 +257,7 @@ export function packageChecks({ rootDir, composed, candidates, unresolved }) {
           unreadable.push({ package: pkg.path, detail: safeMessage(error, rootDir) });
           continue;
         }
-        if (PRIVATE_IMPORT_RE.test(source)) violations.push(repoRelative(rootDir, file));
+        if (importsPrivateKernelPath(source)) violations.push(repoRelative(rootDir, file));
       }
     }
     return { violations: violations.sort(), unreadable: unreadable.sort((a, b) => (a.package < b.package ? -1 : 1)) };
