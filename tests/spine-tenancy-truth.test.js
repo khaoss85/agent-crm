@@ -1,36 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
-import { TENANT_ISOLATION_NOT_ENFORCED } from '../packages/app/src/spine.js';
 
 /**
  * **What the schema says about tenant isolation must be what the runtime does.**
  *
- * Review finding F-2. `createTenantStorage` is defined, unit-tested and — as
- * shipped — called by nothing. `tenantStrategy` was checked for presence at
- * startup and then never used, so every organization composed into one
- * application shares one database while `/api/schema` published
- * `tenantStrategy: 'database-per-tenant'`. A reader had no way to tell the
- * declaration from the delivery except by attacking the product, which is the
- * one failure mode this repository exists to prevent.
+ * Review finding F-2. `createTenantStorage` was defined, unit-tested and called
+ * by nothing; `tenantStrategy` was checked for presence at startup and then
+ * unused, so two organizations in one application shared one database while
+ * `/api/schema` published `database-per-tenant`. A human decided how to close
+ * it — **one instance, one tenant, one storage binding** — and it is closed.
  *
- * **This file fixes nothing.** Which way the gap closes — bind one application
- * to one tenant so that "two organizations in one database" becomes a refused
- * configuration, or scope every read by organization as a Spine v2 slice — is a
- * tenancy-model decision for a human. What these tests do is make the published
- * claim and the measured behaviour impossible to separate, in **both**
- * directions:
+ * These tests survived that change on purpose. They never asserted "the schema
+ * says false"; they asserted **agreement** between the published metadata and
+ * the measured behaviour, in both directions. A test written the other way
+ * would have had to be deleted the moment the product improved, and deleting
+ * the test that caught a defect is how the defect comes back.
  *
- * - if isolation stays unenforced, the schema must keep saying so;
- * - the day somebody enforces it, these tests fail until the schema is updated
- *   to say *that* instead.
- *
- * A test that only asserted "the schema says false" would rot into a lie the
- * moment the product improved. This one cannot.
+ * So the same assertions now hold the opposite result, without a line of their
+ * logic changing shape: measure, publish, compare.
  */
 
 const ORG_HEADER = 'x-test-org';
@@ -50,28 +43,45 @@ const verifier = ({ headers }) => {
   };
 };
 
-/** One production-mode application holding two bootstrapped organizations. */
-async function twoTenantsInOneApplication(t) {
-  const app = createAccordoApp({
-    dbPath: ':memory:',
+/**
+ * Two tenants, as the model requires them: **two instances**, sharing one
+ * control plane, each bound to its own data plane.
+ *
+ * The old version of this helper composed one application holding two
+ * organizations. That configuration is now refused, which is the fix — so the
+ * fixture had to change shape, and the assertions below did not.
+ */
+async function twoBoundTenants(t) {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-truth-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const boot = (id, name) => createAccordoApp({
     spine: {
       mode: 'production',
       identityVerifier: verifier,
-      tenantStrategy: { strategy: 'database-per-tenant' },
+      tenant: { id, storageRoot: root, provision: { name } },
     },
   });
-  const server = createHttpServer(app);
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => { server.close(); app.close(); });
 
-  const alpha = app.spine.organizations.create({ name: 'Alpha', slug: 'alpha' });
-  const bravo = app.spine.organizations.create({ name: 'Bravo', slug: 'bravo' });
-  app.spine.memberships.bootstrapOwner({ organizationId: alpha.id, subject: 'alice' });
-  app.spine.memberships.bootstrapOwner({ organizationId: bravo.id, subject: 'mallory' });
+  const alpha = boot('alpha', 'Alpha');
+  const bravo = boot('bravo', 'Bravo');
+  const alphaServer = createHttpServer(alpha);
+  const bravoServer = createHttpServer(bravo);
+  await new Promise((resolve) => alphaServer.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => bravoServer.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    alphaServer.close(); bravoServer.close(); alpha.close(); bravo.close();
+  });
 
-  const base = `http://127.0.0.1:${server.address().port}`;
-  const call = async (method, path, body, headers = {}) => {
-    const response = await fetch(`${base}${path}`, {
+  alpha.spine.memberships.bootstrapOwner({
+    organizationId: alpha.spine.boundOrganization.id, subject: 'alice',
+  });
+  bravo.spine.memberships.bootstrapOwner({
+    organizationId: bravo.spine.boundOrganization.id, subject: 'mallory',
+  });
+
+  const callTo = (server) => async (method, path, body, headers = {}) => {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`, {
       method,
       headers: { 'content-type': 'application/json', ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -81,56 +91,61 @@ async function twoTenantsInOneApplication(t) {
     try { parsed = JSON.parse(text); } catch { parsed = null; }
     return { status: response.status, text, json: parsed };
   };
+
   return {
-    app,
-    call,
+    root,
     alpha,
     bravo,
-    asAlice: { [SUBJECT_HEADER]: 'alice', [ORG_HEADER]: alpha.id },
-    asMallory: { [SUBJECT_HEADER]: 'mallory', [ORG_HEADER]: bravo.id },
+    toAlpha: callTo(alphaServer),
+    toBravo: callTo(bravoServer),
+    asAlice: { [SUBJECT_HEADER]: 'alice', [ORG_HEADER]: alpha.spine.boundOrganization.id },
+    asMallory: { [SUBJECT_HEADER]: 'mallory', [ORG_HEADER]: bravo.spine.boundOrganization.id },
   };
 }
 
 test('the published isolation claim equals the measured cross-tenant behaviour', async (t) => {
-  const { app, call, alpha, asAlice, asMallory } = await twoTenantsInOneApplication(t);
+  const { alpha, toAlpha, toBravo, asAlice, asMallory } = await twoBoundTenants(t);
 
-  // Alpha's owner writes a record with a name nobody would confuse.
-  const created = await call('POST', '/api/companies',
+  const created = await toAlpha('POST', '/api/companies',
     { name: 'Alpha Confidential Ltd', domain: 'alpha-confidential.example' }, asAlice);
-  assert.equal(created.status, 201, 'the owner of Alpha may create a company in Alpha');
+  assert.equal(created.status, 201, "the owner of Alpha may create a company in Alpha");
 
   // ---- MEASURED: can Bravo's owner reach Alpha's data? -------------------
-  const bravoLists = await call('GET', '/api/companies', undefined, asMallory);
-  const namesVisibleToBravo = (bravoLists.json?.items ?? []).map((row) => row.name);
-  const observedCrossTenantRead =
-    bravoLists.status === 200 && namesVisibleToBravo.includes('Alpha Confidential Ltd');
+  // Two ways, because there are two ways to try: her own instance, and Alpha's.
+  const onHerOwnInstance = await toBravo('GET', '/api/companies', undefined, asMallory);
+  const acrossInstances = await toAlpha('GET', '/api/companies', undefined, asMallory);
+  const namesVisibleToBravo = [
+    ...(onHerOwnInstance.json?.items ?? []),
+    ...(acrossInstances.json?.items ?? []),
+  ].map((row) => row.name);
+  const observedCrossTenantRead = namesVisibleToBravo.includes('Alpha Confidential Ltd');
 
-  const bravoWrites = await call('POST', '/api/companies',
+  const bravoWrites = await toBravo('POST', '/api/companies',
     { name: 'Written By Bravo', domain: 'bravo-wrote-this.example' }, asMallory);
-  const alphaLists = await call('GET', '/api/companies', undefined, asAlice);
+  const alphaLists = await toAlpha('GET', '/api/companies', undefined, asAlice);
   const namesVisibleToAlpha = (alphaLists.json?.items ?? []).map((row) => row.name);
   const observedCrossTenantWrite =
     bravoWrites.status === 201 && namesVisibleToAlpha.includes('Written By Bravo');
 
-  const bravoReadsAudit = await call('GET', '/api/audit', undefined, asMallory);
-  const observedCrossTenantAudit =
-    bravoReadsAudit.status === 200
-    && (bravoReadsAudit.json?.items ?? []).some((row) => row.actorId === 'alice');
+  const bravoReadsAudit = await toBravo('GET', '/api/audit', undefined, asMallory);
+  const bravoReadsAlphaAudit = await toAlpha('GET', '/api/audit', undefined, asMallory);
+  const observedCrossTenantAudit = [
+    ...(bravoReadsAudit.json?.items ?? []),
+    ...(bravoReadsAlphaAudit.json?.items ?? []),
+  ].some((row) => row.actorId === 'alice');
 
   // ---- PUBLISHED: what does the schema say about all three? --------------
-  const published = app.spine.describe().tenantIsolation;
+  const published = alpha.spine.describe().tenantIsolation;
   assert.ok(published, 'the spine must publish a tenantIsolation block');
 
   assert.equal(published.crossTenantCrmReadPossible, observedCrossTenantRead,
-    'the published cross-tenant READ claim disagrees with the measured behaviour — '
-    + 'if this now refuses, say so in the schema; if it still discloses, keep saying so');
+    'the published cross-tenant READ claim disagrees with the measured behaviour');
   assert.equal(published.crossTenantCrmWritePossible, observedCrossTenantWrite,
     'the published cross-tenant WRITE claim disagrees with the measured behaviour');
   assert.equal(published.crossTenantAuditReadPossible, observedCrossTenantAudit,
     'the published cross-tenant AUDIT claim disagrees with the measured behaviour');
 
-  // Enforcement is the conjunction: it is enforced only when none of the three
-  // is possible. This is what makes the file impossible to satisfy by editing
+  // Enforcement is the conjunction, so the file cannot be satisfied by editing
   // one boolean.
   const observedEnforced =
     !observedCrossTenantRead && !observedCrossTenantWrite && !observedCrossTenantAudit;
@@ -138,60 +153,90 @@ test('the published isolation claim equals the measured cross-tenant behaviour',
     'crmDataPlaneEnforced must equal what a cross-tenant caller actually experiences');
 });
 
+test('a foreign tenant is not found, and is told nothing about what exists here', async (t) => {
+  const { alpha, bravo, toAlpha, asMallory } = await twoBoundTenants(t);
+
+  const refused = await toAlpha('GET', '/api/companies', undefined, asMallory);
+  assert.equal(refused.status, 404, 'another tenant is not found here, not forbidden here');
+  assert.ok(!refused.text.includes(bravo.spine.boundOrganization.id));
+  assert.ok(!refused.text.includes(alpha.spine.boundOrganization.id));
+  assert.ok(!refused.text.includes('alpha'), 'the bound tenant is not named in the refusal');
+
+  // Unauthenticated stays 401: "you presented nothing" describes the request,
+  // not this instance, so it discloses nothing and stays useful.
+  const anonymous = await toAlpha('GET', '/api/companies', undefined, {});
+  assert.equal(anonymous.status, 401);
+});
+
 test('the control plane is scoped, and the schema says exactly that', async (t) => {
-  const { app, call, alpha } = await twoTenantsInOneApplication(t);
+  const { alpha, toAlpha, asMallory } = await twoBoundTenants(t);
 
-  // Bravo's genuine owner, pointed at Alpha's organization.
-  const refused = await call('GET', '/api/spine/memberships', undefined, {
-    [SUBJECT_HEADER]: 'mallory', [ORG_HEADER]: alpha.id,
-  });
-  const observedControlPlaneScoped = refused.status === 403;
-  assert.match(refused.text, /MEMBERSHIP_MISSING/,
-    'the refusal must name the missing membership rather than an empty organization');
+  const refused = await toAlpha('GET', '/api/spine/memberships', undefined, asMallory);
+  const observedControlPlaneScoped = refused.status === 404 || refused.status === 403;
 
-  assert.equal(app.spine.describe().tenantIsolation.controlPlaneScoped, observedControlPlaneScoped,
+  assert.equal(alpha.spine.describe().tenantIsolation.controlPlaneScoped, observedControlPlaneScoped,
     'the published control-plane claim disagrees with the measured behaviour');
 });
 
-test('the limitation is published exactly while the gap is open', async (t) => {
-  const { app } = await twoTenantsInOneApplication(t);
-  const block = app.spine.describe();
-  const carriesTheCode = block.limitations.includes(TENANT_ISOLATION_NOT_ENFORCED);
+test('the published storage separation equals the storage the app is holding', async (t) => {
+  const { alpha, bravo } = await twoBoundTenants(t);
+  const published = alpha.spine.describe().tenantIsolation;
 
-  assert.equal(carriesTheCode, block.tenantIsolation.crmDataPlaneEnforced !== true,
-    'TENANT_ISOLATION_NOT_ENFORCED must be published while, and only while, isolation is unenforced');
-  assert.match(TENANT_ISOLATION_NOT_ENFORCED, /^TENANT_ISOLATION_NOT_ENFORCED — /,
-    'the limitation must lead with its stable code, like the four beside it');
-  assert.equal(block.limitations[0], TENANT_ISOLATION_NOT_ENFORCED,
-    'the gap leads the list — a reader needs it before they trust anything else in the block');
+  const observedSeparate =
+    alpha.database.path !== alpha.controlPlaneDatabase.path
+    && alpha.database.plane === 'data'
+    && alpha.controlPlaneDatabase.plane === 'control';
+  assert.equal(published.dataPlaneSeparateFromControlPlane, observedSeparate);
+
+  // And the two tenants really are two files, which is the isolation claim.
+  assert.notEqual(alpha.database.path, bravo.database.path);
+  assert.equal(alpha.controlPlaneDatabase.path, bravo.controlPlaneDatabase.path);
+
+  // A tenant database has no membership table, so a stray control-plane read
+  // from tenant-reachable code raises rather than returns.
+  assert.throws(
+    () => alpha.database.raw.prepare('SELECT * FROM spine_memberships').all(),
+    /no such table/,
+  );
 });
 
-test('no key in the published block asserts isolation as delivered', async (t) => {
-  const { app } = await twoTenantsInOneApplication(t);
-  const block = app.spine.describe();
+test('nothing in the published block claims more than the model delivers', async (t) => {
+  const { alpha } = await twoBoundTenants(t);
+  const block = alpha.spine.describe();
 
-  assert.ok(!('tenantStrategy' in block),
-    'the bare `tenantStrategy` key read as a delivered property of the running application; '
-    + 'the declared value belongs under `tenantStrategyDeclared` and the truth under `tenantIsolation`');
-  assert.equal(block.tenantStrategyDeclared, 'database-per-tenant',
-    'the declared strategy is still published — as a declaration');
-  assert.equal(block.tenantIsolation.declaredStrategy, block.tenantStrategyDeclared,
-    'the two published copies of the declaration must not be able to disagree');
+  assert.equal(block.tenantIsolation.sharedDatabaseMultiTenancy, false);
+  assert.equal(block.tenantIsolation.multipleOrganizationsInOneInstance, false);
+  assert.equal(block.tenantIsolation.postgresImplemented, false);
+  assert.equal(block.tenantStrategy, 'one-tenant-per-instance');
+  assert.ok(!('tenantStrategyDeclared' in block),
+    'declared-versus-enforced existed only while the two could disagree; they no longer can');
+
+  // The measured version of `multipleOrganizationsInOneInstance: false`: the
+  // configuration that would need it is refused, not accommodated.
+  assert.throws(
+    () => createAccordoApp({
+      spine: {
+        mode: 'production',
+        identityVerifier: verifier,
+        tenant: { id: 'alpha', storageRoot: '/tmp/never-created', tenants: ['alpha', 'bravo'] },
+      },
+    }),
+    (error) => error.code === 'SPINE_MULTIPLE_DATA_PLANE_BINDINGS',
+  );
 });
 
 /**
- * The wiring guard.
+ * The wiring guard, kept and inverted.
  *
- * `storageBoundaryWired` is a literal in the published block, and a literal can
- * go stale silently. This walks the shipped source — everything the application
- * actually runs, tests excluded — and holds the literal against whether
- * anything calls `createTenantStorage`. Wire it without republishing the truth
- * and this fails; republish without wiring it and this fails too.
+ * It used to prove the boundary was *not* wired, by scanning the shipped source
+ * for a call that did not exist. The scan is the same; what it now proves is
+ * that `storageBoundaryWired` still matches whether anything actually binds
+ * tenant storage. Unwire it and the published block must say so, or this fails.
  */
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SHIPPED_ROOTS = ['packages', 'apps'];
 const SKIP_DIRECTORIES = new Set(['node_modules', '.git', 'dist', 'coverage', 'tests', '__tests__']);
-const CALL_RE = /(?<!function\s)createTenantStorage\s*\(/;
+const CALL_RE = /(?<!function\s)bindTenantStorage\s*\(/;
 
 /** @param {string} dir @param {string[]} found */
 function walk(dir, found) {
@@ -212,13 +257,14 @@ test('storageBoundaryWired is what the shipped source actually does', async (t) 
   const callers = [];
   for (const root of SHIPPED_ROOTS) walk(join(REPO_ROOT, root), callers);
 
-  const { app } = await twoTenantsInOneApplication(t);
-  const published = app.spine.describe().tenantIsolation.storageBoundaryWired;
+  const { alpha } = await twoBoundTenants(t);
+  const published = alpha.spine.describe().tenantIsolation.storageBoundaryWired;
 
   assert.equal(published, callers.length > 0,
     callers.length > 0
-      ? `createTenantStorage is now called from ${callers.join(', ')} — the published `
-        + 'tenantIsolation block still says the boundary is unwired. Re-derive what this '
-        + 'application actually enforces before shipping it.'
-      : 'no shipped source calls createTenantStorage, so storageBoundaryWired must be false');
+      ? `bindTenantStorage is called from ${callers.join(', ')}, so the published block must not `
+        + 'say the boundary is unwired'
+      : 'no shipped source binds tenant storage, so storageBoundaryWired must be false — '
+        + 'and if that is genuinely the case, this milestone has regressed to F-2');
+  assert.ok(callers.length > 0, 'the tenant storage boundary must be wired into the application');
 });

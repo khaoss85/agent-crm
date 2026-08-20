@@ -14,28 +14,34 @@
     },
     {
       "id": "production-mode",
-      "narrative": "The runtime is in production mode, which is a configured fact rather than an inferred one: the mode is never derived from localhost, an interface address or a missing setting, and the application would have refused to start without an identity verifier and a tenant strategy. In this mode an asserted developer actor is not accepted at all. The tenant strategy is DECLARED and not enforced: the runtime publishes that its storage boundary is unwired and that the CRM data plane is not isolated, so the declaration below is read as a declaration and never as a delivered guarantee.",
+      "narrative": "The runtime is in production mode, which is a configured fact rather than an inferred one: the mode is never derived from localhost, an interface address or a missing setting, and the application would have refused to start without an identity verifier and a bound tenant. In this mode an asserted developer actor is not accepted at all. The tenant strategy is ENFORCED, not merely declared: this instance is bound to one tenant, its CRM database comes from that binding and nowhere else, and the configuration that would serve two tenants from one process is refused at startup — which this run performs rather than asserts.",
       "observe": [
         { "kind": "journey.fact", "fact": "modeIsProduction", "is": "true" },
         { "kind": "journey.fact", "fact": "assertedActorsAllowed", "is": "false" },
-        { "kind": "journey.fact", "fact": "tenantStrategyDeclaredDatabasePerTenant", "is": "true" },
-        { "kind": "journey.fact", "fact": "crmDataPlaneIsolationEnforced", "is": "false" },
-        { "kind": "journey.fact", "fact": "tenantStorageBoundaryWired", "is": "false" },
-        { "kind": "journey.fact", "fact": "unenforcedIsolationPublished", "is": "true" },
+        { "kind": "journey.fact", "fact": "crmDataPlaneIsolationEnforced", "is": "true" },
+        { "kind": "journey.fact", "fact": "tenantStorageBoundaryWired", "is": "true" },
+        { "kind": "journey.fact", "fact": "twoTenantsInOneApplicationRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "multipleOrganizationsInOneInstance", "is": "false" },
+        { "kind": "journey.fact", "fact": "sharedDatabaseMultiTenancyClaimed", "is": "false" },
+        { "kind": "journey.fact", "fact": "postgresImplemented", "is": "false" },
         { "kind": "journey.count", "metric": "permissions", "equals": 11 },
         { "kind": "journey.count", "metric": "roles", "equals": 5 }
       ]
     },
     {
       "id": "tenant-a-reads-only-a",
-      "narrative": "Two tenants hold records with the SAME name, so an isolation that worked by name would fail here. Neither tenant can reach the other's record by direct id, and neither collection read returns it. What is being proven is narrower than it looks: this journey composed TWO APPLICATIONS with two databases, and the separation comes from that composition. The framework does not wire it — two organizations inside ONE application share one database and can read and write each other's records — so this step establishes isolation for a one-application-per-tenant deployment and for nothing else.",
+      "narrative": "Two tenants hold records with the SAME name, so an isolation that worked by name would fail here. Neither tenant can reach the other's record by direct id, and neither collection read returns it, and the reason is structural rather than conditional: they are two database files, chosen by the framework from each instance's tenant binding. The two instances SHARE one control plane, so each can see that the other tenant exists — and neither can act for it, which is the distinction between visibility in the control plane and authority over a data plane. A genuine owner of the other tenant is refused as NOT FOUND rather than forbidden, because confirming that the tenant exists is itself the disclosure.",
       "observe": [
         { "kind": "journey.fact", "fact": "crossTenantByIdRefused", "is": "true" },
         { "kind": "journey.fact", "fact": "crossTenantByListRefused", "is": "true" },
         { "kind": "journey.fact", "fact": "bCannotSeeAAtAll", "is": "true" },
         { "kind": "journey.fact", "fact": "aCannotSeeB", "is": "true" },
-        { "kind": "journey.fact", "fact": "isolationProvenForSeparateApplicationsOnly", "is": "true" },
         { "kind": "journey.fact", "fact": "controlPlaneScoped", "is": "true" },
+        { "kind": "journey.fact", "fact": "foreignOwnerNotFoundOnA", "is": "true" },
+        { "kind": "journey.fact", "fact": "dataPlanesSeparate", "is": "true" },
+        { "kind": "journey.fact", "fact": "dataPlaneIsNotControlPlane", "is": "true" },
+        { "kind": "journey.fact", "fact": "controlPlaneShared", "is": "true" },
+        { "kind": "journey.fact", "fact": "tenantDatabaseHasNoMemberships", "is": "true" },
         { "kind": "journey.count", "metric": "companiesInTenantA", "equals": 1 },
         { "kind": "journey.count", "metric": "companiesInTenantB", "equals": 1 }
       ]
@@ -98,7 +104,7 @@
     },
     {
       "id": "what-this-is-not",
-      "narrative": "The omissions, published as positive facts rather than left unsaid. Shared-database tenancy is not claimed, and neither is enforced tenancy of any kind: the declared strategy is unwired, so two organizations in one application are not isolated. Nothing is scheduled and nothing is backed up, because no scheduler and no backup exist. And production readiness is not claimed at all, because PostgreSQL, durable jobs, secrets, backups and deployment are absent.",
+      "narrative": "The omissions, published as positive facts rather than left unsaid. Shared-database row-level tenancy is not claimed and not implemented: isolation here is one database per tenant and one tenant per instance, and PostgreSQL does not exist. Nothing is scheduled and nothing is backed up, because no scheduler and no backup exist. And production readiness is not claimed at all, because PostgreSQL, durable jobs, secrets, backups and deployment are absent.",
       "observe": [
         { "kind": "journey.fact", "fact": "sharedDatabaseTenancyClaimed", "is": "false" },
         { "kind": "journey.fact", "fact": "productionReadinessClaimed", "is": "false" },
@@ -111,7 +117,7 @@
     {
       "job": "JTBD-15",
       "steps": ["compose", "production-mode", "tenant-a-reads-only-a", "no-tenant-override", "an-authorized-manager-decides", "an-unauthorized-user-is-refused", "escalation-is-attempted-and-refused"],
-      "note": "the row is recorded as not supported and this run is what begins to move it. What it shows is real team and tenant permission enforcement: verified identity, organizations and memberships, eleven bounded permissions in five role bundles, a server-authoritative decision recorded in audit and trace, two separately composed tenant applications that cannot reach each other, and escalation attempts that are refused rather than assumed impossible. What it does NOT show, and what keeps the row short of validated: the framework authenticates nobody, so there is no login, session, password or credential anywhere — a deployment adapter must supply verified identity, and no real identity provider is contacted in this run. And tenancy is NOT enforced by the framework: the declared database-per-tenant strategy has no wiring, so isolation holds only when an operator runs one application per tenant, while two organizations inside one application share one database and can read and write each other's records. The runtime publishes that gap as TENANT_ISOLATION_NOT_ENFORCED. How it closes — one application bound to one tenant, or shared-database row-level scoping — is an open decision, not a shipped model."
+      "note": "the row is recorded as not supported and this run is what begins to move it. What it shows is real team and tenant permission enforcement: verified identity, organizations and memberships, eleven bounded permissions in five role bundles, a server-authoritative decision recorded in audit and trace, two separately composed tenant applications that cannot reach each other, and escalation attempts that are refused rather than assumed impossible. What it does NOT show, and what keeps the row short of validated: the framework authenticates nobody, so there is no login, session, password or credential anywhere — a deployment adapter must supply verified identity, and no real identity provider is contacted in this run. And tenancy is enforced by BINDING rather than by filtering: one instance serves one tenant, its CRM database comes from that binding, and a configuration naming two tenants is refused at startup. What that does NOT give you is shared-database row-level tenancy, cross-tenant reporting, or more than one organization per deployed instance — none of which is claimed, and the first of which is a later slice. PostgreSQL, durable jobs, secrets and backups remain absent, so this supports a controlled pilot of one organization per instance and nothing broader."
     },
     {
       "job": "JTBD-AX-06",

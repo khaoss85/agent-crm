@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
 import {
@@ -37,7 +39,48 @@ import {
 const b64 = (value) => Buffer.from(value).toString('base64url');
 const FAKE_TOKEN = [b64('{"alg":"HS256"}'), b64('{"sub":"NOT-A-REAL-SECRET"}'), 'signature'].join('.');
 
-const PROD = { mode: 'production', identityVerifier: () => {}, tenantStrategy: { strategy: 'database-per-tenant' } };
+/**
+ * **Composing a bound spine (ADR-038, amended).**
+ *
+ * There is no in-memory shortcut here on purpose. A spine-composed application
+ * takes its CRM database from the tenant binding and refuses an explicit path,
+ * so these tests exercise the same two-file, two-plane composition a deployment
+ * gets. The previous fixtures passed `dbPath: ':memory:'` and were, without
+ * noticing, testing the exact composition that shipped the F-2 defect.
+ */
+const roots = [];
+function storageRoot() {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-spine-'));
+  roots.push(root);
+  return root;
+}
+test.after(() => {
+  for (const root of roots) rmSync(root, { recursive: true, force: true });
+});
+
+/** Production spine config bound to one tenant, in its own storage root. */
+const prod = (overrides = {}) => ({
+  mode: 'production',
+  identityVerifier: () => {},
+  tenant: { id: 'alpha', storageRoot: storageRoot(), provision: { name: 'Alpha' } },
+  ...overrides,
+});
+
+/** Production spine config sharing a caller-owned root, for restart tests. */
+const prodIn = (root, id = 'alpha') => ({
+  mode: 'production',
+  identityVerifier: () => {},
+  tenant: { id, storageRoot: root, provision: { name: id } },
+});
+
+/** Local-development spine config, bound like any other. */
+const local = (root = storageRoot(), id = 'local') => ({
+  mode: 'local-development',
+  tenant: { id, storageRoot: root, provision: { name: 'Local development' } },
+});
+
+/** The app under test: bound, two-plane, and with no path to a shared database. */
+const boundApp = (spine = prod()) => createAccordoApp({ spine });
 
 /** A verified identity, as a deployment adapter would supply one. */
 const verified = (subject, organizationId, issuer = 'https://issuer.test') =>
@@ -65,15 +108,15 @@ test('the runtime mode is explicit, and an unset one is an error rather than the
 
 test('production fails startup — not the first request — without a verifier or a tenant strategy', () => {
   assert.throws(
-    () => createAccordoApp({ dbPath: ':memory:', spine: { mode: 'production' } }),
+    () => createAccordoApp({ spine: { mode: 'production' } }),
     (error) => error.code === 'SPINE_VERIFIER_REQUIRED',
   );
   assert.throws(
-    () => createAccordoApp({ dbPath: ':memory:', spine: { mode: 'production', identityVerifier: () => {} } }),
+    () => createAccordoApp({ spine: { mode: 'production', identityVerifier: () => {} } }),
     (error) => error.code === 'SPINE_TENANT_STRATEGY_REQUIRED',
   );
   // A refused boot gets investigated; a refused request at 3am gets retried.
-  const app = createAccordoApp({ dbPath: ':memory:', spine: PROD });
+  const app = boundApp();
   assert.equal(app.spine.mode.mode, 'production');
   assert.equal(app.spine.mode.allowsAssertedActors, false);
   app.close();
@@ -82,9 +125,11 @@ test('production fails startup — not the first request — without a verifier 
 // ---------------------------------------------------------------- identity
 
 test('an unverified identity authorizes nothing, and an assertion is never promoted to a verification', (t) => {
-  const app = createAccordoApp({ dbPath: ':memory:', spine: PROD });
+  const app = boundApp();
   t.after(() => app.close());
-  const org = app.spine.organizations.create({ slug: 'tenant-a', name: 'Tenant A' });
+  // The bound tenant, not one this test invented: an instance serves exactly
+  // the organization it was configured for.
+  const org = app.spine.boundOrganization;
   app.spine.memberships.bootstrapOwner({ organizationId: org.id, subject: 'alice' });
 
   for (const permission of PERMISSIONS) {
@@ -108,21 +153,34 @@ test('an unverified identity authorizes nothing, and an assertion is never promo
   assert.equal(app.spine.decide({ identity: verified('alice', org.id), organizationId: org.id, permission: 'records.read' }).allowed, true);
 });
 
-test('a verified identity cannot be pointed at an organization it was not verified for', (t) => {
-  const app = createAccordoApp({ dbPath: ':memory:', spine: PROD });
+test('a verified identity cannot be pointed at an organization this instance is not bound to', (t) => {
+  const app = boundApp();
   t.after(() => app.close());
-  const a = app.spine.organizations.create({ slug: 'tenant-a', name: 'A' });
+  const a = app.spine.boundOrganization;
+  // A SECOND organization exists in the control plane — a real deployment's
+  // control plane holds every tenant it provisions. This instance still serves
+  // exactly one of them, which is the property under test.
   const b = app.spine.organizations.create({ slug: 'tenant-b', name: 'B' });
   app.spine.memberships.bootstrapOwner({ organizationId: a.id, subject: 'alice' });
   app.spine.memberships.bootstrapOwner({ organizationId: b.id, subject: 'mallory' });
 
-  // The override C9 forbids: alice is a real owner in A, and asks about B.
+  // The override C9 forbids: alice is a real owner here, and asks about B.
+  // Refused for being another tenant entirely, before any permission or
+  // membership is considered.
   const decision = app.spine.decide({ identity: verified('alice', a.id), organizationId: b.id, permission: 'records.read' });
   assert.equal(decision.allowed, false);
-  assert.equal(decision.code, 'ORGANIZATION_MISMATCH');
+  assert.equal(decision.reason, 'TENANT_NOT_BOUND');
+  assert.equal(decision.organizationId, null, 'a refused tenant is not echoed back');
 
-  // And a subject with no membership in the organization it *was* verified for
-  // is refused for the ordinary reason, not accidentally allowed.
+  // Mallory is a genuine owner of B. Against THIS instance she is nobody, and
+  // she is told nothing about whether B exists.
+  assert.throws(
+    () => app.spine.authorize({ identity: verified('mallory', b.id), organizationId: b.id, permission: 'records.read' }),
+    (error) => error.status === 404,
+  );
+
+  // And a subject with no membership in the bound tenant is refused for the
+  // ordinary reason, not accidentally allowed.
   assert.equal(
     app.spine.decide({ identity: verified('nobody', a.id), organizationId: a.id, permission: 'records.read' }).code,
     'MEMBERSHIP_MISSING',
@@ -181,9 +239,9 @@ test('an unknown permission fails closed rather than passing', () => {
 });
 
 test('a system identity cannot exceed its bounded authority', (t) => {
-  const app = createAccordoApp({ dbPath: ':memory:', spine: PROD });
+  const app = boundApp();
   t.after(() => app.close());
-  const org = app.spine.organizations.create({ slug: 'tenant-a', name: 'A' });
+  const org = app.spine.boundOrganization;
   const webhook = defineIdentity({ kind: 'system', subject: 'signature-webhook', method: 'signed-webhook', organizationId: org.id });
 
   // What a webhook is for.
@@ -202,7 +260,7 @@ test('a system identity cannot exceed its bounded authority', (t) => {
 // ------------------------------------------------------------- membership
 
 test('membership administration refuses self-grant, escalation and the last-administrator trap', (t) => {
-  const app = createAccordoApp({ dbPath: ':memory:', spine: PROD });
+  const app = boundApp();
   t.after(() => app.close());
   const org = app.spine.organizations.create({ slug: 'tenant-a', name: 'A' });
   app.spine.memberships.bootstrapOwner({ organizationId: org.id, subject: 'alice' });
@@ -255,14 +313,29 @@ test('membership administration refuses self-grant, escalation and the last-admi
   );
 });
 
-test('an organization is not a company, in the schema and in the store', (t) => {
-  const app = createAccordoApp({ dbPath: ':memory:', spine: { mode: 'local-development' } });
+test('an organization is not a company, and now they are not even in the same database', (t) => {
+  const app = boundApp(local());
   t.after(() => app.close());
-  const tables = app.database.raw
+  const tablesIn = (db) => db.raw
     .prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
-  assert.ok(tables.includes('spine_organizations'), 'organizations are spine infrastructure');
-  assert.ok(tables.includes('companies'), 'companies remain a CRM record');
-  assert.notEqual('spine_organizations', 'companies');
+  const dataPlane = tablesIn(app.database);
+  const controlPlane = tablesIn(app.controlPlaneDatabase);
+
+  // The distinction used to be a naming convention inside one file. It is now
+  // structural: the tenant's own database has no membership table at all, so a
+  // stray read of one from tenant-reachable code raises `no such table` rather
+  // than returning rows.
+  assert.ok(controlPlane.includes('spine_organizations'), 'organizations are control-plane infrastructure');
+  assert.ok(dataPlane.includes('companies'), 'companies remain a CRM record');
+  assert.equal(dataPlane.includes('spine_organizations'), false, 'no tenant database holds organizations');
+  assert.equal(dataPlane.includes('spine_memberships'), false, 'no tenant database holds memberships');
+  assert.equal(controlPlane.includes('companies'), false, 'the control plane holds no CRM record');
+  assert.notEqual(app.database.path, app.controlPlaneDatabase.path, 'two planes, two files');
+  assert.throws(
+    () => app.controlPlaneDatabase.raw.prepare('SELECT * FROM companies').all(),
+    /no such table/,
+    'a CRM read against the control plane fails rather than quietly returning nothing',
+  );
 
   // The two are unrelated: creating a Company creates no Organization.
   const before = app.spine.organizations.list().length;
@@ -277,7 +350,7 @@ test('an organization is not a company, in the schema and in the store', (t) => 
 
 test('a tenant id is untrusted input on a filesystem path', () => {
   const storage = createTenantStorage({ root: '/tmp/spine-tenancy-test' });
-  assert.equal(storage.strategy, 'database-per-tenant');
+  assert.equal(storage.strategy, 'one-tenant-per-instance');
 
   for (const hostile of ['../../etc/passwd', '/etc/passwd', 'a/../b', '..', '.', '', 'A-Tenant',
     'tenant_a', 'x'.repeat(64), 'te\u0000st', 'te\u2028st']) {
@@ -293,8 +366,8 @@ test('a tenant id is untrusted input on a filesystem path', () => {
 test('two tenants are two databases: neither can read or write the other', async (t) => {
   // The isolation claim of v1, proven rather than asserted. Not a WHERE clause
   // anybody could forget — separate files, separate connections.
-  const a = createAccordoApp({ dbPath: ':memory:', spine: { mode: 'local-development' } });
-  const b = createAccordoApp({ dbPath: ':memory:', spine: { mode: 'local-development' } });
+  const a = boundApp(local());
+  const b = boundApp(local());
   t.after(() => { a.close(); b.close(); });
 
   const secret = await a.services.companies.create({ name: 'Tenant A Secret Customer' }, { actor: { type: 'user', id: 'dev' } });
@@ -322,7 +395,7 @@ test('two tenants are two databases: neither can read or write the other', async
 // -------------------------------------------------------------- local mode
 
 test('local-development mode preserves the developer experience, visibly rather than invisibly', async (t) => {
-  const app = createAccordoApp({ dbPath: ':memory:', spine: { mode: 'local-development' } });
+  const app = boundApp(local());
   t.after(() => app.close());
 
   assert.equal(app.spine.mode.allowsAssertedActors, true);
@@ -358,9 +431,9 @@ test('a project composed without the spine is unchanged, and says so rather than
 // --------------------------------------------------------- no secret leaks
 
 test('no decision, error or audit row can carry a credential', (t) => {
-  const app = createAccordoApp({ dbPath: ':memory:', spine: PROD });
+  const app = boundApp();
   t.after(() => app.close());
-  const org = app.spine.organizations.create({ slug: 'tenant-a', name: 'A' });
+  const org = app.spine.boundOrganization;
   app.spine.memberships.bootstrapOwner({ organizationId: org.id, subject: 'alice' });
 
   const TOKEN = FAKE_TOKEN;
@@ -398,14 +471,22 @@ test('no decision, error or audit row can carry a credential', (t) => {
 
   const audit = JSON.stringify(app.audit.list({ limit: 100 }));
   assert.ok(!audit.includes('NOT-A-REAL-SECRET'), 'no audit row carries a credential');
+
+  // Both planes, not just the one this test wrote to: a credential that leaked
+  // into control-plane evidence would be just as leaked.
+  for (const db of [app.database, app.controlPlaneDatabase]) {
+    const dump = db.raw.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()
+      .map((row) => JSON.stringify(db.raw.prepare(`SELECT * FROM "${row.name}" LIMIT 200`).all()))
+      .join('');
+    assert.ok(!dump.includes('NOT-A-REAL-SECRET'), `no row in ${db.plane} storage carries a credential`);
+  }
 });
 
 // --------------------------------------------------------- the HTTP surface
 
 test('the HTTP boundary refuses an unverified caller and distinguishes 401 from 403', async (t) => {
   const app = createAccordoApp({
-    dbPath: ':memory:',
-    spine: { ...PROD, identityVerifier: ({ headers }) => {
+    spine: { ...prod(), identityVerifier: ({ headers }) => {
       // A deliberately simple reference verifier: it trusts a header ONLY
       // because the test controls it, and it is the adapter's job — not the
       // framework's — to decide what verification means.
@@ -422,7 +503,7 @@ test('the HTTP boundary refuses an unverified caller and distinguishes 401 from 
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { await new Promise((r) => server.close(r)); app.close(); });
 
-  const org = app.spine.organizations.create({ slug: 'tenant-a', name: 'A' });
+  const org = app.spine.boundOrganization;
   app.spine.memberships.bootstrapOwner({ organizationId: org.id, subject: 'alice' });
   app.spine.memberships.grant({
     organizationId: org.id, subject: 'vic', role: 'viewer', reason: 'read only',
@@ -480,8 +561,7 @@ test('the HTTP boundary refuses an unverified caller and distinguishes 401 from 
 
 test('a caller cannot point the HTTP boundary at another tenant', async (t) => {
   const app = createAccordoApp({
-    dbPath: ':memory:',
-    spine: { ...PROD, identityVerifier: ({ headers }) => ({
+    spine: { ...prod(), identityVerifier: ({ headers }) => ({
       kind: 'verified-user', subject: headers['x-verified-subject'], issuer: 'https://issuer.test',
       method: 'oidc-id-token', organizationId: headers['x-verified-org'],
     }) },
@@ -491,26 +571,40 @@ test('a caller cannot point the HTTP boundary at another tenant', async (t) => {
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { await new Promise((r) => server.close(r)); app.close(); });
 
-  const a = app.spine.organizations.create({ slug: 'tenant-a', name: 'A' });
+  const a = app.spine.boundOrganization;
+  // B exists in the control plane — a real deployment provisions every tenant
+  // there — but this instance is bound to A and serves nothing else.
   const b = app.spine.organizations.create({ slug: 'tenant-b', name: 'B' });
   app.spine.memberships.bootstrapOwner({ organizationId: a.id, subject: 'alice' });
   app.spine.memberships.bootstrapOwner({ organizationId: b.id, subject: 'mallory' });
 
-  // Mallory is a genuine owner — of B. She asks for A's memberships by naming
-  // A's organization id, which is the whole cross-tenant attack.
+  // Mallory is a genuine owner — of B — verified as such, asking this instance.
+  // **404, not 403.** A 403 would confirm that B exists and that this instance
+  // knows about it; across a tenant boundary that confirmation is the
+  // disclosure.
   const crossTenant = await fetch(`${baseUrl}/api/spine/memberships`, {
+    headers: { 'x-verified-subject': 'mallory', 'x-verified-org': b.id },
+  });
+  assert.equal(crossTenant.status, 404, 'another tenant is not found here, not forbidden here');
+  const refusalBody = await crossTenant.text();
+  assert.ok(!refusalBody.includes(b.id), 'the refusal does not echo the organization it refused');
+  assert.ok(!refusalBody.includes('tenant-b'), 'nor its slug');
+
+  // Naming A's id instead does not help either: she holds no membership in the
+  // tenant this instance serves, and that is an ordinary 403 about HER.
+  const claimingA = await fetch(`${baseUrl}/api/spine/memberships`, {
     headers: { 'x-verified-subject': 'mallory', 'x-verified-org': a.id },
   });
-  assert.equal(crossTenant.status, 403, 'the verified organization is authoritative, not the request');
+  assert.equal(claimingA.status, 403, 'membership is necessary, and she has none here');
 
-  // And her own tenant still works, so the refusal is about the boundary and
-  // not about her.
+  // And alice, the bound tenant's owner, is served normally — so the refusals
+  // are about the boundary rather than about the route being broken.
   const own = await fetch(`${baseUrl}/api/spine/memberships`, {
-    headers: { 'x-verified-subject': 'mallory', 'x-verified-org': b.id },
+    headers: { 'x-verified-subject': 'alice', 'x-verified-org': a.id },
   });
   assert.equal(own.status, 200);
   const body = await own.json();
-  assert.equal(body.items.every((m) => m.organizationId === b.id), true);
+  assert.equal(body.items.every((m) => m.organizationId === a.id), true);
 });
 
 // ------------------------------------------- migration and concurrency
@@ -518,9 +612,6 @@ test('a caller cannot point the HTTP boundary at another tenant', async (t) => {
 test('an existing project with no spine tables upgrades cleanly and keeps its data', async (t) => {
   // C12: a database written before ADR-038 must keep booting. The migration is
   // additive — it creates tables, it does not touch a single existing row.
-  const { mkdtempSync, rmSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
   const dir = mkdtempSync(join(tmpdir(), 'spine-upgrade-'));
   const dbPath = join(dir, 'old.sqlite');
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -531,8 +622,15 @@ test('an existing project with no spine tables upgrades cleanly and keeps its da
   const auditBefore = before.audit.list({ limit: 500 }).length;
   before.close();
 
-  // 2. The same database, reopened by a build that HAS the spine.
-  const after = createAccordoApp({ dbPath, spine: { mode: 'local-development' } });
+  // 2. The same rows, adopted by a build that HAS the spine. A spine-composed
+  //    application takes its data plane from the binding, so adopting a legacy
+  //    file means placing it where the binding names — which is the real
+  //    migration an operator performs, and is deliberately explicit rather than
+  //    something the framework does silently to a database it was handed.
+  const adoptedRoot = join(dir, 'adopted');
+  mkdirSync(join(adoptedRoot, 'tenants'), { recursive: true });
+  copyFileSync(dbPath, join(adoptedRoot, 'tenants', 'legacy.sqlite'));
+  const after = createAccordoApp({ spine: local(adoptedRoot, 'legacy') });
   t.after(() => after.close());
   assert.equal(after.services.companies.get(company.id).name, 'Legacy Ltd', 'existing rows survive untouched');
   assert.equal(after.audit.list({ limit: 500 }).length >= auditBefore, true, 'existing audit survives');
@@ -548,15 +646,12 @@ test('an existing project with no spine tables upgrades cleanly and keeps its da
 });
 
 test('a restart preserves organizations, memberships and their reasons', async (t) => {
-  const { mkdtempSync, rmSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
   const dir = mkdtempSync(join(tmpdir(), 'spine-restart-'));
   const dbPath = join(dir, 'spine.sqlite');
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-  const first = createAccordoApp({ dbPath, spine: PROD });
-  const org = first.spine.organizations.create({ slug: 'tenant-a', name: 'Tenant A' });
+  const first = createAccordoApp({ spine: prodIn(dir, 'tenant-a') });
+  const org = first.spine.boundOrganization;
   first.spine.memberships.bootstrapOwner({ organizationId: org.id, subject: 'alice' });
   first.spine.memberships.grant({
     organizationId: org.id, subject: 'vic', role: 'viewer',
@@ -564,7 +659,7 @@ test('a restart preserves organizations, memberships and their reasons', async (
   });
   first.close();
 
-  const second = createAccordoApp({ dbPath, spine: PROD });
+  const second = createAccordoApp({ spine: prodIn(dir, 'tenant-a') });
   t.after(() => second.close());
   const reopened = second.spine.organizations.bySlug('tenant-a');
   assert.equal(reopened.id, org.id);
@@ -577,19 +672,16 @@ test('a restart preserves organizations, memberships and their reasons', async (
 });
 
 test('two connections to one tenant agree, and neither can reach the other tenant', async (t) => {
-  const { mkdtempSync, rmSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
   const dir = mkdtempSync(join(tmpdir(), 'spine-concurrent-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
   // Two connections to tenant A, one to tenant B.
-  const a1 = createAccordoApp({ dbPath: join(dir, 'a.sqlite'), spine: PROD });
-  const a2 = createAccordoApp({ dbPath: join(dir, 'a.sqlite'), spine: PROD });
-  const b1 = createAccordoApp({ dbPath: join(dir, 'b.sqlite'), spine: PROD });
+  const a1 = createAccordoApp({ spine: prodIn(dir, 'tenant-a') });
+  const a2 = createAccordoApp({ spine: prodIn(dir, 'tenant-a') });
+  const b1 = createAccordoApp({ spine: prodIn(dir, 'tenant-b') });
   t.after(() => { a1.close(); a2.close(); b1.close(); });
 
-  const org = a1.spine.organizations.create({ slug: 'tenant-a', name: 'A' });
+  const org = a1.spine.boundOrganization;
   a1.spine.memberships.bootstrapOwner({ organizationId: org.id, subject: 'alice' });
 
   // The second connection sees the first's writes, and decides identically.
@@ -606,28 +698,51 @@ test('two connections to one tenant agree, and neither can reach the other tenan
     (error) => error.code === 'CONFLICT',
   );
 
-  // Tenant B knows nothing of A's organization or its members.
-  assert.equal(b1.spine.organizations.bySlug('tenant-a'), null);
-  assert.equal(b1.spine.memberships.find({ organizationId: org.id, subject: 'alice' }), null);
-  assert.equal(
-    b1.spine.decide({ identity: verified('alice', org.id), organizationId: org.id, permission: 'records.read' }).code,
-    'MEMBERSHIP_MISSING',
-    'a membership in another tenant’s database is not a membership here',
+  // **The two instances share one control plane and do not share a data plane.**
+  // That separation is the whole model, so it is asserted rather than assumed:
+  // B's CRM database is a different file from A's, and neither is the control
+  // plane both of them read memberships from.
+  assert.notEqual(a1.database.path, b1.database.path, 'two tenants, two CRM databases');
+  assert.equal(a1.database.path, a2.database.path, 'two connections to one tenant, one file');
+  assert.equal(a1.controlPlaneDatabase.path, b1.controlPlaneDatabase.path, 'one control plane');
+  assert.notEqual(a1.database.path, a1.controlPlaneDatabase.path, 'and it is not either data plane');
+
+  // B's instance can SEE A's organization row — a shared control plane is what
+  // a deployment provisioning many tenants actually has — and still refuses to
+  // act for it, as not found. Visibility in the control plane is not authority
+  // over the data plane.
+  assert.ok(b1.spine.organizations.bySlug('tenant-a'), 'the control plane is shared, and that is fine');
+  assert.equal(b1.spine.isBoundTenant(org.id), false, 'but it is not the tenant B serves');
+  assert.throws(
+    () => b1.spine.authorize({ identity: verified('alice', org.id), organizationId: org.id, permission: 'records.read' }),
+    (error) => error.status === 404,
+    'a genuine owner of another tenant is not found on this instance',
   );
+
+  // The decisive one: a row written in A is not reachable from B at all,
+  // because it is not in B's database. No filter has to be remembered.
+  return a1.services.companies.create({ name: 'Only In A' }, { actor: { type: 'user', id: 'alice' } })
+    .then(() => {
+      assert.equal(a2.services.companies.list({ limit: 500 }).some((c) => c.name === 'Only In A'), true);
+      assert.equal(b1.services.companies.list({ limit: 500 }).length, 0, "B's data plane is empty");
+    });
 });
 
 test('a configured verifier is honoured in local mode too, and a failed verification still falls back to an assertion', async (t) => {
   // Ignoring a verifier because the mode is local would silently discard
   // explicit operator configuration — and somebody who wired one up in
   // development did so precisely to exercise it.
+  const localSpine = local();
   const app = createAccordoApp({
-    dbPath: ':memory:',
     spine: {
-      mode: 'local-development',
+      ...localSpine,
       identityVerifier: ({ headers }) => {
         const subject = headers['x-verified-subject'];
         if (typeof subject !== 'string' || subject === '') throw new Error('unverified');
-        return { kind: 'verified-user', subject, issuer: 'https://issuer.test', method: 'oidc-id-token' };
+        return {
+          kind: 'verified-user', subject, issuer: 'https://issuer.test', method: 'oidc-id-token',
+          organizationId: localSpine.tenant.id,
+        };
       },
     },
   });
@@ -662,8 +777,7 @@ test('the SDK preserves 401, 403 and 200 — and holds no credential of its own'
   // C11 requires could not even be exercised.
   const { AccordoClient } = await import('../packages/sdk/src/index.js');
   const app = createAccordoApp({
-    dbPath: ':memory:',
-    spine: { ...PROD, identityVerifier: ({ headers }) => {
+    spine: { ...prod(), identityVerifier: ({ headers }) => {
       const subject = headers['x-verified-subject'];
       if (typeof subject !== 'string' || subject === '') throw new Error('unverified');
       return {
@@ -677,7 +791,7 @@ test('the SDK preserves 401, 403 and 200 — and holds no credential of its own'
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { await new Promise((r) => server.close(r)); app.close(); });
 
-  const org = app.spine.organizations.create({ slug: 'tenant-a', name: 'A' });
+  const org = app.spine.boundOrganization;
   app.spine.memberships.bootstrapOwner({ organizationId: org.id, subject: 'alice' });
   app.spine.memberships.grant({
     organizationId: org.id, subject: 'vic', role: 'viewer', reason: 'read only',

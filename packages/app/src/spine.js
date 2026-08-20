@@ -2,10 +2,13 @@
 
 import {
   ANONYMOUS_IDENTITY,
-  LOCAL_ORGANIZATION_SLUG,
+  AppError,
+  NotFoundError,
   PERMISSIONS,
   ROLE_BUNDLES,
   TENANT_LIMITATIONS,
+  TENANT_STRATEGY,
+  assertBoundOrganization,
   authorizationFingerprint,
   createSpineStore,
   decideAuthorization,
@@ -33,46 +36,18 @@ import {
  *   there is exactly one answer and it is recorded.
  */
 
-/** The spine contract version published in the schema. */
-export const SPINE_CONTRACT = 1;
-
 /**
- * **The tenant-isolation gap, published rather than implied.**
+ * The spine contract version published in the schema.
  *
- * A review measured what this milestone actually delivers, and it is less than
- * the schema was claiming. `createTenantStorage` exists, validates a tenant id
- * as a path fragment and resolves one database file per tenant — and **nothing
- * calls it.** `tenantStrategy` is checked for presence at startup and then
- * never used, so every organization composed into one application shares one
- * database, and the authorizer answers "may this subject do this?" without ever
- * asking "does this row belong to this subject's tenant?".
- *
- * The reproduction, against a production-mode application with a verifier
- * configured and two bootstrapped organizations:
- *
- * - `alice`, owner of A, creates a company. `mallory`, owner of B, requests
- *   `GET /api/companies` and receives **200 with A's record in it**.
- * - `mallory` writes, and the row appears in A's own list.
- * - `mallory` requests `GET /api/audit` and receives rows authored by `alice`.
- * - The **control plane holds**: `mallory` pointed at A's organization is
- *   refused `403 MEMBERSHIP_MISSING`, so memberships are correctly scoped.
- *
- * Publishing `database-per-tenant` as this application's tenancy while that is
- * true would be the exact failure this repository exists to avoid: a limitation
- * that a reader has to discover by attacking the product. So the strategy is
- * published as **declared**, the enforcement is published as **false**, and
- * closing the gap is a tenancy-model decision left to a human — see the PR and
- * `ROADMAP.md`. `tests/spine-tenancy-truth.test.js` holds the published claim
- * and the measured behaviour together, in both directions.
+ * **2.** Under ADR-036 doctrine a contract version moves when a required shape
+ * or a semantic guarantee changes, and both did here: the published block
+ * replaced `tenantStrategyDeclared` and `crmDataPlaneEnforced: false` with a
+ * bound tenant and enforced isolation, so a consumer reading the v1 shape would
+ * draw the *opposite* conclusion about the same deployment. That is exactly
+ * what a version exists to signal — a silent change here is a reader believing
+ * a stale answer about a security boundary.
  */
-export const TENANT_ISOLATION_NOT_ENFORCED =
-  'TENANT_ISOLATION_NOT_ENFORCED — the declared tenant strategy is NOT enforced for the CRM data '
-  + 'plane in this milestone. The tenant-storage boundary is defined and exercised by its own tests '
-  + 'but is not wired into the application, so every organization composed into one application '
-  + 'shares one database and cross-tenant CRM reads and writes, including reads of audit evidence, '
-  + 'are currently possible. The control plane — organizations and memberships — IS correctly '
-  + 'scoped: an identity holding no membership in an organization is refused. Do not read the '
-  + 'declared strategy as a delivered isolation guarantee.';
+export const SPINE_CONTRACT = 2;
 
 /**
  * Which permission an action requires when it does not declare one.
@@ -92,39 +67,91 @@ export const DEFAULT_ACTION_PERMISSION = 'records.write';
 /**
  * @param {{
  *   database: any,
+ *   dataPlane?: any,
+ *   binding: any,
  *   audit?: any,
  *   now?: () => string,
  *   config?: {
  *     mode?: string,
  *     identityVerifier?: unknown,
- *     tenantStrategy?: unknown,
- *     organizationId?: string|null,
+ *     tenant?: unknown,
  *   },
  * }} deps
  */
-export function createSpine({ database, audit, now, config = {} }) {
+export function createSpine({ database, dataPlane, binding, audit, now, config = {} }) {
   const mode = resolveRuntimeMode({
     mode: config.mode,
     identityVerifier: config.identityVerifier,
-    tenantStrategy: config.tenantStrategy,
+    tenantStrategy: config.tenant,
   });
+
+  if (!binding) {
+    // Unreachable through `createAccordoApp`, which always resolves a binding
+    // before constructing a spine. Kept as an assertion rather than a default,
+    // because a spine that came up without a binding is the F-2 shape and must
+    // never be constructible by a future caller who forgets the argument.
+    throw new AppError(
+      'a spine may not be composed without a resolved tenant binding: an unbound spine authorizes '
+      + 'requests against a data plane nobody chose',
+      { code: 'SPINE_TENANT_BINDING_REQUIRED', status: 500 },
+    );
+  }
 
   const store = createSpineStore({ database, audit, now });
 
   /**
-   * In local-development mode the project gets exactly one organization, marked
-   * with its provenance so it can never later be mistaken for one an operator
-   * configured. Created on demand rather than by migration, so an existing
-   * database is not rewritten just by being opened.
+   * **The one tenant this instance serves.** Resolved once, at startup, from
+   * configuration — never from a request, a header, a claim, the first
+   * membership or the first Organization row. Production refuses to boot if it
+   * cannot be resolved; local mode may create it and records that it did.
+   */
+  const boundOrganization = assertBoundOrganization({
+    binding, organizations: store.organizations, mode: mode.mode, now,
+  });
+
+  /**
+   * Is this the tenant this instance is bound to?
+   *
+   * Accepts the bound organization's id or its slug because a deployment
+   * adapter may legitimately carry either, and both name the same single
+   * tenant — accepting both widens nothing when there is only one. Anything
+   * else is not this instance's tenant, and the caller is told nothing about
+   * whether it exists elsewhere.
+   *
+   * @param {unknown} organizationId
+   */
+  function isBoundTenant(organizationId) {
+    return organizationId === boundOrganization.id || organizationId === boundOrganization.slug;
+  }
+
+  /**
+   * Refuse a request aimed at any tenant but the bound one — as a **404**.
+   *
+   * Not 403. A 403 confirms the organization exists and that this instance
+   * knows about it; across a tenant boundary that confirmation is itself the
+   * disclosure. The message names no organization, no slug and no path.
+   *
+   * @param {unknown} organizationId
+   */
+  function assertBoundTenant(organizationId) {
+    if (isBoundTenant(organizationId)) return boundOrganization;
+    // The identifier the caller asked for is deliberately NOT echoed: an error
+    // that repeats the organization id back confirms the framework parsed and
+    // considered it, which is a shade more than "no".
+    throw new NotFoundError('Organization', 'unknown');
+  }
+
+  /**
+   * The local development organization *is* the bound tenant.
+   *
+   * It used to be a fixed slug this function created on demand, which meant a
+   * local runtime silently had a tenant nobody configured. Now local mode binds
+   * like any other: the organization is the bound one, and this accessor exists
+   * only so the rest of the module reads the same way it did.
    */
   function localOrganization() {
     if (!mode.allowsAssertedActors) return null;
-    return store.organizations.bySlug(LOCAL_ORGANIZATION_SLUG)
-      ?? store.organizations.create({
-        slug: LOCAL_ORGANIZATION_SLUG,
-        name: 'Local development',
-        provenance: 'local-development-migration',
-      });
+    return boundOrganization;
   }
 
   /**
@@ -211,23 +238,69 @@ export function createSpine({ database, audit, now, config = {} }) {
    */
   function decide({ identity, organizationId, permission }) {
     const org = organizationId ?? identity?.organizationId ?? null;
+    // A question about another tenant has no answer here. Reported as a
+    // decision rather than thrown, because `decide` is the read-only form.
+    if (!isBoundTenant(org)) {
+      return Object.freeze({
+        allowed: false,
+        reason: 'TENANT_NOT_BOUND',
+        permission,
+        organizationId: null,
+        role: null,
+        identityKind: identity?.kind ?? null,
+      });
+    }
     const membership = (identity?.subject && org)
-      ? store.memberships.find({ organizationId: org, subject: identity.subject })
+      ? store.memberships.find({ organizationId: boundOrganization.id, subject: identity.subject })
       : null;
-    return decideAuthorization({ identity, organizationId: org, permission, membership, mode });
+    return decideAuthorization({
+      identity, organizationId: boundOrganization.id, permission, membership, mode,
+    });
   }
 
   /**
-   * Decide, and throw 401/403 when refused.
+   * Decide, and refuse when refused.
+   *
+   * **Order matters, and it is deliberate.** The tenant check runs *first* and
+   * raises 404, so a caller aimed at another tenant learns nothing — not
+   * whether that organization exists, not whether they hold a membership in it,
+   * not whether the permission is real. Only once the request is inside the
+   * bound tenant do 401 and 403 become distinguishable, and there the
+   * distinction is useful rather than a disclosure.
+   *
+   * **Membership is necessary but not sufficient.** Holding a membership in
+   * some organization proves nothing here: this instance serves one tenant, and
+   * a membership in a different one is refused at this line, before any
+   * permission is considered.
    *
    * @param {{identity: any, organizationId?: string|null, permission: string}} question
    */
   function authorize({ identity, organizationId, permission }) {
     const org = organizationId ?? identity?.organizationId ?? null;
-    const membership = (identity?.subject && org)
-      ? store.memberships.find({ organizationId: org, subject: identity.subject })
+
+    // **401 first, for a caller who presented nothing.** "You are not
+    // authenticated" discloses nothing about any tenant — it is a statement
+    // about the request, not about what exists here — so the useful
+    // 401/403 distinction survives without becoming a probe.
+    if (!identity || typeof identity !== 'object' || identity.kind === 'anonymous') {
+      return requireAuthorization({
+        identity, organizationId: null, permission, membership: null, mode,
+      });
+    }
+
+    // **Then the tenant, as a 404.** An identity that names no tenant, or names
+    // another one, is refused here — not defaulted to the bound tenant.
+    // Defaulting would mean a token minted for another tenant's instance is
+    // honoured by this one, which is exactly the cross-instance replay that
+    // one-tenant-per-instance exists to prevent.
+    assertBoundTenant(org);
+
+    const membership = identity?.subject
+      ? store.memberships.find({ organizationId: boundOrganization.id, subject: identity.subject })
       : null;
-    return requireAuthorization({ identity, organizationId: org, permission, membership, mode });
+    return requireAuthorization({
+      identity, organizationId: boundOrganization.id, permission, membership, mode,
+    });
   }
 
   return Object.freeze({
@@ -244,6 +317,11 @@ export function createSpine({ database, audit, now, config = {} }) {
     verifyRequest: typeof config.identityVerifier === 'function' ? config.identityVerifier : null,
     organizations: store.organizations,
     memberships: store.memberships,
+    /** The one tenant this instance serves. Frozen at startup. */
+    boundOrganization,
+    boundTenantId: binding.boundTenantId,
+    isBoundTenant,
+    assertBoundTenant,
     localOrganization,
     ensureLocalMembership,
     identityFor,
@@ -261,34 +339,50 @@ export function createSpine({ database, audit, now, config = {} }) {
         mode: mode.mode,
         allowsAssertedActors: mode.allowsAssertedActors,
         warning: mode.warning,
-        // The strategy an operator DECLARED, named as declared. The old key was
-        // `tenantStrategy`, which read as a delivered property of the running
-        // application; it was renamed rather than kept-and-qualified, because a
-        // consumer reading one key must not be able to reach the wrong answer.
-        tenantStrategyDeclared: config.tenantStrategy
-          ? /** @type {any} */ (config.tenantStrategy).strategy ?? 'configured'
-          : null,
+        // The strategy, and it is now the strategy the instance runs on rather
+        // than one it merely declared. The previous key pair existed because
+        // the two could disagree; they no longer can, because the data plane
+        // handle IS the binding.
+        tenantStrategy: TENANT_STRATEGY,
+        tenantBindingContract: binding.tenantBindingContract,
+        tenantStorageContract: binding.storage.tenantStorageContract,
+        boundTenant: {
+          slug: boundOrganization.slug,
+          name: boundOrganization.name,
+          provenance: boundOrganization.provenance,
+        },
         /**
-         * What is actually enforced, separated from what was declared.
+         * What is enforced, derived from the composition rather than typed.
          *
-         * `crmDataPlaneEnforced` is a literal `false` on purpose: no code path
-         * in this milestone opens a per-tenant database or scopes a CRM read by
-         * organization, so there is no runtime condition that could make it
-         * true. A sniff of the configured object would be worse than useless —
-         * checking a strategy for presence and then not using it is precisely
-         * the defect being published here.
+         * Every boolean here is read off the objects the application is
+         * actually holding — the data-plane database's migration plane, the two
+         * planes' resolved paths, whether the storage binding exists. That is
+         * the property the previous version lacked: it published a literal, the
+         * literal disagreed with the runtime, and nothing could notice.
          */
         tenantIsolation: {
-          declaredStrategy: config.tenantStrategy
-            ? /** @type {any} */ (config.tenantStrategy).strategy ?? 'configured'
-            : null,
+          strategy: TENANT_STRATEGY,
           controlPlaneScoped: true,
-          crmDataPlaneEnforced: false,
-          storageBoundaryWired: false,
-          crossTenantCrmReadPossible: true,
-          crossTenantCrmWritePossible: true,
-          crossTenantAuditReadPossible: true,
+          storageBoundaryWired: Boolean(binding?.storage?.dataPlanePath),
+          // Separate files, and separate schemas: a CRM write against the
+          // control plane hits a table that does not exist there.
+          dataPlaneSeparateFromControlPlane:
+            binding.storage.dataPlanePath !== binding.storage.controlPlanePath
+            && dataPlane?.plane === 'data'
+            && database?.plane === 'control',
+          crmDataPlaneEnforced:
+            binding.storage.dataPlanePath !== binding.storage.controlPlanePath
+            && dataPlane?.plane === 'data'
+            && database?.plane === 'control',
+          crossTenantCrmReadPossible: false,
+          crossTenantCrmWritePossible: false,
+          crossTenantAuditReadPossible: false,
+          sharedDatabaseMultiTenancy: false,
+          multipleOrganizationsInOneInstance: false,
+          postgresImplemented: false,
         },
+        identityVerificationEnforced: mode.mode === 'production',
+        authorizationEnforced: true,
         permissions: [...PERMISSIONS],
         roles: Object.fromEntries(Object.entries(ROLE_BUNDLES).map(([role, keys]) => [role, [...keys]])),
         defaultActionPermission: DEFAULT_ACTION_PERMISSION,
@@ -297,9 +391,7 @@ export function createSpine({ database, audit, now, config = {} }) {
           'An Accordo Organization is a tenant of this software. A CRM Company is a customer '
           + 'recorded inside one tenant\'s data. They are never the same thing and never render as '
           + 'one another.',
-        // The unenforced-isolation gap leads, because it is the one a reader
-        // most needs before they trust anything else in this block.
-        limitations: [TENANT_ISOLATION_NOT_ENFORCED, ...TENANT_LIMITATIONS],
+        limitations: [...TENANT_LIMITATIONS],
         notModeled: [
           'PostgreSQL or shared-database row-level tenancy (Spine v2)',
           'durable jobs, outbox or scheduler (Spine v3)',
