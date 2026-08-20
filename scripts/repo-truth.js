@@ -1183,19 +1183,67 @@ export async function buildTruthDocument({ rootDir }) {
 export function parseCitations(source) {
   /** @type {Array<{line: number, id: string, value: string}>} */
   const found = [];
-  const lines = String(source).split('\n');
+  const text = String(source);
+  const lines = text.split('\n');
+  // Which `"word=word"` literals in this source are *declared* citations.
+  //
+  // v1 read the JSON form off any line, so any quoted `a=b` anywhere in a bound
+  // JSON file became a citation: adding `"note": "mode=production"` to
+  // `site/claims.json` produced `TRUTH_FACT_UNKNOWN` telling the author to
+  // "cite a generated fact or drop the citation" for a string that was never
+  // one. Both `docs/QUALITY_GATES.md` §6.1 and `docs/REPOSITORY_TRUTH.md`
+  // publish the narrower grammar — "a `facts` array of the same text in JSON" —
+  // so the parser now reads what the grammar says. A document is checked for
+  // the citations it *declares*; anything else is prose the contract does not
+  // get an opinion about.
+  const declared = declaredJsonCitations(text);
   for (let index = 0; index < lines.length; index += 1) {
     for (const match of lines[index].matchAll(CITATION)) {
       found.push({ line: index + 1, id: match[1], value: match[2] });
     }
-    // A JSON `"facts": ["id=value", …]` entry, matched where it sits so the
-    // reported line is the one a reader has to open.
+    if (!declared) continue;
+    // Matched where it sits, so the reported line is the one a reader opens.
     for (const match of lines[index].matchAll(/"([a-z][a-z0-9_.]*=[A-Za-z0-9_.-]+)"/g)) {
+      if (!declared.has(match[1])) continue;
       const parsed = CITATION_LITERAL.exec(match[1]);
       if (parsed) found.push({ line: index + 1, id: parsed[1], value: parsed[2] });
     }
   }
   return found;
+}
+
+/**
+ * Every string this source declares inside a `facts` array, at any depth.
+ *
+ * `null` when the source is not JSON at all — a Markdown document carries its
+ * citations as comments, and a quoted `a=b` in a sentence is a sentence.
+ *
+ * @param {string} text
+ * @returns {Set<string> | null}
+ */
+function declaredJsonCitations(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  /** @type {Set<string>} */
+  const declared = new Set();
+  const walkValue = (value, inFacts) => {
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        if (inFacts && typeof entry === 'string') declared.add(entry);
+        else walkValue(entry, false);
+      }
+      return;
+    }
+    if (value && typeof value === 'object') {
+      for (const [key, entry] of Object.entries(value)) walkValue(entry, key === 'facts');
+    }
+  };
+  walkValue(parsed, false);
+  return declared;
 }
 
 /**

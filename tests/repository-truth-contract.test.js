@@ -300,6 +300,25 @@ test('a JSON facts array is checked by the same grammar as a Markdown comment', 
   assert.deepEqual(codes(checkCitations(citations, index, 'site/claims.json')), ['TRUTH_FACT_VALUE_STALE']);
 });
 
+test('a quoted word=word that is not in a facts array is prose, not a citation', () => {
+  // v1 read the JSON form off any line, so an ordinary string in a bound JSON
+  // file became a citation nothing could resolve: adding `"note":
+  // "mode=production"` to site/claims.json produced TRUTH_FACT_UNKNOWN telling
+  // the author to "cite a generated fact or drop the citation" for a string
+  // that was never one. The published grammar says `facts` array; so does the
+  // parser now.
+  assert.deepEqual(parseCitations('{\n  "note": "mode=production"\n}\n'), []);
+  assert.deepEqual(parseCitations('{\n  "docs": ["rail.app_inspect.implemented=absent"]\n}\n'), []);
+  // A Markdown document carries citations as comments; a quoted a=b in a
+  // sentence is a sentence.
+  assert.deepEqual(parseCitations('Run it with `"mode=production"` set.\n'), []);
+  // The real thing still parses, nested at any depth.
+  assert.deepEqual(
+    parseCitations('{\n  "a": { "b": [ { "facts": [\n    "billing.implemented=absent"\n  ] } ] }\n}\n'),
+    [{ line: 3, id: 'billing.implemented', value: 'absent' }],
+  );
+});
+
 // ───────────────────────── negative: the canonical regression, written as a rule
 
 test('a retired limitation code standing in a current document fails — the PR #102 regression', () => {
