@@ -215,3 +215,44 @@ test('a body actor spoof reaches nothing, over the real HTTP boundary', async (t
   assert.deepEqual([...new Set(actors)], ['user:alice'],
     'every row records the VERIFIED caller, and no spoof reached the audit trail');
 });
+
+/**
+ * Review finding. The module claimed `grep trustedSystemActor` was "a complete
+ * audit of every place the framework claims its own authority". It is not:
+ * `SYSTEM_ACTOR` is exported and directly usable, and a deliberately
+ * well-formed `{type: 'system'}` normalizes to a system actor by design.
+ *
+ * The claim is now stated narrowly, and this test is what keeps it true — it
+ * measures the two counts the doc asserts instead of asserting them in prose.
+ * Both are zero today, which is the strongest state available: the privileged
+ * path exists and nothing in the framework needs it.
+ */
+test('framework self-authority stays at zero, measured rather than asserted', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+
+  const grep = (pattern) => {
+    try {
+      return execFileSync('grep', ['-rn', pattern, 'packages', 'apps', '--include=*.js'],
+        { cwd: repoRoot, encoding: 'utf8' }).split('\n').filter(Boolean);
+    } catch {
+      return []; // grep exits 1 on no match, which is the answer we want.
+    }
+  };
+
+  const isComment = (line) => /:\s*(\*|\/\/)/.test(line);
+  const inActorModule = (line) => line.includes('packages/core/src/actor.js');
+  const isReExport = (line) => line.includes('packages/core/index.js');
+
+  const trusted = grep('trustedSystemActor(')
+    .filter((line) => !isComment(line) && !inActorModule(line) && !isReExport(line));
+  assert.deepEqual(trusted, [],
+    'a new trustedSystemActor call site is a new place the framework claims root — '
+    + 'justify it here and update this expectation deliberately');
+
+  const systemActor = grep('SYSTEM_ACTOR')
+    .filter((line) => !isComment(line) && !inActorModule(line) && !isReExport(line));
+  assert.deepEqual(systemActor, [],
+    'a direct SYSTEM_ACTOR reference bypasses the named path entirely');
+});

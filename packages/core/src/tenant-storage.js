@@ -1,5 +1,6 @@
 // @ts-check
 
+import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { AppError, ValidationError } from './errors.js';
 
@@ -194,7 +195,15 @@ export function bindTenantStorage({ root, tenantId, controlPlanePath }) {
 
   // The one thing a binding must never do is put both planes in one file: that
   // would put Memberships inside the data a tenant's own users can reach.
-  if (dataPlanePath === storage.controlPlanePath) {
+  //
+  // Comparing the two strings is not enough, and a review proved it: a
+  // `controlPlanePath` that is a **symlink** to the tenant's own database has a
+  // different resolved path and the same bytes, so string equality reported two
+  // planes where there was one file. `resolve()` normalizes `.` and `..`; it
+  // does not follow a link, and it cannot see a hard link at all. So the two
+  // are compared as the filesystem sees them — by real path, and by device and
+  // inode where both files already exist.
+  if (sameFile(dataPlanePath, storage.controlPlanePath)) {
     throw new AppError(
       'the tenant data plane and the control plane resolved to the same database, which would put '
       + 'memberships inside tenant-reachable data',
@@ -211,4 +220,34 @@ export function bindTenantStorage({ root, tenantId, controlPlanePath }) {
     controlPlanePath: storage.controlPlanePath,
     limitations: TENANT_LIMITATIONS,
   });
+}
+
+/**
+ * Are these two paths the same file as the filesystem understands it?
+ *
+ * Three comparisons, weakest last, because each catches something the next
+ * cannot: device and inode catch a hard link, the real path catches a symlink,
+ * and the resolved string is the only answer available when neither file exists
+ * yet — which is the ordinary case at first boot.
+ *
+ * @param {string} left @param {string} right
+ */
+function sameFile(left, right) {
+  if (left === right) return true;
+  const leftStat = statOrNull(left);
+  const rightStat = statOrNull(right);
+  if (leftStat && rightStat) {
+    return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+  }
+  return realOrSelf(left) === realOrSelf(right);
+}
+
+/** @param {string} path */
+function statOrNull(path) {
+  try { return statSync(path); } catch { return null; }
+}
+
+/** @param {string} path */
+function realOrSelf(path) {
+  try { return realpathSync(path); } catch { return path; }
 }
