@@ -259,8 +259,10 @@ Bound: `README.md`, `PRODUCT.md`, `AGENTS.md`, `CLAUDE.md`, `TASKS.md`,
 `docs/PROJECT_STATUS.md`, `docs/QUALITY_GATES.md`, `docs/REPOSITORY_TRUTH.md`,
 `docs/CODER_TOOLING_ROADMAP.md`, `docs/strategy/EXECUTION_ROADMAP.md`,
 `docs/benchmarks/CRM_JTBD_MATRIX.md`, `docs/benchmarks/jobs.json`,
-`site/claims.json`, `site/assets/llms.txt`, `site/assets/llms-full.txt`, and
-`examples/scenarios/*.scenario.json`.
+`site/claims.json`, `site/assets/llms.txt`, `site/assets/llms-full.txt`,
+`examples/scenarios/*.scenario.json`, and — added in review —
+`packages/cli/src/app-inspect.js`, whose `productionPosture` string is the
+product claim that failed as instance 1 in §2.
 
 Excluded **by path rule, never by heuristic**: `DECISIONS.md` (dated ADRs),
 `docs/plans/**`, `benchmarks/**`, `docs/transcripts/**`, `site/blog/**`,
@@ -353,7 +355,12 @@ npm run crm -- project verify --json
   inventories were corrected — the explainer listed ten of eleven limitation
   codes, and `README.md` claimed every boundary carried a citation when three
   carry none — and a twelfth limitation, `NUMERIC_CLAIMS_NOT_BOUND`, was added
-  because no cited fact is a count.
+  because no cited fact is a count. The largest finding was scope rather than
+  code: v1 closed one of the two failures §2 names. Instance 1's sentence lives
+  in `packages/cli/src/app-inspect.js`, in no bound surface and covered by no
+  fact, so restoring it in a clean clone left `--check` green. That file is now
+  bound, and the citation grammar takes `// truth: id=value` on a bound `.js`
+  surface.
 
 ### Three things the work changed about the plan
 
@@ -383,11 +390,12 @@ Measured on `claude/repository-truth-contract-v1`:
 
 - `docs/repository-truth.json` — 38 facts from 9 authorities (6 source, 1
   receipt, 2 measurement), 12 published limitations.
-- 88 citations across 20 bound surfaces.
+- 95 citations across 21 bound surfaces, one of which is source: the `app inspect`
+  `productionPosture` sentence, which is the first of the two failures in §2.
 - `npm run repo:truth -- --check`: **~0.5 s** wall clock, one app-composition
   build and no scenario run, run as its own step in the `public-claims` CI job
   on every push and every pull request.
-- `tests/repository-truth-contract.test.js`: 45 tests, ~5 s, passing in both a
+- `tests/repository-truth-contract.test.js`: 47 tests, ~5 s, passing in both a
   full-history checkout and a `--depth 1` shallow clone.
 
 **Deliberately out of v1:** JTBD rows, `docs/editions/**`, any scenario-run

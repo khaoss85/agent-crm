@@ -164,10 +164,13 @@ rather than an observation of silence.
 Three checks, and the mechanism for each was chosen to be the least invasive one that
 works.
 
-**1 — fact citation.** `<!-- truth: <id>=<value> -->` in Markdown, or a
-`"facts": ["<id>=<value>"]` array in JSON. One grammar, one parser, both surfaces.
-The Markdown form is an HTML comment, so it is invisible when a page renders and
-load-bearing when the checker runs.
+**1 — fact citation.** `<!-- truth: <id>=<value> -->` in Markdown, a
+`"facts": ["<id>=<value>"]` array in JSON, or `// truth: <id>=<value>` in a bound
+`.js` source file. One grammar, one parser, three comment characters. The Markdown
+form is an HTML comment, so it is invisible when a page renders and load-bearing
+when the checker runs. The JavaScript form is applied **only** to a `.js` file in
+the bound set, so `// truth: …` in a fenced example inside a document stays an
+example.
 
 - an id nothing resolves → `TRUTH_FACT_UNKNOWN`
 - a cited value the authority no longer produces → `TRUTH_FACT_VALUE_STALE`
@@ -198,6 +201,23 @@ to be maintained and a code deleted from the code fails every document still nam
 it. It is exactly the `TENANT_ISOLATION_NOT_ENFORCED` regression, written as a rule
 — and it binds `docs/PROJECT_STATUS.md`, `TASKS.md` and every scenario document with
 **no marker at all**, which is why none of them was edited.
+
+## One bound surface is source, and why
+
+`packages/cli/src/app-inspect.js` is in the bound set. `productionPosture` is a
+hand-written English sentence that `app inspect` publishes to every agent that asks
+what this framework is, and it is the **first** of the two failures in the record:
+it read "no authentication, tenancy or RBAC exists" in the same report whose
+`PRODUCTION_SPINE_ABSENT` message described identity, tenancy and authorization, and
+a person found it (PR #101). v1 of this contract bound twenty documents and left that
+sentence out of all of them — so restoring the false posture left `--check` green,
+and the contract closed one of the two failures it opens by naming. It carries seven
+citations now.
+
+That is the boundary of what "bound" means for source: a product claim written as a
+string, deliberately cited, one file at a time and each one argued in review. This
+contract does not scan source for sentences and cannot discover which strings are
+claims.
 
 ## What is bound, and what is deliberately historical
 

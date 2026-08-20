@@ -3379,7 +3379,20 @@ the two together is the v2 question. It costs about half a second, and it was
 confirmed green on a simulated pull-request merge commit as well as on the branch
 tip.
 
-Four rules were narrower than they read, and are fixed with the mutation that
+The contract also closed only **one** of the two failures this ADR opens by
+naming. Instance 1 was `app inspect` publishing `productionPosture: "no
+authentication, tenancy or RBAC exists"` — a hand-written English string in
+`packages/cli/src/app-inspect.js`, in none of the twenty bound surfaces and
+covered by no fact. Restoring that exact sentence in a clean clone left
+`repo:truth -- --check` green. The sentence is the one every agent reads to learn
+what this framework is, so it is now a bound surface carrying seven citations,
+and the citation grammar gained a third comment character (`// truth: id=value`,
+applied to a bound `.js` file only, so a fenced example in a document stays an
+example). That is the whole extent of source binding: a product claim written as
+a string, cited deliberately, one file at a time. This contract does not scan
+source for sentences and cannot discover which strings are claims.
+
+Five rules were narrower than they read, and are fixed with the mutation that
 must fail each one:
 
 - **A declared-absence fact could outlive the code.** `SPINE_NOT_MODELED` is a

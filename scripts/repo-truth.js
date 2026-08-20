@@ -316,6 +316,20 @@ export const BOUND_SURFACES = Object.freeze([
   'examples/scenarios/lead-to-won.scenario.json',
   'examples/scenarios/service-sla-escalation.scenario.json',
   'examples/scenarios/tenant-isolation-and-authorization.scenario.json',
+  // **A product claim that happens to live in source.**
+  //
+  // `productionPosture` is a hand-written English sentence that `app inspect`
+  // publishes to every agent that asks what this framework is. It is the first
+  // of the two failures in the record: it read "no authentication, tenancy or
+  // RBAC exists" in the same report whose `PRODUCTION_SPINE_ABSENT` message
+  // described identity, tenancy and authorization, and a person found it
+  // (PR #101). A contract that binds twenty documents and leaves *that*
+  // sentence unbound closes one of the two failures it names.
+  //
+  // Being a `.js` file changes only the comment character. Its machine codes
+  // are in the harvested vocabulary already, because the vocabulary is
+  // harvested from `packages/`; what the binding adds is the citation.
+  'packages/cli/src/app-inspect.js',
 ]);
 
 /** Where the machine-code vocabulary is harvested from. */
@@ -347,6 +361,15 @@ export const CODE_TOKEN = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g;
 
 /** A fact citation, in a Markdown comment or a JSON `facts` entry. */
 export const CITATION = /<!--\s*truth:\s*([a-z][a-z0-9_.]*)\s*=\s*([A-Za-z0-9_.-]+)\s*-->/g;
+
+/**
+ * The same citation in a JavaScript line comment, for a bound `.js` surface.
+ *
+ * One grammar, three comment characters. It is applied **only** to a source file
+ * in {@link BOUND_SURFACES} — never to Markdown, where `// truth: …` inside a
+ * fenced example would become a citation nobody wrote.
+ */
+export const CITATION_JS = /\/\/\s*truth:\s*([a-z][a-z0-9_.]*)\s*=\s*([A-Za-z0-9_.-]+)/g;
 
 /**
  * How a *bound* document names a code that no longer exists without asserting it.
@@ -1232,7 +1255,7 @@ export async function buildTruthDocument({ rootDir }) {
  * @param {string} source
  * @returns {Array<{line: number, id: string, value: string}>}
  */
-export function parseCitations(source) {
+export function parseCitations(source, { javascript = false } = {}) {
   /** @type {Array<{line: number, id: string, value: string}>} */
   const found = [];
   const text = String(source);
@@ -1252,6 +1275,11 @@ export function parseCitations(source) {
   for (let index = 0; index < lines.length; index += 1) {
     for (const match of lines[index].matchAll(CITATION)) {
       found.push({ line: index + 1, id: match[1], value: match[2] });
+    }
+    if (javascript) {
+      for (const match of lines[index].matchAll(CITATION_JS)) {
+        found.push({ line: index + 1, id: match[1], value: match[2] });
+      }
     }
     if (!declared) continue;
     // Matched where it sits, so the reported line is the one a reader opens.
@@ -1499,7 +1527,8 @@ export async function checkRepository({ rootDir }) {
     const full = join(rootDir, surface);
     if (!existsSync(full)) continue;
     const source = readFileSync(full, 'utf8');
-    problems.push(...checkCitations(parseCitations(source), factIndex, surface));
+    const javascript = surface.endsWith('.js');
+    problems.push(...checkCitations(parseCitations(source, { javascript }), factIndex, surface));
     for (const { line, code } of findUnknownCodes(source, vocabulary, basenames)) {
       problems.push({
         code: 'TRUTH_CODE_UNKNOWN',
@@ -1525,7 +1554,8 @@ export async function checkRepository({ rootDir }) {
       surfaces: BOUND_SURFACES.filter((surface) => existsSync(join(rootDir, surface))).length,
       citations: BOUND_SURFACES
         .filter((surface) => existsSync(join(rootDir, surface)))
-        .reduce((total, surface) => total + parseCitations(readFileSync(join(rootDir, surface), 'utf8')).length, 0),
+        .reduce((total, surface) => total
+          + parseCitations(readFileSync(join(rootDir, surface), 'utf8'), { javascript: surface.endsWith('.js') }).length, 0),
     },
   };
 }

@@ -140,7 +140,7 @@ npm run repo:truth -- --check   # fail when the repository and the facts disagre
 | Checked | How | Fails with |
 |---|---|---|
 | the generated fact document is current | the committed `docs/repository-truth.json` must equal a fresh generation from its authorities | `TRUTH_DOCUMENT_STALE` |
-| a current document cites a real fact | `<!-- truth: <factId>=<value> -->` in Markdown, a `facts` array of the same text in JSON | `TRUTH_FACT_UNKNOWN` |
+| a current document cites a real fact | `<!-- truth: <factId>=<value> -->` in Markdown, a `facts` array of the same text in JSON, `// truth: <factId>=<value>` in a bound `.js` source file | `TRUTH_FACT_UNKNOWN` |
 | a cited value is the one the code produces | a reversed polarity is a value that differs, so it is the same failure | `TRUTH_FACT_VALUE_STALE` |
 | every machine code in a bound document still exists | the vocabulary is harvested from `packages/`, `scripts/`, `apps/`, `examples/` and `benchmarks/`, minus `RETIRED_CODES` | `TRUTH_CODE_UNKNOWN` |
 | the measured commit is an ancestor of `HEAD` | `git merge-base --is-ancestor`; object existence is not provenance (ADR-027) | `TRUTH_MEASUREMENT_NOT_ANCESTOR` |

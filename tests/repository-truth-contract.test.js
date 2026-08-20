@@ -318,6 +318,39 @@ test('a JSON facts array is checked by the same grammar as a Markdown comment', 
   assert.deepEqual(codes(checkCitations(citations, index, 'site/claims.json')), ['TRUTH_FACT_VALUE_STALE']);
 });
 
+test('the app inspect posture sentence is bound — the PR #101 regression', async () => {
+  // The first of the two failures ADR-039 names: `productionPosture` published
+  // "no authentication, tenancy or RBAC exists" in the same report whose
+  // PRODUCTION_SPINE_ABSENT message described identity, tenancy and
+  // authorization, and a person found it. v1 of this contract bound twenty
+  // documents and left that sentence out of every one of them, so restoring the
+  // false posture in a throwaway copy left `--check` green.
+  assert.ok(BOUND_SURFACES.includes('packages/cli/src/app-inspect.js'), 'the posture sentence is not bound');
+  const source = readFileSync(join(repoRoot, 'packages/cli/src/app-inspect.js'), 'utf8');
+  const citations = parseCitations(source, { javascript: true });
+  const cited = new Set(citations.map((citation) => citation.id));
+  for (const required of ['spine.authentication.framework_verifier', 'spine.authorization.enforced',
+    'spine.tenant.isolation.mode', 'spine.postgresql.implemented']) {
+    assert.ok(cited.has(required), `the posture sentence does not cite ${required}`);
+  }
+  const { document } = await buildTruthDocument({ rootDir: repoRoot });
+  const index = new Map(document.facts.map((fact) => [fact.id, fact]));
+  assert.deepEqual(checkCitations(citations, index, 'packages/cli/src/app-inspect.js'), []);
+  // Reversing one of them is the mutation that must fail.
+  const reversed = parseCitations(source.replace('// truth: spine.authorization.enforced=enforced',
+    '// truth: spine.authorization.enforced=absent'), { javascript: true });
+  assert.deepEqual(codes(checkCitations(reversed, index, 'packages/cli/src/app-inspect.js')), ['TRUTH_FACT_VALUE_STALE']);
+});
+
+test('the JavaScript comment grammar is applied to source surfaces only', () => {
+  // `// truth: …` inside a fenced example in a Markdown document is an example,
+  // not a citation, so the grammar is opt-in per surface rather than global.
+  const line = '// truth: spine.authorization.enforced=absent\n';
+  assert.deepEqual(parseCitations(line), []);
+  assert.deepEqual(parseCitations(line, { javascript: true }),
+    [{ line: 1, id: 'spine.authorization.enforced', value: 'absent' }]);
+});
+
 test('a quoted word=word that is not in a facts array is prose, not a citation', () => {
   // v1 read the JSON form off any line, so an ordinary string in a bound JSON
   // file became a citation nothing could resolve: adding `"note":
