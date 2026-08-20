@@ -33,8 +33,11 @@ deliberately refused has one named home rather than scattered rows —
 **Customer Data Operations v2**: global search, saved views, bulk actions, export at
 scale, physical consolidation and merge, retention and erasure, and an indexed or
 windowed identity-conflict detector to replace v1's correctness-first whole-table
-read. **Production Spine is still unimplemented**, so none of this is protected by
-authentication, tenancy or role enforcement.
+read. **Production Spine v1 is implemented** (ADR-038), so this data now sits behind
+enforced authorization, memberships and one tenant per application instance — but the
+framework authenticates nobody and ships no verifier, so who a membership belongs to
+is only as trustworthy as the adapter a deployment supplies. PostgreSQL, shared-database
+tenancy, durable jobs, secrets and backups remain unimplemented (Spine v2–v4).
 
 ## Phase overview
 
@@ -46,7 +49,7 @@ authentication, tenancy or role enforcement.
 | 3 | Declarative generation | manifest → module/service/tests |
 | 4 | Admin and SDK generation | manifest → UI and typed client |
 | 5 | create-project CLI | zero-to-project in one command |
-| 6 | Production spine | PostgreSQL, auth, tenancy, permissions |
+| 6 | Production spine | **v1 merged**: identity, tenancy, permissions · v2–v4: PostgreSQL, jobs, self-host interfaces |
 | 7 | Providers and plugins | integration surface |
 | 8 | Agent surface | Skills, Docs MCP, Project MCP |
 | 9 | Deploy and operate | deploy, logs, trace in production |
@@ -100,8 +103,8 @@ M16 Analytics Studio v1
 **Parallelization and hard dependencies — this sequence does NOT gate Cloud.** The workstream milestones and the platform phases run in parallel, exactly as M0–M8 ran alongside strategy work:
 
 - **Hard dependencies inside the track:** M10 → M11 (an Order snapshots a signed Quote) → **M12** (a contract and its subscriptions are activated from an Order) → **M13** (a delivery project is created from the Order/Contract scope) → **M14** → **M15**. M9 is independent of M10–M15. **M16** closes the sequence pragmatically because its value grows with each preceding milestone, but the semantic layer plus pipeline metrics need only M8 and may be pulled earlier. Renewal scheduling inside M12 is additionally gated on `JOBS_AND_OUTBOX.md`: without a scheduler nothing can fire on a future date, so M12 stops at activation.
-- **The Production Spine (Phase 6) is a parallel hard gate, not a sequel:** PostgreSQL, authentication, organizations/tenancy, RBAC, secrets, backups, remote-safe MCP. It can be built at any time alongside M9–M15, and **Accordo Cloud work begins when the Spine is done — not when all domains are done.** A Cloud managed runtime serving M8-era CRMs is a legitimate first Cloud release.
-- **What the Spine specifically gates within the workstreams:** manual-reassignment permission validation with real users (M9), partner/customer access boundaries and portals (M13–M15), role-aware dashboards (M16), and every remote or multi-user claim. Until then those capabilities are designed and boundary-tested against declared actors on the local-development surface, and the JTBD matrix must not claim them validated.
+- **The Production Spine (Phase 6) is a parallel hard gate, not a sequel.** **v1 is merged**: organizations/tenancy, memberships and RBAC exist and are enforced. Still owed by v2–v4: PostgreSQL, shared-database tenancy, durable jobs, secrets, backups, remote-safe MCP — and, outside the framework by design, the identity verifier a deployment supplies. **Accordo Cloud work begins when the Spine is done — not when all domains are done**, and "done" means the whole phase, not v1.
+- **What the Spine specifically gates within the workstreams:** manual-reassignment permission validation with real users (M9), partner/customer access boundaries and portals (M13–M15), role-aware dashboards (M16), and every remote or multi-user claim. v1 moved the blocker: the permission enforcement now exists, so what those rows still wait on is a **verified** user rather than an asserted one. Until a deployment supplies a verifier, they stay boundary-tested against declared actors, and the JTBD matrix must not claim them validated.
 
 Each milestone below follows the standard per-phase format.
 
@@ -363,7 +366,7 @@ The product milestones above are one lane. These run **alongside** them and are 
 domain package boundary      ADR-018 — staged, behavior-preserving extraction
 create-project CLI           Phase 5
 PostgreSQL                   Phase 6 (Production Spine)
-auth / tenancy / RBAC        Phase 6 (Production Spine)
+identity / tenancy / RBAC    Phase 6 v1 — merged (ADR-038)
 Jobs / durable outbox        JOBS_AND_OUTBOX.md
 Integration Runtime          INTEGRATION_RUNTIME.md
 Data Governance              DATA_GOVERNANCE.md
@@ -378,7 +381,7 @@ Dependencies and what can genuinely run in parallel:
 | Domain package boundary | nothing (ADR-018 is accepted) | every product milestone | plugin authorship without core patches |
 | create-project CLI | the framework surface as it stands | everything | first-run experience, benchmark scenarios |
 | PostgreSQL | nothing technically; the deterministic storage boundary already exists | everything | production storage, the conformance suite |
-| Auth / tenancy / RBAC | PostgreSQL is *not* a prerequisite, but they ship together as the Spine | everything | **every** multi-user, remote or portal claim; role-aware anything |
+| Identity / tenancy / RBAC | PostgreSQL is *not* a prerequisite — v1 shipped without it | everything | **v1 merged**: tenancy and RBAC are enforced. Every multi-user, remote or portal claim now waits on the identity *verifier* a deployment supplies, not on the permission model |
 | Jobs / durable outbox | nothing; a database-backed queue works on the current boundary | everything | renewal scheduling (M12+), SLA timers (M15), reminders, provider sync, unattended follow-up |
 | Integration Runtime | Jobs/outbox, then secret management | product milestones | every **real** provider adapter |
 | Data Governance | tenancy for the tenant-boundary parts; the rest is independent | everything | any deployment holding real personal data |
@@ -445,12 +448,15 @@ Two consequences worth stating plainly: **a Cloud release serving an M11-era CRM
 - **Agent executes:** CLI implementation, template, publish dry-runs.
 - **Human approves:** first npm publish (org/scope ownership, 2FA), release process.
 
-## Phase 6 — Production spine: PostgreSQL, auth, tenancy, permissions
+## Phase 6 — Production spine: identity, tenancy, permissions, PostgreSQL
 
-- **Outcome:** a generated CRM can be exposed to real users.
-- **Deliverables:** PostgreSQL adapter behind the existing database contract (ADR-001's promised swap); authn (session + API keys) and actor mapping to the existing identity model; tenant boundary; role-based permissions enforced in services (not routes); remote-safe MCP (Streamable HTTP with authorization — TASKS.md item 6).
-- **Dependencies:** Phase 2 (core objects stable). Gates Phase 9 — no public deploys before this.
-- **Acceptance:** multi-tenant test suite; permission boundary tests; the Milestone 0 safety note in README replaced by a documented production posture; security review pass on the auth/tenancy PRs.
+- **Outcome:** a generated CRM can be exposed to real users. **v1 is merged (PR #98, ADR-038); v2–v4 are not.**
+- **v1 — done.** Verified identity as an adapter contract (`IDENTITY_CONTRACT = 1`, four kinds), organizations and memberships, eleven bounded permissions in five role bundles enforced server-authoritatively, `ACCORDO_MODE` with no default and a production mode that fails startup without a verifier, one tenant per application instance enforced structurally, and a fail-closed actor boundary. **The framework authenticates nobody** — no login, password, session or OIDC implementation ships, and that is the deliberate boundary, not an oversight.
+- **v2 — PostgreSQL and shared-database tenancy.** The PostgreSQL adapter behind the existing database contract (ADR-001's promised swap), and row-level tenancy over 86+ tables, which v1 deliberately did not attempt because a half-migrated version of it is worse than none.
+- **v3 — durable jobs, outbox and scheduler.**
+- **v4 — the self-host interfaces:** secret provider, backup/restore, observability export, remote-safe MCP (Streamable HTTP with authorization — TASKS.md item 6).
+- **Dependencies:** Phase 2 (core objects stable). Gates Phase 9 — no public deploys before the whole phase, not merely v1.
+- **Acceptance:** v1 shipped a permission-boundary suite, a cross-tenant attack suite and a tenancy-truth test that asserts agreement between published metadata and measured behaviour in both directions. Still owed: a multi-tenant suite over shared-database tenancy (v2), and a security review of a deployment running a real verifier, which cannot be written against a framework that ships none.
 - **Agent executes:** implementation and tests.
 - **Human approves:** security model ADR; any default that widens exposure; the review sign-off itself.
 

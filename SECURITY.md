@@ -19,7 +19,9 @@ The framework's own inspection command states the same thing in machine-readable
 
 ```bash
 npm run crm -- app inspect --json | jq '.application.productionPosture'
-# "local development only: no authentication, tenancy or RBAC exists, and actor headers are not identity"
+# "not a readiness claim: the framework authenticates nobody (a deployment adapter supplies
+# verified identity), while tenancy — one tenant per application instance — and authorization
+# are owned and enforced by the framework. SQLite only; ..."
 ```
 
 **Do not expose the HTTP API to a network.** Building the production spine — authentication,

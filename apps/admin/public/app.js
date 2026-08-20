@@ -30,7 +30,7 @@ async function api(path, options = {}) {
 
 // Request client for generated-module views. A declared identity for audit —
 // NOT authentication; a local caller can set any actor. The Admin is
-// local-development-only until auth/tenancy/RBAC exist.
+// local-development-only until a deployment supplies an identity verifier.
 const moduleClient = {
   async request(path, options = {}) {
     const response = await fetch(path, {

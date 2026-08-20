@@ -110,8 +110,12 @@ same one CI runs on every push) into a directory it keeps, then inspects the res
   modules       76        resources     71        policies       7
   packages       9        actions       64        providers      1
 
-  production posture — local development only: no authentication, tenancy or RBAC
-                       exists, and actor headers are not identity
+  production posture — not a readiness claim: the framework authenticates nobody
+                       (a deployment adapter supplies verified identity), while
+                       tenancy — one tenant per application instance — and
+                       authorization are owned and enforced by the framework.
+                       SQLite only; shared-database tenancy, PostgreSQL, durable
+                       jobs, secrets and backups are absent
 ```
 
 It ends on the eleven things the inspector says it cannot see, because a tour that shows only
@@ -167,8 +171,14 @@ Read this before evaluating anything above. `docs/benchmarks/CRM_JTBD_MATRIX.md`
 CRM job with a conservative status vocabulary in which *not supported* is the default and
 evidence is required to leave it.
 
-- **No authentication, tenancy or RBAC.** The server is local-development-only; an actor
-  header is an assertion, not an identity. Do not expose it to a network.
+- **No authentication ships: the framework authenticates nobody.** Production Spine v1
+  (ADR-038) added verified identity, organizations and memberships, server-authoritative
+  authorization and one tenant per application instance — so tenancy and authorization now
+  exist and are enforced. Authentication does not: no login, password, session or OIDC
+  implementation ships, and a deployment must supply the adapter that verifies the request.
+  Production mode refuses to start without one. In local-development mode an actor header is
+  accepted as an assertion and is not an identity, which is the default developer posture.
+  This is not shared-database multi-tenancy and it is not a readiness claim.
 - **SQLite only.** PostgreSQL is on the Production Spine track and is not implemented.
 - **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any
   percentage attributed to this project is fabricated —
@@ -182,8 +192,9 @@ evidence is required to leave it.
   no adapter sends anything to anyone.
 - **No import, export, dedupe, merge, bulk edit, saved views or global search.** Table stakes
   in every commercial CRM, and none of them has a milestone yet.
-- **You cannot put real customer data in this yet.** No authentication, no tenancy, no export
-  and no erasure path — so a data-subject access or deletion request cannot be serviced with it.
+- **You cannot put real customer data in this yet.** No authentication ships, and there is no
+  export and no erasure path — so a data-subject access or deletion request cannot be serviced
+  with it.
   `docs/strategy/DATA_GOVERNANCE.md` is design-only. The one thing that does hold: lead scoring is
   deterministic, versioned and explainable, not a model's judgement about a person.
 - **This is a framework, not a product you sign up for.** There is no hosted CRM, no free

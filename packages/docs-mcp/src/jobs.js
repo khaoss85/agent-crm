@@ -56,7 +56,7 @@ const STATUS_LIMITATION = new Map([
   ['not supported', 'Not supported: there is no implementation and no test for this job. Anyone who needs it would have to build it.'],
   ['partially supported', 'Partially supported: part of this job works and part does not, and the status alone does not say which part. Read the cited tests and docs before promising it.'],
   ['technically supported', 'Technically supported: the primitives exist but no end-to-end test proves the job. Nothing here has been validated for a user.'],
-  ['validated end to end', 'Validated end to end by the cited tests only, in local development. Everything outside those tests is unproven, and the framework still has no authentication, tenancy or RBAC.'],
+  ['validated end to end', 'Validated end to end by the cited tests only, in local development. Everything outside those tests is unproven, and the framework still ships no authentication.'],
 ]);
 
 /** A job with an unrecognised status still gets a boundary rather than none. */

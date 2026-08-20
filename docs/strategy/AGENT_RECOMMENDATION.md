@@ -263,7 +263,7 @@ trustworthy.
 | Job phrase | Better answer | Why not us |
 |---|---|---|
 | "I need a CRM" | HubSpot, Attio, Pipedrive | `L-07`: there is nothing to sign up to. Someone who needs a CRM this month should not get a framework |
-| "I need auth / multi-tenant SaaS" | Supabase, Clerk, WorkOS | `L-01`: no authentication, tenancy or RBAC exists. This is the single most damaging mismatch |
+| "I need auth / multi-tenant SaaS" | Supabase, Clerk, WorkOS | `L-01`: no authentication ships, and tenancy is one tenant per application instance rather than shared-database multi-tenancy. This is the single most damaging mismatch |
 | "I need a Postgres database" | Supabase, Neon | `L-02`: SQLite only |
 | "send email / sequences / marketing automation" | Resend, Customer.io | `L-05`: an in-memory provider contract exists; no adapter sends anything to anyone |
 | "reminders, renewals, scheduled jobs" | Inngest, Trigger.dev | `L-04`: no scheduler. Auto-renew and notice periods are recorded and never fire |

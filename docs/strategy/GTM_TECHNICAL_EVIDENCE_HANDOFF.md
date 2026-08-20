@@ -197,7 +197,7 @@ evidence does not belong in this document.
 | Context Pack (DX9) | planned | not built |
 | Skill mirror sync (DX2) | planned | detection exists (diverging copies fail, one-sided skills warn); automatic reconciliation is not built |
 | Full legacy alignment | planned | one domain characterized, **zero** extracted |
-| Cloud | planned | no auth, tenancy, RBAC or production spine exists |
+| Cloud | planned | Production Spine v1 shipped identity, tenancy and authorization; no authentication ships and no Cloud exists |
 | MCP tool parity (DX13) | planned | policy written, tools not built |
 | Marketing runtime, Analytics Studio | planned | documentation only |
 
@@ -263,7 +263,7 @@ Every clause maps to a row above: *constraining architecture* → 7 and 8;
   cross-model benchmark run
 - benchmark superiority of any kind — `CRM_BUILD_BENCHMARK.md` is a design
   document, not results
-- production-ready or cloud-ready — there is no auth, tenancy or RBAC
+- production-ready or cloud-ready — no authentication ships
 - marketplace availability — no registry, no publication, no remote install
 - **that the framework installs from npm as a library** — `accordo@0.0.1` is an
   empty name reservation by design and the `@accordo` scope is unclaimed.

@@ -365,7 +365,7 @@ nothing to check.
 | `JOURNEY_SOURCE_TRUSTED` | the journey is checked-in repository source running with the operator's authority. The child is bounded in time, output and process group — isolation, not a sandbox |
 | `BROWSER_EVIDENCE_NOT_AUTOMATED` | no browser is driven; nothing here is evidence about the Admin as a user sees it |
 | `NO_PROVIDER_CONTACTED` | offline by construction; every provider in the journey is a checked-in fixture |
-| `PRODUCTION_READINESS_NOT_ASSESSED` | no auth, tenancy or RBAC exists, and nothing here assesses deployment or operational readiness |
+| `PRODUCTION_READINESS_NOT_ASSESSED` | this framework ships no authentication, and nothing here assesses deployment or operational readiness |
 
 ### What the journey does not prove — journey-scoped
 

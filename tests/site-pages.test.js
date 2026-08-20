@@ -399,7 +399,7 @@ test('the CDP + CRM intent separates profile and process without inventing a con
     'limitations must be read before the layer map, and the map before the supporting essay',
   );
   assert.match(html, /not a deployment guide/i);
-  assert.match(html, /no authentication, tenancy or RBAC/i);
+  assert.match(html, /authenticates nobody/i);
   assert.doesNotMatch(html, /built-in (?:CDP )?(?:connector|integration)/i);
 
   assert.match(read('concepts.html'), /concepts\/cdp-plus-crm\.html/);

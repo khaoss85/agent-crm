@@ -13,7 +13,7 @@ commercial process; the agent generates domain modules, deterministic workflows,
 human approval boundaries, and audit and trace, **as reviewable code in the
 developer's own repository** rather than configuration inside someone else's SaaS.
 
-It is pre-release: local SQLite, no authentication, no tenancy, no hosted service.
+It is pre-release: local SQLite, no authentication ships, no hosted service.
 Nothing is installable from npm yet. **The site says all of this out loud.** That
 is not a caveat to be designed around — it is the product's argument.
 
@@ -111,7 +111,7 @@ be a visual element — chips, a grid, a marquee of honesty:
 
 **Nobody else publishes their own blind spots.** That is the brand.
 
-## 5. Page inventory — 147 pages, seven clusters
+## 5. Page inventory — 149 pages, seven clusters
 
 Hub-and-spoke: each pillar page links down to its spokes, each spoke links back up.
 
@@ -120,8 +120,8 @@ Hub-and-spoke: each pillar page links down to its spokes, each spoke links back 
 | **Agent tools** | `tools.html` | 8 | one command: what it answers, what it refuses to claim, what it costs to run |
 | **Capabilities** | `capabilities.html` | 6 | one business domain: what it models, what the framework refuses, what proves it |
 | **Concepts** | `concepts.html` | 8 | why it is built this way — the vision layer |
-| **Compare** | `compare.html` | 4 | opens by naming where the *alternative* wins |
-| **Jobs** | `jobs.html` | 63 | one CRM job, its support status, its evidence |
+| **Compare** | `compare.html` | 9 | opens by naming where the *alternative* wins |
+| **Jobs** | `jobs.html` | 76 | one CRM job, its support status, its evidence |
 | **Answers** | `answers.html` | 15 | one blunt question, answered, plus 15 published refusals |
 
 Plus: `index.html`, `evidence.html` (the full claims ledger as a table), `blog.html`
@@ -249,7 +249,7 @@ In priority order:
 1. **Homepage** — hero, the five-step loop, the 403, falsify output, the blind-spot
    chips, the six-cluster grid, the limits section.
 2. **Spoke template** — breadcrumbs, h1 + plain name, boundary block, body
-   sections, evidence rail, related rail. This is 102 of the 113 pages.
+   sections, evidence rail, related rail. This is the large majority of the pages.
 3. **Pillar template** — hero plus a card grid.
 4. **Table template** — evidence ledger and jobs catalogue, dense and scannable.
 5. **Blog index and article page**, retaining the tested empty state for a build with no posts.

@@ -41,7 +41,7 @@
  * Service is **partial**, and this run invents nothing to hide that
  * (`docs/SERVICE_OPERATIONS.md`):
  *
- * - there is no auth, tenancy or RBAC anywhere in this framework, so "a human
+ * - this framework ships no authentication, so "a human
  *   did it" means an actor object said so;
  * - **nothing was notified, routed, emailed, called or messaged.** Every
  *   notification-shaped result here is published as `false` and observed as

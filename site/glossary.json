@@ -9,7 +9,7 @@
       "metaTitle": "What is a CRM framework? Definition | Accordo",
       "plainName": "CRM framework, defined",
       "intent": "what is a crm framework, open source crm framework for developers",
-      "summary": "A CRM framework is source code a development team composes into its own CRM application: the framework supplies the runtime contracts — records, services, workflows, policies — and the team supplies the domain. A CRM product is configured; a CRM framework is programmed, and the resulting application belongs to whoever wrote it rather than to a vendor. Accordo is an open source CRM framework for developers and their coding agents, MIT-licensed with zero third-party runtime dependencies — and nothing about the term makes the result deployable: this one has no authentication, no tenancy, SQLite persistence and no hosted offering.",
+      "summary": "A CRM framework is source code a development team composes into its own CRM application: the framework supplies the runtime contracts — records, services, workflows, policies — and the team supplies the domain. A CRM product is configured; a CRM framework is programmed, and the resulting application belongs to whoever wrote it rather than to a vendor. Accordo is an open source CRM framework for developers and their coding agents, MIT-licensed with zero third-party runtime dependencies — and nothing about the term makes the result deployable: this one ships no authentication, stores to SQLite and has no hosted offering.",
       "metaDescription": "A CRM framework is source code developers compose into their own CRM application, not a hosted product they configure. The definition, and where this one stops.",
       "sections": [
         {
@@ -38,7 +38,7 @@
         {
           "heading": "What the term does not buy",
           "body": [
-            "Being a framework does not make the output deployable, and this one is explicit about it. There is no authentication, tenancy or RBAC, and the server is local-development-only (L-01); persistence is Node's built-in SQLite adapter (L-02); there is no hosted CRM, free tier or account to sign up for — the output is an application in your repository that you run (L-07).",
+            "Being a framework does not make the output deployable, and this one is explicit about it. No authentication ships, so a deployment must supply the verifier (L-01); persistence is Node's built-in SQLite adapter (L-02); there is no hosted CRM, free tier or account to sign up for — the output is an application in your repository that you run (L-07).",
             "Being a framework also does not make it measurably better than the alternatives. No benchmark has compared building on Accordo with building from scratch or with adopting a product: the build benchmark protocol is published and has not been run, so any number quoted for this project is not ours (L-03)."
           ]
         }
@@ -46,7 +46,7 @@
       "boundaries": [
         "A CRM framework is not a CRM product. There is nothing to sign up for here — no hosted CRM, no account, no free tier; the output is an application in your repository (L-07).",
         "'Open source CRM framework' describes the licence and the source, not a distribution channel. Nothing installs from npm: the bootstrap scaffolds from a checkout and upgrading means merging (L-08).",
-        "'CRM for developers' does not make the result deployable. There is no authentication, tenancy or RBAC, and persistence is local SQLite (L-01, L-02).",
+        "'CRM for developers' does not make the result deployable. No authentication ships (L-01), and persistence is local SQLite (L-02).",
         "Zero third-party runtime dependencies is a property of the framework, not of the application you build on it.",
         "The definition on this page is not a measured comparison. No benchmark has been run against building from scratch or against any product (L-03)."
       ],
@@ -115,7 +115,7 @@
         {
           "heading": "What the built application is, and where it runs",
           "body": [
-            "The output of an agent build here is a local application: Node 22, SQLite persistence, no authentication, tenancy or RBAC, so it runs on one developer's machine and must not be exposed to a network (L-01, L-02). It is a working system to develop against and reason about, not a system a team signs in to.",
+            "The output of an agent build here is a local application: Node 22, SQLite persistence, and no authentication (L-01, L-02), so it runs on one developer's machine and must not be exposed to a network. It is a working system to develop against and reason about, not a system a team signs in to.",
             "Ownership follows the same mechanics as any Accordo project: the framework arrives vendored — `npm create accordo` scaffolds the project and copies the framework source into it, and the same bootstrap runs from a checkout — so upgrading means merging, because no versioned framework dependency exists (L-08). The agent that built the application does not remain attached to it; what remains is source, tests and the evidence trail the framework wrote while the application ran."
           ]
         }
@@ -123,7 +123,7 @@
       "boundaries": [
         "Agent-built names who assembles the source at development time. It does not mean the model operates the CRM at runtime, approves its decisions or acts as its control plane.",
         "No measurement of agent build success exists. The benchmark protocol is published and has not been run, so no completion or reliability figure may be quoted (L-03).",
-        "The built application is local-development-only: no authentication, tenancy or RBAC, and SQLite persistence (L-01, L-02).",
+        "The built application is local-development-only: no authentication ships (L-01), and persistence is SQLite (L-02).",
         "Nothing installs from npm. The agent scaffolds from a checkout of this repository, and the framework is vendored into the project (L-08).",
         "A Solution Plan validates against a real inspection and executes nothing. Planning is a checked file, not an automation.",
         "Code-generating and destructive MCP tools are dry-run unless an explicit apply flag is passed. The default answer to a write is a preview."
@@ -195,7 +195,7 @@
           "heading": "What this definition excludes",
           "body": [
             "The profile-hub reading is excluded entirely: Accordo has no pipeline that ingests records or events from external systems, no identity resolution and no merge, so two records for the same human stay two records. Detecting duplicates, merging Companies or Contacts, importing from CSV and exporting records all read not supported in the job catalogue, and there is no import or export of any kind (L-06).",
-            "The deployment reading is excluded too. A hub built here runs on one developer's machine: no authentication, tenancy or RBAC (L-01), and no way to service a data-subject access or deletion request, which is why real customer data does not belong in it (L-09). For the fuller argument about what a hub built on this foundation is and is not, the customer hub concept page carries the commercial version of this definition with every status quoted from the catalogue."
+            "The deployment reading is excluded too. A hub built here runs on one developer's machine: no authentication ships, and a deployment must supply the verifier (L-01), and no way to service a data-subject access or deletion request, which is why real customer data does not belong in it (L-09). For the fuller argument about what a hub built on this foundation is and is not, the customer hub concept page carries the commercial version of this definition with every status quoted from the catalogue."
           ]
         }
       ],
@@ -204,7 +204,7 @@
         "The definition implemented here is the record chain only. Nothing ingests, deduplicates, merges or resolves identities from other systems, and there is no import or export (L-06).",
         "There is no per-customer screen. The Admin navigates by module and domain, and no view assembles one customer's chain for a reader.",
         "A customer hub is not a customer data platform. The profile-hub reading belongs to a different category this framework explicitly refuses.",
-        "None of it is deployable: no authentication, tenancy or RBAC (L-01), and no export or erasure path, so real customer data does not belong in it (L-09)."
+        "None of it is deployable: no authentication ships, and a deployment must supply the verifier (L-01), and no export or erasure path, so real customer data does not belong in it (L-09)."
       ],
       "claims": [
         "C-06",
@@ -270,7 +270,7 @@
           "heading": "Where this CPQ stops",
           "body": [
             "The name stops at the quote. There is no invoice, no payment, no dunning, no tax and no revenue recognition anywhere in the framework, and MRR, ARR and TCV are deliberately not derived (L-10). There is also no quote PDF and no delivery to a customer: the quote exists as records and Admin screens, and no notification adapter sends anything to anyone.",
-            "The approval is bounded the same way everything here is. requiredApprovalKey values like sales-manager are labels printed on the approval, not enforced roles, because there is no authentication to check a role against (L-01). Metered usage, overage, proration, ramps and minimum commitments are recorded as not quotable rather than approximated — asking for one is refused, which is the honest behaviour."
+            "The approval is bounded the same way everything here is. requiredApprovalKey values like sales-manager are labels printed on the approval, not enforced roles, because ADR-038 deliberately left them descriptive rather than enforced permissions (L-01). Metered usage, overage, proration, ramps and minimum commitments are recorded as not quotable rather than approximated — asking for one is refused, which is the honest behaviour."
           ]
         }
       ],
@@ -278,7 +278,7 @@
         "CPQ here stops at the quote. Nothing bills, invoices, takes payment or recognises revenue, and MRR, ARR and TCV are not derived (L-10).",
         "The catalog provider is an offline fixture. No Stripe, Zuora, ERP or CPQ adapter ships, and no credential ships (L-05).",
         "There is no quote PDF and nothing is sent to a customer. The quote is records and Admin screens.",
-        "requiredApprovalKey is a label, not enforced security. The server checks that the deciding actor is a user, never which user, because there is no authentication (L-01).",
+        "requiredApprovalKey is a label, not enforced security: ADR-038 kept approval keys descriptive rather than promote them into enforced permissions (L-01).",
         "Metered usage, overage, proration, ramps and minimum commitments are not quotable, and quoting one is a refusal rather than an approximation.",
         "The discount policy is proven for quotes. There is no general approval engine over arbitrary custom objects."
       ],
@@ -350,7 +350,7 @@
         "Versioning buys reproducibility, not correctness. Nothing checks that a policy encodes the rule the business intended, and a wrong rule is reproduced exactly.",
         "The fingerprint covers a definition's own source and declared config. Closure state and out-of-file helpers are not captured, and closure analysis is deliberately not attempted.",
         "Reproducing a decision is not reproducing its inputs. Historical routing decisions are only partially reproducible, and the catalogue says so.",
-        "Immutability is enforced at boot for registered versions. It is not a tamper-proof store: the database is a local SQLite file with no access control (L-01).",
+        "Immutability is enforced at boot for registered versions. It is not a tamper-proof store: the database is a local SQLite file, and no authentication ships in front of it (L-01).",
         "No policy evaluates on a schedule. There is no scheduler, queue or delayed evaluation, so time passing changes nothing (L-04)."
       ],
       "claims": [
@@ -411,7 +411,7 @@
           "heading": "What determinism does not cover",
           "body": [
             "Determinism is about reproducibility, not correctness: a workflow that faithfully encodes the wrong business rule reproduces the wrong decision every time, and nothing in the framework can tell. Review of the encoded rule is human work, which is why the rules live in explicit source rather than generated configuration.",
-            "Two mechanical bounds matter as much as the principle. The event buffer is in-process and not durable — a crash between the database commit and the dispatch loses the events, so they cannot back a remote integration. And no workflow ever starts because time passed: there is no scheduler, queue or delayed step, so a follow-up date arriving changes no state (L-04). Everything that runs was explicitly asked to run, by an actor the system records but — having no authentication — never verifies (L-01)."
+            "Two mechanical bounds matter as much as the principle. The event buffer is in-process and not durable — a crash between the database commit and the dispatch loses the events, so they cannot back a remote integration. And no workflow ever starts because time passed: there is no scheduler, queue or delayed step, so a follow-up date arriving changes no state (L-04). Everything that runs was explicitly asked to run, by an actor the system records but, with no verifier supplied, never authenticates (L-01)."
           ]
         }
       ],
@@ -419,7 +419,7 @@
         "Deterministic means reproducible, not correct. A workflow encoding the wrong rule reproduces the wrong decision exactly, and nothing in the framework detects that.",
         "The transaction-scoped event buffer is in-process and not durable. A crash between commit and dispatch loses delivery, so these events cannot back a remote integration.",
         "No workflow is time-driven. There is no scheduler, queue or delayed step; a due date arriving changes no state (L-04).",
-        "The actor a workflow records is asserted in a header, not authenticated (L-01).",
+        "In local-development mode the actor a workflow records is asserted in a header, not authenticated (L-01).",
         "Determinism here describes this framework's services and workflows. It is not a claim that no model runs anywhere at runtime in an application an owner extends."
       ],
       "claims": [
@@ -479,13 +479,13 @@
         {
           "heading": "Where the boundary stops",
           "body": [
-            "The actor is an assertion, not an identity. There is no authentication, tenancy or RBAC, and an actor header is a claim the caller makes about itself (L-01) — so the boundary holds against an honest agent that says what it is, and not against any caller that lies. That is why the server is local-development-only.",
+            "In local-development mode the actor is an assertion, not an identity: no authentication ships, so an actor header there is a claim the caller makes about itself (L-01) — the boundary holds against an honest agent that says what it is, and not against any caller that lies, until a deployment supplies the adapter that verifies the request.",
             "The approval key is a label: nothing checks that the human who approved was a sales manager, because there are no roles to check, which is why obtaining the required commercial approval reads partially supported in the job catalogue and enforcing team or tenant permissions reads not supported. And refusing the decision is not reviewing it — the framework decides who may decide, never whether the human decided well."
           ]
         }
       ],
       "boundaries": [
-        "The boundary is executable behaviour, and only that. It refuses an agent the decision; it does not authenticate anyone, because there is no authentication to do it with (L-01).",
+        "The boundary is executable behaviour, and only that. It refuses an agent the decision; it does not authenticate anyone, because the framework authenticates nobody (L-01).",
         "It holds against an honest agent that declares itself. A caller that asserts a false actor type is not stopped, which is why the server must stay local.",
         "requiredApprovalKey is a label, not a role. Nothing verifies which human decided, only that the deciding actor was a user.",
         "The discount refusal is asserted inside a composite end-to-end test, not a test named only for it. The renewal refusal has its own named test.",
@@ -550,7 +550,7 @@
           "heading": "Where Accordo sits, and what the bridge costs",
           "body": [
             "Accordo is the process layer only. It ships no connector, importer, scheduler or external adapter in either direction — every provider in this repository is an offline fixture (L-05) — so a CDP-to-CRM bridge is application engineering the owner writes: a selected profile mapped into an explicit CRM command, validated by the service and governed by the same policy as any other caller. The clean hand-off happens after selection, not before identity.",
-            "The comparison and architecture pages carry the full versions of this argument: the CDP comparison states operationally what Accordo does not do, and the CDP-plus-CRM concept page describes the two-layer architecture where each side keeps its own question. Both inherit the same posture this page does: no authentication or tenancy (L-01), and no export or erasure path, so real customer data does not belong in the current runtime (L-09)."
+            "The comparison and architecture pages carry the full versions of this argument: the CDP comparison states operationally what Accordo does not do, and the CDP-plus-CRM concept page describes the two-layer architecture where each side keeps its own question. Both inherit the same posture this page does: no authentication (L-01), and no export or erasure path, so real customer data does not belong in the current runtime (L-09)."
           ]
         }
       ],
@@ -558,7 +558,7 @@
         "This page defines a category split. It does not claim Accordo implements the CDP half in any form: no ingestion, no identity resolution, no segmentation, no destination sync.",
         "No bridge ships between the layers. Connecting a CDP to an Accordo application is code the owner writes, not configuration this framework performs (L-05).",
         "No CDP vendor is named or evaluated here. The competitor research this site may cite carries no product-level claims in that category.",
-        "The CRM half described is a local development framework: no authentication, tenancy or RBAC (L-01), and no path to service a data-subject request (L-09).",
+        "The CRM half described is a local development framework: no authentication ships, and a deployment must supply the verifier (L-01), and no path to service a data-subject request (L-09).",
         "Import, export, deduplication and merge do not exist on the CRM side either (L-06). The process layer's integrity claims are about mutations, not about data completeness."
       ],
       "claims": [
@@ -701,7 +701,7 @@
         "Every signature provider is an offline fixture. No envelope has ever reached a real signer, and the signed document is canonical JSON, not a PDF (L-05).",
         "The contract term was never signed. Effective and term dates are post-signature operational metadata a human types with a required reason.",
         "There is no scheduler, so nothing renews, expires or fires on a date (L-04). Amendment, cancellation and renewal flows do not exist.",
-        "The chain runs locally with no authentication or tenancy, so it is a development artifact, not an operating revenue process (L-01)."
+        "The chain runs locally with no authentication, so it is a development artifact, not an operating revenue process (L-01)."
       ],
       "claims": [
         "C-08",
