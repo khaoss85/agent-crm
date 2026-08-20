@@ -80,13 +80,14 @@ working with no Cloud account.
    adapter does. It gets no privileged path.
 5. **The public limitations apply to the Cloud too.** The Cloud may not describe
    the framework as providing an isolation or a guarantee the framework itself
-   publishes as unenforced.
+   does not publish as enforced.
 
 ## What the Cloud may not claim
 
 Until the corresponding public capability exists and is proven, the Cloud may not
-advertise it. Today that includes multi-tenant isolation on the CRM data plane,
-which the framework publishes as **declared and not enforced**
-(`TENANT_ISOLATION_NOT_ENFORCED`). A managed product may operate one instance per
-tenant and say *that* — it may not describe the framework as isolating tenants it
-does not isolate.
+advertise it. Today that includes **shared-database multi-tenancy**, which does
+not exist: the framework enforces one tenant per application instance and has no
+row-level tenancy and no PostgreSQL. A managed product may operate one instance
+per tenant and say *that* — it may not describe many tenants sharing one database
+as isolated, because that arrangement is not something this framework can do at
+all.

@@ -78,11 +78,12 @@ test.
 
 The brief permits implementation only if the gate is narrow, deterministic, and
 passes on the current tree **without requiring any file to move**. It is not, and
-here is the measured reason: the tree at `947eb64` contains 35 `MOVE_PRIVATE`
+here is the measured reason: the tree at `aa1359f` contains 35 `MOVE_PRIVATE`
 paths and 5 `PUBLIC_REDACTED_REPLACEMENT` paths, all of them still present
 publicly — so rule 2 fails on 40 paths today. Rule 5 also has live work to do:
-three private-designated documents are linked from eight public files
-(`MASTER_PLAN.md` from six, `GO_TO_MARKET.md` and `CATEGORY.md` from one each).
+three private-designated documents are linked from **12 files that stay public**
+(`MASTER_PLAN.md` from nine, `GO_TO_MARKET.md` from four, `CATEGORY.md` from
+three, counting each file once per target).
 
 Any gate strong enough to be worth adding therefore fails on files this phase is
 explicitly forbidden to move. A gate authored now would have to be born disabled

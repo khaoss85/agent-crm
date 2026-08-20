@@ -48,7 +48,7 @@ trace or an error.
 bounded identity. Exactly what a self-hosted OIDC adapter does — no privileged
 path, and `asserted-local` is refused in production.*
 
-### Authorization — *shipped*, `SPINE_CONTRACT = 1`
+### Authorization — *shipped*, `SPINE_CONTRACT = 2`
 Eleven bounded permissions, explicit role bundles, `authorizationFingerprint()`,
 and `records.write` as the floor for record actions.
 
@@ -58,15 +58,21 @@ application boundary.*
 
 ### Project and environment identity — *shipped in part*
 The framework side is the Spine **Organization** (the tenant record) and
-`TENANT_STRATEGY = 'database-per-tenant'` with a bounded tenant slug
-(`TENANT_STORAGE_CONTRACT = 1`).
+`TENANT_STRATEGY = 'one-tenant-per-instance'` with a bounded tenant slug
+(`TENANT_STORAGE_CONTRACT = 2`).
 
-**State the limitation with the contract:** v1 *declares* the tenant boundary and
-does **not enforce** isolation on the CRM data plane — the schema publishes
-`tenantIsolation.crmDataPlaneEnforced: false` and leads with
-`TENANT_ISOLATION_NOT_ENFORCED`. So the Cloud's supported shape today is **one
-application instance per tenant**, and the Cloud may not advertise isolation the
-framework says it does not enforce. Closing this is public Spine v2 work.
+**State the limitation with the contract:** isolation on the CRM data plane is
+**enforced**, and enforced structurally rather than by a check — `bindTenantStorage()`
+returns a handle that exposes no `databasePathFor`, so a second tenant is
+*unreachable* rather than refused; a `dbPath` beside a spine is refused
+(`SPINE_DATA_PLANE_PATH_NOT_CONFIGURABLE`); control and data planes are separate
+files with separate migration lists, so a crossing write raises `no such table`;
+and a configuration naming two CRM tenants in one application is refused at
+startup. What does **not** exist is shared-database row-level tenancy, and
+PostgreSQL is not implemented. So the Cloud's supported shape is **one
+application instance per tenant**, and the Cloud may not describe that as
+shared-database multi-tenancy. Row-level tenancy in PostgreSQL is public Spine
+v2 work.
 
 *Cloud-side project and environment identity is a private concept layered above,
 mapping one environment to one instance to one Organization.*

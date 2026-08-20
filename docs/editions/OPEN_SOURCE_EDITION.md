@@ -50,8 +50,8 @@ people relying on it. Concretely (ADR-038, `packages/core`, `packages/app`):
 |---|---|---|
 | Runtime mode | `ACCORDO_MODE` — `local-development` \| `production`, **no default** | An unset mode is an error, never a guess |
 | Identity | `IDENTITY_CONTRACT = 1` | Kinds `verified-user` \| `system` \| `asserted-local` \| `anonymous`; closed evidence-method vocabulary; a claims **fingerprint**, never the claims |
-| Authorization | `SPINE_CONTRACT = 1` | 11 bounded permissions, explicit role bundles, `authorizationFingerprint()`, `records.write` as the record-action floor |
-| Tenant storage | `TENANT_STORAGE_CONTRACT = 1`, `TENANT_STRATEGY = 'database-per-tenant'` | A tenant id is a bounded slug; one database file per tenant |
+| Authorization | `SPINE_CONTRACT = 2` | 11 bounded permissions, explicit role bundles, `authorizationFingerprint()`, `records.write` as the record-action floor |
+| Tenant storage | `TENANT_STORAGE_CONTRACT = 2`, `TENANT_STRATEGY = 'one-tenant-per-instance'` | A tenant id is a bounded slug; one application instance is bound to exactly one tenant data plane |
 
 **The framework authenticates nobody, and that is deliberate.** A deployment
 adapter verifies the request and supplies a bounded, versioned identity; the
@@ -63,19 +63,26 @@ just one more deployment adapter.
 ### One-tenant-per-instance deployment — stated as it actually is
 
 The public edition's supported deployment shape is **one application instance
-per organization**. Two facts belong in the same breath, because the second is
-what makes the first a discipline rather than a guarantee:
+per organization**, and it is **enforced rather than declared**:
 
-- v1 **declares** a versioned TenantStorage boundary of one database per tenant;
-- v1 does **not enforce** tenant isolation on the CRM data plane. The schema
-  publishes `tenantIsolation.crmDataPlaneEnforced: false` and leads its
-  limitations with `TENANT_ISOLATION_NOT_ENFORCED`.
+- `bindTenantStorage()` returns a handle that exposes no `databasePathFor`, so a
+  second tenant is **unreachable** rather than refused by a check somebody could
+  forget;
+- a `dbPath` beside a spine is refused (`SPINE_DATA_PLANE_PATH_NOT_CONFIGURABLE`),
+  because two answers to *"where does this tenant's data live"* was the shape the
+  original defect had;
+- control-plane and data-plane migrations are separate lists in separate files,
+  so a write that crossed the boundary raises `no such table` rather than quietly
+  succeeding;
+- a configuration that would put two CRM tenants in one application is refused at
+  startup.
 
-So a self-hosting operator running one organization is served correctly today,
-and an operator who puts two organizations in one instance is not isolated by the
-runtime and is told so by the runtime. Closing that gap — binding an instance to
-one tenant, or scoping every read by organization — is public Spine v2 work, not
-Cloud work. **This limitation stays public.** Relocating it would be the exact
+What is **absent** is shared-database row-level tenancy across the 86+ tables,
+which v1 deliberately did not attempt because a half-migrated version of it is
+worse than none — it *looks* isolated. PostgreSQL is not implemented either.
+Nothing in this repository may describe the current model as shared-database
+multi-tenancy; row-level tenancy in PostgreSQL is public Spine v2 work, not Cloud
+work. **The remaining limits stay public.** Relocating them would be the exact
 failure the boundary exists to refuse.
 
 ### Deferred public capabilities

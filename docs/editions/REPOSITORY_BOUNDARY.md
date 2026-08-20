@@ -49,17 +49,35 @@ directory-scoped access is sufficient and cheaper.
 
 ## 2. Inventory of the current public tree
 
-Classified from the real tree at `947eb64`, not from memory. **92 paths
-classified** (a trailing `/` denotes a directory counted as one path).
+Classified from the real tree, not from memory. Re-validated against `aa1359f`
+after Production Spine v1 merged. **97 paths classified** (a trailing `/` denotes
+a directory counted as one path).
 
 | Classification | Count |
 |---|---:|
-| `KEEP_PUBLIC` | 42 |
+| `KEEP_PUBLIC` | 47 |
 | `MOVE_PRIVATE` | 35 |
 | `PUBLIC_REDACTED_REPLACEMENT` | 5 |
 | `SPLIT_PUBLIC_PRIVATE` | 5 |
 | `HISTORICAL_ALREADY_PUBLIC` | 5 |
-| **Total** | **92** |
+| **Total** | **97** |
+
+The first pass enumerated the paths where the public/private call is *arguable* —
+marketing, strategy, the site, the Cloud designs — and silently omitted the ones
+where it is not. That is the same shape as the defect this whole boundary exists
+to avoid: an inventory that **reads** complete because nothing in it is wrong.
+The five entries below close it by naming the remainder as whole-directory or
+whole-class rules, so the migration manifest and any future
+`public-surface-check` allowlist have an instruction for **every** path rather
+than for the interesting ones.
+
+**Re-validation against `aa1359f`.** Four non-code paths appeared since the first
+pass — `docs/plans/benchmark-judgement-gates.md`,
+`docs/plans/production-spine-v1.md`,
+`docs/transcripts/2026-08-19-tour-and-falsify.txt` and
+`site/blog/build-a-custom-crm-with-claude-code-day-30.md`. All four fall under
+directory-level entries, so none changes a classification. No path classified in
+the first pass was deleted or renamed.
 
 ### `KEEP_PUBLIC` (42)
 
@@ -123,6 +141,29 @@ Each moves private **only after** its public replacement exists (§4).
 `site/tools.json` · `site/capabilities.json` · `site/assets/styles.css` ·
 `site/assets/mark.svg` · `site/assets/social-preview.{svg,png}`.
 
+### `KEEP_PUBLIC`, by whole-class rule (5 entries)
+
+These were omitted from the first enumeration. They are public, and none of them
+is a close call:
+
+- **`docs/*.md` — framework product documentation (32 files).** `ACTIONS` ·
+  `ADMIN` · `API` · `MODULE_FACTORY` · `MODULE_MANIFEST` · `PACKAGE_AUTHORING` ·
+  `QUALITY_GATES` · `SCENARIO_EVIDENCE` · `SOLUTION_PLAN` · the six domain guides
+  and the rest. Someone who clones only the public repository must be able to run
+  and extend the product; these are how. `PROJECT_STATUS.md` is listed separately
+  above.
+- **`docs/plans/` — 55 dated ExecPlans.** Historical engineering records,
+  including the ones whose milestone was cut or reworked. They preserve what was
+  true when written and are never rewritten.
+- **`docs/jtbd/`** — the JTBD index README supporting the public matrix.
+- **`docs/editions/`** — these five documents. The boundary between the editions
+  is itself public; a private boundary document would be an odd thing to ask
+  contributors to respect.
+- **Root and site config the public repository needs to run:** `.mcp.json` ·
+  `gemini-extension.json` · `package-lock.json` · `site/.gitignore` ·
+  `site/.used-claims.json`. The last two follow the site split rather than
+  travelling on their own.
+
 ### `SPLIT_PUBLIC_PRIVATE` (5)
 
 | Path | Public half | Private half |
@@ -167,15 +208,35 @@ below is authored in the migration task, **before** step 6 removes its source:
 4. **`MANAGED_CLOUD_EDITION.md` + `CLOUD_INTEGRATION_CONTRACT.md`** — already
    written in this PR; they replace the Cloud design documents publicly.
 
-**Inbound links that must be rewritten in the same step**, measured against the
-tree rather than guessed. Exactly **three** private-designated documents are
-currently linked from public files:
+**Inbound links that must be rewritten in the same step**, re-measured against
+`aa1359f`. Three private-designated documents are linked from files that **stay
+public** — **12 distinct files**, not the 8 the first pass counted. The first
+count missed `packages/docs-mcp/README.md`, `DECISIONS.md`, `site/claims.json`
+and two historical documents that remain public and would therefore carry a
+broken link:
 
-| Private-designated document | Linked from |
+| Private-designated document | Linked from files that stay public |
 |---|---|
-| `MASTER_PLAN.md` | `README.md`, `ROADMAP.md`, `PRODUCT.md`, `AGENTS.md`, `CONTRIBUTING.md`, `docs/PROJECT_STATUS.md` — **6 files** |
-| `GO_TO_MARKET.md` | `README.md` |
-| `CATEGORY.md` | `PRODUCT.md` |
+| `MASTER_PLAN.md` | `README.md` · `ROADMAP.md` · `PRODUCT.md` · `AGENTS.md` · `CONTRIBUTING.md` · `DECISIONS.md` · `docs/PROJECT_STATUS.md` · `packages/docs-mcp/README.md` · `docs/plans/first-gtm-article.md` — **9 files** |
+| `GO_TO_MARKET.md` | `README.md` · `site/claims.json` · `docs/marketing/CORRECTIONS.md` · `docs/plans/gtm-smart-crm-intent.md` — **4 files** |
+| `CATEGORY.md` | `PRODUCT.md` · `DECISIONS.md` · `site/claims.json` — **3 files** |
+
+Three of those sources need a rule rather than an edit, because rewriting them
+would falsify a record:
+
+- **`DECISIONS.md`** — an accepted ADR citing the document that motivated it.
+  The citation is historical and stays; migration step 5 appends a note that the
+  target moved private, rather than editing the ADR body.
+- **`docs/marketing/CORRECTIONS.md` and `docs/plans/*`** — dated records that
+  preserve what was true when written. Same rule: the link is annotated as
+  pointing at a now-private document, never silently repointed.
+- **`site/claims.json`** — a claim's `docs` evidence array. The evidence must
+  move to the public replacement, because a claims ledger that cites an
+  unopenable path is exactly the failure the ledger exists to prevent.
+
+Links from files that are themselves `MOVE_PRIVATE` (`docs/marketing/LAUNCH_PACKET.md`,
+`PENDING_HUMAN_SUBMISSION.md`, `CONTENT_PILLARS.md`, `site/concepts.json`,
+`site/glossary.json`) travel with their source and need no public replacement.
 
 Every other public link into `docs/strategy/` — `CRM_BUILD_BENCHMARK`,
 `RECOMMENDATION_MAP`, `DATA_GOVERNANCE`, `CODING_AGENT_DX_NORTH_STAR`,
@@ -209,9 +270,10 @@ entry-point file, so their replacement carries no link debt.
 ## 6. The roadmap, in three tracks
 
 ### Public OSS
-- **Spine v1** — identity, authorization, one-tenant-per-instance *(in review)*
-- **Spine v2** — PostgreSQL per-tenant storage, and closing the CRM data-plane
-  isolation gap v1 publishes as unenforced
+- **Spine v1** — identity, authorization, one-tenant-per-instance *(merged,
+  ADR-038)*
+- **Spine v2** — PostgreSQL per-tenant storage, and shared-database row-level
+  tenancy, which v1 deliberately did not attempt
 - **Spine v3** — durable jobs, outbox, scheduler
 - **Spine v4** — secret, backup, observability and self-host interfaces
 - **Customer Data Operations** — search, saved views, bulk actions, physical
