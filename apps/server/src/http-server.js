@@ -190,6 +190,17 @@ function buildRouter(app) {
   router.add('GET', '/api/schema', async () => ({
     schema: app.schema,
     generatedResourceContract: 1,
+    // Production Spine v1 (ADR-038). Published in BOTH states on purpose: an
+    // application with no spine says so, in the same field, rather than simply
+    // omitting it. A reader who has to infer the absence of a security boundary
+    // from a missing key will eventually infer wrong.
+    spine: app.spine ? app.spine.describe() : {
+      spineContract: null,
+      enabled: false,
+      warning: 'NO PRODUCTION SPINE — this application performs no identity verification, no tenant '
+        + 'isolation and no authorization. Actor identity is whatever the caller claimed. Never expose it, '
+        + 'and never read its audit trail as proof that a particular person did anything.',
+    },
     modules: app.modules.list(),
     generatedModules: app.modules
       .list()
