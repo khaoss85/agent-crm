@@ -126,18 +126,24 @@ Each moves private **only after** its public replacement exists (§4).
 
 ### `MOVE_PRIVATE` (35)
 
-**GTM strategy and research (10):** `GO_TO_MARKET` is listed above;
+**The counting convention**, because these subtotals were wrong once: a
+directory with a trailing `/` counts as one path; a brace expansion counts as
+the files it names, so `social-preview.{svg,png}` is two; and a path
+cross-referenced from another classification is counted there, not twice.
+
+**GTM strategy and research (7):** `GO_TO_MARKET` is listed above under
+`PUBLIC_REDACTED_REPLACEMENT` and counted there, not here;
 `COMPETITOR_MAP` · `MEDUSA_PLAYBOOK` · `AGENT_DISCOVERY` ·
 `AGENT_RECOMMENDATION` · `ORGANIC_GROWTH` · `DISTRIBUTION_SUBMISSIONS` ·
 `BRAND_REQUIREMENTS` under `docs/strategy/`.
 
-**Launch, content and sales enablement (12):** `docs/marketing/LAUNCH_PACKET` ·
+**Launch, content and sales enablement (13):** `docs/marketing/LAUNCH_PACKET` ·
 `FOUNDER_CHECKLIST` · `CONTENT_PILLARS` · `CONTENT_PRODUCTION` ·
 `GITHUB_LISTING` · `AWESOME_LIST_SUBMISSIONS` · `PENDING_HUMAN_SUBMISSION` ·
 `DESIGN_BRIEF` · `NAME_VERIFICATION` · `OBJECTIONS` · `SITE_ARCHITECTURE` ·
 `DEPLOYMENT` · `drafts/`.
 
-**Marketing-site implementation (13):** `site/templates/` · `site/partials/` ·
+**Marketing-site implementation (15):** `site/templates/` · `site/partials/` ·
 `site/blog/` · `site/shell.html` · `site/brand.json` · `site/compare.json` ·
 `site/answers.json` · `site/concepts.json` · `site/glossary.json` ·
 `site/tools.json` · `site/capabilities.json` · `site/assets/styles.css` ·
