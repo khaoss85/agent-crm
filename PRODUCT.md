@@ -18,6 +18,21 @@ Accordo is a framework that lets a user describe a commercial process to Codex o
 
 Accordo is not an autonomous salesperson and is not a full Salesforce replacement in milestone 0.
 
+The framework **authenticates nobody** — a deployment adapter verifies the request — and it
+**owns tenancy and authorization completely**, with one tenant per application instance enforced
+by the storage binding rather than by a filter (ADR-038). Persistence is SQLite; PostgreSQL,
+shared-database row-level tenancy, durable jobs, billing and any marketing runtime do not exist.
+Each of those sentences is bound to a generated fact (ADR-039) and re-checked by
+`npm run repo:truth -- --check`.
+
+<!-- truth: spine.authentication.framework_verifier=absent -->
+<!-- truth: spine.authorization.enforced=enforced -->
+<!-- truth: spine.tenant.isolation.mode=one_tenant_per_instance -->
+<!-- truth: spine.postgresql.implemented=absent -->
+<!-- truth: spine.durable_jobs.implemented=absent -->
+<!-- truth: billing.implemented=absent -->
+<!-- truth: marketing_runtime.implemented=absent -->
+
 It provides:
 
 - reusable CRM primitives;
