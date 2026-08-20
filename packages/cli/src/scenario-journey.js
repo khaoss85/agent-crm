@@ -169,6 +169,51 @@ export const JOURNEYS = Object.freeze({
       }),
     ]),
   }),
+  'tenant-isolation-and-authorization': Object.freeze({
+    installer: 'examples/journeys/tenant-isolation-and-authorization/journey.mjs',
+    clock: JOURNEY_CLOCKS.injected,
+    describes: 'the checked-in Production Spine journey (ADR-038): it composes TWO tenants as two separate '
+      + 'applications with two databases — the wiring the framework does not do for you — creates identically '
+      + 'named records in both, and proves neither can '
+      + 'reach the other by id, by collection or by write; proves a membership in one tenant means nothing in '
+      + 'the other and that a genuine owner of B pointed at A is refused for the organization rather than for '
+      + 'the record; lets an authorized manager decide and refuses a viewer the same decision while leaving '
+      + 'their read intact; keeps 401 and 403 distinct; attempts a self-grant, an escalation by a manager, the '
+      + 'demotion of an organization\'s last administrator and a second bootstrap, and is refused each time; '
+      + 'lets a signature webhook reconcile and refuses it a commercial approval; refuses a developer assertion '
+      + 'outright in production mode; and proves no credential reaches an identity, a decision or an audit row',
+    limitations: Object.freeze([
+      Object.freeze({
+        code: 'ISOLATION_IS_TWO_DATABASES_NOT_A_ROW_COLUMN',
+        message: 'the isolation this run proves comes from the run itself: it composes two separate '
+          + 'applications with two database files. The framework does NOT enforce it — the declared '
+          + 'database-per-tenant strategy has no wiring, and two organizations inside one application share '
+          + 'one database and can read and write each other\'s records and audit rows, which the runtime '
+          + 'publishes as TENANT_ISOLATION_NOT_ENFORCED. So this run establishes isolation for a '
+          + 'one-application-per-tenant deployment and nothing more; it says nothing about shared-database '
+          + 'row-level tenancy, which is a later slice and is deliberately not claimed',
+      }),
+      Object.freeze({
+        code: 'NO_IDENTITY_PROVIDER_IS_CONTACTED',
+        message: 'the framework authenticates nobody. The verified identities in this run are constructed '
+          + 'directly, as a deployment adapter would supply them — no OIDC, SAML, vendor or network call '
+          + 'happens, and no credential exists to be checked. Nothing here is evidence that any real identity '
+          + 'provider integration works',
+      }),
+      Object.freeze({
+        code: 'EVERY_REFUSAL_IS_EARNED_BY_ATTEMPTING_IT',
+        message: 'each safety fact this run publishes is produced by performing the forbidden operation and '
+          + 'recording that it was refused. A report claiming nothing leaked could be produced by a run that '
+          + 'never tried, which is why the refusals are positive facts rather than absences',
+      }),
+      Object.freeze({
+        code: 'NOT_PRODUCTION_READINESS',
+        message: 'identity, tenancy and authorization exist; PostgreSQL and shared-database tenancy, durable '
+          + 'jobs and outbox, a scheduler, secrets, backups, restore and deployment do not. This run is not a '
+          + 'production-readiness statement and no part of it should be quoted as one',
+      }),
+    ]),
+  }),
   'customer-identity-governance': Object.freeze({
     installer: 'examples/journeys/customer-identity-governance/journey.mjs',
     clock: JOURNEY_CLOCKS.injected,

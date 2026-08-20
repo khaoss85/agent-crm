@@ -74,7 +74,7 @@ const LIMITATIONS = Object.freeze([
   ['CI_EVIDENCE_NOT_INFERRED', 'no CI, browser-smoke or benchmark result is read or inferred'],
   ['SECRETS_NOT_INSPECTED', 'no secret, credential, token or environment value is read, and no provider is contacted or authenticated'],
   ['PROVIDER_HEALTH_UNKNOWN', 'a registered provider definition says a provider was composed, never that it is reachable, configured or operational'],
-  ['PRODUCTION_SPINE_ABSENT', 'there is no authentication, tenancy or RBAC in this framework, so no runtime authorization can be reported'],
+  ['PRODUCTION_SPINE_ABSENT', 'Production Spine v1 (ADR-038) adds verified identity, organizations, memberships, server-authoritative authorization and one-tenant-per-instance storage isolation — but none of it can be reported from SOURCE: which mode a deployment chose, which tenant it is bound to, whether a verifier is configured and who holds which membership are all runtime facts, published by a running application at /api/schema. One application instance serves exactly one tenant; two tenants means two instances, and a configuration naming two is refused at startup. Shared-database row-level tenancy and PostgreSQL are NOT implemented, and durable jobs, secrets, backups and deployment are still absent. This is not a production-readiness statement'],
   ['ADMIN_EXTENSIONS_UNSUPPORTED', 'the framework has no seam for a package to contribute an Admin extension, so adminExtensions is empty for every project — not merely empty for this one'],
   ['DATA_QUALITY_UNKNOWN', 'source-only inspection can say which records exist, never whether their data is correct, complete or duplicated'],
   ['RUNTIME_STATE_UNKNOWN', 'nothing here reports what is running, deployed or reachable'],

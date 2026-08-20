@@ -476,3 +476,95 @@ produce one of every outcome:
 
 Report any step that fails; do not mark the customer data section
 browser-validated unless all 32 pass.
+
+## Identity, tenancy and authorization (Production Spine v1, ADR-038)
+
+**Spine-specific, scripted, and outside CI. 34 checks.**
+
+**What has been run, stated precisely.** The independent reviewer drove **all
+34 checks** in real Chromium (**Chromium/141.0.7390.37**) on Node **22.16.0**
+against the enforced composition on the final head: **34 of 34 pass, twice, on a
+fresh fixture and a fresh browser profile each time, with identical results** and
+no dialog, no uncaught error, no console error, no failed resource and no 5xx
+response in either run. That includes checks **32–34**, which were added with
+the isolation change and had never been executed by anyone until this run — the
+single-tenant posture renders and carries
+`data-crm-data-plane-enforced="true"`, no tenant switcher is offered anywhere on
+the page, and the unenforced-isolation error correctly does **not** render on a
+runtime whose binding is intact.
+
+Two things about that run belong here rather than in a report nobody reads
+later. First, the harness is the reviewer's own rebuild, not the author's — the
+original was lost with its worktree — so the check *numbering* below is the
+specification's, while the reviewer's script is an independent rendering of the
+same surface; it covers every check here, but a line-by-line diff of two scripts
+is not what was compared. Second, the reviewer's first two attempts scored 19/34
+and 32/34, and **every one of those failures was the harness, not the product**:
+the Admin hardcodes `x-actor-id`, so personas had to become separate servers
+rather than a value the browser sets, and two assertions were written against
+the *previous* contract (the v1 strategy string `database-per-tenant`, and a
+whole-page regex that matched the role-bundle table rather than the viewer's own
+permissions). Those are recorded because a matrix that silently drops its own
+false failures is a matrix nobody can trust the passes of.
+
+**Browser automation is still manual**, exactly as the sections above say: the
+run was scripted with the same zero-dependency Chrome DevTools Protocol driver,
+that script is not checked in, and no CI job launches a browser.
+
+Setup: three servers from one process, so the three states can be compared
+side by side.
+
+- **production** — an identity verifier that resolves the Admin's actor header
+  to a subject and looks that subject's tenant up from its membership. Two
+  organizations, `tenant-a` and `tenant-b`; `alice` owns A, `vic` is a viewer in
+  A, `mallory` owns B.
+- **local-development** — no verifier, asserted actors.
+- **no spine at all** — the historical composition.
+
+1. The identity and access section renders.
+2. The mode reads `production`.
+3. The identity renders as `verified-user`, with the issuer that verified it.
+4. **No** local-development warning appears in production mode.
+5. The tenant is named, with the **bound tenant** stated as bound and the strategy reading `one-tenant-per-instance`.
+6. *"An Organization is a tenant of this software … They are never the same thing."* renders verbatim.
+7. The owner sees the member list rather than a refusal.
+8. The owner's permissions include `admin.memberships.manage`.
+9. **An authorized action succeeds**: granting `carol` a viewer membership appears in the list as `carol — viewer (active)`.
+10. And it states that no invitation was sent, because no email system exists.
+11. **A denied action is denied**: a viewer is refused the member list, `data-denied="admin.memberships.manage"`.
+12. And the refusal says *"This is a refusal, not an empty organization."*
+13. The viewer is offered **no grant control at all** — the refusal is not a disabled button.
+14. The viewer still sees their own role and permissions.
+15. **The cross-tenant refusal**: an owner of tenant B sees only tenant B — tenant A's members are absent from the answer.
+16. **Naming another tenant in a header buys nothing.** There is no organization header by design, and the verified identity stays authoritative.
+17. An unverified caller gets **401**, distinct from the viewer's **403**.
+18. Local-development mode renders a warning.
+19. It says identity is *asserted, not verified*, and that anyone who can reach the server can claim to be anyone.
+20. The warning carries **error** styling, not muted footnote styling.
+21. The local identity renders as `asserted-local`, and states it would be refused in production.
+22. An application with **no spine** still renders the section.
+23. And says it verifies nobody, isolates nothing and authorizes nothing.
+24. It does **not** render as a healthy, empty security screen.
+25. No password input exists anywhere on the page.
+26. No input is named like a credential.
+27. No rendered value looks like a bearer token.
+28. No JavaScript dialog opened during the run.
+29. No uncaught JavaScript error and no console error during the run.
+30. No failed resource during the run.
+31. No 5xx response during the run.
+32. **The single-tenant posture renders**, saying that this instance serves exactly one Organization, that its CRM data lives in a database bound to that Organization alone, and that a request verified for any other Organization is refused as not found. It carries `data-crm-data-plane-enforced="true"`.
+33. **No tenant switcher is offered** — no select, button or input on the page is named for a tenant or an organization, because the storage binding could not honour one.
+34. **The unenforced-isolation error does NOT render.** It exists so a runtime that lost its binding could say so; a correct one must not show it.
+
+**A harness correction worth recording.** The first run passed 30/31, and the
+one failure exposed that the harness was overwriting the actor header on
+*every* request — including the three raw cross-tenant probes — so checks 15 and
+16 had been passing for the wrong reason. With the harness corrected, those two
+then failed against a *correct* product: an owner of tenant B is not refused,
+she is served her own tenant. The assertions were re-specified to test
+non-disclosure of tenant A rather than a status code, which is the property that
+actually matters.
+
+Report any step that fails; do not mark the identity and access section
+browser-validated unless all 34 pass **on the current head**. As of this
+change that has not happened — see the note above.

@@ -1,13 +1,35 @@
 // @ts-check
 
 export class AccordoClient {
-  /** @param {{baseUrl?: string, actor?: {type: string, id: string}, fetchImpl?: typeof fetch}} [options] */
+  /**
+   * @param {{
+   *   baseUrl?: string,
+   *   actor?: {type: string, id: string},
+   *   headers?: Record<string, string>,
+   *   fetchImpl?: typeof fetch,
+   * }} [options]
+   */
   constructor(options = {}) {
     this.baseUrl = (options.baseUrl ?? 'http://localhost:4000').replace(/\/$/, '');
     const actor = options.actor ?? { type: 'agent', id: 'sdk-client' };
     // Frozen copy: mutating the caller's object cannot silently change the
     // identity sent with every subsequent request.
     this.actor = Object.freeze({ type: actor.type, id: actor.id });
+
+    /**
+     * Headers sent with every request (ADR-038).
+     *
+     * The actor pair is an *assertion*, and against a Production Spine in
+     * production mode it buys nothing — a caller has to present whatever the
+     * deployment's identity verifier actually reads, and only that deployment
+     * knows what that is. Without this the SDK could not talk to an
+     * authorizing server at all: every call would come back 401.
+     *
+     * **The SDK still holds no credential of its own.** It forwards what the
+     * caller hands it, exactly as a browser forwards a header, and it never
+     * stores, logs or defaults one.
+     */
+    this.headers = Object.freeze({ ...(options.headers ?? {}) });
     this.fetch = options.fetchImpl ?? fetch;
   }
 
@@ -107,6 +129,9 @@ export class AccordoClient {
         'content-type': 'application/json',
         'x-actor-type': this.actor.type,
         'x-actor-id': this.actor.id,
+        // Last, so a caller presenting a verified identity is not overridden
+        // by the actor assertion the client would otherwise send.
+        ...this.headers,
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });

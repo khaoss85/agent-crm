@@ -275,6 +275,7 @@ test('every shipped scenario is a valid document, and carries nothing runnable',
     'customer-identity-governance.scenario.json',
     'lead-to-won.scenario.json',
     'service-sla-escalation.scenario.json',
+    'tenant-isolation-and-authorization.scenario.json',
   ], 'a contract validated by exactly one consumer is not validated');
 
   for (const file of shipped) {
