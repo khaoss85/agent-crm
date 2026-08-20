@@ -481,16 +481,31 @@ browser-validated unless all 32 pass.
 
 **Spine-specific, scripted, and outside CI. 34 checks.**
 
-**What has and has not been run, stated precisely.** Checks 1–31 were driven in
-real Chromium (**Chromium/141.0.7390.37**) on Node **22.16.0** against three
-freshly seeded servers, twice from a clean fixture and a clean browser profile,
-with identical results both runs — but on the head *before* tenant isolation was
-enforced. Checks **32–34 were added with that change and have not been run by
-this branch's author**; the composition they exercise changed underneath the old
-harness, and the independent reviewer runs this matrix on the final head. The
-Admin logic they cover is unit-tested in `tests/admin-spine.test.js`, which is
-not the same thing as a browser having rendered it, and this note exists so
-nobody reads it as if it were.
+**What has been run, stated precisely.** The independent reviewer drove **all
+34 checks** in real Chromium (**Chromium/141.0.7390.37**) on Node **22.16.0**
+against the enforced composition on the final head: **34 of 34 pass, twice, on a
+fresh fixture and a fresh browser profile each time, with identical results** and
+no dialog, no uncaught error, no console error, no failed resource and no 5xx
+response in either run. That includes checks **32–34**, which were added with
+the isolation change and had never been executed by anyone until this run — the
+single-tenant posture renders and carries
+`data-crm-data-plane-enforced="true"`, no tenant switcher is offered anywhere on
+the page, and the unenforced-isolation error correctly does **not** render on a
+runtime whose binding is intact.
+
+Two things about that run belong here rather than in a report nobody reads
+later. First, the harness is the reviewer's own rebuild, not the author's — the
+original was lost with its worktree — so the check *numbering* below is the
+specification's, while the reviewer's script is an independent rendering of the
+same surface; it covers every check here, but a line-by-line diff of two scripts
+is not what was compared. Second, the reviewer's first two attempts scored 19/34
+and 32/34, and **every one of those failures was the harness, not the product**:
+the Admin hardcodes `x-actor-id`, so personas had to become separate servers
+rather than a value the browser sets, and two assertions were written against
+the *previous* contract (the v1 strategy string `database-per-tenant`, and a
+whole-page regex that matched the role-bundle table rather than the viewer's own
+permissions). Those are recorded because a matrix that silently drops its own
+false failures is a matrix nobody can trust the passes of.
 
 **Browser automation is still manual**, exactly as the sections above say: the
 run was scripted with the same zero-dependency Chrome DevTools Protocol driver,
