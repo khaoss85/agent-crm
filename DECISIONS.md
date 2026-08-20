@@ -3004,6 +3004,28 @@ behaves exactly as before — and `/api/schema` publishes that in the same field
 rather than omitting it. A reader who has to infer the absence of a security
 boundary from a missing key will eventually infer wrong.
 
+### What versioned, and what deliberately did not (ADR-036 doctrine)
+
+**Nothing bumped.** A *package* version moves when its requires/provides or
+startup composition changes; a *capability* version moves when a required shape
+or semantic guarantee changes. Neither happened: no package declaration was
+touched, and no capability changed shape. The runtime now authorizes what
+packages already declared, which is a runtime change rather than a contract one
+— and bumping every package because the framework grew a boundary would be
+version noise that teaches readers to ignore versions.
+
+Two additive contract fields were introduced instead, both backward-compatible
+and both framework-enforced:
+
+- **`requiredPermission` on a record action.** An action that declares nothing
+  requires `records.write`, the honest floor for a mutation. When an action's
+  required permission becomes contractual — when a consumer relies on it — that
+  is the point to version the action contract deliberately, not before.
+- **`headers` on the SDK client.** Without it the SDK could not present a
+  verified identity at all and every call against an authorizing server
+  returned 401. The client forwards what a caller hands it and stores no
+  credential of its own.
+
 ### What this is not
 
 Not production readiness. PostgreSQL and shared-database tenancy, durable jobs
