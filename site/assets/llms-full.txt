@@ -145,6 +145,7 @@ has no answer here yet — not a plausible reconstruction.
 Evidence-backed articles are canonical on the project site. Syndicated copies may exist,
 but these URLs are the versions bound to this repository's claims and transcripts.
 
+- [Build a custom CRM with Claude Code: what day 30 looks like](blog/build-a-custom-crm-with-claude-code-day-30.html) — 2026-08-19; evidence C-01, C-03, C-04, C-05, C-08, C-16, C-17, C-19, C-21, C-22, C-23.
 - [When to use a CRM platform instead of this](blog/when-to-use-a-crm-platform-instead-of-this.html) — 2026-08-18; evidence C-01, C-03, C-04, C-16, C-18.
 - [What our inspector refuses to tell you](blog/what-our-inspector-refuses-to-tell-you.html) — 2026-08-18; evidence C-13, C-14, C-15.
 - [The sixteen ways we try to break a milestone before it merges](blog/the-sixteen-ways-we-try-to-break-a-milestone-before-it-merges.html) — 2026-08-18; evidence C-11, C-16, C-20.
