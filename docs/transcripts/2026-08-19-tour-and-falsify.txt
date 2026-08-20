@@ -1,0 +1,91 @@
+# npm run tour — receipt for the day-30 article
+
+Recorded 2026-08-20T05:21:46Z at commit e6bc3bd on branch claude/gtm-distribution-complete-bpkw80.
+Node v22.22.2. Command: npm run tour
+
+```
+
+  Composing a CRM application from manifests: catalog, quoting, signature,
+  order activation, delivery and its economics.
+  This is the starter installer, the same one CI runs on every push.
+
+  Done.
+
+  modules       76
+  packages      9
+  capabilities  16
+  resources     71
+  actions       64
+  policies      7
+  providers     1
+
+  What the journey produced, driven end to end:
+  leads               7
+  tasks               3
+  workActivities      6
+  companies           1
+  contacts            2
+  opportunities       2
+  won                 1
+  lost                1
+
+  Composed and inspected in 9.6s.
+
+  What this does NOT show, and you should read before believing any of it:
+    · production posture — local development only: no authentication, tenancy or RBAC exists, and actor headers are not identity
+    · DATABASE_NOT_INSPECTED
+    · PACKAGE_SOURCE_TRUSTED
+    · PROCESS_ISOLATION_BOUNDED
+    · EVIDENCE_NOT_AGGREGATED
+    · CI_EVIDENCE_NOT_INFERRED
+    · SECRETS_NOT_INSPECTED
+    · PROVIDER_HEALTH_UNKNOWN
+    · PRODUCTION_SPINE_ABSENT
+    · ADMIN_EXTENSIONS_UNSUPPORTED
+    · DATA_QUALITY_UNKNOWN
+    · RUNTIME_STATE_UNKNOWN
+
+  Every one of those is a hard boundary on what may be claimed. The full list with
+  evidence is docs/benchmarks/CRM_JTBD_MATRIX.md, where "not supported" is the default.
+
+```
+
+## npm run falsify
+
+```
+  baseline tests/workflow.test.js …
+  baseline tests/signature-contract.test.js …
+  baseline tests/intelligence-contract.test.js …
+  baseline tests/module-factory.test.js …
+  mutating approval-actor-guard …
+  mutating approval-threshold-boundary …
+  mutating webhook-signature-verification …
+  mutating definition-version-immutability …
+  mutating managed-fields-public-write …
+
+  ✓ approval-actor-guard
+      removes: a commercial approval decision requires a human actor
+      caught by: approval workflow rejects an agent pretending to make the human decision
+
+  ✓ approval-threshold-boundary
+      removes: a renewal exactly at the approval threshold requires approval
+      caught by: renewal at threshold requires approval and records the human decision
+
+  ✓ webhook-signature-verification
+      removes: a signature webhook is rejected unless its HMAC verifies
+      caught by: webhook verification is constant-time, replay-bounded and fail-closed
+
+  ✓ definition-version-immutability
+      removes: a registered policy version cannot be edited in place
+      caught by: persisted definition versions: registration is idempotent, drift fails loudly
+
+  ✓ managed-fields-public-write
+      removes: a module whose every field is managed generates no public create or update
+      caught by: a fully managed module generates no public write, and a mixed one does
+
+  · delivery-cost-rounding not run (slow — run with --all)
+
+  5 caught, 0 survived, 0 stale, in 2.3s.
+  Every rule tested here fails loudly when removed.
+
+```
