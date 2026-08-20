@@ -245,11 +245,13 @@ Published per fact and summarised here:
 2. **Document freshness** — the committed `docs/repository-truth.json` must
    equal a fresh generation. Otherwise `TRUTH_DOCUMENT_STALE`.
 3. **Machine-code vocabulary** — every `SCREAMING_SNAKE` identifier in a bound
-   surface must exist in the source vocabulary, be the basename of a file in the
-   repository, or be an angle-bracketed metavariable (`<ERROR_CODE>`).
-   Otherwise `TRUTH_CODE_UNKNOWN`. Measured against the tree as it stands:
-   **one** token in the whole bound corpus needed the metavariable rule, and
-   nothing else needed an exemption.
+   surface must exist in the source vocabulary or be the basename of a file in
+   the repository. Otherwise `TRUTH_CODE_UNKNOWN`. There is no third exemption:
+   review re-measured the claim that "one token needed the metavariable rule"
+   and found the count is **zero** — the one candidate, `ERROR_CODE`, is
+   declared in source and was already in the harvested vocabulary. The
+   angle-bracket strip that rested on that measurement let
+   `<TENANT_ISOLATION_NOT_ENFORCED>` through and was removed.
 
 ### 7.4 Bound surfaces, and the historical exclusions
 
@@ -325,7 +327,9 @@ npm run crm -- project verify --json
   `docs/SCENARIO_EVIDENCE.md`, `docs/IMPLEMENTATION_EVIDENCE.md`.
 - Measured the code-vocabulary rule against the bound corpus before committing
   to it: 72 distinct `SCREAMING_SNAKE` tokens, 1 unresolved after the
-  file-basename and metavariable rules.
+  file-basename and metavariable rules. Review re-measured it: that one token,
+  `ERROR_CODE`, is in the harvested vocabulary, so the metavariable rule
+  resolved nothing and has been removed.
 - Measured the reference composition: nine packages, zero problems, 178 ms
   including process start.
 - Confirmed the ledger's staleness is real and detectable: `e30216c` is an
@@ -337,6 +341,19 @@ npm run crm -- project verify --json
   `docs/QUALITY_GATES.md` §6.1, `AGENTS.md` rule 17, `CLAUDE.md`, and the
   Compatibility Backfill assessment in
   `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`.
+- **Adversarial review, in place on this branch (ADR-039 Amendment 1).** Five
+  defects confirmed with runnable probes and fixed with the mutation that must
+  fail each one: the gate ran in no CI job at all and now runs in
+  `public-claims`; `<TENANT_ISOLATION_NOT_ENFORCED>` in angle brackets passed
+  the machine-code rule in `README.md` and `site/assets/llms.txt`; the two
+  declared-absence facts resting only on a `SPINE_NOT_MODELED` sentence could be
+  outlived by the code and now carry a namespace probe as a second authority;
+  the JSON citation grammar was wider than the one three documents publish; and
+  the stale-document message blamed evidence that had not moved. Two published
+  inventories were corrected — the explainer listed ten of eleven limitation
+  codes, and `README.md` claimed every boundary carried a citation when three
+  carry none — and a twelfth limitation, `NUMERIC_CLAIMS_NOT_BOUND`, was added
+  because no cited fact is a count.
 
 ### Three things the work changed about the plan
 
@@ -365,11 +382,12 @@ npm run crm -- project verify --json
 Measured on `claude/repository-truth-contract-v1`:
 
 - `docs/repository-truth.json` — 38 facts from 9 authorities (6 source, 1
-  receipt, 2 measurement), 10 published limitations.
+  receipt, 2 measurement), 12 published limitations.
 - 88 citations across 20 bound surfaces.
 - `npm run repo:truth -- --check`: **~0.5 s** wall clock, one app-composition
-  build and no scenario run.
-- `tests/repository-truth-contract.test.js`: 39 tests, ~4.4 s, passing in both a
+  build and no scenario run, run as its own step in the `public-claims` CI job
+  on every push and every pull request.
+- `tests/repository-truth-contract.test.js`: 45 tests, ~5 s, passing in both a
   full-history checkout and a `--depth 1` shallow clone.
 
 **Deliberately out of v1:** JTBD rows, `docs/editions/**`, any scenario-run
@@ -379,7 +397,8 @@ describe *other* applications' compositions, so their fingerprints cannot be
 checked against this repository), citation of any measurement fact, PostgreSQL,
 durable jobs, and any wording generation beyond citation.
 
-**Follow-up for v2:** give the `verify` CI job full history and promote
-`repo:truth -- --check` into `gtm:check`; bind `docs/editions/**` once its owner
-merges; decide whether a non-blocking LLM reviewer (option D) is worth adding
-beside the deterministic gate, never inside it.
+**Follow-up for v2:** fold `repo:truth -- --check` into `npm run gtm:check`
+itself, which needs `gtm:check` to stop being something a developer runs in a
+shallow clone; bind `docs/editions/**` once its owner merges; decide whether a
+non-blocking LLM reviewer (option D) is worth adding beside the deterministic
+gate, never inside it.
