@@ -186,10 +186,13 @@ export const JOURNEYS = Object.freeze({
       Object.freeze({
         code: 'ISOLATION_IS_TWO_DATABASES_NOT_A_ROW_COLUMN',
         message: 'the isolation this run proves comes from the run itself: it composes two separate '
-          + 'applications with two database files. The framework does NOT enforce it — the declared '
-          + 'database-per-tenant strategy has no wiring, and two organizations inside one application share '
-          + 'one database and can read and write each other\'s records and audit rows, which the runtime '
-          + 'publishes as TENANT_ISOLATION_NOT_ENFORCED. So this run establishes isolation for a '
+          + 'applications with two database files. The framework enforces that shape rather than merely '
+          + 'declaring it — a spine-composed application takes its CRM database from the tenant binding, '
+          + 'refuses an explicit dbPath beside it, and holds a handle that exposes no databasePathFor at '
+          + 'all, so a second tenant is unreachable rather than refused by a check somebody could forget; '
+          + 'control-plane and data-plane migrations are separate lists, so a crossing write raises "no '
+          + 'such table". Multiple CRM tenants inside one application are NOT supported, and a configuration '
+          + 'that would need them is refused at startup. So this run establishes isolation for a '
           + 'one-application-per-tenant deployment and nothing more; it says nothing about shared-database '
           + 'row-level tenancy, which is a later slice and is deliberately not claimed',
       }),
