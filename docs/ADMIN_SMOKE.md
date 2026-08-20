@@ -476,3 +476,68 @@ produce one of every outcome:
 
 Report any step that fails; do not mark the customer data section
 browser-validated unless all 32 pass.
+
+## Identity, tenancy and authorization (Production Spine v1, ADR-038)
+
+**Spine-specific, scripted, and outside CI. 31 checks, all passing** — driven in
+real Chromium (**Chromium/141.0.7390.37**) on Node **22.16.0**, against three
+freshly seeded servers, twice from a clean fixture and a clean browser profile,
+with identical results both runs.
+
+**Browser automation is still manual**, exactly as the sections above say: the
+run was scripted with the same zero-dependency Chrome DevTools Protocol driver,
+that script is not checked in, and no CI job launches a browser.
+
+Setup: three servers from one process, so the three states can be compared
+side by side.
+
+- **production** — an identity verifier that resolves the Admin's actor header
+  to a subject and looks that subject's tenant up from its membership. Two
+  organizations, `tenant-a` and `tenant-b`; `alice` owns A, `vic` is a viewer in
+  A, `mallory` owns B.
+- **local-development** — no verifier, asserted actors.
+- **no spine at all** — the historical composition.
+
+1. The identity and access section renders.
+2. The mode reads `production`.
+3. The identity renders as `verified-user`, with the issuer that verified it.
+4. **No** local-development warning appears in production mode.
+5. The tenant is named, with its strategy (`database-per-tenant`).
+6. *"An Organization is a tenant of this software … They are never the same thing."* renders verbatim.
+7. The owner sees the member list rather than a refusal.
+8. The owner's permissions include `admin.memberships.manage`.
+9. **An authorized action succeeds**: granting `carol` a viewer membership appears in the list as `carol — viewer (active)`.
+10. And it states that no invitation was sent, because no email system exists.
+11. **A denied action is denied**: a viewer is refused the member list, `data-denied="admin.memberships.manage"`.
+12. And the refusal says *"This is a refusal, not an empty organization."*
+13. The viewer is offered **no grant control at all** — the refusal is not a disabled button.
+14. The viewer still sees their own role and permissions.
+15. **The cross-tenant refusal**: an owner of tenant B sees only tenant B — tenant A's members are absent from the answer.
+16. **Naming another tenant in a header buys nothing.** There is no organization header by design, and the verified identity stays authoritative.
+17. An unverified caller gets **401**, distinct from the viewer's **403**.
+18. Local-development mode renders a warning.
+19. It says identity is *asserted, not verified*, and that anyone who can reach the server can claim to be anyone.
+20. The warning carries **error** styling, not muted footnote styling.
+21. The local identity renders as `asserted-local`, and states it would be refused in production.
+22. An application with **no spine** still renders the section.
+23. And says it verifies nobody, isolates nothing and authorizes nothing.
+24. It does **not** render as a healthy, empty security screen.
+25. No password input exists anywhere on the page.
+26. No input is named like a credential.
+27. No rendered value looks like a bearer token.
+28. No JavaScript dialog opened during the run.
+29. No uncaught JavaScript error and no console error during the run.
+30. No failed resource during the run.
+31. No 5xx response during the run.
+
+**A harness correction worth recording.** The first run passed 30/31, and the
+one failure exposed that the harness was overwriting the actor header on
+*every* request — including the three raw cross-tenant probes — so checks 15 and
+16 had been passing for the wrong reason. With the harness corrected, those two
+then failed against a *correct* product: an owner of tenant B is not refused,
+she is served her own tenant. The assertions were re-specified to test
+non-disclosure of tenant A rather than a status code, which is the property that
+actually matters.
+
+Report any step that fails; do not mark the identity and access section
+browser-validated unless all 31 pass.
