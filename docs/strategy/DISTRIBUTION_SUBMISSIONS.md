@@ -163,6 +163,37 @@ gemini extensions install https://github.com/khaoss85/agent-crm
 npx skills add khaoss85/agent-crm             # skills.sh, indexes on install telemetry
 ```
 
+### 2.8 Secondary MCP directories — checked 2026-08-20
+
+The retrieval audit found that category queries like "MCP CRM server" are won by
+directories rather than by any project's own domain, which makes a listing the
+right instrument for those queries — and a poor one for domain authority. That
+distinction is now evidenced rather than asserted: **mcpservers.org sells
+"Dofollow link" as a premium benefit**, which means its free listing is nofollow
+by the directory's own description. A free directory listing buys corpus
+presence and category-query placement. It does not buy link equity, and it does
+not move the trust signals a recommending agent actually weighs — stars,
+contributors, dependents, age.
+
+| Directory | Mechanism | State |
+|---|---|---|
+| **mcpservers.org** | Web form: Server Name, Short Description, Link (GitHub or docs), Category, Contact Email. A free Submit sits beside a paid "Premium Submit" that buys a dofollow link, faster review and a badge | **Ready to send** — values below. The free tier is the one to use |
+| **mcpmarket.com** | Unknown | **Unreachable from an agent environment.** Returns 403 to a plain client, 429 with a browser user agent, and resets the connection to headless Chromium through the egress proxy. Bot protection, not a policy refusal — a person on a normal browser should have no trouble |
+| **Composio** | Not a directory submission | Composio is a tool-integration platform: appearing in its catalogue means building an integration against their SDK, which is a project rather than a form. Recorded so a future session does not file it as a quick win |
+
+Values for the mcpservers.org form, matching the registry entry so the two
+surfaces cannot drift:
+
+- **Server Name**: `Accordo`
+- **Short Description**: `Read-only docs for the Accordo CRM framework: what it proves, and where it stops.`
+- **Link**: `https://github.com/khaoss85/agent-crm`
+- **Category**: the closest developer-tools option their list offers
+- **Contact Email**: `hello@aetha.ai`
+
+Submitted by hand: headless Chromium cannot reach the site from this
+environment, and guessing at an internal API endpoint would risk filing a
+malformed public listing.
+
 ## 3. Blocked, with the blocker named
 
 | Submission | Blocker | Unblocks when |
