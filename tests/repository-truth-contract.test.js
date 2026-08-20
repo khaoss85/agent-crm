@@ -75,7 +75,41 @@ function problemNaming(problems, needle) {
   return found;
 }
 
-const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+/**
+ * Git in a throwaway repository, with the background daemons turned off.
+ *
+ * `gc.auto=0` and `maintenance.auto=false` are not tuning. After a commit, git
+ * may fork a **detached** `git gc --auto`, which goes on writing inside `.git`
+ * after `spawnSync` has returned. The fixture's cleanup then races it and the
+ * run dies in teardown with `ENOTEMPTY: rmdir '<fixture>/.git'` — which is what
+ * happened on CI for `82976f1`: the same commit passed on one runner and failed
+ * on the other, in the `t.after` of a test whose assertions had all passed.
+ * A gate whose own suite is red half the time is a gate people re-run instead
+ * of read, which is the habit this whole contract exists to break.
+ */
+const git = (cwd, args) => spawnSync('git', ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', ...args], { cwd, encoding: 'utf8' });
+
+/**
+ * A temporary directory that removes itself, and does not fail the run if it
+ * cannot.
+ *
+ * The retries handle the transient case on a loaded runner. If the directory
+ * still will not go, the test is **not** failed: every assertion has already
+ * been made, the path is under `os.tmpdir()`, and a CI runner is discarded
+ * minutes later. Turning a housekeeping race into a red suite reports a defect
+ * that is not there — and this file's job is to be believed.
+ */
+function disposable(t, prefix) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch (error) {
+      process.stderr.write(`note: left ${root} behind (${/** @type {any} */ (error)?.code ?? error})\n`);
+    }
+  });
+  return root;
+}
 
 /**
  * A throwaway git repository carrying only what one rule needs.
@@ -85,8 +119,7 @@ const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
  * it is a real repository with a real history, which costs milliseconds.
  */
 function measurementRepo(t, { files = {}, commits = [] } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-truth-measure-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = disposable(t, 'accordo-truth-measure-');
   mkdirSync(join(root, 'tests'), { recursive: true });
   writeFileSync(join(root, 'tests', 'first.test.js'), '// first\n');
   for (const [path, content] of Object.entries(files)) {
@@ -117,8 +150,7 @@ const ledger = (record) => JSON.stringify({ claimsContract: 2, measuredAgainst: 
  * actually load. Which is also why each such test gets its own copy.
  */
 function frameworkFixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-truth-fixture-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = disposable(t, 'accordo-truth-fixture-');
   cpSync(join(repoRoot, 'packages'), join(root, 'packages'), { recursive: true });
   cpSync(join(repoRoot, 'package.json'), join(root, 'package.json'));
   for (const path of [BENCHMARK_PANEL.aggregate, BENCHMARK_PANEL.protocol]) {
@@ -636,8 +668,7 @@ test('a production dependency contradicts the declared PostgreSQL absence', asyn
 // ──────────────────────────── negative: a receipt is verified, never trusted
 
 test('a receipt whose fingerprints do not match its protocol is refused', (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-truth-receipt-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = disposable(t, 'accordo-truth-receipt-');
   for (const path of [BENCHMARK_PANEL.aggregate, BENCHMARK_PANEL.protocol]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     cpSync(join(repoRoot, path), join(root, path));
@@ -658,8 +689,7 @@ test('a receipt whose fingerprints do not match its protocol is refused', (t) =>
 });
 
 test('a missing receipt refuses the fact rather than defaulting it', (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-truth-noreceipt-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = disposable(t, 'accordo-truth-noreceipt-');
   const problems = [];
   assert.equal(readBenchmarkReceipt(root, problems), null);
   assert.deepEqual(codes(problems), ['TRUTH_AUTHORITY_UNAVAILABLE']);
@@ -738,8 +768,7 @@ test('a commit that only moves the tests tree does not restate the document', as
 });
 
 test('a tree git cannot speak for refuses the measurement instead of guessing', (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-truth-nogit-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = disposable(t, 'accordo-truth-nogit-');
   mkdirSync(join(root, 'site'), { recursive: true });
   writeFileSync(join(root, 'site/claims.json'), ledger({ sha: 'e30216c', tests: 1480, testFiles: 131 }));
   // A temporary directory can sit inside somebody's checkout, so the search is
@@ -769,10 +798,11 @@ test('a shallow clone refuses the measurement facts rather than flaking on them'
   git(root, ['add', '-A']);
   git(root, ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', 'commit', '-q', '-m', 'ledger']);
 
-  const shallowParent = mkdtempSync(join(tmpdir(), 'accordo-truth-shallow-'));
-  t.after(() => rmSync(shallowParent, { recursive: true, force: true }));
+  const shallowParent = disposable(t, 'accordo-truth-shallow-');
   const shallow = join(shallowParent, 'clone');
-  const cloned = spawnSync('git', ['clone', '-q', '--depth', '1', `file://${root}`, shallow], { encoding: 'utf8' });
+  // Through the same hardened config as every other git call in this file: a
+  // clone forks the auto-gc too, and this directory is removed in `t.after`.
+  const cloned = git(shallowParent, ['clone', '-q', '--depth', '1', `file://${root}`, shallow]);
   assert.equal(cloned.status, 0, `git clone --depth 1 failed: ${cloned.stderr}`);
   assert.equal(git(shallow, ['rev-parse', '--is-shallow-repository']).stdout.trim(), 'true');
 
