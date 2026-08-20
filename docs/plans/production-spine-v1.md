@@ -276,14 +276,14 @@ commercial, `f80592be…` intelligence). CI green on the exact head.
 
 | Gate | Result |
 |---|---|
-| `npm run verify` | pass on the exact head |
+| `npm run verify` | **1432 passed, 0 failed, exit 0** on the exact head |
 | `npm run smoke` | pass |
 | `npm run gtm:check` | pass |
 | `project doctor --json` | passed — 9 passed, 0 warning, 0 failed |
 | `package test` × 9 packages | 0 failures anywhere (commercial, signature, contracts, delivery, service, work, lifecycle, intelligence, customer-data) |
 | `app inspect --json` | `PRODUCTION_SPINE_ABSENT` narrowed to the truth and still not a readiness claim |
 | `scenario run` × 5 | all pass, including the new `tenant-isolation-and-authorization` |
-| Real Chromium | **31/31**, twice, over three servers (production, local-development, no spine) from a clean fixture and profile |
+| Real Chromium | **31/31**, twice on the final head, over three servers (production, local-development, no spine) from a clean fixture and a clean browser profile each time |
 | LA0 replays | **all three asserted fingerprints byte-identical**: `fe1875bf…`, `82c1f02f…`, `f80592be…` |
 | GitGuardian | passes (see below) |
 
@@ -316,6 +316,20 @@ commercial, `f80592be…` intelligence). CI green on the exact head.
 6. **An unused async refusal helper** in the journey, removed; the guard that
    mentioned it now names the real hazard — a promise passed to the synchronous
    helper would report "not refused" before it settled.
+7. **A configured verifier was ignored in local-development mode.** The mode
+   decided *whether to verify at all* rather than only what to fall back to, so
+   an operator who explicitly wired a verifier into a development runtime
+   silently got none of it — and the one place a team would first exercise a
+   real adapter was the one place it did not run. The verifier now runs in
+   either mode; the mode decides only the fallback, which stays `asserted-local`
+   locally and `anonymous` in production.
+8. **The SDK could not present a verified identity at all.** It sent only the
+   legacy actor headers, so every SDK call against an authorizing server was
+   401 — a client that cannot reach a server this milestone makes the default.
+   A frozen `headers` option was added, spread last so it cannot be silently
+   overridden, and the SDK stores no credential of its own. Locked in by a test
+   that proves **401, 403 and 200** through the real client rather than merely
+   "denied".
 
 ### Deliberate re-records
 
@@ -324,7 +338,10 @@ commercial, `f80592be…` intelligence). CI green on the exact head.
   fingerprint and every observation count is unchanged; the whole diff is three
   source digests. Every record action now passes through an authorization
   decision and the observable behaviour of all three legacy domains is exactly
-  what it was.
+  what it was. Re-recorded a **second** time after correction 7 touched
+  `http-server.js` again — same three fingerprints, same observation counts,
+  and that second diff is one source digest per baseline and nothing else.
+  A security fix that moved an asserted observation would have shown here.
 - `site/assets/llms-full.txt`, generated from the inspection limitation text.
 
 ### Not done, and why
