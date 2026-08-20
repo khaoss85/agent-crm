@@ -167,6 +167,11 @@ The boundaries, which are as much of the gate as the rules:
   the surface budget, no Skill names it, and it never leaves this repository.
 - **It reads no prose and writes none.** A fact id constrains what a bound
   sentence may assert; it does not produce the sentence, and a sentence carrying
-  no citation is not checked at all.
+  no citation is not checked at all. Reversing the wording around a correct
+  citation still passes — the contract binds values, not sentences.
+- **No number is checked.** No fact any document cites is a count, so every
+  number in a bound sentence — test counts, and the module, package, resource,
+  action, policy and provider counts in `site/assets/llms.txt` and `README.md` —
+  is outside this contract (`NUMERIC_CLAIMS_NOT_BOUND`).
 - **No JTBD row is a fact.** §3 is a person reading merged tests, and it stays
   one.
