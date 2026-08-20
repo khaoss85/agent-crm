@@ -1,0 +1,666 @@
+{
+  "repositoryTruthContract": 1,
+  "sourceSha": "681b27c074ff418f1a5598f4cbe594a7284bda28aa600f5d387e82e75f805048",
+  "authorities": [
+    {
+      "id": "benchmark.tool_selection",
+      "kind": "receipt",
+      "reads": [
+        "benchmarks/tool-selection/panel-v2-2026-08-18/aggregate.json",
+        "benchmarks/tool-selection/panel-v2-2026-08-18/frozen-protocol.json"
+      ]
+    },
+    {
+      "id": "cli.rails",
+      "kind": "source",
+      "reads": [
+        "packages/cli/src/app-inspect-command.js",
+        "packages/cli/src/commands.js",
+        "packages/cli/src/package-scaffold.js",
+        "packages/cli/src/package-test-command.js",
+        "packages/cli/src/project-doctor-command.js",
+        "packages/cli/src/project-verify-command.js",
+        "packages/cli/src/scenario-run-command.js",
+        "packages/cli/src/solution-command.js",
+        "packages/cli/src/solution-verify-command.js"
+      ]
+    },
+    {
+      "id": "identity.contract",
+      "kind": "source",
+      "reads": [
+        "packages/core/src/identity.js"
+      ]
+    },
+    {
+      "id": "measurement.git",
+      "kind": "measurement",
+      "reads": [
+        "git"
+      ]
+    },
+    {
+      "id": "measurement.ledger",
+      "kind": "measurement",
+      "reads": [
+        "site/claims.json"
+      ]
+    },
+    {
+      "id": "reference.composition",
+      "kind": "source",
+      "reads": [
+        "packages/commercial/src/index.js",
+        "packages/contracts/src/index.js",
+        "packages/core/src/package-composition.js",
+        "packages/customer-data/src/index.js",
+        "packages/delivery/src/index.js",
+        "packages/intelligence/src/index.js",
+        "packages/lifecycle/src/index.js",
+        "packages/service/src/index.js",
+        "packages/signature/src/index.js",
+        "packages/work/src/index.js"
+      ]
+    },
+    {
+      "id": "runtime.mode",
+      "kind": "source",
+      "reads": [
+        "packages/core/src/runtime-mode.js"
+      ]
+    },
+    {
+      "id": "spine.contract",
+      "kind": "source",
+      "reads": [
+        "packages/app/src/spine.js",
+        "packages/core/src/authorization.js"
+      ]
+    },
+    {
+      "id": "tenant.storage",
+      "kind": "source",
+      "reads": [
+        "packages/core/src/tenant-binding.js",
+        "packages/core/src/tenant-storage.js"
+      ]
+    }
+  ],
+  "facts": [
+    {
+      "id": "benchmark.build_rate.measured",
+      "value": "not_measured",
+      "authority": "benchmark.tool_selection",
+      "evidence": [
+        "benchmarks/tool-selection/panel-v2-2026-08-18/aggregate.json",
+        "no rate, sabr, successRate or buildRate key exists in the record"
+      ],
+      "scope": "repository",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "benchmark.tool_selection.comparative",
+      "value": "false",
+      "authority": "benchmark.tool_selection",
+      "evidence": [
+        "admitted:78/84",
+        "benchmarks/tool-selection/panel-v2-2026-08-18/aggregate.json",
+        "benchmarks/tool-selection/panel-v2-2026-08-18/frozen-protocol.json",
+        "protocolFingerprint:e1429f905279"
+      ],
+      "scope": "repository",
+      "status": "current",
+      "limitations": [
+        "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
+      ]
+    },
+    {
+      "id": "billing.implemented",
+      "value": "absent",
+      "authority": "reference.composition",
+      "evidence": [
+        "journey-code:NOTHING_WAS_BILLED_OR_NOTIFIED",
+        "match:none",
+        "namespace-probe:invoice|invoicing|billing|payment|usage-rating|proration|tax|revenue-recognition"
+      ],
+      "scope": "repository",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
+      "id": "cdf.full_cdp.implemented",
+      "value": "absent",
+      "authority": "reference.composition",
+      "evidence": [
+        "journey-code:THIS_IS_NOT_A_CDP_OR_A_WAREHOUSE",
+        "packages/cli/src/scenario-journey.js#JOURNEYS"
+      ],
+      "scope": "repository",
+      "status": "current",
+      "limitations": [
+        "NO_SCENARIO_RECEIPT_AVAILABLE"
+      ]
+    },
+    {
+      "id": "cloud_control_plane.implemented",
+      "value": "absent",
+      "authority": "reference.composition",
+      "evidence": [
+        "match:none",
+        "namespace-probe:cloud|deployment|provisioning|workspace-provisioning|billing-account"
+      ],
+      "scope": "repository",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
+      "id": "customer_timeline.complete",
+      "value": "absent",
+      "authority": "reference.composition",
+      "evidence": [
+        "journey-code:THE_PROFILE_IS_A_PROJECTION_NOT_A_TIMELINE",
+        "packages/cli/src/scenario-journey.js#JOURNEYS"
+      ],
+      "scope": "repository",
+      "status": "current",
+      "limitations": [
+        "NO_SCENARIO_RECEIPT_AVAILABLE"
+      ]
+    },
+    {
+      "id": "domain.commercial.package_native",
+      "value": "package_native",
+      "authority": "reference.composition",
+      "evidence": [
+        "package:commercial@3",
+        "packageContract:1",
+        "provides:commercial-quote-binding@1|commercial-quotes@1|commercial-quotes@2",
+        "resources:16"
+      ],
+      "scope": "package",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
+      "id": "domain.contracts.package_native",
+      "value": "package_native",
+      "authority": "reference.composition",
+      "evidence": [
+        "package:contracts@8",
+        "packageContract:1",
+        "provides:contract-lifecycle-source@2|contracts-successor-activation@1|delivery-obligations@1|service-obligations@1",
+        "resources:9"
+      ],
+      "scope": "package",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
+      "id": "domain.customer_data.package_native",
+      "value": "package_native",
+      "authority": "reference.composition",
+      "evidence": [
+        "package:customer-data@1",
+        "packageContract:1",
+        "provides:customer-identity@1",
+        "resources:6"
+      ],
+      "scope": "package",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
+      "id": "domain.delivery.package_native",
+      "value": "package_native",
+      "authority": "reference.composition",
+      "evidence": [
+        "package:delivery@4",
+        "packageContract:1",
+        "provides:delivery-acceptance-evidence@1|delivery-change-management@1|delivery-economics@1",
+        "resources:16"
+      ],
+      "scope": "package",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
+      "id": "domain.intelligence.package_native",
+      "value": "package_native",
+      "authority": "reference.composition",
+      "evidence": [
+        "package:intelligence@1",
+        "packageContract:1",
+        "provides:intelligence@1",
+        "resources:7"
+      ],
+      "scope": "package",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
+      "id": "domain.lifecycle.package_native",
+      "value": "package_native",
+      "authority": "reference.composition",
+      "evidence": [
+        "package:lifecycle@2",
+        "packageContract:1",
+        "provides:none",
+        "resources:3"
+      ],
+      "scope": "package",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
+      "id": "domain.service.package_native",
+      "value": "package_native",
+      "authority": "reference.composition",
+      "evidence": [
+        "package:service@1",
+        "packageContract:1",
+        "provides:service-case-management@1|service-coverage@1|service-sla-evidence@1",
+        "resources:7"
+      ],
+      "scope": "package",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
+      "id": "domain.signature.package_native",
+      "value": "package_native",
+      "authority": "reference.composition",
+      "evidence": [
+        "package:signature@3",
+        "packageContract:1",
+        "provides:signature-orders@1",
+        "resources:10"
+      ],
+      "scope": "package",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
+      "id": "domain.work.package_native",
+      "value": "package_native",
+      "authority": "reference.composition",
+      "evidence": [
+        "package:work@1",
+        "packageContract:1",
+        "provides:follow-up@1",
+        "resources:2"
+      ],
+      "scope": "package",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
+      "id": "marketing_runtime.implemented",
+      "value": "absent",
+      "authority": "reference.composition",
+      "evidence": [
+        "match:none",
+        "namespace-probe:campaign|marketing|audience|nurture|newsletter|broadcast"
+      ],
+      "scope": "repository",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
+      "id": "measurement.source_is_ancestor",
+      "value": "true",
+      "authority": "measurement.git",
+      "evidence": [
+        "git merge-base --is-ancestor <sha> HEAD",
+        "sha:e30216c"
+      ],
+      "scope": "measurement",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "measurement.source_sha",
+      "value": "e30216c",
+      "authority": "measurement.ledger",
+      "evidence": [
+        "site/claims.json#measuredAgainst.sha"
+      ],
+      "scope": "measurement",
+      "status": "stale",
+      "limitations": [
+        "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
+      ]
+    },
+    {
+      "id": "measurement.test_count",
+      "value": 1480,
+      "authority": "measurement.ledger",
+      "evidence": [
+        "site/claims.json#measuredAgainst.tests"
+      ],
+      "scope": "measurement",
+      "status": "stale",
+      "limitations": [
+        "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
+      ]
+    },
+    {
+      "id": "measurement.test_file_count",
+      "value": 131,
+      "authority": "measurement.ledger",
+      "evidence": [
+        "site/claims.json#measuredAgainst.testFiles"
+      ],
+      "scope": "measurement",
+      "status": "stale",
+      "limitations": [
+        "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
+      ]
+    },
+    {
+      "id": "measurement.test_tree_current",
+      "value": "false",
+      "authority": "measurement.git",
+      "evidence": [
+        "headTree:f41904c246ca",
+        "measuredTree:8f11127f1598"
+      ],
+      "scope": "measurement",
+      "status": "current",
+      "limitations": [
+        "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
+      ]
+    },
+    {
+      "id": "rail.app_inspect.implemented",
+      "value": "implemented",
+      "authority": "cli.rails",
+      "evidence": [
+        "handler:packages/cli/src/app-inspect-command.js#inspectApplicationCommand",
+        "verb:app:inspect"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "rail.package_scaffold.implemented",
+      "value": "implemented",
+      "authority": "cli.rails",
+      "evidence": [
+        "handler:packages/cli/src/package-scaffold.js#packageScaffoldCommand",
+        "verb:package:scaffold"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "rail.package_test.implemented",
+      "value": "implemented",
+      "authority": "cli.rails",
+      "evidence": [
+        "handler:packages/cli/src/package-test-command.js#packageTestCommand",
+        "verb:package:test"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "rail.project_doctor.implemented",
+      "value": "implemented",
+      "authority": "cli.rails",
+      "evidence": [
+        "handler:packages/cli/src/project-doctor-command.js#projectDoctorCommand",
+        "verb:project:doctor"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "rail.project_verify.implemented",
+      "value": "implemented",
+      "authority": "cli.rails",
+      "evidence": [
+        "handler:packages/cli/src/project-verify-command.js#projectVerifyCommand",
+        "verb:project:verify"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "rail.scenario_run.implemented",
+      "value": "implemented",
+      "authority": "cli.rails",
+      "evidence": [
+        "handler:packages/cli/src/scenario-run-command.js#scenarioRunCommand",
+        "verb:scenario:run"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "rail.solution_check.implemented",
+      "value": "implemented",
+      "authority": "cli.rails",
+      "evidence": [
+        "handler:packages/cli/src/solution-command.js#solutionCommand",
+        "verb:solution:check"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "rail.solution_verify.implemented",
+      "value": "implemented",
+      "authority": "cli.rails",
+      "evidence": [
+        "handler:packages/cli/src/solution-verify-command.js#solutionVerifyCommand",
+        "verb:solution:verify"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "spine.authentication.framework_verifier",
+      "value": "absent",
+      "authority": "runtime.mode",
+      "evidence": [
+        "mode-env:ACCORDO_MODE",
+        "packages/core/src/runtime-mode.js#resolveRuntimeMode",
+        "refusal:SPINE_VERIFIER_REQUIRED"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": [
+        "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
+      ]
+    },
+    {
+      "id": "spine.authorization.enforced",
+      "value": "enforced",
+      "authority": "spine.contract",
+      "evidence": [
+        "packages/core/src/authorization.js#decideAuthorization",
+        "permissions:11",
+        "roles:5",
+        "spineContract:2"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "spine.durable_jobs.implemented",
+      "value": "absent",
+      "authority": "spine.contract",
+      "evidence": [
+        "declared:durable jobs, outbox or scheduler (Spine v3)",
+        "packages/app/src/spine.js#SPINE_NOT_MODELED"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": [
+        "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
+      ]
+    },
+    {
+      "id": "spine.identity.contract",
+      "value": 1,
+      "authority": "identity.contract",
+      "evidence": [
+        "kinds:verified-user|system|asserted-local|anonymous",
+        "packages/core/src/identity.js#IDENTITY_CONTRACT"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "spine.multi_tenant_single_instance",
+      "value": "refused_at_startup",
+      "authority": "tenant.storage",
+      "evidence": [
+        "NOT_SHARED_DATABASE_TENANCY",
+        "NO_BACKUP_OR_RESTORE",
+        "NO_CROSS_TENANT_QUERY",
+        "ONE_TENANT_PER_INSTANCE",
+        "packages/core/src/tenant-storage.js#TENANT_LIMITATIONS"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "spine.postgresql.implemented",
+      "value": "absent",
+      "authority": "spine.contract",
+      "evidence": [
+        "declared:PostgreSQL or shared-database row-level tenancy (Spine v2)",
+        "package.json#dependencies:none",
+        "packages/app/src/spine.js#SPINE_NOT_MODELED"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": [
+        "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
+      ]
+    },
+    {
+      "id": "spine.secrets_backups.implemented",
+      "value": "absent",
+      "authority": "spine.contract",
+      "evidence": [
+        "declared:secret manager, backups, restore, deploy or rollback (Spine v4)",
+        "packages/app/src/spine.js#SPINE_NOT_MODELED"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": [
+        "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
+      ]
+    },
+    {
+      "id": "spine.tenant.crm_data_plane_enforced",
+      "value": "enforced_by_binding",
+      "authority": "tenant.storage",
+      "evidence": [
+        "boundHandleCanNameASecondTenant:false",
+        "packages/core/src/tenant-storage.js#bindTenantStorage",
+        "planesSeparate:true"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "spine.tenant.isolation.mode",
+      "value": "one_tenant_per_instance",
+      "authority": "tenant.storage",
+      "evidence": [
+        "packages/core/src/tenant-storage.js#TENANT_STRATEGY",
+        "tenantStorageContract:2"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    }
+  ],
+  "limitations": [
+    {
+      "code": "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME",
+      "message": "every fact is read from checked-in source or from a recorded receipt. Nothing here reports what a deployed instance is doing: which mode it chose, which tenant it is bound to, whether a verifier is configured and who holds which membership remain runtime facts"
+    },
+    {
+      "code": "REFERENCE_COMPOSITION_NOT_THE_PROJECT",
+      "message": "packages/domains/generated/index.js is empty in this repository, so package facts are read from a named REFERENCE composition of the nine checked-in domain packages. That is what the framework can compose, not what this checkout composes"
+    },
+    {
+      "code": "JTBD_ROWS_NOT_ENCODED",
+      "message": "no JTBD row is a fact here. Job status is maintained by people and promoted only by a person (docs/QUALITY_GATES.md §3); a generator that owned it would be promoting rows"
+    },
+    {
+      "code": "NO_SCENARIO_RECEIPT_AVAILABLE",
+      "message": "accordo scenario run writes nothing into the project, so this repository checks in no scenario receipt. Scenario evidence is therefore NOT an authority in v1, and scenario limitation metadata is bound only by the machine-code vocabulary rule"
+    },
+    {
+      "code": "IMPLEMENTATION_EVIDENCE_NOT_AN_AUTHORITY",
+      "message": "the checked-in evidence documents under examples/ describe other applications compositions, so their applicationInspectionFingerprint cannot be checked against this repository and they are not read"
+    },
+    {
+      "code": "MEASUREMENT_DESCRIBES_COMMITTED_TREE",
+      "message": "the measurement facts compare git trees at HEAD and at the recorded commit, so an uncommitted change to tests/ does not move them until it is committed"
+    },
+    {
+      "code": "MEASUREMENT_FACTS_ARE_GENERATED_BUT_NOT_CITED",
+      "message": "the measurement facts are generated and their provenance is checked, but no document cites one. A citation would resolve differently in a shallow clone — where ancestry cannot be proven at all — so a document citing it would fail for a reason that has nothing to do with what the document says"
+    },
+    {
+      "code": "CITATIONS_ARE_OPT_IN",
+      "message": "a document is checked for the citations it carries. A sentence with no citation is not checked at all, and this contract cannot discover which sentences ought to have one"
+    },
+    {
+      "code": "WORDING_IS_NOT_GENERATED",
+      "message": "no prose is written or rewritten here. A fact id constrains what a bound sentence may assert; it does not produce the sentence"
+    },
+    {
+      "code": "EDITIONS_NOT_BOUND",
+      "message": "docs/editions/** is deliberately outside the bound surface set in v1"
+    },
+    {
+      "code": "CODE_VOCABULARY_INCLUDES_COMMENTS",
+      "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
+    }
+  ],
+  "fingerprint": "de54212628ae072dd3857220386919390cecac21e2b12474bdb6e47824e4f6be"
+}
