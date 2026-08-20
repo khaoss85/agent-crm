@@ -615,3 +615,43 @@ test('two connections to one tenant agree, and neither can reach the other tenan
     'a membership in another tenant’s database is not a membership here',
   );
 });
+
+test('a configured verifier is honoured in local mode too, and a failed verification still falls back to an assertion', async (t) => {
+  // Ignoring a verifier because the mode is local would silently discard
+  // explicit operator configuration — and somebody who wired one up in
+  // development did so precisely to exercise it.
+  const app = createAccordoApp({
+    dbPath: ':memory:',
+    spine: {
+      mode: 'local-development',
+      identityVerifier: ({ headers }) => {
+        const subject = headers['x-verified-subject'];
+        if (typeof subject !== 'string' || subject === '') throw new Error('unverified');
+        return { kind: 'verified-user', subject, issuer: 'https://issuer.test', method: 'oidc-id-token' };
+      },
+    },
+  });
+  const server = createHttpServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { await new Promise((r) => server.close(r)); app.close(); });
+
+  // 1. The verifier runs, and the identity is genuinely VERIFIED — not asserted.
+  const verifiedResponse = await fetch(`${baseUrl}/api/spine/context`, {
+    headers: { 'x-verified-subject': 'alice' },
+  });
+  assert.equal(verifiedResponse.status, 200);
+  const verifiedBody = await verifiedResponse.json();
+  assert.equal(verifiedBody.identity.kind, 'verified-user');
+  assert.equal(verifiedBody.identity.issuer, 'https://issuer.test');
+
+  // 2. When it cannot verify, local mode still falls back to the asserted
+  //    actor — which is what keeps the developer experience working.
+  const assertedResponse = await fetch(`${baseUrl}/api/spine/context`, {
+    headers: { 'x-actor-id': 'dev' },
+  });
+  assert.equal(assertedResponse.status, 200);
+  const assertedBody = await assertedResponse.json();
+  assert.equal(assertedBody.identity.kind, 'asserted-local');
+  assert.notEqual(assertedBody.identity.kind, 'verified-user', 'a failed verification is never upgraded');
+});

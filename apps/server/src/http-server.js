@@ -543,17 +543,27 @@ function requestIdentity(app, request) {
     return { actor: legacyActorFromHeaders(request), identity: null, organizationId: null };
   }
 
-  const verifier = spine.mode.allowsAssertedActors ? null : spine.verifyRequest;
-  let identity;
-  if (typeof verifier === 'function') {
-    // The adapter verifies. Anything it throws or fails to return is treated as
-    // "not verified" — never as "probably fine".
+  // A configured verifier is always used, in either mode. Ignoring one because
+  // the mode is local would silently discard explicit operator configuration —
+  // and an operator who wired up a verifier in development did so precisely to
+  // exercise it.
+  const verifier = typeof spine.verifyRequest === 'function' ? spine.verifyRequest : null;
+  let identity = null;
+  if (verifier) {
+    // The adapter verifies. Anything it throws, or fails to return, is treated
+    // as "not verified" — never as "probably fine".
     try {
       identity = spine.defineIdentity(verifier({ headers: request.headers, method: request.method, url: request.url }));
     } catch {
-      identity = spine.anonymous;
+      identity = null;
     }
-  } else {
+  }
+
+  if (!identity) {
+    // Nothing verified. In local-development mode the header pair becomes an
+    // explicitly ASSERTED identity; in production it becomes anonymous, which
+    // authorizes nothing. `identityFor` owns that difference so there is one
+    // place it is decided.
     identity = spine.identityFor({ actor: legacyActorFromHeaders(request) });
   }
 
