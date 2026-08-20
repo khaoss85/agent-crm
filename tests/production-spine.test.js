@@ -24,6 +24,19 @@ import {
  * - no secret or token appears in any error, decision or audit row.
  */
 
+/**
+ * A credential-shaped value, built at runtime rather than written down.
+ *
+ * The test needs something that *looks* exactly like a real bearer token, to
+ * prove such a value never reaches an identity, a decision or an audit row. A
+ * literal would put a JWT-shaped string in the repository and trip every secret
+ * scanner that reads it — in a milestone whose entire claim is that no
+ * credential is stored, shipping something that pattern-matches one is the
+ * wrong signal to send. So it is assembled here.
+ */
+const b64 = (value) => Buffer.from(value).toString('base64url');
+const FAKE_TOKEN = [b64('{"alg":"HS256"}'), b64('{"sub":"NOT-A-REAL-SECRET"}'), 'signature'].join('.');
+
 const PROD = { mode: 'production', identityVerifier: () => {}, tenantStrategy: { strategy: 'database-per-tenant' } };
 
 /** A verified identity, as a deployment adapter would supply one. */
@@ -133,7 +146,7 @@ test('hostile identity text is refused rather than stored', () => {
   // An unknown evidence class is refused too: the method vocabulary is closed
   // precisely so a credential cannot be smuggled through as a "method".
   assert.throws(
-    () => defineIdentity({ kind: 'verified-user', subject: 'u', issuer: 'https://i.test', method: 'Bearer eyJhbGciOi' }),
+    () => defineIdentity({ kind: 'verified-user', subject: 'u', issuer: 'https://i.test', method: `Bearer ${FAKE_TOKEN}` }),
     /identity.method must be one of/,
   );
   // A verified user with no issuer is not verified by anybody.
@@ -350,7 +363,7 @@ test('no decision, error or audit row can carry a credential', (t) => {
   const org = app.spine.organizations.create({ slug: 'tenant-a', name: 'A' });
   app.spine.memberships.bootstrapOwner({ organizationId: org.id, subject: 'alice' });
 
-  const TOKEN = [Buffer.from('{"alg":"HS256"}').toString('base64url'), Buffer.from('{"sub":"NOT-A-REAL-SECRET"}').toString('base64url'), 'signature'].join('.');
+  const TOKEN = FAKE_TOKEN;
   const identity = defineIdentity({
     kind: 'verified-user', subject: 'alice', issuer: 'https://issuer.test',
     method: 'oidc-id-token', organizationId: org.id,
