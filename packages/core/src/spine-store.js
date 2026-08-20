@@ -322,7 +322,8 @@ export function createSpineStore({ database, audit, now = () => new Date().toISO
      *
      * @param {{organizationId: string, subject: string, issuer?: string|null, role?: string}} input
      */
-    bootstrapOwner({ organizationId, subject, issuer = null, role = 'owner' }) {
+    bootstrapOwner({ organizationId, subject, issuer = null, role = 'owner',
+      reason = 'bootstrapped as the first member of a new organization' }) {
       const organization = organizations.get(organizationId);
       if (!organization) throw new NotFoundError('Organization', String(organizationId));
       if (memberships.listFor({ organizationId, limit: 1 }).length > 0) {
@@ -343,7 +344,7 @@ export function createSpineStore({ database, audit, now = () => new Date().toISO
            granted_by_subject, granted_reason, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 'active', NULL, ?, ?, ?)`,
       ).run(id, organizationId, cleanSubject, identityString(issuer, 'membership.issuer'), role,
-        'bootstrapped as the first member of a new organization', stamp, stamp);
+        identityString(reason, 'membership.reason', { required: true, max: MAX_REASON }), stamp, stamp);
       audit?.record?.({
         entityType: 'spine_membership', entityId: id, action: 'bootstrapped',
         actor: { type: 'system', id: 'spine' },
