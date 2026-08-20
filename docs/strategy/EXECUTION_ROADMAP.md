@@ -25,6 +25,17 @@ Two dependency rules that document says out loud, because they are the ones
 easiest to violate: **Customer Data Foundation gates any closed-loop attribution
 claim** (MK5–MK7), and **Production Spine gates Cloud** (unchanged).
 
+**Customer Data Foundation v1 is implemented** (ADR-037, `packages/customer-data`):
+identity, provenance, deterministic duplicate candidates, human-governed canonical
+links, data-quality evidence and a bounded consolidated profile. It is **not a CDP**
+and it ships no search index, no bulk surface and no physical merge. What it
+deliberately refused has one named home rather than scattered rows —
+**Customer Data Operations v2**: global search, saved views, bulk actions, export at
+scale, physical consolidation and merge, retention and erasure, and an indexed or
+windowed identity-conflict detector to replace v1's correctness-first whole-table
+read. **Production Spine is still unimplemented**, so none of this is protected by
+authentication, tenancy or role enforcement.
+
 ## Phase overview
 
 | # | Phase | Theme |
