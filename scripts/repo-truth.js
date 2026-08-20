@@ -1278,9 +1278,20 @@ export function repositoryBasenames(rootDir) {
 /**
  * Machine codes named in a document that no source file declares.
  *
- * Three things are not codes and are excluded structurally, not by list: a
- * repository file's basename, an angle-bracketed metavariable (`<ERROR_CODE>`),
- * and anything already in the harvested vocabulary.
+ * Two things are not codes and are excluded structurally, not by list: a
+ * repository file's basename, and anything already in the harvested vocabulary.
+ *
+ * **There is deliberately no angle-bracket exemption.** v1 stripped
+ * `<[A-Z][A-Z0-9_]*>` first, on the argument that a metavariable stands for a
+ * value the reader supplies. It also stood for any code at all: writing
+ * `<TENANT_ISOLATION_NOT_ENFORCED>` in `README.md` or in `site/assets/llms.txt`
+ * passed this rule, which disarmed the one rule written because that code
+ * survived its own fix. The exemption bought nothing either: `ERROR_CODE` — the
+ * only metavariable any bound surface actually uses — is declared in source and
+ * so is in the harvested vocabulary already, which is why the test that claimed
+ * to prove the exemption passed with the strip removed. A placeholder a bound
+ * document wants to write must be a name the source declares, like every other
+ * code in every other sentence this contract checks.
  *
  * @param {string} source
  * @param {Set<string>} vocabulary
@@ -1296,9 +1307,7 @@ export function findUnknownCodes(source, vocabulary, basenames) {
   const retired = new Set([...text.matchAll(RETIRED_CODE)].map((match) => match[1]));
   const lines = text.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
-    // A metavariable stands for a value the reader supplies; it is never a code.
-    const stripped = lines[index].replace(/<[A-Z][A-Z0-9_]*>/g, '');
-    for (const match of stripped.matchAll(CODE_TOKEN)) {
+    for (const match of lines[index].matchAll(CODE_TOKEN)) {
       const code = match[0];
       if (vocabulary.has(code) || basenames.has(code) || retired.has(code)) continue;
       found.push({ line: index + 1, code });

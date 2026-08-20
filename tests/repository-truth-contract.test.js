@@ -336,14 +336,36 @@ test('a code deleted from the source fails every document still naming it', () =
   assert.deepEqual(findUnknownCodes(text, vocabulary, basenames), [{ line: 1, code: 'SPINE_VERIFIER_REQUIRED' }]);
 });
 
-test('a file basename and an angle-bracketed metavariable are not machine codes', () => {
+test('a file basename is not a machine code, and an undeclared name is one', () => {
   const vocabulary = harvestCodeVocabulary(repoRoot);
   const basenames = repositoryBasenames(repoRoot);
   assert.deepEqual(findUnknownCodes('See docs/QUALITY_GATES.md and PROJECT_STATUS.md.\n', vocabulary, basenames), []);
+  // `<ERROR_CODE>` is legal in a bound document because `ERROR_CODE` is declared
+  // in source, not because angle brackets excuse anything. Asserting the reason
+  // is the point: the v1 version of this line passed with or without the
+  // angle-bracket strip, which is how the hole below went unnoticed.
+  assert.equal(vocabulary.has('ERROR_CODE'), true);
   assert.deepEqual(findUnknownCodes('The command exits with <ERROR_CODE>.\n', vocabulary, basenames), []);
   assert.deepEqual(
     findUnknownCodes('It exits with NOT_A_REAL_CODE_AT_ALL.\n', vocabulary, basenames),
     [{ line: 1, code: 'NOT_A_REAL_CODE_AT_ALL' }],
+  );
+});
+
+test('angle brackets do not hide a code — the retired one least of all', () => {
+  const vocabulary = harvestCodeVocabulary(repoRoot);
+  const basenames = repositoryBasenames(repoRoot);
+  // v1 stripped `<[A-Z][A-Z0-9_]*>` before looking for codes, so both of these
+  // passed `--check` in README.md and in site/assets/llms.txt, where angle
+  // brackets render literally. RETIRED_CODES promises to hold "wherever the
+  // mention appears"; four characters must not be able to break that promise.
+  assert.deepEqual(
+    findUnknownCodes('Tenancy: <TENANT_ISOLATION_NOT_ENFORCED> applies.\n', vocabulary, basenames),
+    [{ line: 1, code: 'TENANT_ISOLATION_NOT_ENFORCED' }],
+  );
+  assert.deepEqual(
+    findUnknownCodes('It exits with <SOME_INVENTED_CODE>.\n', vocabulary, basenames),
+    [{ line: 1, code: 'SOME_INVENTED_CODE' }],
   );
 });
 

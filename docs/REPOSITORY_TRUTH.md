@@ -176,8 +176,13 @@ message.
 
 **3 — machine-code vocabulary.** Every `SCREAMING_SNAKE` identifier in a bound
 surface must exist in the source vocabulary harvested from `packages/`, `scripts/`,
-`apps/`, `examples/` and `benchmarks/`, or be a repository file's basename, or be an
-angle-bracketed metavariable (`<ERROR_CODE>`). Otherwise `TRUTH_CODE_UNKNOWN`.
+`apps/`, `examples/` and `benchmarks/`, or be a repository file's basename.
+Otherwise `TRUTH_CODE_UNKNOWN`. There are **only those two** exemptions: a
+metavariable written `<ERROR_CODE>` is legal because `ERROR_CODE` is declared in
+source, not because angle brackets excuse a name. v1 stripped angle-bracketed
+tokens before looking, which let `<TENANT_ISOLATION_NOT_ENFORCED>` pass in
+`README.md` and in `site/assets/llms.txt` — where it renders literally — and
+disarmed the rule that exists because that code survived its own fix.
 
 That third rule is the one lexical rule kept from the rejected "more grep rules over
 prose" option, and it is kept for two reasons: it matches **identifiers**, never
