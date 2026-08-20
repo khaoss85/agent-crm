@@ -63,8 +63,8 @@ beside it rather than by widening the grammar for one document.
 
 `tenant-isolation-and-authorization` (Production Spine v1, ADR-038) is the
 fifth, over a sixth composition — and the composition is the emptiest yet: **no
-domain packages at all**, two tenants composed by the journey as two separate
-applications with two databases. That is deliberate. The
+domain packages at all**, two tenants as two bound instances over one shared
+control plane. That is deliberate. The
 properties under test belong to the framework, so proving them over a
 composition holding nothing shows they do not depend on any package being
 present.
@@ -84,22 +84,28 @@ journey publishes beside it.
 **A correction the review forced, and the reason it belongs here.** The run
 originally observed `tenantStrategyIsDatabasePerTenant` and narrated *"isolation
 is two databases, not a filter anybody could forget to write"*. Both were true
-of the run and false of the framework: the journey composes the two
-applications and the two database files itself, and nothing in the product does
-that for an operator. Two organizations inside **one** application share one
+of the run and false of the framework: the journey composed the two
+applications and the two database files **itself**, and nothing in the product
+did that for an operator. Two organizations inside one application shared one
 database, and the review measured the owner of one reading and writing the
-other's records and audit rows. The observation is now
-`tenantStrategyDeclaredDatabasePerTenant`, sitting beside
-`crmDataPlaneIsolationEnforced: false`, `tenantStorageBoundaryWired: false` and
-`isolationProvenForSeparateApplicationsOnly: true`, and the step narrative says
-which of the two things it proves.
+other's records and audit rows.
 
 This is the failure mode a scenario is meant to catch and did not: **a run can
 prove a property of its own composition and be read as proving a property of
-the framework.** The discriminator is cheap to apply — if the journey had to
-build the arrangement by hand, the arrangement is part of the claim, not part
-of the product — and it is worth applying to every future journey that composes
-more than one application.
+the framework.** The discriminator is cheap — if the journey had to build the
+arrangement by hand, the arrangement is part of the claim, not part of the
+product — and it is worth applying to every future journey that composes more
+than one application.
+
+The gap is now closed rather than disclaimed, and the journey shows the
+difference in one line: it no longer passes a database path, because a
+spine-composed application refuses one and takes its data plane from the tenant
+binding. The observations are `crmDataPlaneIsolationEnforced: true`,
+`tenantStorageBoundaryWired: true` and — the one that matters most —
+`twoTenantsInOneApplicationRefused: true`, which the run earns by attempting
+that configuration and recording the startup refusal. The two instances share
+one control plane deliberately, so the run also proves the distinction between
+*seeing that another tenant exists* and *having any authority over its data*.
 
 One claim was written and then deliberately removed. `JTBD-DG-07` (restrict
 sensitive fields by role) was cited with a note explaining that v1 authorizes

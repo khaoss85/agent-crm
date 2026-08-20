@@ -479,10 +479,18 @@ browser-validated unless all 32 pass.
 
 ## Identity, tenancy and authorization (Production Spine v1, ADR-038)
 
-**Spine-specific, scripted, and outside CI. 32 checks, all passing** — driven in
-real Chromium (**Chromium/141.0.7390.37**) on Node **22.16.0**, against three
+**Spine-specific, scripted, and outside CI. 34 checks.**
+
+**What has and has not been run, stated precisely.** Checks 1–31 were driven in
+real Chromium (**Chromium/141.0.7390.37**) on Node **22.16.0** against three
 freshly seeded servers, twice from a clean fixture and a clean browser profile,
-with identical results both runs.
+with identical results both runs — but on the head *before* tenant isolation was
+enforced. Checks **32–34 were added with that change and have not been run by
+this branch's author**; the composition they exercise changed underneath the old
+harness, and the independent reviewer runs this matrix on the final head. The
+Admin logic they cover is unit-tested in `tests/admin-spine.test.js`, which is
+not the same thing as a browser having rendered it, and this note exists so
+nobody reads it as if it were.
 
 **Browser automation is still manual**, exactly as the sections above say: the
 run was scripted with the same zero-dependency Chrome DevTools Protocol driver,
@@ -502,7 +510,7 @@ side by side.
 2. The mode reads `production`.
 3. The identity renders as `verified-user`, with the issuer that verified it.
 4. **No** local-development warning appears in production mode.
-5. The tenant is named, with its strategy labelled **(declared)** — never bare, because the declared strategy is not the delivered one.
+5. The tenant is named, with the **bound tenant** stated as bound and the strategy reading `one-tenant-per-instance`.
 6. *"An Organization is a tenant of this software … They are never the same thing."* renders verbatim.
 7. The owner sees the member list rather than a refusal.
 8. The owner's permissions include `admin.memberships.manage`.
@@ -529,7 +537,9 @@ side by side.
 29. No uncaught JavaScript error and no console error during the run.
 30. No failed resource during the run.
 31. No 5xx response during the run.
-32. **The unenforced-isolation warning renders**, as an *error* rather than a footnote — added after the review measured that the declared strategy is not enforced. It states that every Organization in this application shares one database, that a member of one can read and write another's CRM records and audit rows, and that memberships themselves ARE scoped correctly.
+32. **The single-tenant posture renders**, saying that this instance serves exactly one Organization, that its CRM data lives in a database bound to that Organization alone, and that a request verified for any other Organization is refused as not found. It carries `data-crm-data-plane-enforced="true"`.
+33. **No tenant switcher is offered** — no select, button or input on the page is named for a tenant or an organization, because the storage binding could not honour one.
+34. **The unenforced-isolation error does NOT render.** It exists so a runtime that lost its binding could say so; a correct one must not show it.
 
 **A harness correction worth recording.** The first run passed 30/31, and the
 one failure exposed that the harness was overwriting the actor header on
@@ -541,4 +551,5 @@ non-disclosure of tenant A rather than a status code, which is the property that
 actually matters.
 
 Report any step that fails; do not mark the identity and access section
-browser-validated unless all 32 pass.
+browser-validated unless all 34 pass **on the current head**. As of this
+change that has not happened — see the note above.

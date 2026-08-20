@@ -131,34 +131,52 @@ is provable rather than asserted.
 **This is explicitly NOT shared-database multi-tenancy, and the PR must not
 claim it is.** Row-level tenancy lands in **Spine v2** with PostgreSQL.
 
-### What actually shipped: declared, not enforced (review finding F-2)
+### What shipped, in two rounds (review finding F-2)
 
-The plan above was **not delivered**, and the delivered thing is smaller than
-the plan reads. `createTenantStorage` was written, unit-tested and never called;
-`tenantStrategy` is checked for presence at startup and then unused. So the
-proof obligation named above — *two tenants cannot cross-read or cross-write* —
-was met only by a journey that composes two applications with two database files
-**by hand**. In one application holding two organizations it is not met at all,
-and the review measured that: the owner of B lists A's companies (200, A's
-record in the body), writes a row that appears in A's own list, and reads audit
-rows authored by A's owner. The control plane holds — B's owner pointed at A is
-`403 MEMBERSHIP_MISSING`.
+**Round one shipped the plan above unwired.** `createTenantStorage` was written,
+unit-tested and never called; `tenantStrategy` was checked for presence at
+startup and then unused. The proof obligation named above — *two tenants cannot
+cross-read or cross-write* — was met only by a journey that composed two
+applications with two database files **by hand**. In one application holding two
+organizations it was not met at all: the owner of B listed A's companies (200,
+A's record in the body), wrote a row that appeared in A's own list, and read
+audit rows authored by A's owner. The control plane held.
 
-The correction here is to the **record, not the model**: the schema publishes
-`tenantStrategyDeclared` plus a `tenantIsolation` block reporting
-`crmDataPlaneEnforced: false`, `TENANT_ISOLATION_NOT_ENFORCED` leads the
-published limitations, and `tests/spine-tenancy-truth.test.js` binds the claim
-to the measurement in both directions so it cannot silently flip back — or
-silently stay false once somebody fixes it.
+**Round two closed it, by decision.** A human chose the model:
 
-**Which way it closes is not decided in this PR.** Bind one application to one
-tenant, so "two organizations in one database" becomes a refused configuration;
-or scope reads by organization as part of Spine v2. `ROADMAP.md` carries it as
-an open decision with an owner field.
+> one running application instance ↔ one authoritative tenant data plane ↔ one
+> tenant storage binding
 
-**No ambient tenant fallback.** There is no "current tenant" global, no default
-organization and no inference. Every request, action and operation receives
-authoritative tenant context or is refused.
+with shared-database row-level tenancy explicitly rejected as the immediate fix,
+and **multiple CRM tenants in one application declared unsupported** — a
+configuration that would need one is refused at startup rather than
+accommodated.
+
+What makes it wiring rather than a guard:
+
+- the CRM database comes from the binding, and an explicit `dbPath` beside a
+  spine is **refused** — two answers to "where does this tenant's data live" is
+  the exact shape the defect had;
+- `bindTenantStorage()` returns an object with **no `databasePathFor` on it**, so
+  a second tenant is unreachable through the handle the application holds rather
+  than refused by a check somebody could forget;
+- control-plane and data-plane migrations are **separate lists**, so a tenant
+  database has no membership table and the control plane has no CRM table: a
+  crossing write raises `no such table` instead of quietly succeeding.
+
+### The tenant binding contract
+
+Production and local-development both require an explicitly bound tenant.
+Nothing is inferred — not from localhost, `NODE_ENV`, the listening interface,
+the first membership, the first Organization row, a header or a body. A verified
+identity that names **no** tenant is refused rather than assumed to mean the
+bound one, because assuming means a token minted for tenant A is honoured by
+tenant B's instance.
+
+Order of refusal: **401** for a caller who presented nothing (a statement about
+the request, not about what exists here) · **404** for any tenant but the bound
+one, echoing no id and no slug, because a 403 confirms existence · **403**
+inside the bound tenant. Membership is necessary and not sufficient.
 
 ## C7 — local-development mode
 
@@ -206,13 +224,17 @@ For database-per-tenant, prove by attacking:
 Attack surfaces: generated modules, core modules, package records, application
 operations, generic CRUD.
 
-**Result: this list was proven for two applications and fails for one.** Every
-item above holds when each tenant is its own application with its own database —
-which is the arrangement the journey builds — and the first four fail inside a
-single application holding two organizations, because nothing scopes a read by
-organization. The last item does hold everywhere: there is no organization
-header, the tenant comes from the verified identity, and a client-supplied one
-buys nothing. See the C6 amendment; the gap is published rather than closed.
+**Result: every item holds, and the arrangement that made them hold is now the
+framework's rather than the journey's.** Each tenant is its own instance with its
+own database because the binding puts it there, not because a test author
+remembered to. The list is proven against two bound instances sharing one
+control plane — the arrangement a real deployment has — and the configuration
+that once broke it (two organizations in one application) no longer starts.
+
+The last item held all along and still does: there is no organization header,
+the tenant comes from the verified identity, and a client-supplied one buys
+nothing. Server-controlled keys are now **stripped** from request payloads
+rather than overridden, so it does not depend on object spread order either.
 
 ## C10 — Admin
 
@@ -260,8 +282,15 @@ ADR-036 doctrine. A **package** version bumps when its requires/provides or
 startup composition changes; a **capability** version bumps when a required
 shape or semantic guarantee changes. **Not every package bumps merely because
 the runtime now authorizes it** — that is a runtime change, not a contract
-change. Where an action's required permission becomes contractual, that contract
-is versioned deliberately and the reasoning recorded.
+change.
+
+**Result: two framework contracts moved, and no package did.**
+`spineContract` 1 → 2 and `tenantStorageContract` 1 → 2, because a consumer
+reading either v1 shape would draw the *opposite* conclusion about the same
+deployment — the first published "isolation not enforced" and the second offered
+an unbound resolver. No domain package declaration, requires list or capability
+shape changed, so none of them moved; bumping them all because the framework
+grew a boundary would be version noise that teaches readers to ignore versions.
 
 ## C14 — tests
 
