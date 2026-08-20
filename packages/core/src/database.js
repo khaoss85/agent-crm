@@ -164,6 +164,49 @@ const MIGRATIONS = [
       ) STRICT;
     `,
   },
+  {
+    version: 5,
+    name: 'production_spine_identity',
+    // Production Spine v1 (ADR-038). These hold the tenant of the SOFTWARE and
+    // the people who may act inside it — infrastructure, not a CRM domain.
+    //
+    // The `spine_` prefix is deliberate and load-bearing: an Accordo
+    // Organization is NOT a CRM Company. A Company is a customer recorded
+    // inside one tenant's data; an Organization is the tenant itself. Naming
+    // them apart in the schema is the cheapest possible place to stop the two
+    // being confused, and every layer above repeats the distinction.
+    //
+    // `provenance` records how an organization came to exist, because a local
+    // development tenant created by a migration must never later be mistaken
+    // for one an operator deliberately configured.
+    sql: `
+      CREATE TABLE IF NOT EXISTS spine_organizations (
+        id TEXT PRIMARY KEY,
+        slug TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        provenance TEXT NOT NULL CHECK(provenance IN ('operator-configured', 'local-development-migration')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+
+      CREATE TABLE IF NOT EXISTS spine_memberships (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL REFERENCES spine_organizations(id) ON DELETE CASCADE,
+        subject TEXT NOT NULL,
+        issuer TEXT,
+        role TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('active', 'suspended')),
+        granted_by_subject TEXT,
+        granted_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(organization_id, subject)
+      ) STRICT;
+
+      CREATE INDEX IF NOT EXISTS spine_memberships_subject
+        ON spine_memberships(subject);
+    `,
+  },
 ];
 
 /**
