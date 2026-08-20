@@ -1,6 +1,7 @@
 // @ts-check
 
 import { NotFoundError, ValidationError } from './errors.js';
+import { PERMISSIONS } from './authorization.js';
 
 export const SUPPORTED_ACTION_CONTRACT = 1;
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
@@ -46,6 +47,30 @@ export function validateActionDefinition(definition, deps) {
   }
   if (definition.actionContract !== SUPPORTED_ACTION_CONTRACT) {
     throw new ValidationError(`${label}: actionContract must be ${SUPPORTED_ACTION_CONTRACT}`);
+  }
+  // ADR-038. `requiredPermission` is contractual, so it is checked where every
+  // other contractual field is checked: at registration, not at the first
+  // request. An unknown key would otherwise fail closed at request time — which
+  // is fail-closed but not fail-fast, and this repository's own rule is that a
+  // process boots correctly configured or does not boot.
+  //
+  // The floor matters more than the spelling. Every record action mutates a
+  // record, which is exactly why the default is `records.write`; a declaration
+  // is there to ask for something *stronger*, never to drop below it. Without
+  // this check a package could declare `records.read` on a mutating action and
+  // silently hand every viewer a write.
+  if (definition.requiredPermission !== undefined) {
+    if (typeof definition.requiredPermission !== 'string' || !PERMISSIONS.includes(definition.requiredPermission)) {
+      throw new ValidationError(
+        `${label}: requiredPermission must be one of ${PERMISSIONS.join(', ')}`,
+      );
+    }
+    if (definition.requiredPermission === 'records.read') {
+      throw new ValidationError(
+        `${label}: a record action mutates a record, so it may not require only "records.read" — `
+        + 'declare a stronger permission or none at all',
+      );
+    }
   }
   if (!deps.moduleExists(definition.module)) {
     throw new ValidationError(`${label}: target module "${definition.module}" is not a generated module`);
