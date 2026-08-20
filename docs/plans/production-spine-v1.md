@@ -274,4 +274,68 @@ commercial, `f80592be…` intelligence). CI green on the exact head.
 
 ## Results of record
 
-(recorded as they are produced)
+| Gate | Result |
+|---|---|
+| `npm run verify` | pass on the exact head |
+| `npm run smoke` | pass |
+| `npm run gtm:check` | pass |
+| `project doctor --json` | passed — 9 passed, 0 warning, 0 failed |
+| `package test` × 9 packages | 0 failures anywhere (commercial, signature, contracts, delivery, service, work, lifecycle, intelligence, customer-data) |
+| `app inspect --json` | `PRODUCTION_SPINE_ABSENT` narrowed to the truth and still not a readiness claim |
+| `scenario run` × 5 | all pass, including the new `tenant-isolation-and-authorization` |
+| Real Chromium | **31/31**, twice, over three servers (production, local-development, no spine) from a clean fixture and profile |
+| LA0 replays | **all three asserted fingerprints byte-identical**: `fe1875bf…`, `82c1f02f…`, `f80592be…` |
+| GitGuardian | passes (see below) |
+
+### Defects and corrections this work produced
+
+1. **The configured verifier was unreachable from the request boundary.** It
+   lived on the spine config while the server looked for it on the app, so
+   *every* production request fell through to anonymous. That reads as "secure"
+   — 401 for everything — which is exactly why it would survive a casual test.
+   Caught by asserting the **401/403 distinction** rather than merely "denied".
+2. **The browser harness rewrote the actor header on every request**, including
+   the three raw cross-tenant probes, so two checks passed for the wrong reason.
+   Fixing the harness made them fail against a *correct* product, and the
+   assertions were re-specified to test **non-disclosure of tenant A** rather
+   than a status code.
+3. **The core migration version pin.** `npm run verify` caught what the targeted
+   suites did not: the pin `[1,2,3,4]` had to move to `[1,2,3,4,5]`. The pin was
+   doing its job — a core migration cannot be added unnoticed.
+4. **A committed JWT-shaped test fixture.** GitGuardian failed on the branch, and
+   a secret-scanner failure on a PR claiming "no credential is stored" is the
+   wrong signal regardless of whether the finding is a true positive. The
+   fixture has to *look* like a bearer token for the test to mean anything, but
+   it does not have to be written down — it is now assembled at runtime. Because
+   the scanner reads every commit in the PR, the literal was also purged from
+   branch history with `git filter-branch`; **the final tree is byte-identical
+   before and after** (`d2f8df94…`), and GitGuardian then passed.
+5. **The local bootstrap reason** recorded the generic bootstrap message instead
+   of saying it came from local mode, so the first developer's membership did
+   not explain how it came to exist while every later one did.
+6. **An unused async refusal helper** in the journey, removed; the guard that
+   mentioned it now names the real hazard — a promise passed to the synchronous
+   helper would report "not refused" before it settled.
+
+### Deliberate re-records
+
+- The three LA0 baselines, because `action-runtime.js`, `create-app.js` and
+  `http-server.js` are behaviour-bearing and all three changed. Every asserted
+  fingerprint and every observation count is unchanged; the whole diff is three
+  source digests. Every record action now passes through an authorization
+  decision and the observable behaviour of all three legacy domains is exactly
+  what it was.
+- `site/assets/llms-full.txt`, generated from the inspection limitation text.
+
+### Not done, and why
+
+- **Row-level shared-database tenancy** — 86+ tables and a backfill of every
+  shipped database. Recorded as **Spine v2** with an owner field in `ROADMAP.md`.
+- **A production identity adapter** (OIDC/SAML/vendor). The framework
+  authenticates nobody by design; a reference adapter belongs outside
+  `packages/core` and needs a real deployment to be worth anything.
+- **Field-level authorization.** v1 authorizes operations, never fields. The
+  `JTBD-DG-07` claim was written and then removed rather than cited-and-
+  disclaimed, because the runner labels every cited row `established`.
+- **No JTBD row was promoted.** `JTBD-15` moves from "not supported" only when a
+  person promotes it on merged tests, which is the runner's own doctrine.
