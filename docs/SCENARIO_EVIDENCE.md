@@ -59,6 +59,34 @@ lowercase token, so a provenance string carrying hyphens
 (`signed-order-terms`) is observed through a boolean the journey publishes
 beside it rather than by widening the grammar for one document.
 
+### The fifth consumer, which is made almost entirely of refusals
+
+`tenant-isolation-and-authorization` (Production Spine v1, ADR-038) is the
+fifth, over a sixth composition — and the composition is the emptiest yet: **no
+domain packages at all**, two tenants as two databases. That is deliberate. The
+properties under test belong to the framework, so proving them over a
+composition holding nothing shows they do not depend on any package being
+present.
+
+It is unlike its predecessors in what it must prove. **Every security claim in
+ADR-038 is a negative one** — nothing leaked, nobody escalated, no credential
+was stored — and a negative claim a run never tests is indistinguishable from a
+feature that was never built. So the journey performs each forbidden operation
+and publishes that it was refused, and the scenario observes those refusals as
+positive facts.
+
+**Contract 1 again needed nothing added**, and it met the same bound the third
+and fourth consumers met, in the same place: an observed value may only be a
+lowercase token, so `database-per-tenant` is observed through a boolean the
+journey publishes beside it.
+
+One claim was written and then deliberately removed. `JTBD-DG-07` (restrict
+sensitive fields by role) was cited with a note explaining that v1 authorizes
+*operations* and never *fields* — but the runner labels every cited row
+`established` regardless of what its note says, so citing a row in order to
+disclaim it reports the opposite of the truth. The row is simply not claimed,
+which is what "not established" already means.
+
 ### The fourth consumer, and the one thing it could not observe
 
 `customer-identity-governance` (Customer Data Foundation v1) is the fourth, over
@@ -320,6 +348,7 @@ nothing to check.
 | `service-sla-escalation` | `SLA_IS_ELAPSED_TIME_NOT_A_CONTRACTUAL_JUDGEMENT`, `NOTHING_WAS_NOTIFIED_OR_ROUTED`, `ESCALATION_IS_MANUALLY_RECORDED`, `SERVICE_COVERAGE_IS_NOT_A_CONTRACT` |
 | `contract-renewal-execution` | `NOTHING_RENEWS_ON_A_CLOCK`, `A_SUCCESSOR_IS_NOT_A_LEGAL_RENEWAL`, `SIGNED_TERM_REQUIRED_AND_PROVEN_BY_REFUSAL`, `NOTHING_WAS_BILLED_OR_NOTIFIED` |
 | `customer-identity-governance` | `MATCHING_IS_EXACT_ONLY`, `CANONICAL_IDENTITY_IS_A_LOGICAL_LINK`, `THIS_IS_NOT_A_CDP_OR_A_WAREHOUSE`, `NO_CONSENT_RETENTION_OR_ERASURE_CLAIM`, `THE_PROFILE_IS_A_PROJECTION_NOT_A_TIMELINE` |
+| `tenant-isolation-and-authorization` | `ISOLATION_IS_TWO_DATABASES_NOT_A_ROW_COLUMN`, `NO_IDENTITY_PROVIDER_IS_CONTACTED`, `EVERY_REFUSAL_IS_EARNED_BY_ATTEMPTING_IT`, `NOT_PRODUCTION_READINESS` |
 
 No code appears in more than one list — not in both journeys, and not shadowing a
 global one. A limitation true of both journeys belongs in the global set; a
