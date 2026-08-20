@@ -1,7 +1,7 @@
 {
   "counts": {
-    "not supported": 93,
-    "partially supported": 33,
+    "not supported": 90,
+    "partially supported": 36,
     "technically supported": 0,
     "total": 149,
     "validated end to end": 23
@@ -683,7 +683,7 @@
       "id": "JTBD-DG-04",
       "section": "Data governance (no milestone assigned — DATA_GOVERNANCE.md)",
       "status": "not supported",
-      "summary": "the hardest design in the track: commercial evidence is deliberately immutable",
+      "summary": "the hardest design in the track: commercial evidence is deliberately immutable. Customer Data Foundation v1 does not move this row and does not claim to: it anonymizes and deletes nothing, its canonical link deletes nothing, and governing a data-quality finding records a decision while keeping the finding and its evidence. The only related fact it contributes is a narrow negative one — no raw provider payload is retained from an import — which is a smaller claim than this row asks for and is not a step toward it",
       "tests": [],
       "title": "Anonymize or delete a subject while preserving immutable evidence"
     },
@@ -726,34 +726,36 @@
     {
       "docs": [],
       "id": "JTBD-DO-01",
-      "section": "Data operations (no milestone assigned)",
-      "status": "not supported",
-      "summary": "no import path; records are created one at a time through services or actions",
-      "tests": [],
+      "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
+      "status": "partially supported",
+      "summary": "Customer Data Foundation v1 adds a bounded import under a fingerprinted mapping (customer-rows@1): a preview that provably writes nothing, a per-row receipt carrying an outcome and a reason code, counts that always reconcile (accepted + rejected + skipped == rows), an all-or-nothing or partial acceptance mode, and an idempotency key derived from the source system, the mapping fingerprint and the sorted row digests — never a clock or a random value, so the same import retried is the same run. examples/scenarios/customer-identity-governance.scenario.json, tests/customer-data-foundation.test.js. Still partial, and the row's own word is the gap: there is no CSV. The rows are a bounded JSON array a caller hands in, capped at 500, with no file upload, no delimiter/encoding/header inference, no column-mapping UI, no streaming and no resumable or scheduled import",
+      "tests": [
+        "tests/customer-data-foundation.test.js"
+      ],
       "title": "Import records from CSV"
     },
     {
       "docs": [],
       "id": "JTBD-DO-02",
-      "section": "Data operations (no milestone assigned)",
-      "status": "not supported",
-      "summary": "unique constraints exist per field; no matching or scoring",
+      "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
+      "status": "partially supported",
+      "summary": "deterministic matching under a versioned, fingerprinted policy (deterministic-customer-match@1) with three exact rules in a fixed precedence — external identity, contact email, company name + domain. An exact match reuses the existing record across source systems; ambiguity produces a duplicate-candidate carrying its rule, its evidence and the policy fingerprint, and the row is left unresolved for a person. The scenario earns this by *attempting* an ambiguous row and publishing that no tie was broken. Still partial: nothing fuzzy, phonetic, probabilistic or machine-learned exists, there is no score or threshold, no rule breaks a tie, and detection runs on import only — entering a record by hand through a service or action detects nothing",
       "tests": [],
       "title": "Detect duplicates on import or entry"
     },
     {
       "docs": [],
       "id": "JTBD-DO-03",
-      "section": "Data operations (no milestone assigned)",
-      "status": "not supported",
-      "summary": "no merge primitive; references would have to be re-pointed and evidence preserved",
+      "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
+      "status": "partially supported",
+      "summary": "on a deliberately narrow reading: a logical canonical merge. A human — never an agent, never without a reason — records that two records are one customer, producing a canonical/alias cluster with the deciding identity and reason on every link. After it, both records still exist byte-identical, both still resolve, both read one consolidated profile, and neither a decided candidate nor an already-clustered record can be silently re-decided or re-parented. Still partial, and the row's own word is again the gap: there is no physical merge. Nothing is deleted, no reference is re-pointed, no field is survivorship-resolved and nothing is un-mergeable by audit — an operator who wants two rows to become one row does not get that here, and it is deliberately deferred to Customer Data Operations v2",
       "tests": [],
       "title": "Merge two Companies or Contacts"
     },
     {
       "docs": [],
       "id": "JTBD-DO-04",
-      "section": "Data operations (no milestone assigned)",
+      "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
       "status": "not supported",
       "summary": "no export endpoint; list is page-bounded by design",
       "tests": [],
@@ -762,7 +764,7 @@
     {
       "docs": [],
       "id": "JTBD-DO-05",
-      "section": "Data operations (no milestone assigned)",
+      "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
       "status": "not supported",
       "summary": "every mutation is single-record",
       "tests": [],
@@ -771,7 +773,7 @@
     {
       "docs": [],
       "id": "JTBD-DO-06",
-      "section": "Data operations (no milestone assigned)",
+      "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
       "status": "not supported",
       "summary": "no saved-view primitive",
       "tests": [],
@@ -780,18 +782,18 @@
     {
       "docs": [],
       "id": "JTBD-DO-07",
-      "section": "Data operations (no milestone assigned)",
+      "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
       "status": "not supported",
-      "summary": "no global search; exact indexed lookups are per-module",
+      "summary": "no global search; exact indexed lookups are per-module. Customer Data Foundation v1 builds no search index of any kind and explicitly defers global search to Customer Data Operations v2; its matching is exact lookups on normalized values, which is not search",
       "tests": [],
       "title": "Search across modules"
     },
     {
       "docs": [],
       "id": "JTBD-DO-08",
-      "section": "Data operations (no milestone assigned)",
+      "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
       "status": "partially supported",
-      "summary": "Work v1 (ADR-030) adds an append-only Activity timeline per subject, with a closed four-entry vocabulary, rendered oldest-first in the Admin — tests/work-operations-e2e.test.js, tests/admin-work.test.js. It is not a unified customer timeline: it covers only what Work itself recorded, Service's support-case-activity stays domain-specific, Delivery history is not aggregated, marketing and communications do not exist at all, and no email, call, meeting or audit row appears on it. Confirmed *partially supported* by human decision on that wording; no other row is promoted by inheritance from it",
+      "summary": "Work v1 (ADR-030) adds an append-only Activity timeline per subject, with a closed four-entry vocabulary, rendered oldest-first in the Admin — tests/work-operations-e2e.test.js, tests/admin-work.test.js. It is not a unified customer timeline: it covers only what Work itself recorded, Service's support-case-activity stays domain-specific, Delivery history is not aggregated, marketing and communications do not exist at all, and no email, call, meeting or audit row appears on it. Customer Data Foundation v1 adds a second, independent projection over the same problem — one read-only consolidated profile per customer, spanning whatever packages the application composes, in which a package that is not composed reads *not available* with a reason rather than as an empty result or a zero. That does not change the row: the profile is a projection over Accordo-managed records, it says so in its own payload, and no email, call, meeting, marketing or communications event appears on it because none exist. Confirmed *partially supported* by human decision on that wording; no other row is promoted by inheritance from it or from the foundation",
       "tests": [
         "tests/admin-work.test.js",
         "tests/work-operations-e2e.test.js"
@@ -801,7 +803,7 @@
     {
       "docs": [],
       "id": "JTBD-DO-09",
-      "section": "Data operations (no milestone assigned)",
+      "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
       "status": "not supported",
       "summary": "no note or attachment primitive",
       "tests": [],

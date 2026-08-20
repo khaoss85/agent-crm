@@ -139,22 +139,6 @@ export function createAccordoApp(options = {}) {
   // deterministic and a malformed action stops startup.
   for (const definition of domains.actions()) actions.register(definition);
 
-  // ── Declared application operations (ADR-032) ─────────────────────────────
-  // Packages contribute bounded application-scoped operations, and the
-  // composition attaches each declared alias generically. This factory no
-  // longer looks any package up by name: the names live in the package
-  // declarations, where names belong. Without the owning package composed,
-  // an alias is simply absent and its route answers an honest 404.
-  const operationRuntime = createOperationRuntime({
-    database,
-    modules,
-    events,
-    config: {
-      catalogTimeoutMs: /** @type {any} */ (options).catalogTimeoutMs,
-      signatureTimeoutMs: /** @type {any} */ (options).signatureTimeoutMs,
-    },
-  });
-  const { aliases: operationAliases } = composePackageOperations({ registry: domains, runtime: operationRuntime });
 
   const notificationProvider = new MemoryNotificationProvider();
   providers.register({
@@ -174,6 +158,24 @@ export function createAccordoApp(options = {}) {
   // once per app instance — frozen, no global state, the only sanctioned way
   // for an action to create/reuse core records.
   const coreAdapters = createCoreAdapters({ database, services, pipelines });
+
+  // ── Declared application operations (ADR-032) ─────────────────────────────
+  // Packages contribute bounded application-scoped operations, and the
+  // composition attaches each declared alias generically. This factory no
+  // longer looks any package up by name: the names live in the package
+  // declarations, where names belong. Without the owning package composed,
+  // an alias is simply absent and its route answers an honest 404.
+  const operationRuntime = createOperationRuntime({
+    database,
+    modules,
+    events,
+    config: {
+      catalogTimeoutMs: /** @type {any} */ (options).catalogTimeoutMs,
+      signatureTimeoutMs: /** @type {any} */ (options).signatureTimeoutMs,
+    },
+    core: coreAdapters,
+  });
+  const { aliases: operationAliases } = composePackageOperations({ registry: domains, runtime: operationRuntime });
 
   const workflows = new WorkflowEngine({
     database,

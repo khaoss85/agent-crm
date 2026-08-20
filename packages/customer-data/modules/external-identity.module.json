@@ -1,0 +1,86 @@
+{
+  "manifestVersion": 1,
+  "name": "external-identity",
+  "description": "One external system's identifier for a record Accordo already owns, held beside that record rather than inside it. It stores the identifier and its provenance and never the source payload: no raw response, no credential and no secret is kept here.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "system",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "externalId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectResource",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectOwner",
+      "type": "enum",
+      "values": [
+        "host",
+        "package"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "subjectOwnerPackage",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectLabel",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "active",
+        "superseded"
+      ],
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "firstObservedRunId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "lastObservedRunId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "firstObservedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "lastObservedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

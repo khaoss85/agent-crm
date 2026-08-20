@@ -1,0 +1,290 @@
+{
+  "implementationEvidenceContract": 1,
+  "plan": "examples/solution-plans/govern-customer-identity.plan.json",
+  "planFingerprint": "e50cba3bb11ff1c6a3a91a6cb662ac33bfda4af7cb57d8ef1ba2459069be51b1",
+  "applicationInspectionFingerprint": "6b29d66d065311ac75c26f3d9436e31625523e61aefdcdf1337a864f66d58697",
+  "requirements": [
+    {
+      "requirementId": "step:step.preview-before-importing",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "preview-writes-nothing.01",
+          "expects": "journey.fact fact=previewWroteNothing is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "preview-writes-nothing.02",
+          "expects": "journey.fact fact=everyRowReceipted is=true"
+        },
+        {
+          "kind": "source.artifact",
+          "path": "packages/customer-data/src/operations.js",
+          "sha256": "d9d3c985eefa5026a8d727d1704bc68b8525fc24d5e8f4f4b8a656011740a2f6"
+        }
+      ]
+    },
+    {
+      "requirementId": "step:step.apply-the-import",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "apply-and-reconcile.01",
+          "expects": "journey.fact fact=receiptsReconcile is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "apply-and-reconcile.02",
+          "expects": "journey.fact fact=previewMatchedTheApply is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "idempotent-by-payload.01",
+          "expects": "journey.fact fact=replayIsTheSameRun is=true"
+        },
+        {
+          "kind": "source.artifact",
+          "path": "packages/customer-data/src/import.js",
+          "sha256": "59add5012ee90d75403d6dba0b307b42e62dfa25c51c4d8fd5ffa93f25b743db"
+        }
+      ]
+    },
+    {
+      "requirementId": "step:step.decide-the-ambiguous-ones",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "only-a-human-decides.03",
+          "expects": "journey.fact fact=agentLinkRefused is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "only-a-human-decides.05",
+          "expects": "journey.fact fact=reasonlessLinkRefused is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "the-link-destroys-nothing.02",
+          "expects": "journey.fact fact=bothRecordsUnchanged is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "a-decision-is-not-overwritten.02",
+          "expects": "journey.fact fact=relinkRefused is=true"
+        },
+        {
+          "kind": "source.artifact",
+          "path": "packages/customer-data/src/actions.js",
+          "sha256": "efe308e5511048dadf41668f3733f6248177f00e9b5375ef11299952ae357d47"
+        }
+      ]
+    },
+    {
+      "requirementId": "step:step.read-one-profile",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "one-profile-read-from-either-side.01",
+          "expects": "journey.fact fact=bothSidesReadOneCustomer is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "absence-reads-as-absence.01",
+          "expects": "journey.fact fact=absentSectionsExplainThemselves is=true"
+        },
+        {
+          "kind": "source.artifact",
+          "path": "packages/customer-data/src/profile.js",
+          "sha256": "78ea89133c898c60886e923481746fbfb489acf0bacf4c6ad6a0feea4149138c"
+        }
+      ]
+    },
+    {
+      "requirementId": "check:c419c554f8ce34953ee20724b3781dd1",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "preview-writes-nothing.01",
+          "expects": "journey.fact fact=previewWroteNothing is=true"
+        }
+      ],
+      "partial": {
+        "reason": "the run compares every module's row count and both host collections before and after the preview, so \"no record and no import run\" is observed exactly. \"No audit row and no event\" is not: the journey publishes a total audit count for the whole run, and a total is not a fact about which write produced it"
+      }
+    },
+    {
+      "requirementId": "check:5b0ec54aa8c06b1fbaf36805f1e19305",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "apply-and-reconcile.01",
+          "expects": "journey.fact fact=receiptsReconcile is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "preview-writes-nothing.02",
+          "expects": "journey.fact fact=everyRowReceipted is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "refuse-the-guess.06",
+          "expects": "journey.count equals=3 metric=duplicateCandidates"
+        }
+      ]
+    },
+    {
+      "requirementId": "check:5481ece8e657f63a21128370b4daf562",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "idempotent-by-payload.01",
+          "expects": "journey.fact fact=replayIsTheSameRun is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "idempotent-by-payload.02",
+          "expects": "journey.count atLeast=1 metric=importRuns"
+        }
+      ],
+      "partial": {
+        "reason": "\"returns the same run\" is observed exactly \u2014 the same run id and the same payload-derived key. \"Creates no second one\" is observed by the journey's own assertion that the run count did not move, but the scenario can only see a lower bound (atLeast), because two later imports in the same run legitimately add runs of their own"
+      }
+    },
+    {
+      "requirementId": "check:85445cc3e2affd8f3bda4108cc47e074",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "refuse-the-guess.01",
+          "expects": "journey.fact fact=ambiguousRowOutcome is=skipped"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "refuse-the-guess.02",
+          "expects": "journey.fact fact=noTieWasBroken is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "refuse-the-guess.04",
+          "expects": "journey.fact fact=probabilisticMatchUsed is=false"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "refuse-the-guess.05",
+          "expects": "journey.count equals=3 metric=ambiguousRowCandidateCount"
+        }
+      ]
+    },
+    {
+      "requirementId": "check:5c241e94806bba2e53b37bd6293d9b16",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "only-a-human-decides.03",
+          "expects": "journey.fact fact=agentLinkRefused is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "only-a-human-decides.05",
+          "expects": "journey.fact fact=reasonlessLinkRefused is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "the-link-destroys-nothing.01",
+          "expects": "journey.fact fact=bothRecordsStillExist is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "the-link-destroys-nothing.02",
+          "expects": "journey.fact fact=bothRecordsUnchanged is=true"
+        }
+      ]
+    },
+    {
+      "requirementId": "check:9538afe44cf8831b71b194c5885baae9",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "a-decision-is-not-overwritten.02",
+          "expects": "journey.fact fact=relinkRefused is=true"
+        },
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "a-decision-is-not-overwritten.01",
+          "expects": "journey.fact fact=redecideRefused is=true"
+        }
+      ]
+    },
+    {
+      "requirementId": "check:a453296da9fd0931c9653eb62ce7cadf",
+      "category": "behavioural",
+      "evidence": [
+        {
+          "kind": "scenario.observation",
+          "scenario": "customer-identity-governance",
+          "observation": "absence-reads-as-absence.01",
+          "expects": "journey.fact fact=absentSectionsExplainThemselves is=true"
+        },
+        {
+          "kind": "source.artifact",
+          "path": "apps/admin/public/admin-customer-data.js",
+          "sha256": "35ca379abe08fd01fb364c70e17e4c60f1971611aede5e41c3d086c93fd895a3"
+        }
+      ],
+      "partial": {
+        "reason": "the server-side claim is observed exactly, over a composition holding no other package at all. That a *rendered* section shows it is not observable from here \u2014 DX6 drives no browser, and the 32-check Chromium matrix in docs/ADMIN_SMOKE.md is a manual gate outside CI"
+      }
+    }
+  ],
+  "limitations": [
+    {
+      "code": "PLAN_TARGETS_THE_JOURNEY_COMPOSITION_NOT_THIS_REPOSITORY",
+      "message": "this plan is written against the application the customer-identity journey composes \u2014 the customer-data package over the host's own Company and Contact, and nothing else \u2014 which is not the composition this repository's own root has. The digest it pins is reproduced by that journey, so every application fact is cited where it was observed and none is cited from this repository's AX1 report"
+    },
+    {
+      "code": "MATCHING_IS_EXACT_ONLY",
+      "message": "the scenario that answers this document publishes five journey-scoped limitations of its own, including that nothing scores or guesses, that a canonical link is logical rather than physical, that this is not a CDP or a warehouse, that no consent or erasure claim is made, and that the profile is a projection rather than a timeline. Every requirement below inherits them"
+    },
+    {
+      "code": "NO_BROWSER_EVIDENCE_IN_THIS_DOCUMENT",
+      "message": "DX6 drives no browser, so no requirement here is evidence about the Admin as a user sees it. The 32-check real-Chromium matrix recorded in docs/ADMIN_SMOKE.md is a manual gate outside CI and is deliberately not cited as machine-checked proof"
+    }
+  ]
+}

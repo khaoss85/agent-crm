@@ -2319,7 +2319,28 @@ The v1 context key set is **closed**: `{config, database, events, modules,
 runExternal}`, frozen, asserted key-exact by
 `tests/package-operations-seam.test.js`. An operation receives only the
 documented capabilities; any additional field is non-contractual, and a
-handler must not probe for undocumented ones. The bounded trace writer remains
+handler must not probe for undocumented ones.
+
+> **Amended by ADR-037 (Customer Data Foundation v1): the set is now six keys.**
+> `core` — the ADR-013 adapters a record action already receives as `ctx.core`
+> — joined the context because a real consumer proved it necessary, which is
+> the only ground this addendum accepts. The measurement, re-run independently
+> at review: the core `contact` module service exposes **no filtered read at
+> all** (`get` and `list` only, no `listWhere`) and `list` hard-caps at **500**
+> rows, so matching an imported row's email through `modules` is not merely
+> expensive — past 500 contacts it cannot find the record, which is a
+> correctness bug; and matching through `database` means a package writing raw
+> SQL against core's tables and re-implementing `normalizeEmail`, a second
+> normalization authority that can drift from the first (the failure mode
+> ADR-036 closed for term fingerprints). "Worse" therefore meant *incorrect*,
+> not *more code*. The addition changes no power: `core` is a frozen,
+> enumerated six-method adapter (`findContactByEmail`,
+> `findCompaniesByNormalizedName`, `createCompany`, `createContact`,
+> `createOpportunity`, `enterOpportunityPipeline`) that reaches no action
+> registry, workflow engine, provider registry, package registry or capability
+> resolver. `trace` remains **not shipped**, for the reason below, and the
+> key-exact test still asserts its absence. The rule stands unchanged: a key
+> is added when a consumer proves it necessary, never in advance. The bounded trace writer remains
 the accepted *direction* — it is added under this ADR, with its bounds as
 specified above, when the first real consumer migrates onto it (the natural
 candidate: `catalog.sync` adopting the bounded writer in place of its raw
@@ -2686,3 +2707,176 @@ No snapshot → unchanged historical behaviour. Valid snapshot → **byte-identi
 outcome (all three LA0 baselines replay unmoved). Invalid snapshot → **fails
 closed**, where it previously passed silently. That last line is a deliberate
 behaviour change and the whole point of the ADR.
+
+## ADR-037 — The customer foundation links and projects existing records; it never becomes a second copy of them
+
+**Status:** accepted. **Milestone:** Customer Data Foundation v1.
+**Plan:** `docs/plans/customer-data-foundation-v1.md`.
+
+### Context
+
+Accordo can price, sign, activate, deliver, service and renew a customer, but
+it had no trustworthy answer to "who is this customer, where did that record
+come from, and is it the same person as that other record". Every package
+carries its own slice — Company and Contact in the host, party snapshots frozen
+on Orders and Contracts, subjects on Work tasks — and nothing tied them
+together or recorded provenance.
+
+The obvious shape is a master customer table that every package points at. That
+shape is wrong here, and the inventory says why: `contacts.email` is already
+`NOT NULL UNIQUE` in the core schema, nine packages already reference
+`companyId`/`contactId`, and the customer columns on `order` and
+`commercial-contract` are **immutable party snapshots frozen at signature** —
+evidence of what was signed, not the current truth about a person. A master
+table would duplicate mutable truth, fight the existing uniqueness rule and
+require a cascade rewrite across every package that already resolves those ids.
+
+### Decision
+
+**Existing business records remain the source records. The foundation adds four
+things beside them: identity, provenance, lineage and projection.**
+
+1. **Package-native, named `customer-data`.** Not core: customer identity,
+   dedupe policy and data-quality semantics are domain behaviour, and
+   `duplicate-candidate` fails the ADR-018 test for what core may own. Optional
+   like every other package — remove the composition line and the application
+   keeps working, with every row still on disk.
+2. **No master customer record.** Six records, none of which copies a business
+   record: an import run, its per-row receipts, external identities, duplicate
+   candidates, canonical links and data-quality issues. Every reference to a
+   record another package owns uses the **ADR-030 subject envelope**
+   (`subjectResource`/`subjectId`/`subjectOwner`/`subjectOwnerPackage`), so
+   this package takes no foreign key on, and stores no copy of, anybody else's
+   table.
+3. **Matching is deterministic and explainable, and never guesses.** Exact
+   external identity, then exact normalized email, then exact company name
+   **and** exact domain. Ambiguity is a first-class answer: the row resolves
+   `unresolved`, a duplicate candidate is recorded with the rule and evidence
+   that produced it, and no rule breaks a tie. There is no fuzzy comparison, no
+   score, no threshold and no ML.
+4. **Canonical identity is a LOGICAL link, decided by a human.** Linking writes
+   cluster membership; it deletes no row, rewrites no field, touches no other
+   package and cascades nowhere. Every linked record still exists and still
+   resolves, and the profile follows the cluster. Physical consolidation is
+   deliberately deferred to a named **Customer Data Operations v2** track,
+   together with global search, saved views, bulk actions, export at scale and
+   any retention or erasure workflow.
+5. **The profile is a projection, not a table.** It reads across whatever
+   packages are composed and stores nothing. A package that is not composed
+   reads **`available: false` with a reason** — never `[]` and never `0`,
+   because an empty list from an uninstalled package is a lie in the place a
+   reader is most likely to believe it. The profile states that it is **not** a
+   complete cross-channel timeline, because marketing, analytics and external
+   events are not represented.
+6. **Import: preview writes nothing, apply re-proves everything.** Preview
+   returns the receipts it would write and leaves the database byte-identical.
+   Apply recomputes the resolution inside its own transaction — a preview is
+   never an authorisation. The idempotency key is derived from the system, the
+   mapping fingerprint and the sorted row digests, so a retry of the same
+   payload returns the same run and a clock never enters it. Acceptance is an
+   explicit choice; under the default partial mode every rejected row carries a
+   receipt and `accepted + rejected + skipped === rows` is asserted rather than
+   assumed.
+
+### The one seam change: `core` joins the ADR-032 operation context
+
+The bounded application-operation context gains a sixth key, `core` — the
+ADR-013 adapters a **record action already receives** as `ctx.core`. It was
+added because a real consumer proved it necessary and both alternatives were
+measured and worse: the core module services cap `list()` at 500 with no email
+filter, so matching through `modules` becomes a correctness bug the moment a
+project has more contacts than that; and matching through `database` means a
+package writing raw SQL against core's tables and re-implementing core's own
+normalization. The rule the addition follows is the rule ADR-036 recorded: a
+key is added when a consumer proves it necessary, never in advance.
+`normalizeEmail` and `normalizeCompanyName` are published from `packages/core`
+for the same reason — so a package that *stores* a normalized form uses the
+identical rule the adapters *match* with.
+
+### Security and governance
+
+PII-capable data is involved. No raw source payload, credential or secret is
+stored anywhere — external identity keeps the identifier and its provenance and
+nothing else. Input is bounded (rows, fields, lengths) and control-safe using
+**the repository's existing strictest PII string policy**, the signer class from
+`packages/signature/src/operations.js`, reused rather than reinvented and proven
+identical code point by code point. Every human identity decision is audited
+with its actor and reason. Retention is limited to what the records above hold,
+and **erasure versus immutable evidence is explicitly unresolved and
+legal-policy dependent**: a signed Order's party snapshot is evidence of what
+was signed, and this milestone does not decide whether or how that may ever be
+removed. The Production Spine does not exist, so a human actor is an audit
+identity and not role enforcement, and the profile and Admin both say so.
+
+### Not modeled, deliberately
+
+A CDP, a warehouse or lakehouse, real-time activation, a probabilistic identity
+graph, ML entity resolution, arbitrary ETL, global full-text search, a consent
+platform, GDPR or any legal assurance, retention and erasure workflows, and a
+cross-channel timeline. **This is not a shipped CDP and is not described as one
+anywhere.**
+
+### Evidence, and what the evidence could not reach
+
+The fourth checked-in journey and scenario, `customer-identity-governance`,
+composes **the customer-data package and nothing else** — which is not a
+convenience: with no other package present, the profile's `available: false` is
+an *observed* fact rather than a rendering detail, and it is the strongest form
+this decision's fifth point can take. The journey earns its safety facts by
+attempting them: it drives a genuinely ambiguous row and publishes that no tie
+was broken, attempts an agent actor, an out-of-candidate canonical record and a
+reasonless decision, and searches every text column of every table in the
+database for a field the mapping does not know.
+
+Three JTBD rows move to *partially supported* on stated readings — DO-01 (no
+CSV: bounded JSON rows), DO-02 (import only, nothing fuzzy), DO-03 (logical
+link, no physical merge) — and DG-04, DO-07 and DO-08 are guarded in the matrix
+against inheriting anything from them.
+
+**One thing the evidence could not reach, recorded rather than hidden.** This
+package's principal surface is three ADR-032 *application operations*, and the
+DX6 observation vocabulary has no `operation.present`: it can observe a package,
+a resource, a module, an action, a capability and a policy, but not a declared
+operation. The scenario therefore proves the operations *work* through
+`journey.fact` and proves the package's *shape* through its resources, policy
+and record actions. Widening a closed vocabulary is a framework change and was
+deliberately left outside this milestone; `docs/SCENARIO_EVIDENCE.md` records
+the gap, and the second package to declare an operation is when it should be
+closed.
+
+### Review amendment — a read that decides something is never a display page
+
+Raised in independent review of the implementing PR, fixed in it, and recorded
+here because it revises how the fifth point above must be read.
+
+The generated record service offers two reads and they are not
+interchangeable. `list()` is a bounded **display** page: it clamps whatever
+limit it is given into `1..500` and returns the newest rows first.
+`listWhere()`/`countWhere()` are the complete exact-match correctness queries
+(ADR-015), and the generated source says so beside them. This package asked
+`list({ limit: 1000 })` in nine places and believed the answer. The bound is
+not exotic — 250 decided duplicate pairs write 500 canonical-link rows — and
+past it, measured on a real application:
+
+- the profile reported `linked: false`, *"no canonical identity decision has
+  been recorded for this record; it stands for itself"*, for a record a human
+  **had** linked; and
+- `ALREADY_IN_CANONICAL_CLUSTER` — the guard whose stated job is to refuse a
+  decision that would "silently rewrite an earlier one" — stopped firing, so
+  one record became canonical of one cluster and alias of another.
+
+So: **every read in this package that decides something is complete by
+construction**, through one helper that says why. A cluster read from a page is
+a cluster that loses members as the table grows, and a guard that stops firing
+at scale is not a guard.
+
+The same review found the fifth point held in only one direction. `available:
+false` was scrupulous, but a *composed* package whose record declares no
+reference this projection can follow reported `count: 0` — which reads as "this
+customer has none", and was false: a quote names an **opportunity**, not a
+company. Absence is therefore honest in both directions now. The profile
+follows the opportunity reference (a record it has already resolved for this
+customer, not a guess); a section it genuinely cannot reach reads `available:
+false` with that reason rather than a zero; and every readable section publishes
+`countIsComplete`, so a number taken from a bounded page is reported as a floor
+instead of a total.

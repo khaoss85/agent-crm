@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { PackageRegistry, SUPPORTED_PACKAGE_CONTRACT, validatePackageDefinition } from '../../core/index.js';
 import { resolvePackageComposition } from '../../core/src/package-composition.js';
-import { PRIVATE_IMPORT_RE, importSpecifiers, packageSources } from './package-sources.js';
+import { importSpecifiers, importsPrivateKernelPath, packageSources } from './package-sources.js';
 
 /**
  * The conformance checks that need no database and no boot.
@@ -151,7 +151,7 @@ export function runDeclarationChecks({ definition, dir }) {
   for (const file of sources) {
     const source = readFileSync(file, 'utf8');
     const shortName = file.slice(dir.length + 1).split(/[\\/]/).join('/');
-    if (PRIVATE_IMPORT_RE.test(source)) privateImports.push(shortName);
+    if (importsPrivateKernelPath(source)) privateImports.push(shortName);
     if (/\beval\s*\(/.test(source)) dynamic.push(`${shortName}: eval`);
     if (/\bnew Function\s*\(/.test(source)) dynamic.push(`${shortName}: new Function`);
     if (/\bawait import\s*\(/.test(source)) dynamic.push(`${shortName}: dynamic import`);

@@ -55,7 +55,7 @@ makes Commercial a package.
 
 ## Where each domain lives today
 
-Verified against the working tree, 2026-08-07.
+Verified against the working tree, 2026-08-19.
 
 | Domain | Runtime home | Is it a package? |
 |---|---|---|
@@ -66,8 +66,11 @@ Verified against the working tree, 2026-08-07.
 | Signature & Order | `packages/signature/` — `src/`, `modules/` (`external-operation.js` stays in core as the recorded neutral runner) | **yes** — the third legacy domain extracted, on the ADR-032 operations seam |
 | Contract Activation | `packages/contracts/` — `src/`, `modules/`, `README.md` | **yes** |
 | Delivery | `packages/delivery/` — `src/`, `modules/`, `README.md` | **yes** |
+| Service | `packages/service/` — `src/`, `modules/`, `README.md` | **yes** — package-native from its first commit (M15, built and merged) |
+| Work | `packages/work/` — `src/`, `modules/`, `README.md` | **yes** — package-native; owns the ADR-030 subject envelope |
+| Lifecycle | `packages/lifecycle/` — `src/`, `modules/`, `README.md` | **yes** — package-native (M16a, M16b) |
+| Customer Data | `packages/customer-data/` — `src/`, `modules/`, `README.md` | **yes** — package-native (ADR-037). It **requires nothing**, adds no master customer table, and links and projects rather than duplicating |
 | Custom-package fixture | `examples/custom-packages/partner-scorecard/` | **yes** — the customer-authoring proof |
-| Service | not built (M15) | — |
 | Marketing & Growth | documentation only (`docs/strategy/`) | — |
 
 Each of the four has a `packages/<name>/generated/` directory and nothing else:
@@ -736,11 +739,71 @@ this matrix can claim about one domain.
 | Lead Intelligence | **yes** — `tests/characterization/`, `legacyCharacterizationContract: 1` | the extraction candidate. Still **not** package-aligned: it remains kernel source with an ambient runtime field and a fixed definition slot |
 | Commercial Operations | **yes** — `tests/characterization/commercial-*`, `legacyCharacterizationContract: 1` | extracted; the baseline replayed identically across the move |
 | Signature & Order | **yes** — `tests/characterization/signature-*`, `legacyCharacterizationContract: 1` | extracted; the asserted baseline replayed byte-identical across the move (`fe1875bf…`), and the webhook route stays kernel-owned by ADR-032's measured decision |
-| Contracts, Delivery, Service | **not applicable** | package-native from birth; `crm package test` plus their own suites already cover them |
+| Contracts, Delivery, Service, Work, Lifecycle, Customer Data | **not applicable** | package-native from birth; `crm package test` plus their own suites already cover them |
 
 **LA0 is a gate for extracting a legacy domain, not a requirement for building a
 new one.** A package written package-native has no pre-move behaviour to
 preserve, and demanding a characterization baseline from it would be ceremony.
+
+## The Customer Data Foundation backfill answer, as the rule requires
+
+Customer Data Foundation v1 (ADR-037) introduces a capability that *looks*
+horizontal and mostly is not: `customer-data/customer-identity@1`, plus a
+consolidated **profile projection** that reads across whatever packages an
+application composes. Every domain holds customer-shaped data, so every domain
+gets a row — and the honest answer for almost all of them is that nothing
+changes, because **the foundation links and projects; it never duplicates.**
+
+That sentence is the whole assessment. The foundation adds no master customer
+table, no copy of a business record and no foreign key into one. Company and
+Contact stay the host application's records; every other record stays with the
+package that owns it; and identity, provenance, lineage and projection are held
+*beside* them through the ADR-030 subject envelope. A domain that keeps owning
+its own records has nothing to backfill.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **Potentially all of them, and materially none.** The profile reads every composed package, so every package is a possible section of it. No package is read *into* — nothing is copied, re-keyed, re-pointed or normalized away, and no domain's records change shape, ownership or lifecycle |
+| Which are already aligned? | **All of them, by construction.** The foundation requires nothing (`requires: []`) and reaches the host only through the ADR-013 core adapters. A composed package is projected as it already is; an uncomposed one reads *not available* with a reason. Neither case asks the domain for anything |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None.** One kernel change was needed and it is not a domain backfill: the ADR-032 bounded operation context gained `core`, the same frozen ADR-013 adapter handle a record action already receives as `ctx.core`. It was measured against both alternatives — a 500-capped scan through `modules`, which is a correctness bug the moment a project has more contacts than that, and raw SQL through `database`, which would have a package re-implementing core's own normalization — and the sanctioned adapter won. `tests/package-operations-seam.test.js` freezes the widened key set, so a further widening is a deliberate act |
+| What changed for extraction? | **Nothing.** No legacy domain moved, and this package was package-native from its first commit, so it has no pre-move behaviour to preserve and needs no LA0 baseline. The three asserted LA0 baselines replay byte-identical across this work |
+| Matrix updated? | Yes — this section, plus the coverage table below |
+
+### What the foundation asks of each domain: nothing, stated per domain
+
+| Domain | Status against Customer Data Foundation v1 |
+|---|---|
+| **Core CRM (Sales)** | `aligned` — and it is the load-bearing case. Company and Contact **remain the source records**. An import creates them through the core adapters exactly as a person would; a canonical link records a decision *beside* them and leaves both rows byte-identical; and the scenario proves that by fingerprinting them before and after. No core record gained a field, a foreign key or an owner |
+| **Pipeline** | `not_applicable` — a stage is the state of an opportunity, not an identity or a source of customer rows |
+| **Lead Intelligence** | `not_applicable` — enrichment already carries its own snapshot and provenance for a Lead (M9). The foundation does not read, replace or reconcile it, and a Lead is not a customer identity |
+| **Commercial Operations** | `aligned` — projected as a profile section when composed. Quotes are read, never copied, and the section is absent-with-a-reason when the package is not composed |
+| **Signature & Order** | `aligned` — same shape, and with one deliberate silence: signed evidence is immutable, and nothing in this foundation edits, anonymizes or erases it. The erasure question against immutable signed evidence is stated as unresolved rather than answered |
+| **Contract Activation** | `aligned` — projected when composed; contracts and subscriptions keep their own identity and their own lifecycle |
+| **Delivery** | `aligned` — projected when composed |
+| **Service** | `aligned` — projected when composed. `support-case-activity` stays domain-specific and is **not** aggregated into the profile, for the same reason Work v1 refused to fold it in: two timelines that mean different things are honest, one that means both is not |
+| **Work** | `aligned` — projected when composed. The foundation reuses Work's ADR-030 subject envelope to point at records rather than inventing a second reference mechanism |
+| **Lifecycle** | `aligned` — projected when composed |
+| **Custom-package fixture** | `not_applicable` — it owns one resource and no customer-shaped record |
+| **Marketing & Growth** | `not_applicable` — documentation only. This is the row most at risk of being over-read: a customer data layer next to an unbuilt marketing track invites the word *CDP*, and **no such claim is made anywhere**. There is no audience, no segment, no consent, no activation and no export |
+
+### The profile is a projection, and the absence is part of the contract
+
+A profile section for a package that is not composed reads `available: false`
+with a reason and with a **null** count and null items — never a zero. A zero
+would be a claim that there are none, which an application that cannot see the
+package is not entitled to make. `examples/scenarios/customer-identity-governance.scenario.json`
+observes this over a composition holding **no other package at all**, which is
+what makes it a fact rather than a rendering detail.
+
+### And the Production Spine's absence stays visible
+
+Nothing here changes it. There is no auth, tenancy or RBAC in this framework, so
+"a human decided" means an actor object said `type: "user"` — an audit boundary,
+not role enforcement. Nothing is scheduled, notified, exported or activated;
+nothing is deployed; and none of this is a GDPR, consent, retention or erasure
+claim. Those absences are published by the package's own metadata and by the
+scenario's limitations rather than left for a reader to discover.
 
 ## Sequencing, which this document does not change
 

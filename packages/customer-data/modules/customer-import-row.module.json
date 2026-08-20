@@ -1,0 +1,91 @@
+{
+  "manifestVersion": 1,
+  "name": "customer-import-row",
+  "description": "The receipt for one input row of an applied import: what it was, what happened to it, and which deterministic rule decided. Every rejected row has one of these, and accepted + rejected + skipped equals the run's row count exactly - a rejected row never disappears quietly.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "runId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "rowIndex",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "inputDigest",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "outcome",
+      "type": "enum",
+      "values": [
+        "accepted",
+        "rejected",
+        "skipped"
+      ],
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "reasonCode",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "matchRule",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectResource",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectOwner",
+      "type": "enum",
+      "values": [
+        "host",
+        "package"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "subjectOwnerPackage",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectLabel",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "createdSubject",
+      "type": "boolean",
+      "writable": "managed"
+    }
+  ]
+}

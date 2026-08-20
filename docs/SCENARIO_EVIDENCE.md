@@ -59,6 +59,33 @@ lowercase token, so a provenance string carrying hyphens
 (`signed-order-terms`) is observed through a boolean the journey publishes
 beside it rather than by widening the grammar for one document.
 
+### The fourth consumer, and the one thing it could not observe
+
+`customer-identity-governance` (Customer Data Foundation v1) is the fourth, over
+a fifth composition — the `customer-data` package over the host's own Company
+and Contact, and **nothing else**. It is unlike its predecessors in two ways
+that matter. Its load-bearing outcome is a *refusal to decide*: the value of a
+customer-data layer is what it declines to merge, so the journey drives a
+genuinely ambiguous row and publishes that no tie was broken. And the emptiness
+of its composition is itself evidence: with no other package present, the
+profile's `available: false` sections are observed rather than argued.
+
+**Contract 1 again needed nothing added**, and it met the same bound the third
+consumer met, in the same place: `company-name-domain` is a rule name carrying
+hyphens, so it is observed through a boolean the journey publishes beside it.
+
+The one thing it could **not** observe is worth recording rather than hiding.
+The customer-data package's principal surface is three **application operations**
+(ADR-032) — preview, apply, read profile — and the observation vocabulary has no
+`operation.present`: it can observe a package, a resource, a module, an action,
+a capability and a policy, but not a declared operation. The scenario therefore
+proves the operations work through `journey.fact` (they were called, and what
+they returned), and proves the package's *shape* through its resources, policy
+and record actions. Widening a closed vocabulary is a framework change and was
+deliberately left out of this milestone's scope; the gap is real, it is one kind
+wide, and the second package that declares an operation is when it should be
+closed.
+
 Four things did **not** change, and the second consumer is the reason we can say
 so rather than assume it:
 
@@ -292,6 +319,7 @@ nothing to check.
 | `b2b-lead-qualification` | `JOURNEY_CLOCK_IS_WALL_CLOCK`, `ENRICHMENT_PROVIDER_IS_A_FIXTURE` |
 | `service-sla-escalation` | `SLA_IS_ELAPSED_TIME_NOT_A_CONTRACTUAL_JUDGEMENT`, `NOTHING_WAS_NOTIFIED_OR_ROUTED`, `ESCALATION_IS_MANUALLY_RECORDED`, `SERVICE_COVERAGE_IS_NOT_A_CONTRACT` |
 | `contract-renewal-execution` | `NOTHING_RENEWS_ON_A_CLOCK`, `A_SUCCESSOR_IS_NOT_A_LEGAL_RENEWAL`, `SIGNED_TERM_REQUIRED_AND_PROVEN_BY_REFUSAL`, `NOTHING_WAS_BILLED_OR_NOTIFIED` |
+| `customer-identity-governance` | `MATCHING_IS_EXACT_ONLY`, `CANONICAL_IDENTITY_IS_A_LOGICAL_LINK`, `THIS_IS_NOT_A_CDP_OR_A_WAREHOUSE`, `NO_CONSENT_RETENTION_OR_ERASURE_CLAIM`, `THE_PROFILE_IS_A_PROJECTION_NOT_A_TIMELINE` |
 
 No code appears in more than one list — not in both journeys, and not shadowing a
 global one. A limitation true of both journeys belongs in the global set; a

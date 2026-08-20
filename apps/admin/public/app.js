@@ -269,6 +269,7 @@ import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
 import { createQuoteView } from './admin-quotes.js';
 import { createWorkView } from './admin-work.js';
+import { createCustomerDataView } from './admin-customer-data.js';
 import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
 
 const dashboardView = document.querySelector('#view-dashboard');
@@ -303,6 +304,16 @@ const quoteView = createQuoteView({
 // Work (ADR-030): the package-scoped task queue and its activity timeline. The
 // section renders only while the server publishes the work package.
 const workView = createWorkView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  navigate: (hash) => { window.location.hash = hash; },
+});
+
+// Customer Data Foundation (ADR-037): import, duplicate candidates, the data
+// quality queue and the read-only profile. Renders only while the server
+// publishes the customer-data package.
+const customerDataView = createCustomerDataView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
@@ -345,6 +356,15 @@ async function populateNav() {
       link.textContent = 'Work';
       generatedNav.appendChild(link);
     }
+    // Customer data (ADR-037): one nav link when the package is composed.
+    if (schema?.domains?.['customer-data']?.metadata?.customerDataContract === 1
+      || schema?.domains?.['customer-data']?.customerDataContract === 1) {
+      const link = document.createElement('a');
+      link.setAttribute('href', '#/customer-data');
+      link.setAttribute('data-nav', 'customer-data');
+      link.textContent = 'Customer data';
+      generatedNav.appendChild(link);
+    }
     // Pipeline boards (ADR-014): one nav link per registered pipeline, from
     // the same schema payload, canonical names only.
     if (schema?.pipelineContract === 1 && Array.isArray(schema.pipelines)) {
@@ -374,7 +394,8 @@ async function route() {
       link.getAttribute('href') === `#/modules/${target.moduleName}` ||
       (target.view === 'pipeline' && link.getAttribute('href') === `#/pipelines/${target.pipelineName}`) ||
       ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes') ||
-      ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work')
+      ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
+      ((target.view === 'customer-data' || target.view === 'customer-profile') && link.getAttribute('href') === '#/customer-data')
     );
     link.classList.toggle('active', active);
   }
@@ -397,6 +418,8 @@ async function route() {
     else if (target.view === 'pipeline') await pipelineBoard.renderBoard(target.pipelineName);
     else if (target.view === 'quotes') await quoteView.renderQuoteList();
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
+    else if (target.view === 'customer-data') await customerDataView.render();
+    else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();
     else if (target.view === 'work-task') await workView.renderTask(target.taskId);
   } catch (error) {

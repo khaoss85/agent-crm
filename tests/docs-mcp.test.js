@@ -319,7 +319,11 @@ test('a standing limitation resolves as a limitation, not a capability', async (
 
 test('check_job answers "not supported" when that is the truth', async () => {
   const server = createDocsMcpServer();
-  const result = await callTool(server, 'check_job', { query: 'import records from CSV' });
+  // Export, not import: the CSV-import row this test used to name became
+  // *partially supported* with the Customer Data Foundation, and a test that
+  // pins a status has to move when the status honestly moves. Exporting records
+  // is the neighbouring row that genuinely does not exist.
+  const result = await callTool(server, 'check_job', { query: 'export records' });
   assert.equal(result.isError, false);
 
   const answer = result.structuredContent;
@@ -327,7 +331,7 @@ test('check_job answers "not supported" when that is the truth', async () => {
   assert.equal(answer.answer, 'not supported');
   assert.match(answer.answerText, /Not supported/);
   assert.match(answer.answerText, /docs\/benchmarks\/CRM_JTBD_MATRIX\.md/);
-  assert.equal(answer.matches[0].id, 'JTBD-DO-01');
+  assert.equal(answer.matches[0].id, 'JTBD-DO-04');
   assert.equal(answer.matches[0].status, 'not supported');
 });
 
@@ -617,6 +621,6 @@ test('an ambiguous job question abstains instead of answering from the top match
   // The anti-overclaim property must survive the fix: a specific question still
   // gets its answer, and a genuinely unsupported job is still reported as one.
   assert.equal(index.check('approve a discount', 5).answer, 'validated end to end');
-  assert.equal(index.check('import contacts from CSV', 5).answer, 'not supported');
+  assert.equal(index.check('export records', 5).answer, 'not supported');
   assert.equal(index.check('teleport the customer to mars', 5).answer, 'unknown');
 });

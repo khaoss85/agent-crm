@@ -1,0 +1,109 @@
+{
+  "manifestVersion": 1,
+  "name": "canonical-link",
+  "description": "One member of a canonical identity cluster, recorded by a human decision. This is a LOGICAL canonical merge - a link, not a deletion: every source record survives untouched, every reference to it keeps resolving, and no field of any other package is rewritten. Physical consolidation is deliberately not part of this milestone.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "clusterKey",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectResource",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectOwner",
+      "type": "enum",
+      "values": [
+        "host",
+        "package"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "subjectOwnerPackage",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectLabel",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "role",
+      "type": "enum",
+      "values": [
+        "canonical",
+        "alias"
+      ],
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "decisionId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedByType",
+      "type": "enum",
+      "values": [
+        "user"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "decidedById",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "active",
+        "withdrawn"
+      ],
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "withdrawnReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "withdrawnAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

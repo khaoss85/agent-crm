@@ -61,6 +61,17 @@ export { writeTrace } from './src/action-runtime.js';
 // nothing here knows about any package.
 export { normalizeActor, SYSTEM_ACTOR } from './src/actor.js';
 
+// ---- identity normalization (ADR-013's own rules, published) ----
+// These two already lived in core, because the core adapters match records
+// with them: `contacts.email` is stored lowercased and globally unique, and
+// company matching collapses case and whitespace. They are pure runtime
+// primitives with no domain vocabulary in them — the ADR-018 test for what
+// core may own — and they are published here so a package that has to STORE a
+// normalized form uses the identical rule the adapters MATCH with. The
+// alternative was a second implementation inside a package, which is exactly
+// the drift this repository refuses everywhere else.
+export { normalizeEmail, normalizeCompanyName } from './src/core-adapters.js';
+
 // ---- declared-definition fingerprints (ADR-015) ----
 // A package that publishes versioned policies uses the same mechanism every
 // first-party definition uses: declared JSON-safe config, canonical source.
