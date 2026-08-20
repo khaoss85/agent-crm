@@ -16,7 +16,7 @@ in the same place the number appears — not in a footnote, not one click away:
 1. **The edition.** "Edition L (G1–G4)". A number with no edition reads as the
    whole benchmark.
 2. **The Edition D status.** G5 and G6 blocked on the Production Spine: no
-   authentication, tenancy or RBAC exists, so a deployed instance cannot honestly
+   authentication ships, so a deployed instance cannot honestly
    be scored. Not run, not estimated.
 3. **The G1 attestation.** G1 is operator-attested, read from the run's
    intervention record rather than measured. Twenty-five of the seventy-five

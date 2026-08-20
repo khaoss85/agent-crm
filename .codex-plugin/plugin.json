@@ -29,7 +29,7 @@
     "displayName": "Accordo",
     "developerName": "Aetha",
     "shortDescription": "Build custom CRM and Customer Hub code",
-    "longDescription": "Accordo is the open-source framework coding agents use to build custom CRMs and Customer Hubs. For Smart CRM, the agent composes while deterministic policy and human approval boundaries govern named decisions. For CDP + CRM, Accordo owns the process layer, not ingestion, identity resolution or segmentation, and ships no bridge runtime. The output is reviewable code in your repository with audit and trace. Pre-release: local SQLite, no authentication, tenancy or RBAC.",
+    "longDescription": "Accordo is the open-source framework coding agents use to build custom CRMs and Customer Hubs. For Smart CRM, the agent composes while deterministic policy and human approval boundaries govern named decisions. For CDP + CRM, Accordo owns the process layer, not ingestion, identity resolution or segmentation, and ships no bridge runtime. The output is reviewable code in your repository with audit and trace. Pre-release: local SQLite, and no authentication ships.",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
     "websiteURL": "https://accordo.dev",

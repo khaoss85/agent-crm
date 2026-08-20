@@ -563,7 +563,13 @@ test('the machine-readable contract is stable, and its vocabulary is closed', (t
   assert.match(origin.message, /framework source beside itself/);
   assert.match(origin.message, /whether npm served them/);
   assert.match(origin.message, /provenance attestation/);
-  assert.match(report.project.productionPosture, /no authentication, tenancy or RBAC/);
+  // Spine v1 made the old wording false in both directions: the framework now owns
+  // tenancy and authorization, and it never owned authentication. The posture has to
+  // keep saying both, and keep refusing to be read as a readiness claim.
+  assert.match(report.project.productionPosture, /not a readiness claim/);
+  assert.match(report.project.productionPosture, /authenticates nobody/);
+  assert.match(report.project.productionPosture, /one tenant per application instance/);
+  assert.doesNotMatch(report.project.productionPosture, /no authentication, tenancy or RBAC/);
   assert.deepEqual(report.project.composedPackages, []);
 });
 

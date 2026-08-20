@@ -71,7 +71,7 @@ Guide, where the project carries it: `docs/APPLICATION_INSPECTION.md`. The repor
 
 - whether any **database** has applied a migration, holds data, or holds *good* data — it reads source only;
 - whether a **provider** is configured, authenticated or reachable. A provider entry means a definition was composed in source, nothing more. Never infer credentials;
-- any **runtime authorization**. There is no auth, tenancy or RBAC in this framework, so no role is enforced anywhere;
+- any **role enforced from an approval code**. Production Spine v1 added authorization, but approval codes stay descriptive labels and the framework authenticates nobody;
 - **JTBD or quality-gate status.** `evidence.status` is `not_aggregated` and carries paths, not claims. Read the documents yourself.
 
 Verify the reliability of source **data** separately: `app inspect` says a record exists, never that its rows are complete, deduplicated or correct. Count the nulls yourself.

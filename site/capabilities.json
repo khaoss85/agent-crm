@@ -104,7 +104,7 @@
         },
         {
           "q": "Does routing assign leads automatically in production?",
-          "a": "Routing is deterministic against a versioned policy and routing targets, proven by tests on one developer's machine. There is no production deployment story: no authentication, no tenancy and no scheduler exist, so nothing routes anywhere unattended."
+          "a": "Routing is deterministic against a versioned policy and routing targets, proven by tests on one developer's machine. There is no production deployment story: no authentication ships and no scheduler exists, so nothing routes anywhere unattended."
         }
       ]
     },

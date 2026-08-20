@@ -101,6 +101,6 @@ obligation row.
 
 ## Do not implement here
 
-Billing, invoicing, payment, usage rating, proration, ramps, minimum commitments, tax, FX, revenue recognition, MRR/ARR/TCV, seat changes on a live subscription, **automatic or scheduled renewal**, renewal-notice delivery, customer notification, cancellation, delivery execution, partner assignment, time/expense/margin, change requests, customer acceptance, service contracts, entitlements, SLA, support cases, a scheduler, a durable outbox, auth/tenancy/RBAC.
+Billing, invoicing, payment, usage rating, proration, ramps, minimum commitments, tax, FX, revenue recognition, MRR/ARR/TCV, seat changes on a live subscription, **automatic or scheduled renewal**, renewal-notice delivery, customer notification, cancellation, delivery execution, partner assignment, time/expense/margin, change requests, customer acceptance, service contracts, entitlements, SLA, support cases, a scheduler, a durable outbox, authentication.
 
 Finish with `npm run verify` and the starter (`node examples/starters/b2b-lead-qualification/install.mjs`).

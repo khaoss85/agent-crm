@@ -173,7 +173,7 @@ back door around that.
 ## The human-actor boundary, stated exactly
 
 Every decision here requires `actor.type === "user"`. That is an **audit**
-boundary — this framework has no auth, tenancy or RBAC, so it is not Sales,
+boundary — this framework ships no authentication, so it is not Sales,
 Legal or Finance role enforcement, and this README does not pretend otherwise.
 
 ## Evidence

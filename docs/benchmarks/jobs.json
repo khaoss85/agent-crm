@@ -1,7 +1,7 @@
 {
   "counts": {
-    "not supported": 90,
-    "partially supported": 36,
+    "not supported": 89,
+    "partially supported": 37,
     "technically supported": 0,
     "total": 149,
     "validated end to end": 23
@@ -216,9 +216,14 @@
       "docs": [],
       "id": "JTBD-15",
       "section": "CRM JTBD validation matrix",
-      "status": "not supported",
-      "summary": "no authentication, tenancy or RBAC. The server is local-development-only. This is a hard prerequisite before any remote exposure.",
-      "tests": [],
+      "status": "partially supported",
+      "summary": "Production Spine v1 (ADR-038) enforces the permission half: organizations, memberships, eleven bounded permissions in five role bundles, server-authoritative authorization on every route, one tenant per application instance, and a fail-closed actor boundary. The identity underneath it is not validated: the framework authenticates nobody and ships no verifier, so *which* person holds a membership is only as trustworthy as the deployment adapter, and in local-development mode it is an assertion. This is not shared-database multi-tenancy, and remote exposure still requires a verifier the framework does not provide.",
+      "tests": [
+        "tests/actor-fails-closed.test.js",
+        "tests/production-spine.test.js",
+        "tests/spine-route-authorization.test.js",
+        "tests/spine-tenancy-truth.test.js"
+      ],
       "title": "Enforce team / tenant permissions"
     },
     {
@@ -447,7 +452,7 @@
       "id": "JTBD-CO-04",
       "section": "Commercial Operations / CPQ (Milestones 10-11 implemented for the local slice, ADR-016 and ADR-017)",
       "status": "partially supported",
-      "summary": "the human-actor boundary is validated (agent actors refused 403; one atomic decision per version; concurrent decisions resolve to one winner) — but requiredApprovalKey is a label: secure Sales-Manager/Finance role enforcement is not validated before RBAC (JTBD-15)",
+      "summary": "the human-actor boundary is validated (agent actors refused 403; one atomic decision per version; concurrent decisions resolve to one winner) — but requiredApprovalKey is still a label: secure Sales-Manager/Finance role enforcement is not validated, because ADR-038 deliberately left approval keys descriptive rather than promote them into enforced permissions, which would change the meaning of records already written (JTBD-15)",
       "tests": [],
       "title": "Obtain required commercial approval on a discount"
     },
@@ -845,7 +850,7 @@
       "id": "JTBD-DS-04",
       "section": "Delivery & Service (handover at M13, execution at M14a, economics at M14b1, and change, deliverables and acceptance at M14b2 — all merged; docs/DELIVERY_HANDOVER.md, docs/DELIVERY_ECONOMICS.md, docs/DELIVERY_CHANGE_ACCEPTANCE.md)",
       "status": "not supported",
-      "summary": "requires RBAC/tenancy — hard-gated by the Production Spine (JTBD-15). M13 records a partner engagement; it grants no access to restrict",
+      "summary": "authorization and tenancy now exist, but no partner access surface does: M13 records a partner engagement and grants no access to restrict, and no verifier ships to authenticate a partner (JTBD-15)",
       "tests": [],
       "title": "Restrict partner access to assigned work only"
     },
@@ -983,7 +988,7 @@
       "id": "JTBD-LI-06",
       "section": "Lead Intelligence & Routing (Milestone 9 — implemented for the local slice, ADR-015)",
       "status": "not supported",
-      "summary": "the assignment record carries source/previousAssignmentId/reason as future data, but no override action exists and none may claim manager permissions before the Production Spine (JTBD-15)",
+      "summary": "the assignment record carries source/previousAssignmentId/reason as future data, but no override action exists, and none may claim a manager made the call until a verifier makes that manager a verified person rather than an asserted one (JTBD-15)",
       "tests": [],
       "title": "Manually reassign with permission and reason"
     },
