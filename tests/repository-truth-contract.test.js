@@ -420,6 +420,20 @@ test('a change with no moved value is still stale, and says which kind of change
   problemNaming(problems, 'No fact value moved');
 });
 
+test('a sourceSha-only change says it was sourceSha, and does not blame the evidence', async () => {
+  // A comment-only edit to any of the 20 authority sources moves `sourceSha`
+  // and nothing else — no fact, no evidence pointer, no limitation, not even
+  // the semantic fingerprint. v1 reported "the evidence, the authority list or
+  // a limitation did", naming three things that had not moved. Confirmed by
+  // appending a comment to packages/core/src/identity.js in a throwaway copy.
+  const built = buildFacts(await bundle());
+  const body = { facts: built.facts, authorities: built.authorities, sourceSha: 'a'.repeat(64) };
+  const problems = diffDocuments(body, { ...body, sourceSha: 'b'.repeat(64) });
+  assert.deepEqual(codes(problems), ['TRUTH_DOCUMENT_STALE']);
+  problemNaming(problems, 'only sourceSha did');
+  assert.doesNotMatch(problems[0].message, /the evidence, the authority list or a limitation/);
+});
+
 // ───────────────── negative: absence is never silently turned into a false fact
 
 test('a declared-absence fact whose declaration is gone is refused, never defaulted to absent', async () => {

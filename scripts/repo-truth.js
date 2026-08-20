@@ -1383,12 +1383,26 @@ export function diffDocuments(committed, fresh) {
     .filter((fact) => String(before.get(fact.id)?.value) !== String(fact.value))
     .map((fact) => `${fact.id}: ${JSON.stringify(before.get(fact.id)?.value ?? null)} → ${JSON.stringify(fact.value)}`);
   const dropped = [...before.keys()].filter((id) => !(fresh?.facts ?? []).some((fact) => fact.id === id));
+  // `sourceSha` is a fingerprint of the bytes that were *read*, so a
+  // comment-only edit to any authority source moves it while every fact,
+  // every piece of evidence and the semantic `fingerprint` stand still. That
+  // is by design — but v1's message then reported "the evidence, the authority
+  // list or a limitation did", naming three things that had not changed. A
+  // gate that misdescribes its own failure teaches the reader to stop reading
+  // it, which is the habit this contract exists to break.
+  const sourceMoved = String(committed?.sourceSha ?? '') !== String(fresh?.sourceSha ?? '');
+  const bodyMoved = !moved.length && !dropped.length
+    && canonical({ ...committed, sourceSha: null }) !== canonical({ ...fresh, sourceSha: null });
   return [{
     code: 'TRUTH_DOCUMENT_STALE',
     message: `${TRUTH_DOCUMENT} no longer matches its authorities. `
       + (moved.length ? `Facts that moved: ${moved.join('; ')}. ` : '')
       + (dropped.length ? `Facts that no longer exist: ${dropped.join(', ')}. ` : '')
-      + (moved.length || dropped.length ? '' : 'No fact value moved; the evidence, the authority list or a limitation did. ')
+      + (bodyMoved ? 'No fact value moved; the evidence, the authority list or a limitation did. ' : '')
+      + (!moved.length && !dropped.length && !bodyMoved && sourceMoved
+        ? `No fact moved and no conclusion changed: only sourceSha did, because an authority source was edited `
+          + `(${String(committed?.sourceSha ?? 'none').slice(0, 12)} → ${String(fresh?.sourceSha ?? 'none').slice(0, 12)}). `
+        : '')
       + 'Run `npm run repo:truth` and commit the result.',
   }];
 }
