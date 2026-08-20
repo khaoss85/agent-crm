@@ -338,7 +338,13 @@ and versioned (`CLOUD_INTEGRATION_CONTRACT.md`) — and needs nothing from Spine
 v2's storage work. The moment C0 requires a change to framework internals, the
 parallelism is broken and the change belongs on the public track first.
 
-> **This roadmap lives here, not in `ROADMAP.md`, for one deliberate reason:**
-> `ROADMAP.md` is concurrently being edited on the Production Spine v1 branch.
-> Folding the three tracks into it now would create a merge conflict in a file
-> another agent owns. Migration step 5 folds it in, once Spine v1 has landed.
+> **This roadmap lives here, not in `ROADMAP.md`.** The original reason was that
+> `ROADMAP.md` was being edited concurrently on the Production Spine v1 branch, so
+> folding the three tracks in would have conflicted with a file another agent
+> owned. **That reason expired when Spine v1 merged in PR #98**, and `ROADMAP.md`
+> is nobody's open branch now. What remains is the ordinary one: `ROADMAP.md` is a
+> `SPLIT_PUBLIC_PRIVATE` path whose commercial-sequencing half moves private, so
+> folding the tracks in *before* that split would write private sequencing into a
+> public file and then have to unpick it. Migration step 5 still folds it in,
+> after the split. This note names the constraint that expired rather than
+> quietly dropping it, so the next reader can tell a live reason from a spent one.
