@@ -94,6 +94,25 @@ domain can align to it or be backfilled into it. This explicit assessment closes
 the Compatibility Backfill Rule for the transport without inventing six empty
 runtime integrations.
 
+### Repository Truth Contract assessment (ADR-039)
+
+`scripts/repo-truth.js` and `docs/repository-truth.json` are a horizontal
+**repository evidence discipline**, not a CRM runtime capability. Its status is
+`not_applicable` for all six columns and for every domain outside the table: it
+imports no domain package at runtime, opens no application or database, exposes
+no domain mutation, and adds nothing a domain could align to or be backfilled
+into. It reads the checked-in source of the framework, a frozen benchmark
+receipt and the measured claims ledger, and it never leaves this repository — a
+generated project has no claims ledger, no JTBD matrix and no status file.
+
+One fact *is* nearly domain-shaped and is deliberately not a row:
+`domain.<name>.package_native` is generated for all nine checked-in packages
+from a named **reference composition**. That is a fact *about* the packages, read
+from `resolvePackageComposition`, not a capability any package implements —
+adding or removing a package moves the fact with no edit to the package. This
+explicit assessment closes the Compatibility Backfill Rule for the contract
+without inventing six empty runtime integrations.
+
 | Horizontal capability | Pipeline | Lead Intelligence | Commercial Ops | Signature & Order | Contract Activation | Delivery |
 |---|---|---|---|---|---|---|
 | **Domain package seam** (ADR-018) — `definePackage`, declared resources, one static import | `not_applicable` ¹ | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |

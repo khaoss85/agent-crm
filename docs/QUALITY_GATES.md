@@ -117,3 +117,53 @@ rules:
   — needs a source of truth this repository does not have offline. It stays the
   integrator's job under §1.11, and `docs/PROJECT_STATUS.md` → "Future
   automation" records the tool that would close it.
+
+### 6.1 The Repository Truth Contract — `npm run repo:truth` (ADR-039)
+
+The two gates above compare **documents to documents**. That is exactly how the
+failure this section was extended for got through: after Production Spine v1
+changed the runtime, the status file, the JTBD matrix, the claims ledger and the
+scenario limitation metadata stayed mutually consistent **and stale together**,
+and every gate was green. One instance published a limitation code for a gap that
+ADR-038 Amendment 2 had already closed by binding, and a person found it, not a
+gate.
+
+<!-- truth: retired-code TENANT_ISOLATION_NOT_ENFORCED — named once as the code that survived its own fix. History, not an assertion about this repository. -->
+
+So a third gate compares **documents to the code**:
+
+```console
+npm run repo:truth              # regenerate docs/repository-truth.json
+npm run repo:truth -- --check   # fail when the repository and the facts disagree
+```
+
+| Checked | How | Fails with |
+|---|---|---|
+| the generated fact document is current | the committed `docs/repository-truth.json` must equal a fresh generation from its authorities | `TRUTH_DOCUMENT_STALE` |
+| a current document cites a real fact | `<!-- truth: <factId>=<value> -->` in Markdown, a `facts` array of the same text in JSON | `TRUTH_FACT_UNKNOWN` |
+| a cited value is the one the code produces | a reversed polarity is a value that differs, so it is the same failure | `TRUTH_FACT_VALUE_STALE` |
+| every machine code in a bound document still exists | the vocabulary is harvested from `packages/`, `scripts/`, `apps/`, `examples/` and `benchmarks/`, minus `RETIRED_CODES` | `TRUTH_CODE_UNKNOWN` |
+| the measured commit is an ancestor of `HEAD` | `git merge-base --is-ancestor`; object existence is not provenance (ADR-027) | `TRUTH_MEASUREMENT_NOT_ANCESTOR` |
+| an authority that cannot be read stops the run | no fact is defaulted, and two authorities that disagree publish neither answer | `TRUTH_AUTHORITY_UNAVAILABLE`, `TRUTH_AUTHORITIES_CONTRADICT` |
+
+**In a feature PR.** Run `npm run repo:truth -- --check` when the PR changes a
+product boundary, a rail, a package's contract, the spine, or any sentence in a
+bound document that states what the framework does or does not do. If a fact
+moved, run `npm run repo:truth` and commit the regenerated document in the same
+PR — a regenerated fact and a stale sentence citing it fail together, which is
+the point.
+
+The boundaries, which are as much of the gate as the rules:
+
+- **It is not in `npm run verify` or `npm run gtm:check` in v1.** Its measurement
+  checks need full git history; the `public-claims` job has `fetch-depth: 0` and
+  the `verify` job deliberately does not. The history-free half is covered by
+  `verify` through `tests/repository-truth-contract.test.js`, which asserts the
+  refusal rather than skipping when history is absent.
+- **It is not an Accordo rail and not a product command.** Nothing is added to
+  the surface budget, no Skill names it, and it never leaves this repository.
+- **It reads no prose and writes none.** A fact id constrains what a bound
+  sentence may assert; it does not produce the sentence, and a sentence carrying
+  no citation is not checked at all.
+- **No JTBD row is a fact.** §3 is a person reading merged tests, and it stays
+  one.
