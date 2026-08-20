@@ -30,6 +30,20 @@ export const ORGANIZATION_IS_NOT_A_COMPANY =
   + 'A Company is a customer recorded inside your data. They are never the same thing.';
 
 /**
+ * Shown whenever the runtime reports that the declared tenant strategy is not
+ * enforced for the CRM data plane.
+ *
+ * The operator reading this screen is the person who would otherwise learn it
+ * by attacking the product, so it renders as an error beside the declaration
+ * rather than as a footnote below it.
+ */
+export const TENANT_ISOLATION_WARNING =
+  'DECLARED, NOT ENFORCED — this build does not isolate CRM data by Organization. Every Organization '
+  + 'in this application shares one database, so a member of one Organization can read and write '
+  + 'another\'s CRM records and audit rows. Memberships themselves ARE scoped correctly. Do not put '
+  + 'two real tenants in one application.';
+
+/**
  * @param {{doc: any, mount: any, client: any}} deps
  */
 export function createSpineView({ doc, mount, client }) {
@@ -128,7 +142,17 @@ export function createSpineView({ doc, mount, client }) {
     const permissionList = el('p', 'spine-permissions', permissions.join(', ') || 'none');
     permissionList.setAttribute('data-permission-count', String(permissions.length));
     orgBox.appendChild(permissionList);
-    orgBox.appendChild(fact('Tenant strategy', context.tenantStrategy));
+    orgBox.appendChild(fact('Tenant strategy (declared)', context.tenantStrategyDeclared));
+
+    // The declared strategy is not the delivered one. Rendered as an error next
+    // to the declaration, so the two facts cannot be read apart.
+    const isolation = context.tenantIsolation ?? null;
+    if (isolation && isolation.crmDataPlaneEnforced !== true) {
+      const gap = el('p', 'error spine-tenant-isolation-gap', TENANT_ISOLATION_WARNING);
+      gap.setAttribute('data-crm-data-plane-enforced', 'false');
+      gap.setAttribute('data-control-plane-scoped', String(isolation.controlPlaneScoped === true));
+      orgBox.appendChild(gap);
+    }
     panel.appendChild(orgBox);
 
     // ── roles, so a person can see what a role means before granting it ──

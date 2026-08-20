@@ -37,6 +37,44 @@ import {
 export const SPINE_CONTRACT = 1;
 
 /**
+ * **The tenant-isolation gap, published rather than implied.**
+ *
+ * A review measured what this milestone actually delivers, and it is less than
+ * the schema was claiming. `createTenantStorage` exists, validates a tenant id
+ * as a path fragment and resolves one database file per tenant — and **nothing
+ * calls it.** `tenantStrategy` is checked for presence at startup and then
+ * never used, so every organization composed into one application shares one
+ * database, and the authorizer answers "may this subject do this?" without ever
+ * asking "does this row belong to this subject's tenant?".
+ *
+ * The reproduction, against a production-mode application with a verifier
+ * configured and two bootstrapped organizations:
+ *
+ * - `alice`, owner of A, creates a company. `mallory`, owner of B, requests
+ *   `GET /api/companies` and receives **200 with A's record in it**.
+ * - `mallory` writes, and the row appears in A's own list.
+ * - `mallory` requests `GET /api/audit` and receives rows authored by `alice`.
+ * - The **control plane holds**: `mallory` pointed at A's organization is
+ *   refused `403 MEMBERSHIP_MISSING`, so memberships are correctly scoped.
+ *
+ * Publishing `database-per-tenant` as this application's tenancy while that is
+ * true would be the exact failure this repository exists to avoid: a limitation
+ * that a reader has to discover by attacking the product. So the strategy is
+ * published as **declared**, the enforcement is published as **false**, and
+ * closing the gap is a tenancy-model decision left to a human — see the PR and
+ * `ROADMAP.md`. `tests/spine-tenancy-truth.test.js` holds the published claim
+ * and the measured behaviour together, in both directions.
+ */
+export const TENANT_ISOLATION_NOT_ENFORCED =
+  'TENANT_ISOLATION_NOT_ENFORCED — the declared tenant strategy is NOT enforced for the CRM data '
+  + 'plane in this milestone. The tenant-storage boundary is defined and exercised by its own tests '
+  + 'but is not wired into the application, so every organization composed into one application '
+  + 'shares one database and cross-tenant CRM reads and writes, including reads of audit evidence, '
+  + 'are currently possible. The control plane — organizations and memberships — IS correctly '
+  + 'scoped: an identity holding no membership in an organization is refused. Do not read the '
+  + 'declared strategy as a delivered isolation guarantee.';
+
+/**
  * Which permission an action requires when it does not declare one.
  *
  * Every record action mutates a record, so `records.write` is the honest floor:
@@ -223,9 +261,34 @@ export function createSpine({ database, audit, now, config = {} }) {
         mode: mode.mode,
         allowsAssertedActors: mode.allowsAssertedActors,
         warning: mode.warning,
-        tenantStrategy: config.tenantStrategy
+        // The strategy an operator DECLARED, named as declared. The old key was
+        // `tenantStrategy`, which read as a delivered property of the running
+        // application; it was renamed rather than kept-and-qualified, because a
+        // consumer reading one key must not be able to reach the wrong answer.
+        tenantStrategyDeclared: config.tenantStrategy
           ? /** @type {any} */ (config.tenantStrategy).strategy ?? 'configured'
           : null,
+        /**
+         * What is actually enforced, separated from what was declared.
+         *
+         * `crmDataPlaneEnforced` is a literal `false` on purpose: no code path
+         * in this milestone opens a per-tenant database or scopes a CRM read by
+         * organization, so there is no runtime condition that could make it
+         * true. A sniff of the configured object would be worse than useless —
+         * checking a strategy for presence and then not using it is precisely
+         * the defect being published here.
+         */
+        tenantIsolation: {
+          declaredStrategy: config.tenantStrategy
+            ? /** @type {any} */ (config.tenantStrategy).strategy ?? 'configured'
+            : null,
+          controlPlaneScoped: true,
+          crmDataPlaneEnforced: false,
+          storageBoundaryWired: false,
+          crossTenantCrmReadPossible: true,
+          crossTenantCrmWritePossible: true,
+          crossTenantAuditReadPossible: true,
+        },
         permissions: [...PERMISSIONS],
         roles: Object.fromEntries(Object.entries(ROLE_BUNDLES).map(([role, keys]) => [role, [...keys]])),
         defaultActionPermission: DEFAULT_ACTION_PERMISSION,
@@ -234,7 +297,9 @@ export function createSpine({ database, audit, now, config = {} }) {
           'An Accordo Organization is a tenant of this software. A CRM Company is a customer '
           + 'recorded inside one tenant\'s data. They are never the same thing and never render as '
           + 'one another.',
-        limitations: [...TENANT_LIMITATIONS],
+        // The unenforced-isolation gap leads, because it is the one a reader
+        // most needs before they trust anything else in this block.
+        limitations: [TENANT_ISOLATION_NOT_ENFORCED, ...TENANT_LIMITATIONS],
         notModeled: [
           'PostgreSQL or shared-database row-level tenancy (Spine v2)',
           'durable jobs, outbox or scheduler (Spine v3)',

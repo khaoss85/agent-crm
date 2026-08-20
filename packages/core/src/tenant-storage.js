@@ -16,9 +16,21 @@ import { AppError, ValidationError } from './errors.js';
  * correctness path. A half-migrated version of that is strictly worse than
  * none, because it *looks* isolated.
  *
- * So v1 takes isolation the storage engine already gives for free: **one
- * database file per tenant**. Two tenants cannot cross-read because they are
- * not in the same database — not because a `WHERE` clause was remembered.
+ * So v1 *declares* isolation the storage engine already gives for free: **one
+ * database file per tenant**. Two tenants would not cross-read because they
+ * would not be in the same database — not because a `WHERE` clause was
+ * remembered.
+ *
+ * **What v1 shipped, stated plainly.** This boundary is defined and covered by
+ * its own tests, and **it is not wired into the application.** A review
+ * measured the consequence: two organizations composed into one application
+ * share one database, and the owner of one reads and writes the other's CRM
+ * records and audit rows. The application therefore publishes
+ * `TENANT_ISOLATION_NOT_ENFORCED` beside the declared strategy, and nothing
+ * here — this comment included — may be read as a delivered isolation
+ * guarantee. Which way that gap closes (bind one application to one tenant, or
+ * row-level scoping as a Spine v2 slice) is a tenancy-model decision for a
+ * human, and this module deliberately does not pre-empt it.
  *
  * **This is explicitly NOT shared-database multi-tenancy and must never be
  * described as such.** Row-level tenancy in PostgreSQL is Spine v2.
@@ -55,9 +67,10 @@ const TENANT_ID_RE = /^[a-z][a-z0-9-]{0,62}$/;
 
 /** What this strategy does and does not promise, published verbatim. */
 export const TENANT_LIMITATIONS = Object.freeze([
-  'NOT_SHARED_DATABASE_TENANCY — isolation comes from separate database files, not from a row-level '
-  + 'organization column. Row-level tenancy in PostgreSQL is a later slice, and this milestone does '
-  + 'not claim it.',
+  'NOT_SHARED_DATABASE_TENANCY — this strategy would take isolation from separate database files, '
+  + 'not from a row-level organization column. Row-level tenancy in PostgreSQL is a later slice, and '
+  + 'this milestone does not claim it. See TENANT_ISOLATION_NOT_ENFORCED: the strategy is declared '
+  + 'and not yet enforced for the CRM data plane.',
   'NO_CROSS_TENANT_QUERY — tenants are separate databases, so there is no cross-tenant report, '
   + 'aggregate or join, and none is provided.',
   'TENANT_COUNT_IS_BOUNDED_BY_FILE_HANDLES — this model does not scale to very large tenant counts; '

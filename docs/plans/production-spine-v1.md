@@ -131,6 +131,31 @@ is provable rather than asserted.
 **This is explicitly NOT shared-database multi-tenancy, and the PR must not
 claim it is.** Row-level tenancy lands in **Spine v2** with PostgreSQL.
 
+### What actually shipped: declared, not enforced (review finding F-2)
+
+The plan above was **not delivered**, and the delivered thing is smaller than
+the plan reads. `createTenantStorage` was written, unit-tested and never called;
+`tenantStrategy` is checked for presence at startup and then unused. So the
+proof obligation named above — *two tenants cannot cross-read or cross-write* —
+was met only by a journey that composes two applications with two database files
+**by hand**. In one application holding two organizations it is not met at all,
+and the review measured that: the owner of B lists A's companies (200, A's
+record in the body), writes a row that appears in A's own list, and reads audit
+rows authored by A's owner. The control plane holds — B's owner pointed at A is
+`403 MEMBERSHIP_MISSING`.
+
+The correction here is to the **record, not the model**: the schema publishes
+`tenantStrategyDeclared` plus a `tenantIsolation` block reporting
+`crmDataPlaneEnforced: false`, `TENANT_ISOLATION_NOT_ENFORCED` leads the
+published limitations, and `tests/spine-tenancy-truth.test.js` binds the claim
+to the measurement in both directions so it cannot silently flip back — or
+silently stay false once somebody fixes it.
+
+**Which way it closes is not decided in this PR.** Bind one application to one
+tenant, so "two organizations in one database" becomes a refused configuration;
+or scope reads by organization as part of Spine v2. `ROADMAP.md` carries it as
+an open decision with an owner field.
+
 **No ambient tenant fallback.** There is no "current tenant" global, no default
 organization and no inference. Every request, action and operation receives
 authoritative tenant context or is refused.
@@ -180,6 +205,14 @@ For database-per-tenant, prove by attacking:
 
 Attack surfaces: generated modules, core modules, package records, application
 operations, generic CRUD.
+
+**Result: this list was proven for two applications and fails for one.** Every
+item above holds when each tenant is its own application with its own database —
+which is the arrangement the journey builds — and the first four fail inside a
+single application holding two organizations, because nothing scopes a read by
+organization. The last item does hold everywhere: there is no organization
+header, the tenant comes from the verified identity, and a client-supplied one
+buys nothing. See the C6 amendment; the gap is published rather than closed.
 
 ## C10 — Admin
 

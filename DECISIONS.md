@@ -2987,15 +2987,49 @@ manifests plus 10 core), a backfill of every shipped database, every unique
 constraint reworked and every correctness path rescoped. A half-migrated version
 of that is worse than none, because it *looks* isolated.
 
-v1 takes a **versioned TenantStorage boundary: one database per tenant.** Two
-tenants cannot cross-read because they are not in the same database, not because
-a `WHERE` clause was remembered. A tenant id is untrusted input on a filesystem
-path, so traversal, absolute paths, NUL, uppercase and over-length are refused
-and the resolved path is proven to be inside the root anyway.
+v1 *declares* a **versioned TenantStorage boundary: one database per tenant.**
+Two tenants would not cross-read because they would not be in the same database,
+not because a `WHERE` clause was remembered. A tenant id is untrusted input on a
+filesystem path, so traversal, absolute paths, NUL, uppercase and over-length are
+refused and the resolved path is proven to be inside the root anyway.
 
 **This is explicitly not shared-database multi-tenancy, and nothing in this
 repository may describe it as such.** Row-level tenancy in PostgreSQL is Spine
 v2.
+
+#### Amendment — the boundary is declared and NOT enforced (review finding F-2)
+
+The paragraph above describes a boundary that shipped **unwired**.
+`createTenantStorage` is defined, validates a tenant id and resolves one file per
+tenant; nothing calls it. `tenantStrategy` is checked for presence at startup and
+then never used. The authorizer answers *"may this subject do this?"* and never
+*"does this row belong to this subject's tenant?"*, so a single application
+holding two organizations holds both in one database.
+
+Measured, against a production-mode application with a verifier configured and
+two bootstrapped organizations: the owner of A creates a company; the owner of B
+requests `GET /api/companies` and receives **200 with A's record in it**; B's
+write appears in A's list; and B reads `GET /api/audit` and receives rows
+authored by A's owner. The **control plane holds** — B's owner pointed at A's
+organization is refused `403 MEMBERSHIP_MISSING` — so memberships are correctly
+scoped and the gap is confined to the CRM data plane.
+
+**What this amendment changes is the record, not the code.** The published
+schema now carries `tenantStrategyDeclared` and a `tenantIsolation` block whose
+`crmDataPlaneEnforced` is `false`, and `TENANT_ISOLATION_NOT_ENFORCED` leads the
+published limitations. `tests/spine-tenancy-truth.test.js` holds the published
+claim against the measured behaviour **in both directions**, so the schema can
+neither keep saying "not enforced" after somebody enforces it nor start saying
+"enforced" without the behaviour changing — the shape a limitation needs if it
+is not to rot into a lie when the product improves.
+
+**How the gap closes is deliberately not decided here.** Two candidates, both
+real: bind one application instance to one tenant, so that "two organizations in
+one database" becomes a refused configuration — small, and it forecloses
+cross-tenant reporting; or scope every read by organization as part of Spine v2 —
+larger, and where the product ends up anyway. Choosing between them is a
+tenancy-model decision for a human, and `ROADMAP.md` carries it as an open
+decision with an owner field rather than as an implementation detail.
 
 ### The spine is opt-in, and its absence is loud
 
