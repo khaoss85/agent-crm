@@ -67,20 +67,9 @@ function refuses(attempt, expected) {
   try {
     const value = attempt();
     if (value && typeof value.then === 'function') {
-      throw new Error('use refusesAsync for a promise');
+      // A promise here would be reported as 'not refused' before it settled.
+      throw new Error('refuses() is for synchronous attempts; await the call first');
     }
-  } catch (error) {
-    assert.equal(expected(error), true, `refused, but not in the expected way: ${String(error?.code ?? error)}`);
-    return true;
-  }
-  assert.fail('the operation was expected to be refused and was not');
-  return false;
-}
-
-/** @param {() => Promise<any>} attempt @param {(error: any) => boolean} expected */
-async function refusesAsync(attempt, expected) {
-  try {
-    await attempt();
   } catch (error) {
     assert.equal(expected(error), true, `refused, but not in the expected way: ${String(error?.code ?? error)}`);
     return true;
