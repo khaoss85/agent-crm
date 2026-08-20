@@ -10,14 +10,14 @@
       "plainName": "Building a CRM yourself",
       "intent": "build a custom crm from scratch vs using a crm framework",
       "verifiedOn": "2026-08-04",
-      "summary": "The comparison with no competitor in it: your own empty repository against this framework. What you get is CRM machinery — module manifests that generate their own migrations, deterministic workflows, a human-approval boundary, audit and trace. What you still write is most of what a business calls a CRM: authentication, tenancy, import, export, search, email, and the database it should have been on. This is a framework, not an application, so the honest form of this page is a subtraction rather than a pitch.",
-      "metaDescription": "Your own empty repository against this framework: what the machinery gives you, and the authentication, tenancy, import, export and search you still write.",
+      "summary": "The comparison with no competitor in it: your own empty repository against this framework. What you get is CRM machinery — module manifests that generate their own migrations, deterministic workflows, a human-approval boundary, audit and trace. What you still write is most of what a business calls a CRM: authentication, import, export, search, email, and the database it should have been on. This is a framework, not an application, so the honest form of this page is a subtraction rather than a pitch.",
+      "metaDescription": "Your own empty repository against this framework: what the machinery gives you, and the authentication, import, export and search you still write.",
       "sections": [
         {
           "heading": "Where building from scratch wins",
           "body": [
             "Total control is the real advantage, not a slogan: nothing in your schema is shaped by someone else's idea of what a Company is, and no upgrade ever asks you to reconcile your domain with a framework's opinion of it. That advantage is larger here than usual, because ownership in this project means vendored source rather than a dependency — `npm create accordo`, the published `create-accordo@0.1.0`, scaffolds a project that boots, inspects and passes the project doctor by copying the framework source into it, so upgrading means merging, not bumping (L-08). If the end state was going to be a fork you maintain, starting from your own repository means every convention in it is one you chose.",
-            "The second win is everything this framework does not have. There is no authentication, tenancy or RBAC, and an actor header is an assertion rather than an identity (L-01). Persistence is Node's built-in SQLite; PostgreSQL is not implemented (L-02). Import, export, dedupe, merge, bulk edit, saved views and global search do not exist, and none of them has a milestone (L-06). No email, calendar or marketing adapter sends anything to anyone (L-05). Nothing is scheduled, delayed or recurring, because there is no scheduler and no queue (L-04). If those are the hard parts of what you are building — and for plenty of CRMs they are the entire thing — starting here has not reduced your work; you write them once on either path.",
+            "The second win is everything this framework does not have. No authentication ships — the framework authenticates nobody, and a deployment must supply the verifier — so in local-development mode an actor header is an assertion rather than an identity (L-01). Persistence is Node's built-in SQLite; PostgreSQL is not implemented (L-02). Import, export, dedupe, merge, bulk edit, saved views and global search do not exist, and none of them has a milestone (L-06). No email, calendar or marketing adapter sends anything to anyone (L-05). Nothing is scheduled, delayed or recurring, because there is no scheduler and no queue (L-04). If those are the hard parts of what you are building — and for plenty of CRMs they are the entire thing — starting here has not reduced your work; you write them once on either path.",
             "The third win is the first week. A form, a table and a list against a database you already run is a day of work, with no manifest, no policy version and no migration convention standing between you and a working screen. This framework starts paying on the second commercial rule, not on the first screen, and if there is never a second commercial rule it does not start paying at all."
           ]
         },
@@ -32,7 +32,7 @@
         {
           "heading": "How to choose",
           "body": [
-            "Build it yourself if the CRM is a form, a list and a few statuses; if the hard part is authentication, tenancy or billing; if you need PostgreSQL on day one; if import, export and search are the feature list rather than an afterthought; or if real customer data goes in immediately, because it cannot go in here yet (L-09).",
+            "Build it yourself if the CRM is a form, a list and a few statuses; if the hard part is authentication or billing; if you need PostgreSQL on day one; if import, export and search are the feature list rather than an afterthought; or if real customer data goes in immediately, because it cannot go in here yet (L-09).",
             "Start from this framework if the process is the product — stages, approvals, discount policy, obligations, handovers — and someone will ask in six months why a number was what it was. It fits when a coding agent is doing most of the typing and you want the output as reviewable source with conventions the agent can read back, and when you would otherwise be deriving approvals, audit and trace by hand for the third time. You keep the repository either way; the question is only whether the first thousand lines in it are yours or the framework's."
           ]
         },
@@ -48,7 +48,7 @@
       "boundaries": [
         "This is a framework, not an application you sign up for. There is no hosted CRM, no free tier and no account (L-07).",
         "Ownership means vendored source, not a dependency: `npm create accordo` scaffolds a project with the framework source copied in, and upgrading means merging rather than bumping (L-08).",
-        "No authentication, tenancy or RBAC. An actor header is an assertion, not an identity, and this must not be exposed to a network (L-01).",
+        "The framework authenticates nobody, and ships no verifier. In local-development mode an actor header is an assertion, not an identity, and that server must not be exposed to a network (L-01).",
         "SQLite only. PostgreSQL is on a track, not in the code (L-02).",
         "No import, export, dedupe, merge, bulk edit, saved views or global search — table stakes in every commercial CRM, recorded here rather than left for you to discover (L-06).",
         "No scheduler, queue or reminders: follow-up Tasks are a shared model a person moves by hand, a due date changes no state, and nothing recurring or delayed fires anywhere (L-04).",
@@ -110,7 +110,7 @@
         },
         {
           "q": "What do I still have to build myself?",
-          "a": "Everything the ledger lists as absent: authentication, tenancy, RBAC, hosting, billing, schedulers, real provider adapters. The framework generates a local, SQLite-backed application — production hardening is explicitly not included."
+          "a": "Everything the ledger lists as absent: authentication, hosting, billing, schedulers, real provider adapters. The framework generates a local, SQLite-backed application — production hardening is explicitly not included."
         }
       ]
     },
@@ -121,7 +121,7 @@
       "plainName": "Twenty, the open-source CRM platform",
       "intent": "twenty crm alternative for building a custom crm with a coding agent",
       "verifiedOn": "2026-08-04",
-      "summary": "Twenty is an open-source CRM platform with an apps SDK; this is a framework that generates a CRM into your repository. The comparison is about where the extension code lives and what runtime it runs inside — not about which has more features, because Twenty is a working product with a hosted option and this has no authentication, no tenancy and no PostgreSQL. Every fact here about Twenty traces to one dated internal research file, nothing was installed or run, and anything that file does not carry is absent from this page rather than inferred.",
+      "summary": "Twenty is an open-source CRM platform with an apps SDK; this is a framework that generates a CRM into your repository. The comparison is about where the extension code lives and what runtime it runs inside — not about which has more features, because Twenty is a working product with a hosted option and this has no authentication and no PostgreSQL. Every fact here about Twenty traces to one dated internal research file, nothing was installed or run, and anything that file does not carry is absent from this page rather than inferred.",
       "metaDescription": "Twenty is a working CRM platform with an apps SDK; this generates a CRM into your repository. One dated research file, and nothing was installed or run.",
       "sections": [
         {
@@ -129,7 +129,7 @@
           "body": [
             "As of the research date this page carries, August 4, 2026, Twenty is the largest project in the researched set by GitHub stars — 54.3k — with YC S23 backing, roughly $5.5M raised, and weekly releases. It runs as a NestJS/React/PostgreSQL platform you can self-host with Docker, or as a cloud product; the per-seat cloud pricing in the research file came from third-party teardowns rather than a primary page, so treat the figures there as indicative and do not budget from this page. The headline fact is simpler than any of that: it is a CRM a technical team can run and use, and this framework is not.",
             "Its coding-agent story is real rather than a slide. The research file records an MIT-licensed SDK, a create-twenty-app command, a CLAUDE.md checked into the repository, AI agents inside the product, and native MCP confirmed for cloud workspaces — with self-host parity explicitly unverified. Measured on getting an agent productive against a running CRM this afternoon, that is ahead of where this project stands: `npm create accordo` scaffolds a local development project with the framework vendored in — ownership means keeping that copied source, and upgrading means merging (L-08) — and the MCP server here is stdio and local only, with no hosted or authenticated endpoint (C-18).",
-            "And the plain asymmetry. Twenty 2.0 added an apps platform, in-product AI agents and git-backed workspace config, and its customization surface spans a settings UI, APIs and an Apps SDK covering entities, serverless logic functions and UI widgets. This framework has no authentication, tenancy or RBAC at all (L-01), stores everything in SQLite (L-02), and is not a product you sign up for (L-07). If what you want is a CRM, that comparison is not close, and pretending otherwise here would forfeit your trust in everything else on this site."
+            "And the plain asymmetry. Twenty 2.0 added an apps platform, in-product AI agents and git-backed workspace config, and its customization surface spans a settings UI, APIs and an Apps SDK covering entities, serverless logic functions and UI widgets. This framework ships no authentication at all (L-01), stores everything in SQLite (L-02), and is not a product you sign up for (L-07). If what you want is a CRM, that comparison is not close, and pretending otherwise here would forfeit your trust in everything else on this site."
           ]
         },
         {
@@ -165,7 +165,7 @@
         "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04; the hedges that file carries (secondary-sourced pricing, unverified self-host MCP parity) are carried here too.",
         "No feature-by-feature comparison exists here, and none should be inferred from what this page omits.",
         "Licence descriptions are factual summaries of published texts, not legal advice.",
-        "This framework has no authentication, tenancy or RBAC in any edition — there is nothing gated because there is nothing to gate (L-01).",
+        "This framework ships no authentication in any edition — there is nothing gated because there is nothing to gate (L-01).",
         "A project bootstrap that runs from a checkout, and no published package: ownership is copying source, and upgrading is merging (L-08).",
         "The MCP server is stdio and local only, with no hosted or authenticated endpoint, and it inherits the local process's authority.",
         "No claim that a coding agent builds faster or more reliably here than anywhere else — the benchmark has not been run (L-03)."
@@ -236,7 +236,7 @@
           "heading": "Where Odoo wins",
           "body": [
             "It is a suite, and CRM is one app inside it: the CRM arrives attached to the rest of the business system rather than as something you integrate later. The research file records a community edition under LGPL, deployment on Odoo.sh or self-hosted, a monorepo at roughly 53.5k GitHub stars as of August 4, 2026, and a target buyer running from SMB to mid-market — a buyer with a purchase order, not a repository. Its summary of the position is blunt and worth repeating rather than softening: Odoo owns the self-host SMB buyer, not the developer builder, and this project does not compete for that buyer directly.",
-            "Against this framework's own ledger the asymmetry is not subtle. No authentication, tenancy or RBAC (L-01). No email, calendar or marketing integration — a notification provider contract exists and no adapter sends anything to anyone (L-05). No import, export, dedupe, merge, bulk edit, saved views or global search (L-06). No hosted product to sign up for; the output is an application in your repository (L-07). And you cannot put real customer data in this yet: with no export and no erasure path, a data-subject access or deletion request cannot be serviced at all (L-09). If a sales team is meant to log in on Monday, that list is the whole answer.",
+            "Against this framework's own ledger the asymmetry is not subtle. No authentication ships, and a deployment must supply the verifier (L-01). No email, calendar or marketing integration — a notification provider contract exists and no adapter sends anything to anyone (L-05). No import, export, dedupe, merge, bulk edit, saved views or global search (L-06). No hosted product to sign up for; the output is an application in your repository (L-07). And you cannot put real customer data in this yet: with no export and no erasure path, a data-subject access or deletion request cannot be serviced at all (L-09). If a sales team is meant to log in on Monday, that list is the whole answer.",
             "Pipeline reporting is the same story in miniature. Reporting pipeline is recorded here as partially supported, not as a feature: there are no saved views, no dashboards and no report builder to hand to a sales manager."
           ]
         },
@@ -273,7 +273,7 @@
         "No feature comparison, no pricing comparison and no migration path — the source carries none of the three.",
         "Licence descriptions are factual summaries, not legal advice.",
         "This framework is not a product a business buys: no hosted CRM, no free tier, no account (L-07).",
-        "No authentication, tenancy or RBAC, so nothing here is ready for a sales team to log into (L-01).",
+        "No authentication ships, so nothing here is ready for a sales team to log into (L-01).",
         "No email, calendar or marketing integration, and no import or export, so this does not connect to a suite you already run (L-05, L-06).",
         "Real customer data cannot go in yet: no export and no erasure path means a subject request cannot be serviced (L-09)."
       ],
@@ -363,7 +363,7 @@
           "heading": "How to choose",
           "body": [
             "If the sentence you would write is unify our customer data across systems, stop here. Nothing in this framework does that, and building it on top would not be an extension but a different product: there is no ingestion path and no scheduler to run one (L-04, L-05).",
-            "If the sentence is our commercial process needs stages, quotes, approvals and an audit trail, and one record's outcome has to be explainable afterwards, that is the narrow case this exists for — with the standing caveats that there is no authentication, no tenancy and no place for real customer data yet (L-01, L-09).",
+            "If the sentence is our commercial process needs stages, quotes, approvals and an audit trail, and one record's outcome has to be explainable afterwards, that is the narrow case this exists for — with the standing caveats that there is no authentication and no place for real customer data yet (L-01, L-09).",
             "If both sentences are true, they are different layers rather than competing options: the CDP owns the profile and this owns a process. They do not connect today, because there is no integration runtime and no import (L-05, L-06), so any bridge between them is engineering work you would own outright.",
             "If what you actually need is marketing execution — audiences, campaigns, journeys, attribution — the answer is the same and is recorded rather than implied: every one of those jobs is marked not supported in the job matrix, so you can confirm the refusal instead of taking it on trust."
           ]
@@ -459,7 +459,7 @@
         {
           "heading": "Where Frappe CRM wins",
           "body": [
-            "It is a CRM your team can use. The research file this page reads — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records Frappe CRM as an end-user CRM app on the Frappe low-code framework (Python, MariaDB, Vue) at 3.1k GitHub stars, deployable on Frappe Cloud, Docker or bench, with SMBs and the ERPNext ecosystem as its customer. This framework is none of that: there is no hosted product and no account (L-07), no authentication, tenancy or RBAC (L-01), persistence is local SQLite (L-02), and nothing installs from npm — the bootstrap runs from a checkout, so ownership means copying source and upgrading means merging (L-08). If what you need is a CRM in use this quarter, the comparison ends in Frappe's favour before it starts.",
+            "It is a CRM your team can use. The research file this page reads — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records Frappe CRM as an end-user CRM app on the Frappe low-code framework (Python, MariaDB, Vue) at 3.1k GitHub stars, deployable on Frappe Cloud, Docker or bench, with SMBs and the ERPNext ecosystem as its customer. This framework is none of that: there is no hosted product and no account (L-07), no authentication ships, and a deployment must supply the verifier (L-01), persistence is local SQLite (L-02), and nothing installs from npm — the bootstrap runs from a checkout, so ownership means copying source and upgrading means merging (L-08). If what you need is a CRM in use this quarter, the comparison ends in Frappe's favour before it starts.",
             "Its customization model is a strength on its own terms. The file calls the DocType metadata model the most mature metadata-driven customization model in open-source CRM: forms and APIs are auto-generated from metadata in a running system, so an administrator shapes the application without writing code. Where the person doing the customizing is an admin rather than a developer with a repository, that is the better fit — and the huge ERPNext adjacency the file records means a company already inside that ecosystem has every reason to stay in it."
           ]
         },
@@ -494,7 +494,7 @@
         "No hands-on evaluation: nothing from Frappe was installed, configured or run to produce this page.",
         "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04.",
         "Licence descriptions are factual summaries of published texts, not legal advice.",
-        "No authentication, tenancy or RBAC in this framework; an actor header is an assertion, not an identity (L-01).",
+        "This framework ships no authentication; in local-development mode an actor header is an assertion, not an identity (L-01).",
         "SQLite only. PostgreSQL is on a track, not in the code (L-02).",
         "This is a framework, not a product you sign up for: no hosted CRM, no free tier, no account (L-07).",
         "Nothing installs from npm: the bootstrap runs from a checkout, ownership is copying source, and upgrading is merging (L-08).",
@@ -555,7 +555,7 @@
           "heading": "Where Relaticle wins",
           "body": [
             "On the axis it chose, it is ahead of everything else in the researched set — including this project's own runtime story. The research file — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records a first-party MCP server with 30 tools, calls it the most agent-forward incumbent claim, and names Relaticle the first mover on agent-native CRM language. It is a working application on a modern PHP stack — Laravel, Filament, PHP 8.4, Postgres — that a developer-led team or an AI-forward SMB can self-host and point an agent at today. The MCP server here, by contrast, is stdio and local only, with no hosted or authenticated endpoint (C-18), and there is no product around it to operate: no hosted CRM, no free tier, no account (L-07).",
-            "Runtime flexibility without a deploy. The file records 22 custom field types and no-migration schema changes — a record can be reshaped inside the running app without touching a repository. And the baseline asymmetry holds here as everywhere on this site: Relaticle is a CRM you can use, while this framework has no authentication, tenancy or RBAC (L-01), stores everything in local SQLite (L-02), and arrives vendored — `npm create accordo` copies the framework source into the project, so ownership means keeping that copy and upgrading means merging (L-08)."
+            "Runtime flexibility without a deploy. The file records 22 custom field types and no-migration schema changes — a record can be reshaped inside the running app without touching a repository. And the baseline asymmetry holds here as everywhere on this site: Relaticle is a CRM you can use, while this framework has no authentication ships, and a deployment must supply the verifier (L-01), stores everything in local SQLite (L-02), and arrives vendored — `npm create accordo` copies the framework source into the project, so ownership means keeping that copy and upgrading means merging (L-08)."
           ]
         },
         {
@@ -590,7 +590,7 @@
         "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04.",
         "Licence descriptions are factual summaries of published texts, not legal advice.",
         "The MCP server here is stdio and local only, with no hosted or authenticated endpoint, and it inherits the local process's authority.",
-        "No authentication, tenancy or RBAC; an actor header is an assertion, not an identity (L-01).",
+        "No authentication ships; in local-development mode an actor header is an assertion, not an identity (L-01).",
         "SQLite only. PostgreSQL is on a track, not in the code (L-02).",
         "This is a framework, not a product you sign up for: no hosted CRM, no free tier, no account (L-07).",
         "Nothing installs from npm: ownership is copying source, and upgrading is merging (L-08).",
@@ -650,7 +650,7 @@
           "heading": "Where Comp AI's CRM wins",
           "body": [
             "It proved the demand is real, and has since proved more than that. The research file this page reads — docs/strategy/COMPETITOR_MAP.md — recorded 4.4k GitHub stars on August 4, 2026; a re-check dated August 20 records 8.7k stars, 1.0k forks and 211 commits, under an MIT licence, TypeScript end-to-end on Next.js, NestJS and Prisma. Its thesis is an autonomous background agent with a work queue, evidence-based facts and a sandboxed design the file calls genuinely novel. If what you want is a CRM in which the agent is a worker inside the product, that is its entire thesis — and nothing in this framework attempts it. There is no background agent here, no work queue, and no scheduler for either: nothing in this framework runs unattended at all (L-04).",
-            "It is also far simpler to stand up. The file records deployment as three Vercel deployments. This project is not a product at all — no hosted CRM, no free tier, no account (L-07) — with no authentication, tenancy or RBAC (L-01), persistence in local SQLite (L-02), and a bootstrap that runs from a checkout of the repository rather than from a registry, so ownership means copying source and upgrading means merging (L-08)."
+            "It is also far simpler to stand up. The file records deployment as three Vercel deployments. This project is not a product at all — no hosted CRM, no free tier, no account (L-07) — with no authentication ships, and a deployment must supply the verifier (L-01), persistence in local SQLite (L-02), and a bootstrap that runs from a checkout of the repository rather than from a registry, so ownership means copying source and upgrading means merging (L-08)."
           ]
         },
         {
@@ -685,7 +685,7 @@
         "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04; the star and commit figures are that date's snapshot.",
         "Licence descriptions are factual summaries of published texts, not legal advice.",
         "No background agent, no work queue and no scheduler exist in this framework — nothing here runs unattended (L-04).",
-        "No authentication, tenancy or RBAC; an actor header is an assertion, not an identity (L-01).",
+        "No authentication ships; in local-development mode an actor header is an assertion, not an identity (L-01).",
         "SQLite only. PostgreSQL is on a track, not in the code (L-02).",
         "This is a framework, not a product you sign up for: no hosted CRM, no free tier, no account (L-07).",
         "Nothing installs from npm: ownership is copying source, and upgrading is merging (L-08).",
@@ -741,7 +741,7 @@
         {
           "heading": "Where EspoCRM and SuiteCRM win",
           "body": [
-            "They are complete products you can install today. The research file this page reads — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records EspoCRM at 3.2k GitHub stars and SuiteCRM at 5.6k: legacy PHP open-source CRMs, self-hosted or in Docker, serving SMBs and legacy installs, both AGPL. EspoCRM's metadata and admin-panel customization is recorded as strong; SuiteCRM carries a PHP module framework the file describes as aging. Against this framework's own ledger, the asymmetry is total: no authentication, tenancy or RBAC (L-01), no email, calendar or marketing integration (L-05), no import, export, dedupe, merge, bulk edit, saved views or global search (L-06), no hosted product (L-07), and no place for real customer data yet — with no export and no erasure path, a data-subject access or deletion request cannot be serviced (L-09).",
+            "They are complete products you can install today. The research file this page reads — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records EspoCRM at 3.2k GitHub stars and SuiteCRM at 5.6k: legacy PHP open-source CRMs, self-hosted or in Docker, serving SMBs and legacy installs, both AGPL. EspoCRM's metadata and admin-panel customization is recorded as strong; SuiteCRM carries a PHP module framework the file describes as aging. Against this framework's own ledger, the asymmetry is total: no authentication ships, and a deployment must supply the verifier (L-01), no email, calendar or marketing integration (L-05), no import, export, dedupe, merge, bulk edit, saved views or global search (L-06), no hosted product (L-07), and no place for real customer data yet — with no export and no erasure path, a data-subject access or deletion request cannot be serviced (L-09).",
             "The file's own market summary is the honest headline: together with Odoo, the legacy CRMs own the self-host SMB buyer, not the developer builder, and this project does not compete for their buyer directly. If your company is choosing a CRM to run, this page has no third option to offer — pick between them on their merits, which this page does not evaluate."
           ]
         },
@@ -777,7 +777,7 @@
         "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04.",
         "Licence descriptions are factual summaries of published texts, not legal advice.",
         "This framework is not a product a business buys: no hosted CRM, no free tier, no account (L-07).",
-        "No authentication, tenancy or RBAC, so nothing here is ready for a sales team to log into (L-01).",
+        "No authentication ships, so nothing here is ready for a sales team to log into (L-01).",
         "No email, calendar or marketing integration, and no import or export, so this does not connect to or migrate from an existing CRM (L-05, L-06).",
         "Real customer data cannot go in yet: no export and no erasure path means a subject request cannot be serviced (L-09).",
         "Nothing installs from npm: ownership is copying source, and upgrading is merging (L-08).",
@@ -874,7 +874,7 @@
         "No hands-on evaluation: none of the templates was installed, configured or run to produce this page.",
         "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04.",
         "Licence descriptions are factual summaries of published texts, not legal advice.",
-        "No authentication, tenancy or RBAC in this framework; an actor header is an assertion, not an identity (L-01).",
+        "This framework ships no authentication; in local-development mode an actor header is an assertion, not an identity (L-01).",
         "SQLite only — the templates' recorded Supabase pairing is a stack this framework does not offer (L-02).",
         "No import, export, dedupe, merge, bulk edit, saved views or global search here (L-06).",
         "This is a framework, not a product you sign up for: no hosted CRM, no free tier, no account (L-07).",

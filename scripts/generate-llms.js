@@ -334,7 +334,7 @@ function statusSection() {
       ? `- **The public name is chosen** (brand status: {{brand.nameStatus}})${npmCaveat(brand.npm.status)}`
       : '- **The public name is undecided** (brand status: {{brand.nameStatus}}). "{{brand.name}}" is a placeholder. Do not treat it as a package name, a brand or a namespace.',
     npmPublicationLine(),
-    '- **There is no production spine**: no authentication, no tenancy, no RBAC. The HTTP server is local-development-only, and an actor header is an assertion rather than an identity.',
+    '- **The production spine is half-built**: Production Spine v1 added verified identity, organizations and memberships, server-authoritative authorization and one tenant per application instance — but the framework authenticates nobody and ships no verifier, so in local-development mode an actor header is an assertion rather than an identity.',
     '- **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any percentage attributed to this project is fabricated.',
     '- Measured at commit {{measured.sha}} on {{measured.date}}: **{{measured.tests}} tests passing, 0 failing.**',
   ].join('\n');
@@ -1007,7 +1007,7 @@ function guard(name, text) {
     { pattern: /\baccordo|pactio|vinculo|relato\b/i, why: 'a shortlisted name that has not been chosen' },
   ];
   const overclaims = [
-    { pattern: /\bproduction[-\s]ready\b/i, why: 'there is no authentication, tenancy or RBAC (L-01)' },
+    { pattern: /\bproduction[-\s]ready\b/i, why: 'there is no authentication ships, and a deployment must supply the verifier (L-01)' },
     { pattern: /\benterprise[-\s]grade\b/i, why: 'unfalsifiable' },
     { pattern: /\b(soc\s?2|iso\s?27001|hipaa|gdpr[-\s]compliant)\b/i, why: 'no compliance posture exists' },
     { pattern: /\bbank[-\s]grade\b/i, why: 'unfalsifiable' },

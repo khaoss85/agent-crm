@@ -108,7 +108,7 @@ Read this before positioning anything.
 | **Interactions / communications** (email, calendar, calls, conversations) | **planned** — absent |
 | **Package extension surface** (Admin/UI, HTTP routes) | **planned** — `ADMIN_EXTENSIONS_UNSUPPORTED`; no route contribution |
 | **Package distribution & lifecycle** (install, versions, trust) | **planned** — absent |
-| Production spine, Cloud | **planned** — no auth, tenancy, RBAC, PostgreSQL |
+| Production spine, Cloud | **v1 shipped** — identity, tenancy and authorization; no authentication, no PostgreSQL, no Cloud |
 
 ---
 

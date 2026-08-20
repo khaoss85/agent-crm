@@ -53,7 +53,7 @@
  *   run proves they are identical rather than arguing it.
  * - **Succeeding an agreement is not cancelling it.** There are no cancellation
  *   primitives, and this run creates none.
- * - There is no auth, tenancy or RBAC anywhere in this framework, so "a human
+ * - This framework ships no authentication, so "a human
  *   did it" means an actor object said so.
  *
  * Run it directly:

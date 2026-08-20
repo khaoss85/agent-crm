@@ -41,7 +41,7 @@ const LIMITATIONS = Object.freeze([
   ['PROVENANCE_NOT_CREATED', 'a local assembly has no provenance attestation. npm creates provenance only when the package is published from the configured trusted GitHub Actions workflow'],
   ['TRUSTED_PUBLISHER_NOT_INSPECTED', 'the npm trusted-publisher setting is external state. This command cannot prove the registry authorizes the workflow, which action it allows or whether 2FA is enabled'],
   ['SOURCE_IS_A_COPY', 'the package carries a copy of the framework source. Projects created from it own that source, and upgrades mean merging rather than changing a dependency version'],
-  ['GENERATED_PROJECT_IS_LOCAL_ONLY', 'the package creates local-development software: SQLite only, with no authentication, tenancy or RBAC'],
+  ['GENERATED_PROJECT_IS_LOCAL_ONLY', 'the package creates local-development software: SQLite only, and no authentication ships'],
 ]);
 
 /** @param {string} path */

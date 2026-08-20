@@ -61,10 +61,10 @@ before a commenter gets to say them.
 >
 > Before anyone has to find these out for themselves, the things that will annoy you:
 >
-> - **There is no authentication, no tenancy and no RBAC.** The server is local-development-only
+> - **No authentication ships.** A deployment must supply the verifier, and the server is local-development-only
 >   and an actor header is an assertion, not an identity. So the refusal above holds against an
 >   honest agent, not against anyone with network access. The framework reports this itself:
->   `crm app inspect --json` returns `productionPosture: "local development only…"`. [L-01]
+>   `crm app inspect --json` returns a `productionPosture` that opens "not a readiness claim: the framework authenticates nobody…". [L-01]
 > - **The deterministic policy is proven on one built-in object and one value threshold.** There
 >   is no general policy engine over arbitrary custom objects yet. If your reaction to the
 >   headline is "so it's a hardcoded if-statement with a test on it" — that is a fair reading of

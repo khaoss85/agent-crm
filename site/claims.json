@@ -3,12 +3,12 @@
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used. Contract 2 (ADR-027): measuredAgainst additionally requires testFiles and testsTree, and no claim, limitation or repoFact may type an exact test count — the one number lives in measuredAgainst and reaches a page as {{measured.tests}}.",
   "measuredAgainst": {
     "date": "2026-08-20",
-    "sha": "2d74503",
+    "sha": "e30216c",
     "command": "npm run verify",
-    "tests": 1400,
+    "tests": 1480,
     "failures": 0,
-    "testFiles": 124,
-    "testsTree": "d944b76bb2708ac008725becf0bed32ecff11cb5",
+    "testFiles": 131,
+    "testsTree": "8f11127f15982d8869d082dae9f432218e9a4cf9",
     "note": "Written by `node scripts/measure-suite.js --apply` from a real run on a clean tree. Never edit these numbers by hand: scripts/site-check.js verifies sha, testsTree and testFiles against the commit, so a record moved forward without a re-run fails the build."
   },
   "claims": [
@@ -89,7 +89,7 @@
         ],
         "testName": "approval workflow rejects an agent pretending to make the human decision"
       },
-      "limitation": "The actor is asserted, not authenticated: there is no auth, tenancy or RBAC, and an actor header is not identity. This holds a boundary against an honest agent, not against an attacker with network access.",
+      "limitation": "In local-development mode the actor is asserted, not authenticated: no authentication ships, so an actor header there is not an identity. This holds a boundary against an honest agent, not against an attacker with network access.",
       "surfaces": [
         "site",
         "readme",
@@ -489,16 +489,21 @@
   "limitations": [
     {
       "id": "L-01",
-      "headline": "No authentication, tenancy or RBAC.",
-      "text": "The server is local-development-only. An actor header is an assertion, not an identity. Do not expose it to a network.",
+      "headline": "No authentication ships: the framework authenticates nobody.",
+      "text": "Production Spine v1 (ADR-038) gives the framework verified identity, organizations and memberships, server-authoritative authorization and one tenant per application instance — so tenancy and authorization now exist and are enforced. What does not exist is authentication: no login, password, session or OIDC implementation ships, and a deployment must supply the adapter that verifies the request. Production mode refuses to start without one. In local-development mode an actor header is accepted as an assertion and is not an identity, which is the default developer posture. This is not shared-database multi-tenancy and it is not a readiness claim.",
       "evidence": {
         "jtbd": "JTBD-15",
         "docs": [
           "docs/PROJECT_STATUS.md",
-          "README.md"
+          "README.md",
+          "DECISIONS.md"
+        ],
+        "tests": [
+          "tests/production-spine.test.js",
+          "tests/actor-fails-closed.test.js"
         ],
         "repoFacts": [
-          "crm app inspect reports productionPosture: local development only"
+          "crm app inspect reports a productionPosture that refuses to be read as a readiness claim"
         ]
       },
       "surfaces": [
@@ -610,7 +615,7 @@
     {
       "id": "L-09",
       "headline": "You cannot put real customer data in this yet.",
-      "text": "A CRM is a personal-data system by definition, and this one has no authentication, no tenancy, no export and no erasure path — so there is no way to service a data-subject access or deletion request with it. Data governance is designed and unimplemented. The one thing that does hold today: lead scoring is deterministic, versioned and explainable, not a model's judgement about a person.",
+      "text": "A CRM is a personal-data system by definition, and this one ships no authentication and has no export and no erasure path — so there is no way to service a data-subject access or deletion request with it. Data governance is designed and unimplemented. The one thing that does hold today: lead scoring is deterministic, versioned and explainable, not a model's judgement about a person.",
       "evidence": {
         "jtbd": "JTBD-15",
         "tests": [

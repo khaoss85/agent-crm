@@ -798,7 +798,7 @@ what makes it a fact rather than a rendering detail.
 
 ### And the Production Spine's absence stays visible
 
-Nothing here changes it. There is no auth, tenancy or RBAC in this framework, so
+Nothing here changes it. This framework ships no authentication, so
 "a human decided" means an actor object said `type: "user"` — an audit boundary,
 not role enforcement. Nothing is scheduled, notified, exported or activated;
 nothing is deployed; and none of this is a GDPR, consent, retention or erasure

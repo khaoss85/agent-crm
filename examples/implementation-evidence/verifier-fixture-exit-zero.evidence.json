@@ -1,7 +1,7 @@
 {
   "implementationEvidenceContract": 1,
   "plan": "examples/solution-plans/verifier-fixture-exit-zero.plan.json",
-  "planFingerprint": "094940148ad4f266c95b33d7eed6ff955bb2f073a4a6b3b60752f1cc61008921",
+  "planFingerprint": "846ea420fb43f69a965cdd706174d7c68d4e26c009bc3275a7bcc7b36fe827f8",
   "applicationInspectionFingerprint": "fcb5c5bcbb52e4d640f9f1e0df95d81ec7f6147b4be2954baa2cbc7cad2e5798",
   "requirements": [
     {

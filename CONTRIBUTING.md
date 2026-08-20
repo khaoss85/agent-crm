@@ -76,7 +76,7 @@ it is why the claims on the front page can be as specific as they are.
 ## Security
 
 Do not open a public issue for a vulnerability. `SECURITY.md` has the process, and reads the
-project's security posture honestly first — there is no authentication, tenancy or RBAC, so
+project's security posture honestly first — no authentication ships, so
 "the API is unauthenticated" is documented rather than a finding.
 
 ## Licence and provenance

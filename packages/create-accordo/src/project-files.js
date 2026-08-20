@@ -55,7 +55,7 @@ function packageJson(name) {
     name,
     version: '0.1.0',
     private: true,
-    description: 'An Accordo CRM project. Local development only: it has no authentication, tenancy or RBAC, and it stores data in SQLite on this machine.',
+    description: 'An Accordo CRM project. Local development only: no authentication ships, so a deployment must supply the verifier, and it stores data in SQLite on this machine.',
     type: 'module',
     engines: { node: '>=22.16.0' },
     bin: { accordo: './packages/cli/bin/accordo.js' },
@@ -100,7 +100,7 @@ An Accordo CRM project. The framework source is checked in under \`packages/\`
 and \`apps/\` — you own it outright, and you change it the way you change any
 other code in this repository.
 
-**It is local-development software.** It has no authentication, no tenancy and
+**It is local-development software.** No authentication ships, and
 no role-based access control; it stores data in SQLite on this machine; and
 nothing in it is deployable. Read the limitations below before building
 anything on top of it that touches money.
@@ -228,7 +228,7 @@ already inconsistent, and it is cheap enough to run before every change.
 
 ## What this project is not
 
-No authentication, no tenancy, no RBAC, SQLite only, no scheduler, no durable
+No authentication ships, SQLite only, no scheduler, no durable
 outbox, every provider an offline fixture, and nothing deployable. Do not write
 a claim into this repository that these limits contradict — state a capability
 and its limitation in the same breath.

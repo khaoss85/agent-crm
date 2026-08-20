@@ -341,7 +341,7 @@ every entry is a **mirror of a stable CLI contract**, not a second implementatio
 — an MCP tool that reimplements a CLI is a second thing to keep true.
 
 **Remote mutation stays Production-Spine and human-approval work**, exactly as
-the roadmap says. That is not a scheduling statement: there is no auth, tenancy
+the roadmap says. That is not a scheduling statement: no authentication ships, and no tenancy
 or RBAC, so there is no one to authorize a remote write.
 
 ### C.2b A domain namespace, worked through on Service (M15)
