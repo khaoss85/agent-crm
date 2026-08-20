@@ -12,6 +12,8 @@ import {
   normalizeError,
 } from '../../../packages/core/src/errors.js';
 import { isExposableGeneratedModule } from '../../../packages/core/src/generated-module-contract.js';
+import { stripServerControlledKeys } from '../../../packages/core/src/actor.js';
+import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js';
 
 const DEFAULT_PUBLIC_DIR = resolve(
   fileURLToPath(new URL('../../admin/public', import.meta.url)),
@@ -74,7 +76,7 @@ export function createHttpServer(app, options = {}) {
           body,
           rawBody,
           headers: request.headers,
-          actor: actorFromRequest(request),
+          ...requestIdentity(app, request),
         });
         if (!response.writableEnded) {
           // A handler either returns a tagged envelope (explicit status) or a
@@ -108,6 +110,31 @@ export function createHttpServer(app, options = {}) {
 
   // Node's own reap would destroy a request this server has already accepted.
   server.on('timeout', reapIdleConnection);
+
+  /**
+   * **A local-development runtime may only listen on loopback.**
+   *
+   * Local mode accepts asserted, unverified identities — anyone who can reach
+   * the socket can claim to be anyone. That is a reasonable trade on a loopback
+   * interface and a catastrophe on any other, so the address is checked at the
+   * moment of binding rather than trusted at the moment of configuring.
+   *
+   * An omitted host means "every interface", which is the worst case and not
+   * the safe one, so it is refused in local mode too. Wrapping `listen` rather
+   * than asking callers to check keeps the guard on the one path every server
+   * must take.
+   */
+  const listen = server.listen.bind(server);
+  server.listen = /** @type {any} */ ((...args) => {
+    const mode = app?.spine?.mode?.mode ?? null;
+    if (mode) {
+      const host = args.find((arg, index) => index > 0 && typeof arg === 'string')
+        ?? (typeof args[0] === 'object' && args[0] !== null ? /** @type {any} */ (args[0]).host : undefined);
+      assertBindAddress(mode, host);
+    }
+    return listen(...args);
+  });
+
   return server;
 }
 
@@ -190,6 +217,17 @@ function buildRouter(app) {
   router.add('GET', '/api/schema', async () => ({
     schema: app.schema,
     generatedResourceContract: 1,
+    // Production Spine v1 (ADR-038). Published in BOTH states on purpose: an
+    // application with no spine says so, in the same field, rather than simply
+    // omitting it. A reader who has to infer the absence of a security boundary
+    // from a missing key will eventually infer wrong.
+    spine: app.spine ? app.spine.describe() : {
+      spineContract: null,
+      enabled: false,
+      warning: 'NO PRODUCTION SPINE — this application performs no identity verification, no tenant '
+        + 'isolation and no authorization. Actor identity is whatever the caller claimed. Never expose it, '
+        + 'and never read its audit trail as proof that a particular person did anything.',
+    },
     modules: app.modules.list(),
     generatedModules: app.modules
       .list()
@@ -217,7 +255,8 @@ function buildRouter(app) {
 
   // Catalog synchronization (ADR-016). Local-development surface like every
   // other write route; the provider call runs outside the write transaction.
-  router.add('POST', '/api/catalog/sync', async ({ body, actor }) => {
+  router.add('POST', '/api/catalog/sync', async ({ body, actor, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.write');
     if (typeof app.syncCatalog !== 'function') {
       throw new NotFoundError('Operation', 'catalog sync');
     }
@@ -251,7 +290,8 @@ function buildRouter(app) {
 
   // Explicit envelope reconciliation (ADR-017). No background scheduler ships
   // in this milestone: recovery is always an explicit, audited operation.
-  router.add('POST', '/api/signature/envelopes/:id/reconcile', async ({ params, actor }) => {
+  router.add('POST', '/api/signature/envelopes/:id/reconcile', async ({ params, actor, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'signature.reconcile');
     if (typeof app.reconcileSignature !== 'function') {
       throw new NotFoundError('Operation', 'signature reconciliation');
     }
@@ -264,23 +304,30 @@ function buildRouter(app) {
   // composed each answers an honest 404. ADR-032 deliberately refused to build
   // arbitrary path registration for packages, so an enumerated adapter is the
   // sanctioned shape rather than a shortcut around one.
-  router.add('POST', '/api/customer-data/import/preview', async ({ body, actor }) => {
+  router.add('POST', '/api/customer-data/import/preview', async ({ body, actor, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
     if (typeof app.previewCustomerImport !== 'function') {
       throw new NotFoundError('Operation', 'customer data import');
     }
     // A preview writes nothing, so it needs no human boundary — but it is
     // still recorded as the actor who asked.
-    return app.previewCustomerImport({ ...(body ?? {}), actor });
+    // The caller's own `actor` (or tenant, or identity) is REMOVED, not
+    // overridden. Overriding works only while this spread stays in this order,
+    // and a security property that depends on the order of an object literal is
+    // one refactor away from being gone.
+    return app.previewCustomerImport({ ...stripServerControlledKeys(body), actor });
   });
 
-  router.add('POST', '/api/customer-data/import/apply', async ({ body, actor }) => {
+  router.add('POST', '/api/customer-data/import/apply', async ({ body, actor, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.write');
     if (typeof app.applyCustomerImport !== 'function') {
       throw new NotFoundError('Operation', 'customer data import');
     }
-    return app.applyCustomerImport({ ...(body ?? {}), actor });
+    return app.applyCustomerImport({ ...stripServerControlledKeys(body), actor });
   });
 
-  router.add('GET', '/api/customer-data/profile/:resource/:id', async ({ params }) => {
+  router.add('GET', '/api/customer-data/profile/:resource/:id', async ({ params, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
     if (typeof app.readCustomerProfile !== 'function') {
       throw new NotFoundError('Operation', 'customer profile');
     }
@@ -292,11 +339,13 @@ function buildRouter(app) {
   // else — unknown names, handwritten core modules, malformed or hand-edited
   // definitions — fails closed as 404. This is a framework contract against
   // accidental misuse, not a sandbox against malicious source-code changes.
-  router.add('GET', '/api/modules/:module', async ({ params }) => {
+  router.add('GET', '/api/modules/:module', async ({ params, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
     const module = resolveGeneratedModule(app, params.module);
     return generatedModuleMetadata(module, app.actions.listForModule(module.name));
   });
-  router.add('GET', '/api/modules/:module/records', async ({ params, searchParams }) => {
+  router.add('GET', '/api/modules/:module/records', async ({ params, searchParams, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'list');
     return {
       items: module.service.list({
@@ -305,15 +354,18 @@ function buildRouter(app) {
       }),
     };
   });
-  router.add('POST', '/api/modules/:module/records', async ({ params, body, actor }) => {
+  router.add('POST', '/api/modules/:module/records', async ({ params, body, actor, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.write');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'create');
     return respond(201, await module.service.create(recordInput(body), { actor }));
   });
-  router.add('GET', '/api/modules/:module/records/:id', async ({ params }) => {
+  router.add('GET', '/api/modules/:module/records/:id', async ({ params, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'get');
     return module.service.get(params.id);
   });
-  router.add('PATCH', '/api/modules/:module/records/:id', async ({ params, body, actor }) => {
+  router.add('PATCH', '/api/modules/:module/records/:id', async ({ params, body, actor, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.write');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'update');
     return module.service.update(params.id, recordInput(body), { actor });
   });
@@ -326,105 +378,284 @@ function buildRouter(app) {
   // declaration — core CRUD stays on its dedicated routes and is never served
   // by the generic records surface). Anything else is a 404; unknown action
   // 404; bad input 400; invalid transition a stable 409.
-  router.add('POST', '/api/modules/:module/records/:id/actions/:action', async ({ params, body, actor }) => {
+  router.add('POST', '/api/modules/:module/records/:id/actions/:action', async ({ params, body, actor, identity, organizationId }) => {
     resolveActionableModule(app, params.module); // 404 for unknown/ineligible modules
+    // The action runtime authorizes with the action's own declared permission;
+    // passing the identity through is what makes that possible.
     return app.runAction({
       module: params.module,
       action: params.action,
       recordId: params.id,
       input: actionInput(body),
       actor,
+      identity,
+      organizationId,
     });
   });
 
-  router.add('GET', '/api/companies', async ({ query }) => ({
-    items: app.services.companies.list({ limit: parseLimit(query.limit) }),
-  }));
-  router.add('POST', '/api/companies', async ({ body, actor }) => (
-    respond(201, await app.services.companies.create(body ?? {}, { actor }))
-  ));
+  router.add('GET', '/api/companies', async ({ query, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
+    return { items: app.services.companies.list({ limit: parseLimit(query.limit) }) };
+  });
+  router.add('POST', '/api/companies', async ({ body, actor, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.write');
+    return respond(201, await app.services.companies.create(body ?? {}, { actor }));
+  });
 
-  router.add('GET', '/api/contacts', async ({ query }) => ({
-    items: app.services.contacts.list({
-      companyId: query.companyId,
-      limit: parseLimit(query.limit),
-    }),
-  }));
-  router.add('POST', '/api/contacts', async ({ body, actor }) => (
-    respond(201, await app.services.contacts.create(body ?? {}, { actor }))
-  ));
+  router.add('GET', '/api/contacts', async ({ query, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
+    return {
+      items: app.services.contacts.list({
+        companyId: query.companyId,
+        limit: parseLimit(query.limit),
+      }),
+    };
+  });
+  router.add('POST', '/api/contacts', async ({ body, actor, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.write');
+    return respond(201, await app.services.contacts.create(body ?? {}, { actor }));
+  });
 
-  router.add('GET', '/api/opportunities', async ({ query }) => ({
-    items: app.services.opportunities.list({
-      stage: query.stage,
-      type: query.type,
-      companyId: query.companyId,
-      limit: parseLimit(query.limit),
-    }),
-  }));
-  router.add('POST', '/api/opportunities', async ({ body, actor }) => (
-    respond(201, await app.services.opportunities.create(body ?? {}, { actor }))
-  ));
-  router.add('GET', '/api/opportunities/:id', async ({ params }) => (
-    app.services.opportunities.get(params.id)
-  ));
-  router.add('POST', '/api/opportunities/:id/stage', async ({ params, body, actor }) => (
-    app.workflows.run(
+  router.add('GET', '/api/opportunities', async ({ query, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
+    return {
+      items: app.services.opportunities.list({
+        stage: query.stage,
+        type: query.type,
+        companyId: query.companyId,
+        limit: parseLimit(query.limit),
+      }),
+    };
+  });
+  router.add('POST', '/api/opportunities', async ({ body, actor, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.write');
+    return respond(201, await app.services.opportunities.create(body ?? {}, { actor }));
+  });
+  router.add('GET', '/api/opportunities/:id', async ({ params, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
+    return app.services.opportunities.get(params.id);
+  });
+  router.add('POST', '/api/opportunities/:id/stage', async ({ params, body, actor, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.write');
+    return app.workflows.run(
       'request-opportunity-stage-change',
       { opportunityId: params.id, targetStage: body?.targetStage },
       { actor },
-    )
-  ));
+    );
+  });
 
-  router.add('GET', '/api/approvals', async ({ query }) => ({
-    items: app.services.approvals.list({
-      status: query.status,
-      opportunityId: query.opportunityId,
-      limit: parseLimit(query.limit),
-    }),
-  }));
-  router.add('POST', '/api/approvals/:id/approve', async ({ params, actor }) => (
-    app.workflows.run(
+  router.add('GET', '/api/approvals', async ({ query, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
+    return {
+      items: app.services.approvals.list({
+        status: query.status,
+        opportunityId: query.opportunityId,
+        limit: parseLimit(query.limit),
+      }),
+    };
+  });
+  router.add('POST', '/api/approvals/:id/approve', async ({ params, actor, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'approvals.decide');
+    return app.workflows.run(
       'decide-opportunity-approval',
       { approvalId: params.id, decision: 'approved' },
       { actor },
-    )
-  ));
-  router.add('POST', '/api/approvals/:id/reject', async ({ params, actor }) => (
-    app.workflows.run(
+    );
+  });
+  router.add('POST', '/api/approvals/:id/reject', async ({ params, actor, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'approvals.decide');
+    return app.workflows.run(
       'decide-opportunity-approval',
       { approvalId: params.id, decision: 'rejected' },
       { actor },
-    )
-  ));
+    );
+  });
 
-  router.add('GET', '/api/traces', async ({ query }) => ({
-    items: app.workflows.listRuns({
-      status: query.status,
-      workflowName: query.workflowName,
-      limit: parseLimit(query.limit),
-    }),
-  }));
-  router.add('GET', '/api/traces/:id', async ({ params }) => app.workflows.getRun(params.id));
+  // Trace and audit are evidence about everyone in the tenant, so they are
+  // read-gated like any other record read. An ungated audit route is a
+  // disclosure of who did what, which is precisely what this milestone exists
+  // to protect.
+  router.add('GET', '/api/traces', async ({ query, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
+    return {
+      items: app.workflows.listRuns({
+        status: query.status,
+        workflowName: query.workflowName,
+        limit: parseLimit(query.limit),
+      }),
+    };
+  });
+  router.add('GET', '/api/traces/:id', async ({ params, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
+    return app.workflows.getRun(params.id);
+  });
 
-  router.add('GET', '/api/audit', async ({ query }) => ({
-    items: app.audit.list({
-      entityType: query.entityType,
-      entityId: query.entityId,
-      limit: parseLimit(query.limit),
-    }),
-  }));
+  router.add('GET', '/api/audit', async ({ query, identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
+    return {
+      items: app.audit.list({
+        entityType: query.entityType,
+        entityId: query.entityId,
+        limit: parseLimit(query.limit),
+      }),
+    };
+  });
 
-  router.add('GET', '/api/notifications', async () => ({ items: app.notifications.list() }));
+  // ---- Production Spine (ADR-038) --------------------------------------
+  // Bounded on purpose: who am I, which tenant, who else is a member, and what
+  // the roles mean. No token, no secret, no password, no invitation flow.
+  router.add('GET', '/api/spine/context', async ({ identity, organizationId }) => {
+    if (!app.spine) {
+      throw new NotFoundError('Operation', 'production spine');
+    }
+    const organization = organizationId ? app.spine.organizations.get(organizationId) : null;
+    const membership = (identity?.subject && organizationId)
+      ? app.spine.memberships.find({ organizationId, subject: identity.subject })
+      : null;
+    return {
+      ...app.spine.describe(),
+      identity: app.spine.identityEvidence(identity),
+      organization,
+      membership,
+      permissions: membership ? membership.permissions : [],
+    };
+  });
 
-  router.add('POST', '/api/demo/seed', async () => respond(201, await app.seedDemo()));
-  router.add('POST', '/api/demo/run', async () => app.runDemo());
+  router.add('GET', '/api/spine/memberships', async ({ identity, organizationId }) => {
+    if (!app.spine) throw new NotFoundError('Operation', 'production spine');
+    gate(app, identity, organizationId, 'admin.memberships.manage');
+    return { items: app.spine.memberships.listFor({ organizationId }) };
+  });
+
+  router.add('POST', '/api/spine/memberships', async ({ body, identity, organizationId }) => {
+    if (!app.spine) throw new NotFoundError('Operation', 'production spine');
+    // The store authorizes and applies the no-self-grant and last-administrator
+    // rules; the route does not get to decide any of that.
+    return respond(201, app.spine.memberships.grant({
+      organizationId,
+      subject: body?.subject,
+      role: body?.role,
+      issuer: body?.issuer ?? null,
+      reason: body?.reason,
+      identity,
+      mode: app.spine.mode,
+    }));
+  });
+
+  router.add('POST', '/api/spine/memberships/:subject/suspend', async ({ params, body, identity, organizationId }) => {
+    if (!app.spine) throw new NotFoundError('Operation', 'production spine');
+    return app.spine.memberships.suspend({
+      organizationId,
+      subject: params.subject,
+      reason: body?.reason,
+      identity,
+      mode: app.spine.mode,
+    });
+  });
+
+  router.add('GET', '/api/notifications', async ({ identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.read');
+    return { items: app.notifications.list() };
+  });
+
+  router.add('POST', '/api/demo/seed', async ({ identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.write');
+    return respond(201, await app.seedDemo());
+  });
+  router.add('POST', '/api/demo/run', async ({ identity, organizationId }) => {
+    gate(app, identity, organizationId, 'records.write');
+    return app.runDemo();
+  });
 
   return router;
 }
 
-/** @param {import('node:http').IncomingMessage} request */
-function actorFromRequest(request) {
+/**
+ * Refuse a request that the composed spine does not permit.
+ *
+ * A no-op when no spine is composed — and `app inspect` publishes that fact, so
+ * the no-op is never a silent one.
+ *
+ * `authorize` refuses another tenant with **404** before it considers a
+ * permission at all, so this one call carries both the tenant boundary and the
+ * permission boundary and they cannot be applied in the wrong order.
+ *
+ * @param {any} app @param {any} identity @param {string|null} organizationId @param {string} permission
+ */
+function gate(app, identity, organizationId, permission) {
+  if (!app?.spine) return null;
+  return app.spine.authorize({ identity, organizationId, permission });
+}
+
+/**
+ * The identity and tenant a request acts under (ADR-038).
+ *
+ * ### What this replaced, and why it had to go
+ *
+ * The previous `actorFromRequest` read `x-actor-type` and `x-actor-id` and,
+ * when they were missing, invented `{type: 'user', id: 'api-user'}`. Any caller
+ * was any user, and an absent header produced a *valid-looking* one. Every "a
+ * human decided" recorded through this server rested on that.
+ *
+ * ### The rule
+ *
+ * When the spine is composed, the **verifier** decides who the caller is. The
+ * headers are still read in local-development mode, because that mode has
+ * explicitly declared assertions acceptable and says so loudly — but the
+ * resulting identity is marked `asserted-local`, never `verified-user`, so
+ * nothing downstream can mistake one for the other.
+ *
+ * ### The organization is never taken from the client
+ *
+ * There is deliberately no `x-organization-id` header. The tenant comes from
+ * the verified identity, and a caller who supplies one anyway is attempting the
+ * override that C9 forbids — so a mismatch is refused by the authorizer rather
+ * than resolved in the caller's favour.
+ *
+ * @param {any} app @param {import('node:http').IncomingMessage} request
+ */
+function requestIdentity(app, request) {
+  const spine = app?.spine ?? null;
+
+  if (!spine) {
+    // No spine composed: the historical behaviour, unchanged. `app inspect`
+    // publishes that this composition authorizes nothing.
+    return { actor: legacyActorFromHeaders(request), identity: null, organizationId: null };
+  }
+
+  // A configured verifier is always used, in either mode. Ignoring one because
+  // the mode is local would silently discard explicit operator configuration —
+  // and an operator who wired up a verifier in development did so precisely to
+  // exercise it.
+  const verifier = typeof spine.verifyRequest === 'function' ? spine.verifyRequest : null;
+  let identity = null;
+  if (verifier) {
+    // The adapter verifies. Anything it throws, or fails to return, is treated
+    // as "not verified" — never as "probably fine".
+    try {
+      identity = spine.defineIdentity(verifier({ headers: request.headers, method: request.method, url: request.url }));
+    } catch {
+      identity = null;
+    }
+  }
+
+  if (!identity) {
+    // Nothing verified. In local-development mode the header pair becomes an
+    // explicitly ASSERTED identity; in production it becomes anonymous, which
+    // authorizes nothing. `identityFor` owns that difference so there is one
+    // place it is decided.
+    identity = spine.identityFor({ actor: legacyActorFromHeaders(request) });
+  }
+
+  return {
+    actor: identityToActor(identity),
+    identity,
+    organizationId: identity?.organizationId ?? null,
+  };
+}
+
+/** The legacy header pair — asserted, and only ever trusted in local mode. */
+function legacyActorFromHeaders(request) {
   const typeHeader = request.headers['x-actor-type'];
   const idHeader = request.headers['x-actor-id'];
   const type = typeof typeHeader === 'string' && ['user', 'agent', 'system'].includes(typeHeader)
@@ -432,6 +663,13 @@ function actorFromRequest(request) {
     : 'user';
   const id = typeof idHeader === 'string' && idHeader.trim() ? idHeader.trim() : 'api-user';
   return { type, id };
+}
+
+/** @param {any} identity */
+function identityToActor(identity) {
+  if (!identity || identity.kind === 'anonymous') return { type: 'user', id: 'anonymous' };
+  if (identity.kind === 'system') return { type: 'system', id: identity.subject };
+  return { type: 'user', id: identity.subject };
 }
 
 /** @param {import('node:http').IncomingMessage} request */

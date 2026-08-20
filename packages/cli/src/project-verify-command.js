@@ -203,7 +203,7 @@ const LIMITATIONS = Object.freeze([
   },
   {
     code: 'PRODUCTION_READINESS_NOT_ASSESSED',
-    message: 'there is no auth, tenancy or RBAC in this framework, and nothing here assesses deployment, capacity or operational readiness',
+    message: 'this framework ships no authentication, and nothing here assesses deployment, capacity or operational readiness',
   },
 ]);
 

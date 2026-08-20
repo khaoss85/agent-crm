@@ -2880,3 +2880,293 @@ customer, not a guess); a section it genuinely cannot reach reads `available:
 false` with that reason rather than a zero; and every readable section publishes
 `countIsComplete`, so a number taken from a bounded page is reported as a floor
 instead of a total.
+
+
+## ADR-038 — The framework authenticates nobody, and owns every decision that follows
+
+**Status:** accepted. **Milestone:** Production Spine v1.
+**Plan:** `docs/plans/production-spine-v1.md`.
+
+### Context
+
+The repository holds customer identities, external identifiers, canonical
+links, signed commercial terms, contracts, subscriptions, delivery, service and
+work records — real PII-capable data — behind a runtime with no authentication,
+no tenancy and no authorization. Three facts made that concrete rather than
+rhetorical:
+
+1. `normalizeActor()` returned `SYSTEM_ACTOR` — the most privileged identity in
+   the framework — for `null`, a string, or an unknown `type`. **The safest
+   input produced the strongest identity.**
+2. `actorFromRequest()` read `x-actor-type` and `x-actor-id` and, when they were
+   absent, invented `{type: 'user', id: 'api-user'}`. Any caller was any user,
+   and a missing header produced a valid-*looking* one.
+3. No record, table, service or action carried a tenant at all.
+
+Every "a human decided" in this codebase meant *an actor object said so*.
+
+### Decision
+
+**The framework authenticates nobody. It owns everything after that.**
+
+A deployment adapter verifies the request and supplies a bounded, versioned
+identity context. The framework owns the contract, the tenant selection,
+membership, the authorization decision, the audit evidence and a fail-closed
+boundary. Four options were compared:
+
+- **A — trust the headers, add role strings.** Rejected: authorization over an
+  unauthenticated identity is decoration that makes the audit log *more*
+  confident and no more true.
+- **B — passwords, sessions and credentials in core.** Rejected for v1: it makes
+  the framework an identity provider, which is a security scope of its own.
+- **C — verified identity adapter + framework authorization boundary.**
+  **Chosen.** The framework never learns a secret, and the one thing it must own
+  — the decision — it owns completely.
+- **D — a provider-specific auth package.** Rejected as a kernel dependency. No
+  vendor name appears in `packages/core`, and a reference adapter may live
+  outside it later.
+
+### The four identity kinds, which never blur
+
+`verified-user` · `system` (bounded authority: a webhook may reconcile, it may
+never approve a discount) · `asserted-local` (accepted only in explicit
+local-development mode) · `anonymous` (authorizes nothing, and is the one kind
+with no subject, because inventing one would be the same fail-open this ADR
+removes).
+
+**No token, credential or secret enters the contract, the audit log, the trace
+or an error message.** The contract carries a *fingerprint* of the claims the
+adapter accepted, so a decision can be tied to its evidence without the
+evidence being stored.
+
+### An Accordo Organization is not a CRM Company
+
+A **Company** is a customer recorded *inside* one tenant's data. An
+**Organization** is the tenant — a customer of the software. The distinction is
+in the table names (`spine_organizations`), the store, the schema block, the
+Admin and this ADR, because blurring it would make "grant someone access to a
+Company" sound reasonable, and from there one tenant's customer list leaks into
+another tenant's authorization model.
+
+### Permissions, and why not the two obvious shapes
+
+Eleven **bounded semantic permissions** bundled into roles. A fixed role enum is
+immediately inflexible; one permission per method looks rigorous, produces
+hundreds of unreadable keys, and ends with everyone granted all of them. `owner`
+is an explicit list rather than "all permissions", so adding a permission later
+cannot silently widen an existing role.
+
+`requiredApprovalKey` values stay **descriptive labels**. Promoting them into
+enforced permissions would change the meaning of records already written.
+
+Membership administration carries two non-negotiable rules: **nobody grants a
+permission they do not hold** (otherwise `admin.memberships.manage` is silently
+equivalent to all of them), and **the last active administrator cannot demote or
+suspend themselves** (not to protect them, but to stop an organization becoming
+permanently unadministrable).
+
+### The mode is explicit, and production fails startup
+
+Two modes, no default. The mode is **never inferred** from localhost,
+`NODE_ENV`, an interface address or a missing config: a proxy, a container
+network or a misread `X-Forwarded-For` all make a production request look local.
+An unset mode is an error, because "I forgot to configure it" and "I meant the
+permissive one" must not be the same input. Production **fails startup** without
+an identity verifier and a tenant strategy — a refused boot is investigated, a
+refused request at 3am is retried.
+
+Local-development mode keeps today's developer experience through a **real
+membership row** an operator can list and revoke, not an invisible branch inside
+the authorizer. An assertion is never promoted to a verification.
+
+### Tenancy: the honest choice, and what it is not
+
+Row-level tenancy — an `organization_id` on every mutable table — is the right
+long-term answer and was **not** attempted here: **86+ tables** (76 module
+manifests plus 10 core), a backfill of every shipped database, every unique
+constraint reworked and every correctness path rescoped. A half-migrated version
+of that is worse than none, because it *looks* isolated.
+
+v1 *declares* a **versioned TenantStorage boundary: one database per tenant.**
+Two tenants would not cross-read because they would not be in the same database,
+not because a `WHERE` clause was remembered. A tenant id is untrusted input on a
+filesystem path, so traversal, absolute paths, NUL, uppercase and over-length are
+refused and the resolved path is proven to be inside the root anyway.
+
+**This is explicitly not shared-database multi-tenancy, and nothing in this
+repository may describe it as such.** Row-level tenancy in PostgreSQL is Spine
+v2.
+
+#### Amendment 1 — the boundary shipped unwired (review finding F-2)
+
+The paragraph above described a boundary that shipped **declared and not
+delivered**. `createTenantStorage` was defined, validated a tenant id and
+resolved one file per tenant; nothing called it. `tenantStrategy` was checked
+for presence at startup and then never used. The authorizer answered *"may this
+subject do this?"* and never *"does this row belong to this subject's tenant?"*,
+so a single application holding two organizations held both in one database.
+
+Measured, against a production-mode application with a verifier configured and
+two bootstrapped organizations: the owner of A creates a company; the owner of B
+requests `GET /api/companies` and receives **200 with A's record in it**; B's
+write appears in A's list; and B reads `GET /api/audit` and receives rows
+authored by A's owner. The control plane held — B's owner pointed at A was
+`403 MEMBERSHIP_MISSING`.
+
+#### Amendment 2 — closed by binding, not by filtering
+
+A human decided the model, and it is enforced rather than documented:
+
+> **one running Accordo application instance ↔ one authoritative tenant data
+> plane ↔ one tenant storage binding**
+
+**Shared-database row-level tenancy is explicitly rejected as the fix.** It is a
+later slice across 86+ tables, and it is not required by the deployment model
+this product is entering, which provisions one isolated instance and database
+per tenant. **Multiple CRM tenants inside one application are not supported**,
+and that is the enforcement rather than a limitation: a configuration that would
+need it is refused at startup.
+
+**What "wired" means here.** A spine-composed application takes its CRM database
+from the binding and refuses an explicit `dbPath` beside it, because two answers
+to *"where does this tenant's data live"* is the exact shape the defect had.
+`bindTenantStorage()` resolves one tenant and returns an object that carries
+`dataPlanePath` and `controlPlanePath` and **exposes no `databasePathFor` at
+all** — a second tenant is not refused by a check somebody could forget, it is
+unreachable through the handle the application holds. There is no branch in
+which a bound application can reach the unscoped shared database, because no
+such handle is ever constructed.
+
+**Two planes, two files, two schemas.** Control-plane migrations (organizations,
+memberships) and data-plane migrations (CRM) are separate lists. A tenant
+database has no membership table and the control plane has no CRM table, so a
+write that crossed the boundary raises `no such table` rather than quietly
+succeeding — which is what turns a convention into an enforcement. The combined
+list remains the default, so every composition without a spine is unchanged.
+
+**The tenant is never inferred** — not from localhost, `NODE_ENV`, the listening
+interface, the first membership, the first Organization row, a header, a body or
+a claim the framework did not bind itself. The strongest temptation is *"there is
+only one organization, so use it"*, and it is wrong because it makes provisioning
+order a security control: an instance booting before its organization exists, or
+after a control plane creates a second, would silently change whose data it
+serves.
+
+**A verified identity that names no tenant is refused**, not assumed to mean the
+bound one. Assuming would mean a token minted for tenant A is honoured by tenant
+B's instance — the cross-instance replay that one-tenant-per-instance exists to
+prevent. Requiring the identity to state its tenant, and requiring equality with
+the binding, is what makes "each tenant has its own instance" a boundary rather
+than a deployment convention.
+
+**The order of refusal is deliberate.** *401* for a caller who presented nothing
+— a statement about the request, not about what exists here, so it discloses
+nothing and stays useful. Then *404* for any tenant but the bound one, because a
+403 would confirm that the organization exists and that this instance knows
+about it, and across a tenant boundary that confirmation is the disclosure; the
+refusal echoes no id and no slug. Then *403* inside the bound tenant, where the
+distinction is about the caller rather than about the data. **Membership is
+necessary and not sufficient**: a membership in another organization is refused
+before any permission is considered.
+
+**The refusal matrix**, all at startup, all with stable codes and none carrying a
+filesystem path or a configured value: `SPINE_VERIFIER_REQUIRED` ·
+`SPINE_TENANT_STRATEGY_REQUIRED` · `SPINE_LOCAL_TENANT_REQUIRED` ·
+`SPINE_BOUND_TENANT_REQUIRED` · `SPINE_BOUND_TENANT_INVALID` ·
+`SPINE_TENANT_STORAGE_ROOT_REQUIRED` · `SPINE_MULTIPLE_DATA_PLANE_BINDINGS` ·
+`SPINE_DATA_PLANE_PATH_NOT_CONFIGURABLE` · `SPINE_BOUND_TENANT_UNKNOWN` ·
+`SPINE_LOCAL_MODE_REMOTE_BIND` · `TENANT_PLANES_COLLIDE`. Not echoing the value
+matters most on `SPINE_BOUND_TENANT_INVALID`, whose input is attacker-chosen on
+precisely the path where an attacker-chosen string reached a path resolver.
+
+**Local-development mode may only listen on loopback.** That mode accepts
+asserted identities, so anyone who can reach the socket can claim to be anyone;
+an omitted host means every interface, which is the worst case rather than the
+safe one, so it is refused too.
+
+#### Amendment 3 — the actor boundary fails closed
+
+`normalizeActor` returned `SYSTEM_ACTOR` — the strongest identity in the
+framework — for `null`, a string, an unknown `type` and any malformed object.
+A review argued it was unreachable from any public adapter, and that was true
+*because of two properties nothing tested*: `actor` happened to be spread last
+in two request handlers, and `identityToActor` happened to be total. A boundary
+that holds by coincidence holds until somebody writes `{ actor, ...body }`.
+
+So it was measured rather than argued. Instrumented, the fallback fired **three
+times across the whole suite**, every one an e2e fixture passing
+`{type: 'human', id: 'e2e'}` — an unknown type laundered into root. Nothing
+depended on it.
+
+Now: a malformed actor becomes the **least-privileged** identity; prototype
+-inherited `type`/`id` do not count, because an actor found on a prototype is
+one somebody arranged to be found; `SYSTEM_ACTOR` is reachable only through
+`trustedSystemActor(reason)`, so grepping that name is a complete audit of where
+the framework claims its own authority; and request payloads have
+server-controlled keys **stripped** rather than overridden, so the property no
+longer depends on the order of an object spread anywhere.
+
+
+### The spine is opt-in, and its absence is loud
+
+`createAccordoApp({ spine })` turns it on. An application composed without it
+behaves exactly as before — and `/api/schema` publishes that in the same field,
+rather than omitting it. A reader who has to infer the absence of a security
+boundary from a missing key will eventually infer wrong.
+
+### What versioned, and what deliberately did not (ADR-036 doctrine)
+
+**Two framework contracts bumped; no package did.** Under the doctrine a
+contract version moves when a required shape or a semantic guarantee changes,
+and both moved twice over:
+
+- **`spineContract` 1 → 2.** The published block replaced
+  `tenantStrategyDeclared` and `crmDataPlaneEnforced: false` with a bound tenant
+  and enforced isolation. A consumer reading the v1 shape would draw the
+  *opposite* conclusion about the same deployment, which is exactly what a
+  version exists to signal — a silent change here is a reader believing a stale
+  answer about a security boundary.
+- **`tenantStorageContract` 1 → 2.** v1 offered an unbound resolver and promised
+  isolation it did not deliver; v2 offers a binding with no way to name a second
+  tenant, and enforces it.
+
+**No domain package moved**, and that restraint is deliberate: none of their
+declarations, requires or capability shapes changed. Bumping every package
+because the framework grew a boundary would be version noise that teaches
+readers to ignore versions.
+
+Otherwise: the runtime now authorizes what packages already declared, which is a
+runtime change rather than a contract one
+— and bumping every package because the framework grew a boundary would be
+version noise that teaches readers to ignore versions.
+
+Two additive contract fields were introduced instead, both backward-compatible
+and both framework-enforced:
+
+- **`requiredPermission` on a record action.** An action that declares nothing
+  requires `records.write`, the honest floor for a mutation. When an action's
+  required permission becomes contractual — when a consumer relies on it — that
+  is the point to version the action contract deliberately, not before.
+- **`headers` on the SDK client.** Without it the SDK could not present a
+  verified identity at all and every call against an authorizing server
+  returned 401. The client forwards what a caller hands it and stores no
+  credential of its own.
+
+### What may be claimed, and what may not
+
+**May be claimed.** Spine v1 supports a controlled real pilot: **one
+organization per deployed instance**, verified users, server-authoritative
+permissions, and an isolated tenant database enforced by the storage binding
+rather than by a filter.
+
+**May not be claimed**, and is not claimed anywhere in this repository:
+
+- multiple organizations inside one application,
+- shared-database multi-tenancy or row-level tenancy of any kind,
+- PostgreSQL — it is not implemented,
+- durable jobs, an outbox or a scheduler,
+- secret management, backups, restore or any recovery SLA,
+- general production readiness, or any SOC2 or GDPR posture.
+
+Those remain Spine v2, v3 and v4 in `ROADMAP.md` with explicit ownership rather
+than scattered through limitation strings.

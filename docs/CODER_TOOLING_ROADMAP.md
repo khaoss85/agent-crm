@@ -161,7 +161,7 @@ Each of these is refused for a reason, not a schedule:
 | automatic source modification from a plan | a plan is reviewed; a diff is reviewed; conflating them removes the review |
 | executable commands as trusted plan content | see above, and enforced by the validator rather than documented |
 | remote package or provider installation | nothing here reaches the network, and no official package needs to |
-| production deploy | there is no auth, tenancy or RBAC — the Production Spine gates this |
+| production deploy | no authentication ships — the remaining Production Spine work gates this |
 | database or runtime-health inspection | AX1 is source-only by design; a tool that sometimes opens a database is a tool nobody can reason about |
 | sandboxing package code | **repository source is trusted.** Isolation is real; a sandbox is not attempted and would not be honest to claim |
 

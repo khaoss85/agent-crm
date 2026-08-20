@@ -47,7 +47,7 @@
           "heading": "What the catalogue says about the widened area",
           "body": [
             "The job catalogue spans CRM, marketing, analytics, data operations, governance, commercial, contract, delivery and packaging. A minority of its rows are validated end to end, a band are partial, and most are honestly marked not supported — the live split is published at /jobs.json, which is the copy that cannot go stale. That distribution is the reason this page argues about architecture and not about coverage.",
-            "A wider label describes what the framework is able to be pointed at, not what it already does. Reading the same absence list four ways does not shorten it: there is no authentication, tenancy or RBAC (L-01), no scheduler, queue or reminders (L-04), no email, calendar or marketing adapter (L-05), and persistence is SQLite (L-02). MRR, ARR and TCV are deliberately not derived because contract term and normalization policy are not modelled (JTBD-CS-05), and there is no semantic metric layer at all (JTBD-AN-01)."
+            "A wider label describes what the framework is able to be pointed at, not what it already does. Reading the same absence list four ways does not shorten it: no authentication ships and a deployment must supply the verifier (L-01), there is no scheduler, queue or reminders (L-04), no email, calendar or marketing adapter (L-05), and persistence is SQLite (L-02). MRR, ARR and TCV are deliberately not derived because contract term and normalization policy are not modelled (JTBD-CS-05), and there is no semantic metric layer at all (JTBD-AN-01)."
           ]
         },
         {
@@ -136,7 +136,7 @@
         {
           "heading": "Where the boundary stops",
           "body": [
-            "The actor is an assertion, not an identity. There is no authentication, no tenancy and no RBAC, and an actor header is a claim the caller makes about itself (L-01). The boundary therefore holds against an honest agent that says what it is, and not against anyone with network access who says otherwise. The server is local-development-only for exactly this reason.",
+            "The actor is an assertion, not an identity — in local-development mode, which is the posture this page describes. The framework authenticates nobody and ships no verifier, so an actor header there is a claim the caller makes about itself (L-01). The boundary therefore holds against an honest agent that says what it is, and not against anyone with network access who says otherwise, until a deployment supplies the adapter that verifies the request.",
             "The approval key is a label. The commercial test asserts requiredApprovalKey equals 'sales-manager' with the comment that this is a LABEL, not enforced security — real Sales-Manager or Finance role enforcement needs authentication, tenancy and roles enforced in services, and none of that exists. Obtaining the required commercial approval on a discount is 'partially supported' in the catalogue (JTBD-CO-04) for this reason, and enforcing team or tenant permissions is not supported at all (JTBD-15).",
             "The renewal rule is proven on one built-in object with one threshold value. Managing a custom object with an approval rule is 'partially supported' (JTBD-06). And nothing raises an approval because time passed: there is no scheduler, no delayed workflow and no queue, so every approval in this system starts from somebody or something asking for a state change (L-04)."
           ]
@@ -203,7 +203,7 @@
         {
           "heading": "What owning it does not buy you yet",
           "body": [
-            "Owning the code does not make it deployable. There is no authentication, tenancy or RBAC, and the server is local-development-only (L-01); persistence is SQLite (L-02); there is no import, export, dedupe, merge, bulk edit, saved view or global search (L-06). You cannot put real customer data in it: a CRM is a personal-data system by definition, and this one has no way to service an access or deletion request (L-09).",
+            "Owning the code does not make it deployable. The framework authenticates nobody and ships no verifier, so a deployment must supply that adapter before the server faces anyone (L-01); persistence is SQLite (L-02); there is no import, export, dedupe, merge, bulk edit, saved view or global search (L-06). You cannot put real customer data in it: a CRM is a personal-data system by definition, and this one has no way to service an access or deletion request (L-09).",
             "And there is nothing to sign up to. No hosted CRM, no free tier, no account — the output is an application in your repository that you run (L-07). Ownership today is ownership of a framework and a local application, not of a system your team logs into on Monday."
           ]
         }
@@ -213,7 +213,7 @@
         "Neither half of the ejection proof exists yet: there is no examples/ejected application and no test asserting a project still verifies green once the framework dependency is deleted.",
         "Zero third-party runtime dependencies describes the framework, not your application. Everything you add, you carry.",
         "The MIT confirmation covers this framework only. It decides nothing about a future managed offering and nothing about the licence of the code you generate.",
-        "Owning the source does not make it safe to deploy. No authentication, no tenancy, no RBAC, SQLite only, and no path to service a data-subject request.",
+        "Owning the source does not make it safe to deploy. No authentication ships, persistence is SQLite, and there is no path to service a data-subject request.",
         "A package detaches without touching the kernel, but its data stays behind and there is no export to take it with you.",
         "There is no registry, marketplace or sandbox. An enabled package runs with the host process's authority."
       ],
@@ -430,14 +430,14 @@
           "body": [
             "It does not mean a hosted assistant, an autonomous salesperson or a CRM product a team can sign in to. There is no hosted CRM, free tier or account; the output is source in a repository that its owner runs (L-07). There is no email, calendar or marketing adapter that lets an agent contact a customer, and the in-memory notification provider sends nothing to anyone (L-05).",
             "It also does not mean this repository has proved that no model can run anywhere at runtime. That universal statement has no ledger claim and remains a refused answer. The claim here is narrower and testable: the named commercial policies are deterministic, the named agent decisions are refused, and the named writes carry audit and trace.",
-            "Most importantly, the actor is asserted rather than authenticated. There is no authentication, tenancy or RBAC, and an actor header is a claim the caller makes about itself (L-01). The refusal holds against an honest coding agent that identifies itself; it is not a security boundary against a caller that lies. Persistence is local SQLite (L-02), and real customer data does not belong here because there is no export or erasure path (L-09)."
+            "Most importantly, in local-development mode the actor is asserted rather than authenticated. The framework authenticates nobody and ships no verifier, so an actor header there is a claim the caller makes about itself (L-01). The refusal holds against an honest coding agent that identifies itself; it is not a security boundary against a caller that lies, until a deployment supplies the adapter that verifies the request. Persistence is local SQLite (L-02), and real customer data does not belong here because there is no export or erasure path (L-09)."
           ]
         }
       ],
       "boundaries": [
         "Smart CRM here names an agent-built application with deterministic policy boundaries. It is not a hosted AI CRM, runtime assistant or autonomous salesperson.",
         "The proof is specific: a discounted-quote approval returns 403 to an asserted agent actor, and a renewal approval has its own refusal test. It does not prove a human gate on every action.",
-        "The actor is asserted in a header, not authenticated. With no authentication, tenancy or RBAC, this is a behavior boundary for an honest agent and not a security boundary against an attacker.",
+        "In local-development mode the actor is asserted in a header, not authenticated. With no verifier supplied, this is a behavior boundary for an honest agent and not a security boundary against an attacker.",
         "Lead scoring is a deterministic weighted rule set, not machine learning. Versioning and contributions make it explainable; they do not make the policy correct, unbiased or predictive.",
         "No ledger claim proves that a model never runs anywhere at runtime. This page makes no such universal statement and the broader question remains refused.",
         "The framework is local-development-only and SQLite-only. There is no hosted product, email or calendar integration, and no safe path for real customer data.",
@@ -515,7 +515,7 @@
           "heading": "The bridge is deliberately shown as missing",
           "body": [
             "There is no integration runtime, importer, scheduler, queue or external provider adapter in Accordo. No email, calendar or marketing adapter sends anything, and every provider in the examples is an offline fixture (L-05). There is no import, export, duplicate detection, merge, global search or unified activity timeline (L-06). A bridge from any CDP is therefore application engineering you own, not configuration this framework can perform today.",
-            "That absence also controls the data posture. There is no authentication, tenancy or RBAC, and an actor header is an assertion rather than identity (L-01). Real customer data does not belong in the current runtime because there is no export or erasure path for a subject request (L-09). The diagram explains where Accordo belongs in an architecture; it is not a deployment guide and cannot be followed into a live integration."
+            "That absence also controls the data posture. The framework authenticates nobody, and in local-development mode an actor header is an assertion rather than an identity (L-01). Real customer data does not belong in the current runtime because there is no export or erasure path for a subject request (L-09). The diagram explains where Accordo belongs in an architecture; it is not a deployment guide and cannot be followed into a live integration."
           ]
         },
         {
@@ -529,7 +529,7 @@
       "boundaries": [
         "Accordo is the CRM process layer in this architecture, not the customer data platform. It does not ingest events, resolve identities or build and sync audiences.",
         "No bridge ships between the layers. There is no integration runtime, importer, scheduler, queue or external provider adapter, so connection code is application work the owner must build.",
-        "No authentication, tenancy or RBAC. An actor header is asserted rather than authenticated, and the local server must not be exposed to a network (L-01).",
+        "The framework authenticates nobody, and ships no verifier. In local-development mode an actor header is asserted rather than authenticated, and that server must not be exposed to a network (L-01).",
         "Real customer data does not belong in the current runtime: there is no export or erasure path, so a subject request cannot be serviced (L-09).",
         "The page names no CDP vendor and makes no claim about one. It describes a category-level responsibility split, not a tested third-party integration.",
         "No benchmark result supports a claim that coding agents build this architecture faster or more reliably (L-03)."
@@ -633,7 +633,7 @@
         {
           "heading": "The boundary every build still inherits",
           "body": [
-            "None of the above changes what the framework is. There is no authentication, tenancy or RBAC, persistence is local SQLite, there is no scheduler, and no integration adapter sends anything to anyone — so a hub composed here is a hub on one developer's machine. Real customer data does not belong in it: there is no export and no erasure path, so a data-subject access or deletion request cannot be serviced with it (L-09). Enforcing team or tenant permissions (JTBD-15) reads not supported, which is the same fact stated by the catalogue."
+            "None of the above changes what the framework is. No authentication ships, persistence is local SQLite, there is no scheduler, and no integration adapter sends anything to anyone — so a hub composed here is a hub on one developer's machine. Real customer data does not belong in it: there is no export and no erasure path, so a data-subject access or deletion request cannot be serviced with it (L-09). Enforcing team or tenant permissions (JTBD-15) reads partially supported: the permissions are enforced, and the identity under them is only as good as a verifier nobody has supplied."
           ]
         }
       ],
@@ -642,7 +642,7 @@
         "Single customer view here means records written through this application's audited actions, CRUD routes and module services in one local database. It is a chain, not a profile assembled from other systems: nothing ingests, deduplicates, merges or resolves an identity.",
         "This is not a customer data platform, and nothing here softens that refusal. The comparison page states it in full and this page inherits it; no product in that category is named, because the competitor research this site may cite carries none.",
         "Marketing and billing do not exist as runtime code, and there is no unified customer screen. The Admin navigates by module and domain; no view, query or timeline assembles one customer's chain for a reader.",
-        "None of it is deployable. No authentication, tenancy or RBAC, SQLite only, no scheduler and no integration adapter — so a hub that works here works on one developer's machine.",
+        "None of it is deployable. No authentication ships, SQLite only, no scheduler and no integration adapter — so a hub that works here works on one developer's machine.",
         "Nothing here is measured against another product, and no page on this site ranks this against a named vendor. The build benchmark has not been run."
       ],
       "claims": ["C-06", "C-05", "C-08", "C-21", "C-09", "C-10", "C-11", "C-12", "C-16"],

@@ -37,7 +37,7 @@ proves:
 
 The generated application is local-development software, not a hosted CRM:
 
-- no authentication, tenancy or RBAC;
+- no authentication ships, and a deployment must supply the verifier;
 - SQLite only;
 - no scheduler or durable outbox;
 - provider implementations are offline fixtures;

@@ -140,7 +140,7 @@ export const PLAN_PROBLEM_CODES = Object.freeze([
 /** Limitations every plan carries, whatever its author wrote. */
 export const PLAN_LIMITATIONS = Object.freeze([
   { code: 'PLAN_NOT_EXECUTED', message: 'This is a document, not a runtime. Nothing here runs, installs, deploys or modifies source.' },
-  { code: 'APPROVAL_NOT_RBAC', message: 'An approval code marks a human-actor boundary. There is no auth, tenancy or RBAC in this framework, so no role is enforced anywhere.' },
+  { code: 'APPROVAL_NOT_RBAC', message: 'An approval code marks a human-actor boundary. Production Spine v1 added authorization, but ADR-038 deliberately left approval codes descriptive labels rather than enforced permissions, so no role is enforced from one.' },
   { code: 'EVIDENCE_NOT_VERIFIED', message: 'An observed fact is checked for shape and citation, never for truth. No query is run and no database is read.' },
   { code: 'BINDING_IS_SOURCE_ONLY', message: 'The bound application report is AX1: source-only. It says nothing about a database, a provider\'s health or what is deployed.' },
 ]);

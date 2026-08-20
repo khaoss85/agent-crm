@@ -1,0 +1,128 @@
+{
+  "scenarioContract": 1,
+  "id": "tenant-isolation-and-authorization",
+  "title": "Two tenants share a server and reach nothing of each other's, and every refusal is earned by attempting it",
+  "summary": "One security process, driven end to end against two real composed applications under one production-mode spine. Two tenants hold identically named records, and neither can reach the other by id, by collection or by write. A membership in one tenant means nothing in the other, and a genuine owner of tenant B pointed at tenant A is refused for the organization rather than for the record — the verified identity is authoritative and no request may override it. An authorized manager decides; a viewer is refused the same decision and keeps their read; unauthenticated and unauthorized stay distinct answers, 401 and 403. Then the escalations are attempted rather than assumed away: a self-grant, a manager granting a role they do not hold, the demotion of an organization's last administrator, a second bootstrap, a signature webhook reaching past reconciliation, and a developer assertion presented to a production runtime. Each is refused, and each refusal is published as a positive fact because a report that said nothing leaked could be produced by a run that never tried. No credential reaches an identity, a decision or an audit row. Each step names the JTBD rows it exercises; every other row in the index is reported as not established.",
+  "journey": "tenant-isolation-and-authorization",
+  "steps": [
+    {
+      "id": "compose",
+      "narrative": "The checked-in Production Spine journey composes two applications as two tenant databases under one production-mode spine and drives the whole process in process, asserting each guarantee and each refusal as it goes. Every claim below cites this step, so a journey that does not complete establishes nothing.",
+      "observe": [
+        { "kind": "journey.completed" }
+      ]
+    },
+    {
+      "id": "production-mode",
+      "narrative": "The runtime is in production mode, which is a configured fact rather than an inferred one: the mode is never derived from localhost, an interface address or a missing setting, and the application would have refused to start without an identity verifier and a bound tenant. In this mode an asserted developer actor is not accepted at all. The tenant strategy is ENFORCED, not merely declared: this instance is bound to one tenant, its CRM database comes from that binding and nowhere else, and the configuration that would serve two tenants from one process is refused at startup — which this run performs rather than asserts.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "modeIsProduction", "is": "true" },
+        { "kind": "journey.fact", "fact": "assertedActorsAllowed", "is": "false" },
+        { "kind": "journey.fact", "fact": "crmDataPlaneIsolationEnforced", "is": "true" },
+        { "kind": "journey.fact", "fact": "tenantStorageBoundaryWired", "is": "true" },
+        { "kind": "journey.fact", "fact": "twoTenantsInOneApplicationRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "multipleOrganizationsInOneInstance", "is": "false" },
+        { "kind": "journey.fact", "fact": "sharedDatabaseMultiTenancyClaimed", "is": "false" },
+        { "kind": "journey.fact", "fact": "postgresImplemented", "is": "false" },
+        { "kind": "journey.count", "metric": "permissions", "equals": 11 },
+        { "kind": "journey.count", "metric": "roles", "equals": 5 }
+      ]
+    },
+    {
+      "id": "tenant-a-reads-only-a",
+      "narrative": "Two tenants hold records with the SAME name, so an isolation that worked by name would fail here. Neither tenant can reach the other's record by direct id, and neither collection read returns it, and the reason is structural rather than conditional: they are two database files, chosen by the framework from each instance's tenant binding. The two instances SHARE one control plane, so each can see that the other tenant exists — and neither can act for it, which is the distinction between visibility in the control plane and authority over a data plane. A genuine owner of the other tenant is refused as NOT FOUND rather than forbidden, because confirming that the tenant exists is itself the disclosure.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "crossTenantByIdRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "crossTenantByListRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "bCannotSeeAAtAll", "is": "true" },
+        { "kind": "journey.fact", "fact": "aCannotSeeB", "is": "true" },
+        { "kind": "journey.fact", "fact": "controlPlaneScoped", "is": "true" },
+        { "kind": "journey.fact", "fact": "foreignOwnerNotFoundOnA", "is": "true" },
+        { "kind": "journey.fact", "fact": "dataPlanesSeparate", "is": "true" },
+        { "kind": "journey.fact", "fact": "dataPlaneIsNotControlPlane", "is": "true" },
+        { "kind": "journey.fact", "fact": "controlPlaneShared", "is": "true" },
+        { "kind": "journey.fact", "fact": "tenantDatabaseHasNoMemberships", "is": "true" },
+        { "kind": "journey.count", "metric": "companiesInTenantA", "equals": 1 },
+        { "kind": "journey.count", "metric": "companiesInTenantB", "equals": 1 }
+      ]
+    },
+    {
+      "id": "no-tenant-override",
+      "narrative": "The attack the tenant model exists to stop: a verified user who is a genuine owner — of the other tenant — names this tenant's organization. The verified identity is authoritative and the request does not get to override it, so the refusal is about the organization rather than about the record. A membership in one tenant is worth nothing in the other.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "foreignOwnerRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "membershipDoesNotCross", "is": "true" }
+      ]
+    },
+    {
+      "id": "an-authorized-manager-decides",
+      "narrative": "Authorization is not only refusal. A manager holds approvals.decide and commercial.approve because the role bundle carries them, and the decision is server-side and recorded — never a role string compared in a handler.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "managerMayDecide", "is": "true" },
+        { "kind": "journey.fact", "fact": "managerMayApproveCommercially", "is": "true" }
+      ]
+    },
+    {
+      "id": "an-unauthorized-user-is-refused",
+      "narrative": "The same decision, attempted by a viewer, is refused because the role does not carry the permission — and the viewer keeps the read they are entitled to, so the refusal is scoped rather than a blanket lockout. Unauthenticated and unauthorized stay different answers to different questions: 401 for nothing verified, 403 for somebody verified who may not.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "viewerRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "viewerMayStillRead", "is": "true" },
+        { "kind": "journey.fact", "fact": "unauthenticatedIsFourZeroOne", "is": "true" },
+        { "kind": "journey.fact", "fact": "unauthorizedIsFourZeroThree", "is": "true" }
+      ]
+    },
+    {
+      "id": "escalation-is-attempted-and-refused",
+      "narrative": "Four ways to acquire authority nobody granted, each performed rather than argued away: a viewer promoting themselves, a manager granting a role carrying permissions the manager does not hold, an organization's last administrator demoting themselves into an unadministrable state, and a second bootstrap of an organization that already has members.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "selfGrantRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "managerCannotGrantRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "lastAdministratorProtected", "is": "true" },
+        { "kind": "journey.fact", "fact": "secondBootstrapRefused", "is": "true" },
+        { "kind": "journey.count", "metric": "memberships", "equals": 3 }
+      ]
+    },
+    {
+      "id": "bounded-system-and-refused-assertion",
+      "narrative": "A signature webhook may reconcile, because that is what a webhook is for, and may not approve a discount — bounded authority enumerated rather than a powerful role handed over and hoped about. And a developer assertion, which local mode would accept, is refused outright here: the single line that keeps local mode from being a production bypass.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "webhookMayReconcile", "is": "true" },
+        { "kind": "journey.fact", "fact": "webhookOverreachRefused", "is": "true" },
+        { "kind": "journey.fact", "fact": "assertedRefusedInProduction", "is": "true" }
+      ]
+    },
+    {
+      "id": "no-credential-anywhere",
+      "narrative": "An identity is constructed carrying a token in its claims. The identity keeps a fingerprint of those claims and nothing else, and the token appears in no identity, no decision and no audit row. The framework holds no credential because it authenticates nobody, and this step is what makes that a checked fact rather than a design intention.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "noCredentialStored", "is": "true" },
+        { "kind": "journey.fact", "fact": "credentialStoredAnywhere", "is": "false" },
+        { "kind": "journey.fact", "fact": "identityProviderContacted", "is": "false" },
+        { "kind": "journey.count", "metric": "auditEvents", "atLeast": 3 }
+      ]
+    },
+    {
+      "id": "what-this-is-not",
+      "narrative": "The omissions, published as positive facts rather than left unsaid. Shared-database row-level tenancy is not claimed and not implemented: isolation here is one database per tenant and one tenant per instance, and PostgreSQL does not exist. Nothing is scheduled and nothing is backed up, because no scheduler and no backup exist. And production readiness is not claimed at all, because PostgreSQL, durable jobs, secrets, backups and deployment are absent.",
+      "observe": [
+        { "kind": "journey.fact", "fact": "sharedDatabaseTenancyClaimed", "is": "false" },
+        { "kind": "journey.fact", "fact": "productionReadinessClaimed", "is": "false" },
+        { "kind": "journey.fact", "fact": "anythingScheduled", "is": "false" },
+        { "kind": "journey.fact", "fact": "anythingBackedUp", "is": "false" }
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "job": "JTBD-15",
+      "steps": ["compose", "production-mode", "tenant-a-reads-only-a", "no-tenant-override", "an-authorized-manager-decides", "an-unauthorized-user-is-refused", "escalation-is-attempted-and-refused"],
+      "note": "the row is recorded as not supported and this run is what begins to move it. What it shows is real team and tenant permission enforcement: verified identity, organizations and memberships, eleven bounded permissions in five role bundles, a server-authoritative decision recorded in audit and trace, two separately composed tenant applications that cannot reach each other, and escalation attempts that are refused rather than assumed impossible. What it does NOT show, and what keeps the row short of validated: the framework authenticates nobody, so there is no login, session, password or credential anywhere — a deployment adapter must supply verified identity, and no real identity provider is contacted in this run. And tenancy is enforced by BINDING rather than by filtering: one instance serves one tenant, its CRM database comes from that binding, and a configuration naming two tenants is refused at startup. What that does NOT give you is shared-database row-level tenancy, cross-tenant reporting, or more than one organization per deployed instance — none of which is claimed, and the first of which is a later slice. PostgreSQL, durable jobs, secrets and backups remain absent, so this supports a controlled pilot of one organization per instance and nothing broader."
+    },
+    {
+      "job": "JTBD-AX-06",
+      "steps": ["escalation-is-attempted-and-refused", "bounded-system-and-refused-assertion", "no-credential-anywhere", "what-this-is-not"],
+      "note": "unavailable capability reported honestly, as positive facts rather than as silence. The run publishes that shared-database tenancy is not claimed, that no identity provider was contacted, that no credential is stored, that nothing was scheduled or backed up, and that production readiness is not claimed — and each safety fact is earned by attempting the forbidden operation, because a refusal a run could earn by never trying is worthless."
+    }
+  ]
+}

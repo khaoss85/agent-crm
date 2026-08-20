@@ -5,7 +5,7 @@
     {
       "slug": "can-an-agent-approve-a-deal-or-discount",
       "question": "Can a coding agent approve a deal or a discount on my behalf?",
-      "answer": "No. Commercial policy is deterministic code rather than a model's judgement — a renewal at or above the threshold stops and waits for a named human (C-03) — and a test asserts the refusal, so the boundary is a property of the system rather than a promise in a README (C-04). The same refusal holds where the money is: an agent actor calling quote.approve is rejected with status 403 and code HUMAN_APPROVAL_REQUIRED, and only a human user actor can decide (C-21). The scope is exactly this: the actor is asserted, not authenticated — there is no auth, tenancy or RBAC, and an actor header is not identity (L-01) — so it holds a boundary against an honest agent, not against an attacker with network access, and the threshold policy is proven on the built-in renewal object with a single value threshold.",
+      "answer": "No. Commercial policy is deterministic code rather than a model's judgement — a renewal at or above the threshold stops and waits for a named human (C-03) — and a test asserts the refusal, so the boundary is a property of the system rather than a promise in a README (C-04). The same refusal holds where the money is: an agent actor calling quote.approve is rejected with status 403 and code HUMAN_APPROVAL_REQUIRED, and only a human user actor can decide (C-21). The scope is exactly this: the actor is asserted, not authenticated in local-development mode — no authentication ships, and there an actor header is not identity (L-01) — so it holds a boundary against an honest agent, not against an attacker with network access, and the threshold policy is proven on the built-in renewal object with a single value threshold.",
       "claims": [
         "C-03",
         "C-04",
@@ -14,12 +14,12 @@
       "limitations": [
         "L-01"
       ],
-      "snippet": "No. A discount or a renewal at the threshold stops and waits for a named human. The actor is asserted, not authenticated: no auth, tenancy or RBAC."
+      "snippet": "No. A discount or a renewal at the threshold stops and waits for a named human. The actor is asserted, not authenticated: no authentication ships."
     },
     {
       "slug": "can-i-run-this-in-production",
       "question": "Can I deploy this and let my team log into it?",
-      "answer": "No. There is no authentication, tenancy or RBAC; the HTTP server is local-development-only and an actor header is an assertion rather than an identity, so it must not be exposed to a network (L-01). Persistence is Node's built-in SQLite adapter — PostgreSQL is on the Production Spine track and is not implemented (L-02). Even the fully composed starter application runs entirely locally against SQLite with no authentication (C-22), and there is no hosted CRM, free tier or account to sign up to (L-07).",
+      "answer": "No. The framework authenticates nobody and ships no verifier, so a deployment must supply one; in local-development mode an actor header is an assertion rather than an identity, and that server must not be exposed to a network (L-01). Persistence is Node's built-in SQLite adapter — PostgreSQL is on the Production Spine track and is not implemented (L-02). Even the fully composed starter application runs entirely locally against SQLite with no authentication (C-22), and there is no hosted CRM, free tier or account to sign up to (L-07).",
       "claims": [
         "C-22"
       ],
@@ -28,7 +28,7 @@
         "L-02",
         "L-07"
       ],
-      "snippet": "No. No authentication, tenancy or RBAC, the server is local-development-only and an actor header is not an identity. SQLite only, nothing to sign up to."
+      "snippet": "No. No authentication ships, and in local-development mode an actor header is not an identity. SQLite only, nothing to sign up to."
     },
     {
       "slug": "can-an-agent-add-a-custom-crm-object",
@@ -91,7 +91,7 @@
     {
       "slug": "does-every-change-leave-an-audit-trail",
       "question": "Does every change leave an audit trail and a trace?",
-      "answer": "Yes. Every mutation goes through a module service or a named workflow, and leaves an audit event and a step-level trace behind it (C-16). That routing is also what makes the approval refusal enforceable rather than advisory: a test asserts that an agent cannot make the human's decision (C-04). What the audit is not: it records what the process did under an asserted actor, so it is not a tamper-evident or externally attestable log and it is not a compliance control — there is no authentication, tenancy or RBAC behind the actor it records (L-01).",
+      "answer": "Yes. Every mutation goes through a module service or a named workflow, and leaves an audit event and a step-level trace behind it (C-16). That routing is also what makes the approval refusal enforceable rather than advisory: a test asserts that an agent cannot make the human's decision (C-04). What the audit is not: it records what the process did under an asserted actor, so it is not a tamper-evident or externally attestable log and it is not a compliance control — no authentication ships behind the actor it records, so that actor is only as trustworthy as the verifier a deployment supplies (L-01).",
       "claims": [
         "C-16",
         "C-04"
@@ -99,12 +99,12 @@
       "limitations": [
         "L-01"
       ],
-      "snippet": "Yes — every mutation leaves an audit event and a step-level trace. It is not tamper-evident, not externally attestable, and no authentication sits behind it."
+      "snippet": "Yes — every mutation leaves an audit event and a step-level trace. It is not tamper-evident, not externally attestable, and no authentication ships behind it."
     },
     {
       "slug": "can-i-put-real-customer-data-in-it",
       "question": "Can I put real customer data in it?",
-      "answer": "No. A CRM is a personal-data system by definition, and this one has no authentication, no tenancy, no export and no erasure path, so a data-subject access or deletion request cannot be serviced with it; the data-governance track is designed and unimplemented (L-09). There is also no import, export, dedupe, merge, bulk edit, saved views or global search (L-06), and the server is local-development-only with an actor header that is an assertion rather than an identity (L-01). The one thing that does hold today: lead scoring is deterministic and versioned, every score carrying the fingerprint of the model version that produced it, rather than a model's judgement about a person (C-07).",
+      "answer": "No. A CRM is a personal-data system by definition, and this one ships no authentication, and has no export and no erasure path, so a data-subject access or deletion request cannot be serviced with it; the data-governance track is designed and unimplemented (L-09). There is also no import, export, dedupe, merge, bulk edit, saved views or global search (L-06), and the server is local-development-only with an actor header that is an assertion rather than an identity (L-01). The one thing that does hold today: lead scoring is deterministic and versioned, every score carrying the fingerprint of the model version that produced it, rather than a model's judgement about a person (C-07).",
       "claims": [
         "C-07"
       ],
@@ -113,7 +113,7 @@
         "L-06",
         "L-01"
       ],
-      "snippet": "No. No authentication, no tenancy, no export and no erasure path, so a deletion request cannot be serviced. No import, dedupe, merge or search either."
+      "snippet": "No. No authentication ships, and there is no export and no erasure path, so a deletion request cannot be serviced. No import, dedupe, merge or search either."
     },
     {
       "slug": "how-does-quoting-and-discount-approval-work",

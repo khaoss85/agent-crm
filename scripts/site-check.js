@@ -268,7 +268,7 @@ for (const path of authored) {
 // ---------------------------------------------------------------- 5. overclaim guard
 
 const overclaims = [
-  { pattern: /\bproduction[-\s]ready\b/i, why: 'there is no authentication, tenancy or RBAC (L-01)' },
+  { pattern: /\bproduction[-\s]ready\b/i, why: 'there is no authentication ships, and a deployment must supply the verifier (L-01)' },
   { pattern: /\benterprise[-\s]grade\b/i, why: 'unfalsifiable, and the production spine does not exist' },
   { pattern: /\b(soc\s?2|iso\s?27001|hipaa|gdpr[-\s]compliant)\b/i, why: 'no compliance posture exists or has been assessed' },
   { pattern: /\bbank[-\s]grade\b/i, why: 'unfalsifiable' },

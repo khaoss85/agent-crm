@@ -30,7 +30,7 @@ async function api(path, options = {}) {
 
 // Request client for generated-module views. A declared identity for audit —
 // NOT authentication; a local caller can set any actor. The Admin is
-// local-development-only until auth/tenancy/RBAC exist.
+// local-development-only until a deployment supplies an identity verifier.
 const moduleClient = {
   async request(path, options = {}) {
     const response = await fetch(path, {
@@ -270,6 +270,7 @@ import { createPipelineBoard } from './admin-pipeline.js';
 import { createQuoteView } from './admin-quotes.js';
 import { createWorkView } from './admin-work.js';
 import { createCustomerDataView } from './admin-customer-data.js';
+import { createSpineView } from './admin-spine.js';
 import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
 
 const dashboardView = document.querySelector('#view-dashboard');
@@ -320,6 +321,16 @@ const customerDataView = createCustomerDataView({
   navigate: (hash) => { window.location.hash = hash; },
 });
 
+// Production Spine (ADR-038): verified identity, the tenant, memberships and
+// what this build cannot promise. Always available — an application with no
+// spine composed still renders the section, saying exactly that, because a
+// missing security screen reads as "fine" and it is not.
+const spineView = createSpineView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+});
+
 async function populateNav() {
   try {
     const schema = await moduleClient.request('/api/schema');
@@ -365,6 +376,15 @@ async function populateNav() {
       link.textContent = 'Customer data';
       generatedNav.appendChild(link);
     }
+    // The spine link is unconditional: whether or not a spine is composed is
+    // exactly the thing an operator needs to be able to look up.
+    {
+      const link = document.createElement('a');
+      link.setAttribute('href', '#/spine');
+      link.setAttribute('data-nav', 'spine');
+      link.textContent = 'Identity & access';
+      generatedNav.appendChild(link);
+    }
     // Pipeline boards (ADR-014): one nav link per registered pipeline, from
     // the same schema payload, canonical names only.
     if (schema?.pipelineContract === 1 && Array.isArray(schema.pipelines)) {
@@ -396,6 +416,7 @@ async function route() {
       ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
       ((target.view === 'customer-data' || target.view === 'customer-profile') && link.getAttribute('href') === '#/customer-data')
+      || (target.view === 'spine' && link.getAttribute('href') === '#/spine')
     );
     link.classList.toggle('active', active);
   }
@@ -418,6 +439,7 @@ async function route() {
     else if (target.view === 'pipeline') await pipelineBoard.renderBoard(target.pipelineName);
     else if (target.view === 'quotes') await quoteView.renderQuoteList();
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
+    else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') await customerDataView.render();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();

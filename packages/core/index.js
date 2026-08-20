@@ -59,7 +59,15 @@ export { writeTrace } from './src/action-runtime.js';
 // rolls its own drifts from the evidence beside it, and a package that bounds
 // an id the kernel does not bound can merge two people into one row. Generic:
 // nothing here knows about any package.
-export { normalizeActor, SYSTEM_ACTOR } from './src/actor.js';
+export {
+  normalizeActor,
+  requireActor,
+  trustedSystemActor,
+  stripServerControlledKeys,
+  SERVER_CONTROLLED_KEYS,
+  SYSTEM_ACTOR,
+  ANONYMOUS_ACTOR,
+} from './src/actor.js';
 
 // ---- identity normalization (ADR-013's own rules, published) ----
 // These two already lived in core, because the core adapters match records
@@ -166,3 +174,53 @@ export {
   validateImplementationEvidence,
   implementationEvidenceVocabulary,
 } from './src/implementation-evidence.js';
+
+// ---- Production Spine v1 (ADR-038): identity, mode, authorization, tenancy ----
+// The framework does not authenticate anybody — a deployment adapter does, and
+// hands back a bounded, verified identity context. What the framework owns is
+// everything after that: the contract, the tenant, the membership, the
+// decision, the evidence, and a boundary that fails closed.
+export {
+  IDENTITY_CONTRACT,
+  IDENTITY_KINDS,
+  IDENTITY_METHODS,
+  MAX_IDENTITY_FIELD,
+  ANONYMOUS_IDENTITY,
+  defineIdentity,
+  identityString,
+  identityEvidence,
+  actorFromIdentity,
+  claimsFingerprint,
+} from './src/identity.js';
+
+export { RUNTIME_MODES, MODE_ENV, resolveRuntimeMode } from './src/runtime-mode.js';
+
+export {
+  PERMISSIONS,
+  ROLES,
+  ROLE_BUNDLES,
+  SYSTEM_PERMISSIONS,
+  ROLE_BEARING_KINDS,
+  authorizationFingerprint,
+  assertPermissionKey,
+  decideAuthorization,
+  requireAuthorization,
+} from './src/authorization.js';
+
+export { createSpineStore, LOCAL_ORGANIZATION_SLUG } from './src/spine-store.js';
+
+export {
+  TENANT_STORAGE_CONTRACT,
+  TENANT_STRATEGY,
+  TENANT_LIMITATIONS,
+  assertTenantId,
+  createTenantStorage,
+  bindTenantStorage,
+} from './src/tenant-storage.js';
+
+export {
+  TENANT_BINDING_CONTRACT,
+  resolveTenantBinding,
+  assertBindAddress,
+  assertBoundOrganization,
+} from './src/tenant-binding.js';

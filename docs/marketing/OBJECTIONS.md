@@ -64,9 +64,9 @@ vanished tomorrow, your generated application would still run and still enforce 
 
 ### 6. "Can I deploy this?"
 
-No. There is no authentication, no tenancy and no RBAC, and an actor header is not an identity
+No. No authentication ships, and in local-development mode an actor header is not an identity
 (`L-01`). The framework reports this itself — `npm run crm -- app inspect --json` returns
-`productionPosture: "local development only…"`. Do not expose the HTTP API to a network. This is
+`productionPosture: "not a readiness claim: the framework authenticates nobody…"`. Do not expose the HTTP API to a network without supplying a verifier. This is
 the single biggest reason not to adopt it yet, and it is why there is no deploy button, no
 hosted demo and no template-gallery listing: those all assert deployability.
 

@@ -82,7 +82,7 @@ const LIMITATIONS = Object.freeze([
   ['DATABASE_NOT_INSPECTED', 'no database is opened. Nothing here says which migrations have been applied to any database, or whether its rows are consistent with the current schema'],
   ['PROVIDER_HEALTH_UNKNOWN', 'no network call is made. A configured provider may be unreachable, unauthorised or returning nonsense, and this command would not know'],
   ['SECRETS_NOT_INSPECTED', 'no environment variable or file content is read for secrets. The hygiene check asks git which paths are tracked; it never opens them'],
-  ['PRODUCTION_READINESS_NOT_ASSESSED', 'there is no auth, tenancy or RBAC in this framework, so no report from it can be a production-readiness statement'],
+  ['PRODUCTION_READINESS_NOT_ASSESSED', 'this framework ships no authentication, so no report from it can be a production-readiness statement'],
   ['PACKAGE_CONFORMANCE_NOT_RUN', 'packages are checked for the source-boundary rule only. Full conformance means composing and booting each package, which is `crm package test <path>` and is deliberately not run here'],
   ['DISCOVERY_IS_BY_CONVENTION', 'Solution Plans, skills and documentation are found in documented locations only. Something kept elsewhere is not seen, and its absence from this report is not a statement that it is fine'],
   ['UNCOMPOSED_PACKAGES_NOT_CLASSIFIED', 'the packages graded here are the ones the application actually composed, located through the composition file. A directory under packages/ that the composition does not reference is not classified at all: telling kernel code from an unreferenced domain package would mean executing it, and guessing produced a false failure once already. Customer packages under examples/custom-packages are advisory only'],

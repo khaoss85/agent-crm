@@ -140,6 +140,17 @@ export async function runRecordAction(params) {
   const targetModule = modules.get(module); // throws NotFoundError if unknown
   const service = targetModule.service;
 
+  // Production Spine v1 (ADR-038). Authorization happens HERE — before input
+  // validation, before the prepare phase, before a transaction is opened and
+  // before any provider is contacted. A refusal must cost the caller nothing
+  // and must reveal nothing about the record they were not allowed to touch.
+  //
+  // The runtime asks; it never decides. The permission comes from the action's
+  // own declaration, and the decision comes from the spine.
+  const authorization = params.spine
+    ? authorizeRecordAction(params, definition)
+    : null;
+
   const validatedInput = validateActionInput(definition.input ?? [], input);
 
   // External-operation actions (ADR-017) need TWO local write transactions
@@ -264,7 +275,24 @@ export async function runRecordAction(params) {
       runId,
       workflowName: `${module}.${action}`,
       status: failure ? 'failed' : 'completed',
-      input: { recordId, input: validatedInput, actor: safeActor(actor) },
+      input: {
+        recordId,
+        input: validatedInput,
+        actor: safeActor(actor),
+        // The decision that let this run, so the trace answers "by what
+        // authority" rather than only "who claimed to be whom".
+        ...(authorization
+          ? {
+            authorization: {
+              permission: authorization.permission,
+              organizationId: authorization.organizationId,
+              subject: authorization.subject,
+              kind: authorization.kind,
+              role: authorization.role,
+            },
+          }
+          : {}),
+      },
       output: failure ? null : result,
       error: failure ? failure.message : null,
       startedAt,
@@ -425,6 +453,28 @@ export function sanitizeJsonSafe(value, path = 'value', seen = new Set()) {
   } finally {
     seen.delete(value);
   }
+}
+
+/**
+ * Authorize one record action against the composed spine.
+ *
+ * `requiredPermission` on the action definition is the contractual declaration;
+ * an action that declares nothing requires the spine's default, which is
+ * `records.write` — every record action is a mutation, so a `viewer` runs none
+ * of them.
+ *
+ * @param {any} params @param {any} definition
+ */
+function authorizeRecordAction(params, definition) {
+  const { spine, actor } = params;
+  const identity = params.identity ?? spine.identityFor({ identity: params.identity, actor });
+  const organizationId = params.organizationId
+    ?? identity?.organizationId
+    ?? null;
+  const permission = typeof definition.requiredPermission === 'string'
+    ? definition.requiredPermission
+    : spine.defaultActionPermission;
+  return spine.authorize({ identity, organizationId, permission });
 }
 
 /** @param {unknown} actor */

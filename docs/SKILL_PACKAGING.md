@@ -210,7 +210,7 @@ only signal deciding whether a skill triggers at the right moment, and
   Codex — and a file written for a third by guessing at its conventions would
   look supported and silently never load
   (`docs/AGENT_HARNESS_COMPATIBILITY.md`).
-- **Portability is not authorization.** None of this adds auth, tenancy or RBAC,
+- **Portability is not authorization.** None of this adds authentication,
   and a skill that runs in a stranger's project runs with that user's full
   authority. `crm app inspect` imports the project's composition, which executes
   it: that is isolation, not a sandbox (`PACKAGE_SOURCE_TRUSTED`).
