@@ -655,3 +655,55 @@ test('a configured verifier is honoured in local mode too, and a failed verifica
   assert.equal(assertedBody.identity.kind, 'asserted-local');
   assert.notEqual(assertedBody.identity.kind, 'verified-user', 'a failed verification is never upgraded');
 });
+
+test('the SDK preserves 401, 403 and 200 — and holds no credential of its own', async (t) => {
+  // Before this, the SDK could only send the legacy actor assertion, so every
+  // call against a production-mode server came back 401 and the distinction
+  // C11 requires could not even be exercised.
+  const { AccordoClient } = await import('../packages/sdk/src/index.js');
+  const app = createAccordoApp({
+    dbPath: ':memory:',
+    spine: { ...PROD, identityVerifier: ({ headers }) => {
+      const subject = headers['x-verified-subject'];
+      if (typeof subject !== 'string' || subject === '') throw new Error('unverified');
+      return {
+        kind: 'verified-user', subject, issuer: 'https://issuer.test',
+        method: 'oidc-id-token', organizationId: headers['x-verified-org'],
+      };
+    } },
+  });
+  const server = createHttpServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { await new Promise((r) => server.close(r)); app.close(); });
+
+  const org = app.spine.organizations.create({ slug: 'tenant-a', name: 'A' });
+  app.spine.memberships.bootstrapOwner({ organizationId: org.id, subject: 'alice' });
+  app.spine.memberships.grant({
+    organizationId: org.id, subject: 'vic', role: 'viewer', reason: 'read only',
+    identity: verified('alice', org.id), mode: app.spine.mode,
+  });
+
+  const call = async (headers) => {
+    try {
+      const body = await new AccordoClient({ baseUrl, headers }).request('/api/spine/memberships');
+      return { status: 200, items: body.items.length };
+    } catch (error) {
+      return { status: error.status, code: error.code };
+    }
+  };
+
+  assert.deepEqual(await call({}), { status: 401, code: 'UNAUTHENTICATED' });
+  assert.deepEqual(
+    await call({ 'x-verified-subject': 'vic', 'x-verified-org': org.id }),
+    { status: 403, code: 'FORBIDDEN' },
+    'authenticated-but-unauthorized is a different answer from unauthenticated',
+  );
+  assert.deepEqual(await call({ 'x-verified-subject': 'alice', 'x-verified-org': org.id }), { status: 200, items: 2 });
+
+  // The client forwards what it is handed and keeps nothing: no default
+  // credential, and no way for one to be stored on it.
+  const client = new AccordoClient({ baseUrl });
+  assert.deepEqual(client.headers, {});
+  assert.equal(Object.isFrozen(client.headers), true, 'a caller cannot mutate them after construction');
+});
