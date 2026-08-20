@@ -146,20 +146,23 @@ npm run repo:truth -- --check   # fail when the repository and the facts disagre
 | the measured commit is an ancestor of `HEAD` | `git merge-base --is-ancestor`; object existence is not provenance (ADR-027) | `TRUTH_MEASUREMENT_NOT_ANCESTOR` |
 | an authority that cannot be read stops the run | no fact is defaulted, and two authorities that disagree publish neither answer | `TRUTH_AUTHORITY_UNAVAILABLE`, `TRUTH_AUTHORITIES_CONTRADICT` |
 
-**In a feature PR.** Run `npm run repo:truth -- --check` when the PR changes a
-product boundary, a rail, a package's contract, the spine, or any sentence in a
-bound document that states what the framework does or does not do. If a fact
-moved, run `npm run repo:truth` and commit the regenerated document in the same
-PR — a regenerated fact and a stale sentence citing it fail together, which is
-the point.
+**In a feature PR.** `npm run repo:truth -- --check` runs on every push and every
+pull request, as its own step in the `public-claims` CI job. Run it locally when
+the PR changes a product boundary, a rail, a package's contract, the spine, or
+any sentence in a bound document that states what the framework does or does not
+do. If a fact moved, run `npm run repo:truth` and commit the regenerated document
+in the same PR — a regenerated fact and a stale sentence citing it fail together,
+which is the point.
 
 The boundaries, which are as much of the gate as the rules:
 
-- **It is not in `npm run verify` or `npm run gtm:check` in v1.** Its measurement
-  checks need full git history; the `public-claims` job has `fetch-depth: 0` and
-  the `verify` job deliberately does not. The history-free half is covered by
-  `verify` through `tests/repository-truth-contract.test.js`, which asserts the
-  refusal rather than skipping when history is absent.
+- **It runs in `public-claims`, not in `verify`.** Its measurement checks need
+  full git history; `public-claims` is checked out with `fetch-depth: 0` and the
+  `verify` job deliberately is not. It is a separate step rather than a member of
+  `npm run gtm:check`, because `gtm:check` is also run locally in a clone that may
+  be shallow. The history-free half is covered by `verify` too, through
+  `tests/repository-truth-contract.test.js`, which asserts the refusal rather than
+  skipping when history is absent.
 - **It is not an Accordo rail and not a product command.** Nothing is added to
   the surface budget, no Skill names it, and it never leaves this repository.
 - **It reads no prose and writes none.** A fact id constrains what a bound

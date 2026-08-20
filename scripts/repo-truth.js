@@ -136,6 +136,12 @@ export const TRUTH_LIMITATIONS = Object.freeze([
     + 'produce the sentence'],
   ['EDITIONS_NOT_BOUND',
     'docs/editions/** is deliberately outside the bound surface set in v1'],
+  ['NUMERIC_CLAIMS_NOT_BOUND',
+    'no fact any document cites is a count. The only count-shaped facts here are the measurement ones, and '
+    + 'MEASUREMENT_FACTS_ARE_GENERATED_BUT_NOT_CITED keeps those out of every document — so every number in a '
+    + 'bound sentence (test counts, and the module, package, resource, action, policy and provider counts in '
+    + 'site/assets/llms.txt and README.md) is outside this contract. A citation standing next to a number binds '
+    + 'the sentence, never the number'],
   ['CODE_VOCABULARY_INCLUDES_COMMENTS',
     'the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as '
     + 'declared. Narrowing it to executable identifiers would need a parser per file type and would refuse '

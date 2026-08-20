@@ -3358,3 +3358,60 @@ sentence that carries none is not checked, and this contract cannot discover
 which sentences ought to have one. Every one of these is published in the
 document's own `limitations[]`, by code, so a reader acts on the boundary rather
 than discovering it.
+
+#### Amendment 1 — the gate shipped unwired, and three rules had holes (review findings)
+
+The paragraph above — "It is **standalone in v1** … Promoting `repo:truth` into
+`gtm:check` is v2 work and needs the job given full history first" — described a
+gate that ran **nowhere**. No CI job invoked `repo:truth -- --check`; the whole
+contract, citations and machine-code vocabulary included, was enforced only by
+whoever remembered to type the command. That reproduces the failure this ADR
+opens with: both recorded instances were found by a person and not by a gate,
+which is only an argument if a gate exists. The stated blocker did not exist
+either — `gtm:check` runs in exactly one job, `public-claims`, and that job is
+already checked out with `fetch-depth: 0`, as the same paragraph says two
+sentences earlier.
+
+`repo:truth -- --check` now runs as its own step in `public-claims`, on every
+push and every pull request. A separate step rather than a member of `gtm:check`,
+because `gtm:check` is also run locally in a clone that may be shallow; folding
+the two together is the v2 question. It costs about half a second, and it was
+confirmed green on a simulated pull-request merge commit as well as on the branch
+tip.
+
+Three rules were narrower than they read, and are fixed with the mutation that
+must fail each one:
+
+- **Angle brackets hid any machine code.** `findUnknownCodes` stripped
+  `<[A-Z][A-Z0-9_]*>` from every line before looking, so
+  `<TENANT_ISOLATION_NOT_ENFORCED>` passed `--check` in `README.md` and in
+  `site/assets/llms.txt`, where angle brackets render literally to the agent
+  reading it. That disarmed the one lexical rule this ADR keeps — the rule
+  written because that exact code survived its own fix — and broke
+  `RETIRED_CODES`'s stated promise to hold "wherever the mention appears". The
+  exemption bought nothing: `ERROR_CODE`, the only metavariable any bound surface
+  uses, is declared in source and was already in the harvested vocabulary, which
+  is why the test that claimed to prove the exemption passed with the strip
+  removed. The strip is gone; the exemptions are the vocabulary and repository
+  basenames, and nothing else.
+- **The JSON citation grammar was wider than the one published.** Any quoted
+  `word=word` on any line of a bound JSON file was read as a citation, so
+  `"note": "mode=production"` in `site/claims.json` produced `TRUTH_FACT_UNKNOWN`
+  for a string that was never one. The parser now reads `facts` arrays out of the
+  parsed JSON, which is what §6.1 and `docs/REPOSITORY_TRUTH.md` always said.
+- **The stale message blamed the wrong thing.** A comment-only edit to an
+  authority source moves `sourceSha` and nothing else, and the run correctly
+  failed — reporting "the evidence, the authority list or a limitation did",
+  naming three things that had not moved. In a contract about documents that
+  state what is no longer true, its own diagnostic may not.
+
+Two published inventories disagreed with their contents and are corrected:
+`docs/REPOSITORY_TRUTH.md` listed ten of the eleven `limitations[]` codes,
+dropping `CODE_VOCABULARY_INCLUDES_COMMENTS`, and `README.md`'s "Where it stops"
+claimed "Every boundary below carries a machine-checked citation" over twelve
+bullets of which three carry none. A twelfth limitation,
+`NUMERIC_CLAIMS_NOT_BOUND`, is added: no fact in this contract is a count that
+any document cites, so every number in a bound sentence — test counts, module,
+package, resource and action counts — is outside it, and a reader should not
+infer otherwise from a citation standing next to one. A test now asserts that the
+document's codes and the explainer's table are the same set.

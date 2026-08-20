@@ -220,6 +220,24 @@ test('every fact obeys the closed vocabularies, and every authority is declared'
   }
   const ids = document.facts.map((fact) => fact.id);
   assert.deepEqual(ids, [...ids].sort(), 'facts are not sorted by id');
+  assert.equal(new Set(ids).size, ids.length, 'two facts share one id, so a citation would resolve to whichever won');
+});
+
+test('the explainer publishes every limitation the document does', async () => {
+  // v1 shipped eleven codes in `limitations[]` and ten rows in the table, and
+  // the PR that shipped it said "all eleven boundaries are published". A
+  // contract whose own published inventory disagrees with its contents is the
+  // failure it exists to catch, one level up.
+  const { document } = await buildTruthDocument({ rootDir: repoRoot });
+  const explainer = readFileSync(join(repoRoot, 'docs/REPOSITORY_TRUTH.md'), 'utf8');
+  const rows = new Set(
+    [...explainer.matchAll(/^\| `([A-Z][A-Z0-9_]+)` \|/gm)].map((match) => match[1]),
+  );
+  assert.deepEqual(
+    document.limitations.map((limitation) => limitation.code).sort(),
+    [...rows].sort(),
+    'docs/REPOSITORY_TRUTH.md and limitations[] publish different sets of codes',
+  );
 });
 
 test('the document carries no timestamp, no secret and no absolute path', async () => {

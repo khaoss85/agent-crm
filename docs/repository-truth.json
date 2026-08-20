@@ -658,9 +658,13 @@
       "message": "docs/editions/** is deliberately outside the bound surface set in v1"
     },
     {
+      "code": "NUMERIC_CLAIMS_NOT_BOUND",
+      "message": "no fact any document cites is a count. The only count-shaped facts here are the measurement ones, and MEASUREMENT_FACTS_ARE_GENERATED_BUT_NOT_CITED keeps those out of every document — so every number in a bound sentence (test counts, and the module, package, resource, action, policy and provider counts in site/assets/llms.txt and README.md) is outside this contract. A citation standing next to a number binds the sentence, never the number"
+    },
+    {
       "code": "CODE_VOCABULARY_INCLUDES_COMMENTS",
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "cf37ff8bc6c689ab20e8ef12df766e51a2466ab583ca75a6a61ca21fe31d1810"
+  "fingerprint": "b42b2115a6d0e753c28a75a7fcf0390632cf3ae222b35c5d09160f96193d058b"
 }

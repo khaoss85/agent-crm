@@ -224,14 +224,24 @@ Published in the document's own `limitations[]`, by code:
 | `CITATIONS_ARE_OPT_IN` | a sentence with no citation is not checked, and this contract cannot discover which sentences ought to have one |
 | `WORDING_IS_NOT_GENERATED` | no prose is written or rewritten; a fact constrains what a bound sentence may assert, it does not produce the sentence |
 | `EDITIONS_NOT_BOUND` | `docs/editions/**` is outside the bound set in v1 |
+| `NUMERIC_CLAIMS_NOT_BOUND` | no fact any document cites is a count, so every number in a bound sentence — test counts, and the module, package, resource, action, policy and provider counts in `site/assets/llms.txt` and `README.md` — is outside this contract. A citation next to a number binds the sentence, never the number |
+| `CODE_VOCABULARY_INCLUDES_COMMENTS` | the vocabulary is harvested lexically, so a code named only in a source comment counts as declared. `RETIRED_CODES` closes the case that matters: a code this repository deliberately removed is subtracted wherever it is mentioned |
 
 ## Where it runs, and where it deliberately does not
 
-`repo:truth` is **standalone in v1**. It is not in `npm run verify` and not in
-`npm run gtm:check`, for one measured reason: its measurement checks need full git
-history, `gtm:check`'s `public-claims` CI job has `fetch-depth: 0` but the `verify`
-job does not, and wiring a fail-closed history check into a shallow job would turn a
-truth gate into a flake.
+`repo:truth -- --check` runs on every push and every pull request, as its own step in
+the **`public-claims`** CI job. That is the one job checked out with `fetch-depth: 0`,
+and the measurement provenance checks need full git history — which is also why it is
+**not** in `npm run verify`, deliberately left at `fetch-depth: 1`, where a
+fail-closed history check would be a flake rather than a gate.
+
+It is a separate step rather than a member of `npm run gtm:check`, because
+`gtm:check` is also run locally, in a clone that may be shallow.
+
+v1 wired it into nothing at all and asked a person to run it "when the PR changes a
+product boundary". That reproduced the failure this contract exists to close: both
+instances in the record were found by a person and not by a gate, which is only a
+complaint if a gate exists.
 
 The deterministic, git-free half **is** covered by `verify`:
 `tests/repository-truth-contract.test.js` runs inside `npm test` and asserts the
@@ -242,8 +252,9 @@ available it asserts the measurement facts too; where it is not, it asserts the
 to prove it, because a test that quietly stops testing in CI is the same class of
 failure this contract exists to close.
 
-Promoting `repo:truth` into `gtm:check` is v2 work, and it needs the CI job to be
-given full history first.
+Folding `repo:truth` into `npm run gtm:check` itself — so one command name covers
+both — is v2 work, and it needs `gtm:check` to stop being something a developer runs
+in a shallow clone.
 
 ## The measured ledger is visibly stale, and that is the design
 

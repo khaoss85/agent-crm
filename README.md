@@ -171,11 +171,15 @@ Read this before evaluating anything above. `docs/benchmarks/CRM_JTBD_MATRIX.md`
 CRM job with a conservative status vocabulary in which *not supported* is the default and
 evidence is required to leave it.
 
-Every boundary below carries a machine-checked citation into
+Most boundaries below carry a machine-checked citation into
 [`docs/repository-truth.json`](docs/repository-truth.json), the generated fact document
 (`repositoryTruthContract: 1`, ADR-039). The citations are HTML comments — invisible when this
-page renders, load-bearing when `npm run repo:truth -- --check` runs. A sentence that survives
-the code it describes fails that check.
+page renders, load-bearing when `npm run repo:truth -- --check` runs on every push. A cited
+sentence that survives the code it describes fails that check. Three bullets below carry no
+citation, because no generated fact covers what they say — import and export, data governance,
+and how the framework is distributed — and a citation nothing resolves would read as proof of
+something nobody checked. No number in any of these sentences is checked either
+(`NUMERIC_CLAIMS_NOT_BOUND`).
 
 - **No authentication ships: the framework authenticates nobody.** Production Spine v1
   (ADR-038) added verified identity, organizations and memberships, server-authoritative
