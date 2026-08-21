@@ -42,7 +42,8 @@
     "bench:tools:freeze": "node benchmarks/tool-selection/run.js freeze",
     "characterize:intelligence": "node scripts/characterize-intelligence.mjs",
     "characterize:commercial": "node scripts/characterize-commercial.mjs",
-    "repo:truth": "node scripts/repo-truth.js"
+    "repo:truth": "node scripts/repo-truth.js",
+    "jtbd:check": "node scripts/jtbd-gate.js"
   },
   "keywords": [
     "crm",

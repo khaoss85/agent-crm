@@ -7,12 +7,14 @@ data/*.sqlite-shm
 data/*.sqlite-wal
 # Test-coverage output, at the repository ROOT only. Anchored deliberately:
 # unanchored, `coverage/` matches at any depth, and it silently swallowed
-# `docs/jtbd/coverage/` — `git add -A` skipped the directory without a word and
-# published a tree missing a file `docs/jtbd/AGENTS.md` cites by name.
+# `docs/jtbd/coverage/` — `git add -A` skipped the directory without a word,
+# so the catalogue was published missing the status crosswalk that
+# `docs/jtbd/AGENTS.md` already told readers to open. Found twice, independently.
 /coverage/
 .DS_Store
 *.log
 .tmp/
+__pycache__/
 
 # Built site output — regenerate with `npm run site:build`
 site/dist/

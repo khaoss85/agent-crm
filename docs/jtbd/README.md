@@ -14,6 +14,18 @@ This directory is a desired-state requirements corpus, not a claim that Accordo 
 
 No decompression/materialization step is required.
 
+## The three layers
+
+The desired catalogue, coverage overlay, and roadmap ownership overlay are separate contracts:
+
+| Layer | Where | Answers |
+|---|---|---|
+| desired | `catalog/` | what somebody wants a CRM to do |
+| coverage | `coverage/coverage.overlay.jsonl` | what executable evidence proves |
+| ownership | `roadmap/roadmap.overlay.jsonl` | which pillar and milestone own the gap |
+
+`scripts/jtbd-gate.js` enforces that coverage can only originate in evidence-backed assessments; roadmap assignment cannot promote coverage.
+
 ## Tools, and what does not exist
 
 Present and working: `tools/verify_catalog.py` (validates the corpus against
@@ -41,5 +53,5 @@ absent tools inline.
 2. Pin and record the target repository SHA.
 3. Read root `AGENTS.md`, `docs/QUALITY_GATES.md`, this directory's `AGENTS.md`, and `coverage/STATUS_CROSSWALK.md`.
 4. Use `query_catalog.py` to select the relevant JTBD slice.
-5. Bind every positive status to executable repository evidence and state the residual limitation.
+5. Bind every positive status to executable repository evidence and state the residual limitation in `coverage/assessments.json`.
 6. Only after coverage is assessed, derive the roadmap from demonstrated gaps.

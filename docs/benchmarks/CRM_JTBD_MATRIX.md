@@ -10,6 +10,15 @@ Status legend:
 
 Every row: actor · trigger · desired outcome · required CRM primitives · required framework capabilities · acceptance scenario · status · evidence · manual interventions.
 
+**Which desired job is each row a claim about?** These rows are Accordo-primitive-shaped and
+predate the desired-state catalogue in `docs/jtbd/`.
+`docs/jtbd/coverage/matrix_crosswalk.json` maps every row here — including the fifteen Cloud
+rows declared in prose below — onto canonical catalogue ids, and
+`node scripts/jtbd-gate.js` refuses a non-default row that cites neither an id nor a written
+reason why none exists. The narrative, the counts per disposition and the four declared
+exceptions are in `docs/jtbd/coverage/MATRIX_CROSSWALK.md`. **A canonical id is not a status**:
+the catalogue is desired state, and citing one of its jobs says nothing about support.
+
 **No row here is a generated fact, and none ever will be** (ADR-039,
 `JTBD_ROWS_NOT_ENCODED`). A status is moved by a person reading merged tests
 (`docs/QUALITY_GATES.md` §3), and a generator that owned these values would be

@@ -3,9 +3,10 @@
 Input JTBD ID: `<ACC-JTBD-...>`  
 Target repository/SHA: `<...>`
 
-1. Load the exact record from `catalog/jtbd.jsonl` (`python tools/query_catalog.py --id <JTBD_ID> --json`).
-2. Load linked core/supporting capabilities.
-3. Read current coverage and evidence.
+1. Load the exact record: `python docs/jtbd/tools/query_catalog.py --id <ACC-JTBD-...> --json`.
+2. Load linked core/supporting capabilities from `docs/jtbd/catalog/capabilities.json`.
+3. Read current coverage, evidence and owner from the same query's `coverage` and `owner`
+   blocks — they are the overlays, not the catalogue's own status field.
 4. Produce a vertical specification with:
    - problem and outcome;
    - actors, access scope and threat model;

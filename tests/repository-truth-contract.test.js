@@ -165,6 +165,21 @@ function frameworkFixture(t) {
   mkdirSync(join(root, 'tests'), { recursive: true });
   writeFileSync(join(root, 'tests', 'placeholder.test.js'), '// placeholder\n');
   mkdirSync(join(root, 'site'), { recursive: true });
+  // A stand-in JTBD portfolio. `jtbd.portfolio` is a source authority, and an unreadable
+  // source authority refuses the whole document — correctly, and that is what a fixture
+  // missing these files was doing. Copying the real 4.6 MB catalogue into every fixture would
+  // make this file minutes slower for no extra coverage: what a fixture has to exercise is
+  // that the counts are *counted*, not what they count to here.
+  for (const directory of ['docs/jtbd/catalog', 'docs/jtbd/coverage', 'docs/jtbd/roadmap']) {
+    mkdirSync(join(root, directory), { recursive: true });
+  }
+  writeFileSync(join(root, 'docs/jtbd/catalog/jtbd.jsonl'),
+    `${JSON.stringify({ jtbd_id: 'ACC-JTBD-FIXTURE-001' })}\n`);
+  writeFileSync(join(root, 'docs/jtbd/coverage/coverage.overlay.jsonl'),
+    `${JSON.stringify({ jtbdId: 'ACC-JTBD-FIXTURE-001', coverageStatus: 'not supported', evidence: [] })}\n`);
+  writeFileSync(join(root, 'docs/jtbd/roadmap/roadmap.overlay.jsonl'),
+    `${JSON.stringify({ jtbdId: 'ACC-JTBD-FIXTURE-001', ownerStatus: 'unassigned' })}\n`);
+  writeFileSync(join(root, 'docs/jtbd/coverage/matrix_crosswalk.json'), `${JSON.stringify({ rows: [] })}\n`);
 
   return {
     root,
