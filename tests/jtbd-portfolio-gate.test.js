@@ -202,6 +202,30 @@ test('refuses a crosswalk that has drifted from the matrix it copies', () => {
   assert.ok(codes(problems).has('JTBD_CROSSWALK_STATUS_DRIFT'));
 });
 
+test('requires every matrix row to have exactly one crosswalk disposition', () => {
+  const crosswalk = clone(world.crosswalk);
+  crosswalk.rows = crosswalk.rows.filter((entry) => entry.matrixId !== 'JTBD-DS-02');
+  assert.ok(codes(checkWorld({ ...world, crosswalk }).problems).has('JTBD_CROSSWALK_UNCITED'));
+
+  const duplicated = clone(world.crosswalk);
+  duplicated.rows.push(clone(duplicated.rows[0]));
+  assert.ok(codes(checkWorld({ ...world, crosswalk: duplicated }).problems).has('JTBD_CROSSWALK_ID_UNKNOWN'));
+});
+
+test('refuses a crosswalk row absent from the matrix', () => {
+  const matrixText = world.matrixText.replace(/^\|\s*JTBD-DS-02\s*\|.*$/m, '');
+  assert.ok(codes(checkWorld({ ...world, matrixText }).problems).has('JTBD_CROSSWALK_ID_UNKNOWN'));
+});
+
+test('preserves missing-overlay input failures', () => {
+  const problems = checkWorld({
+    ...world,
+    coverageText: null,
+    problems: [...world.problems, { code: 'JTBD_INPUT_UNAVAILABLE', message: 'coverage overlay absent' }],
+  }).problems;
+  assert.ok(codes(problems).has('JTBD_INPUT_UNAVAILABLE'));
+});
+
 test('refuses an unclassified artefact', () => {
   const classification = clone(world.classification);
   delete classification.artefacts['docs/jtbd/coverage/coverage.overlay.jsonl'];

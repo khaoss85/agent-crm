@@ -36,3 +36,7 @@ site/.render-check/
 
 # Deterministic Vercel Function corpus, assembled during the build.
 packages/docs-mcp/runtime-corpus/
+
+# Python bytecode — never tracked. A tools/ import during verification generates it.
+__pycache__/
+*.pyc

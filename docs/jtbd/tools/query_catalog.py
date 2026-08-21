@@ -38,6 +38,14 @@ ROADMAP = ROOT / "roadmap" / "roadmap.overlay.jsonl"
 PRIVATE_FIELDS = ("roadmap", "competitive_benchmark")
 
 
+def stream_records(path: Path):
+    """Yield JSON objects one line at a time without materialising the corpus."""
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                yield json.loads(line)
+
+
 def load_overlay(path: Path) -> dict[str, dict]:
     """Read one overlay into an id-keyed dict, streaming, or return {} if absent."""
     if not path.exists():
@@ -58,7 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Slice the Accordo JTBD portfolio (catalogue + coverage + roadmap overlays).",
     )
     catalog = parser.add_argument_group("catalogue filters")
-    catalog.add_argument("--persona", help="persona id or role name")
+    catalog.add_argument("--persona", help="persona id")
+    catalog.add_argument("--role", help="exact role name")
     catalog.add_argument("--capability", help="a capability id in core or supporting")
     catalog.add_argument("--phase", choices=["ADOPT", "RUN", "OPTIMIZE", "MAINTAIN", "GOVERN", "EVOLVE"])
     catalog.add_argument("--risk", choices=["LOW", "MEDIUM", "HIGH"])
@@ -98,45 +107,42 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     matches: list[dict] = []
-    with CATALOG.open(encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            record = json.loads(line)
-            jtbd_id = record["jtbd_id"]
-            caps = record["capabilities"]["core"] + record["capabilities"]["supporting"]
-            if args.persona and args.persona not in {record["persona_id"], record["role"]}:
-                continue
-            if args.capability and args.capability not in caps:
-                continue
-            if args.phase and args.phase != record["platform_lifecycle"]:
-                continue
-            if args.risk and args.risk != record["risk_and_governance"]["risk_level"]:
-                continue
-            if args.id and args.id != jtbd_id:
-                continue
+    for record in stream_records(CATALOG):
+        jtbd_id = record["jtbd_id"]
+        caps = record["capabilities"]["core"] + record["capabilities"]["supporting"]
+        if args.persona and args.persona != record["persona_id"]:
+            continue
+        if args.role and args.role != record["role"]:
+            continue
+        if args.capability and args.capability not in caps:
+            continue
+        if args.phase and args.phase != record["platform_lifecycle"]:
+            continue
+        if args.risk and args.risk != record["risk_and_governance"]["risk_level"]:
+            continue
+        if args.id and args.id != jtbd_id:
+            continue
 
-            cov = coverage.get(jtbd_id, {})
-            own = roadmap.get(jtbd_id, {})
-            if args.pillar and own.get("pillar") != args.pillar:
-                continue
-            if args.package and own.get("package") != args.package:
-                continue
-            if args.edition and own.get("edition") != args.edition:
-                continue
-            if args.coverage_status and cov.get("coverageStatus") != args.coverage_status:
-                continue
-            if args.roadmap_status and own.get("ownerStatus") != args.roadmap_status:
-                continue
-            if args.milestone and own.get("milestone") != args.milestone:
-                continue
-            if args.dependency and args.dependency not in (own.get("dependencies") or []):
-                continue
+        cov = coverage.get(jtbd_id, {})
+        own = roadmap.get(jtbd_id, {})
+        if args.pillar and own.get("pillar") != args.pillar:
+            continue
+        if args.package and own.get("package") != args.package:
+            continue
+        if args.edition and own.get("edition") != args.edition:
+            continue
+        if args.coverage_status and cov.get("coverageStatus") != args.coverage_status:
+            continue
+        if args.roadmap_status and own.get("ownerStatus") != args.roadmap_status:
+            continue
+        if args.milestone and own.get("milestone") != args.milestone:
+            continue
+        if args.dependency and args.dependency not in (own.get("dependencies") or []):
+            continue
 
-            matches.append(project(record, cov, own))
-            if args.limit and len(matches) >= args.limit:
-                break
-
+        matches.append(project(record, cov, own))
+        if args.limit and len(matches) >= args.limit:
+            break
     if args.count:
         print(len(matches))
         return 0

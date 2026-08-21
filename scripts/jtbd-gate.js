@@ -38,6 +38,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { createReadStream, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -480,7 +481,29 @@ export function checkWorld(world) {
 
   // ── 4. the crosswalk cites real ids and does not drift from the matrix ────
   let unmapped = 0;
+  const matrixIds = new Set([
+    ...[...String(matrixText ?? '').matchAll(/^\|\s*(JTBD-[^|\s]+)\s*\|/gm)].map((match) => match[1]),
+    ...[...String(matrixText ?? '').matchAll(/^#{2,}\s+(JTBD-[^\s—]+)/gm)].map((match) => match[1]),
+  ]);
+  for (const match of String(matrixText ?? '').matchAll(/(?:JTBD-)?([A-Z]+)-(\d+)…(?:JTBD-)?\1-(\d+)/g)) {
+    const [, prefix, start, end] = match;
+    for (let number = Number(start); number <= Number(end); number += 1) {
+      matrixIds.add(`JTBD-${prefix}-${String(number).padStart(start.length, '0')}`);
+    }
+  }
+  const matrixRows = new Map();
+  for (const match of String(matrixText ?? '').matchAll(/^\|\s*(JTBD-[^|\s]+)\s*\|[^|]*\|\s*\*\*(.+?)\*\*\s*\|/gm)) {
+    matrixRows.set(match[1], match[2]);
+  }
+  const crosswalkIds = new Set();
   for (const row of crosswalk.rows) {
+    if (crosswalkIds.has(row.matrixId)) {
+      problems.push({ code: 'JTBD_CROSSWALK_ID_UNKNOWN', message: `${row.matrixId} has more than one crosswalk disposition` });
+    }
+    crosswalkIds.add(row.matrixId);
+    if (!matrixIds.has(row.matrixId)) {
+      problems.push({ code: 'JTBD_CROSSWALK_ID_UNKNOWN', message: `${row.matrixId} exists in the crosswalk but not in ${PATHS.matrix}` });
+    }
     if (!CROSSWALK_DISPOSITIONS.includes(row.disposition)) {
       problems.push({ code: 'JTBD_CROSSWALK_ID_UNKNOWN', message: `${row.matrixId}: disposition "${row.disposition}" is outside the closed set` });
     }
@@ -502,9 +525,15 @@ export function checkWorld(world) {
     // The matrix table rows publish their own status. When the two disagree, the crosswalk
     // has gone stale behind a document that moved — the exact drift ADR-039 was written for,
     // one layer out.
-    const declared = new RegExp(`^\\|\\s*${row.matrixId}\\s*\\|[^|]*\\|\\s*\\*\\*(.+?)\\*\\*\\s*\\|`, 'm').exec(matrixText ?? '');
-    if (declared && declared[1] !== row.matrixStatus) {
-      problems.push({ code: 'JTBD_CROSSWALK_STATUS_DRIFT', message: `${row.matrixId}: the matrix says "${declared[1]}", the crosswalk says "${row.matrixStatus}"` });
+    const declared = matrixRows.get(row.matrixId);
+    if (declared && declared !== row.matrixStatus) {
+      problems.push({ code: 'JTBD_CROSSWALK_STATUS_DRIFT', message: `${row.matrixId}: the matrix says "${declared}", the crosswalk says "${row.matrixStatus}"` });
+    }
+  }
+
+  for (const matrixId of matrixIds) {
+    if (!crosswalkIds.has(matrixId)) {
+      problems.push({ code: 'JTBD_CROSSWALK_UNCITED', message: `${matrixId} exists in the matrix but has no crosswalk disposition` });
     }
   }
 
@@ -566,8 +595,8 @@ export async function loadWorld(rootDir = ROOT) {
     truth,
     classification,
     matrixText: existsSync(join(rootDir, PATHS.matrix)) ? readFileSync(join(rootDir, PATHS.matrix), 'utf8') : '',
-    coverageText: readOverlay(rootDir, PATHS.coverageOverlay, []),
-    roadmapText: readOverlay(rootDir, PATHS.roadmapOverlay, []),
+    coverageText: readOverlay(rootDir, PATHS.coverageOverlay, problems),
+    roadmapText: readOverlay(rootDir, PATHS.roadmapOverlay, problems),
     digests,
     problems,
   };
@@ -581,10 +610,15 @@ async function main() {
     // A deliberate human action: re-stamp what each assessment reads, at HEAD. Kept apart
     // from `--write` so that regenerating an overlay can never bless evidence that moved.
     const doc = JSON.parse(readFileSync(join(ROOT, PATHS.assessments), 'utf8'));
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
     for (const entry of doc.assessments) {
       for (const item of entry.evidence) {
-        item.sha256 = sha256(readFileSync(join(ROOT, item.path), 'utf8'));
+        const dirty = execFileSync('git', ['status', '--porcelain', '--', item.path], { cwd: ROOT, encoding: 'utf8' }).trim();
+        if (dirty) throw new Error(`${item.path} has uncommitted changes; commit it before --reverify`);
+        const committed = execFileSync('git', ['show', `HEAD:${item.path}`], { cwd: ROOT, encoding: 'utf8' });
+        item.sha256 = sha256(committed);
       }
+      entry.verifiedAtSha = head;
     }
     writeFileSync(join(ROOT, PATHS.assessments), `${JSON.stringify(doc, null, 1)}\n`);
     console.log(`re-stamped evidence digests for ${doc.assessments.length} assessments`);
