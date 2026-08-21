@@ -15,53 +15,66 @@ who assumes it was checked.
 
 ---
 
-## 1. The blocking question this manifest cannot answer
+## 1. The site/public gate split — **ruled**
 
-**The site's build inputs are designated private, and its build scripts are
-public.** That is a contradiction, and it must be resolved by a human before
-step 2 runs. It was not visible until the manifest traced generators rather
-than files.
+This section previously asked a blocking question. **A human has now answered
+it**, and the answer is option C below. The reasoning is kept because the
+alternatives are what make the ruling legible, but this is a decision, not an
+open item.
 
-Measured: **7 public scripts read paths classified `MOVE_PRIVATE`** —
+### The governing constraint
+
+> **The OSS repository must never depend on a private file to pass CI.**
+
+Everything else in this section follows from that one sentence. It is also the
+test that retires the contradiction the manifest originally found.
+
+### The contradiction, as measured
+
+**7 public scripts read paths classified `MOVE_PRIVATE`** —
 `scripts/site-build.js` · `scripts/site-check.js` · `scripts/site-pages.js` ·
 `scripts/site-clusters.js` · `scripts/generate-llms.js` ·
-`scripts/distribution-check.js` · `scripts/brand-set.js`.
-
-And `scripts/` **is not classified anywhere in the inventory.** The boundary
-document classifies content and forgets the machinery that reads it.
-
-The consequence is concrete, not theoretical:
+`scripts/distribution-check.js` · `scripts/brand-set.js` — and `scripts/` is
+classified nowhere in the inventory. The boundary document classified content and
+forgot the machinery that reads it.
 
 ```
-npm run gtm:check
+npm run gtm:check          ← a PUBLIC gate
   └── npm run site:check
         └── npm run site:build   ← reads site/templates, site/partials,
-                                    site/shell.html, site/brand.json,
-                                    site/{compare,answers,concepts,glossary,
-                                    tools,capabilities}.json
+                                    site/shell.html and six site/*.json files,
+                                    all classified MOVE_PRIVATE
 ```
 
-`gtm:check` is a **public** gate. If those inputs move private and the scripts
-stay, the public repository cannot run its own gate. If the scripts move too,
-the public repository loses `llms.txt` regeneration — and
-`REPOSITORY_BOUNDARY.md` §5 requires that public claims stay **sourced from the
-OSS repository**, not copied into it.
+### The ruling
 
-### The three options, and the recommendation
+**Public OSS keeps — and remains responsible for verifying:** technical
+documentation · self-host documentation · public API, package and agent
+documentation · `site/claims.json` · `jobs.json` · `llms.txt` /
+`llms-full.txt` · public evidence and limitations · the public high-level
+roadmap · technical and retrieval pages. The public gate keeps: technical docs,
+public current facts, retrieval assets, links, claims and evidence.
+
+**Private `accordo-platform` owns:** the commercial marketing-site source, build
+and deploy · pricing and packaging · GTM strategy · competitor research · launch
+and sales material · private Cloud source. It carries **its own** marketing-site
+build and deploy checks.
+
+### The three options, and why C
 
 | | What moves | What breaks | Verdict |
 |---|---|---|---|
-| **A. Inputs stay public** | only `templates/`, `partials/`, `shell.html`, `styles.css`, `blog/`, `DEPLOYMENT` | nothing public | The private site cannot render without reaching back into the public repo for its content |
-| **B. Everything site moves** | all `site/**` plus all 7 scripts | public `gtm:check`, `site:check`, `llms.txt` regeneration | Violates the "claims stay sourced from OSS" rule |
-| **C. Split by purpose** | presentation and marketing content move; **claims, evidence and llms generation stay** | one script must be split in two | **Recommended** |
+| **A. Inputs stay public** | only presentation | nothing public | The private site cannot render without reaching back into the public repo |
+| **B. Everything site moves** | all `site/**` plus all 7 scripts | public `gtm:check`, `site:check`, `llms.txt` regeneration | **Violates the governing constraint** |
+| **C. Split by purpose** | presentation and marketing content move; **claims, evidence and llms generation stay** | one script splits in two | **Ruled** |
 
-**Why C.** `site-check.js` already does two separable jobs. Rules 1–3 and 6 —
-every claim carries evidence that exists, every claim carries a limitation,
-every public number traces to a measurement this checkout descends from — are
-*technical evidence integrity*, and they are the reason the claims ledger is
-trustworthy. Rules 4–5 — no template hardcodes a brand, no built page
-overclaims — are *marketing-site* checks. The first set belongs to whoever owns
-the framework's honesty; the second belongs to whoever owns the site.
+`site-check.js` already does two separable jobs. Rules 1–3 and 6 — every claim
+carries evidence that exists, every claim carries a limitation, every public
+number traces to a measurement this checkout descends from — are *technical
+evidence integrity*, and they are the reason the claims ledger is trustworthy.
+Rules 4–5 — no template hardcodes a brand, no built page overclaims — are
+*marketing-site* checks. The first set belongs to whoever owns the framework's
+honesty; the second belongs to whoever owns the site.
 
 Under C the public repository keeps `site/claims.json`, `site/jobs.json`,
 `site/assets/llms.txt`, `site/assets/llms-full.txt`, `generate-llms.js`, and a
@@ -72,6 +85,12 @@ deploy configuration, plus rules 4–5 as its own gate.
 **This requires a code change (splitting `site-check.js`) that is out of scope
 for a documentation phase.** It is migration step 0 and it lands in the public
 repository *before* anything moves.
+
+### Until `accordo-platform` exists
+
+Do not delete or move the current site. Do not break any current public check.
+The split is prepared here and executed later — that is the whole purpose of
+this document.
 
 ---
 
@@ -86,9 +105,10 @@ repository *before* anything moves.
    no force-push to the default branch, and secret scanning enabled — the
    private repository is where credentials are most likely to end up, so it
    gets the stricter configuration, not the looser one.
-4. **Decide §1** and record the decision in `REPOSITORY_BOUNDARY.md`.
+4. ~~Decide §1~~ — **done.** The gate split is ruled in §1; nothing further is
+   needed here.
 
-Until 1–4 are done, steps 2 onward do not begin.
+Until 1–3 are done, steps 2 onward do not begin.
 
 ---
 
@@ -171,7 +191,44 @@ History for the private half is a copy with a provenance note naming the public
 commit it was split from — `filter-repo` cannot split a file, and pretending
 otherwise would produce a private history that misrepresents what happened.
 
-### 3.6 What explicitly does not move
+### 3.6 `docs/jtbd/` — `SPLIT_PUBLIC_PRIVATE`
+
+**First, what is actually there.** At `f30d0f7` the directory contains **exactly
+one file: `README.md`**. Verified against the tree, and against all 88 remote
+branches — the catalogue is on none of them.
+
+**That README describes seven files that do not exist**: `MASTER.md`,
+`catalog/jtbd.compact.jsonl`, three files under `prompts/`, and
+`quality_report.md`. It tells agents how to resolve fields between them. This is
+a live instance of exactly the failure `docs/REPOSITORY_TRUTH.md` exists to
+catch — a public document confidently describing artefacts nobody committed —
+and it is recorded here rather than quietly fixed, because the migration plan
+must not assume a catalogue that is missing.
+
+**The classification below is therefore forward-looking.** It governs the
+catalogue *when it lands*. Nothing under `docs/jtbd/` moves today.
+
+| Future subset | Contents | Edition |
+|---|---|---|
+| **Public** | canonical JTBD ids and job wording · public coverage status · public evidence · public limitations · the query and verification schemas and tools contributors and agents need | stays in `accordo` |
+| **Private** | the complete desired portfolio where strategically sensitive · the detailed semantic quality report · gap-to-roadmap analysis · prioritisation · business value · competitive rationale · private milestone ownership · internal spec-generation prompts | `accordo-platform`, `docs/internal/jtbd/` |
+
+Three rules govern the split, and the third is the one that constrains the
+design rather than merely describing it:
+
+1. **The full catalogue has already been public** if and when it is committed.
+   Nothing here rewrites history to pretend otherwise; the boundary protects
+   *future* additions.
+2. **No broken agent instructions.** `README.md` and `AGENTS.md` under
+   `docs/jtbd/` must not, after migration, direct an agent at a private path.
+3. **The public query tool must not require the private catalogue.** A public
+   subset generated from a private source is acceptable **only** if public
+   verification does not thereby depend on private CI or private files — which
+   is the §1 governing constraint applied to this directory. **Prefer a
+   checked-in, independently verifiable public artefact** over a generation step
+   that reaches across the boundary.
+
+### 3.7 What explicitly does not move
 
 `docs/marketing/CORRECTIONS.md` · `docs/benchmarks/URR_PILOT_2026-08-10.md` ·
 the rail-selection panel record dated `2026-08-13` · `docs/transcripts/` ·
@@ -189,9 +246,9 @@ If a future editor believes one of these should move, that is a change to
 Each step states its verification and its rollback. **A step whose verification
 fails is rolled back, not pushed through.**
 
-### Step 0 — resolve §1 and split the site gate *(public repository)*
+### Step 0 — split the site gate per the §1 ruling *(public repository)*
 
-Land the §1 decision. Under option C: split `scripts/site-check.js` into a
+Implement the §1 ruling (option C): split `scripts/site-check.js` into a
 public `claims-check` (rules 1–3, 6) and a site-only check (rules 4–5); point
 `gtm:check` at the public half.
 
