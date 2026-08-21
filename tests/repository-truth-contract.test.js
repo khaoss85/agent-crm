@@ -525,6 +525,15 @@ test('a retired-claim declaration excuses a comment, never a published string', 
   assert.equal(findRetiredClaims(`The framework: ${RETIRED_CLAIMS[0]}.\n`).length, 1);
 });
 
+test('a retired claim re-wrapped across a line break is the same claim', () => {
+  // Prose re-wraps. A rule whose whole point is to survive re-typing cannot be
+  // escaped by a newline, so the claim is read over each line and over each line
+  // joined to its successor.
+  const wrapped = 'it once said "no authentication, tenancy\nor RBAC exists" in that report.\n';
+  assert.deepEqual(findRetiredClaims(wrapped), [{ line: 1, claim: RETIRED_CLAIMS[0] }]);
+  assert.deepEqual(findRetiredClaims(`<!-- truth: retired-claim ${RETIRED_CLAIMS[0]} — history -->\n${wrapped}`), []);
+});
+
 test('a quoted word=word that is not in a facts array is prose, not a citation', () => {
   // v1 read the JSON form off any line, so an ordinary string in a bound JSON
   // file became a citation nothing could resolve: adding `"note":

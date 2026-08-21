@@ -1675,14 +1675,33 @@ export function findRetiredClaims(source, { javascript = false } = {}) {
   const text = String(source);
   const declared = new Set([...text.matchAll(RETIRED_CLAIM)].map((match) => normalizeClaimText(match[1])));
   const lines = text.split('\n');
+  const isComment = (line) => {
+    const trimmed = line.trimStart();
+    return trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*');
+  };
   for (let index = 0; index < lines.length; index += 1) {
-    const trimmed = lines[index].trimStart();
-    const excusable = !javascript || trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*');
-    const normalized = normalizeClaimText(lines[index]);
+    // The line, and the line joined to its successor. A prose document re-wraps,
+    // and a claim that fell across a line break would otherwise be a one-keystroke
+    // escape from a rule whose whole job is to survive re-typing. One join covers
+    // every single break; a claim deliberately spread over three lines is beyond
+    // this rule, and POSTURE_PROSE_NOT_GENERATED already says where the boundary is.
+    const next = index + 1 < lines.length ? lines[index + 1] : null;
     for (const claim of RETIRED_CLAIMS) {
       const needle = normalizeClaimText(claim);
-      if (!normalized.includes(needle)) continue;
-      if (excusable && declared.has(needle)) continue;
+      const here = normalizeClaimText(lines[index]).includes(needle);
+      // Each occurrence is reported once. A pair is only consulted when neither
+      // of its lines carries the claim on its own — otherwise the line that does
+      // is reported here, or on the next turn of the loop.
+      let excusable = isComment(lines[index]);
+      if (!here) {
+        if (next === null || normalizeClaimText(next).includes(needle)) continue;
+        if (!normalizeClaimText(`${lines[index]} ${next}`).includes(needle)) continue;
+        excusable = excusable && isComment(next);
+      }
+      // In a `.js` surface the declaration reaches comments only: a file-scoped
+      // escape excused the published `productionPosture` string as readily as the
+      // paragraph explaining it, and the mutation went back to passing.
+      if ((!javascript || excusable) && declared.has(needle)) continue;
       found.push({ line: index + 1, claim });
     }
   }
