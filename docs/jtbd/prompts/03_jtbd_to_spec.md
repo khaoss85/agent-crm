@@ -3,7 +3,7 @@
 Input JTBD ID: `<ACC-JTBD-...>`  
 Target repository/SHA: `<...>`
 
-1. Load the exact record from `data/jtbd.jsonl`.
+1. Load the exact record from `catalog/jtbd.jsonl` (`python tools/query_catalog.py --id <JTBD_ID> --json`).
 2. Load linked core/supporting capabilities.
 3. Read current coverage and evidence.
 4. Produce a vertical specification with:

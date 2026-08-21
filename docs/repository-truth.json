@@ -350,7 +350,7 @@
         "site/claims.json#measuredAgainst.sha"
       ],
       "scope": "measurement",
-      "status": "current",
+      "status": "stale",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
@@ -363,7 +363,7 @@
         "site/claims.json#measuredAgainst.tests"
       ],
       "scope": "measurement",
-      "status": "current",
+      "status": "stale",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
@@ -376,14 +376,14 @@
         "site/claims.json#measuredAgainst.testFiles"
       ],
       "scope": "measurement",
-      "status": "current",
+      "status": "stale",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_tree_current",
-      "value": "true",
+      "value": "false",
       "authority": "measurement.git",
       "evidence": [
         "git rev-parse <sha>:tests versus HEAD:tests",
@@ -672,5 +672,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "cf70e1539909725de6242389e73a3b570eacb6378fea3861862d613817cde8c1"
+  "fingerprint": "7f3d626f797477b7150f1ff5255b2feef1b7b75e333233d5e495f110fb40bab2"
 }
