@@ -172,8 +172,24 @@ when the checker runs. The JavaScript form is applied **only** to a `.js` file i
 the bound set, so `// truth: …` in a fenced example inside a document stays an
 example.
 
+The JavaScript form is read from a line that is **nothing but** that comment, so a
+string literal quoting the grammar stays a string literal — it used to become a
+citation nobody wrote. And a `truth:` directive that is not one of the three legal
+forms is **refused**, not ignored: `// truth: <id> -> <value>` matched no pattern,
+so a typo turned a load-bearing citation off with no signal at all.
+
+The bound set is a frozen list of repository-relative paths, and it is enforced as
+one. A path that is absolute, carries a `..` segment, or reaches its file through a
+symbolic link at **any** component is `TRUTH_SURFACE_UNSAFE` and is refused rather
+than read: a symlink at `packages/cli/src/app-inspect.js` pointed the gate at a file
+outside the repository, and pointed at a citation-free file it dropped that
+surface's citations and left `--check` green. The same check guards every authority
+source, which is imported as well as hashed.
+
 - an id nothing resolves → `TRUTH_FACT_UNKNOWN`
 - a cited value the authority no longer produces → `TRUTH_FACT_VALUE_STALE`
+- a directive no rule reads → `TRUTH_CITATION_MALFORMED`
+- a bound path the filesystem can redirect → `TRUTH_SURFACE_UNSAFE`
 
 A reversed polarity is a value that differs, so it is the same failure — which is the
 point: a document that says `enforced` about something the code now leaves
@@ -222,11 +238,16 @@ the historical falsehood back into `productionPosture` and leaving the citations
 untouched left `repo:truth -- --check` **green** — measured, not reasoned about.
 Two rules close it, and neither reads prose:
 
-- **`RETIRED_CLAIMS`** holds the one recorded false posture verbatim across every
-  bound surface, on exactly the terms `RETIRED_CODES` holds a retired code: a
-  short list, each entry a reviewable edit with an argument attached, and a
+- **`RETIRED_CLAIMS`** holds the one recorded false posture across every bound
+  surface, on exactly the terms `RETIRED_CODES` holds a retired code: a short
+  list, each entry a reviewable edit with an argument attached, and a
   `truth: retired-claim <claim> — why` declaration for the surface that names it
-  as history (this section carries one). `TRUTH_CLAIM_RETIRED`.
+  as history (this section carries one). Matched on folded case and collapsed
+  whitespace, and read across a single line break as well as along a line,
+  because prose re-wraps and a rule that a newline defeats is not a rule. In a
+  `.js` surface the declaration reaches **comment lines only** — file-scoped, it
+  excused the published string as readily as the paragraph explaining it.
+  `TRUTH_CLAIM_RETIRED`.
 - **A directive no rule reads is refused.** `// truth: spine.authorization.enforced
   -> enforced` matched no pattern and was silently not a citation, so a typo turned
   a load-bearing citation off with no signal. `TRUTH_CITATION_MALFORMED`.
