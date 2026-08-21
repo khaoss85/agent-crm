@@ -5,10 +5,16 @@ node_modules/
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
-coverage/
+# Test-coverage output, at the repository ROOT only. Anchored deliberately:
+# unanchored, `coverage/` matches at any depth, and it silently swallowed
+# `docs/jtbd/coverage/` — `git add -A` skipped the directory without a word,
+# so the catalogue was published missing the status crosswalk that
+# `docs/jtbd/AGENTS.md` already told readers to open. Found twice, independently.
+/coverage/
 .DS_Store
 *.log
 .tmp/
+__pycache__/
 
 # Built site output — regenerate with `npm run site:build`
 site/dist/
@@ -30,3 +36,7 @@ site/.render-check/
 
 # Deterministic Vercel Function corpus, assembled during the build.
 packages/docs-mcp/runtime-corpus/
+
+# Python bytecode — never tracked. A tools/ import during verification generates it.
+__pycache__/
+*.pyc

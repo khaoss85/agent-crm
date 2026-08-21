@@ -169,6 +169,17 @@ export const TRUTH_LIMITATIONS = Object.freeze([
  * and a glob would make it move when an unrelated file arrived. A missing entry
  * is `TRUTH_AUTHORITY_UNAVAILABLE`, never a defaulted fact.
  */
+/**
+ * The JTBD portfolio's four files, named once and used twice: as the authority's `reads` and
+ * as members of {@link AUTHORITY_SOURCES}, so a change to any of them moves `sourceSha`.
+ */
+export const JTBD_PORTFOLIO_SOURCES = Object.freeze([
+  'docs/jtbd/catalog/jtbd.jsonl',
+  'docs/jtbd/coverage/coverage.overlay.jsonl',
+  'docs/jtbd/coverage/matrix_crosswalk.json',
+  'docs/jtbd/roadmap/roadmap.overlay.jsonl',
+]);
+
 export const AUTHORITY_SOURCES = Object.freeze([
   'packages/core/src/identity.js',
   'packages/core/src/authorization.js',
@@ -190,6 +201,7 @@ export const AUTHORITY_SOURCES = Object.freeze([
   'packages/service/src/index.js',
   'packages/signature/src/index.js',
   'packages/work/src/index.js',
+  ...JTBD_PORTFOLIO_SOURCES,
 ]);
 
 /** The nine checked-in domain packages, and the factory each one exports. */
@@ -585,8 +597,19 @@ export function canonical(value) {
   return JSON.stringify(value ?? null);
 }
 
-/** Every file under a directory, excluding the noise no authority lives in. */
-function walk(directory, out = []) {
+/**
+ * Every file under a directory, excluding the noise no authority lives in.
+ *
+ * `coverage` is excluded **only at the repository root**, where it is a test-coverage report
+ * directory. Excluding it by name at any depth also hid `docs/jtbd/coverage/`, so a document
+ * naming `MATRIX_CROSSWALK.md` was told the filename was an undeclared machine code — the
+ * basename exemption is derived from the filesystem precisely so that cannot happen.
+ *
+ * @param {string} directory
+ * @param {string[]} out
+ * @param {string} [rootDir]
+ */
+function walk(directory, out = [], rootDir = directory) {
   let entries;
   try {
     entries = readdirSync(directory);
@@ -594,7 +617,8 @@ function walk(directory, out = []) {
     return out;
   }
   for (const name of entries) {
-    if (name === 'node_modules' || name === '.git' || name === 'dist' || name === 'coverage') continue;
+    if (name === 'node_modules' || name === '.git' || name === 'dist') continue;
+    if (name === 'coverage' && resolve(directory) === resolve(rootDir)) continue;
     const path = join(directory, name);
     let stat;
     try {
@@ -602,7 +626,7 @@ function walk(directory, out = []) {
     } catch {
       continue;
     }
-    if (stat.isDirectory()) walk(path, out);
+    if (stat.isDirectory()) walk(path, out, rootDir);
     else out.push(path);
   }
   return out;
@@ -825,6 +849,23 @@ export async function readAuthorities({ rootDir }) {
     return bundle;
   }
 
+  // ── the JTBD portfolio, counted rather than typed ────────────────────────
+  //
+  // Six **summary** facts, and deliberately not six hundred. ADR-039's
+  // `JTBD_ROWS_NOT_ENCODED` holds that no job status is a fact, and that still holds:
+  // nothing here reads a coverage status and turns it into a value. What is counted is the
+  // shape of the portfolio — how many desired jobs exist, whether the coverage overlay
+  // covers all of them, how many are claimed by no milestone, how many non-default coverage
+  // rows cite no canonical job, and how many positive rows carry no evidence. The last is
+  // the one that matters: it must stay 0, and typing it by hand is exactly how it would stop
+  // being 0 without anything failing.
+  try {
+    bundle.jtbd = readJtbdPortfolio(rootDir);
+  } catch (error) {
+    unavailable(`the JTBD portfolio could not be read: ${/** @type {any} */ (error)?.message ?? error}`);
+    return bundle;
+  }
+
   // ── the benchmark receipt, verified rather than trusted ──────────────────
   bundle.benchmark = readBenchmarkReceipt(rootDir, deferred);
 
@@ -833,6 +874,45 @@ export async function readAuthorities({ rootDir }) {
 
   bundle.deferredProblems = deferred;
   return bundle;
+}
+
+/**
+ * Count the JTBD portfolio's shape, without holding it.
+ *
+ * The catalogue is 4.6 MB of JSONL and the overlays are one row per record. Every read here
+ * splits on newlines and keeps only an id or a status, so nothing ever holds 600 records —
+ * the same discipline `scripts/jtbd-gate.js` and `docs/jtbd/tools/query_catalog.py` are
+ * written to. A missing file throws, and the caller turns that into
+ * `TRUTH_AUTHORITY_UNAVAILABLE`: no count is defaulted from a file that was not there.
+ *
+ * @param {string} rootDir
+ */
+function readJtbdPortfolio(rootDir) {
+  const lines = (rel) => readFileSync(join(rootDir, rel), 'utf8').split('\n').filter((line) => line.trim());
+  const catalogIds = new Set();
+  let records = 0;
+  for (const line of lines('docs/jtbd/catalog/jtbd.jsonl')) {
+    records += 1;
+    const match = /"jtbd_id"\s*:\s*"([^"]+)"/.exec(line);
+    if (match) catalogIds.add(match[1]);
+  }
+  const coverage = lines('docs/jtbd/coverage/coverage.overlay.jsonl').map((line) => JSON.parse(line));
+  const roadmap = lines('docs/jtbd/roadmap/roadmap.overlay.jsonl').map((line) => JSON.parse(line));
+  const crosswalk = JSON.parse(readFileSync(join(rootDir, 'docs/jtbd/coverage/matrix_crosswalk.json'), 'utf8'));
+  const covered = new Set(coverage.map((row) => row.jtbdId));
+  return {
+    records,
+    uniqueIds: catalogIds.size,
+    overlayComplete: covered.size === catalogIds.size
+      && coverage.length === records
+      && roadmap.length === records
+      && [...catalogIds].every((id) => covered.has(id)),
+    unassigned: roadmap.filter((row) => row.ownerStatus === 'unassigned').length,
+    unmapped: crosswalk.rows.filter((row) => row.matrixStatus !== 'not supported' && !row.canonicalJtbdIds.length).length,
+    positiveWithoutEvidence: coverage
+      .filter((row) => row.coverageStatus !== 'not supported')
+      .filter((row) => !Array.isArray(row.evidence) || !row.evidence.length).length,
+  };
 }
 
 /**
@@ -1294,6 +1374,33 @@ export function buildFacts(bundle) {
     });
   }
 
+  // ── the JTBD portfolio, six summary counts ───────────────────────────────
+  if (bundle.jtbd) {
+    const portfolio = bundle.jtbd;
+    /** @type {Array<[string, any, 'count'|undefined, string[]]>} */
+    const jtbdFacts = [
+      ['jtbd.catalog.record_count', portfolio.records, 'count', ['docs/jtbd/catalog/jtbd.jsonl']],
+      ['jtbd.catalog.unique_ids', portfolio.uniqueIds, 'count', ['docs/jtbd/catalog/jtbd.jsonl#jtbd_id']],
+      ['jtbd.coverage.overlay_complete', portfolio.overlayComplete ? 'true' : 'false', undefined,
+        ['docs/jtbd/coverage/coverage.overlay.jsonl', 'docs/jtbd/roadmap/roadmap.overlay.jsonl']],
+      ['jtbd.roadmap.unassigned_count', portfolio.unassigned, 'count', ['docs/jtbd/roadmap/roadmap.overlay.jsonl#ownerStatus']],
+      ['jtbd.crosswalk.unmapped_count', portfolio.unmapped, 'count', ['docs/jtbd/coverage/matrix_crosswalk.json#rows']],
+      ['jtbd.positive_coverage_without_evidence_count', portfolio.positiveWithoutEvidence, 'count',
+        ['docs/jtbd/coverage/coverage.overlay.jsonl#evidence']],
+    ];
+    for (const [id, value, shape, evidence] of jtbdFacts) {
+      add({
+        id,
+        value,
+        shape,
+        authority: 'jtbd.portfolio',
+        evidence,
+        scope: 'repository',
+        limitations: ['JTBD_ROWS_NOT_ENCODED'],
+      });
+    }
+  }
+
   // ── benchmark receipts ───────────────────────────────────────────────────
   if (bundle.benchmark) {
     add({
@@ -1393,6 +1500,7 @@ export function buildFacts(bundle) {
     { id: 'tenant.storage', kind: 'source', reads: ['packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js'] },
     { id: 'reference.composition', kind: 'source', reads: REFERENCE_PACKAGES.map(([, path]) => path).concat(['packages/core/src/package-composition.js']) },
     { id: 'cli.rails', kind: 'source', reads: ['packages/cli/src/commands.js', ...RAILS.map(([, , path]) => path)] },
+    { id: 'jtbd.portfolio', kind: 'source', reads: JTBD_PORTFOLIO_SOURCES },
     { id: 'benchmark.tool_selection', kind: 'receipt', reads: [BENCHMARK_PANEL.aggregate, BENCHMARK_PANEL.protocol] },
     { id: 'measurement.ledger', kind: 'measurement', reads: ['site/claims.json'] },
     { id: 'measurement.git', kind: 'measurement', reads: ['git'] },

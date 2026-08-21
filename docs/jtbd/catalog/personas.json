@@ -1,0 +1,1412 @@
+[
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-EXEC-CRO",
+    "code": "CRO",
+    "role": "Chief Revenue Officer",
+    "group": "Executive & Strategy",
+    "mission": "Massimizzare crescita efficiente e prevedibile coordinando marketing, sales, customer e finance su un unico sistema di decisione.",
+    "key_kpis": [
+      "ARR bookings",
+      "Net Revenue Retention",
+      "Forecast accuracy",
+      "Pipeline coverage",
+      "CAC payback",
+      "Gross margin"
+    ],
+    "key_decisions": [
+      "allocazione budget e capacità",
+      "priorità di segmento e motion",
+      "commit revenue",
+      "eccezioni di pricing e rischio"
+    ],
+    "typical_integrations": [
+      "Data warehouse",
+      "ERP/Finance",
+      "Billing",
+      "Marketing automation",
+      "Sales engagement",
+      "Customer success"
+    ],
+    "default_capability_ids": [
+      "FIN-001",
+      "FIN-005",
+      "AIA-001",
+      "AIA-004",
+      "COL-009"
+    ],
+    "access_scope": "Accesso aggregato cross-funzionale; PII e record-level detail solo per eccezioni autorizzate.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-EXEC-MKT-DIR",
+    "code": "MKT_DIR",
+    "role": "Direttore Marketing / CMO",
+    "group": "Executive & Strategy",
+    "mission": "Generare domanda e crescita misurabili, orchestrando audience, canali, contenuti e lifecycle fino al risultato economico.",
+    "key_kpis": [
+      "Marketing-sourced pipeline",
+      "CAC",
+      "Cost per opportunity",
+      "Incremental revenue",
+      "Conversion rate",
+      "Brand/deliverability health"
+    ],
+    "key_decisions": [
+      "budget e channel mix",
+      "priorità audience",
+      "portfolio campagne",
+      "governance brand e consenso"
+    ],
+    "typical_integrations": [
+      "Ad platforms",
+      "Web analytics",
+      "CMS/DAM",
+      "Email/SMS",
+      "Webinar/Event",
+      "Data warehouse"
+    ],
+    "default_capability_ids": [
+      "MKT-003",
+      "MKT-004",
+      "MKT-015",
+      "MKT-016",
+      "AIA-002"
+    ],
+    "access_scope": "Accesso aggregato cross-funzionale; PII e record-level detail solo per eccezioni autorizzate.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-EXEC-SALES-DIR",
+    "code": "SALES_DIR",
+    "role": "Direttore Vendite / VP Sales",
+    "group": "Executive & Strategy",
+    "mission": "Rendere il motore commerciale prevedibile, produttivo e scalabile, con pipeline di qualità e coaching basato su evidenze.",
+    "key_kpis": [
+      "Bookings",
+      "Quota attainment",
+      "Forecast accuracy",
+      "Win rate",
+      "Sales cycle",
+      "Pipeline coverage"
+    ],
+    "key_decisions": [
+      "coverage e territori",
+      "quote e capacità",
+      "deal strategy",
+      "pricing e approvazioni"
+    ],
+    "typical_integrations": [
+      "Email/Calendar",
+      "Sales engagement",
+      "Telephony",
+      "CPQ",
+      "E-sign",
+      "Partner portal"
+    ],
+    "default_capability_ids": [
+      "SAL-006",
+      "SAL-011",
+      "SAL-012",
+      "SAL-013",
+      "AIA-002"
+    ],
+    "access_scope": "Accesso aggregato cross-funzionale; PII e record-level detail solo per eccezioni autorizzate.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-EXEC-CUST-OPS",
+    "code": "CUST_OPS",
+    "role": "Direttore Customer Operations",
+    "group": "Executive & Strategy",
+    "mission": "Offrire un servizio coerente, proattivo ed efficiente lungo l'intero customer journey, riducendo attriti e costo di gestione.",
+    "key_kpis": [
+      "First contact resolution",
+      "SLA attainment",
+      "CSAT",
+      "Cost to serve",
+      "Escalation rate",
+      "Self-service deflection"
+    ],
+    "key_decisions": [
+      "service model",
+      "capacità e routing",
+      "escalation",
+      "automazione e self-service"
+    ],
+    "typical_integrations": [
+      "Support desk",
+      "Contact center",
+      "Knowledge base",
+      "Product telemetry",
+      "Billing",
+      "Status/incident platform"
+    ],
+    "default_capability_ids": [
+      "CSV-009",
+      "CSV-011",
+      "CSV-012",
+      "CSV-016",
+      "CSV-020"
+    ],
+    "access_scope": "Accesso aggregato cross-funzionale; PII e record-level detail solo per eccezioni autorizzate.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-OPS-REVOPS",
+    "code": "REVOPS",
+    "role": "Revenue Operations Director / Manager",
+    "group": "Revenue Operations",
+    "mission": "Progettare e governare dati, processi, metriche e automazioni che collegano marketing, sales, customer e finance.",
+    "key_kpis": [
+      "Funnel conversion",
+      "Routing SLA",
+      "Forecast reconciliation",
+      "Data quality",
+      "Process cycle time",
+      "Automation success rate"
+    ],
+    "key_decisions": [
+      "source of truth",
+      "process design",
+      "routing/scoring",
+      "release e priorità operative"
+    ],
+    "typical_integrations": [
+      "CRM",
+      "Marketing automation",
+      "Sales engagement",
+      "Customer success",
+      "Billing",
+      "Data warehouse"
+    ],
+    "default_capability_ids": [
+      "AIA-001",
+      "AUT-002",
+      "DAT-009",
+      "SAL-002",
+      "COL-014"
+    ],
+    "access_scope": "Accesso operativo cross-funzionale a schema, processi e record; modifiche di configurazione tramite change control.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-EXEC-CS-DIR",
+    "code": "CS_DIR",
+    "role": "Direttore Customer Success",
+    "group": "Executive & Strategy",
+    "mission": "Massimizzare adozione, valore, retention ed expansion con un modello Customer Success scalabile e predittivo.",
+    "key_kpis": [
+      "Gross retention",
+      "Net revenue retention",
+      "Time to value",
+      "Product adoption",
+      "Renewal forecast accuracy",
+      "Expansion ARR"
+    ],
+    "key_decisions": [
+      "segmentazione e coverage",
+      "health model",
+      "risk/renewal plays",
+      "capacity e portfolio"
+    ],
+    "typical_integrations": [
+      "Product analytics",
+      "Support desk",
+      "Billing",
+      "Learning platform",
+      "Survey/NPS",
+      "Data warehouse"
+    ],
+    "default_capability_ids": [
+      "CSV-002",
+      "CSV-003",
+      "CSV-006",
+      "CSV-007",
+      "CSV-022"
+    ],
+    "access_scope": "Accesso aggregato cross-funzionale; PII e record-level detail solo per eccezioni autorizzate.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-PROD-CRM-PO",
+    "code": "CRM_PO",
+    "role": "CRM/CDP Product Owner",
+    "group": "Product & Platform Operations",
+    "mission": "Trasformare bisogni e JTBD in una piattaforma coerente, adottata, verificabile e progressivamente più agentica.",
+    "key_kpis": [
+      "Outcome adoption",
+      "Time to value",
+      "Release predictability",
+      "Capability coverage",
+      "Defect escape rate",
+      "Roadmap value delivered"
+    ],
+    "key_decisions": [
+      "priorità backlog",
+      "configurazione vs custom",
+      "scope release",
+      "acceptance e rollout"
+    ],
+    "typical_integrations": [
+      "GitHub/CI",
+      "Product analytics",
+      "Support/request intake",
+      "Design system",
+      "Data catalog",
+      "Feature flag platform"
+    ],
+    "default_capability_ids": [
+      "PLT-002",
+      "AUT-013",
+      "COL-012",
+      "AIA-021",
+      "DEV-009"
+    ],
+    "access_scope": "Accesso a configurazioni e telemetry; promozione in produzione solo tramite gate e audit.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-OPS-MKT-OPS",
+    "code": "MKT_OPS",
+    "role": "Marketing Operations & CRM Manager",
+    "group": "Revenue Operations",
+    "mission": "Rendere eseguibili, misurabili e affidabili campagne, lifecycle e handoff attraverso dati e automazioni governate.",
+    "key_kpis": [
+      "Campaign cycle time",
+      "Lead routing SLA",
+      "Data completeness",
+      "Deliverability",
+      "Attribution coverage",
+      "Automation failure rate"
+    ],
+    "key_decisions": [
+      "configurazione campagne",
+      "tassonomie",
+      "consenso e suppression",
+      "release martech"
+    ],
+    "typical_integrations": [
+      "Marketing automation",
+      "CMS/Landing",
+      "Ad platforms",
+      "Web analytics",
+      "Webinar/Event",
+      "CRM"
+    ],
+    "default_capability_ids": [
+      "MKT-003",
+      "MKT-021",
+      "MKT-023",
+      "DAT-019",
+      "AUT-002"
+    ],
+    "access_scope": "Accesso operativo cross-funzionale a schema, processi e record; modifiche di configurazione tramite change control.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-SALES-MGR",
+    "code": "SALES_MGR",
+    "role": "Sales Manager",
+    "group": "Sales Frontline & Management",
+    "mission": "Guidare il team verso quota con priorità chiare, coaching tempestivo e pipeline verificabile.",
+    "key_kpis": [
+      "Team quota attainment",
+      "Forecast accuracy",
+      "Stage conversion",
+      "Lead response SLA",
+      "Sales cycle",
+      "Rep productivity"
+    ],
+    "key_decisions": [
+      "priorità team",
+      "forecast category",
+      "deal coaching",
+      "escalation e approvazioni"
+    ],
+    "typical_integrations": [
+      "Email/Calendar",
+      "Telephony",
+      "Sales engagement",
+      "CPQ",
+      "Conversation intelligence",
+      "Data warehouse"
+    ],
+    "default_capability_ids": [
+      "SAL-006",
+      "SAL-011",
+      "SAL-013",
+      "COL-004",
+      "COL-001"
+    ],
+    "access_scope": "Accesso ai record assegnati e al team; sconti, export e comunicazioni massive soggetti a policy.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-SALES-AE",
+    "code": "AE",
+    "role": "Account Executive",
+    "group": "Sales Frontline & Management",
+    "mission": "Portare opportunità qualificate alla chiusura costruendo valore, consenso del buying committee e un processo d'acquisto controllato.",
+    "key_kpis": [
+      "Win rate",
+      "Bookings",
+      "Sales cycle",
+      "Average deal size",
+      "Next-step adherence",
+      "Forecast accuracy"
+    ],
+    "key_decisions": [
+      "priorità account",
+      "qualificazione",
+      "deal strategy",
+      "proposta e next step"
+    ],
+    "typical_integrations": [
+      "Email/Calendar",
+      "Telephony",
+      "Sales engagement",
+      "CPQ",
+      "E-sign",
+      "Product demo"
+    ],
+    "default_capability_ids": [
+      "SAL-005",
+      "SAL-006",
+      "SAL-009",
+      "SAL-010",
+      "SAL-014"
+    ],
+    "access_scope": "Accesso ai record assegnati e al team; sconti, export e comunicazioni massive soggetti a policy.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-SALES-SDR",
+    "code": "SDR",
+    "role": "SDR / BDR",
+    "group": "Sales Frontline & Management",
+    "mission": "Creare conversazioni qualificate con gli account giusti, nel momento e sul canale appropriato, rispettando policy e ownership.",
+    "key_kpis": [
+      "Qualified meetings",
+      "Reply rate",
+      "Meeting held rate",
+      "Lead response time",
+      "Opportunity acceptance rate",
+      "Touches per meeting"
+    ],
+    "key_decisions": [
+      "priorità prospect",
+      "messaggio e canale",
+      "qualificazione",
+      "handoff"
+    ],
+    "typical_integrations": [
+      "Sales engagement",
+      "Email",
+      "Telephony",
+      "LinkedIn/social",
+      "Calendar",
+      "Data enrichment"
+    ],
+    "default_capability_ids": [
+      "SAL-002",
+      "SAL-004",
+      "SAL-008",
+      "MKT-020",
+      "COL-001"
+    ],
+    "access_scope": "Accesso ai record assegnati e al team; sconti, export e comunicazioni massive soggetti a policy.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-CUST-CVM",
+    "code": "CVM",
+    "role": "Customer Value Manager / CSM",
+    "group": "Customer Success & Service",
+    "mission": "Guidare ogni cliente verso outcome misurabili, adozione, rinnovo ed espansione con interventi proporzionati al rischio.",
+    "key_kpis": [
+      "Time to value",
+      "Health score movement",
+      "Renewal rate",
+      "Expansion ARR",
+      "Product adoption",
+      "Portfolio coverage"
+    ],
+    "key_decisions": [
+      "priorità portfolio",
+      "risk play",
+      "success plan",
+      "renewal ed expansion"
+    ],
+    "typical_integrations": [
+      "Product analytics",
+      "Support desk",
+      "Billing",
+      "Learning platform",
+      "Survey/NPS",
+      "Calendar"
+    ],
+    "default_capability_ids": [
+      "CSV-002",
+      "CSV-004",
+      "CSV-005",
+      "CSV-007",
+      "CSV-022"
+    ],
+    "access_scope": "Accesso ai clienti assegnati, casi e utilizzo necessario all'assistenza; azioni sensibili richiedono verifica.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-SALES-ENABLE",
+    "code": "ENABLE",
+    "role": "Sales Enablement Specialist",
+    "group": "Sales Frontline & Management",
+    "mission": "Ridurre il tempo necessario per diventare efficaci e rendere replicabili i comportamenti che aumentano win rate e qualità.",
+    "key_kpis": [
+      "Ramp time",
+      "Certification rate",
+      "Content usage",
+      "Skill improvement",
+      "Win rate lift",
+      "Playbook adoption"
+    ],
+    "key_decisions": [
+      "curriculum",
+      "contenuti approvati",
+      "coaching priority",
+      "readiness"
+    ],
+    "typical_integrations": [
+      "LMS",
+      "Conversation intelligence",
+      "Content repository",
+      "CRM",
+      "Product analytics",
+      "Knowledge base"
+    ],
+    "default_capability_ids": [
+      "COL-004",
+      "COL-005",
+      "COL-011",
+      "SAL-018",
+      "AIA-012"
+    ],
+    "access_scope": "Accesso ai record assegnati e al team; sconti, export e comunicazioni massive soggetti a policy.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-SVC-AGENT",
+    "code": "SERVICE",
+    "role": "Customer Service Agent",
+    "group": "Customer Success & Service",
+    "mission": "Risolvere richieste rapidamente e correttamente con pieno contesto cliente, rispettando SLA, sicurezza e tono.",
+    "key_kpis": [
+      "First contact resolution",
+      "Average handle time",
+      "CSAT",
+      "SLA attainment",
+      "Reopen rate",
+      "Escalation rate"
+    ],
+    "key_decisions": [
+      "triage",
+      "risposta",
+      "risoluzione standard",
+      "escalation"
+    ],
+    "typical_integrations": [
+      "Support desk",
+      "Contact center",
+      "Knowledge base",
+      "Order/Billing",
+      "Identity verification",
+      "Status page"
+    ],
+    "default_capability_ids": [
+      "CSV-009",
+      "CSV-011",
+      "CSV-012",
+      "CSV-013",
+      "COL-001"
+    ],
+    "access_scope": "Accesso ai clienti assegnati, casi e utilizzo necessario all'assistenza; azioni sensibili richiedono verifica.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-CHANNEL-MGR",
+    "code": "PARTNER",
+    "role": "Partner / Channel Manager",
+    "group": "Partner & Ecosystem",
+    "mission": "Sviluppare un ecosistema produttivo e governato, aumentando pipeline e ricavi sourced o influenced dai partner.",
+    "key_kpis": [
+      "Partner-sourced pipeline",
+      "Activated partners",
+      "Deal registration SLA",
+      "Partner win rate",
+      "MDF ROI",
+      "Partner retention"
+    ],
+    "key_decisions": [
+      "tier e investimento",
+      "deal registration",
+      "co-sell priority",
+      "incentivi"
+    ],
+    "typical_integrations": [
+      "Partner portal",
+      "PRM",
+      "CRM",
+      "Marketing automation",
+      "LMS",
+      "Finance"
+    ],
+    "default_capability_ids": [
+      "SAL-021",
+      "FIN-012",
+      "COL-011",
+      "MKT-024",
+      "DAT-007"
+    ],
+    "access_scope": "Accesso segregato per partner, territorio e deal registration; nessuna visibilità cross-partner non autorizzata.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-MKT-PERF",
+    "code": "PERF_MKT",
+    "role": "Performance Marketing Specialist",
+    "group": "Marketing & Growth",
+    "mission": "Investire il budget media dove genera crescita incrementale e clienti di valore, con misurazione closed-loop.",
+    "key_kpis": [
+      "Incremental ROAS",
+      "CAC",
+      "Cost per opportunity",
+      "Qualified pipeline",
+      "Conversion rate",
+      "Budget pacing"
+    ],
+    "key_decisions": [
+      "budget e bid",
+      "audience",
+      "creative test",
+      "pause e riallocazioni"
+    ],
+    "typical_integrations": [
+      "Ad platforms",
+      "Web analytics",
+      "Tag manager",
+      "CRM",
+      "Offline conversion API",
+      "Data warehouse"
+    ],
+    "default_capability_ids": [
+      "MKT-007",
+      "MKT-013",
+      "MKT-015",
+      "MKT-016",
+      "AIA-006"
+    ],
+    "access_scope": "Accesso a audience e performance con consenso e purpose limitation; PII minimizzata nell'analisi.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-MKT-CONTENT",
+    "code": "CONTENT",
+    "role": "Content Marketing Manager",
+    "group": "Marketing & Growth",
+    "mission": "Produrre e distribuire contenuti autorevoli e riusabili che rispondono ai bisogni del mercato e influenzano pipeline e adozione.",
+    "key_kpis": [
+      "Content-influenced pipeline",
+      "Organic demand",
+      "Engagement quality",
+      "Time to publish",
+      "Content reuse",
+      "Freshness coverage"
+    ],
+    "key_decisions": [
+      "topic e formato",
+      "brief e fonti",
+      "approvazione",
+      "distribuzione e refresh"
+    ],
+    "typical_integrations": [
+      "CMS",
+      "DAM",
+      "SEO tools",
+      "CRM",
+      "Marketing automation",
+      "Knowledge base"
+    ],
+    "default_capability_ids": [
+      "MKT-009",
+      "MKT-010",
+      "MKT-017",
+      "MKT-025",
+      "AIA-011"
+    ],
+    "access_scope": "Accesso a audience e performance con consenso e purpose limitation; PII minimizzata nell'analisi.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-MKT-CAMPAIGN",
+    "code": "CAMPAIGN",
+    "role": "Campaign & Lifecycle Manager",
+    "group": "Marketing & Growth",
+    "mission": "Portare campagne e journey dal brief al risultato con segmentazione corretta, orchestration affidabile e learning continuo.",
+    "key_kpis": [
+      "Campaign conversion",
+      "Incremental lift",
+      "Pipeline/revenue",
+      "Delivery success",
+      "Cycle time",
+      "Unsubscribe/pressure"
+    ],
+    "key_decisions": [
+      "audience e trigger",
+      "journey design",
+      "launch/pause",
+      "test e rollout"
+    ],
+    "typical_integrations": [
+      "Marketing automation",
+      "Email/SMS",
+      "Ad platforms",
+      "CMS",
+      "CRM",
+      "Product events"
+    ],
+    "default_capability_ids": [
+      "MKT-001",
+      "MKT-003",
+      "MKT-005",
+      "MKT-021",
+      "AUT-002"
+    ],
+    "access_scope": "Accesso a audience e performance con consenso e purpose limitation; PII minimizzata nell'analisi.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-GROWTH-CRO",
+    "code": "CRO_SPEC",
+    "role": "CRO / Conversion Optimization Specialist",
+    "group": "Marketing & Growth",
+    "mission": "Aumentare la conversione sostenibile rimuovendo frizioni e validando causalmente le modifiche all'esperienza.",
+    "key_kpis": [
+      "Conversion lift",
+      "Experiment velocity",
+      "Revenue per visitor",
+      "Form completion",
+      "Guardrail metrics",
+      "Learning reuse"
+    ],
+    "key_decisions": [
+      "ipotesi",
+      "design esperimento",
+      "rollout",
+      "personalizzazione"
+    ],
+    "typical_integrations": [
+      "Web analytics",
+      "Experimentation platform",
+      "Session replay",
+      "CMS",
+      "CRM",
+      "Product analytics"
+    ],
+    "default_capability_ids": [
+      "MKT-013",
+      "MKT-022",
+      "AIA-005",
+      "AIA-003",
+      "DAT-005"
+    ],
+    "access_scope": "Accesso a audience e performance con consenso e purpose limitation; PII minimizzata nell'analisi.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-MKT-ABM",
+    "code": "ABM",
+    "role": "ABM Manager",
+    "group": "Marketing & Growth",
+    "mission": "Creare engagement coordinato e rilevante nei target account, collegando intent, buying committee, seller action e pipeline.",
+    "key_kpis": [
+      "Engaged target accounts",
+      "Account progression",
+      "ABM pipeline",
+      "Target account win rate",
+      "Buying committee coverage",
+      "Cost per engaged account"
+    ],
+    "key_decisions": [
+      "account tier",
+      "play e personalizzazione",
+      "seller alert",
+      "budget per account"
+    ],
+    "typical_integrations": [
+      "Intent data",
+      "Ad platforms",
+      "Sales engagement",
+      "CRM",
+      "Content platform",
+      "Data enrichment"
+    ],
+    "default_capability_ids": [
+      "MKT-018",
+      "DAT-016",
+      "DAT-022",
+      "SAL-019",
+      "MKT-011"
+    ],
+    "access_scope": "Accesso a audience e performance con consenso e purpose limitation; PII minimizzata nell'analisi.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-MKT-PMM",
+    "code": "PMM",
+    "role": "Product Marketing Manager",
+    "group": "Marketing & Growth",
+    "mission": "Tradurre mercato, clienti e prodotto in positioning, messaggi, prove e lanci che aumentano adozione e win rate.",
+    "key_kpis": [
+      "Launch adoption",
+      "Win rate",
+      "Message resonance",
+      "Sales readiness",
+      "Feature adoption",
+      "Proof asset usage"
+    ],
+    "key_decisions": [
+      "positioning",
+      "messaging",
+      "launch scope",
+      "competitive response"
+    ],
+    "typical_integrations": [
+      "Product analytics",
+      "CRM",
+      "Survey/research",
+      "Content repository",
+      "Conversation intelligence",
+      "Roadmap tool"
+    ],
+    "default_capability_ids": [
+      "SAL-020",
+      "MKT-009",
+      "COL-005",
+      "CSV-021",
+      "AIA-013"
+    ],
+    "access_scope": "Accesso a audience e performance con consenso e purpose limitation; PII minimizzata nell'analisi.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-DATA-ENG",
+    "code": "DATA_ENG",
+    "role": "Data Engineering Manager",
+    "group": "Data, AI & Engineering",
+    "mission": "Fornire dati cliente affidabili, freschi, tracciabili e sostenibili per analytics, workflow e agenti.",
+    "key_kpis": [
+      "Data freshness SLA",
+      "Pipeline success rate",
+      "Data quality score",
+      "Cost per processed event",
+      "Mean time to recover",
+      "Schema compatibility"
+    ],
+    "key_decisions": [
+      "architettura",
+      "data contract",
+      "SLA",
+      "priorità incidenti e investimenti"
+    ],
+    "typical_integrations": [
+      "Warehouse/Lakehouse",
+      "Event bus",
+      "dbt/Transformation",
+      "Source systems",
+      "Reverse ETL",
+      "Observability"
+    ],
+    "default_capability_ids": [
+      "DAT-017",
+      "DAT-018",
+      "DEV-016",
+      "DEV-017",
+      "DEV-021"
+    ],
+    "access_scope": "Accesso tecnico per ambiente; dati produzione mascherati per default e privilegi elevati just-in-time.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-DATA-ANALYTICS",
+    "code": "ANALYTICS",
+    "role": "Data Analytics / BI Expert",
+    "group": "Data, AI & Engineering",
+    "mission": "Trasformare dati certificati in decisioni comprensibili, ripetibili e tempestive per ogni funzione revenue.",
+    "key_kpis": [
+      "Time to insight",
+      "Dashboard adoption",
+      "Metric reconciliation",
+      "Query performance",
+      "Alert precision",
+      "Decision follow-through"
+    ],
+    "key_decisions": [
+      "metric definition",
+      "analysis method",
+      "certification",
+      "narrative and recommendation"
+    ],
+    "typical_integrations": [
+      "Data warehouse",
+      "BI",
+      "Semantic layer",
+      "CRM",
+      "Product analytics",
+      "Experimentation"
+    ],
+    "default_capability_ids": [
+      "AIA-001",
+      "AIA-002",
+      "AIA-003",
+      "AIA-007",
+      "DAT-012"
+    ],
+    "access_scope": "Accesso tecnico per ambiente; dati produzione mascherati per default e privilegi elevati just-in-time.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-DATA-SCI",
+    "code": "DATA_SCI",
+    "role": "Data Scientist / ML Engineer",
+    "group": "Data, AI & Engineering",
+    "mission": "Costruire modelli che migliorano decisioni e azioni CRM, misurando utility reale, rischio e drift.",
+    "key_kpis": [
+      "Decision utility",
+      "Model calibration",
+      "Lift/uplift",
+      "Drift",
+      "Inference latency",
+      "False action rate"
+    ],
+    "key_decisions": [
+      "problem framing",
+      "model/feature choice",
+      "deployment gate",
+      "retraining e rollback"
+    ],
+    "typical_integrations": [
+      "Feature store",
+      "Model registry",
+      "Warehouse",
+      "CRM workflows",
+      "Experimentation",
+      "Observability"
+    ],
+    "default_capability_ids": [
+      "AIA-004",
+      "AIA-009",
+      "AIA-010",
+      "AIA-021",
+      "AIA-024"
+    ],
+    "access_scope": "Accesso tecnico per ambiente; dati produzione mascherati per default e privilegi elevati just-in-time.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-PLAT-ADMIN",
+    "code": "CRM_ADMIN",
+    "role": "CRM/CDP Administrator",
+    "group": "Product & Platform Operations",
+    "mission": "Mantenere Accordo configurato, sicuro, affidabile e facile da usare, senza introdurre bypass o debito operativo.",
+    "key_kpis": [
+      "Change success rate",
+      "Admin request cycle time",
+      "Data quality",
+      "Automation failure rate",
+      "Adoption",
+      "Permission incidents"
+    ],
+    "key_decisions": [
+      "configurazione",
+      "accesso",
+      "release",
+      "troubleshooting e rollback"
+    ],
+    "typical_integrations": [
+      "IAM/SSO",
+      "Data sources",
+      "Email/Calendar",
+      "Marketing automation",
+      "Support",
+      "Observability"
+    ],
+    "default_capability_ids": [
+      "PLT-016",
+      "PLT-006",
+      "PLT-002",
+      "AUT-013",
+      "GOV-006"
+    ],
+    "access_scope": "Accesso a configurazioni e telemetry; promozione in produzione solo tramite gate e audit.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-DEV-INTEGRATION",
+    "code": "INTEGRATION_DEV",
+    "role": "Integration / API Developer",
+    "group": "Data, AI & Engineering",
+    "mission": "Collegare Accordo in modo sicuro e affidabile a sistemi, eventi e strumenti esterni, preservando contratti e consistenza.",
+    "key_kpis": [
+      "Sync success rate",
+      "Data loss incidents",
+      "Integration latency",
+      "MTTR",
+      "API error rate",
+      "Backward compatibility"
+    ],
+    "key_decisions": [
+      "contract e mapping",
+      "sync strategy",
+      "failure handling",
+      "versioning e rollout"
+    ],
+    "typical_integrations": [
+      "External APIs",
+      "Event bus",
+      "Webhook providers",
+      "CI/CD",
+      "Secret manager",
+      "Observability"
+    ],
+    "default_capability_ids": [
+      "DEV-001",
+      "DEV-002",
+      "DEV-007",
+      "AUT-011",
+      "DEV-010"
+    ],
+    "access_scope": "Accesso tecnico per ambiente; dati produzione mascherati per default e privilegi elevati just-in-time.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-AI-AGENT-ENG",
+    "code": "AGENT_ENG",
+    "role": "Agentic CRM Platform Engineer / AI Automation Architect",
+    "group": "Data, AI & Engineering",
+    "mission": "Costruire agenti CRM affidabili che osservano, decidono e agiscono entro policy verificabili, con evaluation e rollback.",
+    "key_kpis": [
+      "Task success rate",
+      "Policy violation rate",
+      "Human override rate",
+      "Cost per successful job",
+      "Latency",
+      "Regression escape rate"
+    ],
+    "key_decisions": [
+      "agent contract",
+      "tool e autonomy boundary",
+      "model routing",
+      "deploy e rollback"
+    ],
+    "typical_integrations": [
+      "Model providers",
+      "MCP/tool servers",
+      "Workflow engine",
+      "Knowledge store",
+      "Evaluation platform",
+      "Observability"
+    ],
+    "default_capability_ids": [
+      "AIA-014",
+      "AIA-015",
+      "AIA-020",
+      "AIA-021",
+      "DEV-022"
+    ],
+    "access_scope": "Accesso tecnico per ambiente; dati produzione mascherati per default e privilegi elevati just-in-time.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-GOV-DATA",
+    "code": "GOVERNANCE",
+    "role": "Data Governance, Privacy & Security Manager",
+    "group": "Governance & Finance",
+    "mission": "Garantire che dati, automazioni e agenti siano usati secondo finalità, permessi, sicurezza e accountability dimostrabili.",
+    "key_kpis": [
+      "Policy violation rate",
+      "Access review completion",
+      "DSAR SLA",
+      "Audit findings",
+      "Incident MTTR",
+      "AI risk exceptions"
+    ],
+    "key_decisions": [
+      "policy e lawful basis",
+      "accesso",
+      "eccezione",
+      "incident e AI approval"
+    ],
+    "typical_integrations": [
+      "IAM/SSO",
+      "DLP",
+      "SIEM",
+      "Consent platform",
+      "Data catalog",
+      "Ticketing"
+    ],
+    "default_capability_ids": [
+      "GOV-002",
+      "GOV-003",
+      "GOV-006",
+      "GOV-009",
+      "GOV-010"
+    ],
+    "access_scope": "Accesso a dati e log necessari a controllo e riconciliazione, con segregation of duties e tracciabilità.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-FIN-REV",
+    "code": "REV_FIN",
+    "role": "Revenue Finance Analyst",
+    "group": "Governance & Finance",
+    "mission": "Riconciliare piano, pipeline, bookings, billing e ricavi per rendere affidabili le decisioni economiche del motore revenue.",
+    "key_kpis": [
+      "Forecast accuracy",
+      "Revenue reconciliation variance",
+      "Gross margin",
+      "CAC payback",
+      "Budget variance",
+      "Closing cycle time"
+    ],
+    "key_decisions": [
+      "metric policy",
+      "forecast adjustment",
+      "budget variance",
+      "profitability e control"
+    ],
+    "typical_integrations": [
+      "ERP",
+      "Billing",
+      "CRM",
+      "Data warehouse",
+      "Commission system",
+      "Planning tool"
+    ],
+    "default_capability_ids": [
+      "FIN-001",
+      "FIN-005",
+      "FIN-008",
+      "FIN-009",
+      "AIA-001"
+    ],
+    "access_scope": "Accesso a dati e log necessari a controllo e riconciliazione, con segregation of duties e tracciabilità.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  },
+  {
+    "schema_version": "1.0.0",
+    "persona_id": "PER-OPS-DEAL-DESK",
+    "code": "DEAL_DESK",
+    "role": "Deal Desk / Commercial Operations Specialist",
+    "group": "Governance & Finance",
+    "mission": "Portare le richieste commerciali dalla configurazione alla firma rapidamente, proteggendo margine, policy e obblighi.",
+    "key_kpis": [
+      "Quote turnaround time",
+      "Approval SLA",
+      "Discount leakage",
+      "Gross margin",
+      "Rework rate",
+      "Contract cycle time"
+    ],
+    "key_decisions": [
+      "completezza deal",
+      "pricing e sconto",
+      "approvazione",
+      "eccezione contrattuale"
+    ],
+    "typical_integrations": [
+      "CPQ",
+      "CRM",
+      "Contract lifecycle management",
+      "E-sign",
+      "ERP/Tax",
+      "Security review"
+    ],
+    "default_capability_ids": [
+      "SAL-015",
+      "SAL-016",
+      "SAL-017",
+      "FIN-003",
+      "FIN-011"
+    ],
+    "access_scope": "Accesso a dati e log necessari a controllo e riconciliazione, con segregation of duties e tracciabilità.",
+    "jtbd_count": 20,
+    "lifecycle_distribution": {
+      "ADOPT": 4,
+      "RUN": 8,
+      "OPTIMIZE": 4,
+      "MAINTAIN": 1,
+      "GOVERN": 1,
+      "EVOLVE": 2
+    }
+  }
+]

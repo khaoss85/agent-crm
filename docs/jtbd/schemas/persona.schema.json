@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://accordo.dev/schemas/persona.schema.json",
+  "title": "Accordo Persona",
+  "type": "object",
+  "required": [
+    "persona_id",
+    "role",
+    "group",
+    "mission",
+    "key_kpis",
+    "key_decisions",
+    "jtbd_count"
+  ],
+  "properties": {
+    "persona_id": {
+      "type": "string",
+      "pattern": "^PER-[A-Z0-9-]+$"
+    },
+    "role": {
+      "type": "string"
+    },
+    "group": {
+      "type": "string"
+    },
+    "mission": {
+      "type": "string"
+    },
+    "key_kpis": {
+      "type": "array",
+      "minItems": 3
+    },
+    "key_decisions": {
+      "type": "array",
+      "minItems": 2
+    },
+    "jtbd_count": {
+      "type": "integer",
+      "minimum": 20
+    }
+  }
+}

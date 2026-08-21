@@ -1,0 +1,1641 @@
+{
+ "$comment": "Every row of docs/benchmarks/CRM_JTBD_MATRIX.md mapped onto the canonical desired-state catalogue. `disposition` is derived by scripts/jtbd-gate.js from the id sets and is never hand-typed. A row whose canonicalJtbdIds is empty MUST carry an unmappedReason, and a non-default matrixStatus with an empty id list is counted in the fact jtbd.crosswalk.unmapped_count. This file states no coverage and no priority: matrixStatus is copied from the matrix so the gate can cross-check the two documents.",
+ "crosswalkVersion": 1,
+ "rows": [
+  {
+   "matrixId": "JTBD-01",
+   "title": "Manage a custom CRM business object end to end",
+   "matrixStatus": "validated end to end",
+   "milestone": "M4",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-003"
+   ]
+  },
+  {
+   "matrixId": "JTBD-01b",
+   "title": "Associate a generated CRM record with another generated CRM record",
+   "matrixStatus": "validated end to end",
+   "milestone": "M5",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-003"
+   ]
+  },
+  {
+   "matrixId": "JTBD-02",
+   "title": "Request commercial approval on a deal",
+   "matrixStatus": "validated end to end",
+   "milestone": "M0",
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-DEAL-DESK-008",
+    "ACC-JTBD-SALES-MGR-011",
+    "ACC-JTBD-SALES-DIR-009"
+   ]
+  },
+  {
+   "matrixId": "JTBD-03",
+   "title": "Manage a deal through pipeline stages",
+   "matrixStatus": "validated end to end",
+   "milestone": "M8",
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-AE-008",
+    "ACC-JTBD-SALES-DIR-002"
+   ]
+  },
+  {
+   "matrixId": "JTBD-04",
+   "title": "Capture a lead",
+   "matrixStatus": "validated end to end",
+   "milestone": "M6",
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-MKT-OPS-009",
+    "ACC-JTBD-SDR-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-05",
+   "title": "Qualify (or disqualify) a lead",
+   "matrixStatus": "validated end to end",
+   "milestone": "M6",
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-REVOPS-006",
+    "ACC-JTBD-SDR-012"
+   ]
+  },
+  {
+   "matrixId": "JTBD-05b",
+   "title": "Convert a qualified lead into Company, Contact and Opportunity",
+   "matrixStatus": "validated end to end",
+   "milestone": "M7",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-SDR-012"
+   ]
+  },
+  {
+   "matrixId": "JTBD-06",
+   "title": "Manage a custom object with an approval rule",
+   "matrixStatus": "partially supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-008"
+   ]
+  },
+  {
+   "matrixId": "JTBD-07",
+   "title": "Schedule next actions / follow-ups",
+   "matrixStatus": "partially supported",
+   "milestone": null,
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-SALES-MGR-008",
+    "ACC-JTBD-AE-010",
+    "ACC-JTBD-SDR-008"
+   ]
+  },
+  {
+   "matrixId": "JTBD-08",
+   "title": "Hand off a won deal",
+   "matrixStatus": "validated end to end",
+   "milestone": "M13",
+   "disposition": "superseded",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-SALES-MGR-012",
+    "ACC-JTBD-DEAL-DESK-016"
+   ],
+   "supersededBy": "JTBD-DS-01"
+  },
+  {
+   "matrixId": "JTBD-09",
+   "title": "Onboard a customer",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CS-DIR-002",
+    "ACC-JTBD-CVM-006"
+   ]
+  },
+  {
+   "matrixId": "JTBD-10",
+   "title": "Manage contracts and renewals",
+   "matrixStatus": "partially supported",
+   "milestone": "M12",
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CVM-011",
+    "ACC-JTBD-CS-DIR-007",
+    "ACC-JTBD-DEAL-DESK-017"
+   ]
+  },
+  {
+   "matrixId": "JTBD-11",
+   "title": "Identify churn risk",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CS-DIR-003",
+    "ACC-JTBD-CVM-014"
+   ]
+  },
+  {
+   "matrixId": "JTBD-12",
+   "title": "Identify upsell",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CVM-012",
+    "ACC-JTBD-AE-016"
+   ]
+  },
+  {
+   "matrixId": "JTBD-13",
+   "title": "Report pipeline",
+   "matrixStatus": "partially supported",
+   "milestone": null,
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-SALES-DIR-005",
+    "ACC-JTBD-ANALYTICS-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-14",
+   "title": "Integrate email / calendar / marketing",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-MKT-OPS-002",
+    "ACC-JTBD-INTEGRATION-DEV-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-15",
+   "title": "Enforce team / tenant permissions",
+   "matrixStatus": "partially supported",
+   "milestone": "Spine v1",
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-002",
+    "ACC-JTBD-GOVERNANCE-004"
+   ]
+  },
+  {
+   "matrixId": "JTBD-LI-01",
+   "title": "Enrich a Lead from external sources with snapshot + provenance",
+   "matrixStatus": "validated end to end",
+   "milestone": "M9",
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-SDR-005",
+    "ACC-JTBD-ABM-017"
+   ]
+  },
+  {
+   "matrixId": "JTBD-LI-02",
+   "title": "Calculate an explainable lead score",
+   "matrixStatus": "validated end to end",
+   "milestone": "M9",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-DATA-SCI-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-LI-03",
+   "title": "Prioritize Leads by score",
+   "matrixStatus": "partially supported",
+   "milestone": "M9",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-SDR-006"
+   ]
+  },
+  {
+   "matrixId": "JTBD-LI-04",
+   "title": "Route a Lead automatically under a published policy",
+   "matrixStatus": "validated end to end",
+   "milestone": "M9",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-REVOPS-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-LI-05",
+   "title": "Use sales capacity and availability in routing",
+   "matrixStatus": "partially supported",
+   "milestone": "M9",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-REVOPS-009"
+   ]
+  },
+  {
+   "matrixId": "JTBD-LI-06",
+   "title": "Manually reassign with permission and reason",
+   "matrixStatus": "not supported",
+   "milestone": "M9",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-SALES-MGR-014"
+   ]
+  },
+  {
+   "matrixId": "JTBD-LI-07",
+   "title": "Version and publish a scoring/routing policy",
+   "matrixStatus": "validated end to end",
+   "milestone": "M9",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-REVOPS-006"
+   ]
+  },
+  {
+   "matrixId": "JTBD-LI-08",
+   "title": "Roll back a policy to an earlier version",
+   "matrixStatus": "partially supported",
+   "milestone": "M9",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-DATA-SCI-017"
+   ]
+  },
+  {
+   "matrixId": "JTBD-LI-09",
+   "title": "Reproduce a historical routing decision exactly",
+   "matrixStatus": "partially supported",
+   "milestone": "M9",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-GOVERNANCE-009"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CO-01",
+   "title": "Create a Quote from a Price Book",
+   "matrixStatus": "validated end to end",
+   "milestone": "M10",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-DEAL-DESK-006"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CO-02",
+   "title": "Synchronize an external catalog (Stripe/Zuora/ERP/custom)",
+   "matrixStatus": "partially supported",
+   "milestone": "M10",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-INTEGRATION-DEV-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CO-03",
+   "title": "Request a discount under a deterministic policy",
+   "matrixStatus": "validated end to end",
+   "milestone": "M10",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-DEAL-DESK-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CO-04",
+   "title": "Obtain required commercial approval on a discount",
+   "matrixStatus": "partially supported",
+   "milestone": "M10",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-DEAL-DESK-008"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CO-05",
+   "title": "Create a signature envelope with a provider",
+   "matrixStatus": "partially supported",
+   "milestone": "M11",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-DEAL-DESK-012"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CO-06",
+   "title": "Verify signing via verified provider events",
+   "matrixStatus": "partially supported",
+   "milestone": "M11",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-DEAL-DESK-012"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CO-07",
+   "title": "Create an immutable signed Order snapshot",
+   "matrixStatus": "validated end to end",
+   "milestone": "M11",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-DEAL-DESK-011"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DS-01",
+   "title": "Hand over a won Deal to delivery",
+   "matrixStatus": "validated end to end",
+   "milestone": "M13",
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-SALES-MGR-012",
+    "ACC-JTBD-DEAL-DESK-016"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DS-02",
+   "title": "Create a Commessa / Delivery Project from an Order",
+   "matrixStatus": "partially supported",
+   "milestone": "M13",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no delivery/project-management persona among its 30 roles, so no desired job expresses 'turn an order into a delivery project'"
+  },
+  {
+   "matrixId": "JTBD-DS-03",
+   "title": "Involve a third-party delivery partner (engagement, role, scope)",
+   "matrixStatus": "partially supported",
+   "milestone": "M13",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-PARTNER-012"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DS-04",
+   "title": "Restrict partner access to assigned work only",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-PARTNER-018"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DS-05",
+   "title": "Manage milestones and deliverables",
+   "matrixStatus": "partially supported",
+   "milestone": "M13",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CVM-003"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DS-06",
+   "title": "Track hours and costs on delivery",
+   "matrixStatus": "validated end to end",
+   "milestone": "M14b1",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "no catalogue persona owns delivery time and cost capture; the closest, Revenue Finance, works from bookings and revenue, not from delivery effort"
+  },
+  {
+   "matrixId": "JTBD-DS-07",
+   "title": "Calculate delivery margin (forecast vs actual)",
+   "matrixStatus": "partially supported",
+   "milestone": "M14b1",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-REV-FIN-010"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DS-08",
+   "title": "Manage a Change Request with impact and approval",
+   "matrixStatus": "validated end to end",
+   "milestone": "M14b2",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "delivery change control has no canonical job; the catalogue's change jobs are configuration change (CRM-ADMIN-018) and contract change (DEAL-DESK-011), neither of which is a delivery change request"
+  },
+  {
+   "matrixId": "JTBD-DS-09",
+   "title": "Collect customer acceptance on deliverables",
+   "matrixStatus": "partially supported",
+   "milestone": "M14b2",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "no canonical job records customer acceptance of a deliverable; CVM-010 is value realization, which is an outcome claim rather than a signed acceptance"
+  },
+  {
+   "matrixId": "JTBD-DS-10",
+   "title": "Activate billing on accepted milestones",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue models billing only as consumed data (DAT-015, FIN-004) and no persona's job is to activate it"
+  },
+  {
+   "matrixId": "JTBD-DS-11",
+   "title": "Activate a Service Contract with Entitlements and SLA",
+   "matrixStatus": "partially supported",
+   "milestone": "M15",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CUST-OPS-003"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DS-12",
+   "title": "Manage support cases and escalation",
+   "matrixStatus": "partially supported",
+   "milestone": "M15",
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-SERVICE-006",
+    "ACC-JTBD-SERVICE-010"
+   ]
+  },
+  {
+   "matrixId": "JTBD-PK-01",
+   "title": "Create and compose a custom local domain package",
+   "matrixStatus": "validated end to end",
+   "milestone": "M13",
+   "disposition": "split",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-019",
+    "ACC-JTBD-INTEGRATION-DEV-019"
+   ]
+  },
+  {
+   "matrixId": "JTBD-PK-02",
+   "title": "Depend on another package without importing its source",
+   "matrixStatus": "validated end to end",
+   "milestone": "M13",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-INTEGRATION-DEV-018"
+   ]
+  },
+  {
+   "matrixId": "JTBD-PK-03",
+   "title": "Validate a package before booting it",
+   "matrixStatus": "partially supported",
+   "milestone": "M13",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-INTEGRATION-DEV-004"
+   ]
+  },
+  {
+   "matrixId": "JTBD-PK-04",
+   "title": "Remove a package without losing its data",
+   "matrixStatus": "partially supported",
+   "milestone": "M13",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-017"
+   ]
+  },
+  {
+   "matrixId": "JTBD-PK-05",
+   "title": "Scaffold a new package from a template",
+   "matrixStatus": "validated end to end",
+   "milestone": "DX3",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-INTEGRATION-DEV-019"
+   ]
+  },
+  {
+   "matrixId": "JTBD-PK-06",
+   "title": "Install a package from a registry or marketplace",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-PARTNER-020"
+   ]
+  },
+  {
+   "matrixId": "JTBD-PK-07",
+   "title": "Run an untrusted package safely",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-GOVERNANCE-010"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-01",
+   "title": "Create a dynamic audience from CRM data",
+   "matrixStatus": "not supported",
+   "milestone": "MK2",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-MKT-OPS-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-02",
+   "title": "Freeze an audience snapshot for a send",
+   "matrixStatus": "not supported",
+   "milestone": "MK2",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-03",
+   "title": "Apply exclusions and suppression sets",
+   "matrixStatus": "not supported",
+   "milestone": "MK2",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-002"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-04",
+   "title": "Verify consent and communication preferences",
+   "matrixStatus": "not supported",
+   "milestone": "MK2",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-MKT-OPS-003"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-05",
+   "title": "Apply a cross-campaign frequency cap",
+   "matrixStatus": "not supported",
+   "milestone": "MK2",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-06",
+   "title": "Sync an audience to a provider",
+   "matrixStatus": "not supported",
+   "milestone": "MK6",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-PERF-MKT-003"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-07",
+   "title": "Diagnose a funnel drop",
+   "matrixStatus": "not supported",
+   "milestone": "MK1",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRO-SPEC-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-08",
+   "title": "Create a complete Campaign Proposal",
+   "matrixStatus": "not supported",
+   "milestone": "MK1",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-001"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-09",
+   "title": "Select a channel and an installed provider, with rationale",
+   "matrixStatus": "not supported",
+   "milestone": "MK1",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-MKT-DIR-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-10",
+   "title": "Recommend a send time and window",
+   "matrixStatus": "not supported",
+   "milestone": "MK1",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-014"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-11",
+   "title": "Define content, creative, landing page and CTA",
+   "matrixStatus": "not supported",
+   "milestone": "MK1",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-006"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-12",
+   "title": "Define a tracking plan (UTM, conversion events)",
+   "matrixStatus": "not supported",
+   "milestone": "MK1",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-MKT-OPS-011"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-13",
+   "title": "Request human approval of a proposal",
+   "matrixStatus": "not supported",
+   "milestone": "MK1",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-004"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-14",
+   "title": "Run a one-shot email campaign",
+   "matrixStatus": "not supported",
+   "milestone": "MK2",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-008"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-15",
+   "title": "Run a rolling campaign",
+   "matrixStatus": "not supported",
+   "milestone": "MK4",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-008"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-16",
+   "title": "Run a triggered campaign",
+   "matrixStatus": "not supported",
+   "milestone": "MK4",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-003"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-17",
+   "title": "Run a multi-step multichannel journey",
+   "matrixStatus": "not supported",
+   "milestone": "MK4",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-MKT-DIR-008"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-18",
+   "title": "Pause or stop a running campaign",
+   "matrixStatus": "not supported",
+   "milestone": "MK4",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-010"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-19",
+   "title": "Handle bounces and unsubscribes",
+   "matrixStatus": "not supported",
+   "milestone": "MK2",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-MKT-OPS-010"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-20",
+   "title": "Generate email content",
+   "matrixStatus": "not supported",
+   "milestone": "MK3",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CONTENT-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-21",
+   "title": "Generate SMS/WhatsApp messaging content",
+   "matrixStatus": "not supported",
+   "milestone": "MK3",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CONTENT-010"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-22",
+   "title": "Generate a landing page, form and CTA",
+   "matrixStatus": "not supported",
+   "milestone": "MK3",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRO-SPEC-008"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-23",
+   "title": "Publish a preview",
+   "matrixStatus": "not supported",
+   "milestone": "MK3",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CONTENT-008"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-24",
+   "title": "Publish an approved asset to production",
+   "matrixStatus": "not supported",
+   "milestone": "MK3",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CONTENT-009"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-25",
+   "title": "Create an A/B test",
+   "matrixStatus": "not supported",
+   "milestone": "MK5",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRO-SPEC-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-26",
+   "title": "Assign a deterministic control group",
+   "matrixStatus": "not supported",
+   "milestone": "MK5",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRO-SPEC-004"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-27",
+   "title": "Create a holdout",
+   "matrixStatus": "not supported",
+   "milestone": "MK5",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-MKT-DIR-014"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-28",
+   "title": "Measure lift against control",
+   "matrixStatus": "not supported",
+   "milestone": "MK5",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRO-SPEC-011"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-29",
+   "title": "Select and publish a winner",
+   "matrixStatus": "not supported",
+   "milestone": "MK5",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRO-SPEC-016"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-30",
+   "title": "Prepare a Media Plan",
+   "matrixStatus": "not supported",
+   "milestone": "MK6",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-PERF-MKT-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-31",
+   "title": "Sync an audience to an ads platform",
+   "matrixStatus": "not supported",
+   "milestone": "MK6",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-PERF-MKT-006"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-32",
+   "title": "Launch an approved ads campaign",
+   "matrixStatus": "not supported",
+   "milestone": "MK6",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-PERF-MKT-006"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-33",
+   "title": "Ingest spend and results",
+   "matrixStatus": "not supported",
+   "milestone": "MK6",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-PERF-MKT-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-34",
+   "title": "Propose a budget change",
+   "matrixStatus": "not supported",
+   "milestone": "MK6",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-PERF-MKT-009"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-35",
+   "title": "Define a funnel",
+   "matrixStatus": "not supported",
+   "milestone": "MK7",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRO-SPEC-001"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-36",
+   "title": "Identify and segment a drop",
+   "matrixStatus": "not supported",
+   "milestone": "MK7",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRO-SPEC-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-37",
+   "title": "Report a campaign result",
+   "matrixStatus": "not supported",
+   "milestone": "MK7",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-PERF-MKT-012"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-38",
+   "title": "First-touch attribution",
+   "matrixStatus": "not supported",
+   "milestone": "MK7",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-ANALYTICS-011"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-39",
+   "title": "Last-touch attribution",
+   "matrixStatus": "not supported",
+   "milestone": "MK7",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-ANALYTICS-011"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-40",
+   "title": "Multi-touch attribution",
+   "matrixStatus": "not supported",
+   "milestone": "MK7",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-MKT-DIR-014"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-41",
+   "title": "Connect a campaign to an Opportunity or Order",
+   "matrixStatus": "not supported",
+   "milestone": "MK7",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-REVOPS-011"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-42",
+   "title": "Calculate campaign ROI",
+   "matrixStatus": "not supported",
+   "milestone": "MK7",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-PERF-MKT-013"
+   ]
+  },
+  {
+   "matrixId": "JTBD-MK-43",
+   "title": "Recommend the next campaign version",
+   "matrixStatus": "not supported",
+   "milestone": "MK7",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-019"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AX-01",
+   "title": "Discover installed packages, capabilities and policies",
+   "matrixStatus": "validated end to end",
+   "milestone": "AX1",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-PO-003"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AX-02",
+   "title": "Extend the CRM for a goal without patching the kernel",
+   "matrixStatus": "validated end to end",
+   "milestone": "AX0",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-PO-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AX-03",
+   "title": "Turn a business objective into a reviewable solution plan",
+   "matrixStatus": "partially supported",
+   "milestone": "AX2",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-PO-006"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AX-04",
+   "title": "Build the solution as checked-in, customer-owned source",
+   "matrixStatus": "partially supported",
+   "milestone": "AX3",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-PO-010"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AX-05",
+   "title": "Verify the solution against defined acceptance",
+   "matrixStatus": "partially supported",
+   "milestone": "AX3",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-PO-004"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AX-06",
+   "title": "Report unavailable capabilities honestly",
+   "matrixStatus": "partially supported",
+   "milestone": "AX1",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-AGENT-ENG-002"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AX-07",
+   "title": "Analyse a funnel and identify a drop from a goal",
+   "matrixStatus": "not supported",
+   "milestone": "AX5",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-ANALYTICS-006"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AX-08",
+   "title": "Propose an optimization campaign from an insight",
+   "matrixStatus": "not supported",
+   "milestone": "AX5",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CAMPAIGN-013"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AX-09",
+   "title": "Deploy, observe and fix a solution in production",
+   "matrixStatus": "not supported",
+   "milestone": "AX4",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-AGENT-ENG-018"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AX-10",
+   "title": "Close the loop: measure, learn, propose the next version",
+   "matrixStatus": "not supported",
+   "milestone": "AX5",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-AGENT-ENG-013"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AN-01",
+   "title": "Define a trusted, explainable metric",
+   "matrixStatus": "not supported",
+   "milestone": "M16",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-ANALYTICS-001"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AN-02",
+   "title": "Create a report from approved metrics/dimensions",
+   "matrixStatus": "not supported",
+   "milestone": "M16",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-ANALYTICS-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AN-03",
+   "title": "Create a role-aware dashboard",
+   "matrixStatus": "not supported",
+   "milestone": "M16",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-ANALYTICS-003"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AN-04",
+   "title": "Version and roll back a dashboard",
+   "matrixStatus": "not supported",
+   "milestone": "M16",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-ANALYTICS-018"
+   ]
+  },
+  {
+   "matrixId": "JTBD-AN-05",
+   "title": "Validate metric correctness against fixtures",
+   "matrixStatus": "not supported",
+   "milestone": "M16",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-ANALYTICS-004"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CS-01",
+   "title": "Activate a commercial contract from a signed Order",
+   "matrixStatus": "partially supported",
+   "milestone": "M12",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-DEAL-DESK-016"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CS-02",
+   "title": "Activate a subscription with lines and an initial term",
+   "matrixStatus": "partially supported",
+   "milestone": "M12",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CVM-002"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CS-03",
+   "title": "Amend seats or quantity on a live subscription",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "no canonical job amends a live subscription in place; CVM-011 is renewal and retention planning, which the matrix already cites separately"
+  },
+  {
+   "matrixId": "JTBD-CS-04",
+   "title": "Record an expansion or contraction, classified at the time of change",
+   "matrixStatus": "partially supported",
+   "milestone": "M16b",
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-REV-FIN-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CS-05",
+   "title": "Calculate MRR, ARR and TCV from real contract data",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-REV-FIN-001"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CS-06",
+   "title": "Schedule a renewal ahead of term end",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CVM-011"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CS-07",
+   "title": "Create a renewal opportunity from an expiring subscription",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CVM-011"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CS-08",
+   "title": "Apply a versioned price-uplift policy at renewal",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-REV-FIN-008"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CS-09",
+   "title": "Cancel or non-renew with an audited reason",
+   "matrixStatus": "partially supported",
+   "milestone": "M16a",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CVM-014"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CS-10",
+   "title": "Read a complete amendment history",
+   "matrixStatus": "partially supported",
+   "milestone": "M16b",
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-DEAL-DESK-011"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DO-01",
+   "title": "Import records from CSV",
+   "matrixStatus": "partially supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DO-02",
+   "title": "Detect duplicates on import or entry",
+   "matrixStatus": "partially supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-REVOPS-017"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DO-03",
+   "title": "Merge two Companies or Contacts",
+   "matrixStatus": "partially supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-MKT-OPS-013"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DO-04",
+   "title": "Export records",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DO-05",
+   "title": "Bulk update a set of records",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DO-06",
+   "title": "Save and share a filtered view",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-009"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DO-07",
+   "title": "Search across modules",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "no canonical job is 'search across modules'; the catalogue carries search only as capability PLT-009, which no record references"
+  },
+  {
+   "matrixId": "JTBD-DO-08",
+   "title": "See a unified activity timeline for a record",
+   "matrixStatus": "partially supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-SERVICE-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DO-09",
+   "title": "Attach notes or files to a record",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-AE-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CM-01",
+   "title": "Sync email with CRM records",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-INTEGRATION-DEV-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CM-02",
+   "title": "Sync calendar events",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-INTEGRATION-DEV-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CM-03",
+   "title": "Log meetings and calls",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-AE-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CM-04",
+   "title": "Schedule and track a follow-up",
+   "matrixStatus": "partially supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-SALES-MGR-008"
+   ]
+  },
+  {
+   "matrixId": "JTBD-CM-05",
+   "title": "Honor unsubscribe and communication preferences",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-SDR-018"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DG-01",
+   "title": "Record consent and lawful basis",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-GOVERNANCE-003"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DG-02",
+   "title": "Honor an opt-out across outbound paths",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-GOVERNANCE-005"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DG-03",
+   "title": "Export everything held about a subject",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-GOVERNANCE-006"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DG-04",
+   "title": "Anonymize or delete a subject while preserving immutable evidence",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-GOVERNANCE-006"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DG-05",
+   "title": "Apply a retention policy and evidence that it ran",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-GOVERNANCE-007"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DG-06",
+   "title": "Inspect what was shared with which provider",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-GOVERNANCE-010"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DG-07",
+   "title": "Restrict sensitive fields by role",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-GOVERNANCE-004"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DG-08",
+   "title": "Prove a deletion request completed",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-GOVERNANCE-014"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DC-01",
+   "title": "Apply a brand's colors and typography",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no brand or visual-design persona; theming is not a job any of its 30 roles states"
+  },
+  {
+   "matrixId": "JTBD-DC-02",
+   "title": "Choose and group Admin navigation",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-013"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DC-03",
+   "title": "Control field order, sections and responsive layout",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "consolidated",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-003"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DC-04",
+   "title": "Replace a component without forking the Admin",
+   "matrixStatus": "partially supported",
+   "milestone": null,
+   "disposition": "identical",
+   "canonicalJtbdIds": [
+    "ACC-JTBD-CRM-ADMIN-020"
+   ]
+  },
+  {
+   "matrixId": "JTBD-DC-05",
+   "title": "Generate a CRM UI from a Figma file or screenshot",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "no canonical job starts from a design file; the catalogue's configuration jobs start from a process, not from a rendering"
+  },
+  {
+   "matrixId": "JTBD-DC-06",
+   "title": "Prove the UI still matches its design after a change",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "no canonical job asserts visual regression; CRM-PO-017 is schema, API and documentation consistency, which is not the same claim"
+  },
+  {
+   "matrixId": "JTBD-DC-07",
+   "title": "Meet a stated accessibility bar",
+   "matrixStatus": "not supported",
+   "milestone": null,
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "accessibility is stated in no canonical acceptance criterion in the catalogue"
+  },
+  {
+   "matrixId": "JTBD-CL-01",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-02",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-03",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-04",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-05",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-06",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-07",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-08",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-09",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-10",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-11",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-12",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-13",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-14",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  },
+  {
+   "matrixId": "JTBD-CL-15",
+   "title": "Cloud operator job (specified in CLOUD_JTBD.md)",
+   "matrixStatus": "not supported",
+   "milestone": "C0",
+   "disposition": "no_canonical_match",
+   "canonicalJtbdIds": [],
+   "unmappedReason": "the catalogue has no Cloud-operator persona among its 30 roles; every CL job is an operator job for the managed edition, specified in a private-designated document"
+  }
+ ]
+}
