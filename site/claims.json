@@ -266,6 +266,17 @@
         ],
         "docs": [
           "docs/PACKAGE_AUTHORING.md"
+        ],
+        "facts": [
+          "domain.commercial.package_native=package_native",
+          "domain.contracts.package_native=package_native",
+          "domain.customer_data.package_native=package_native",
+          "domain.delivery.package_native=package_native",
+          "domain.intelligence.package_native=package_native",
+          "domain.lifecycle.package_native=package_native",
+          "domain.service.package_native=package_native",
+          "domain.signature.package_native=package_native",
+          "domain.work.package_native=package_native"
         ]
       },
       "limitation": "The scaffold that starts one writes an empty package and nothing else: no business logic, no composition, no global identity-uniqueness check. There is no registry, no marketplace, no publication and no sandboxing — package code runs with the host process's authority. Detaching leaves its data behind; there is no uninstall.",
@@ -285,6 +296,11 @@
         "docs": [
           "docs/APPLICATION_INSPECTION.md",
           "docs/AGENT_HARNESS_COMPATIBILITY.md"
+        ],
+        "facts": [
+          "rail.app_inspect.implemented=implemented",
+          "rail.project_doctor.implemented=implemented",
+          "rail.solution_check.implemented=implemented"
         ]
       },
       "limitation": "Source-only and read-only. It never opens the database, contacts a provider, reads a secret, or reports runtime, CI or authorization state — and it lists those blind spots as machine-readable limitations in its own output.",
@@ -310,6 +326,17 @@
           "npm run tour runs examples/starters/b2b-lead-qualification/install.mjs, which CI runs on every push, into a directory it keeps",
           "the counts are the app inspect report of that composed project",
           "scripts/tour.js exits non-zero if the composed application is ever empty"
+        ],
+        "facts": [
+          "domain.commercial.package_native=package_native",
+          "domain.contracts.package_native=package_native",
+          "domain.customer_data.package_native=package_native",
+          "domain.delivery.package_native=package_native",
+          "domain.intelligence.package_native=package_native",
+          "domain.lifecycle.package_native=package_native",
+          "domain.service.package_native=package_native",
+          "domain.signature.package_native=package_native",
+          "domain.work.package_native=package_native"
         ]
       },
       "limitation": "It composes the starter's application, not yours, and it runs entirely locally against SQLite with no authentication. The counts describe what that starter applies; a different composition gives different numbers. Wall-clock time varies by machine and is deliberately not claimed.",
@@ -350,6 +377,10 @@
         ],
         "docs": [
           "docs/SOLUTION_PLAN.md"
+        ],
+        "facts": [
+          "rail.solution_check.implemented=implemented",
+          "rail.solution_verify.implemented=implemented"
         ]
       },
       "limitation": "A document contract, not a planner and not a runtime. Nothing executes a plan, and the validator refuses a plan that carries a command.",
@@ -452,6 +483,10 @@
         ],
         "docs": [
           "docs/QUALITY_GATES.md"
+        ],
+        "facts": [
+          "rail.project_verify.implemented=implemented",
+          "rail.scenario_run.implemented=implemented"
         ]
       },
       "limitation": "A test count measures effort, not correctness — read the adversarial-review categories in docs/QUALITY_GATES.md to see what is actually attacked. Real-browser tests are run manually and are not in CI.",
@@ -504,6 +539,14 @@
         ],
         "repoFacts": [
           "crm app inspect reports a productionPosture that refuses to be read as a readiness claim"
+        ],
+        "facts": [
+          "spine.authentication.framework_verifier=absent",
+          "spine.authorization.enforced=enforced",
+          "spine.tenant.isolation.mode=one_tenant_per_instance",
+          "spine.tenant.crm_data_plane_enforced=enforced_by_binding",
+          "spine.multi_tenant_single_instance=refused_at_startup",
+          "spine.identity.contract=1"
         ]
       },
       "surfaces": [
@@ -520,6 +563,9 @@
         "docs": [
           "docs/PROJECT_STATUS.md",
           "docs/strategy/PLATFORM_CAPABILITIES.md"
+        ],
+        "facts": [
+          "spine.postgresql.implemented=absent"
         ]
       },
       "surfaces": [
@@ -535,6 +581,10 @@
         "docs": [
           "docs/strategy/CRM_BUILD_BENCHMARK.md",
           "docs/PROJECT_STATUS.md"
+        ],
+        "facts": [
+          "benchmark.build_rate.measured=not_measured",
+          "benchmark.tool_selection.comparative=false"
         ]
       },
       "surfaces": [
@@ -551,6 +601,9 @@
         "jtbd": "JTBD-07, JTBD-10",
         "docs": [
           "docs/strategy/JOBS_AND_OUTBOX.md"
+        ],
+        "facts": [
+          "spine.durable_jobs.implemented=absent"
         ]
       },
       "surfaces": [
@@ -566,6 +619,9 @@
         "jtbd": "JTBD-14",
         "docs": [
           "docs/strategy/INTEGRATION_RUNTIME.md"
+        ],
+        "facts": [
+          "marketing_runtime.implemented=absent"
         ]
       },
       "surfaces": [
@@ -629,6 +685,11 @@
           "DATA_GOVERNANCE.md records the whole track as design only",
           "no import or export exists (L-06)",
           "scoring is a deterministic weighted model with a persisted version fingerprint (C-07)"
+        ],
+        "facts": [
+          "spine.authentication.framework_verifier=absent",
+          "cdf.full_cdp.implemented=absent",
+          "customer_timeline.complete=absent"
         ]
       },
       "surfaces": [
@@ -667,6 +728,9 @@
           "EXECUTION_ROADMAP.md lists invoicing, billing, payment, usage rating, proration, tax and FX as explicitly deferred",
           "packages/contracts/modules/subscription.module.json describes itself as a commercial activation record, not a billing engine, with no invoice schedule, usage rating, proration, payment, renewal or cancellation state",
           "JTBD-DS-10 (activate billing on accepted milestones) and JTBD-CS-05 (calculate MRR, ARR and TCV from real contract data) both read 'not supported'"
+        ],
+        "facts": [
+          "billing.implemented=absent"
         ]
       },
       "surfaces": [
@@ -687,6 +751,9 @@
           "MARKETING_GROWTH_OPERATIONS.md opens with 'Status: product strategy and roadmap only. Nothing in this document is implemented.'",
           "all 43 JTBD-MK rows in docs/benchmarks/jobs.json read 'not supported'",
           "the work is sequenced as EXECUTION_ROADMAP track MK0-MK7 and none of it is merged"
+        ],
+        "facts": [
+          "marketing_runtime.implemented=absent"
         ]
       },
       "surfaces": [

@@ -65,6 +65,31 @@ export const SPINE_CONTRACT = 2;
 export const DEFAULT_ACTION_PERMISSION = 'records.write';
 
 /**
+ * What Production Spine v1 deliberately does **not** model, declared once.
+ *
+ * This was an array literal inside `describe()`, which meant the only way to
+ * read it was to boot a spine — a mode, a verifier, a tenant binding and two
+ * database files, just to learn what the framework says it does not do. That
+ * made it prose to every reader outside the running application, and prose is
+ * what ADR-039 exists to stop being the authority.
+ *
+ * Hoisted here it is a **declaration**: importable, frozen, spread into
+ * `describe()` unchanged, and read by `scripts/repo-truth.js` as the authority
+ * behind `spine.postgresql.implemented`, `spine.durable_jobs.implemented` and
+ * `spine.secrets_backups.implemented`. Those facts are therefore
+ * *declared-absent* rather than *inferred from silence*, which is the
+ * distinction ADR-039 §7.1 turns on.
+ */
+export const SPINE_NOT_MODELED = Object.freeze([
+  'PostgreSQL or shared-database row-level tenancy (Spine v2)',
+  'durable jobs, outbox or scheduler (Spine v3)',
+  'secret manager, backups, restore, deploy or rollback (Spine v4)',
+  'password, session or credential storage — the framework authenticates nobody',
+  'email invitations',
+  'SOC2, GDPR or any compliance posture',
+]);
+
+/**
  * @param {{
  *   database: any,
  *   dataPlane?: any,
@@ -392,14 +417,7 @@ export function createSpine({ database, dataPlane, binding, audit, now, config =
           + 'recorded inside one tenant\'s data. They are never the same thing and never render as '
           + 'one another.',
         limitations: [...TENANT_LIMITATIONS],
-        notModeled: [
-          'PostgreSQL or shared-database row-level tenancy (Spine v2)',
-          'durable jobs, outbox or scheduler (Spine v3)',
-          'secret manager, backups, restore, deploy or rollback (Spine v4)',
-          'password, session or credential storage — the framework authenticates nobody',
-          'email invitations',
-          'SOC2, GDPR or any compliance posture',
-        ],
+        notModeled: [...SPINE_NOT_MODELED],
       };
     },
   });

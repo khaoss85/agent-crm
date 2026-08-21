@@ -354,6 +354,26 @@ export async function inspectApplication({ rootDir: requested }) {
       composition: COMPOSITION.map((entry) => entry.path),
       // Declared statically by the framework, not read from a running system.
       databaseBackend: 'sqlite (node:sqlite)',
+      // This sentence is the one every agent reads to learn what the framework
+      // is, and it is the first of the two failures ADR-039 exists to close: it
+      // once said "no authentication, tenancy or RBAC exists" in the same report
+      // whose PRODUCTION_SPINE_ABSENT message described all three (PR #101).
+      // truth: retired-claim no authentication, tenancy or RBAC exists — the line above names the retired posture as the recorded failure; the report below never asserts it
+      //
+      // The citations below bind the *values* each clause rests on. They do not
+      // bind the sentence: restoring the retired posture with these lines left
+      // untouched kept `--check` green, which is why RETIRED_CLAIMS exists and
+      // why generating this sentence from its own facts is v2
+      // (POSTURE_PROSE_NOT_GENERATED).
+      // truth: spine.identity.contract=1
+      // truth: spine.authentication.framework_verifier=absent
+      // truth: spine.authorization.enforced=enforced
+      // truth: spine.tenant.isolation.mode=one_tenant_per_instance
+      // truth: spine.tenant.crm_data_plane_enforced=enforced_by_binding
+      // truth: spine.multi_tenant_single_instance=refused_at_startup
+      // truth: spine.postgresql.implemented=absent
+      // truth: spine.durable_jobs.implemented=absent
+      // truth: spine.secrets_backups.implemented=absent
       productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite only; shared-database tenancy, PostgreSQL, durable jobs, secrets and backups are absent',
     },
     packages,

@@ -58,3 +58,15 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm run gtm:check
+      # The Repository Truth Contract (ADR-039) belongs in this job and in no
+      # other. Its measurement provenance checks need full git history, and this
+      # is the one job that has it — which is also why it cannot go in `verify`,
+      # deliberately left at `fetch-depth: 1`.
+      #
+      # It shipped wired into nothing: a contract written because the failure it
+      # closes was "found by a person, not by a gate" was itself waiting on a
+      # person to remember to type the command. A separate step rather than a
+      # member of `gtm:check`, so the composition of `gtm:check` — which a
+      # developer runs locally in a possibly shallow clone — is unchanged. It
+      # takes about half a second.
+      - run: npm run repo:truth -- --check

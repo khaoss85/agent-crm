@@ -39,6 +39,21 @@ framework authenticates nobody and ships no verifier, so who a membership belong
 is only as trustworthy as the adapter a deployment supplies. PostgreSQL, shared-database
 tenancy, durable jobs, secrets and backups remain unimplemented (Spine v2–v4).
 
+The paragraph above is this roadmap's **current-status block**, and every
+load-bearing sentence in it is bound to a generated fact (ADR-039). The rest of the
+document is a plan and is deliberately unbound: a roadmap describes what is
+intended, and a fact contract has nothing to say about an intention.
+
+<!-- truth: cdf.full_cdp.implemented=absent -->
+<!-- truth: customer_timeline.complete=absent -->
+<!-- truth: domain.customer_data.package_native=package_native -->
+<!-- truth: spine.authorization.enforced=enforced -->
+<!-- truth: spine.authentication.framework_verifier=absent -->
+<!-- truth: spine.multi_tenant_single_instance=refused_at_startup -->
+<!-- truth: spine.postgresql.implemented=absent -->
+<!-- truth: spine.durable_jobs.implemented=absent -->
+<!-- truth: spine.secrets_backups.implemented=absent -->
+
 ## Phase overview
 
 | # | Phase | Theme |
