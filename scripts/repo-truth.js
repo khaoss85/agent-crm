@@ -1656,20 +1656,33 @@ export function findUnknownCodes(source, vocabulary, basenames) {
  * reason and at the same cost — a reviewable edit with an argument attached,
  * scoped to the file that writes it.
  *
+ * **In a `.js` surface the declaration reaches comment lines only**, and that
+ * restriction is not tidiness. The retired posture and the paragraph explaining
+ * it live in the *same file*: a file-scoped declaration excused the explanation
+ * and the published `productionPosture` string alike, and restoring the
+ * falsehood went back to passing. A comment is the file talking about itself; a
+ * string literal is what `app inspect` hands to an agent, and nothing excuses
+ * that. Every other bound surface is prose or data end to end, so the
+ * declaration stays file-scoped there.
+ *
  * @param {string} source
+ * @param {{javascript?: boolean}} [options]
  * @returns {Array<{line: number, claim: string}>}
  */
-export function findRetiredClaims(source) {
+export function findRetiredClaims(source, { javascript = false } = {}) {
   /** @type {Array<{line: number, claim: string}>} */
   const found = [];
   const text = String(source);
   const declared = new Set([...text.matchAll(RETIRED_CLAIM)].map((match) => normalizeClaimText(match[1])));
   const lines = text.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trimStart();
+    const excusable = !javascript || trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*');
     const normalized = normalizeClaimText(lines[index]);
     for (const claim of RETIRED_CLAIMS) {
       const needle = normalizeClaimText(claim);
-      if (!normalized.includes(needle) || declared.has(needle)) continue;
+      if (!normalized.includes(needle)) continue;
+      if (excusable && declared.has(needle)) continue;
       found.push({ line: index + 1, claim });
     }
   }
@@ -1779,7 +1792,7 @@ export async function checkRepository({ rootDir }) {
           + 'reads is worse than none: it looks like proof and checks nothing.',
       });
     }
-    for (const { line, claim } of findRetiredClaims(source)) {
+    for (const { line, claim } of findRetiredClaims(source, { javascript })) {
       problems.push({
         code: 'TRUTH_CLAIM_RETIRED',
         message: `${surface}:${line}: states "${claim}", a claim this repository deliberately retired. It is the `

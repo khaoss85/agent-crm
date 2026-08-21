@@ -3453,3 +3453,75 @@ any document cites, so every number in a bound sentence — test counts, module,
 package, resource and action counts — is outside it, and a reader should not
 infer otherwise from a citation standing next to one. A test now asserts that the
 document's codes and the explainer's table are the same set.
+
+#### Amendment 2 — binding the posture sentence did not close instance 1, and the `.js` allowlist was not path-scoped
+
+Amendment 1 says the posture sentence "is now a bound surface carrying seven
+citations", after recording that restoring the false posture in a clean clone had
+left `--check` green. Read together, those two sentences claim the first of the
+two failures this ADR opens by naming is closed. **It was not, and the mutation
+says so:** pasting `"no authentication, tenancy or RBAC exists"` back into
+`productionPosture` and touching nothing else exits **0**. A citation binds a
+**value** — reversing `spine.authorization.enforced=enforced` to `=absent` fails,
+and that is the entire content of what those lines prove. They say nothing about
+the sentence beneath them, which is what `WORDING_IS_NOT_GENERATED` had already
+said and what the amendment then wrote past.
+
+Generating the sentence from its own facts is the real answer and stays **v2**.
+What closes the recorded case now is `RETIRED_CLAIMS`, the exact counterpart of
+`RETIRED_CODES`: a short list holding the one retired claim across every bound
+surface, matched on collapsed whitespace and folded case, each entry a reviewable
+edit with an argument attached, and a `truth: retired-claim <claim> — why`
+declaration for a surface that names it as history. In a `.js` surface that
+declaration reaches **comment lines only** — file-scoped, it excused the
+published string as readily as the paragraph explaining it, and the mutation went
+straight back to passing. A rewording that preserves the bounded meaning still
+passes; the boundary is published as `POSTURE_PROSE_NOT_GENERATED`, because this
+holds the falsehood that *is* in the record and not the set of all falsehoods.
+The sentence also asserted the identity-contract seam and the absence of
+shared-database tenancy while citing nothing for either; it carries nine
+citations now.
+
+**The `.js` grammar was bounded by a literal list and by nothing else.**
+`BOUND_SURFACES` is frozen, so no code path in the script can traverse — but a
+symlink at `packages/cli/src/app-inspect.js` is followed. Pointed outside the
+repository it made *that* file's `// truth:` lines the ones the gate read; pointed
+at a citation-free file it dropped the posture's citations from 95 to 88 and left
+`--check` green with the falsehood standing in the target. An allowlist a symlink
+can redirect is not an allowlist, so every bound surface and every authority
+source is now checked to be repository-relative, free of any `..` segment, and
+reachable without traversing a symlink at any component, a parent directory
+included — `TRUTH_SURFACE_UNSAFE`, refused rather than skipped. Two smaller holes
+in the same grammar: a string literal quoting `// truth: id=value` inside the
+bound surface *became* a citation (own-line comments only now), and
+`// truth: id -> value` matched no pattern and was silently not one
+(`TRUTH_CITATION_MALFORMED`, a code declared since v1 and never emitted until
+now).
+
+**The cleanup compromise was half of one.** Amendment 1 records the retry-and-warn
+half. Warning is the right answer to a transient race and the wrong answer to a
+permanent leak, which it made invisible — the same shape as a stale document
+nothing checks, inside the suite that exists to catch that shape. The run now owns
+one `mkdtemp` scratch root, every fixture is created inside it, a cleanup that
+cannot finish registers what it left, and after every test in the file the gate
+retries once and then fails deterministically on a directory or a program still
+inside that root. It deletes nothing outside the root, kills nothing, and names
+residue by **class** rather than by absolute path, because a CI log is
+machine-facing and public. Two runs in flight cannot reach each other's
+directories, and that is driven by a probe rather than argued: swapping the sweep
+for a `/tmp` glob makes the probe fail, which is what makes its passing evidence.
+
+**The detached auto-gc explanation is unchanged and stays a hypothesis.** It did
+not reproduce locally in 75 rounds under three concurrent workers. The gate
+reports what is left behind, never why.
+
+`NUMERIC_CLAIMS_NOT_BOUND` was itself inaccurate, which in this ADR is not a
+small thing. `spine.identity.contract=1` is a cited integer, so `docs/QUALITY_GATES.md`
+§6.1's "no number is checked" was false; and typed *test* counts are not
+unchecked but held by `findLooseTestCounts` inside `gtm:check`, so naming them
+first among the things "outside this contract" read as the opposite of the case.
+Both are corrected. Binding numbers remains v2: requiring one to carry a fact
+means classifying a load-bearing current count against a date, an ADR number, a
+currency example, a receipt's raw count and a digit inside a code fence, and
+`findLooseTestCounts` needed two hand-tuned negative lookbehinds to survive
+widening from `site/` to `docs/` for a single noun.

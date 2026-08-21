@@ -387,18 +387,85 @@ npm run crm -- project verify --json
    on — this contract's own failure mode, reproduced inside it. All three now
    remove the fact.
 
+### The validation pass, and the four things it found
+
+A second pass ran the attacks the two accepted extensions were scoped by, rather
+than reading the code for them. Four findings, each with the probe that
+reproduces it and the mutation that now fails.
+
+1. **Binding the posture sentence did not close instance 1.** The paragraph above
+   records that it did. A citation binds a **value**: reversing one of the
+   `// truth:` lines fails, and that is the whole of what they prove. Pasting
+   *"no authentication, tenancy or RBAC exists"* back into `productionPosture`
+   with the citations untouched exited **0**. `RETIRED_CLAIMS` now holds that one
+   recorded claim across every bound surface, on the terms `RETIRED_CODES` holds
+   a retired code, with a `truth: retired-claim <claim> — why` declaration for
+   the two surfaces that name it as history — and in a `.js` surface that
+   declaration reaches **comment lines only**, because a file-scoped one excused
+   the published string as readily as the paragraph about it. A benign rewording
+   that keeps the bounded meaning still passes. The boundary is published as
+   `POSTURE_PROSE_NOT_GENERATED`: this holds the falsehood that *is* in the
+   record, not the set of all falsehoods, and generating the sentence is v2.
+2. **A symlink widened the path allowlist, silently.** `BOUND_SURFACES` is a
+   frozen literal list, so nothing in the script can traverse; the filesystem
+   can. Replacing `packages/cli/src/app-inspect.js` with a symlink to a file
+   outside the repository made *that* file's citations the ones the gate read,
+   and pointing it at a citation-free file dropped the count from 95 to 88 and
+   left `--check` **green** with the false posture sitting in the target. Every
+   bound surface and authority source is now checked to be repository-relative,
+   `..`-free and reachable without traversing a symlink at any component — a
+   parent directory included. `TRUTH_SURFACE_UNSAFE`, refused rather than skipped.
+3. **The grammar read its own examples, and ignored its own typos.** A string
+   literal quoting `// truth: id=value` inside the bound `.js` surface became a
+   citation; `// truth: id -> value` matched nothing and was silently not one.
+   Own-line comments only, and `TRUTH_CITATION_MALFORMED` — a code already
+   declared in `TRUTH_PROBLEMS` that had never been emitted.
+4. **The cleanup compromise was half-implemented.** Retry-and-warn was in; the
+   suite-level residual gate was not, so a *permanent* leak was invisible.
+   `tests/helpers/scratch.js` gives the run one `mkdtemp` scratch root, creates
+   every fixture inside it, registers what a per-test cleanup could not remove,
+   and after every test in the file retries once and then **fails**
+   deterministically on a directory or a program still inside that root. It
+   deletes nothing outside the root — the guard is exercised, not asserted —
+   kills nothing, and names residue by **class** (`accordo-truth-fixture-`,
+   `git`), never by absolute path, because a CI log is machine-facing and public.
+   `tests/helpers/scratch-concurrency-probe.js` runs two of these side by side,
+   in both orders, and proves each survives the other's full sweep; swapping the
+   sweep for a `/tmp` glob makes that probe fail, which is what makes it evidence.
+
+**Still a hypothesis, and left as one.** The detached `git gc --auto` explanation
+for the original teardown race is unchanged and unpromoted: `gc.auto=0` and
+`maintenance.auto=false` are set on the theory that it is the writer, the race
+never reproduced locally in 75 rounds under three concurrent workers, and the new
+gate reports *what* is left, never *why*.
+
+**Numeric binding stays v2, and the limitation was reworded rather than
+implemented.** The published `NUMERIC_CLAIMS_NOT_BOUND` was wrong twice:
+`spine.identity.contract=1` is a cited integer, so §6.1's "no number is checked"
+was false; and typed *test* counts are not unchecked at all —
+`findLooseTestCounts` holds them inside `gtm:check` — so listing them first among
+the things "outside this contract" read as the opposite of the case. Requiring a
+number to carry a fact means telling a load-bearing current count from a date, an
+ADR number, a currency example, a receipt's raw count and a digit inside a code
+fence. `findLooseTestCounts` needed two hand-tuned negative lookbehinds to
+survive widening from `site/` to `docs/` for **one** noun; seven nouns across
+twenty-one surfaces is a new gate with its own false-positive budget, and it needs
+count-shaped facts that do not exist yet.
+
 ## 12. Outcome and follow-up
 
 Measured on `claude/repository-truth-contract-v1`:
 
 - `docs/repository-truth.json` — 38 facts from 9 authorities (6 source, 1
-  receipt, 2 measurement), 12 published limitations.
-- 95 citations across 21 bound surfaces, one of which is source: the `app inspect`
-  `productionPosture` sentence, which is the first of the two failures in §2.
+  receipt, 2 measurement), 13 published limitations.
+- 97 citations across 21 bound surfaces, one of which is source: the `app inspect`
+  `productionPosture` sentence, which is the first of the two failures in §2. It
+  carries nine now, having asserted the identity-contract seam and shared-database
+  tenancy while citing nothing for either.
 - `npm run repo:truth -- --check`: **~0.5 s** wall clock, one app-composition
   build and no scenario run, run as its own step in the `public-claims` CI job
   on every push and every pull request.
-- `tests/repository-truth-contract.test.js`: 47 tests, ~5 s, passing in both a
+- `tests/repository-truth-contract.test.js`: 58 tests, ~3.5 s, passing in both a
   full-history checkout and a `--depth 1` shallow clone.
 
 **Deliberately out of v1:** JTBD rows, `docs/editions/**`, any scenario-run

@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { describeResidual, disposable, removeForProbe, scratchClass, scratchRoot } from './helpers/scratch.js';
+import { runConcurrencyProbe } from './helpers/scratch-concurrency-probe.js';
 
 import {
   AUTHORITY_KINDS,
@@ -15,6 +18,7 @@ import {
   FACT_STATUSES,
   FACT_VALUES,
   REPOSITORY_TRUTH_CONTRACT,
+  RETIRED_CLAIMS,
   RETIRED_CODES,
   TRUTH_DOCUMENT,
   buildFacts,
@@ -23,6 +27,8 @@ import {
   checkCitations,
   checkRepository,
   diffDocuments,
+  findMalformedDirectives,
+  findRetiredClaims,
   findUnknownCodes,
   harvestCodeVocabulary,
   parseCitations,
@@ -30,6 +36,7 @@ import {
   readBenchmarkReceipt,
   readMeasurement,
   repositoryBasenames,
+  resolveSurfacePath,
   serialize,
 } from '../scripts/repo-truth.js';
 
@@ -90,26 +97,24 @@ function problemNaming(problems, needle) {
 const git = (cwd, args) => spawnSync('git', ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', ...args], { cwd, encoding: 'utf8' });
 
 /**
- * A temporary directory that removes itself, and does not fail the run if it
- * cannot.
+ * A temporary directory that removes itself, warns rather than failing when it
+ * cannot, and **registers what it left** for the run-level gate.
  *
- * The retries handle the transient case on a loaded runner. If the directory
- * still will not go, the test is **not** failed: every assertion has already
- * been made, the path is under `os.tmpdir()`, and a CI runner is discarded
- * minutes later. Turning a housekeeping race into a red suite reports a defect
- * that is not there — and this file's job is to be believed.
+ * Both halves live in `tests/helpers/scratch.js` now, because the first half
+ * alone was only half a policy. Retrying and warning is the right answer to a
+ * transient race on a loaded runner — every assertion in the test has already
+ * passed, and failing there reports a defect that is not there. It is the wrong
+ * answer to a *permanent* leak, which it made invisible: importing the helper
+ * also arms a run-level gate that retries once more after every test in this
+ * file and then fails deterministically on anything still standing.
+ *
+ * The helper also gives this run a scratch root of its own, so its sweep can
+ * name nothing outside what this process created — two runs in flight cannot
+ * reach each other's directories, which `tests/helpers/scratch-concurrency-probe.js`
+ * proves rather than asserts in prose.
+ *
+ * Imported at the top of this file; named here because this is where it is read.
  */
-function disposable(t, prefix) {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  t.after(() => {
-    try {
-      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    } catch (error) {
-      process.stderr.write(`note: left ${root} behind (${/** @type {any} */ (error)?.code ?? error})\n`);
-    }
-  });
-  return root;
-}
 
 /**
  * A throwaway git repository carrying only what one rule needs.
@@ -381,6 +386,143 @@ test('the JavaScript comment grammar is applied to source surfaces only', () => 
   assert.deepEqual(parseCitations(line), []);
   assert.deepEqual(parseCitations(line, { javascript: true }),
     [{ line: 1, id: 'spine.authorization.enforced', value: 'absent' }]);
+});
+
+// ───────────────────── negative: the `.js` grammar is bounded and path-scoped
+
+test('the bound .js set is exactly one canonical generator, and nothing globs into it', () => {
+  // The whole reason a source file may carry a citation is that `productionPosture`
+  // is a product claim written as a string. That is a per-file argument, made in
+  // review; it is not a rule a pattern could widen.
+  assert.deepEqual(BOUND_SURFACES.filter((surface) => surface.endsWith('.js')),
+    ['packages/cli/src/app-inspect.js']);
+  for (const surface of [...BOUND_SURFACES, ...AUTHORITY_SOURCES]) {
+    assert.ok(!surface.startsWith('/') && !surface.split('/').includes('..'),
+      `${surface} is not a repository-relative path without a ".." segment`);
+  }
+});
+
+test('a declared path that traverses is refused before anything reads it', () => {
+  for (const traversal of ['../outside.js', '/etc/passwd', 'packages/../../x.js']) {
+    const resolved = resolveSurfacePath(repoRoot, traversal);
+    assert.equal(resolved.ok, false, `${traversal} was accepted`);
+    assert.match(/** @type {any} */ (resolved).reason, /repository-relative/);
+  }
+  assert.equal(resolveSurfacePath(repoRoot, 'packages/cli/src/app-inspect.js').ok, true);
+});
+
+test('a symlink at a bound path is refused, not followed — at the file and at a parent', async (t) => {
+  // Measured on this branch, and it is the reason the allowlist needed a guard
+  // at all: `BOUND_SURFACES` is a frozen literal list, so nothing in the script
+  // can traverse, but the filesystem can. Pointing the bound source surface at a
+  // citation-free file dropped its citations from 95 to 88 and left `--check`
+  // GREEN with the retired posture standing in the symlink's target.
+  const root = disposable(t, 'accordo-truth-symlink-');
+  mkdirSync(join(root, 'packages/cli/src'), { recursive: true });
+  mkdirSync(join(root, 'elsewhere'), { recursive: true });
+  writeFileSync(join(root, 'elsewhere', 'decoy.js'), '// truth: made.up.fact=nonsense\n');
+
+  const bound = join(root, 'packages/cli/src/app-inspect.js');
+  symlinkSync(join(root, 'elsewhere', 'decoy.js'), bound);
+  const atFile = resolveSurfacePath(root, 'packages/cli/src/app-inspect.js');
+  assert.equal(atFile.ok, false);
+  assert.match(/** @type {any} */ (atFile).reason, /symbolic link/);
+  assert.match(/** @type {any} */ (atFile).reason, /app-inspect\.js/);
+
+  // A parent component is the same hole wearing a different hat.
+  rmSync(bound);
+  writeFileSync(bound, '// truth: spine.authorization.enforced=enforced\n');
+  rmSync(join(root, 'packages/cli/src'), { recursive: true, force: true });
+  symlinkSync(join(root, 'elsewhere'), join(root, 'packages/cli/src'));
+  const atParent = resolveSurfacePath(root, 'packages/cli/src/app-inspect.js');
+  assert.equal(atParent.ok, false);
+  assert.match(/** @type {any} */ (atParent).reason, /symbolic link/);
+  assert.match(/** @type {any} */ (atParent).reason, /packages\/cli\/src/);
+
+  // A path that simply is not there is still the caller's `existsSync` case, not
+  // a traversal — refusing it here would turn "not present" into a failure.
+  assert.equal(resolveSurfacePath(root, 'docs/never-existed.md').ok, true);
+});
+
+test('a string literal that quotes the grammar is not a citation', () => {
+  // `CITATION_JS` matched anywhere on a line, so this line inside the one bound
+  // `.js` surface produced TRUTH_FACT_UNKNOWN for a citation nobody wrote. A
+  // grammar that reads its own examples is not bounded.
+  const literal = "const example = '// truth: made.up.fact=nonsense';\n";
+  assert.deepEqual(parseCitations(literal, { javascript: true }), []);
+  // The real form, on its own line, still parses — indented or not.
+  assert.deepEqual(parseCitations('      // truth: billing.implemented=absent\n', { javascript: true }),
+    [{ line: 1, id: 'billing.implemented', value: 'absent' }]);
+});
+
+test('a truth: directive no rule reads is refused rather than ignored', () => {
+  // A typo used to turn a load-bearing citation off with no signal at all:
+  // `-> ` matches no pattern, so the line was neither a citation nor an error.
+  assert.deepEqual(findMalformedDirectives('// truth: spine.authorization.enforced -> enforced\n',
+    { javascript: true }), [{ line: 1, body: 'spine.authorization.enforced -> enforced' }]);
+  assert.deepEqual(findMalformedDirectives('<!-- truth: this is not a citation -->\n'),
+    [{ line: 1, body: 'this is not a citation' }]);
+  // The three legal forms are legal.
+  assert.deepEqual(findMalformedDirectives('// truth: billing.implemented=absent\n', { javascript: true }), []);
+  assert.deepEqual(findMalformedDirectives(`<!-- truth: retired-code ${RETIRED_CODES[0]} — history -->\n`), []);
+  assert.deepEqual(findMalformedDirectives(`<!-- truth: retired-claim ${RETIRED_CLAIMS[0]} — history -->\n`), []);
+  // A document quoting the grammar inside a table cell or a sentence is a
+  // document. The rule reads own-line directives only, which is why widening it
+  // to Markdown did not redden `docs/QUALITY_GATES.md` §6.1.
+  assert.deepEqual(findMalformedDirectives('| cites a fact | `<!-- truth: <factId>=<value> -->` | fails |\n'), []);
+  assert.deepEqual(findMalformedDirectives('written `// truth: <id>=<value>` in a bound file.\n',
+    { javascript: true }), []);
+});
+
+// ───────── negative: the retired posture, which citations alone did not catch
+
+test('restoring the retired posture fails, and citations alone never did — PR #101, again', async () => {
+  // ADR-039 Amendment 1 records that binding `productionPosture` closed the first
+  // of the two failures. It did not. A citation binds a VALUE: reversing one of
+  // the nine `// truth:` lines fails, and that is all they prove. Pasting the
+  // recorded falsehood into the sentence beneath them and touching nothing else
+  // exited 0 — measured on this branch, not reasoned about.
+  const source = readFileSync(join(repoRoot, 'packages/cli/src/app-inspect.js'), 'utf8');
+  const posture = /productionPosture: '([^']*)'/.exec(source);
+  assert.ok(posture, 'productionPosture is no longer a single-quoted string');
+
+  const falsified = source.replace(posture[0], `productionPosture: '${RETIRED_CLAIMS[0]}'`);
+  const hits = findRetiredClaims(falsified, { javascript: true });
+  assert.equal(hits.length, 1, 'the retired posture in the published string was not caught');
+  assert.equal(hits[0].claim, RETIRED_CLAIMS[0]);
+
+  // The citations are untouched by that mutation, which is exactly the point.
+  const { document } = await buildTruthDocument({ rootDir: repoRoot });
+  const index = new Map(document.facts.map((fact) => [fact.id, fact]));
+  assert.deepEqual(checkCitations(parseCitations(falsified, { javascript: true }), index, 'x'), []);
+
+  // A re-wrap and a capitalised sentence start are the same claim.
+  assert.equal(findRetiredClaims(`x = 'No authentication,   tenancy or RBAC exists here';\n`,
+    { javascript: true }).length, 1);
+
+  // A wording change that keeps the bounded meaning is not this rule's business.
+  const reworded = source.replace(posture[0], "productionPosture: 'not a readiness claim: this framework "
+    + "verifies no identity itself, and owns and enforces authorization and one-tenant-per-instance tenancy'");
+  assert.deepEqual(findRetiredClaims(reworded, { javascript: true }), []);
+  assert.deepEqual(checkCitations(parseCitations(reworded, { javascript: true }), index, 'x'), []);
+});
+
+test('a retired-claim declaration excuses a comment, never a published string', () => {
+  // The retired posture and the paragraph explaining it live in the same file.
+  // A file-scoped declaration excused both, so restoring the falsehood went back
+  // to passing — the escape has to be narrower than the file it is written in.
+  const declaration = `// truth: retired-claim ${RETIRED_CLAIMS[0]} — named as history\n`;
+  assert.deepEqual(findRetiredClaims(`${declaration}// once said "${RETIRED_CLAIMS[0]}" (PR #101)\n`,
+    { javascript: true }), []);
+  const published = findRetiredClaims(`${declaration}  posture: '${RETIRED_CLAIMS[0]}',\n`, { javascript: true });
+  assert.equal(published.length, 1);
+  assert.equal(published[0].line, 2);
+  // Markdown and JSON are prose and data end to end, so there the declaration is
+  // file-scoped — the same shape as a retired code's.
+  assert.deepEqual(findRetiredClaims(`<!-- truth: retired-claim ${RETIRED_CLAIMS[0]} — history -->\n`
+    + `it read "${RETIRED_CLAIMS[0]}" in the same report (PR #101).\n`), []);
+  // An undeclared mention in a bound Markdown surface still fails.
+  assert.equal(findRetiredClaims(`The framework: ${RETIRED_CLAIMS[0]}.\n`).length, 1);
 });
 
 test('a quoted word=word that is not in a facts array is prose, not a citation', () => {
@@ -888,6 +1030,55 @@ test('the bound surfaces are current documents, and history is excluded by path'
     assert.ok(BOUND_SURFACES.includes(required), `${required} is not bound`);
   }
   assert.ok(BOUND_SURFACES.some((surface) => surface.startsWith('examples/scenarios/')), 'no scenario document is bound');
+});
+
+// ─────────────────────────────── the residual policy over this file's own scratch
+
+test('every throwaway directory is created inside the run-owned scratch root', (t) => {
+  // The gate's licence to delete a whole tree is that the tree is one this
+  // process made inside a root it owns. If a fixture were made anywhere else,
+  // the sweep would either miss it — a leak the gate cannot see — or it would
+  // have to match a pattern over os.tmpdir(), which is what makes a sweep
+  // reach a concurrent run.
+  const root = scratchRoot();
+  const fixture = disposable(t, 'accordo-truth-selftest-');
+  assert.ok(fixture.startsWith(root + sep), `${scratchClass(fixture)} was created outside the run scratch root`);
+  assert.equal(scratchClass(fixture), 'accordo-truth-selftest-');
+});
+
+test('the sweep refuses any path outside the run-owned scratch root', () => {
+  const root = scratchRoot();
+  for (const outside of [tmpdir(), join(tmpdir(), 'accordo-someone-elses-run'), repoRoot, root]) {
+    assert.throws(() => removeForProbe(outside), /not inside this run's scratch root/,
+      `the guard accepted ${outside === root ? 'the run root itself' : 'a path outside the run root'}`);
+  }
+});
+
+test('the residual report names classes, never an absolute path', () => {
+  const report = describeResidual({
+    directories: ['accordo-truth-fixture-'],
+    warned: ['accordo-truth-fixture-'],
+    programs: ['git'],
+  });
+  assert.match(report, /accordo-truth-fixture-/);
+  assert.match(report, /program classes still inside the run scratch: git/);
+  // A CI log is machine-facing and public. The run's absolute path carries the
+  // runner's user and directory layout, and tells a reader nothing they needed.
+  assert.doesNotMatch(report, /\//, 'the residual report contains a path separator');
+  assert.ok(!report.includes(tmpdir()), 'the residual report names the temporary directory');
+  assert.ok(!report.includes(scratchRoot()), 'the residual report names the run scratch root');
+});
+
+test('two concurrent runs cannot sweep each other — driven, not argued', async () => {
+  // `tests/helpers/scratch-concurrency-probe.js`: two processes, each building
+  // scratch the way every test here does, each running a FULL sweep of its own
+  // while the other is standing, in both orders. A `/tmp` glob passes the
+  // "my own scratch is gone" half and fails this one.
+  const results = await runConcurrencyProbe();
+  for (const result of results) {
+    assert.equal(result.code, 0, `concurrency worker ${result.name} failed:\n${result.out}${result.err}`);
+    assert.match(result.out, /both rounds clean/);
+  }
 });
 
 /**
