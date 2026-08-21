@@ -191,42 +191,48 @@ History for the private half is a copy with a provenance note naming the public
 commit it was split from — `filter-repo` cannot split a file, and pretending
 otherwise would produce a private history that misrepresents what happened.
 
-### 3.6 `docs/jtbd/` — `SPLIT_PUBLIC_PRIVATE`
+### 3.6 `docs/jtbd/` — path-by-path final inventory
 
-**First, what is actually there.** At `f30d0f7` the directory contains **exactly
-one file: `README.md`**. Verified against the tree, and against all 88 remote
-branches — the catalogue is on none of them.
+Re-inventoried against measured `main` at `5b3d23d` after the catalogue, quality, alignment and measurement merges. The inventory is generated from `git ls-tree`; every tracked path is classified below. **Nothing is moved or deleted by this PR.**
 
-**That README describes seven files that do not exist**: `MASTER.md`,
-`catalog/jtbd.compact.jsonl`, three files under `prompts/`, and
-`quality_report.md`. It tells agents how to resolve fields between them. This is
-a live instance of exactly the failure `docs/REPOSITORY_TRUTH.md` exists to
-catch — a public document confidently describing artefacts nobody committed —
-and it is recorded here rather than quietly fixed, because the migration plan
-must not assume a catalogue that is missing.
-
-**The classification below is therefore forward-looking.** It governs the
-catalogue *when it lands*. Nothing under `docs/jtbd/` moves today.
-
-| Future subset | Contents | Edition |
+| Current path | Long-term disposition | Boundary reason |
 |---|---|---|
-| **Public** | canonical JTBD ids and job wording · public coverage status · public evidence · public limitations · the query and verification schemas and tools contributors and agents need | stays in `accordo` |
-| **Private** | the complete desired portfolio where strategically sensitive · the detailed semantic quality report · gap-to-roadmap analysis · prioritisation · business value · competitive rationale · private milestone ownership · internal spec-generation prompts | `accordo-platform`, `docs/internal/jtbd/` |
+| `docs/jtbd/AGENTS.md` | **KEEP_PUBLIC** | Agent evidence rules must remain beside the public verification surface. |
+| `docs/jtbd/MASTER.md` | **SPLIT_PUBLIC_PRIVATE** | Keep a canonical public job projection; private owns the complete strategic portfolio. |
+| `docs/jtbd/PORTFOLIO_ALIGNMENT.md` | **KEEP_PUBLIC** | Public contract separating desired state, coverage and ownership. |
+| `docs/jtbd/PUBLIC_PRIVATE.json` | **KEEP_PUBLIC** | Executable classification remains public until migration is executed. |
+| `docs/jtbd/PUBLIC_PRIVATE.md` | **KEEP_PUBLIC** | Public explanation of the edition boundary. |
+| `docs/jtbd/README.md` | **KEEP_PUBLIC** | Public entry point and reference-resolution guidance. |
+| `docs/jtbd/catalog/capabilities.json` | **SPLIT_PUBLIC_PRIVATE** | Public capability identifiers; private strategic annotations where present. |
+| `docs/jtbd/catalog/e2e_scenarios.json` | **SPLIT_PUBLIC_PRIVATE** | Public acceptance boundaries; private competitive or sequencing context. |
+| `docs/jtbd/catalog/jtbd.jsonl` | **SPLIT_PUBLIC_PRIVATE** | Public canonical job subset; private complete strategic desired portfolio. |
+| `docs/jtbd/catalog/personas.json` | **SPLIT_PUBLIC_PRIVATE** | Public role taxonomy; private commercial segmentation where appropriate. |
+| `docs/jtbd/coverage/MATRIX_CROSSWALK.md` | **KEEP_PUBLIC** | Public preservation map for historical positive coverage rows. |
+| `docs/jtbd/coverage/STATUS_CROSSWALK.md` | **KEEP_PUBLIC** | Public status-vocabulary contract. |
+| `docs/jtbd/coverage/assessments.json` | **KEEP_PUBLIC** | Executable evidence bindings remain inspectable. |
+| `docs/jtbd/coverage/coverage.overlay.jsonl` | **KEEP_PUBLIC** | Conservative public coverage conclusions and limitations. |
+| `docs/jtbd/coverage/matrix_crosswalk.json` | **KEEP_PUBLIC** | Machine crosswalk preserving historical evidence. |
+| `docs/jtbd/manifest.json` | **SPLIT_PUBLIC_PRIVATE** | Public projection gets its own checksum; private source keeps independent provenance. |
+| `docs/jtbd/prompts/01_repo_coverage_audit.md` | **KEEP_PUBLIC** | Public evidence-assessment workflow. |
+| `docs/jtbd/prompts/02_gap_to_roadmap.md` | **MOVE_PRIVATE** | Priority and gap-to-roadmap analysis exposes strategy. |
+| `docs/jtbd/prompts/03_jtbd_to_spec.md` | **MOVE_PRIVATE** | Internal specification generation over the complete strategic portfolio. |
+| `docs/jtbd/prompts/04_competitor_benchmark.md` | **MOVE_PRIVATE** | Competitive analysis is commercial research. |
+| `docs/jtbd/prompts/05_simulate_lifecycle.md` | **SPLIT_PUBLIC_PRIVATE** | Public validation workflow; private portfolio-wide strategic simulation. |
+| `docs/jtbd/quality/SEMANTIC_QUALITY_FINDINGS.md` | **MOVE_PRIVATE** | Detailed portfolio defect and disposition analysis. |
+| `docs/jtbd/quality/findings.json` | **MOVE_PRIVATE** | Machine quality/gap findings over the strategic portfolio. |
+| `docs/jtbd/quality_report.md` | **SPLIT_PUBLIC_PRIVATE** | Public structural validity; private detailed semantic quality. |
+| `docs/jtbd/roadmap/OWNERSHIP.md` | **SPLIT_PUBLIC_PRIVATE** | Public tracks/status/dependencies; private priority and commercial sequencing. |
+| `docs/jtbd/roadmap/capability_pillars.json` | **KEEP_PUBLIC** | Public technical ownership taxonomy. |
+| `docs/jtbd/roadmap/pillars.json` | **SPLIT_PUBLIC_PRIVATE** | Public pillar contracts; private priority and commercial sequencing fields. |
+| `docs/jtbd/roadmap/roadmap.overlay.jsonl` | **SPLIT_PUBLIC_PRIVATE** | Public disposition/dependencies; private prioritisation and business rationale. |
+| `docs/jtbd/schemas/coverage.schema.json` | **KEEP_PUBLIC** | Public verification contract. |
+| `docs/jtbd/schemas/jtbd.schema.json` | **SPLIT_PUBLIC_PRIVATE** | Public projection schema and private full schema evolve independently. |
+| `docs/jtbd/schemas/persona.schema.json` | **SPLIT_PUBLIC_PRIVATE** | Public role projection and private full taxonomy evolve independently. |
+| `docs/jtbd/tools/audit_semantic_quality.py` | **MOVE_PRIVATE** | Operates on and exposes strategic quality analysis. |
+| `docs/jtbd/tools/query_catalog.py` | **KEEP_PUBLIC** | Public subset/overlay query surface must remain independently usable. |
+| `docs/jtbd/tools/verify_catalog.py` | **KEEP_PUBLIC** | Public subset verification must not depend on private files. |
 
-Three rules govern the split, and the third is the one that constrains the
-design rather than merely describing it:
-
-1. **The full catalogue has already been public** if and when it is committed.
-   Nothing here rewrites history to pretend otherwise; the boundary protects
-   *future* additions.
-2. **No broken agent instructions.** `README.md` and `AGENTS.md` under
-   `docs/jtbd/` must not, after migration, direct an agent at a private path.
-3. **The public query tool must not require the private catalogue.** A public
-   subset generated from a private source is acceptable **only** if public
-   verification does not thereby depend on private CI or private files — which
-   is the §1 governing constraint applied to this directory. **Prefer a
-   checked-in, independently verifiable public artefact** over a generation step
-   that reaches across the boundary.
+The full catalogue is already public history. Migration never rewrites that history. A future public projection must be checked in, checksum-bound and verifiable using only public files; the private source must not become a dependency of public CI. Coverage remains public and evidence-bound. Roadmap assignment never promotes coverage.
 
 ### 3.7 What explicitly does not move
 

@@ -163,7 +163,7 @@ is a close call:
 - **`docs/plans/` — 55 dated ExecPlans.** Historical engineering records,
   including the ones whose milestone was cut or reworked. They preserve what was
   true when written and are never rewritten.
-- **`docs/jtbd/`** — the JTBD index README supporting the public matrix.
+- **`docs/jtbd/`** — classified path by path in `PRIVATE_REPOSITORY_MIGRATION.md` §3.6: public evidence/query contracts stay; strategic portfolio, quality and prioritisation material moves or splits only after a private repository exists.
 - **`docs/editions/`** — these five documents. The boundary between the editions
   is itself public; a private boundary document would be an odd thing to ask
   contributors to respect.
