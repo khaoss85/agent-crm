@@ -1,53 +1,45 @@
-# Accordo JTBD functional coverage catalog
+# Accordo JTBD desired-state catalog
 
-This directory is the source of truth for product-functional coverage analysis of Accordo as an agent-native CRM / Customer Data Platform.
+Catalog version `2026-08-20.1`: **30 personas · 600 JTBD · 225 capabilities · 10 end-to-end scenarios**.
 
-## Purpose
+This directory is a desired-state requirements corpus, not a claim that Accordo currently supports these jobs. Phase D must assess the repository at a pinned SHA using the four JTBD statuses defined by `docs/QUALITY_GATES.md`.
 
-Use this catalog to answer four questions:
+## Canonical raw files
 
-1. Which real jobs must Accordo support for each business and technical persona?
-2. Which jobs are fully, partially or not supported by the current repository?
-3. Which missing capabilities should enter the roadmap first?
-4. How does Accordo's coverage and agentic model compare with CRM/CDP competitors?
+- `catalog/jtbd.jsonl` — 4,611,152 bytes / 600 complete records.
+- `MASTER.md` — 370,072 bytes.
+- `catalog/personas.json` — 30 personas.
+- `catalog/capabilities.json` — 225 atomic capabilities.
+- `catalog/e2e_scenarios.json` — 10 cross-functional scenarios.
 
-The catalog is intentionally written for both humans and coding agents. Do not promote a JTBD to `FUNCTIONAL` or `PRODUCTION_READY` from prose or source inspection alone: attach repository evidence and respect the evidence rules in `AGENTS.md`, `docs/QUALITY_GATES.md`, and the application rails.
+No decompression/materialization step is required.
 
-## Files
+## Tools, and what does not exist
 
-- `MASTER.md` — human-readable master specification covering personas, JTBDs, use cases, agentic design and evaluation model.
-- `catalog/jtbd.compact.jsonl` — machine-readable index of all 600 JTBDs. It contains the stable IDs and the fields needed for repository audits and roadmap prioritization.
-- `prompts/01_repo_coverage_audit.md` — instructions for assessing repository coverage.
-- `prompts/02_gap_to_roadmap.md` — instructions for converting verified gaps into a roadmap.
-- `prompts/03_jtbd_to_spec.md` — instructions for turning one JTBD into an implementation specification.
-- `quality_report.md` — catalog validation summary.
+Present and working: `tools/verify_catalog.py` (validates the corpus against
+`manifest.json`) and `tools/query_catalog.py` (streams the corpus and selects a
+slice; `--json` emits a single JSON array on stdout and the match count on
+stderr, so the output parses).
 
-The original rich JSONL contains more verbose scenario, acceptance, governance and testing detail than the compact Git copy. The authoritative semantic specification remains `MASTER.md`; the compact JSONL is the fast machine index. If a field is absent from the compact record, resolve it from `MASTER.md` rather than inventing it.
+**`MASTER.md` names four things that do not exist in this repository** —
+`tools/validate_catalog.py`, `tools/init_coverage.py`, `tools/score_roadmap.py`
+and the path `data/jtbd.jsonl` (the real path is `catalog/jtbd.jsonl`). Six
+references in total, at lines 60, 68, 84–86 and 1021.
 
-## Recommended agent workflow
+They are **NOT_IMPLEMENTED**, not missing by accident. `MASTER.md` is frozen by
+the SHA-256 in `manifest.json` and cannot be edited without moving the
+catalogue's checksum, so the correction is recorded here instead of silently
+diverging the corpus. Treat those four names as historical: do not run them, and
+do not add a tool merely because a document mentions it.
 
-For a broad audit:
+The prompts under `prompts/` have been corrected to the real paths and mark the
+absent tools inline.
 
-1. Read this file and `AGENTS.md`.
-2. Read `MASTER.md` selectively by persona/JTBD ID; do not load the whole document if only one area is being audited.
-3. Read `catalog/jtbd.compact.jsonl` to select the relevant JTBD IDs.
-4. Run the smallest Accordo rail that answers the evidence question (`app inspect`, `project doctor`, `project verify`, `scenario run`, `solution verify`).
-5. Record status as `ABSENT`, `CONCEPT_ONLY`, `PARTIAL`, `FUNCTIONAL`, or `PRODUCTION_READY` only when the evidence supports it.
-6. State known limitations in the same output as the capability claim.
-7. Use `prompts/02_gap_to_roadmap.md` only after the coverage pass.
+## Phase D
 
-## Coverage vocabulary
-
-- `NOT_ASSESSED` — no repository assessment has been performed against a pinned commit.
-- `ABSENT` — no meaningful implementation evidence exists.
-- `CONCEPT_ONLY` — represented in docs/schema/design but no usable workflow is proven.
-- `PARTIAL` — meaningful implementation exists but the JTBD acceptance boundary is incomplete.
-- `FUNCTIONAL` — the complete JTBD flow is implemented and evidenced at the required level.
-- `PRODUCTION_READY` — functional plus production-grade security, governance, observability, reliability and operational evidence.
-- `DEPRECATED` — implementation exists but should not be treated as current capability.
-
-## Scope
-
-Catalog version: 600 JTBDs across 30 personas, 20 jobs per persona, spanning adoption, operation, optimization, maintenance, governance and platform evolution.
-
-This directory is roadmap input, not a claim ledger. Current product truth remains governed by the repository's existing evidence and status documents.
+1. Run `python docs/jtbd/tools/verify_catalog.py`.
+2. Pin and record the target repository SHA.
+3. Read root `AGENTS.md`, `docs/QUALITY_GATES.md`, this directory's `AGENTS.md`, and `coverage/STATUS_CROSSWALK.md`.
+4. Use `query_catalog.py` to select the relevant JTBD slice.
+5. Bind every positive status to executable repository evidence and state the residual limitation.
+6. Only after coverage is assessed, derive the roadmap from demonstrated gaps.
