@@ -171,6 +171,16 @@ Read this before evaluating anything above. `docs/benchmarks/CRM_JTBD_MATRIX.md`
 CRM job with a conservative status vocabulary in which *not supported* is the default and
 evidence is required to leave it.
 
+Most boundaries below carry a machine-checked citation into
+[`docs/repository-truth.json`](docs/repository-truth.json), the generated fact document
+(`repositoryTruthContract: 1`, ADR-039). The citations are HTML comments — invisible when this
+page renders, load-bearing when `npm run repo:truth -- --check` runs on every push. A cited
+sentence that survives the code it describes fails that check. Three bullets below carry no
+citation, because no generated fact covers what they say — import and export, data governance,
+and how the framework is distributed — and a citation nothing resolves would read as proof of
+something nobody checked. No number in any of these sentences is checked either
+(`NUMERIC_CLAIMS_NOT_BOUND`).
+
 - **No authentication ships: the framework authenticates nobody.** Production Spine v1
   (ADR-038) added verified identity, organizations and memberships, server-authoritative
   authorization and one tenant per application instance — so tenancy and authorization now
@@ -179,17 +189,38 @@ evidence is required to leave it.
   Production mode refuses to start without one. In local-development mode an actor header is
   accepted as an assertion and is not an identity, which is the default developer posture.
   This is not shared-database multi-tenancy and it is not a readiness claim.
+  <!-- truth: spine.authentication.framework_verifier=absent -->
+  <!-- truth: spine.authorization.enforced=enforced -->
+  <!-- truth: spine.tenant.isolation.mode=one_tenant_per_instance -->
+  <!-- truth: spine.tenant.crm_data_plane_enforced=enforced_by_binding -->
+  <!-- truth: spine.multi_tenant_single_instance=refused_at_startup -->
 - **SQLite only.** PostgreSQL is on the Production Spine track and is not implemented.
+  <!-- truth: spine.postgresql.implemented=absent -->
 - **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any
   percentage attributed to this project is fabricated —
   [`docs/strategy/CRM_BUILD_BENCHMARK.md`](docs/strategy/CRM_BUILD_BENCHMARK.md) is the
   protocol, not a result.
+  <!-- truth: benchmark.build_rate.measured=not_measured -->
+  <!-- truth: benchmark.tool_selection.comparative=false -->
 - **No scheduler, no reminders, nothing on a timer.** Follow-up Tasks and an Activity
   timeline exist as one shared model (`docs/WORK_TASKS.md`) and a person moves every one of
   them: a due date changes no state, nothing recurring exists, nothing is assigned or
   notified, and renewal notice periods are recorded and never fire.
+  <!-- truth: spine.durable_jobs.implemented=absent -->
 - **No email, calendar or marketing integrations.** A notification provider contract exists;
   no adapter sends anything to anyone.
+  <!-- truth: marketing_runtime.implemented=absent -->
+- **Nothing bills.** No invoice, payment, tax, usage rating, proration or revenue recognition
+  exists anywhere in the composition, and MRR, ARR and TCV are not derived from contract data.
+  <!-- truth: billing.implemented=absent -->
+- **No backups, no restore, no secret manager.** None of them exists, and no recovery
+  objective is claimed.
+  <!-- truth: spine.secrets_backups.implemented=absent -->
+- **The customer foundation is not a CDP, and the profile is not a timeline.** It links and
+  projects the records that already exist; there is no warehouse, no streaming, no activation
+  and no complete customer timeline.
+  <!-- truth: cdf.full_cdp.implemented=absent -->
+  <!-- truth: customer_timeline.complete=absent -->
 - **No import, export, dedupe, merge, bulk edit, saved views or global search.** Table stakes
   in every commercial CRM, and none of them has a milestone yet.
 - **You cannot put real customer data in this yet.** No authentication ships, and there is no
@@ -198,7 +229,9 @@ evidence is required to leave it.
   `docs/strategy/DATA_GOVERNANCE.md` is design-only. The one thing that does hold: lead scoring is
   deterministic, versioned and explainable, not a model's judgement about a person.
 - **This is a framework, not a product you sign up for.** There is no hosted CRM, no free
-  tier, no account. The output is an application you run.
+  tier, no account, and no control plane that provisions, deploys or meters anything. The
+  output is an application you run.
+  <!-- truth: cloud_control_plane.implemented=absent -->
 - **Ownership means vendored source: there is no framework dependency to bump.**
   `npm create accordo` — the published `create-accordo@0.1.0` — scaffolds a project that boots,
   reports `valid` from `app inspect` and exits 0 from `project doctor`, by copying the framework

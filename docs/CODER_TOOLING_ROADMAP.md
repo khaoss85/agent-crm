@@ -7,6 +7,22 @@ This is a roadmap, not a claim. Everything under **Shipped** has merged tests
 behind it; everything below that is not available and must never be described as
 if it were.
 
+**The Shipped / not-built line is machine-checked.** Each of the eight rails is
+bound to a generated fact in `docs/repository-truth.json` (ADR-039), read from two
+independent authorities — the CLI dispatch table and the handler module's own
+export — which must agree. A rung that moved between the two sections without the
+code moving fails `npm run repo:truth -- --check`; so does a rung whose two
+authorities disagree, which is refused rather than resolved in either direction.
+
+<!-- truth: rail.app_inspect.implemented=implemented -->
+<!-- truth: rail.solution_check.implemented=implemented -->
+<!-- truth: rail.project_doctor.implemented=implemented -->
+<!-- truth: rail.package_scaffold.implemented=implemented -->
+<!-- truth: rail.package_test.implemented=implemented -->
+<!-- truth: rail.project_verify.implemented=implemented -->
+<!-- truth: rail.scenario_run.implemented=implemented -->
+<!-- truth: rail.solution_verify.implemented=implemented -->
+
 ## Shipped
 
 | | Surface | What it answers |

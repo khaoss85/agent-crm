@@ -278,6 +278,7 @@ The remaining documents, one line each in `llms.txt` if you need to know what th
 - [docs/PACKAGE_AUTHORING.md]({{brand.repository}}/blob/main/docs/PACKAGE_AUTHORING.md)
 - [docs/RENAME_SURFACE.md]({{brand.repository}}/blob/main/docs/RENAME_SURFACE.md)
 - [docs/RENEWAL_AMENDMENT.md]({{brand.repository}}/blob/main/docs/RENEWAL_AMENDMENT.md)
+- [docs/REPOSITORY_TRUTH.md]({{brand.repository}}/blob/main/docs/REPOSITORY_TRUTH.md)
 - [docs/SCENARIO_EVIDENCE.md]({{brand.repository}}/blob/main/docs/SCENARIO_EVIDENCE.md)
 - [docs/SERVICE_OPERATIONS.md]({{brand.repository}}/blob/main/docs/SERVICE_OPERATIONS.md)
 - [docs/SIGNATURE_ORDER.md]({{brand.repository}}/blob/main/docs/SIGNATURE_ORDER.md)

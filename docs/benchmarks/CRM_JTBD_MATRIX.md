@@ -10,6 +10,25 @@ Status legend:
 
 Every row: actor · trigger · desired outcome · required CRM primitives · required framework capabilities · acceptance scenario · status · evidence · manual interventions.
 
+**No row here is a generated fact, and none ever will be** (ADR-039,
+`JTBD_ROWS_NOT_ENCODED`). A status is moved by a person reading merged tests
+(`docs/QUALITY_GATES.md` §3), and a generator that owned these values would be
+promoting rows. What *is* machine-checked is the standing product boundary the rows
+are written against, cited once here, plus every machine code named anywhere in this
+document — a limitation code that no source file declares any more fails
+`npm run repo:truth -- --check`, which is how `TENANT_ISOLATION_NOT_ENFORCED` would
+have been caught surviving its own fix.
+
+<!-- truth: retired-code TENANT_ISOLATION_NOT_ENFORCED — named once, as the retired code this rule exists to catch. Never asserted about this repository. -->
+
+<!-- truth: spine.authentication.framework_verifier=absent -->
+<!-- truth: spine.authorization.enforced=enforced -->
+<!-- truth: spine.tenant.crm_data_plane_enforced=enforced_by_binding -->
+<!-- truth: billing.implemented=absent -->
+<!-- truth: marketing_runtime.implemented=absent -->
+<!-- truth: cloud_control_plane.implemented=absent -->
+<!-- truth: spine.durable_jobs.implemented=absent -->
+
 ---
 
 ## JTBD-01 — Manage a custom CRM business object end to end
