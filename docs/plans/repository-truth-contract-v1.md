@@ -433,6 +433,14 @@ reproduces it and the mutation that now fails.
    in both orders, and proves each survives the other's full sweep; swapping the
    sweep for a `/tmp` glob makes that probe fail, which is what makes it evidence.
 
+   **Scope, stated rather than implied:** the helper is adopted by the one file
+   whose teardown this ADR's amendment is about. Fifty-nine other test files
+   still create their own `mkdtemp` directories under `os.tmpdir()` and tear them
+   down by hand, so a leak in any of those is still invisible. Moving them onto
+   the helper is mechanical and broad, it touches every domain suite, and it does
+   not belong inside a validation pass — it is named here so the next person
+   finds it written down rather than discovering it.
+
 **Still a hypothesis, and left as one.** The detached `git gc --auto` explanation
 for the original teardown race is unchanged and unpromoted: `gc.auto=0` and
 `maintenance.auto=false` are set on the theory that it is the writer, the race
