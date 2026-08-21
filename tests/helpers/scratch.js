@@ -163,32 +163,40 @@ function programsInsideRun() {
  * @returns {void}
  */
 function residualGate() {
-  // One more attempt, now that every test has finished and released its handles.
-  // This is the retry the compromise asks for, and it is the last one.
-  try {
-    sweepRunScratch();
-  } catch {
-    // Fall through to the survey; the gate reports what is there, not what threw.
-  }
-  /** @type {string[]} */
-  let remaining = [];
-  try {
-    remaining = existsSync(RUN_ROOT) ? readdirSync(RUN_ROOT) : [];
-  } catch (error) {
-    remaining = [`unreadable-root(${/** @type {any} */ (error)?.code ?? 'unknown'})`];
-  }
-  const programs = [...programsInsideRun()].sort();
+  // One survey, one bounded retry, then the verdict.
+  //
+  // The retry is the compromise's, and it is what keeps this gate a report about
+  // *permanent* residue: a child that has been asked to exit, or a directory
+  // whose last handle is closing, is gone within a few hundred milliseconds on a
+  // loaded runner. A leak is not, and after this it fails.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    try {
+      sweepRunScratch();
+    } catch {
+      // Fall through to the survey; the gate reports what is there, not what threw.
+    }
+    /** @type {string[]} */
+    let remaining = [];
+    try {
+      remaining = existsSync(RUN_ROOT) ? readdirSync(RUN_ROOT) : [];
+    } catch (error) {
+      remaining = [`unreadable-root(${/** @type {any} */ (error)?.code ?? 'unknown'})`];
+    }
+    const programs = [...programsInsideRun()].sort();
 
-  if (remaining.length === 0 && programs.length === 0) {
-    unlinkRunRoot();
-    return;
-  }
+    if (remaining.length === 0 && programs.length === 0) {
+      unlinkRunRoot();
+      return;
+    }
+    if (attempt === 0) continue;
 
-  assert.fail(describeResidual({
-    directories: [...new Set(remaining.map(scratchClass))].sort(),
-    warned: [...registered.keys()].sort(),
-    programs,
-  }));
+    assert.fail(describeResidual({
+      directories: [...new Set(remaining.map(scratchClass))].sort(),
+      warned: [...registered.keys()].sort(),
+      programs,
+    }));
+  }
 }
 
 /**
