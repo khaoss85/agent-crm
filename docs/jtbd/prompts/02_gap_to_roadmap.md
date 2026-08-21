@@ -2,16 +2,20 @@
 
 ## Inputs
 
-- `data/jtbd.jsonl`
-- `data/capabilities.json`
-- `data/coverage_jtbd.assessed.jsonl`
-- `data/coverage_capabilities.assessed.jsonl`
+- `docs/jtbd/catalog/jtbd.jsonl`
+- `docs/jtbd/catalog/capabilities.json`
+- `docs/jtbd/coverage/coverage.overlay.jsonl`
+- `docs/jtbd/roadmap/roadmap.overlay.jsonl`
 - target SHA and assessment report
 
 ## Task
 
-1. Reject any roadmap item whose coverage is still `NOT_ASSESSED`.
-2. Calculate roadmap score with `tools/score_roadmap.py`.
+1. Reject any roadmap item whose coverage overlay row still reads `assessed: false`. An
+   unassessed job is not a demonstrated gap.
+2. Score the candidates. **No scoring tool ships in this repository, and the weights are
+   commercial** — `docs/jtbd/PUBLIC_PRIVATE.md` classifies this prompt `SPLIT_PUBLIC_PRIVATE`
+   for exactly that reason. The public half is step 1 and steps 3 onward; the value,
+   differentiation and sequencing weights live on the private side.
 3. Cluster gaps into vertical epics that close complete JTBD flows.
 4. Identify enabling capabilities and order dependencies.
 5. Separate:

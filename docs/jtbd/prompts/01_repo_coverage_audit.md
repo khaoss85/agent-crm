@@ -12,12 +12,13 @@ You are auditing an agentic CRM repository against a desired-state catalog.
 
 ## Required preparation
 
-1. Read `AGENTS.md`.
-2. Run `python tools/validate_catalog.py`.
+1. Read `docs/jtbd/AGENTS.md`, `docs/QUALITY_GATES.md` §3 and
+   `docs/jtbd/coverage/STATUS_CROSSWALK.md`.
+2. Run `python docs/jtbd/tools/verify_catalog.py`.
 3. Record runtime/test constraints.
-4. Initialize:
+4. Select the slice — never open six hundred records:
    ```bash
-   python tools/init_coverage.py --repo <OWNER/REPO> --sha <TARGET_SHA> --assessor "<NAME>" --out data/coverage_jtbd.assessed.jsonl
+   python docs/jtbd/tools/query_catalog.py --persona PER-... --fields
    ```
 
 ## Task
@@ -30,18 +31,25 @@ For every in-scope JTBD:
 3. Execute relevant tests. Create a minimal reproduction when tests are absent.
 4. Fill every coverage dimension with score 0–4, evidence and exact gaps.
 5. Assign status using the weakest critical dimension; do not average away a security or failure gap.
+   Publish it in the four-value vocabulary of `docs/QUALITY_GATES.md` §3, not in the
+   catalogue's portable enum — `docs/jtbd/coverage/STATUS_CROSSWALK.md` is the bridge, and it
+   reads one way only.
 6. Keep status at most `PARTIAL` when:
    - no end-to-end test exists;
    - a state change can bypass domain rules;
    - the role has no usable surface;
    - agent behavior lacks evaluation or policy boundary;
    - failure, retry or audit is absent.
-7. Produce:
-   - `data/coverage_jtbd.assessed.jsonl`
-   - `data/coverage_capabilities.assessed.jsonl`
-   - `reports/coverage_summary.md`
-   - `reports/critical_gaps.csv`
-   - `reports/evidence_index.csv`
+7. Write each positive conclusion into `docs/jtbd/coverage/assessments.json` — evidence with
+   `kind`, `path` and `claim`, the residual limitations, the Repository Truth fact ids and a
+   `verifiedAtSha` — then:
+   ```bash
+   node scripts/jtbd-gate.js --reverify   # stamp the digest of every file the row reads
+   node scripts/jtbd-gate.js --write      # regenerate the overlays
+   node scripts/jtbd-gate.js              # the gate must pass
+   ```
+   `assessments.json` is the only place a positive status can be born. A catalogue id absent
+   from it is `not supported`, and nothing promotes a row automatically.
 
 ## Evidence rules
 

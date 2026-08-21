@@ -15,8 +15,13 @@ Never reverse that order.
 
 1. `python docs/jtbd/tools/verify_catalog.py`
 2. Record repository, branch, target SHA, assessor and constraints.
-3. Read `coverage/STATUS_CROSSWALK.md`.
+3. Read `coverage/STATUS_CROSSWALK.md` and `PORTFOLIO_ALIGNMENT.md`.
 4. Select the smallest relevant slice; do not load 600 records when a persona/capability slice answers the question.
+5. Write conclusions into `coverage/assessments.json`, then
+   `node scripts/jtbd-gate.js --reverify && node scripts/jtbd-gate.js --write`. Nothing else
+   may create a positive coverage status, and the gate refuses one that cites no executable
+   evidence, names no residual limitation, or reads a file that has moved since it was
+   verified.
 
 ## Evidence discipline
 

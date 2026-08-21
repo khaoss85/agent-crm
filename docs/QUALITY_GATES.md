@@ -52,6 +52,30 @@ Only four values, and the burden of proof is on the higher one:
 
 Never infer a status from an isolated primitive.
 
+### 3.1 The desired-state catalogue is a different document, and a gate keeps it that way
+
+`docs/jtbd/` holds a **desired-state** corpus — jobs somebody wants a CRM to do, and every record
+in it ships unassessed against any repository. The existence of a job there says nothing about whether this framework
+supports it, and counting the corpus is not a coverage measurement.
+
+`node scripts/jtbd-gate.js` holds three layers apart — desired, coverage, ownership — in three
+files and three vocabularies joined only by `jtbd_id`
+(`docs/jtbd/PORTFOLIO_ALIGNMENT.md`). §3's four values are the coverage layer's **only**
+vocabulary, `not supported` is the default for every id, and a positive status can be born in
+exactly one place: `docs/jtbd/coverage/assessments.json`, written by a person. The gate refuses
+a claim resting on nothing executable (`JTBD_EVIDENCE_NOT_EXECUTABLE`), a claim naming no
+residual limitation (`JTBD_EVIDENCE_LIMITATION_ABSENT`), a cited fact the Repository Truth
+Contract does not publish (`JTBD_FACT_UNKNOWN`), the top status claimed without saying where it
+stands on the Production Spine (`JTBD_SPINE_EVIDENCE_ABSENT`), and — the one that keeps a green
+row from outliving its proof — evidence that has changed since the row was verified
+(`JTBD_EVIDENCE_MOVED`). It runs inside `npm run verify`, through
+`tests/jtbd-portfolio-gate.test.js`.
+
+`docs/benchmarks/CRM_JTBD_MATRIX.md` stays hand-written and stays this repository's coverage
+record. What the gate adds is that each of its non-default rows now names the desired job it is
+a claim about, or says in writing that none exists
+(`docs/jtbd/coverage/MATRIX_CROSSWALK.md`).
+
 ## 4. Production gates (future, not met today)
 
 Each is a hard gate before public multi-user use; none exists yet.

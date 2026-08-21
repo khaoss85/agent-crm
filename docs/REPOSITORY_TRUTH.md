@@ -94,6 +94,19 @@ is not a state they can be in; disagreement is a failure instead.
 | `reference.composition` | the nine checked-in domain packages composed through `resolvePackageComposition` — the same function `PackageRegistry` throws from at startup |
 | `cli.rails` | the CLI dispatch table **and** each handler module's export, which must agree |
 
+| `jtbd.portfolio` | the desired-state catalogue and the two overlays beside it, **counted** |
+
+The last one is worth its own sentence, because it looks like the thing this contract refuses.
+`JTBD_ROWS_NOT_ENCODED` still holds: no job status is a fact here, and nothing reads a coverage
+status and turns it into a value. What `jtbd.portfolio` publishes is six **summary counts** —
+how many desired jobs exist, whether the coverage overlay covers all of them, how many are
+claimed by no milestone, how many non-default coverage rows cite no desired job, and how many
+positive coverage rows carry no evidence. The last is the one that matters. It must stay `0`,
+and hand-typing it is exactly how it would stop being `0` with every gate green. Per-job
+validation stays in `scripts/jtbd-gate.js`, where it belongs, and the six facts each carry
+`JTBD_ROWS_NOT_ENCODED` in their own `limitations[]` so a reader meets the boundary in the
+document rather than discovering it.
+
 **Receipt-derived** — read from a recorded run, and **verified rather than trusted**.
 
 | Authority | Read as | Verified by |

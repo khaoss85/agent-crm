@@ -1,0 +1,50 @@
+{
+ "$comment": "Public/private classification for every artefact under docs/jtbd/, in the vocabulary of docs/editions/REPOSITORY_BOUNDARY.md §2. `generated` marks a file scripts/jtbd-gate.js writes, so it can be regenerated on either side of the boundary rather than copied. The rule that decides the hard cases is §3: a document goes private because it is COMMERCIAL, never because it is unflattering. Nothing here is executed by this PR — no file moves and no history is rewritten.",
+ "classificationContract": 1,
+ "vocabulary": [
+  "KEEP_PUBLIC",
+  "MOVE_PRIVATE",
+  "PUBLIC_REDACTED_REPLACEMENT",
+  "SPLIT_PUBLIC_PRIVATE",
+  "HISTORICAL_ALREADY_PUBLIC"
+ ],
+ "artefacts": {
+  "docs/jtbd/README.md": { "classification": "KEEP_PUBLIC", "generated": false, "why": "what the corpus is and what it is not; no commercial content" },
+  "docs/jtbd/AGENTS.md": { "classification": "KEEP_PUBLIC", "generated": false, "why": "the evidence discipline an agent must follow; the part of this directory most worth reading in public" },
+  "docs/jtbd/MASTER.md": { "classification": "SPLIT_PUBLIC_PRIVATE", "generated": false, "why": "the rendered corpus, so it carries the same priority scores and differentiation hypotheses as the JSONL", "publicHalf": "job statements, use cases, acceptance criteria", "privateHalf": "roadmap scoring and the differentiation hypothesis per job" },
+  "docs/jtbd/manifest.json": { "classification": "KEEP_PUBLIC", "generated": false, "why": "file inventory and counts" },
+  "docs/jtbd/quality_report.md": { "classification": "KEEP_PUBLIC", "generated": false, "why": "how the corpus was built and checked" },
+  "docs/jtbd/PORTFOLIO_ALIGNMENT.md": { "classification": "KEEP_PUBLIC", "generated": false, "why": "the three-layer design; states a boundary rather than a plan" },
+  "docs/jtbd/PUBLIC_PRIVATE.md": { "classification": "KEEP_PUBLIC", "generated": false, "why": "this classification, explained" },
+  "docs/jtbd/PUBLIC_PRIVATE.json": { "classification": "KEEP_PUBLIC", "generated": false, "why": "this classification, machine-readable" },
+
+  "docs/jtbd/catalog/jtbd.jsonl": { "classification": "SPLIT_PUBLIC_PRIVATE", "generated": false, "why": "each record holds the desired job (public) beside roadmap.priority, business_value_1_5, strategic_fit_1_5, differentiation_1_5, audit_priority_score_0_100 and competitive_benchmark.accordo_differentiation_hypothesis, which are commercial judgement under §3", "publicHalf": "job statement, use case, acceptance criteria, capabilities, NFRs, test obligations", "privateHalf": "roadmap scoring fields and the competitive benchmark block", "splitExecuted": false, "note": "the file is byte-frozen and hash-verified by docs/jtbd/tools/verify_catalog.py, so the split cannot be executed by editing it in place. The public projection is the coverage and roadmap overlays plus a generated public subset; the migration writes that subset before anything moves." },
+  "docs/jtbd/catalog/personas.json": { "classification": "KEEP_PUBLIC", "generated": false, "why": "roles, missions and KPIs; no Accordo commercial position" },
+  "docs/jtbd/catalog/capabilities.json": { "classification": "KEEP_PUBLIC", "generated": false, "why": "a capability vocabulary with required evidence per capability" },
+  "docs/jtbd/catalog/e2e_scenarios.json": { "classification": "KEEP_PUBLIC", "generated": false, "why": "cross-functional desired scenarios" },
+
+  "docs/jtbd/coverage/STATUS_CROSSWALK.md": { "classification": "KEEP_PUBLIC", "generated": false, "why": "how the catalogue enum maps onto the four repository statuses" },
+  "docs/jtbd/coverage/MATRIX_CROSSWALK.md": { "classification": "KEEP_PUBLIC", "generated": false, "why": "which desired job each coverage row is a claim about" },
+  "docs/jtbd/coverage/matrix_crosswalk.json": { "classification": "KEEP_PUBLIC", "generated": false, "why": "the same, machine-readable; carries no priority" },
+  "docs/jtbd/coverage/assessments.json": { "classification": "KEEP_PUBLIC", "generated": false, "why": "evidence and named limitations. §3: never private because it is unflattering, and this file is mostly limitations" },
+  "docs/jtbd/coverage/coverage.overlay.jsonl": { "classification": "KEEP_PUBLIC", "generated": true, "why": "the public statement of what this repository proves, generated from assessments.json" },
+
+  "docs/jtbd/roadmap/pillars.json": { "classification": "KEEP_PUBLIC", "generated": false, "why": "pillar, edition, track and milestone names already public in docs/editions/REPOSITORY_BOUNDARY.md §6 and EXECUTION_ROADMAP; no sequencing tied to commercial timing" },
+  "docs/jtbd/roadmap/capability_pillars.json": { "classification": "KEEP_PUBLIC", "generated": false, "why": "a capability-to-pillar table; states ownership, not priority" },
+  "docs/jtbd/roadmap/roadmap.overlay.jsonl": { "classification": "KEEP_PUBLIC", "generated": true, "why": "generated ownership; carries no priority, business value or competitive rationale" },
+  "docs/jtbd/roadmap/OWNERSHIP.md": { "classification": "KEEP_PUBLIC", "generated": false, "why": "the ownership and gap report" },
+
+  "docs/jtbd/prompts/01_repo_coverage_audit.md": { "classification": "KEEP_PUBLIC", "generated": false, "why": "an audit method anyone auditing this repository should be able to read" },
+  "docs/jtbd/prompts/02_gap_to_roadmap.md": { "classification": "SPLIT_PUBLIC_PRIVATE", "generated": false, "why": "the gap analysis is public; the scoring weights that turn a gap into a priority are commercial", "publicHalf": "how a demonstrated gap becomes a candidate", "privateHalf": "value, differentiation and sequencing weights" },
+  "docs/jtbd/prompts/03_jtbd_to_spec.md": { "classification": "KEEP_PUBLIC", "generated": false, "why": "how a desired job becomes a testable specification" },
+  "docs/jtbd/prompts/04_competitor_benchmark.md": { "classification": "MOVE_PRIVATE", "generated": false, "why": "competitive research, named explicitly by §3 as the commercial case" },
+  "docs/jtbd/prompts/05_simulate_lifecycle.md": { "classification": "KEEP_PUBLIC", "generated": false, "why": "a simulation method, no commercial content" },
+
+  "docs/jtbd/schemas/jtbd.schema.json": { "classification": "KEEP_PUBLIC", "generated": false, "why": "the record shape" },
+  "docs/jtbd/schemas/persona.schema.json": { "classification": "KEEP_PUBLIC", "generated": false, "why": "the persona shape" },
+  "docs/jtbd/schemas/coverage.schema.json": { "classification": "KEEP_PUBLIC", "generated": false, "why": "the portable assessment shape. Note it is the CATALOGUE's enum, not this repository's four statuses — docs/jtbd/coverage/STATUS_CROSSWALK.md is the bridge" },
+
+  "docs/jtbd/tools/verify_catalog.py": { "classification": "KEEP_PUBLIC", "generated": false, "why": "the integrity check on the frozen corpus" },
+  "docs/jtbd/tools/query_catalog.py": { "classification": "KEEP_PUBLIC", "generated": false, "why": "the slice tool; reads the overlays and prints no priority field" }
+ }
+}
