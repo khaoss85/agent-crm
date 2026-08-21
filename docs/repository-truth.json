@@ -336,7 +336,7 @@
       "authority": "measurement.git",
       "evidence": [
         "git merge-base --is-ancestor <sha> HEAD",
-        "sha:e30216c"
+        "sha:9c261f2"
       ],
       "scope": "measurement",
       "status": "current",
@@ -344,50 +344,50 @@
     },
     {
       "id": "measurement.source_sha",
-      "value": "e30216c",
+      "value": "9c261f2",
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.sha"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_count",
-      "value": 1480,
+      "value": 1539,
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.tests"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_file_count",
-      "value": 131,
+      "value": 132,
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.testFiles"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_tree_current",
-      "value": "false",
+      "value": "true",
       "authority": "measurement.git",
       "evidence": [
         "git rev-parse <sha>:tests versus HEAD:tests",
-        "measuredTree:8f11127f1598"
+        "measuredTree:9e610b38de11"
       ],
       "scope": "measurement",
       "status": "current",
@@ -672,5 +672,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "fa398a81c28e1dd40d7ee82736d5d248a402dc90ab9aa06062948fba96eadf2d"
+  "fingerprint": "cf70e1539909725de6242389e73a3b570eacb6378fea3861862d613817cde8c1"
 }
