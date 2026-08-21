@@ -2,7 +2,7 @@
 
 ## Inputs
 
-- `data/jtbd.jsonl`
+- `catalog/jtbd.jsonl`
 - `data/capabilities.json`
 - `data/coverage_jtbd.assessed.jsonl`
 - `data/coverage_capabilities.assessed.jsonl`
@@ -11,7 +11,7 @@
 ## Task
 
 1. Reject any roadmap item whose coverage is still `NOT_ASSESSED`.
-2. Calculate roadmap score with `tools/score_roadmap.py`.
+2. **FUTURE:** `tools/score_roadmap.py` does not exist. Until it does, rank by hand and state the ranking rule in the output, so a reader can disagree with it.
 3. Cluster gaps into vertical epics that close complete JTBD flows.
 4. Identify enabling capabilities and order dependencies.
 5. Separate:

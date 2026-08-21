@@ -14,6 +14,27 @@ This directory is a desired-state requirements corpus, not a claim that Accordo 
 
 No decompression/materialization step is required.
 
+## Tools, and what does not exist
+
+Present and working: `tools/verify_catalog.py` (validates the corpus against
+`manifest.json`) and `tools/query_catalog.py` (streams the corpus and selects a
+slice; `--json` emits a single JSON array on stdout and the match count on
+stderr, so the output parses).
+
+**`MASTER.md` names four things that do not exist in this repository** —
+`tools/validate_catalog.py`, `tools/init_coverage.py`, `tools/score_roadmap.py`
+and the path `data/jtbd.jsonl` (the real path is `catalog/jtbd.jsonl`). Six
+references in total, at lines 60, 68, 84–86 and 1021.
+
+They are **NOT_IMPLEMENTED**, not missing by accident. `MASTER.md` is frozen by
+the SHA-256 in `manifest.json` and cannot be edited without moving the
+catalogue's checksum, so the correction is recorded here instead of silently
+diverging the corpus. Treat those four names as historical: do not run them, and
+do not add a tool merely because a document mentions it.
+
+The prompts under `prompts/` have been corrected to the real paths and mark the
+absent tools inline.
+
 ## Phase D
 
 1. Run `python docs/jtbd/tools/verify_catalog.py`.

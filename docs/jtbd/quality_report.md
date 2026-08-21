@@ -45,7 +45,7 @@ VALIDATION_OK
 
 ## Persona lifecycle invariant
 
-Each persona contains ADOPT, RUN, OPTIMIZE, MAINTAIN, GOVERN and EVOLVE records. This is validated by `tools/validate_catalog.py`.
+Each persona contains ADOPT, RUN, OPTIMIZE, MAINTAIN, GOVERN and EVOLVE records. This is validated by `tools/verify_catalog.py`.
 
 ## Caveat
 

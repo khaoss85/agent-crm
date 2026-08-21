@@ -13,11 +13,13 @@ You are auditing an agentic CRM repository against a desired-state catalog.
 ## Required preparation
 
 1. Read `AGENTS.md`.
-2. Run `python tools/validate_catalog.py`.
+2. Run `python tools/verify_catalog.py`.
 3. Record runtime/test constraints.
 4. Initialize:
    ```bash
-   python tools/init_coverage.py --repo <OWNER/REPO> --sha <TARGET_SHA> --assessor "<NAME>" --out data/coverage_jtbd.assessed.jsonl
+   # NOT_IMPLEMENTED: tools/init_coverage.py does not exist in this repository.
+   # Initialise the overlay by hand, or from the coverage overlay if one is present.
+   # Every row starts at `not supported`; nothing is pre-assessed.
    ```
 
 ## Task
