@@ -661,12 +661,16 @@
     },
     {
       "code": "NUMERIC_CLAIMS_NOT_BOUND",
-      "message": "no fact any document cites is a count. The only count-shaped facts here are the measurement ones, and MEASUREMENT_FACTS_ARE_GENERATED_BUT_NOT_CITED keeps those out of every document — so every number in a bound sentence (test counts, and the module, package, resource, action, policy and provider counts in site/assets/llms.txt and README.md) is outside this contract. A citation standing next to a number binds the sentence, never the number"
+      "message": "this contract requires no number to be bound and can discover none that ought to be. A citation standing next to a number binds the sentence, never the number. Two precisions, because the shorter statement read as more than it was: (1) ONE cited fact does carry an integer — spine.identity.contract, a contract version, checked in site/claims.json exactly like any other value — so \"no number is checked here\" is false; what holds is that no COUNT is, the count-shaped facts being the measurement ones that MEASUREMENT_FACTS_ARE_GENERATED_BUT_NOT_CITED keeps out of every document. (2) Typed TEST counts are not unchecked, they are checked by a different gate — findLooseTestCounts in scripts/measurement.js, run by scripts/site-check.js inside gtm:check across README.md, site/ and every docs/ document outside DATED_HISTORY. What no gate holds is every other current count: module, package, resource, action, policy, provider, rail, skill, scenario and JTBD-row counts, in this document set and in others"
+    },
+    {
+      "code": "POSTURE_PROSE_NOT_GENERATED",
+      "message": "productionPosture in packages/cli/src/app-inspect.js is hand-written English bound to explicit fact ids. The citations hold its VALUES; they do not derive its wording, so a reworded falsehood is caught only where RETIRED_CLAIMS names the exact retired claim. Generating the sentence from its own facts is v2"
     },
     {
       "code": "CODE_VOCABULARY_INCLUDES_COMMENTS",
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "33ffe4c05ffeff8507a4912f6aa5d930d7fb5fb2eed6512c039a4b36dfa9a518"
+  "fingerprint": "fa398a81c28e1dd40d7ee82736d5d248a402dc90ab9aa06062948fba96eadf2d"
 }

@@ -169,9 +169,26 @@ The boundaries, which are as much of the gate as the rules:
   sentence may assert; it does not produce the sentence, and a sentence carrying
   no citation is not checked at all. Reversing the wording around a correct
   citation still passes — the contract binds values, not sentences.
-- **No number is checked.** No fact any document cites is a count, so every
-  number in a bound sentence — test counts, and the module, package, resource,
-  action, policy and provider counts in `site/assets/llms.txt` and `README.md` —
-  is outside this contract (`NUMERIC_CLAIMS_NOT_BOUND`).
+- **No count is checked, and one number is.** `spine.identity.contract=1` is a
+  cited integer, held like any other value, so "no number is checked" was false.
+  What is outside this contract is every **count**: module, package, resource,
+  action, policy, provider, rail, skill and scenario. Typed *test* counts are not
+  unchecked either — `findLooseTestCounts` (§6 above) refuses them across
+  `README.md`, `AGENTS.md`, `TASKS.md`, `site/` and every `docs/` document outside
+  `DATED_HISTORY`. Requiring a number to carry a fact means classifying dates, ADR
+  numbers, currency examples and code-fence digits, which is v2
+  (`NUMERIC_CLAIMS_NOT_BOUND`).
+- **The posture sentence is bound by value, not by wording.**
+  `packages/cli/src/app-inspect.js` cites nine facts above `productionPosture`, and
+  reversing one fails. The sentence itself is prose, so restoring the recorded false
+  posture with the citations untouched passed — closed now by `RETIRED_CLAIMS`,
+  which holds that one recorded claim and no other (`TRUTH_CLAIM_RETIRED`,
+  `POSTURE_PROSE_NOT_GENERATED`).
+- **A bound path the filesystem can redirect is refused.** Every bound surface and
+  every authority source must be repository-relative, free of `..`, and reachable
+  without traversing a symlink; a symlink at `packages/cli/src/app-inspect.js` used
+  to drop its citations silently (`TRUTH_SURFACE_UNSAFE`). A `truth:` directive
+  that is neither a citation nor a `retired-code`/`retired-claim` declaration is
+  refused rather than ignored (`TRUTH_CITATION_MALFORMED`).
 - **No JTBD row is a fact.** §3 is a person reading merged tests, and it stays
   one.

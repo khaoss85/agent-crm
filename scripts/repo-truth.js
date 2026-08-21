@@ -36,8 +36,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { basename, extname, join, relative, sep } from 'node:path';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -93,9 +93,11 @@ export const TRUTH_PROBLEMS = Object.freeze([
   'TRUTH_FACT_UNKNOWN',
   'TRUTH_FACT_VALUE_STALE',
   'TRUTH_CITATION_MALFORMED',
+  'TRUTH_CLAIM_RETIRED',
   'TRUTH_CODE_UNKNOWN',
   'TRUTH_MEASUREMENT_NOT_ANCESTOR',
   'TRUTH_MEASUREMENT_UNPROVABLE',
+  'TRUTH_SURFACE_UNSAFE',
 ]);
 
 /**
@@ -137,11 +139,20 @@ export const TRUTH_LIMITATIONS = Object.freeze([
   ['EDITIONS_NOT_BOUND',
     'docs/editions/** is deliberately outside the bound surface set in v1'],
   ['NUMERIC_CLAIMS_NOT_BOUND',
-    'no fact any document cites is a count. The only count-shaped facts here are the measurement ones, and '
-    + 'MEASUREMENT_FACTS_ARE_GENERATED_BUT_NOT_CITED keeps those out of every document — so every number in a '
-    + 'bound sentence (test counts, and the module, package, resource, action, policy and provider counts in '
-    + 'site/assets/llms.txt and README.md) is outside this contract. A citation standing next to a number binds '
-    + 'the sentence, never the number'],
+    'this contract requires no number to be bound and can discover none that ought to be. A citation standing '
+    + 'next to a number binds the sentence, never the number. Two precisions, because the shorter statement '
+    + 'read as more than it was: (1) ONE cited fact does carry an integer — spine.identity.contract, a contract '
+    + 'version, checked in site/claims.json exactly like any other value — so "no number is checked here" is '
+    + 'false; what holds is that no COUNT is, the count-shaped facts being the measurement ones that '
+    + 'MEASUREMENT_FACTS_ARE_GENERATED_BUT_NOT_CITED keeps out of every document. (2) Typed TEST counts are not '
+    + 'unchecked, they are checked by a different gate — findLooseTestCounts in scripts/measurement.js, run by '
+    + 'scripts/site-check.js inside gtm:check across README.md, site/ and every docs/ document outside '
+    + 'DATED_HISTORY. What no gate holds is every other current count: module, package, resource, action, '
+    + 'policy, provider, rail, skill, scenario and JTBD-row counts, in this document set and in others'],
+  ['POSTURE_PROSE_NOT_GENERATED',
+    'productionPosture in packages/cli/src/app-inspect.js is hand-written English bound to explicit fact ids. '
+    + 'The citations hold its VALUES; they do not derive its wording, so a reworded falsehood is caught only '
+    + 'where RETIRED_CLAIMS names the exact retired claim. Generating the sentence from its own facts is v2'],
   ['CODE_VOCABULARY_INCLUDES_COMMENTS',
     'the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as '
     + 'declared. Narrowing it to executable identifiers would need a parser per file type and would refuse '
@@ -386,6 +397,173 @@ export const RETIRED_CODE = /<!--\s*truth:\s*retired-code\s+([A-Z][A-Z0-9_]+)\b/
 /** A citation as it appears inside a JSON `facts` array. */
 export const CITATION_LITERAL = /^([a-z][a-z0-9_.]*)=([A-Za-z0-9_.-]+)$/;
 
+/**
+ * A **claim** this repository deliberately retired, subtracted from every bound
+ * surface however it is worded back in.
+ *
+ * The exact counterpart of {@link RETIRED_CODES}, and it exists because the
+ * citation half of this contract cannot reach the case that opens ADR-039.
+ * Citations bind **values**: reversing `spine.authorization.enforced=enforced`
+ * to `=absent` fails, and that is what the seven `// truth:` lines above
+ * `productionPosture` actually prove. They say nothing at all about the
+ * *sentence* underneath them, so pasting the historical falsehood back into
+ * `productionPosture` and leaving the citations untouched left
+ * `repo:truth -- --check` **green** — measured on this branch, and exactly the
+ * failure ADR-039's first recorded instance is.
+ *
+ * Generating the sentence from its facts is the real answer and is named as v2.
+ * Until then this closes the one case the record actually contains: the specific
+ * retired claim, held verbatim wherever a bound surface words it back in, on the
+ * same terms as a retired code — a short list, each entry a reviewable edit with
+ * an argument attached, and an escape (`truth: retired-claim …`) for the bound
+ * document that needs to name it as history.
+ *
+ * **Its boundary, stated rather than implied:** this holds the recorded
+ * falsehood, not the set of all falsehoods. A *newly invented* false posture is
+ * still outside the contract, which is what `WORDING_IS_NOT_GENERATED` and
+ * `POSTURE_PROSE_NOT_GENERATED` say.
+ */
+export const RETIRED_CLAIMS = Object.freeze([
+  // PR #101. `app inspect` published this in the same report whose
+  // PRODUCTION_SPINE_ABSENT message described identity, tenancy and
+  // authorization — and ADR-038 had already made all three true. A person found
+  // it. It is the first of the two failures ADR-039 opens by naming.
+  'no authentication, tenancy or RBAC exists',
+]);
+
+/**
+ * A retired claim, compared on collapsed whitespace and folded case.
+ *
+ * Not a general prose rule: it normalises the two ways the same sentence gets
+ * re-typed (a re-wrap, a capitalised sentence start) and nothing else.
+ *
+ * @param {string} text
+ */
+export function normalizeClaimText(text) {
+  return String(text).toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * How a *bound* surface names a retired claim as history rather than asserting it.
+ *
+ *   <!-- truth: retired-claim no authentication, tenancy or RBAC exists — why -->
+ */
+export const RETIRED_CLAIM = /(?:<!--|\/\/)\s*truth:\s*retired-claim\s+(.+?)\s+—/g;
+
+/**
+ * One `truth:` directive, read from a line that is **nothing but** that directive.
+ *
+ * Two holes close here, and both were measured on this branch:
+ *
+ * 1. **A string literal was a citation.** {@link CITATION_JS} matched anywhere on
+ *    a line, so `const example = '// truth: made.up.fact=nonsense';` inside the
+ *    one bound `.js` surface produced a citation nobody wrote. Requiring the
+ *    comment to *start* the line is the whole fix, and every real citation in
+ *    `packages/cli/src/app-inspect.js` already sits on its own line.
+ * 2. **A malformed directive was silent.** `// truth: spine.authorization.enforced
+ *    -> enforced` matched no pattern, so it was neither a citation nor an error:
+ *    a typo turned a load-bearing citation off with no signal at all. A grammar
+ *    that fails open is not a grammar.
+ *
+ * Markdown citations are deliberately still read anywhere on the line — an HTML
+ * comment cannot be a string literal, `AGENTS.md` already carries one mid-line,
+ * and the *malformed* rule below is the part scoped to own-line directives so
+ * that a document quoting the grammar inside a table cell stays a document.
+ *
+ * @param {string} line
+ * @param {{javascript?: boolean}} [options]
+ * @returns {string | null} the directive body, or `null` when the line is not one
+ */
+export function readTruthDirective(line, { javascript = false } = {}) {
+  const trimmed = String(line).trim();
+  let body = null;
+  if (trimmed.startsWith('<!--') && trimmed.endsWith('-->')) body = trimmed.slice(4, -3).trim();
+  else if (javascript && trimmed.startsWith('//')) body = trimmed.slice(2).trim();
+  if (body === null || !/^truth:/i.test(body)) return null;
+  return body.slice(body.indexOf(':') + 1).trim();
+}
+
+/**
+ * Every `truth:` directive in a surface that is not one of the three legal forms.
+ *
+ * The legal forms are a citation (`id=value`), a retired-code declaration and a
+ * retired-claim declaration. Anything else is a directive the author meant to be
+ * load-bearing and that no rule reads — which is the failure mode this contract
+ * exists to stop, committed inside its own grammar.
+ *
+ * @param {string} source
+ * @param {{javascript?: boolean}} [options]
+ * @returns {Array<{line: number, body: string}>}
+ */
+export function findMalformedDirectives(source, { javascript = false } = {}) {
+  /** @type {Array<{line: number, body: string}>} */
+  const found = [];
+  const lines = String(source).split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const body = readTruthDirective(lines[index], { javascript });
+    if (body === null) continue;
+    if (CITATION_LITERAL.test(body.replace(/\s*=\s*/, '='))) continue;
+    if (/^retired-code\s+[A-Z][A-Z0-9_]+\b/.test(body)) continue;
+    if (/^retired-claim\s+.+\s+—/.test(body)) continue;
+    found.push({ line: index + 1, body });
+  }
+  return found;
+}
+
+/**
+ * Whether a declared surface path is safe to read as itself.
+ *
+ * {@link BOUND_SURFACES} and {@link AUTHORITY_SOURCES} are frozen literal lists,
+ * so nothing *inside* this file can traverse. The filesystem can: replacing
+ * `packages/cli/src/app-inspect.js` with a symlink was measured on this branch,
+ * and it does two things, both silent —
+ *
+ * - pointing it at a file **outside the repository** made that file's `// truth:`
+ *   lines the ones the gate read; and
+ * - pointing it at a citation-free file dropped the posture sentence's seven
+ *   citations from 95 to 88 and left `--check` **green**, with the false posture
+ *   sitting in the symlink's target.
+ *
+ * A path-allowlisted grammar that a symlink can redirect is not path-allowlisted,
+ * so every declared path is checked to be repository-relative, free of any `..`
+ * segment, and reachable without traversing a symlink at any component. The
+ * answer is a refusal, never a quiet skip: a surface that cannot be read *as
+ * itself* is `TRUTH_SURFACE_UNSAFE`, on the same rule as every other authority
+ * here — a fact never silently defaults from something that could not be read.
+ *
+ * @param {string} rootDir
+ * @param {string} declared repository-relative, POSIX separators
+ * @returns {{ok: true, full: string} | {ok: false, reason: string}}
+ */
+export function resolveSurfacePath(rootDir, declared) {
+  if (isAbsolute(declared) || declared.split('/').includes('..')) {
+    return { ok: false, reason: `"${declared}" is not a repository-relative path without a ".." segment` };
+  }
+  const root = realpathSync(resolve(rootDir));
+  const full = join(root, declared);
+  let walked = root;
+  for (const segment of declared.split('/')) {
+    walked = join(walked, segment);
+    let stat;
+    try {
+      stat = lstatSync(walked);
+    } catch {
+      // A path that does not exist is the caller's `existsSync` case, not a
+      // traversal: it is skipped, exactly as it was before this check existed.
+      return { ok: true, full };
+    }
+    if (stat.isSymbolicLink()) {
+      return { ok: false, reason: `"${relative(root, walked).split(sep).join('/')}" is a symbolic link, so the gate `
+        + 'would read whatever it points at rather than the file this contract names' };
+    }
+  }
+  const real = realpathSync(full);
+  if (real !== full && relative(root, real).startsWith('..')) {
+    return { ok: false, reason: `"${declared}" resolves outside the repository` };
+  }
+  return { ok: true, full };
+}
+
 // ────────────────────────────────────────────────────────────────── utilities
 
 /** Deterministic string order, independent of locale. */
@@ -478,7 +656,20 @@ export async function readAuthorities({ rootDir }) {
   /** @type {Array<[string, string]>} */
   const digests = [];
   for (const path of AUTHORITY_SOURCES) {
-    const full = join(rootDir, path);
+    // An authority is read *and imported*, so a symlink here does not merely
+    // redirect a digest — it changes which code the facts are derived from.
+    // Refused whole, on the same rule as an unreadable authority: nothing is
+    // defaulted from something that could not be read as itself.
+    const safe = resolveSurfacePath(rootDir, path);
+    if (!safe.ok) {
+      problems.push({
+        code: 'TRUTH_SURFACE_UNSAFE',
+        message: `authority source ${path} cannot be read as itself: ${safe.reason}. No fact is derived from a `
+          + 'path the filesystem can redirect.',
+      });
+      continue;
+    }
+    const full = safe.full;
     if (!existsSync(full)) {
       unavailable(`authority source ${path} does not exist, so the facts it carries cannot be read at all`);
       continue;
@@ -1277,8 +1468,16 @@ export function parseCitations(source, { javascript = false } = {}) {
       found.push({ line: index + 1, id: match[1], value: match[2] });
     }
     if (javascript) {
-      for (const match of lines[index].matchAll(CITATION_JS)) {
-        found.push({ line: index + 1, id: match[1], value: match[2] });
+      // Own-line comments only. `CITATION_JS` used to match anywhere on the
+      // line, so a string literal holding the text of a citation *became* one:
+      // measured on this branch, `const example = '// truth: made.up.fact=x';`
+      // in the bound source surface produced TRUTH_FACT_UNKNOWN for a citation
+      // nobody wrote. A grammar that reads its own examples is not bounded.
+      const trimmed = lines[index].trimStart();
+      if (trimmed.startsWith('//')) {
+        for (const match of trimmed.matchAll(CITATION_JS)) {
+          found.push({ line: index + 1, id: match[1], value: match[2] });
+        }
       }
     }
     if (!declared) continue;
@@ -1445,6 +1644,39 @@ export function findUnknownCodes(source, vocabulary, basenames) {
 }
 
 /**
+ * Every retired claim a bound surface states without declaring it as history.
+ *
+ * The counterpart of the retired-code half of {@link findUnknownCodes}, and it
+ * exists because the citation half cannot reach it: seven `// truth:` lines
+ * above `productionPosture` bind seven **values**, and say nothing at all about
+ * the sentence they sit above. Pasting the historical falsehood back into that
+ * sentence and leaving the citations alone was measured green on this branch.
+ *
+ * The declaration escape is the same one a retired code gets, for the same
+ * reason and at the same cost — a reviewable edit with an argument attached,
+ * scoped to the file that writes it.
+ *
+ * @param {string} source
+ * @returns {Array<{line: number, claim: string}>}
+ */
+export function findRetiredClaims(source) {
+  /** @type {Array<{line: number, claim: string}>} */
+  const found = [];
+  const text = String(source);
+  const declared = new Set([...text.matchAll(RETIRED_CLAIM)].map((match) => normalizeClaimText(match[1])));
+  const lines = text.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const normalized = normalizeClaimText(lines[index]);
+    for (const claim of RETIRED_CLAIMS) {
+      const needle = normalizeClaimText(claim);
+      if (!normalized.includes(needle) || declared.has(needle)) continue;
+      found.push({ line: index + 1, claim });
+    }
+  }
+  return found;
+}
+
+/**
  * Is the committed document still what the authorities produce?
  *
  * Compared canonically, so key order and formatting cannot hide a difference —
@@ -1524,11 +1756,38 @@ export async function checkRepository({ rootDir }) {
   const basenames = repositoryBasenames(rootDir);
 
   for (const surface of BOUND_SURFACES) {
-    const full = join(rootDir, surface);
+    const safe = resolveSurfacePath(rootDir, surface);
+    if (!safe.ok) {
+      problems.push({
+        code: 'TRUTH_SURFACE_UNSAFE',
+        message: `${surface} cannot be read as itself: ${safe.reason}. A bound surface the filesystem can redirect `
+          + 'is not bound — pointing this path at a citation-free file drops its citations and leaves the gate '
+          + 'green with the claim it was checking still standing.',
+      });
+      continue;
+    }
+    const full = safe.full;
     if (!existsSync(full)) continue;
     const source = readFileSync(full, 'utf8');
     const javascript = surface.endsWith('.js');
     problems.push(...checkCitations(parseCitations(source, { javascript }), factIndex, surface));
+    for (const { line, body } of findMalformedDirectives(source, { javascript })) {
+      problems.push({
+        code: 'TRUTH_CITATION_MALFORMED',
+        message: `${surface}:${line}: writes \`truth: ${body}\`, which is not a citation (\`id=value\`), a `
+          + '`retired-code CODE — why` declaration or a `retired-claim <claim> — why` one. A directive no rule '
+          + 'reads is worse than none: it looks like proof and checks nothing.',
+      });
+    }
+    for (const { line, claim } of findRetiredClaims(source)) {
+      problems.push({
+        code: 'TRUTH_CLAIM_RETIRED',
+        message: `${surface}:${line}: states "${claim}", a claim this repository deliberately retired. It is the `
+          + 'first of the two failures ADR-039 opens by naming, and the citations beside it prove nothing about it '
+          + '— they bind values, not sentences. Remove it, or declare `truth: retired-claim ' + claim + ' — why` '
+          + 'in this file if the surface names it as history.',
+      });
+    }
     for (const { line, code } of findUnknownCodes(source, vocabulary, basenames)) {
       problems.push({
         code: 'TRUTH_CODE_UNKNOWN',

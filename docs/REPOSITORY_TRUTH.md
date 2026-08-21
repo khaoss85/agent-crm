@@ -204,15 +204,37 @@ it. It is exactly the `TENANT_ISOLATION_NOT_ENFORCED` regression, written as a r
 
 ## One bound surface is source, and why
 
+<!-- truth: retired-claim no authentication, tenancy or RBAC exists — this section quotes the retired posture as the recorded failure the rule exists to catch. Named as history, never asserted about this repository. -->
+
 `packages/cli/src/app-inspect.js` is in the bound set. `productionPosture` is a
 hand-written English sentence that `app inspect` publishes to every agent that asks
 what this framework is, and it is the **first** of the two failures in the record:
 it read "no authentication, tenancy or RBAC exists" in the same report whose
 `PRODUCTION_SPINE_ABSENT` message described identity, tenancy and authorization, and
 a person found it (PR #101). v1 of this contract bound twenty documents and left that
-sentence out of all of them — so restoring the false posture left `--check` green,
-and the contract closed one of the two failures it opens by naming. It carries seven
-citations now.
+sentence out of all of them. It carries nine citations now.
+
+**Citations alone did not close that failure, and the record has to say so.** A
+citation binds a **value**: reversing `spine.authorization.enforced=enforced` to
+`=absent` fails, which is what the nine `// truth:` lines above the sentence
+actually prove. They say nothing about the *sentence underneath them*, so pasting
+the historical falsehood back into `productionPosture` and leaving the citations
+untouched left `repo:truth -- --check` **green** — measured, not reasoned about.
+Two rules close it, and neither reads prose:
+
+- **`RETIRED_CLAIMS`** holds the one recorded false posture verbatim across every
+  bound surface, on exactly the terms `RETIRED_CODES` holds a retired code: a
+  short list, each entry a reviewable edit with an argument attached, and a
+  `truth: retired-claim <claim> — why` declaration for the surface that names it
+  as history (this section carries one). `TRUTH_CLAIM_RETIRED`.
+- **A directive no rule reads is refused.** `// truth: spine.authorization.enforced
+  -> enforced` matched no pattern and was silently not a citation, so a typo turned
+  a load-bearing citation off with no signal. `TRUTH_CITATION_MALFORMED`.
+
+The boundary, stated rather than implied: this holds the falsehood that **is** in
+the record, not the set of all falsehoods. A newly invented false posture is still
+outside the contract — `POSTURE_PROSE_NOT_GENERATED`. Generating the sentence from
+its own facts is the answer, and it is v2.
 
 That is the boundary of what "bound" means for source: a product claim written as a
 string, deliberately cited, one file at a time and each one argued in review. This
@@ -252,8 +274,43 @@ Published in the document's own `limitations[]`, by code:
 | `CITATIONS_ARE_OPT_IN` | a sentence with no citation is not checked, and this contract cannot discover which sentences ought to have one |
 | `WORDING_IS_NOT_GENERATED` | no prose is written or rewritten; a fact constrains what a bound sentence may assert, it does not produce the sentence |
 | `EDITIONS_NOT_BOUND` | `docs/editions/**` is outside the bound set in v1 |
-| `NUMERIC_CLAIMS_NOT_BOUND` | no fact any document cites is a count, so every number in a bound sentence — test counts, and the module, package, resource, action, policy and provider counts in `site/assets/llms.txt` and `README.md` — is outside this contract. A citation next to a number binds the sentence, never the number |
+| `NUMERIC_CLAIMS_NOT_BOUND` | this contract requires no number to be bound and can discover none that ought to be — see the section below, which states the two things the shorter wording got wrong |
+| `POSTURE_PROSE_NOT_GENERATED` | `productionPosture` is hand-written English bound to fact **ids**; the citations hold its values, not its wording. `RETIRED_CLAIMS` catches the one recorded falsehood; generating the sentence is v2 |
 | `CODE_VOCABULARY_INCLUDES_COMMENTS` | the vocabulary is harvested lexically, so a code named only in a source comment counts as declared. `RETIRED_CODES` closes the case that matters: a code this repository deliberately removed is subtracted wherever it is mentioned |
+
+### `NUMERIC_CLAIMS_NOT_BOUND`, said accurately
+
+The one-line form said "no fact any document cites is a count, so every number in a
+bound sentence … is outside this contract". Two things in that are wrong, and both
+matter to a reader deciding whether a number they are reading was checked.
+
+**One cited fact is an integer.** `spine.identity.contract=1` is cited by
+`site/claims.json` and checked exactly like any other value — the closed vocabulary
+admits three literal shapes, and `contract` is one of them. So the companion claim in
+`docs/QUALITY_GATES.md` §6.1, "**No number is checked**", was false. What holds is
+narrower: no **count** is cited. The count-shaped facts are the three measurement
+ones, and `MEASUREMENT_FACTS_ARE_GENERATED_BUT_NOT_CITED` keeps those out of every
+document.
+
+**Typed test counts are not unchecked — a different gate holds them.**
+`findLooseTestCounts` in `scripts/measurement.js`, run by `scripts/site-check.js`
+inside `npm run gtm:check`, refuses a literal `N tests` in `README.md`, `AGENTS.md`,
+`TASKS.md`, `site/`, the site templates and **every** document under `docs/` outside
+`DATED_HISTORY`. Listing test counts first among the things "outside this contract"
+read as *unchecked*, which is the opposite of the case.
+
+What genuinely no gate holds is **every other current count** — module, package,
+resource, action, policy, provider, rail, skill, scenario and JTBD-row counts,
+including the ones this very file publishes about itself.
+
+**Why binding them is v2 and not a line of code.** Requiring a number to carry a fact
+means telling a load-bearing current count from a date, an ADR number, a currency
+example, a benchmark receipt's raw count and a number inside a fenced code block —
+classification, not citation. `findLooseTestCounts` needed two hand-tuned negative
+lookbehinds (a hyphen, a currency symbol) to survive widening from `site/` to `docs/`
+alone, for **one** noun. Generalising that to seven nouns across twenty-one surfaces
+is a new gate with its own false-positive budget, and it needs count-shaped facts —
+`package.count`, `rail.count` — that do not exist yet. v2 owns both halves.
 
 ## Where it runs, and where it deliberately does not
 
