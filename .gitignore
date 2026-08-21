@@ -5,7 +5,11 @@ node_modules/
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
-coverage/
+# Test-coverage output, at the repository ROOT only. Anchored deliberately:
+# unanchored, `coverage/` matches at any depth, and it silently swallowed
+# `docs/jtbd/coverage/` — `git add -A` skipped the directory without a word and
+# published a tree missing a file `docs/jtbd/AGENTS.md` cites by name.
+/coverage/
 .DS_Store
 *.log
 .tmp/
