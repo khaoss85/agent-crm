@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://accordo.dev/schemas/jtbd.schema.json",
+  "title": "Accordo JTBD Catalog Entry",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "jtbd_id",
+    "persona_id",
+    "role",
+    "platform_lifecycle",
+    "job_name",
+    "job_statement",
+    "use_case",
+    "agentic_design",
+    "data",
+    "capabilities",
+    "acceptance_criteria",
+    "kpis",
+    "risk_and_governance",
+    "roadmap",
+    "coverage"
+  ],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "jtbd_id": {"type": "string", "pattern": "^ACC-JTBD-[A-Z0-9-]+-[0-9]{3}$"},
+    "persona_id": {"type": "string", "pattern": "^PER-[A-Z0-9-]+$"},
+    "role": {"type": "string", "minLength": 2},
+    "role_group": {"type": "string"},
+    "platform_lifecycle": {"enum": ["ADOPT", "RUN", "OPTIMIZE", "MAINTAIN", "GOVERN", "EVOLVE"]},
+    "journey_stages": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "job_name": {"type": "string", "minLength": 5},
+    "job_statement": {
+      "type": "object",
+      "required": ["when", "want", "so_that", "canonical"],
+      "properties": {
+        "when": {"type": "string"},
+        "want": {"type": "string"},
+        "so_that": {"type": "string"},
+        "canonical": {"type": "string"}
+      }
+    },
+    "use_case": {"type": "object", "required": ["name", "summary", "trigger", "frequency", "primary_flow", "exception_flows", "outputs"]},
+    "agentic_design": {"type": "object", "required": ["pattern", "target_autonomy", "human_approval_required", "agent_roles", "tools_required", "evidence_contract"]},
+    "data": {"type": "object", "required": ["entities", "inputs", "integrations", "freshness_requirement"]},
+    "capabilities": {
+      "type": "object",
+      "required": ["core", "supporting"],
+      "properties": {
+        "core": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z]{3}-[0-9]{3}$"}, "minItems": 1},
+        "supporting": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z]{3}-[0-9]{3}$"}}
+      }
+    },
+    "acceptance_criteria": {"type": "array", "items": {"type": "string"}, "minItems": 5},
+    "kpis": {"type": "array", "items": {"type": "string"}, "minItems": 3},
+    "risk_and_governance": {"type": "object", "required": ["risk_level", "guardrails"]},
+    "non_functional_requirements": {"type": "object"},
+    "test_obligations": {"type": "array", "items": {"type": "string"}, "minItems": 4},
+    "roadmap": {"type": "object", "required": ["priority", "suggested_horizon", "business_value_1_5", "frequency_1_5", "strategic_fit_1_5", "differentiation_1_5", "risk_reduction_1_5", "effort_points"]},
+    "coverage": {"type": "object", "required": ["status", "confidence_0_1", "dimensions", "evidence", "known_gaps"]}
+  },
+  "additionalProperties": true
+}
