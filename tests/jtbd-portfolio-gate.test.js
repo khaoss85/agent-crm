@@ -9,6 +9,7 @@
 
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +43,25 @@ test('the checked-in portfolio passes its own gate', () => {
   assert.equal(summary.uniqueIds, 600);
   assert.equal(summary.overlayComplete, true);
   assert.equal(summary.positiveCoverageWithoutEvidence, 0);
+});
+
+test('v1.1 enforces the L3 approval boundary and preserves unique resolvable ids', () => {
+  const lines = readFileSync(join(ROOT, 'docs/jtbd/catalog/jtbd.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(new Set(lines.map((row) => row.jtbd_id)).size, lines.length);
+  assert.equal(lines.filter((row) => row.agentic_design.target_autonomy === 'L3' && row.agentic_design.human_approval_required !== true).length, 0);
+  const supersessions = JSON.parse(readFileSync(join(ROOT, 'docs/jtbd/catalog/supersessions.json'), 'utf8'));
+  const active = new Set(lines.map((row) => row.jtbd_id));
+  for (const item of supersessions.supersededIds) assert.ok(active.has(item.supersededBy));
+});
+
+test('every desired job has a complete public roadmap disposition and no private priority', () => {
+  const assignments = readFileSync(join(ROOT, 'docs/jtbd/roadmap/assignments.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(assignments.length, 600);
+  assert.equal(new Set(assignments.map((row) => row.jtbdId)).size, 600);
+  for (const row of assignments) {
+    for (const field of ['disposition', 'pillar', 'edition', 'roadmapTrack', 'milestoneOrEpic', 'dependencies']) assert.notEqual(row[field], undefined);
+    for (const field of ['priority', 'businessValue', 'competitiveRationale', 'commercialSequence']) assert.ok(!(field in row));
+  }
 });
 
 test('the catalogue is streamed, and only four fields survive the read', async () => {
@@ -308,6 +328,11 @@ test('the summary facts in docs/repository-truth.json are the generated ones', (
   for (const fact of truth.facts.filter((entry) => entry.id.startsWith('jtbd.'))) {
     assert.deepEqual(fact.limitations, ['JTBD_ROWS_NOT_ENCODED']);
   }
+});
+
+test('every JTBD artefact has an explicit public/private disposition', () => {
+  const tracked = execFileSync('git', ['ls-files', 'docs/jtbd'], { cwd: ROOT, encoding: 'utf8' }).trim().split('\n');
+  for (const rel of tracked) assert.ok(world.classification.artefacts[rel], `${rel} is unclassified`);
 });
 
 test('every referenced artefact exists', () => {

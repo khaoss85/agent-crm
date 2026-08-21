@@ -1,0 +1,107 @@
+{
+  "reverseAuditContract": 1,
+  "catalogueVersion": "2026-08-21.1",
+  "principle": "No JTBD is invented to justify existing code.",
+  "plt004": {
+    "classification": "implementation plumbing with no direct JTBD expected",
+    "reason": "Custom objects/fields are a horizontal construction primitive; the catalogue models business outcomes and currently contains no authoring job. Do not invent one merely to justify shipped code."
+  },
+  "orphanCapabilities": {
+    "AUT-005": {
+      "classification": "implementation plumbing with no direct JTBD expected",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "AUT-016": {
+      "classification": "taxonomy error",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "AUT-018": {
+      "classification": "taxonomy error",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "COL-002": {
+      "classification": "taxonomy error",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "COL-010": {
+      "classification": "taxonomy error",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "CSV-018": {
+      "classification": "missing desired job",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "DAT-008": {
+      "classification": "missing desired job",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "DEV-006": {
+      "classification": "taxonomy error",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "DEV-018": {
+      "classification": "implementation plumbing with no direct JTBD expected",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "GOV-001": {
+      "classification": "missing desired job",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "GOV-004": {
+      "classification": "missing desired job",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "GOV-012": {
+      "classification": "taxonomy error",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "GOV-015": {
+      "classification": "missing desired job",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "GOV-016": {
+      "classification": "missing desired job",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "MKT-008": {
+      "classification": "overbuilt/roadmap debt",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "PLT-004": {
+      "classification": "implementation plumbing with no direct JTBD expected",
+      "reason": "Custom objects/fields are a horizontal construction primitive; the catalogue models business outcomes and currently contains no authoring job. Do not invent one merely to justify shipped code."
+    },
+    "PLT-009": {
+      "classification": "implementation plumbing with no direct JTBD expected",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "PLT-014": {
+      "classification": "overbuilt/roadmap debt",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "PLT-015": {
+      "classification": "overbuilt/roadmap debt",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    },
+    "SAL-023": {
+      "classification": "overbuilt/roadmap debt",
+      "reason": "Classification follows whether the capability is runtime plumbing, an absent user outcome, an unowned implementation promise, or a duplicate/misplaced taxonomy entry."
+    }
+  },
+  "governanceSecurityOrphans": [
+    "GOV-001",
+    "GOV-004",
+    "GOV-012",
+    "GOV-015",
+    "GOV-016"
+  ],
+  "previouslyEmptyPillars": {
+    "signature-order": "implementation plumbing with no direct JTBD expected",
+    "delivery": "missing desired job",
+    "work": "missing desired job",
+    "customer-data-operations": "missing desired job",
+    "interactions": "missing desired job",
+    "billing": "missing desired job",
+    "design-to-crm": "taxonomy error"
+  }
+}

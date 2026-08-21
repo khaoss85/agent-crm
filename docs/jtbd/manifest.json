@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "catalog_version": "2026-08-20.1",
+  "catalog_version": "2026-08-21.1",
   "counts": {
     "personas": 30,
     "capabilities": 225,
@@ -11,7 +11,7 @@
     {
       "path": "catalog/jtbd.jsonl",
       "bytes": 4611152,
-      "sha256": "c771e3c6b113903d5dc6e35dad6e793e345106e256aea586fedd062b3a611c28"
+      "sha256": "7103ffb869ed0fbae55e14404d59ec53b1a7b3ae0c103c9a4594d289f5877b54"
     },
     {
       "path": "MASTER.md",

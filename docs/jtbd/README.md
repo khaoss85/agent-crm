@@ -1,6 +1,6 @@
 # Accordo JTBD desired-state catalog
 
-Catalog version `2026-08-20.1`: **30 personas · 600 JTBD · 225 capabilities · 10 end-to-end scenarios**.
+Catalog version `2026-08-21.1`: **30 personas · 600 JTBD · 225 capabilities · 10 end-to-end scenarios**.
 
 This directory is a desired-state requirements corpus, not a claim that Accordo currently supports these jobs. Phase D must assess the repository at a pinned SHA using the four JTBD statuses defined by `docs/QUALITY_GATES.md`.
 

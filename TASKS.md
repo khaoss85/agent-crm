@@ -168,3 +168,21 @@ Recorded so they are not lost, and deliberately not bundled into a domain milest
 - [ ] **Runtime and database inspection** — what a particular database has actually applied, as opposed to what the checked-in source AX1 reads declares.
 - [ ] **AX2 — a machine-readable Solution Plan**, consuming AX1's report as its input.
 - [ ] **Data Operations** — deduplication, merge, quality remediation.
+
+## JTBD portfolio normalization follow-ups
+
+The v1.1 ownership overlay sequences work but starts none of it. Product priority comes from reviewed ownership/dependencies, never raw JTBD counts.
+
+- [ ] Spine v2 PostgreSQL per-tenant production storage.
+- [ ] Managed Cloud C0 organizations/projects/environments/deployments — blocked on human creation and scoped access to `accordo-platform`.
+- [ ] Customer Data Operations v2; Interactions; Billing; Marketing; Analytics.
+- [ ] Vercel Accordo project/account scope and `public-surface-check` after private-repository creation.
+- [ ] Repository Truth Contract v2 generated `productionPosture`.
+- [ ] Deprecate `commercial-quotes@1` after every consumer moves to the integrity-verifying contract.
+- [ ] Browser automation in CI.
+- [ ] DX6/ADR-032 application-operation observations; DX9 Context Pack; DX13 Project MCP parity.
+- [ ] Shared-database row tenancy only if economics justify it.
+- [ ] Actual public→private migration after human repository creation; no history rewrite.
+- [ ] Package remote install/update/uninstall/registry.
+- [ ] Spine v3 jobs/outbox/scheduler; Spine v4 secrets/backups/observability/self-host.
+- [ ] Real Codex/Gemini comparative benchmark when both harnesses exist.

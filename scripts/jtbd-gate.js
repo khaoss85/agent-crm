@@ -145,6 +145,7 @@ const PATHS = Object.freeze({
   assessments: 'docs/jtbd/coverage/assessments.json',
   coverageOverlay: 'docs/jtbd/coverage/coverage.overlay.jsonl',
   roadmapOverlay: 'docs/jtbd/roadmap/roadmap.overlay.jsonl',
+  assignments: 'docs/jtbd/roadmap/assignments.jsonl',
   classification: 'docs/jtbd/PUBLIC_PRIVATE.json',
   truth: 'docs/repository-truth.json',
   matrix: 'docs/benchmarks/CRM_JTBD_MATRIX.md',
@@ -216,9 +217,10 @@ const readJson = (rootDir, rel, problems) => {
  *
  * Pure over what it is handed, so a test can move one input and watch exactly one field move.
  */
-export function buildOverlays({ records, assessments, crosswalk, capabilityPillars, pillars }) {
+export function buildOverlays({ records, assessments, crosswalk, capabilityPillars, pillars, assignments = [] }) {
   const problems = [];
   const byId = new Map(assessments.map((entry) => [entry.jtbdId, entry]));
+  const assignmentById = new Map(assignments.map((entry) => [entry.jtbdId, entry]));
   const precedence = pillars.precedence;
   const registry = pillars.pillars;
 
@@ -297,16 +299,23 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
     else if (!milestone) ownerStatus = 'unassigned';
     else ownerStatus = withMilestone.some((row) => row.matrixStatus !== 'not supported') ? 'in progress' : 'planned';
 
+    const explicit = assignmentById.get(record.id);
+    const explicitPillar = explicit ? registry[explicit.pillar] : null;
     roadmap.push({
       jtbdId: record.id,
-      ownershipResolution: resolution,
-      pillar: entry ? winner : null,
-      package: entry ? entry.package : null,
-      edition: entry ? entry.edition : null,
-      roadmapTrack: entry ? entry.roadmapTrack : null,
-      milestone,
-      dependencies: entry ? entry.dependencies : [],
-      ownerStatus,
+      ownershipResolution: explicit
+        ? (explicit.edition === 'private-managed-cloud' ? 'private_managed_cloud' : 'public_oss_pillar')
+        : resolution,
+      pillar: explicit?.pillar ?? (entry ? winner : null),
+      package: explicitPillar?.package ?? (entry ? entry.package : null),
+      edition: explicit?.edition ?? (entry ? entry.edition : null),
+      roadmapTrack: explicit?.roadmapTrack ?? (entry ? entry.roadmapTrack : null),
+      milestone: explicit?.milestoneOrEpic ?? milestone,
+      roadmapSlice: explicit?.roadmapSlice ?? null,
+      dependencies: explicit?.dependencies ?? (entry ? entry.dependencies : []),
+      ownerStatus: explicit?.disposition ?? ownerStatus,
+      deferredReason: explicit?.deferredReason ?? null,
+      publicLimitation: explicit?.publicLimitation ?? null,
       candidatePillars,
       unownedCoreCapabilities: unowned,
       coreCapabilities: record.core.length,
@@ -326,6 +335,18 @@ const readOverlay = (rootDir, rel, problems) => {
   }
   return readFileSync(file, 'utf8');
 };
+
+const readJsonl = (rootDir, rel, problems) => {
+  const text = readOverlay(rootDir, rel, problems);
+  if (text === null) return [];
+  try { return text.split('\n').filter(Boolean).map((line) => JSON.parse(line)); }
+  catch (error) {
+    problems.push({ code: 'JTBD_INPUT_UNAVAILABLE', message: `${rel} is not readable JSONL: ${error.message}` });
+    return [];
+  }
+};
+
+
 
 /**
  * Every check, over an already-loaded world.
@@ -460,6 +481,29 @@ export function checkWorld(world) {
   }
 
   // ── 3. ownership resolves, exactly once, and nothing is orphaned ──────────
+  const assignmentIds = new Set();
+  for (const assignment of world.assignments ?? []) {
+    if (assignmentIds.has(assignment.jtbdId) || !catalogIds.has(assignment.jtbdId)) {
+      problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: duplicate or unknown roadmap assignment` });
+    }
+    assignmentIds.add(assignment.jtbdId);
+    const required = ['disposition', 'pillar', 'edition', 'roadmapTrack', 'milestoneOrEpic', 'dependencies'];
+    for (const field of required) if (assignment[field] === undefined || assignment[field] === null || assignment[field] === '') {
+      problems.push({ code: 'JTBD_ROADMAP_ORPHAN', message: `${assignment.jtbdId}: assignment lacks ${field}` });
+    }
+    if (['deferred', 'out of scope'].includes(assignment.disposition) && !assignment.deferredReason) {
+      problems.push({ code: 'JTBD_ROADMAP_ORPHAN', message: `${assignment.jtbdId}: ${assignment.disposition} requires a reason` });
+    }
+    for (const privateField of ['priority', 'businessValue', 'competitiveRationale', 'commercialSequence']) {
+      if (Object.prototype.hasOwnProperty.call(assignment, privateField)) {
+        problems.push({ code: 'JTBD_PRIVATE_FIELD_PUBLISHED', message: `${assignment.jtbdId}: public roadmap assignment carries ${privateField}` });
+      }
+    }
+  }
+  for (const id of catalogIds) if (!assignmentIds.has(id)) {
+    problems.push({ code: 'JTBD_ROADMAP_ORPHAN', message: `${id}: no explicit roadmap disposition` });
+  }
+
   const coverageById = new Map(built.coverage.map((row) => [row.jtbdId, row]));
   let unassigned = 0;
   for (const row of built.roadmap) {
@@ -576,6 +620,7 @@ export async function loadWorld(rootDir = ROOT) {
   const pillars = readJson(rootDir, PATHS.pillars, problems);
   const truth = readJson(rootDir, PATHS.truth, problems);
   const classification = readJson(rootDir, PATHS.classification, problems);
+  const assignments = readJsonl(rootDir, PATHS.assignments, problems);
   const assessments = assessmentsDoc?.assessments ?? [];
   const digests = new Map();
   for (const entry of assessments) {
@@ -594,6 +639,7 @@ export async function loadWorld(rootDir = ROOT) {
     pillars: pillars ?? { precedence: [], pillars: {} },
     truth,
     classification,
+    assignments,
     matrixText: existsSync(join(rootDir, PATHS.matrix)) ? readFileSync(join(rootDir, PATHS.matrix), 'utf8') : '',
     coverageText: readOverlay(rootDir, PATHS.coverageOverlay, problems),
     roadmapText: readOverlay(rootDir, PATHS.roadmapOverlay, problems),
