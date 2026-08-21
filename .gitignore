@@ -5,9 +5,11 @@ node_modules/
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
-# Test-coverage output, at the repository root only. Unanchored, this pattern also
-# swallowed `docs/jtbd/coverage/` — git silently refused to add the JTBD coverage overlay
-# and the status crosswalk that `docs/jtbd/AGENTS.md` already told readers to open.
+# Test-coverage output, at the repository ROOT only. Anchored deliberately:
+# unanchored, `coverage/` matches at any depth, and it silently swallowed
+# `docs/jtbd/coverage/` — `git add -A` skipped the directory without a word,
+# so the catalogue was published missing the status crosswalk that
+# `docs/jtbd/AGENTS.md` already told readers to open. Found twice, independently.
 /coverage/
 .DS_Store
 *.log
