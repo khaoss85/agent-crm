@@ -29,6 +29,7 @@ The desired catalogue is `docs/jtbd/catalog/jtbd.jsonl`; quality candidates are 
 - 2026-08-22: independent review fixes preserve null package ownership, validate pillar metadata and actual private field names, and explicitly retire the stale MASTER v1.0 rendering.
 - 2026-08-22: semantic integrator replaced the uniform correction with a per-row approval-boundary artifact, grouped the remaining findings, audited every roadmap assignment, and grounded every reverse-capability reason.
 - 2026-08-22: final review hardening conservatively queued all 16 DECIDE flows whose shared acceptance flow records decisions/tasks, added semantic ownership statuses and concrete taxonomy evidence, validated dependency identifiers, and synchronized canonical byte metadata.
+- 2026-08-22: the final integration follow-up moved semantic owner deferral into the canonical JTBD gate: settled non-candidate owners now require a public technical override, while unsupported owners without one must remain explicitly deferred.
 
 ## Decision log
 - L3 implies approval. Rows whose flows act on state retain L3 and require approval; recommendation/preparation-only rows move to L2. `ACC-JTBD-AE-012` remains conservatively valid and explicitly queued for human confirmation.

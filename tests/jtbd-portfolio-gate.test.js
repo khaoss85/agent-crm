@@ -154,6 +154,62 @@ test('refuses unknown pillars and assignment metadata that contradicts the regis
   }
 });
 
+test('semantic roadmap ownership permits a candidate, reviewed override, or human deferral only', () => {
+  const source = world.assignments.find((row) => row.jtbdId === 'ACC-JTBD-CRO-002');
+  assert.ok(source);
+  const replace = (mutation) => world.assignments.map((row) => row.jtbdId === source.jtbdId
+    ? { ...row, ...mutation }
+    : row);
+  const candidate = { ...source, disposition: 'planned' };
+  assert.ok(!codes(checkWorld({ ...world, assignments: replace(candidate) }).problems)
+    .has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
+
+  const billing = world.pillars.pillars.billing;
+  const unsupported = {
+    pillar: 'billing',
+    edition: billing.edition,
+    roadmapTrack: billing.roadmapTrack,
+    disposition: 'planned',
+    overrideRationale: undefined,
+  };
+  for (const disposition of ['planned', 'in progress', 'implemented']) {
+    const problems = checkWorld({
+      ...world,
+      assignments: replace({ ...unsupported, disposition }),
+    }).problems;
+    assert.ok(codes(problems).has('JTBD_ROADMAP_OWNER_UNSUPPORTED'), disposition);
+  }
+
+  const reviewedOverride = replace({
+    ...unsupported,
+    overrideRationale: 'Billing owns delivery because its public API is the orchestration boundary.',
+  });
+  assert.ok(!codes(checkWorld({ ...world, assignments: reviewedOverride }).problems)
+    .has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
+
+  const humanDeferred = replace({
+    ...unsupported,
+    disposition: 'deferred',
+    deferredReason: 'Candidate-pillar ownership is ambiguous and requires human product review.',
+  });
+  assert.ok(!codes(checkWorld({ ...world, assignments: humanDeferred }).problems)
+    .has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
+});
+
+test('semantic ownership overrides cannot publish commercial rationale', () => {
+  const source = world.assignments.find((row) => row.jtbdId === 'ACC-JTBD-CRO-002');
+  const billing = world.pillars.pillars.billing;
+  const assignments = world.assignments.map((row) => row.jtbdId === source.jtbdId ? {
+    ...row,
+    pillar: 'billing',
+    edition: billing.edition,
+    roadmapTrack: billing.roadmapTrack,
+    disposition: 'planned',
+    overrideRationale: 'Commercial sequencing makes this the highest business value.',
+  } : row);
+  assert.ok(codes(checkWorld({ ...world, assignments }).problems).has('JTBD_PRIVATE_FIELD_PUBLISHED'));
+});
+
 test('roadmap dependencies are arrays of unique registered pillar ids', () => {
   const validId = Object.keys(world.pillars.pillars)[0];
   for (const dependencies of [

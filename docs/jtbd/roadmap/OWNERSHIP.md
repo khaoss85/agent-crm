@@ -19,13 +19,23 @@ Catalogue v1.1 gives every desired job one explicit assignment containing:
 - a public limitation stating that planning metadata does not promote coverage.
 
 The gate rejects duplicate, missing, or unknown assignments; a pillar typo; edition or track
-metadata that disagrees with the pillar registry; private commercial fields in the public
-assignment; and stale generated overlays. The `package` field is projected from the explicitly
+metadata that disagrees with the pillar registry; a settled assignment outside its
+capability-derived `candidatePillars` unless it carries a reviewed `overrideRationale`; private
+commercial fields in the public assignment; and stale generated overlays. An unsupported owner
+without that rationale must be `deferred` with an explicit ownership-ambiguity reason. The
+`package` field is projected from the explicitly
 assigned pillar, including a deliberate `null` for framework pillars with no domain package.
 
 Capability-derived candidates and historical matrix references remain visible in
-`candidatePillars`, `unownedCoreCapabilities`, and `matrixRows`. They are context, not the
-owner-selection rule after v1.1. The explicit assignment is authoritative.
+`candidatePillars`, `unownedCoreCapabilities`, and `matrixRows`. Candidate pillars are a
+plausibility boundary, not a plurality winner or an automatic product priority. An explicit
+assignment is authoritative only when it selects any candidate, records a reviewed public
+technical ownership override, or defers the ambiguity for human review.
+
+`overrideRationale` is public technical governance. It may explain an architecture boundary,
+delivery responsibility, orchestration owner, or public dependency. It must not contain priority
+scores, business value, competitive rationale, commercial timing or sequencing, or win/loss
+positioning; those judgements stay outside the public repository.
 
 ## Current generated disposition
 

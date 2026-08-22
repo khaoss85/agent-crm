@@ -173,6 +173,8 @@ Recorded so they are not lost, and deliberately not bundled into a domain milest
 
 The v1.1 ownership overlay sequences work but starts none of it. Product priority comes from reviewed ownership/dependencies, never raw JTBD counts.
 
+- [x] Enforce the candidate-owner / reviewed-override / human-deferral boundary in the canonical JTBD gate, including the registered non-candidate pillar mutation regression.
+
 - [ ] Spine v2 PostgreSQL per-tenant production storage.
 - [ ] Managed Cloud C0 organizations/projects/environments/deployments — blocked on human creation and scoped access to `accordo-platform`.
 - [ ] Customer Data Operations v2; Interactions; Billing; Marketing; Analytics.

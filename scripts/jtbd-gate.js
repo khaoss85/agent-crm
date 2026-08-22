@@ -113,6 +113,7 @@ export const JTBD_GATE_PROBLEMS = Object.freeze([
   'JTBD_SPINE_EVIDENCE_ABSENT',
   'JTBD_FACT_UNKNOWN',
   'JTBD_ROADMAP_ORPHAN',
+  'JTBD_ROADMAP_OWNER_UNSUPPORTED',
   'JTBD_ROADMAP_RESOLUTION_UNKNOWN',
   'JTBD_CROSSWALK_ID_UNKNOWN',
   'JTBD_CROSSWALK_UNCITED',
@@ -301,6 +302,31 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
 
     const explicit = assignmentById.get(record.id);
     const explicitPillar = explicit ? registry[explicit.pillar] : null;
+    const overrideRationale = typeof explicit?.overrideRationale === 'string'
+      ? explicit.overrideRationale.trim()
+      : '';
+    const candidateOwner = explicit ? candidatePillars.includes(explicit.pillar) : true;
+    const settled = ['implemented', 'in progress', 'planned'].includes(explicit?.disposition);
+    if (explicit && !candidateOwner && !overrideRationale && settled) {
+      problems.push({
+        code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
+        message: `${record.id}: pillar "${explicit.pillar}" is outside the capability-derived candidate set `
+          + `[${candidatePillars.join(', ')}] and cannot be ${explicit.disposition} without a public technical ownership override; defer it for human ownership review`,
+      });
+    }
+    if (explicit && !candidateOwner && !overrideRationale && explicit.disposition === 'deferred'
+      && !/\b(owner|ownership|candidate pillar)\b/i.test(String(explicit.deferredReason ?? ''))) {
+      problems.push({
+        code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
+        message: `${record.id}: unsupported pillar "${explicit.pillar}" is deferred, but deferredReason does not make the ownership ambiguity explicit`,
+      });
+    }
+    if (overrideRationale && /\b(priority score|business value|competitive|commercial (?:timing|sequenc(?:e|ing))|win\/?loss)\b/i.test(overrideRationale)) {
+      problems.push({
+        code: 'JTBD_PRIVATE_FIELD_PUBLISHED',
+        message: `${record.id}: overrideRationale must explain public technical ownership, not private commercial prioritisation`,
+      });
+    }
     roadmap.push({
       jtbdId: record.id,
       ownershipResolution: explicit
@@ -319,6 +345,7 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
       ownerStatus: explicit?.disposition ?? ownerStatus,
       deferredReason: explicit?.deferredReason ?? null,
       publicLimitation: explicit?.publicLimitation ?? null,
+      ...(overrideRationale ? { overrideRationale } : {}),
       candidatePillars,
       unownedCoreCapabilities: unowned,
       coreCapabilities: record.core.length,
