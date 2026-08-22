@@ -1,0 +1,4214 @@
+{
+  "proposalContract": 2,
+  "catalogueFrom": "2026-08-20.1",
+  "catalogueTo": "2026-08-21.1",
+  "oldChecksum": "c771e3c6b113903d5dc6e35dad6e793e345106e256aea586fedd062b3a611c28",
+  "newChecksum": "f841593ef385141ad1b8eab645b0266c46af08c80eab64aa17767350c86ea05e",
+  "rule": "L3 means acts after approval; classification is established by the semantic review artifact.",
+  "summary": {
+    "A_KEEP_L3_REQUIRE_APPROVAL": 264,
+    "HUMAN_CONFIRMATION_REQUIRED": 16
+  },
+  "proposals": [
+    {
+      "jtbdId": "ACC-JTBD-ABM-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ABM-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ABM-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The CREATE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ABM-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ABM-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ABM-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ABM-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ABM-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ABM-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ABM-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ABM-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AE-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AE-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AE-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AE-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AE-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AE-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AE-011",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The CREATE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AE-012",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AE-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AE-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AE-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AE-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AGENT-ENG-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AGENT-ENG-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AGENT-ENG-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AGENT-ENG-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AGENT-ENG-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AGENT-ENG-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AGENT-ENG-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-AGENT-ENG-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ANALYTICS-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The CREATE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ANALYTICS-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ANALYTICS-009",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ANALYTICS-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ANALYTICS-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ANALYTICS-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ANALYTICS-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CAMPAIGN-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CAMPAIGN-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CAMPAIGN-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CAMPAIGN-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CAMPAIGN-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CAMPAIGN-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CAMPAIGN-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CAMPAIGN-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CAMPAIGN-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CAMPAIGN-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CAMPAIGN-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CONTENT-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CONTENT-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The CREATE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CONTENT-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The CREATE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CONTENT-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CONTENT-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CONTENT-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CONTENT-011",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CONTENT-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CONTENT-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CONTENT-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CONTENT-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CONTENT-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-ADMIN-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-ADMIN-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-ADMIN-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-ADMIN-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-ADMIN-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-ADMIN-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-ADMIN-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-ADMIN-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-ADMIN-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-ADMIN-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-ADMIN-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-ADMIN-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-PO-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-PO-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-PO-007",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-PO-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-PO-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-PO-013",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-PO-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-PO-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRM-PO-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-006",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-SPEC-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-SPEC-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-SPEC-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The CREATE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-SPEC-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-SPEC-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-SPEC-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-SPEC-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CRO-SPEC-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CS-DIR-007",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CS-DIR-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CS-DIR-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CS-DIR-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CS-DIR-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CS-DIR-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CS-DIR-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CS-DIR-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CUST-OPS-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CUST-OPS-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CUST-OPS-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CUST-OPS-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CUST-OPS-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CUST-OPS-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CUST-OPS-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CVM-005",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CVM-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CVM-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CVM-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CVM-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CVM-011",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CVM-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CVM-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CVM-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-CVM-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-ENG-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-ENG-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-ENG-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-ENG-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-ENG-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-ENG-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-ENG-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-ENG-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-ENG-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-ENG-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-008",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-011",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DATA-SCI-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DEAL-DESK-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DEAL-DESK-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DEAL-DESK-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DEAL-DESK-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The CREATE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DEAL-DESK-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-DEAL-DESK-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ENABLE-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ENABLE-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ENABLE-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ENABLE-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ENABLE-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ENABLE-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ENABLE-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ENABLE-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ENABLE-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-ENABLE-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-GOVERNANCE-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-GOVERNANCE-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-GOVERNANCE-011",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-GOVERNANCE-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-GOVERNANCE-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-GOVERNANCE-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-INTEGRATION-DEV-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-INTEGRATION-DEV-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-INTEGRATION-DEV-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-INTEGRATION-DEV-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-INTEGRATION-DEV-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-INTEGRATION-DEV-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-INTEGRATION-DEV-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-INTEGRATION-DEV-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-INTEGRATION-DEV-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-INTEGRATION-DEV-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-INTEGRATION-DEV-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-INTEGRATION-DEV-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-DIR-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-DIR-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-DIR-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-DIR-012",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-DIR-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-DIR-015",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-DIR-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-OPS-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-OPS-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-OPS-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-OPS-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-OPS-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-OPS-011",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-OPS-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-OPS-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-OPS-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-OPS-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-OPS-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-MKT-OPS-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PARTNER-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PARTNER-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PARTNER-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PARTNER-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PARTNER-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PARTNER-011",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PARTNER-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PARTNER-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PARTNER-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PARTNER-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PARTNER-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PARTNER-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PERF-MKT-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PERF-MKT-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PERF-MKT-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PERF-MKT-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PERF-MKT-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PERF-MKT-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PERF-MKT-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PERF-MKT-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PMM-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The CREATE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PMM-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The CREATE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PMM-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PMM-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PMM-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PMM-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PMM-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-PMM-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REV-FIN-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REV-FIN-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REV-FIN-016",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REV-FIN-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REVOPS-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REVOPS-008",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REVOPS-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REVOPS-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REVOPS-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REVOPS-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REVOPS-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REVOPS-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REVOPS-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-REVOPS-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-DIR-006",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-DIR-011",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-DIR-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-DIR-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-DIR-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-DIR-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-MGR-005",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-MGR-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-MGR-007",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-MGR-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-MGR-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-MGR-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-MGR-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-MGR-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-MGR-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-MGR-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-MGR-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SALES-MGR-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-005",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-006",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-011",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-016",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SDR-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SERVICE-006",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SERVICE-007",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SERVICE-008",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The CREATE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SERVICE-009",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SERVICE-010",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SERVICE-012",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The EXECUTE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SERVICE-013",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SERVICE-014",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SERVICE-015",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The OPTIMIZE flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    },
+    {
+      "jtbdId": "ACC-JTBD-SERVICE-017",
+      "semanticClass": "A_KEEP_L3_REQUIRE_APPROVAL",
+      "old": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": false
+      },
+      "new": {
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
+      },
+      "needsHumanConfirmation": false,
+      "reason": "The MAINTAIN flow records, applies, creates, maintains, or optimizes state and its outputs include an operational result. That is action rather than recommendation; L3 is retained and explicit approval is required.",
+      "reviewArtifact": "approval-boundary-review-v1.1.json"
+    }
+  ]
+}

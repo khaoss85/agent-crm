@@ -2,13 +2,8 @@
 from pathlib import Path
 import collections, hashlib, json, sys
 ROOT=Path(__file__).resolve().parents[1]
-expected={
- 'catalog/jtbd.jsonl':('c771e3c6b113903d5dc6e35dad6e793e345106e256aea586fedd062b3a611c28',4611152),
- 'MASTER.md':('85a9bfa2460446b54a966a0606a9a199e4d02083268c33fe06826a7e9732e58a',370072),
- 'catalog/personas.json':('c7f7c1107f3ceefcaa4cbbcbb08e2a39efd4e6058cf92187b60f967e362cb6b1',36664),
- 'catalog/capabilities.json':('8b31c747a648dd0b8d40036baa0331810bb9d4fd1e533b667f674a40c5f365ae',104627),
- 'catalog/e2e_scenarios.json':('7c7f3bfcbd7f59e42604ad5f5de4e30c58e858466740cd8c73e890889381b1fb',25314),
-}
+manifest=json.loads((ROOT/'manifest.json').read_text())
+expected={entry['path']:(entry['sha256'],entry['bytes']) for entry in manifest['files']}
 errors=[]
 for rel,(sha,n) in expected.items():
  p=ROOT/rel
@@ -43,6 +38,20 @@ if len(scen)!=10: errors.append(f'scenario count {len(scen)} != 10')
 by_persona=collections.Counter(r.get('persona_id') or r.get('role_id') for r in records)
 # There must be 30 non-null persona/role keys with 20 jobs each.
 if len(by_persona)!=30 or set(by_persona.values())!={20}: errors.append(f'jobs/persona invalid: {dict(by_persona)}')
+# v1.1 semantic invariants and retirement resolution.
+for record in records:
+ autonomy=record.get('agentic_design',{})
+ if autonomy.get('target_autonomy')=='L3' and autonomy.get('human_approval_required') is not True:
+  errors.append(f"L3_APPROVAL_CONTRADICTION {record.get('jtbd_id')}")
+sup_path=ROOT/'catalog/supersessions.json'
+if not sup_path.exists(): errors.append('MISSING catalog/supersessions.json')
+else:
+ supersessions=json.loads(sup_path.read_text())
+ active=set(ids)
+ for item in supersessions.get('supersededIds',[]):
+  old=item.get('id'); replacement=item.get('supersededBy')
+  if old in active or not replacement or replacement not in active:
+   errors.append(f'SUPERSESSION_UNRESOLVED {old} -> {replacement}')
 if errors:
  print('VALIDATION_FAILED')
  for e in errors: print('-',e)

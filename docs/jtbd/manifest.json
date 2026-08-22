@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "catalog_version": "2026-08-20.1",
+  "catalog_version": "2026-08-21.1",
   "counts": {
     "personas": 30,
     "capabilities": 225,
@@ -10,13 +10,13 @@
   "files": [
     {
       "path": "catalog/jtbd.jsonl",
-      "bytes": 4611152,
-      "sha256": "c771e3c6b113903d5dc6e35dad6e793e345106e256aea586fedd062b3a611c28"
+      "bytes": 4763586,
+      "sha256": "f841593ef385141ad1b8eab645b0266c46af08c80eab64aa17767350c86ea05e"
     },
     {
       "path": "MASTER.md",
-      "bytes": 370072,
-      "sha256": "85a9bfa2460446b54a966a0606a9a199e4d02083268c33fe06826a7e9732e58a"
+      "bytes": 370337,
+      "sha256": "bd90be31365d06f0fe7325e6966b9374270d2b4e117099ec189f47966b6403ba"
     },
     {
       "path": "catalog/personas.json",

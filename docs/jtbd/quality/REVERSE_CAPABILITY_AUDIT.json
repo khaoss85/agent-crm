@@ -1,0 +1,200 @@
+{
+  "reverseAuditContract": 1,
+  "catalogueVersion": "2026-08-21.1",
+  "principle": "No JTBD is invented to justify existing code.",
+  "plt004": {
+    "classification": "implementation plumbing with no direct JTBD expected",
+    "reason": "“Custom object e custom field” is a reusable Platform Foundation mechanism used to deliver other outcomes; a direct desired job is not expected unless a user-facing authoring or administration outcome is separately approved.",
+    "capabilityName": "Custom object e custom field",
+    "capabilityDefinition": "Capacità di custom object e custom field come parte della fondazione multi-tenant, configurabile, sicura e amministrabile."
+  },
+  "orphanCapabilities": {
+    "AUT-005": {
+      "classification": "implementation plumbing with no direct JTBD expected",
+      "reason": "“Job schedulato e ricorrente” is a reusable Workflow & Automation mechanism used to deliver other outcomes; a direct desired job is not expected unless a user-facing authoring or administration outcome is separately approved.",
+      "capabilityName": "Job schedulato e ricorrente",
+      "capabilityDefinition": "Capacità di job schedulato e ricorrente come parte della workflow affidabili, transazionali, osservabili e governati."
+    },
+    "AUT-016": {
+      "classification": "taxonomy error",
+      "reason": "“Workflow template e blueprint” (Capacità di workflow template e blueprint come parte della workflow affidabili, transazionali, osservabili e governati.) competes with DEV-005 App e plugin framework. Workflow blueprints are authoring/templates, which duplicates the developer-platform extension surface rather than workflow execution. This is a taxonomy defect rather than a missing job or roadmap debt because the ambiguity is which capability/category owns the same concept. Recommended human action: relocate.",
+      "capabilityName": "Workflow template e blueprint",
+      "capabilityDefinition": "Capacità di workflow template e blueprint come parte della workflow affidabili, transazionali, osservabili e governati.",
+      "taxonomyEvidence": {
+        "competingCapabilityOrCategory": "DEV-005 App e plugin framework",
+        "duplicatedOrMisplacedBoundary": "Workflow blueprints are authoring/templates, which duplicates the developer-platform extension surface rather than workflow execution.",
+        "recommendedHumanAction": "relocate"
+      }
+    },
+    "AUT-018": {
+      "classification": "taxonomy error",
+      "reason": "“Agent-triggered workflow” (Capacità di agent-triggered workflow come parte della workflow affidabili, transazionali, osservabili e governati.) competes with AIA-004 Tool use e action execution. An agent-trigger is an invocation mode for agent action execution, not a distinct workflow reliability capability. This is a taxonomy defect rather than a missing job or roadmap debt because the ambiguity is which capability/category owns the same concept. Recommended human action: consolidate.",
+      "capabilityName": "Agent-triggered workflow",
+      "capabilityDefinition": "Capacità di agent-triggered workflow come parte della workflow affidabili, transazionali, osservabili e governati.",
+      "taxonomyEvidence": {
+        "competingCapabilityOrCategory": "AIA-004 Tool use e action execution",
+        "duplicatedOrMisplacedBoundary": "An agent-trigger is an invocation mode for agent action execution, not a distinct workflow reliability capability.",
+        "recommendedHumanAction": "consolidate"
+      }
+    },
+    "COL-002": {
+      "classification": "taxonomy error",
+      "reason": "“Comment, mention e collaboration” (Capacità di comment, mention e collaboration come parte della lavoro coordinato, conoscenza, coaching e adozione.) competes with COL-003 Note e conversation summary. Comments and mentions share the conversational-record boundary with notes and summaries; the atomic record versus collaboration boundary is undefined. This is a taxonomy defect rather than a missing job or roadmap debt because the ambiguity is which capability/category owns the same concept. Recommended human action: split.",
+      "capabilityName": "Comment, mention e collaboration",
+      "capabilityDefinition": "Capacità di comment, mention e collaboration come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+      "taxonomyEvidence": {
+        "competingCapabilityOrCategory": "COL-003 Note e conversation summary",
+        "duplicatedOrMisplacedBoundary": "Comments and mentions share the conversational-record boundary with notes and summaries; the atomic record versus collaboration boundary is undefined.",
+        "recommendedHumanAction": "split"
+      }
+    },
+    "COL-010": {
+      "classification": "taxonomy error",
+      "reason": "“Change communication” (Capacità di change communication come parte della lavoro coordinato, conoscenza, coaching e adozione.) competes with AUT-009 Notification e escalation. Change communication duplicates notification delivery unless it is narrowed to a distinct adoption outcome. This is a taxonomy defect rather than a missing job or roadmap debt because the ambiguity is which capability/category owns the same concept. Recommended human action: rename.",
+      "capabilityName": "Change communication",
+      "capabilityDefinition": "Capacità di change communication come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+      "taxonomyEvidence": {
+        "competingCapabilityOrCategory": "AUT-009 Notification e escalation",
+        "duplicatedOrMisplacedBoundary": "Change communication duplicates notification delivery unless it is narrowed to a distinct adoption outcome.",
+        "recommendedHumanAction": "rename"
+      }
+    },
+    "CSV-018": {
+      "classification": "missing desired job",
+      "reason": "Human review is missing an outcome for a user who needs “Entitlement, contract e service eligibility”; the catalogue must not manufacture that outcome from the capability definition.",
+      "capabilityName": "Entitlement, contract e service eligibility",
+      "capabilityDefinition": "Capacità di entitlement, contract e service eligibility come parte della onboarding, adozione, valore, retention e assistenza."
+    },
+    "DAT-008": {
+      "classification": "missing desired job",
+      "reason": "Human review is missing an outcome for a user who needs “Golden record e master data management”; the catalogue must not manufacture that outcome from the capability definition.",
+      "capabilityName": "Golden record e master data management",
+      "capabilityDefinition": "Capacità di golden record e master data management come parte della raccolta, unificazione, qualità e attivazione dei dati cliente."
+    },
+    "DEV-006": {
+      "classification": "taxonomy error",
+      "reason": "“Custom action e serverless function” (Capacità di custom action e serverless function come parte della API, estensibilità, integrazioni, delivery e reliability.) competes with AIA-004 Tool use e action execution. Custom actions overlap the agent/tool action contract, while serverless functions are deployment plumbing; the combined capability crosses two categories. This is a taxonomy defect rather than a missing job or roadmap debt because the ambiguity is which capability/category owns the same concept. Recommended human action: split.",
+      "capabilityName": "Custom action e serverless function",
+      "capabilityDefinition": "Capacità di custom action e serverless function come parte della API, estensibilità, integrazioni, delivery e reliability.",
+      "taxonomyEvidence": {
+        "competingCapabilityOrCategory": "AIA-004 Tool use e action execution",
+        "duplicatedOrMisplacedBoundary": "Custom actions overlap the agent/tool action contract, while serverless functions are deployment plumbing; the combined capability crosses two categories.",
+        "recommendedHumanAction": "split"
+      }
+    },
+    "DEV-018": {
+      "classification": "implementation plumbing with no direct JTBD expected",
+      "reason": "“Versioned migration” is a reusable Developer Platform mechanism used to deliver other outcomes; a direct desired job is not expected unless a user-facing authoring or administration outcome is separately approved.",
+      "capabilityName": "Versioned migration",
+      "capabilityDefinition": "Capacità di versioned migration come parte della API, estensibilità, integrazioni, delivery e reliability."
+    },
+    "GOV-001": {
+      "classification": "missing desired job",
+      "reason": "Human review is missing an outcome for a user who needs “SSO e MFA”; the catalogue must not manufacture that outcome from the capability definition.",
+      "capabilityName": "SSO e MFA",
+      "capabilityDefinition": "Capacità di sso e mfa come parte della sicurezza, privacy, compliance e accountability."
+    },
+    "GOV-004": {
+      "classification": "missing desired job",
+      "reason": "Human review is missing an outcome for a user who needs “DSAR, export e delete”; the catalogue must not manufacture that outcome from the capability definition.",
+      "capabilityName": "DSAR, export e delete",
+      "capabilityDefinition": "Capacità di dsar, export e delete come parte della sicurezza, privacy, compliance e accountability."
+    },
+    "GOV-012": {
+      "classification": "taxonomy error",
+      "reason": "“Vendor e connector governance” (Capacità di vendor e connector governance come parte della sicurezza, privacy, compliance e accountability.) competes with DEV-007 Connector SDK. Connector governance belongs to the connector lifecycle, while vendor governance is a procurement/compliance concern; the combined capability crosses categories. This is a taxonomy defect rather than a missing job or roadmap debt because the ambiguity is which capability/category owns the same concept. Recommended human action: split.",
+      "capabilityName": "Vendor e connector governance",
+      "capabilityDefinition": "Capacità di vendor e connector governance come parte della sicurezza, privacy, compliance e accountability.",
+      "taxonomyEvidence": {
+        "competingCapabilityOrCategory": "DEV-007 Connector SDK",
+        "duplicatedOrMisplacedBoundary": "Connector governance belongs to the connector lifecycle, while vendor governance is a procurement/compliance concern; the combined capability crosses categories.",
+        "recommendedHumanAction": "split"
+      }
+    },
+    "GOV-015": {
+      "classification": "missing desired job",
+      "reason": "Human review is missing an outcome for a user who needs “Access review e recertification”; the catalogue must not manufacture that outcome from the capability definition.",
+      "capabilityName": "Access review e recertification",
+      "capabilityDefinition": "Capacità di access review e recertification come parte della sicurezza, privacy, compliance e accountability."
+    },
+    "GOV-016": {
+      "classification": "missing desired job",
+      "reason": "Human review is missing an outcome for a user who needs “Data minimization e purpose limitation”; the catalogue must not manufacture that outcome from the capability definition.",
+      "capabilityName": "Data minimization e purpose limitation",
+      "capabilityDefinition": "Capacità di data minimization e purpose limitation come parte della sicurezza, privacy, compliance e accountability."
+    },
+    "MKT-008": {
+      "classification": "overbuilt/roadmap debt",
+      "reason": "“Web e in-app personalization” is declared in Marketing & Growth but no desired job consumes it; retain it as explicit roadmap debt rather than inventing demand.",
+      "capabilityName": "Web e in-app personalization",
+      "capabilityDefinition": "Capacità di web e in-app personalization come parte della segmentazione, orchestration, contenuti, activation e misurazione."
+    },
+    "PLT-004": {
+      "classification": "implementation plumbing with no direct JTBD expected",
+      "reason": "“Custom object e custom field” is a reusable Platform Foundation mechanism used to deliver other outcomes; a direct desired job is not expected unless a user-facing authoring or administration outcome is separately approved.",
+      "capabilityName": "Custom object e custom field",
+      "capabilityDefinition": "Capacità di custom object e custom field come parte della fondazione multi-tenant, configurabile, sicura e amministrabile."
+    },
+    "PLT-009": {
+      "classification": "implementation plumbing with no direct JTBD expected",
+      "reason": "“Ricerca, indicizzazione e viste” is a reusable Platform Foundation mechanism used to deliver other outcomes; a direct desired job is not expected unless a user-facing authoring or administration outcome is separately approved.",
+      "capabilityName": "Ricerca, indicizzazione e viste",
+      "capabilityDefinition": "Capacità di ricerca, indicizzazione e viste come parte della fondazione multi-tenant, configurabile, sicura e amministrabile."
+    },
+    "PLT-014": {
+      "classification": "overbuilt/roadmap debt",
+      "reason": "“Localizzazione, valuta e fuso orario” is declared in Platform Foundation but no desired job consumes it; retain it as explicit roadmap debt rather than inventing demand.",
+      "capabilityName": "Localizzazione, valuta e fuso orario",
+      "capabilityDefinition": "Capacità di localizzazione, valuta e fuso orario come parte della fondazione multi-tenant, configurabile, sicura e amministrabile."
+    },
+    "PLT-015": {
+      "classification": "overbuilt/roadmap debt",
+      "reason": "“Esperienza mobile e offline” is declared in Platform Foundation but no desired job consumes it; retain it as explicit roadmap debt rather than inventing demand.",
+      "capabilityName": "Esperienza mobile e offline",
+      "capabilityDefinition": "Capacità di esperienza mobile e offline come parte della fondazione multi-tenant, configurabile, sicura e amministrabile."
+    },
+    "SAL-023": {
+      "classification": "overbuilt/roadmap debt",
+      "reason": "“Mobile sales workspace” is declared in Sales CRM but no desired job consumes it; retain it as explicit roadmap debt rather than inventing demand.",
+      "capabilityName": "Mobile sales workspace",
+      "capabilityDefinition": "Capacità di mobile sales workspace come parte della processi commerciali dalla prospezione alla chiusura e all'handoff."
+    }
+  },
+  "governanceSecurityOrphans": [
+    "GOV-001",
+    "GOV-004",
+    "GOV-012",
+    "GOV-015",
+    "GOV-016"
+  ],
+  "previouslyEmptyPillars": {
+    "signature-order": {
+      "classification": "implementation plumbing with no direct JTBD expected",
+      "reason": "Signature/order is enabling execution plumbing in the current catalogue; no direct signer/order-administration outcome is approved."
+    },
+    "delivery": {
+      "classification": "missing desired job",
+      "reason": "No desired job currently owns planning and accepting delivery work; that missing user outcome remains for human review."
+    },
+    "work": {
+      "classification": "missing desired job",
+      "reason": "No desired job currently owns activities/tasks as a work-management outcome; do not infer one from the module roadmap."
+    },
+    "customer-data-operations": {
+      "classification": "missing desired job",
+      "reason": "The catalogue lacks an approved operator outcome for maintaining customer-data operations; roadmap assignment is not a substitute."
+    },
+    "interactions": {
+      "classification": "missing desired job",
+      "reason": "The catalogue lacks an approved outcome for recording/governing customer interactions as a distinct job."
+    },
+    "billing": {
+      "classification": "missing desired job",
+      "reason": "The catalogue lacks an approved billing-operator/customer outcome, and billing remains outside current implementation."
+    },
+    "design-to-crm": {
+      "classification": "taxonomy error",
+      "reason": "Design-to-CRM describes a construction surface rather than a settled desired-job pillar; taxonomy ownership needs human resolution."
+    }
+  }
+}

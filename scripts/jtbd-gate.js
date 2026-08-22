@@ -39,10 +39,10 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { createReadStream, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, normalize, resolve } from 'node:path';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -113,6 +113,7 @@ export const JTBD_GATE_PROBLEMS = Object.freeze([
   'JTBD_SPINE_EVIDENCE_ABSENT',
   'JTBD_FACT_UNKNOWN',
   'JTBD_ROADMAP_ORPHAN',
+  'JTBD_ROADMAP_OWNER_UNSUPPORTED',
   'JTBD_ROADMAP_RESOLUTION_UNKNOWN',
   'JTBD_CROSSWALK_ID_UNKNOWN',
   'JTBD_CROSSWALK_UNCITED',
@@ -145,12 +146,38 @@ const PATHS = Object.freeze({
   assessments: 'docs/jtbd/coverage/assessments.json',
   coverageOverlay: 'docs/jtbd/coverage/coverage.overlay.jsonl',
   roadmapOverlay: 'docs/jtbd/roadmap/roadmap.overlay.jsonl',
+  assignments: 'docs/jtbd/roadmap/assignments.jsonl',
+  overrideReviews: 'docs/jtbd/roadmap/override-reviews.json',
   classification: 'docs/jtbd/PUBLIC_PRIVATE.json',
   truth: 'docs/repository-truth.json',
   matrix: 'docs/benchmarks/CRM_JTBD_MATRIX.md',
 });
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+
+const TECHNICAL_OWNERSHIP_RATIONALES = Object.freeze({
+  architecture_boundary: 'Ownership follows the reviewed public architecture boundary.',
+  delivery_responsibility: 'Ownership follows the reviewed public delivery responsibility.',
+  orchestration_owner: 'Ownership follows the reviewed public orchestration responsibility.',
+  public_dependency: 'Ownership follows the reviewed public dependency boundary.',
+});
+const OVERRIDE_EVIDENCE_PREFIX = 'docs/jtbd/reviews/ownership/';
+
+const isReviewedTechnicalOverride = (assignment, rationale, reviewsById, evidenceKeys) => {
+  const review = reviewsById.get(assignment?.overrideReviewId);
+  const reviewedAt = typeof review?.reviewedAt === 'string' ? review.reviewedAt : '';
+  const timestamp = Date.parse(reviewedAt);
+  return review && typeof review === 'object' && !Array.isArray(review)
+    && review.jtbdId === assignment.jtbdId && review.pillar === assignment.pillar
+    && review.technicalRationale === rationale
+    && TECHNICAL_OWNERSHIP_RATIONALES[review.ownershipBasis] === rationale
+    && typeof review.reviewedBy === 'string' && review.reviewedBy.trim().length >= 3
+    && typeof review.evidencePath === 'string'
+    && normalize(review.evidencePath) === review.evidencePath
+    && review.evidencePath.startsWith(OVERRIDE_EVIDENCE_PREFIX) && review.evidencePath.endsWith('.md')
+    && evidenceKeys.has(`${review.reviewId}\0${review.evidencePath}`)
+    && Number.isFinite(timestamp) && new Date(timestamp).toISOString() === reviewedAt;
+};
 
 /**
  * Stream the catalogue, yielding only the four fields the overlays need.
@@ -216,12 +243,69 @@ const readJson = (rootDir, rel, problems) => {
  *
  * Pure over what it is handed, so a test can move one input and watch exactly one field move.
  */
-export function buildOverlays({ records, assessments, crosswalk, capabilityPillars, pillars }) {
+export function buildOverlays({ records, assessments, crosswalk, capabilityPillars, pillars, assignments = [], overrideReviews = { reviews: [] }, reviewEvidenceKeys = new Set() }) {
   const problems = [];
+  const registryKeys = overrideReviews && typeof overrideReviews === 'object' && !Array.isArray(overrideReviews)
+    ? Object.keys(overrideReviews)
+    : [];
+  const registryEnvelopeValid = registryKeys.length === 2
+    && registryKeys.includes('contract') && registryKeys.includes('reviews')
+    && overrideReviews.contract === 1 && Array.isArray(overrideReviews.reviews);
+  if (!registryEnvelopeValid) {
+    problems.push({
+      code: 'JTBD_PRIVATE_FIELD_PUBLISHED',
+      message: `${PATHS.overrideReviews}: expected the closed public envelope { contract: 1, reviews: [...] }`,
+    });
+  }
+  const reviewRows = registryEnvelopeValid ? overrideReviews.reviews : [];
   const byId = new Map(assessments.map((entry) => [entry.jtbdId, entry]));
+  const assignmentById = new Map(assignments.map((entry) => [entry.jtbdId, entry]));
   const precedence = pillars.precedence;
   const registry = pillars.pillars;
-
+  const reviewsById = new Map();
+  const allowedReviewFields = new Set([
+    'reviewId', 'jtbdId', 'pillar', 'ownershipBasis', 'technicalRationale',
+    'reviewedBy', 'reviewedAt', 'evidencePath',
+  ]);
+  for (const review of reviewRows) {
+    if (!review || typeof review !== 'object' || Array.isArray(review)) {
+      problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${PATHS.overrideReviews}: every review must be a plain object` });
+      continue;
+    }
+    const unknown = Object.keys(review).filter((field) => !allowedReviewFields.has(field));
+    const missing = [...allowedReviewFields].filter((field) => !Object.prototype.hasOwnProperty.call(review, field));
+    if (unknown.length || missing.length) {
+      problems.push({
+        code: 'JTBD_PRIVATE_FIELD_PUBLISHED',
+        message: `${review.reviewId ?? 'override review'}: public ownership review schema differs (unknown: ${unknown.join(', ') || 'none'}; missing: ${missing.join(', ') || 'none'})`,
+      });
+    }
+    const reviewedAt = typeof review.reviewedAt === 'string' ? review.reviewedAt : '';
+    const reviewedTimestamp = Date.parse(reviewedAt);
+    const validEntry = typeof review.reviewId === 'string' && /^JTBD-OWNER-OVERRIDE-[A-Z0-9-]+$/.test(review.reviewId)
+      && records.some((record) => record.id === review.jtbdId)
+      && Boolean(registry[review.pillar])
+      && TECHNICAL_OWNERSHIP_RATIONALES[review.ownershipBasis] === review.technicalRationale
+      && typeof review.reviewedBy === 'string' && review.reviewedBy.trim().length >= 3
+      && Number.isFinite(reviewedTimestamp) && new Date(reviewedTimestamp).toISOString() === reviewedAt
+      && typeof review.evidencePath === 'string'
+      && normalize(review.evidencePath) === review.evidencePath
+      && review.evidencePath.startsWith(OVERRIDE_EVIDENCE_PREFIX) && review.evidencePath.endsWith('.md')
+      && reviewEvidenceKeys.has(`${review.reviewId}\0${review.evidencePath}`);
+    if (!validEntry) {
+      problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${review.reviewId ?? 'override review'}: invalid or unevidenced public ownership review` });
+    }
+    const references = assignments.filter((assignment) => assignment.overrideReviewId === review.reviewId);
+    if (references.length !== 1 || references[0]?.jtbdId !== review.jtbdId
+      || references[0]?.pillar !== review.pillar
+      || references[0]?.overrideRationale !== review.technicalRationale) {
+      problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${review.reviewId ?? 'override review'}: review must be referenced by exactly its matching assignment` });
+    }
+    if (reviewsById.has(review.reviewId)) {
+      problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${review.reviewId}: duplicate ownership review id` });
+    }
+    reviewsById.set(review.reviewId, review);
+  }
   // Which crosswalk rows name each canonical job, so ownership follows the crosswalk and
   // never the coverage overlay. A milestone is a plan; a status is a claim; they are
   // deliberately read from different places.
@@ -297,16 +381,62 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
     else if (!milestone) ownerStatus = 'unassigned';
     else ownerStatus = withMilestone.some((row) => row.matrixStatus !== 'not supported') ? 'in progress' : 'planned';
 
+    const explicit = assignmentById.get(record.id);
+    const explicitPillar = explicit ? registry[explicit.pillar] : null;
+    const overrideRationale = typeof explicit?.overrideRationale === 'string'
+      ? explicit.overrideRationale.trim()
+      : '';
+    const reviewedOverride = explicit
+      ? isReviewedTechnicalOverride(explicit, overrideRationale, reviewsById, reviewEvidenceKeys)
+      : false;
+    const candidateOwner = explicit ? candidatePillars.includes(explicit.pillar) : true;
+    const settled = ['implemented', 'in progress', 'planned'].includes(explicit?.disposition);
+    if (explicit?.overrideReviewId && candidateOwner) {
+      problems.push({
+        code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
+        message: `${record.id}: a candidate owner must not carry a non-candidate ownership override review`,
+      });
+    }
+    if (explicit && overrideRationale && !reviewedOverride) {
+      problems.push({
+        code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
+        message: `${record.id}: overrideRationale is not bound to a registered technical ownership basis and existing public review evidence`,
+      });
+    }
+    if (explicit && !candidateOwner && !reviewedOverride && settled) {
+      problems.push({
+        code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
+        message: `${record.id}: pillar "${explicit.pillar}" is outside the capability-derived candidate set `
+          + `[${candidatePillars.join(', ')}] and cannot be ${explicit.disposition} without a meaningful technical rationale and structured public review evidence; defer it for human ownership review`,
+      });
+    }
+    if (explicit && !candidateOwner && !reviewedOverride && explicit.disposition === 'deferred'
+      && !/\b(owner|ownership|candidate pillar)\b/i.test(String(explicit.deferredReason ?? ''))) {
+      problems.push({
+        code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
+        message: `${record.id}: unsupported pillar "${explicit.pillar}" is deferred, but deferredReason does not make the ownership ambiguity explicit`,
+      });
+    }
     roadmap.push({
       jtbdId: record.id,
-      ownershipResolution: resolution,
-      pillar: entry ? winner : null,
-      package: entry ? entry.package : null,
-      edition: entry ? entry.edition : null,
-      roadmapTrack: entry ? entry.roadmapTrack : null,
-      milestone,
-      dependencies: entry ? entry.dependencies : [],
-      ownerStatus,
+      ownershipResolution: explicit
+        ? (explicit.edition === 'private-managed-cloud' ? 'private_managed_cloud' : 'public_oss_pillar')
+        : resolution,
+      pillar: explicit?.pillar ?? (entry ? winner : null),
+      // An explicit assignment owns the complete pillar projection. In particular, `null`
+      // is a meaningful package value for framework pillars; it must not fall through to
+      // the capability-inferred pillar's package.
+      package: explicit ? explicitPillar?.package ?? null : (entry ? entry.package : null),
+      edition: explicit?.edition ?? (entry ? entry.edition : null),
+      roadmapTrack: explicit?.roadmapTrack ?? (entry ? entry.roadmapTrack : null),
+      milestone: explicit?.milestoneOrEpic ?? milestone,
+      roadmapSlice: explicit?.roadmapSlice ?? null,
+      dependencies: explicit?.dependencies ?? (entry ? entry.dependencies : []),
+      ownerStatus: explicit?.disposition ?? ownerStatus,
+      deferredReason: explicit?.deferredReason ?? null,
+      publicLimitation: explicit?.publicLimitation ?? null,
+      ...(reviewedOverride ? { overrideRationale } : {}),
+      ...(reviewedOverride ? { overrideReviewId: explicit.overrideReviewId } : {}),
       candidatePillars,
       unownedCoreCapabilities: unowned,
       coreCapabilities: record.core.length,
@@ -326,6 +456,18 @@ const readOverlay = (rootDir, rel, problems) => {
   }
   return readFileSync(file, 'utf8');
 };
+
+const readJsonl = (rootDir, rel, problems) => {
+  const text = readOverlay(rootDir, rel, problems);
+  if (text === null) return [];
+  try { return text.split('\n').filter(Boolean).map((line) => JSON.parse(line)); }
+  catch (error) {
+    problems.push({ code: 'JTBD_INPUT_UNAVAILABLE', message: `${rel} is not readable JSONL: ${error.message}` });
+    return [];
+  }
+};
+
+
 
 /**
  * Every check, over an already-loaded world.
@@ -460,6 +602,53 @@ export function checkWorld(world) {
   }
 
   // ── 3. ownership resolves, exactly once, and nothing is orphaned ──────────
+  const assignmentIds = new Set();
+  for (const assignment of world.assignments ?? []) {
+    if (assignmentIds.has(assignment.jtbdId) || !catalogIds.has(assignment.jtbdId)) {
+      problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: duplicate or unknown roadmap assignment` });
+    }
+    assignmentIds.add(assignment.jtbdId);
+    const registeredPillar = world.pillars?.pillars?.[assignment.pillar];
+    if (!registeredPillar) {
+      problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: assignment names unknown pillar "${assignment.pillar}"` });
+    } else {
+      if (assignment.edition !== registeredPillar.edition) {
+        problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: assignment edition "${assignment.edition}" disagrees with pillar "${assignment.pillar}" (${registeredPillar.edition})` });
+      }
+      if (assignment.roadmapTrack !== registeredPillar.roadmapTrack) {
+        problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: assignment roadmapTrack disagrees with pillar "${assignment.pillar}"` });
+      }
+    }
+    const required = ['disposition', 'pillar', 'edition', 'roadmapTrack', 'milestoneOrEpic', 'dependencies'];
+    for (const field of required) if (assignment[field] === undefined || assignment[field] === null || assignment[field] === '') {
+      problems.push({ code: 'JTBD_ROADMAP_ORPHAN', message: `${assignment.jtbdId}: assignment lacks ${field}` });
+    }
+    if (!Array.isArray(assignment.dependencies)) {
+      problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: dependencies must be an array of registered pillar ids` });
+    } else {
+      const seenDependencies = new Set();
+      for (const dependency of assignment.dependencies) {
+        if (typeof dependency !== 'string' || !world.pillars?.pillars?.[dependency]) {
+          problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: dependency "${dependency}" is not a registered pillar id` });
+        } else if (seenDependencies.has(dependency)) {
+          problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: dependency "${dependency}" is duplicated` });
+        }
+        seenDependencies.add(dependency);
+      }
+    }
+    if (['deferred', 'out of scope'].includes(assignment.disposition) && !assignment.deferredReason) {
+      problems.push({ code: 'JTBD_ROADMAP_ORPHAN', message: `${assignment.jtbdId}: ${assignment.disposition} requires a reason` });
+    }
+    for (const privateField of [...PRIVATE_CATALOG_FIELDS, 'priority', 'businessValue', 'competitiveRationale', 'commercialSequence']) {
+      if (Object.prototype.hasOwnProperty.call(assignment, privateField)) {
+        problems.push({ code: 'JTBD_PRIVATE_FIELD_PUBLISHED', message: `${assignment.jtbdId}: public roadmap assignment carries ${privateField}` });
+      }
+    }
+  }
+  for (const id of catalogIds) if (!assignmentIds.has(id)) {
+    problems.push({ code: 'JTBD_ROADMAP_ORPHAN', message: `${id}: no explicit roadmap disposition` });
+  }
+
   const coverageById = new Map(built.coverage.map((row) => [row.jtbdId, row]));
   let unassigned = 0;
   for (const row of built.roadmap) {
@@ -576,6 +765,21 @@ export async function loadWorld(rootDir = ROOT) {
   const pillars = readJson(rootDir, PATHS.pillars, problems);
   const truth = readJson(rootDir, PATHS.truth, problems);
   const classification = readJson(rootDir, PATHS.classification, problems);
+  const assignments = readJsonl(rootDir, PATHS.assignments, problems);
+  const overrideReviews = readJson(rootDir, PATHS.overrideReviews, problems) ?? { reviews: [] };
+  const reviewRows = Array.isArray(overrideReviews.reviews) ? overrideReviews.reviews : [];
+  const evidenceRoot = realpathSync(resolve(rootDir, OVERRIDE_EVIDENCE_PREFIX));
+  const reviewEvidenceKeys = new Set(reviewRows
+    .filter((review) => typeof review.evidencePath === 'string'
+      && typeof review.reviewId === 'string'
+      && normalize(review.evidencePath) === review.evidencePath
+      && review.evidencePath.startsWith(OVERRIDE_EVIDENCE_PREFIX) && review.evidencePath.endsWith('.md')
+      && resolve(rootDir, review.evidencePath).startsWith(`${evidenceRoot}/`)
+      && existsSync(resolve(rootDir, review.evidencePath))
+      && realpathSync(resolve(rootDir, review.evidencePath)).startsWith(`${evidenceRoot}/`)
+      && readFileSync(resolve(rootDir, review.evidencePath), 'utf8').split(/\r?\n/)
+        .includes(`<!-- jtbd-owner-review: ${review.reviewId} -->`))
+    .map((review) => `${review.reviewId}\0${review.evidencePath}`));
   const assessments = assessmentsDoc?.assessments ?? [];
   const digests = new Map();
   for (const entry of assessments) {
@@ -594,6 +798,9 @@ export async function loadWorld(rootDir = ROOT) {
     pillars: pillars ?? { precedence: [], pillars: {} },
     truth,
     classification,
+    assignments,
+    overrideReviews,
+    reviewEvidenceKeys,
     matrixText: existsSync(join(rootDir, PATHS.matrix)) ? readFileSync(join(rootDir, PATHS.matrix), 'utf8') : '',
     coverageText: readOverlay(rootDir, PATHS.coverageOverlay, problems),
     roadmapText: readOverlay(rootDir, PATHS.roadmapOverlay, problems),
