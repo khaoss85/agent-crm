@@ -263,6 +263,15 @@ test('override reviews bind evidence per id and reject fields outside the public
     reviewEvidenceKeys: new Set([`${review.reviewId}\0${review.evidencePath}`]),
   }).problems;
   assert.ok(codes(unused).has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
+  const unconsumedAssignments = assignments.map((row) => row.jtbdId === review.jtbdId
+    ? { ...row, overrideRationale: undefined }
+    : row);
+  const unconsumed = checkWorld({
+    ...world, assignments: unconsumedAssignments,
+    overrideReviews: { contract: 1, reviews: [review] },
+    reviewEvidenceKeys: new Set([`${review.reviewId}\0${review.evidencePath}`]),
+  }).problems;
+  assert.ok(codes(unconsumed).has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
 });
 
 test('semantic ownership overrides cannot publish commercial rationale', () => {

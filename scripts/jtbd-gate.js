@@ -39,7 +39,7 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { createReadStream, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, normalize, resolve } from 'node:path';
@@ -296,7 +296,9 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
       problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${review.reviewId ?? 'override review'}: invalid or unevidenced public ownership review` });
     }
     const references = assignments.filter((assignment) => assignment.overrideReviewId === review.reviewId);
-    if (references.length !== 1 || references[0]?.jtbdId !== review.jtbdId || references[0]?.pillar !== review.pillar) {
+    if (references.length !== 1 || references[0]?.jtbdId !== review.jtbdId
+      || references[0]?.pillar !== review.pillar
+      || references[0]?.overrideRationale !== review.technicalRationale) {
       problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${review.reviewId ?? 'override review'}: review must be referenced by exactly its matching assignment` });
     }
     if (reviewsById.has(review.reviewId)) {
@@ -389,6 +391,12 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
       : false;
     const candidateOwner = explicit ? candidatePillars.includes(explicit.pillar) : true;
     const settled = ['implemented', 'in progress', 'planned'].includes(explicit?.disposition);
+    if (explicit?.overrideReviewId && candidateOwner) {
+      problems.push({
+        code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
+        message: `${record.id}: a candidate owner must not carry a non-candidate ownership override review`,
+      });
+    }
     if (explicit && overrideRationale && !reviewedOverride) {
       problems.push({
         code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
@@ -760,7 +768,7 @@ export async function loadWorld(rootDir = ROOT) {
   const assignments = readJsonl(rootDir, PATHS.assignments, problems);
   const overrideReviews = readJson(rootDir, PATHS.overrideReviews, problems) ?? { reviews: [] };
   const reviewRows = Array.isArray(overrideReviews.reviews) ? overrideReviews.reviews : [];
-  const evidenceRoot = resolve(rootDir, OVERRIDE_EVIDENCE_PREFIX);
+  const evidenceRoot = realpathSync(resolve(rootDir, OVERRIDE_EVIDENCE_PREFIX));
   const reviewEvidenceKeys = new Set(reviewRows
     .filter((review) => typeof review.evidencePath === 'string'
       && typeof review.reviewId === 'string'
@@ -768,6 +776,7 @@ export async function loadWorld(rootDir = ROOT) {
       && review.evidencePath.startsWith(OVERRIDE_EVIDENCE_PREFIX) && review.evidencePath.endsWith('.md')
       && resolve(rootDir, review.evidencePath).startsWith(`${evidenceRoot}/`)
       && existsSync(resolve(rootDir, review.evidencePath))
+      && realpathSync(resolve(rootDir, review.evidencePath)).startsWith(`${evidenceRoot}/`)
       && readFileSync(resolve(rootDir, review.evidencePath), 'utf8').split(/\r?\n/)
         .includes(`<!-- jtbd-owner-review: ${review.reviewId} -->`))
     .map((review) => `${review.reviewId}\0${review.evidencePath}`));
