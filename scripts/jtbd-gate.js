@@ -42,7 +42,7 @@ import { execFileSync } from 'node:child_process';
 import { createReadStream, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, normalize, resolve } from 'node:path';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -173,6 +173,7 @@ const isReviewedTechnicalOverride = (assignment, rationale, reviewsById, evidenc
     && TECHNICAL_OWNERSHIP_RATIONALES[review.ownershipBasis] === rationale
     && typeof review.reviewedBy === 'string' && review.reviewedBy.trim().length >= 3
     && typeof review.evidencePath === 'string'
+    && normalize(review.evidencePath) === review.evidencePath
     && review.evidencePath.startsWith(OVERRIDE_EVIDENCE_PREFIX) && review.evidencePath.endsWith('.md')
     && evidenceKeys.has(`${review.reviewId}\0${review.evidencePath}`)
     && Number.isFinite(timestamp) && new Date(timestamp).toISOString() === reviewedAt;
@@ -288,10 +289,15 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
       && typeof review.reviewedBy === 'string' && review.reviewedBy.trim().length >= 3
       && Number.isFinite(reviewedTimestamp) && new Date(reviewedTimestamp).toISOString() === reviewedAt
       && typeof review.evidencePath === 'string'
+      && normalize(review.evidencePath) === review.evidencePath
       && review.evidencePath.startsWith(OVERRIDE_EVIDENCE_PREFIX) && review.evidencePath.endsWith('.md')
       && reviewEvidenceKeys.has(`${review.reviewId}\0${review.evidencePath}`);
     if (!validEntry) {
       problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${review.reviewId ?? 'override review'}: invalid or unevidenced public ownership review` });
+    }
+    const references = assignments.filter((assignment) => assignment.overrideReviewId === review.reviewId);
+    if (references.length !== 1 || references[0]?.jtbdId !== review.jtbdId || references[0]?.pillar !== review.pillar) {
+      problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${review.reviewId ?? 'override review'}: review must be referenced by exactly its matching assignment` });
     }
     if (reviewsById.has(review.reviewId)) {
       problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${review.reviewId}: duplicate ownership review id` });
@@ -754,11 +760,13 @@ export async function loadWorld(rootDir = ROOT) {
   const assignments = readJsonl(rootDir, PATHS.assignments, problems);
   const overrideReviews = readJson(rootDir, PATHS.overrideReviews, problems) ?? { reviews: [] };
   const reviewRows = Array.isArray(overrideReviews.reviews) ? overrideReviews.reviews : [];
+  const evidenceRoot = resolve(rootDir, OVERRIDE_EVIDENCE_PREFIX);
   const reviewEvidenceKeys = new Set(reviewRows
     .filter((review) => typeof review.evidencePath === 'string'
       && typeof review.reviewId === 'string'
+      && normalize(review.evidencePath) === review.evidencePath
       && review.evidencePath.startsWith(OVERRIDE_EVIDENCE_PREFIX) && review.evidencePath.endsWith('.md')
-      && resolve(rootDir, review.evidencePath).startsWith(`${resolve(rootDir)}/`)
+      && resolve(rootDir, review.evidencePath).startsWith(`${evidenceRoot}/`)
       && existsSync(resolve(rootDir, review.evidencePath))
       && readFileSync(resolve(rootDir, review.evidencePath), 'utf8').split(/\r?\n/)
         .includes(`<!-- jtbd-owner-review: ${review.reviewId} -->`))

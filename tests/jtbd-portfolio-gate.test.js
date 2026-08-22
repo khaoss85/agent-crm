@@ -249,6 +249,20 @@ test('override reviews bind evidence per id and reject fields outside the public
     reviewEvidenceKeys: new Set(['JTBD-OWNER-OVERRIDE-ONE\0docs/jtbd/roadmap/assignments.jsonl']),
   }).problems;
   assert.ok(codes(selfEvidence).has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
+  const escapingReview = {
+    ...review,
+    evidencePath: 'docs/jtbd/reviews/ownership/../../../plans/jtbd-catalogue-v1-1-normalization.md',
+  };
+  const escaping = checkWorld({
+    ...world, assignments, overrideReviews: { contract: 1, reviews: [escapingReview] },
+    reviewEvidenceKeys: new Set([`${review.reviewId}\0${escapingReview.evidencePath}`]),
+  }).problems;
+  assert.ok(codes(escaping).has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
+  const unused = checkWorld({
+    ...world, overrideReviews: { contract: 1, reviews: [review] },
+    reviewEvidenceKeys: new Set([`${review.reviewId}\0${review.evidencePath}`]),
+  }).problems;
+  assert.ok(codes(unused).has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
 });
 
 test('semantic ownership overrides cannot publish commercial rationale', () => {
