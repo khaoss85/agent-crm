@@ -5,8 +5,9 @@
     "assignments": 600,
     "unassigned": 0,
     "dispositions": {
+      "deferred": 357,
       "in progress": 49,
-      "planned": 551
+      "planned": 194
     },
     "failedChecks": 0,
     "structurallyValid": 600,
@@ -169,7 +170,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -319,7 +320,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -357,7 +358,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -395,7 +396,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -432,7 +433,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -469,7 +470,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-013",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -507,7 +508,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -544,7 +545,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -581,7 +582,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -618,7 +619,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -656,7 +657,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -694,7 +695,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -770,7 +771,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -809,7 +810,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -848,7 +849,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -887,7 +888,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -926,7 +927,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -965,7 +966,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1163,7 +1164,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1240,7 +1241,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-013",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1318,7 +1319,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1356,7 +1357,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1394,7 +1395,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1433,7 +1434,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1472,7 +1473,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1626,7 +1627,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1740,7 +1741,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1778,7 +1779,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1816,7 +1817,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1930,7 +1931,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -1968,7 +1969,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2006,7 +2007,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-013",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2044,7 +2045,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2082,7 +2083,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2120,7 +2121,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2158,7 +2159,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2197,7 +2198,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2235,7 +2236,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2274,7 +2275,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2313,7 +2314,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2352,7 +2353,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2430,7 +2431,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2469,7 +2470,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2507,7 +2508,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2585,7 +2586,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2624,7 +2625,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2662,7 +2663,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2701,7 +2702,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2739,7 +2740,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2854,7 +2855,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2892,7 +2893,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2930,7 +2931,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -2969,7 +2970,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3008,7 +3009,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3047,7 +3048,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CUST-OPS-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3086,7 +3087,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3168,7 +3169,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3209,7 +3210,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3328,7 +3329,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3368,7 +3369,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3528,7 +3529,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3609,7 +3610,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3689,7 +3690,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3730,7 +3731,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3771,7 +3772,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3812,7 +3813,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3894,7 +3895,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3932,7 +3933,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -3970,7 +3971,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4008,7 +4009,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4084,7 +4085,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4160,7 +4161,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4198,7 +4199,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4236,7 +4237,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4274,7 +4275,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4312,7 +4313,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4350,7 +4351,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-013",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4388,7 +4389,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4426,7 +4427,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4464,7 +4465,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4502,7 +4503,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4540,7 +4541,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4578,7 +4579,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4616,7 +4617,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4654,7 +4655,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4693,7 +4694,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4804,7 +4805,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4918,7 +4919,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -4957,7 +4958,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5031,7 +5032,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5069,7 +5070,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5146,7 +5147,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5184,7 +5185,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5224,7 +5225,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5262,7 +5263,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5301,7 +5302,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5338,7 +5339,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5416,7 +5417,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5455,7 +5456,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5535,7 +5536,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5615,7 +5616,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5654,7 +5655,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5693,7 +5694,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5855,7 +5856,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5894,7 +5895,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-013",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -5933,7 +5934,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6011,7 +6012,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6050,7 +6051,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6089,7 +6090,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6128,7 +6129,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6167,7 +6168,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-OPS-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6206,7 +6207,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6245,7 +6246,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6284,7 +6285,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6323,7 +6324,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6362,7 +6363,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6401,7 +6402,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6479,7 +6480,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6518,7 +6519,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6748,7 +6749,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6787,7 +6788,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6826,7 +6827,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6866,7 +6867,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6905,7 +6906,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -6945,7 +6946,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -7025,7 +7026,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AE-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -7065,7 +7066,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AE-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -7145,7 +7146,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AE-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -7185,7 +7186,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AE-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -7303,7 +7304,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AE-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -7543,7 +7544,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AE-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -7623,7 +7624,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AE-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -7786,7 +7787,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -7826,7 +7827,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -7866,7 +7867,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -7906,7 +7907,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8026,7 +8027,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8066,7 +8067,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8106,7 +8107,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8146,7 +8147,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8186,7 +8187,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8266,7 +8267,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-013",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8306,7 +8307,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8346,7 +8347,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8426,7 +8427,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8466,7 +8467,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8506,7 +8507,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8546,7 +8547,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8586,7 +8587,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8699,7 +8700,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8738,7 +8739,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8777,7 +8778,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8855,7 +8856,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8894,7 +8895,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -8933,7 +8934,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9126,7 +9127,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9165,7 +9166,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9204,7 +9205,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9243,7 +9244,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9282,7 +9283,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9321,7 +9322,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9360,7 +9361,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9397,7 +9398,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9434,7 +9435,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9471,7 +9472,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9508,7 +9509,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9545,7 +9546,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9582,7 +9583,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9619,7 +9620,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9656,7 +9657,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9693,7 +9694,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9730,7 +9731,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9767,7 +9768,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9804,7 +9805,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-013",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9915,7 +9916,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9952,7 +9953,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -9989,7 +9990,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10026,7 +10027,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10063,7 +10064,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ENABLE-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10100,7 +10101,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10140,7 +10141,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10180,7 +10181,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10220,7 +10221,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10260,7 +10261,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10340,7 +10341,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10380,7 +10381,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10419,7 +10420,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10499,7 +10500,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10539,7 +10540,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10659,7 +10660,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10739,7 +10740,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10779,7 +10780,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10819,7 +10820,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10859,7 +10860,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-SERVICE-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10899,7 +10900,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10938,7 +10939,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -10977,7 +10978,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11014,7 +11015,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11053,7 +11054,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11092,7 +11093,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11129,7 +11130,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11168,7 +11169,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11205,7 +11206,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11242,7 +11243,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11281,7 +11282,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11355,7 +11356,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-013",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11394,7 +11395,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11433,7 +11434,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11472,7 +11473,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11511,7 +11512,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11550,7 +11551,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11589,7 +11590,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -11628,7 +11629,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PARTNER-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -12032,7 +12033,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PERF-MKT-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -12190,7 +12191,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PERF-MKT-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -12306,7 +12307,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PERF-MKT-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -12425,7 +12426,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PERF-MKT-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -12504,7 +12505,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CONTENT-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -12662,7 +12663,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CONTENT-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -12898,7 +12899,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CONTENT-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -13172,7 +13173,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CONTENT-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -13210,7 +13211,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CONTENT-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -13568,7 +13569,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CAMPAIGN-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -13646,7 +13647,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CAMPAIGN-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -13684,7 +13685,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CAMPAIGN-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -13842,7 +13843,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CAMPAIGN-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -13880,7 +13881,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CAMPAIGN-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -13998,7 +13999,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CAMPAIGN-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -14118,7 +14119,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-SPEC-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -14522,7 +14523,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-SPEC-013",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -14602,7 +14603,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-SPEC-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -14684,7 +14685,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-SPEC-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -14764,7 +14765,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-SPEC-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -14888,7 +14889,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ABM-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -14970,7 +14971,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ABM-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -15052,7 +15053,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ABM-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -15092,7 +15093,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ABM-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -15131,7 +15132,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ABM-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -15213,7 +15214,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ABM-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -15545,7 +15546,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ABM-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -15709,7 +15710,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PMM-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -15747,7 +15748,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PMM-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -15904,7 +15905,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PMM-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -15941,7 +15942,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PMM-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16019,7 +16020,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PMM-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16057,7 +16058,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PMM-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16095,7 +16096,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PMM-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16211,7 +16212,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PMM-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16289,7 +16290,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PMM-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16327,7 +16328,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PMM-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16405,7 +16406,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-PMM-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16443,7 +16444,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16484,7 +16485,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16525,7 +16526,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16566,7 +16567,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16607,7 +16608,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16648,7 +16649,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16689,7 +16690,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16730,7 +16731,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16771,7 +16772,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16812,7 +16813,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16853,7 +16854,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16894,7 +16895,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -16935,7 +16936,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-013",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17017,7 +17018,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17058,7 +17059,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17099,7 +17100,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17139,7 +17140,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17180,7 +17181,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17220,7 +17221,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-ENG-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17299,7 +17300,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17493,7 +17494,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17532,7 +17533,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17571,7 +17572,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17609,7 +17610,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17724,7 +17725,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-013",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17762,7 +17763,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17800,7 +17801,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17839,7 +17840,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17877,7 +17878,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17955,7 +17956,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -17994,7 +17995,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -18033,7 +18034,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -18111,7 +18112,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -18150,7 +18151,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -18267,7 +18268,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -18345,7 +18346,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -18423,7 +18424,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -18501,7 +18502,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-013",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -18540,7 +18541,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -18579,7 +18580,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -18697,7 +18698,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -18736,7 +18737,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -18814,7 +18815,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-ADMIN-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19079,7 +19080,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-ADMIN-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19118,7 +19119,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-ADMIN-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19307,7 +19308,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-ADMIN-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19461,7 +19462,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-ADMIN-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19576,7 +19577,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19616,7 +19617,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19656,7 +19657,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19772,7 +19773,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19812,7 +19813,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19852,7 +19853,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19892,7 +19893,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19932,7 +19933,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -19972,7 +19973,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20012,7 +20013,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20093,7 +20094,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20134,7 +20135,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20175,7 +20176,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-016",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20215,7 +20216,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20331,7 +20332,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-INTEGRATION-DEV-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20449,7 +20450,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20488,7 +20489,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20527,7 +20528,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20566,7 +20567,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20605,7 +20606,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20644,7 +20645,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20683,7 +20684,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20722,7 +20723,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20761,7 +20762,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -20801,7 +20802,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-012",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21000,7 +21001,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21079,7 +21080,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21118,7 +21119,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-AGENT-ENG-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21157,7 +21158,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-GOVERNANCE-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21196,7 +21197,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-GOVERNANCE-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21313,7 +21314,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-GOVERNANCE-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21352,7 +21353,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-GOVERNANCE-006",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21391,7 +21392,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-GOVERNANCE-007",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21509,7 +21510,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-GOVERNANCE-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21549,7 +21550,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-GOVERNANCE-011",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21667,7 +21668,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-GOVERNANCE-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21866,7 +21867,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-GOVERNANCE-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21906,7 +21907,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-GOVERNANCE-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -21946,7 +21947,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REV-FIN-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22022,7 +22023,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REV-FIN-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22098,7 +22099,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REV-FIN-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22209,7 +22210,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REV-FIN-008",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22246,7 +22247,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REV-FIN-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22432,7 +22433,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REV-FIN-014",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22469,7 +22470,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REV-FIN-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22543,7 +22544,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REV-FIN-017",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22581,7 +22582,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REV-FIN-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22657,7 +22658,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-REV-FIN-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22695,7 +22696,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DEAL-DESK-001",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22735,7 +22736,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DEAL-DESK-002",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22775,7 +22776,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DEAL-DESK-003",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22815,7 +22816,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DEAL-DESK-004",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -22855,7 +22856,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DEAL-DESK-005",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -23015,7 +23016,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DEAL-DESK-009",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -23054,7 +23055,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DEAL-DESK-010",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -23254,7 +23255,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DEAL-DESK-015",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -23374,7 +23375,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DEAL-DESK-018",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -23414,7 +23415,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DEAL-DESK-019",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {
@@ -23454,7 +23455,7 @@
     },
     {
       "jtbdId": "ACC-JTBD-DEAL-DESK-020",
-      "disposition": "planned",
+      "disposition": "deferred",
       "structuralStatus": "structurally_valid",
       "semanticStatus": "needs_human_review",
       "semanticEvidence": {

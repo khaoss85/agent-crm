@@ -75,6 +75,11 @@ test('approval ambiguity remains explicit and every contradiction stays reviewed
       assert.deepEqual(row.proposed, { targetAutonomy: 'L3', humanApprovalRequired: true });
     }
   }
+  const records = readFileSync(join(ROOT, 'docs/jtbd/catalog/jtbd.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  for (const row of review.reviews) {
+    const record = records.find((item) => item.jtbd_id === row.jtbdId);
+    assert.ok(record.use_case.summary.includes(`limite ${row.proposed.targetAutonomy}`), row.jtbdId);
+  }
 });
 
 test('roadmap audit separates structure, semantic support, overrides, and human review', () => {
@@ -91,6 +96,11 @@ test('roadmap audit separates structure, semantic support, overrides, and human 
     ? 'semantically_supported'
     : unrelated.semanticEvidence.overrideRationale ? 'explicit_override_with_rationale' : 'needs_human_review';
   assert.equal(status, 'needs_human_review');
+  for (const row of audit.audits.filter((item) => item.semanticStatus === 'needs_human_review')) {
+    const assignment = world.assignments.find((item) => item.jtbdId === row.jtbdId);
+    assert.equal(assignment.disposition, 'deferred', row.jtbdId);
+    assert.ok(assignment.deferredReason, row.jtbdId);
+  }
 });
 
 test('taxonomy errors name concrete competing evidence and a human action', () => {

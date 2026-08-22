@@ -3,7 +3,7 @@
   "catalogueFrom": "2026-08-20.1",
   "catalogueTo": "2026-08-21.1",
   "oldChecksum": "c771e3c6b113903d5dc6e35dad6e793e345106e256aea586fedd062b3a611c28",
-  "newChecksum": "380d1d83551d7e99fa5862d5c8a15748f9c555d017d7ea9b7ef31d87cad05867",
+  "newChecksum": "f841593ef385141ad1b8eab645b0266c46af08c80eab64aa17767350c86ea05e",
   "rule": "L3 means acts after approval; classification is established by the semantic review artifact.",
   "summary": {
     "A_KEEP_L3_REQUIRE_APPROVAL": 264,

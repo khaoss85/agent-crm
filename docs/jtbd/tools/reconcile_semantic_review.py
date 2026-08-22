@@ -4,6 +4,7 @@
 import collections
 import hashlib
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,6 +74,9 @@ for jtbd_id in sorted(affected):
     old = affected[jtbd_id]["old"]
     design["target_autonomy"] = proposed["targetAutonomy"]
     design["human_approval_required"] = proposed["humanApprovalRequired"]
+    record["use_case"]["summary"] = re.sub(
+        r"limite L[0-5]", f"limite {proposed['targetAutonomy']}", record["use_case"]["summary"]
+    )
     for index, criterion in enumerate(record["acceptance_criteria"]):
         if criterion.startswith("Nessuna azione supera il livello L"):
             record["acceptance_criteria"][index] = criterion.replace(
@@ -253,6 +257,11 @@ for assignment in assignments:
         semantic_status = "explicit_override_with_rationale"
     else:
         semantic_status = "needs_human_review"
+        assignment["disposition"] = "deferred"
+        assignment["deferredReason"] = (
+            "Assigned pillar is outside the capability-derived candidate set and has no reviewed "
+            "override rationale; product ownership confirmation is required."
+        )
     checks = {
         "pillarRegistered": pillar is not None,
         "editionRegisteredForPillar": pillar is not None and assignment["edition"] == pillar["edition"],
@@ -293,6 +302,10 @@ write_json("roadmap/assignment-audit-v1.1.json", {
     "coverageEffect": "NONE",
     "audits": audits,
 })
+(ROOT / "roadmap/assignments.jsonl").write_text("".join(
+    json.dumps(assignment, ensure_ascii=False, separators=(",", ":")) + "\n"
+    for assignment in assignments
+))
 
 # Ground every reverse-audit conclusion in the named capability rather than a shared template.
 reverse = read_json("quality/REVERSE_CAPABILITY_AUDIT.json")

@@ -29,8 +29,10 @@ owner-selection rule after v1.1. The explicit assignment is authoritative.
 
 ## Current generated disposition
 
-All 600 desired jobs have an explicit roadmap disposition: 49 are `in progress` and 551 are
-`planned`; none is left `unassigned`. This is portfolio planning, not an implementation score.
+All 600 desired jobs have an explicit roadmap disposition: semantically supported assignments
+remain `in progress` or `planned`; assignments outside the candidate-owner set without a reviewed
+override are explicitly `deferred` for human ownership review, never presented as settled. None is
+left `unassigned`. This is portfolio planning, not an implementation score.
 Coverage remains five evidence-backed `partially supported` rows and 595 default `not
 supported` rows.
 
@@ -41,7 +43,7 @@ supported` rows.
 | Customer Data Operations v2 | 80 |
 | Interactions | 70 |
 | Data Governance | 69 |
-| Billing | 37 |
+| Billing | 36 |
 | Marketing | 37 |
 | Design-to-CRM | 30 |
 | Agent Experience/DX | 21 |
@@ -50,6 +52,7 @@ supported` rows.
 | Spine v2 PostgreSQL | 5 |
 | Spine v4 secrets/backups/observability | 5 |
 | Managed Cloud C0-C6 | 2 |
+| Core CRM / Revenue | 1 |
 
 `Historical roadmap claim` preserves the existing crosswalk's named ownership without
 pretending that a new product decision was made. It is not a generic future bucket: every row
