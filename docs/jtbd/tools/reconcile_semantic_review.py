@@ -111,7 +111,8 @@ write_json("quality/approval-boundary-review-v1.1.json", {
     "priorProposalProvenance": (
         "No 264/16 artifact or needs_human_confirmation field was found in reachable Git history "
         "or PR #108/#109 discussion. The 264/16 split survives only in the PR #111 integrator "
-        "handover; the catalogue's 16 DECIDE contradictions independently reproduce its L2 count."
+        "handover; the catalogue's 16 DECIDE contradictions independently reproduce a 16-row "
+        "decision family, but one is the AE-012 ambiguity, leaving 15 confirmed L2 rows."
     ),
     "summary": summary,
     "reviews": reviews,
