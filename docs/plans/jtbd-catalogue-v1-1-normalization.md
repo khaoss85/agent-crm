@@ -8,8 +8,9 @@ The desired catalogue is `docs/jtbd/catalog/jtbd.jsonl`; quality candidates are 
 
 ## Approaches considered
 1. Flip all approval booleans: rejected because it overrides the records' explicit no-approval intent.
-2. Downgrade every contradictory row to L2: chosen only after confirming all 280 are LOW/MEDIUM risk, explicitly say approval is not required, and L2's canonical definition permits recommendation/preparation without execution.
+2. Downgrade every contradictory row to L2: initially chosen, then rejected during independent semantic reconciliation because risk and the old boolean do not prove recommendation-only meaning.
 3. Hand-edit records and roadmap rows: rejected because it is unauditable and invites omissions; checked proposal/disposition files carry every decision.
+4. Classify from each row's action semantics and preserve ambiguity explicitly: chosen because it distinguishes execution from recommendation, remains reproducible, and keeps unresolved product meaning visible in a valid conservative state.
 
 ## Milestones
 1. Generate a correction proposal with old/new fields and semantic context.
@@ -26,11 +27,12 @@ The desired catalogue is `docs/jtbd/catalog/jtbd.jsonl`; quality candidates are 
 - 2026-08-21: plan created; correction and roadmap generation started from merged migration-readiness main.
 - 2026-08-21: 280 contradictions resolved by reviewed rule; catalogue checksum moved; every desired job assigned to a coherent roadmap slice; reverse audit and proved-finding dispositions recorded.
 - 2026-08-22: independent review fixes preserve null package ownership, validate pillar metadata and actual private field names, and explicitly retire the stale MASTER v1.0 rendering.
+- 2026-08-22: semantic integrator replaced the uniform correction with a per-row approval-boundary artifact, grouped the remaining findings, audited every roadmap assignment, and grounded every reverse-capability reason.
 
 ## Decision log
-- L3 implies approval. Contradictory LOW/MEDIUM rows retain their explicit no-approval intent by moving to L2; no HIGH-risk row is affected.
+- L3 implies approval. Rows whose flows act on state retain L3 and require approval; recommendation/preparation-only rows move to L2. `ACC-JTBD-AE-012` remains conservatively valid and explicitly queued for human confirmation.
 - Coverage is unchanged. Roadmap assignments are planning metadata only.
 - Proved wording/dependency defects not safely correctable mechanically are deferred individually for human semantic review, never silently discarded.
 
 ## Outcome and follow-up
-Implementation and verification complete; human product review remains pending while the PR stays open. No next-front implementation is part of this plan.
+Semantic reconciliation is implemented; human product review remains pending while the PR stays open. No next-front implementation is part of this plan.

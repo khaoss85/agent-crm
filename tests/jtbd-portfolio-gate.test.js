@@ -54,6 +54,24 @@ test('v1.1 enforces the L3 approval boundary and preserves unique resolvable ids
   for (const item of supersessions.supersededIds) assert.ok(active.has(item.supersededBy));
 });
 
+test('approval ambiguity remains explicit and every contradiction stays reviewed', () => {
+  const review = JSON.parse(readFileSync(join(ROOT, 'docs/jtbd/quality/approval-boundary-review-v1.1.json'), 'utf8'));
+  assert.equal(review.reviews.length, 280);
+  assert.equal(Object.values(review.summary).reduce((sum, count) => sum + count, 0), review.reviews.length);
+  assert.deepEqual(new Set(review.reviews.map((row) => row.semanticClass)), new Set([
+    'A_KEEP_L3_REQUIRE_APPROVAL',
+    'B_MOVE_TO_L2_NO_APPROVAL',
+    'HUMAN_CONFIRMATION_REQUIRED',
+  ]));
+  const ambiguous = review.reviews.filter((row) => row.semanticClass === 'HUMAN_CONFIRMATION_REQUIRED');
+  assert.ok(ambiguous.length > 0, 'the human-confirmation queue cannot silently disappear');
+  for (const row of ambiguous) {
+    assert.equal(row.needsHumanConfirmation, true);
+    assert.deepEqual(row.proposed, { targetAutonomy: 'L3', humanApprovalRequired: true });
+  }
+  assert.equal(ambiguous.find((row) => row.jtbdId === 'ACC-JTBD-AE-012')?.needsHumanConfirmation, true);
+});
+
 test('every desired job has a complete public roadmap disposition and no private priority', () => {
   const assignments = readFileSync(join(ROOT, 'docs/jtbd/roadmap/assignments.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(assignments.length, 600);
