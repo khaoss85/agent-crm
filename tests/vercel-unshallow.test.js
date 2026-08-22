@@ -18,6 +18,12 @@ function fixture(commitCount = 4) {
   git(source, 'init', '-b', 'main');
   git(source, 'config', 'user.email', 'test@example.com');
   git(source, 'config', 'user.name', 'Test');
+  // The 271-commit regression intentionally crosses Git's automatic
+  // maintenance threshold. Keep fixture creation synchronous so a detached
+  // background gc cannot still be rewriting .git/objects when node:test runs
+  // the fixture cleanup hook.
+  git(source, 'config', 'gc.auto', '0');
+  git(source, 'config', 'maintenance.auto', 'false');
   let measured = '';
   for (let index = 0; index < commitCount; index += 1) {
     writeFileSync(join(source, 'record.txt'), `${index}\n`);

@@ -48,6 +48,11 @@ Vercel checks.
   commits behind the shallow boundary. The ineffective abbreviated-SHA and plain
   fetches were replaced with one maximum-depth recovery; a real 271-commit
   repository regression proves the old bound is crossed.
+- 2026-08-22: the first post-merge main run exposed a fixture-only race: creating
+  271 commits crossed Git's automatic maintenance threshold, and the detached
+  process could still own `.git/objects` when `node:test` cleaned the temporary
+  repository. The fixture now disables automatic gc and maintenance so its
+  lifecycle is deterministic; production restoration behavior is unchanged.
 
 ## Decision log
 - A non-git checkout is now a failure: this build helper has no truthful success
@@ -56,6 +61,8 @@ Vercel checks.
   the measured SHA always comes from `site/claims.json`.
 
 ## Outcome and follow-up
-Pending exact-head CI, review, and Vercel preview evidence. Account/project-scope
-questions remain a separate follow-up if a technically valid build is green but
-the intended production alias is not.
+Exact-head CI, review and Vercel preview evidence passed before merge. The
+post-merge fixture race above is tracked as a technical closeout rather than
+mistaken for a provenance failure. Account/project-scope questions remain a
+separate follow-up if a technically valid build is green but the intended
+production alias is not.
