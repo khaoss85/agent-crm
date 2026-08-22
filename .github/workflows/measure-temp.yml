@@ -1,0 +1,18 @@
+name: Temporary measurement
+on:
+  workflow_dispatch:
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/measure-suite.js --apply
+      - uses: actions/upload-artifact@v4
+        with:
+          name: measured-ledger
+          path: site/claims.json
