@@ -9,9 +9,10 @@
  * configured remote has no credentials, so a plain `git fetch --unshallow`
  * fails; the repository is public, so a fetch addressed at the GitHub URL —
  * composed from the VERCEL_GIT_* variables every git build provides — needs
- * none. Exit is always 0 when the tree is already complete, and non-zero only
- * when the tree is shallow and no fetch could repair it, so the gate that runs
- * next reports the truthful failure instead of this script masking it.
+ * none. The helper reads the current ledger and exits 0 only after git reports
+ * complete history, resolves that measured commit, and proves it is an ancestor
+ * of HEAD. A zero-exit fetch with an unmet post-condition falls through to the
+ * next bounded strategy instead of masking the failure the gate would report.
  *
  * This exists as a file because vercel.json caps buildCommand at 256
  * characters; the command stays `node scripts/vercel-unshallow.js && npm run
@@ -20,33 +21,116 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const git = (/** @type {string[]} */ args) => spawnSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+/**
+ * @typedef {{status: number | null, stdout?: string | Buffer | null, stderr?: string | Buffer | null}} GitResult
+ */
 
-const probe = git(['rev-parse', '--is-shallow-repository']);
-if (probe.status !== 0) {
-  console.log('vercel-unshallow: not a git checkout; nothing to do.');
-  process.exit(0);
-}
-if (probe.stdout.trim() !== 'true') {
-  console.log('vercel-unshallow: history already complete.');
-  process.exit(0);
-}
+/**
+ * Restore and prove the history needed by the public measurement ledger.
+ * @param {{
+ *   cwd?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   runGit?: (args: string[]) => GitResult,
+ *   out?: (message: string) => void,
+ *   error?: (message: string) => void,
+ * }} [options]
+ */
+export function restoreProvenance(options = {}) {
+  const cwd = options.cwd ?? process.cwd();
+  const env = options.env ?? process.env;
+  const runGit = options.runGit ?? ((args) => spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }));
+  const out = options.out ?? console.log;
+  const error = options.error ?? console.error;
 
-const attempts = [['fetch', '--quiet', '--unshallow']];
-const owner = process.env.VERCEL_GIT_REPO_OWNER;
-const slug = process.env.VERCEL_GIT_REPO_SLUG;
-if (owner && slug) {
-  attempts.push(['fetch', '--quiet', '--unshallow', `https://github.com/${owner}/${slug}.git`]);
-}
-
-for (const args of attempts) {
-  const run = git(args);
-  if (run.status === 0) {
-    console.log(`vercel-unshallow: history restored via \`git ${args.join(' ')}\`.`);
-    process.exit(0);
+  let measuredSha;
+  try {
+    const ledger = JSON.parse(readFileSync(join(cwd, 'site', 'claims.json'), 'utf8'));
+    measuredSha = ledger?.measuredAgainst?.sha;
+  } catch (cause) {
+    error(`vercel-unshallow: cannot read site/claims.json: ${errorMessage(cause)}`);
+    return 1;
   }
+  if (typeof measuredSha !== 'string' || !/^[0-9a-f]{7,40}$/.test(measuredSha)) {
+    error('vercel-unshallow: site/claims.json has no valid measuredAgainst.sha.');
+    return 1;
+  }
+
+  const initial = verifyProvenance(runGit, measuredSha);
+  if (initial.ok) {
+    out(`vercel-unshallow: provenance already available for ${measuredSha}.`);
+    return 0;
+  }
+  if (initial.notGit) {
+    error('vercel-unshallow: not a git checkout; measurement provenance cannot be proved.');
+    return 1;
+  }
+
+  const attempts = [['fetch', '--quiet', '--unshallow']];
+  const owner = env.VERCEL_GIT_REPO_OWNER;
+  const slug = env.VERCEL_GIT_REPO_SLUG;
+  if (owner && slug) {
+    const publicUrl = `https://github.com/${owner}/${slug}.git`;
+    attempts.push(
+      ['fetch', '--quiet', '--unshallow', publicUrl],
+      ['fetch', '--quiet', publicUrl, measuredSha],
+      ['fetch', '--quiet', '--deepen=256', publicUrl, 'main'],
+      ['fetch', '--quiet', publicUrl, 'main'],
+    );
+  }
+
+  for (const args of attempts) {
+    const run = runGit(args);
+    const command = `git ${args.join(' ')}`;
+    if (run.status !== 0) {
+      error(`vercel-unshallow: \`${command}\` failed${gitDetail(run)}; trying the next strategy.`);
+      continue;
+    }
+    const verified = verifyProvenance(runGit, measuredSha);
+    if (verified.ok) {
+      out(`vercel-unshallow: provenance for ${measuredSha} verified after \`${command}\`.`);
+      return 0;
+    }
+    error(`vercel-unshallow: \`${command}\` exited 0 but provenance is still unproved (${verified.reason}); trying the next strategy.`);
+  }
+
+  const final = verifyProvenance(runGit, measuredSha);
+  error(`vercel-unshallow: unable to prove ${measuredSha} is available, in complete history, and an ancestor of HEAD (${final.reason}).`);
+  return 1;
 }
 
-console.error('vercel-unshallow: the clone is shallow and no fetch could restore history; site:check will refuse provenance next, which is the correct failure.');
-process.exit(1);
+/** @param {(args: string[]) => GitResult} runGit @param {string} measuredSha */
+function verifyProvenance(runGit, measuredSha) {
+  const shallow = runGit(['rev-parse', '--is-shallow-repository']);
+  if (shallow.status !== 0) return { ok: false, notGit: true, reason: 'git state unavailable' };
+  if (String(shallow.stdout ?? '').trim() !== 'false') {
+    return { ok: false, notGit: false, reason: 'checkout is shallow' };
+  }
+  const object = runGit(['cat-file', '-e', `${measuredSha}^{commit}`]);
+  if (object.status !== 0) return { ok: false, notGit: false, reason: `commit ${measuredSha} is unavailable` };
+  const ancestor = runGit(['merge-base', '--is-ancestor', measuredSha, 'HEAD']);
+  if (ancestor.status !== 0) return { ok: false, notGit: false, reason: `${measuredSha} is not an ancestor of HEAD` };
+  return { ok: true, notGit: false, reason: 'verified' };
+}
+
+/** @param {GitResult} run */
+function gitDetail(run) {
+  const detail = String(run.stderr ?? '').trim().split('\n').at(-1);
+  return detail ? `: ${detail}` : '';
+}
+
+/** @param {unknown} cause */
+function errorMessage(cause) {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = restoreProvenance();
+}
