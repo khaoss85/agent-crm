@@ -20,7 +20,9 @@ Catalogue v1.1 gives every desired job one explicit assignment containing:
 
 The gate rejects duplicate, missing, or unknown assignments; a pillar typo; edition or track
 metadata that disagrees with the pillar registry; a settled assignment outside its
-capability-derived `candidatePillars` unless it carries a reviewed `overrideRationale`; private
+capability-derived `candidatePillars` unless it carries a reviewed `overrideRationale` plus
+structured `overrideReview` evidence (`reviewedBy`, canonical UTC `reviewedAt`, and a public
+evidence reference); private
 commercial fields in the public assignment; and stale generated overlays. An unsupported owner
 without that rationale must be `deferred` with an explicit ownership-ambiguity reason. The
 `package` field is projected from the explicitly
@@ -32,7 +34,9 @@ plausibility boundary, not a plurality winner or an automatic product priority. 
 assignment is authoritative only when it selects any candidate, records a reviewed public
 technical ownership override, or defers the ambiguity for human review.
 
-`overrideRationale` is public technical governance. It may explain an architecture boundary,
+`overrideRationale` and `overrideReview` are public technical governance. The rationale must be
+meaningful rather than a truthy marker, and the review object records who approved it, when, and
+where the public review evidence lives. The rationale may explain an architecture boundary,
 delivery responsibility, orchestration owner, or public dependency. It must not contain priority
 scores, business value, competitive rationale, commercial timing or sequencing, or win/loss
 positioning; those judgements stay outside the public repository.

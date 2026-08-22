@@ -154,6 +154,18 @@ const PATHS = Object.freeze({
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
+const isReviewedTechnicalOverride = (assignment, rationale) => {
+  const review = assignment?.overrideReview;
+  const reviewedAt = typeof review?.reviewedAt === 'string' ? review.reviewedAt : '';
+  const timestamp = Date.parse(reviewedAt);
+  return rationale.length >= 40
+    && /\b(architectur(?:e|al)|boundary|capabilit(?:y|ies)|deliver(?:y|able)|dependency|orchestrat(?:e|ion|or)|package|public api|service owner)\b/i.test(rationale)
+    && review && typeof review === 'object' && !Array.isArray(review)
+    && typeof review.reviewedBy === 'string' && review.reviewedBy.trim().length >= 3
+    && typeof review.evidence === 'string' && review.evidence.trim().length >= 8
+    && Number.isFinite(timestamp) && new Date(timestamp).toISOString() === reviewedAt;
+};
+
 /**
  * Stream the catalogue, yielding only the four fields the overlays need.
  *
@@ -305,23 +317,24 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
     const overrideRationale = typeof explicit?.overrideRationale === 'string'
       ? explicit.overrideRationale.trim()
       : '';
+    const reviewedOverride = explicit ? isReviewedTechnicalOverride(explicit, overrideRationale) : false;
     const candidateOwner = explicit ? candidatePillars.includes(explicit.pillar) : true;
     const settled = ['implemented', 'in progress', 'planned'].includes(explicit?.disposition);
-    if (explicit && !candidateOwner && !overrideRationale && settled) {
+    if (explicit && !candidateOwner && !reviewedOverride && settled) {
       problems.push({
         code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
         message: `${record.id}: pillar "${explicit.pillar}" is outside the capability-derived candidate set `
-          + `[${candidatePillars.join(', ')}] and cannot be ${explicit.disposition} without a public technical ownership override; defer it for human ownership review`,
+          + `[${candidatePillars.join(', ')}] and cannot be ${explicit.disposition} without a meaningful technical rationale and structured public review evidence; defer it for human ownership review`,
       });
     }
-    if (explicit && !candidateOwner && !overrideRationale && explicit.disposition === 'deferred'
+    if (explicit && !candidateOwner && !reviewedOverride && explicit.disposition === 'deferred'
       && !/\b(owner|ownership|candidate pillar)\b/i.test(String(explicit.deferredReason ?? ''))) {
       problems.push({
         code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
         message: `${record.id}: unsupported pillar "${explicit.pillar}" is deferred, but deferredReason does not make the ownership ambiguity explicit`,
       });
     }
-    if (overrideRationale && /\b(priority score|business value|competitive|commercial (?:timing|sequenc(?:e|ing))|win\/?loss)\b/i.test(overrideRationale)) {
+    if (overrideRationale && /\b(priority score|business value|competitive|commercial (?:timing|sequenc(?:e|ing))|win\/?loss|roi|market demand|revenue potential)\b/i.test(overrideRationale)) {
       problems.push({
         code: 'JTBD_PRIVATE_FIELD_PUBLISHED',
         message: `${record.id}: overrideRationale must explain public technical ownership, not private commercial prioritisation`,
@@ -346,6 +359,7 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
       deferredReason: explicit?.deferredReason ?? null,
       publicLimitation: explicit?.publicLimitation ?? null,
       ...(overrideRationale ? { overrideRationale } : {}),
+      ...(reviewedOverride ? { overrideReview: explicit.overrideReview } : {}),
       candidatePillars,
       unownedCoreCapabilities: unowned,
       coreCapabilities: record.core.length,
