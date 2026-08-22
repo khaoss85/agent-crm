@@ -1,5 +1,7 @@
 name: Temporary measurement
 on:
+  push:
+    branches: [claude/post-jtbd-v1-1-truth-measurement]
   workflow_dispatch:
 jobs:
   measure:
