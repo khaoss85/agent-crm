@@ -10,8 +10,8 @@
   "files": [
     {
       "path": "catalog/jtbd.jsonl",
-      "bytes": 4763601,
-      "sha256": "1ee4b32cbf3f0bd6c11e4ce6231324681cbe8eab253fa11aa833f575ca4b9139"
+      "bytes": 4763586,
+      "sha256": "380d1d83551d7e99fa5862d5c8a15748f9c555d017d7ea9b7ef31d87cad05867"
     },
     {
       "path": "MASTER.md",

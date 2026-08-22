@@ -17,27 +17,47 @@
     },
     "AUT-016": {
       "classification": "taxonomy error",
-      "reason": "“Workflow template e blueprint” currently has no owning job and overlaps a taxonomy boundary; human review must relocate or consolidate the capability before attaching desired jobs.",
+      "reason": "“Workflow template e blueprint” (Capacità di workflow template e blueprint come parte della workflow affidabili, transazionali, osservabili e governati.) competes with DEV-005 App e plugin framework. Workflow blueprints are authoring/templates, which duplicates the developer-platform extension surface rather than workflow execution. This is a taxonomy defect rather than a missing job or roadmap debt because the ambiguity is which capability/category owns the same concept. Recommended human action: relocate.",
       "capabilityName": "Workflow template e blueprint",
-      "capabilityDefinition": "Capacità di workflow template e blueprint come parte della workflow affidabili, transazionali, osservabili e governati."
+      "capabilityDefinition": "Capacità di workflow template e blueprint come parte della workflow affidabili, transazionali, osservabili e governati.",
+      "taxonomyEvidence": {
+        "competingCapabilityOrCategory": "DEV-005 App e plugin framework",
+        "duplicatedOrMisplacedBoundary": "Workflow blueprints are authoring/templates, which duplicates the developer-platform extension surface rather than workflow execution.",
+        "recommendedHumanAction": "relocate"
+      }
     },
     "AUT-018": {
       "classification": "taxonomy error",
-      "reason": "“Agent-triggered workflow” currently has no owning job and overlaps a taxonomy boundary; human review must relocate or consolidate the capability before attaching desired jobs.",
+      "reason": "“Agent-triggered workflow” (Capacità di agent-triggered workflow come parte della workflow affidabili, transazionali, osservabili e governati.) competes with AIA-004 Tool use e action execution. An agent-trigger is an invocation mode for agent action execution, not a distinct workflow reliability capability. This is a taxonomy defect rather than a missing job or roadmap debt because the ambiguity is which capability/category owns the same concept. Recommended human action: consolidate.",
       "capabilityName": "Agent-triggered workflow",
-      "capabilityDefinition": "Capacità di agent-triggered workflow come parte della workflow affidabili, transazionali, osservabili e governati."
+      "capabilityDefinition": "Capacità di agent-triggered workflow come parte della workflow affidabili, transazionali, osservabili e governati.",
+      "taxonomyEvidence": {
+        "competingCapabilityOrCategory": "AIA-004 Tool use e action execution",
+        "duplicatedOrMisplacedBoundary": "An agent-trigger is an invocation mode for agent action execution, not a distinct workflow reliability capability.",
+        "recommendedHumanAction": "consolidate"
+      }
     },
     "COL-002": {
       "classification": "taxonomy error",
-      "reason": "“Comment, mention e collaboration” currently has no owning job and overlaps a taxonomy boundary; human review must relocate or consolidate the capability before attaching desired jobs.",
+      "reason": "“Comment, mention e collaboration” (Capacità di comment, mention e collaboration come parte della lavoro coordinato, conoscenza, coaching e adozione.) competes with COL-003 Note e conversation summary. Comments and mentions share the conversational-record boundary with notes and summaries; the atomic record versus collaboration boundary is undefined. This is a taxonomy defect rather than a missing job or roadmap debt because the ambiguity is which capability/category owns the same concept. Recommended human action: split.",
       "capabilityName": "Comment, mention e collaboration",
-      "capabilityDefinition": "Capacità di comment, mention e collaboration come parte della lavoro coordinato, conoscenza, coaching e adozione."
+      "capabilityDefinition": "Capacità di comment, mention e collaboration come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+      "taxonomyEvidence": {
+        "competingCapabilityOrCategory": "COL-003 Note e conversation summary",
+        "duplicatedOrMisplacedBoundary": "Comments and mentions share the conversational-record boundary with notes and summaries; the atomic record versus collaboration boundary is undefined.",
+        "recommendedHumanAction": "split"
+      }
     },
     "COL-010": {
       "classification": "taxonomy error",
-      "reason": "“Change communication” currently has no owning job and overlaps a taxonomy boundary; human review must relocate or consolidate the capability before attaching desired jobs.",
+      "reason": "“Change communication” (Capacità di change communication come parte della lavoro coordinato, conoscenza, coaching e adozione.) competes with AUT-009 Notification e escalation. Change communication duplicates notification delivery unless it is narrowed to a distinct adoption outcome. This is a taxonomy defect rather than a missing job or roadmap debt because the ambiguity is which capability/category owns the same concept. Recommended human action: rename.",
       "capabilityName": "Change communication",
-      "capabilityDefinition": "Capacità di change communication come parte della lavoro coordinato, conoscenza, coaching e adozione."
+      "capabilityDefinition": "Capacità di change communication come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+      "taxonomyEvidence": {
+        "competingCapabilityOrCategory": "AUT-009 Notification e escalation",
+        "duplicatedOrMisplacedBoundary": "Change communication duplicates notification delivery unless it is narrowed to a distinct adoption outcome.",
+        "recommendedHumanAction": "rename"
+      }
     },
     "CSV-018": {
       "classification": "missing desired job",
@@ -53,9 +73,14 @@
     },
     "DEV-006": {
       "classification": "taxonomy error",
-      "reason": "“Custom action e serverless function” currently has no owning job and overlaps a taxonomy boundary; human review must relocate or consolidate the capability before attaching desired jobs.",
+      "reason": "“Custom action e serverless function” (Capacità di custom action e serverless function come parte della API, estensibilità, integrazioni, delivery e reliability.) competes with AIA-004 Tool use e action execution. Custom actions overlap the agent/tool action contract, while serverless functions are deployment plumbing; the combined capability crosses two categories. This is a taxonomy defect rather than a missing job or roadmap debt because the ambiguity is which capability/category owns the same concept. Recommended human action: split.",
       "capabilityName": "Custom action e serverless function",
-      "capabilityDefinition": "Capacità di custom action e serverless function come parte della API, estensibilità, integrazioni, delivery e reliability."
+      "capabilityDefinition": "Capacità di custom action e serverless function come parte della API, estensibilità, integrazioni, delivery e reliability.",
+      "taxonomyEvidence": {
+        "competingCapabilityOrCategory": "AIA-004 Tool use e action execution",
+        "duplicatedOrMisplacedBoundary": "Custom actions overlap the agent/tool action contract, while serverless functions are deployment plumbing; the combined capability crosses two categories.",
+        "recommendedHumanAction": "split"
+      }
     },
     "DEV-018": {
       "classification": "implementation plumbing with no direct JTBD expected",
@@ -77,9 +102,14 @@
     },
     "GOV-012": {
       "classification": "taxonomy error",
-      "reason": "“Vendor e connector governance” currently has no owning job and overlaps a taxonomy boundary; human review must relocate or consolidate the capability before attaching desired jobs.",
+      "reason": "“Vendor e connector governance” (Capacità di vendor e connector governance come parte della sicurezza, privacy, compliance e accountability.) competes with DEV-007 Connector SDK. Connector governance belongs to the connector lifecycle, while vendor governance is a procurement/compliance concern; the combined capability crosses categories. This is a taxonomy defect rather than a missing job or roadmap debt because the ambiguity is which capability/category owns the same concept. Recommended human action: split.",
       "capabilityName": "Vendor e connector governance",
-      "capabilityDefinition": "Capacità di vendor e connector governance come parte della sicurezza, privacy, compliance e accountability."
+      "capabilityDefinition": "Capacità di vendor e connector governance come parte della sicurezza, privacy, compliance e accountability.",
+      "taxonomyEvidence": {
+        "competingCapabilityOrCategory": "DEV-007 Connector SDK",
+        "duplicatedOrMisplacedBoundary": "Connector governance belongs to the connector lifecycle, while vendor governance is a procurement/compliance concern; the combined capability crosses categories.",
+        "recommendedHumanAction": "split"
+      }
     },
     "GOV-015": {
       "classification": "missing desired job",

@@ -6,7 +6,7 @@ This directory is a desired-state requirements corpus, not a claim that Accordo 
 
 ## Canonical raw files
 
-- `catalog/jtbd.jsonl` — 4,611,152 bytes / 600 complete records.
+- `catalog/jtbd.jsonl` — 4,763,586 bytes / 600 complete records.
 - `MASTER.md` — historical v1.0 rendered snapshot; **not canonical** for current records.
 - `catalog/personas.json` — 30 personas.
 - `catalog/capabilities.json` — 225 atomic capabilities.

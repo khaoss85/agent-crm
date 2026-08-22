@@ -2,11 +2,10 @@
   "approvalBoundaryReviewContract": 1,
   "catalogueVersion": "2026-08-21.1",
   "classificationAuthority": "Semantic classification from each record's canonical statement, trigger, desired outcome, pattern, flow, outputs, acceptance criteria, risk, and sensitivity; risk and the prior approval boolean are context, never the decision rule.",
-  "priorProposalProvenance": "No 264/16 artifact or needs_human_confirmation field was found in reachable Git history or PR #108/#109 discussion. The 264/16 split survives only in the PR #111 integrator handover; the catalogue's 16 DECIDE contradictions independently reproduce a 16-row decision family, but one is the AE-012 ambiguity, leaving 15 confirmed L2 rows.",
+  "priorProposalProvenance": "No 264/16 artifact or needs_human_confirmation field was found in reachable Git history or PR #108/#109 discussion. The 264/16 split survives only in the PR #111 integrator handover. All 16 DECIDE contradictions contain the same unresolved decision/task write and therefore remain in the human-confirmation queue rather than being classified by pattern.",
   "summary": {
     "A_KEEP_L3_REQUIRE_APPROVAL": 264,
-    "B_MOVE_TO_L2_NO_APPROVAL": 15,
-    "HUMAN_CONFIRMATION_REQUIRED": 1
+    "HUMAN_CONFIRMATION_REQUIRED": 16
   },
   "reviews": [
     {
@@ -50,6 +49,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -97,6 +99,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -144,6 +149,7 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -191,6 +197,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -238,6 +247,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -285,6 +297,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -332,6 +347,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -379,6 +397,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -426,6 +447,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -473,6 +497,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -519,6 +546,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -566,6 +596,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -613,6 +646,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -660,6 +696,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -707,6 +746,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -754,6 +796,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -801,6 +846,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -851,6 +899,7 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -900,10 +949,13 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
-      "reason": "The job both recommends a forecast and records downstream decisions/tasks. The generic DECIDE flow does not establish whether updating the forecast is a mutation or only a prepared recommendation, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "needsHumanConfirmation": true
     },
     {
@@ -947,6 +999,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -996,6 +1051,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1043,6 +1101,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1089,6 +1150,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1136,6 +1200,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1183,6 +1250,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1230,6 +1300,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1277,6 +1350,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1324,6 +1400,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1373,6 +1452,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1420,6 +1502,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1466,6 +1551,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1514,6 +1602,7 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1561,6 +1650,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1570,14 +1662,14 @@
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-009",
       "role": "Data Analytics / BI Expert",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando si verifica un evento operativo e devo portare a termine il lavoro con contesto completo, voglio produrre forecast e scenario analysis, così da ridurre l'incertezza con stima, range, driver e confidenza riconciliabili.",
@@ -1602,7 +1694,7 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Produrre forecast e scenario analysis», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ridurre l'incertezza con stima, range, driver e confidenza riconciliabili e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Forecast accuracy, Forecast bias, Coverage-to-target e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile.",
@@ -1610,11 +1702,14 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-013",
@@ -1657,6 +1752,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1704,6 +1802,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1751,6 +1852,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1797,6 +1901,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1844,6 +1951,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1892,6 +2002,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1940,6 +2053,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -1989,6 +2105,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2036,6 +2155,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2083,6 +2205,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2130,6 +2255,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2177,6 +2305,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2224,6 +2355,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2271,6 +2405,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2317,6 +2454,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2364,6 +2504,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2411,6 +2554,7 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2459,6 +2603,7 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2506,6 +2651,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2554,6 +2702,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2602,6 +2753,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2652,6 +2806,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2700,6 +2857,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2747,6 +2907,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2794,6 +2957,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2841,6 +3007,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2887,6 +3056,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2934,6 +3106,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -2981,6 +3156,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3028,6 +3206,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3076,6 +3257,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3124,6 +3308,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3171,6 +3358,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3218,6 +3408,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3265,6 +3458,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3312,6 +3508,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3359,6 +3558,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3406,6 +3608,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3452,6 +3657,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3499,6 +3707,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3547,6 +3758,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3556,14 +3770,14 @@
     {
       "jtbdId": "ACC-JTBD-CRM-PO-007",
       "role": "CRM/CDP Product Owner",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando si verifica un evento operativo e devo portare a termine il lavoro con contesto completo, voglio decidere configurazione versus sviluppo custom, così da ottenere un risultato ripetibile per «decidere configurazione versus sviluppo custom» con dati affidabili, responsabilità chiare e impatto misurabile.",
@@ -3586,18 +3800,21 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Decidere configurazione versus sviluppo custom», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ottenere un risultato ripetibile per «decidere configurazione versus sviluppo custom» con dati affidabili, responsabilità chiare e impatto misurabile e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Outcome adoption, Time to value, Release predictability e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile."
         ],
         "risk": "LOW",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-010",
@@ -3640,6 +3857,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3687,6 +3907,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3696,14 +3919,14 @@
     {
       "jtbdId": "ACC-JTBD-CRM-PO-013",
       "role": "CRM/CDP Product Owner",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando le performance sono sotto target o emerge un'opportunità di miglioramento, voglio prioritizzare con valore, rischio ed effort, così da ottenere un risultato ripetibile per «prioritizzare con valore, rischio ed effort» con dati affidabili, responsabilità chiare e impatto misurabile.",
@@ -3726,18 +3949,21 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Prioritizzare con valore, rischio ed effort», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ottenere un risultato ripetibile per «prioritizzare con valore, rischio ed effort» con dati affidabili, responsabilità chiare e impatto misurabile e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Outcome adoption, Time to value, Release predictability e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile."
         ],
         "risk": "LOW",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-014",
@@ -3780,6 +4006,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3827,6 +4056,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3874,6 +4106,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -3883,14 +4118,14 @@
     {
       "jtbdId": "ACC-JTBD-CRO-006",
       "role": "Chief Revenue Officer",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando si verifica un evento operativo e devo portare a termine il lavoro con contesto completo, voglio produrre forecast di bookings, ARR e ricavi, così da ridurre l'incertezza con stima, range, driver e confidenza riconciliabili.",
@@ -3915,7 +4150,7 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Produrre forecast di bookings, ARR e ricavi», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ridurre l'incertezza con stima, range, driver e confidenza riconciliabili e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Forecast accuracy, Forecast bias, Coverage-to-target e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile.",
@@ -3923,11 +4158,14 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-CRO-008",
@@ -3970,6 +4208,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4017,6 +4258,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4064,6 +4308,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4111,6 +4358,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4158,6 +4408,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4205,6 +4458,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4253,6 +4509,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4300,6 +4559,7 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4347,6 +4607,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4394,6 +4657,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4441,6 +4707,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4488,6 +4757,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4535,6 +4807,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4544,14 +4819,14 @@
     {
       "jtbdId": "ACC-JTBD-CS-DIR-007",
       "role": "Direttore Customer Success",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando si verifica un evento operativo e devo portare a termine il lavoro con contesto completo, voglio prevedere rinnovi, churn e contrazione, così da ridurre l'incertezza con stima, range, driver e confidenza riconciliabili.",
@@ -4576,7 +4851,7 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Prevedere rinnovi, churn e contrazione», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ridurre l'incertezza con stima, range, driver e confidenza riconciliabili e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Forecast accuracy, Forecast bias, Coverage-to-target e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile.",
@@ -4584,11 +4859,14 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-008",
@@ -4631,6 +4909,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4678,6 +4959,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4726,6 +5010,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4773,6 +5060,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4820,6 +5110,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4867,6 +5160,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4913,6 +5209,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -4960,6 +5259,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5007,6 +5309,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5054,6 +5359,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5101,6 +5409,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5149,6 +5460,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5196,6 +5510,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5243,6 +5560,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5252,14 +5572,14 @@
     {
       "jtbdId": "ACC-JTBD-CVM-005",
       "role": "Customer Value Manager / CSM",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando si verifica un evento operativo e devo portare a termine il lavoro con contesto completo, voglio prioritizzare portfolio e task, così da ottenere un risultato ripetibile per «prioritizzare portfolio e task» con dati affidabili, responsabilità chiare e impatto misurabile.",
@@ -5282,18 +5602,21 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Prioritizzare portfolio e task», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ottenere un risultato ripetibile per «prioritizzare portfolio e task» con dati affidabili, responsabilità chiare e impatto misurabile e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Time to value, Health score movement, Renewal rate e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile."
         ],
         "risk": "LOW",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-CVM-006",
@@ -5336,6 +5659,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5383,6 +5709,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5430,6 +5759,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5477,6 +5809,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5524,6 +5859,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5571,6 +5909,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5618,6 +5959,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5665,6 +6009,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5712,6 +6059,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5759,6 +6109,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5806,6 +6159,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5853,6 +6209,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5900,6 +6259,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5947,6 +6309,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -5994,6 +6359,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6041,6 +6409,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6088,6 +6459,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6135,6 +6509,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6181,6 +6558,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6228,6 +6608,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6275,6 +6658,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6322,6 +6708,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6331,14 +6720,14 @@
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-008",
       "role": "Data Scientist / ML Engineer",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando si verifica un evento operativo e devo portare a termine il lavoro con contesto completo, voglio costruire forecast e scenari, così da ridurre l'incertezza con stima, range, driver e confidenza riconciliabili.",
@@ -6363,7 +6752,7 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Costruire forecast e scenari», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ridurre l'incertezza con stima, range, driver e confidenza riconciliabili e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Forecast accuracy, Forecast bias, Coverage-to-target e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile.",
@@ -6371,11 +6760,14 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-009",
@@ -6418,6 +6810,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6465,6 +6860,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6512,6 +6910,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6561,6 +6962,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6608,6 +7012,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6655,6 +7062,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6702,6 +7112,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6749,6 +7162,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6795,6 +7211,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6842,6 +7261,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6889,6 +7311,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6937,6 +7362,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -6987,6 +7415,7 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7034,6 +7463,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7080,6 +7512,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7128,6 +7563,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7175,6 +7613,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7222,6 +7663,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7269,6 +7713,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7317,6 +7764,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7364,6 +7814,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7411,6 +7864,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7458,6 +7914,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7505,6 +7964,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7552,6 +8014,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7600,6 +8065,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7647,6 +8115,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7696,6 +8167,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7743,6 +8217,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7792,6 +8269,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7839,6 +8319,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7886,6 +8369,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7934,6 +8420,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -7982,6 +8471,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8029,6 +8521,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8076,6 +8571,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8123,6 +8621,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8171,6 +8672,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8218,6 +8722,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8267,6 +8774,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8314,6 +8824,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8361,6 +8874,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8407,6 +8923,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8456,6 +8975,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8505,6 +9027,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8552,6 +9077,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8561,14 +9089,14 @@
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-012",
       "role": "Direttore Marketing / CMO",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando si verifica un evento operativo e devo portare a termine il lavoro con contesto completo, voglio prevedere contributo marketing a pipeline e ricavi, così da ridurre l'incertezza con stima, range, driver e confidenza riconciliabili.",
@@ -8593,7 +9121,7 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Prevedere contributo marketing a pipeline e ricavi», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ridurre l'incertezza con stima, range, driver e confidenza riconciliabili e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Forecast accuracy, Forecast bias, Coverage-to-target e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile.",
@@ -8601,11 +9129,14 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-013",
@@ -8648,6 +9179,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8657,14 +9191,14 @@
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-015",
       "role": "Direttore Marketing / CMO",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando le performance sono sotto target o emerge un'opportunità di miglioramento, voglio prioritizzare esperimenti di crescita, così da decidere sulla base di effetto causale, guardrail e learning riutilizzabile.",
@@ -8687,7 +9221,7 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Prioritizzare esperimenti di crescita», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di decidere sulla base di effetto causale, guardrail e learning riutilizzabile e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Experiment velocity, Decision rate, Incremental lift e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile.",
@@ -8695,11 +9229,14 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-017",
@@ -8741,6 +9278,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8788,6 +9328,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8836,6 +9379,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8886,6 +9432,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8935,6 +9484,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -8982,6 +9534,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9031,6 +9586,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9079,6 +9637,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9129,6 +9690,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9178,6 +9742,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9225,6 +9792,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9272,6 +9842,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9320,6 +9893,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9367,6 +9943,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9414,6 +9993,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9461,6 +10043,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9508,6 +10093,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9557,6 +10145,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9604,6 +10195,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9651,6 +10245,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9698,6 +10295,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9745,6 +10345,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9792,6 +10395,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9839,6 +10445,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9885,6 +10494,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9934,6 +10546,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -9981,6 +10596,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10028,6 +10646,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10075,6 +10696,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10122,6 +10746,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10169,6 +10796,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10216,6 +10846,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10264,6 +10897,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10312,6 +10948,7 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10359,6 +10996,7 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10406,6 +11044,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10453,6 +11094,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10500,6 +11144,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10547,6 +11194,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10594,6 +11244,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10640,6 +11293,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10690,6 +11346,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10737,6 +11396,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10746,14 +11408,14 @@
     {
       "jtbdId": "ACC-JTBD-REV-FIN-016",
       "role": "Revenue Finance Analyst",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando le performance sono sotto target o emerge un'opportunità di miglioramento, voglio simulare scenari di crescita e capacità, così da allocare risorse sul rendimento atteso più alto mantenendo vincoli e scenari espliciti.",
@@ -10776,18 +11438,21 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Simulare scenari di crescita e capacità», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di allocare risorse sul rendimento atteso più alto mantenendo vincoli e scenari espliciti e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Forecast accuracy, Revenue reconciliation variance, Gross margin e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile."
         ],
         "risk": "LOW",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-REV-FIN-017",
@@ -10830,6 +11495,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10878,6 +11546,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -10887,14 +11558,14 @@
     {
       "jtbdId": "ACC-JTBD-REVOPS-008",
       "role": "Revenue Operations Director / Manager",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando si verifica un evento operativo e devo portare a termine il lavoro con contesto completo, voglio produrre forecast operativo riconciliato, così da ridurre l'incertezza con stima, range, driver e confidenza riconciliabili.",
@@ -10919,7 +11590,7 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Produrre forecast operativo riconciliato», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ridurre l'incertezza con stima, range, driver e confidenza riconciliabili e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Forecast accuracy, Forecast bias, Coverage-to-target e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile.",
@@ -10927,11 +11598,14 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-009",
@@ -10978,6 +11652,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11026,6 +11703,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11073,6 +11753,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11120,6 +11803,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11167,6 +11853,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11214,6 +11903,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11262,6 +11954,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11311,6 +12006,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11320,14 +12018,14 @@
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-006",
       "role": "Direttore Vendite / VP Sales",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando si verifica un evento operativo e devo portare a termine il lavoro con contesto completo, voglio produrre forecast e commit di vendita, così da ridurre l'incertezza con stima, range, driver e confidenza riconciliabili.",
@@ -11352,7 +12050,7 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Produrre forecast e commit di vendita», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ridurre l'incertezza con stima, range, driver e confidenza riconciliabili e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Forecast accuracy, Forecast bias, Coverage-to-target e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile.",
@@ -11360,11 +12058,14 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-011",
@@ -11407,6 +12108,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11454,6 +12158,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11501,6 +12208,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11548,6 +12258,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11594,6 +12307,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11603,14 +12319,14 @@
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-005",
       "role": "Sales Manager",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando si verifica un evento operativo e devo portare a termine il lavoro con contesto completo, voglio prioritizzare attività giornaliere del team, così da ottenere un risultato ripetibile per «prioritizzare attività giornaliere del team» con dati affidabili, responsabilità chiare e impatto misurabile.",
@@ -11633,18 +12349,21 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Prioritizzare attività giornaliere del team», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ottenere un risultato ripetibile per «prioritizzare attività giornaliere del team» con dati affidabili, responsabilità chiare e impatto misurabile e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Team quota attainment, Forecast accuracy, Stage conversion e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile."
         ],
         "risk": "LOW",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-006",
@@ -11687,6 +12406,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11696,14 +12418,14 @@
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-007",
       "role": "Sales Manager",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando si verifica un evento operativo e devo portare a termine il lavoro con contesto completo, voglio produrre forecast commit e best case, così da ridurre l'incertezza con stima, range, driver e confidenza riconciliabili.",
@@ -11728,7 +12450,7 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Produrre forecast commit e best case», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ridurre l'incertezza con stima, range, driver e confidenza riconciliabili e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Forecast accuracy, Forecast bias, Coverage-to-target e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile.",
@@ -11736,11 +12458,14 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-008",
@@ -11783,6 +12508,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11830,6 +12558,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11877,6 +12608,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11924,6 +12658,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -11971,6 +12708,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12018,6 +12758,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12065,6 +12808,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12112,6 +12858,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12160,6 +12909,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12207,6 +12959,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12216,14 +12971,14 @@
     {
       "jtbdId": "ACC-JTBD-SDR-006",
       "role": "SDR / BDR",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "proposed": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
       "evidence": {
         "job": "Quando si verifica un evento operativo e devo portare a termine il lavoro con contesto completo, voglio prioritizzare prospect con intent e fit, così da ottenere un risultato ripetibile per «prioritizzare prospect con intent e fit» con dati affidabili, responsabilità chiare e impatto misurabile.",
@@ -12246,18 +13001,21 @@
         "acceptanceCriteria": [
           "GIVEN un utente con scope valido e input entro SLA, WHEN esegue «Prioritizzare prospect con intent e fit», THEN Accordo mostra fonti, freshness, assunzioni e confidence prima della decisione.",
           "Il risultato consente di ottenere un risultato ripetibile per «prioritizzare prospect con intent e fit» con dati affidabili, responsabilità chiare e impatto misurabile e produce almeno un output con owner, stato, timestamp e collegamento ai record di origine.",
-          "Nessuna azione supera il livello L2; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
+          "Nessuna azione supera il livello L3; le azioni ad alto impatto richiedono approvazione esplicita e sono sempre revocabili o compensabili.",
           "Errori, dati mancanti, conflitti e risposte parziali non vengono nascosti: generano stato fail-closed, motivo leggibile e percorso di remediation.",
           "L'esito viene misurato tramite Qualified meetings, Reply rate, Meeting held rate e collegato all'agent/workflow version che lo ha prodotto.",
           "Ogni lettura e scrittura rispetta tenant isolation, least privilege, audit trail e retention applicabile."
         ],
         "risk": "LOW",
         "sensitiveData": [],
-        "actsOrMutates": false,
-        "recommendationOrPreparationOnly": true
+        "authoritativeEffectCandidates": [
+          "Registra decisione, task downstream e metriche di controllo; confronta previsto e consuntivo."
+        ],
+        "actsOrMutates": true,
+        "recommendationOrPreparationOnly": false
       },
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
-      "needsHumanConfirmation": false
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "needsHumanConfirmation": true
     },
     {
       "jtbdId": "ACC-JTBD-SDR-007",
@@ -12300,6 +13058,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12347,6 +13108,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12394,6 +13158,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12441,6 +13208,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12488,6 +13258,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12535,6 +13308,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12582,6 +13358,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12629,6 +13408,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12676,6 +13458,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12723,6 +13508,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12769,6 +13557,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12819,6 +13610,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12866,6 +13660,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12913,6 +13710,7 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -12960,6 +13758,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -13008,6 +13809,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -13058,6 +13862,9 @@
         ],
         "risk": "MEDIUM",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna record, timeline, owner, KPI e audit trail."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -13105,6 +13912,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -13152,6 +13962,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -13199,6 +14012,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Aggiorna playbook, modello o configurazione solo dopo verifica e conserva il learning."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },
@@ -13245,6 +14061,9 @@
         ],
         "risk": "LOW",
         "sensitiveData": [],
+        "authoritativeEffectCandidates": [
+          "Applica remediation sicura o apre incidente con owner, SLA e runbook."
+        ],
         "actsOrMutates": true,
         "recommendationOrPreparationOnly": false
       },

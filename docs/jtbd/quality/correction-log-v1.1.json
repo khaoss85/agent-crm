@@ -3,11 +3,10 @@
   "catalogueFrom": "2026-08-20.1",
   "catalogueTo": "2026-08-21.1",
   "oldChecksum": "c771e3c6b113903d5dc6e35dad6e793e345106e256aea586fedd062b3a611c28",
-  "newChecksum": "1ee4b32cbf3f0bd6c11e4ce6231324681cbe8eab253fa11aa833f575ca4b9139",
+  "newChecksum": "380d1d83551d7e99fa5862d5c8a15748f9c555d017d7ea9b7ef31d87cad05867",
   "summary": {
     "A_KEEP_L3_REQUIRE_APPROVAL": 264,
-    "B_MOVE_TO_L2_NO_APPROVAL": 15,
-    "HUMAN_CONFIRMATION_REQUIRED": 1
+    "HUMAN_CONFIRMATION_REQUIRED": 16
   },
   "reviewArtifact": "approval-boundary-review-v1.1.json",
   "corrections": [
@@ -293,7 +292,7 @@
         "humanApprovalRequired": true
       },
       "needsHumanConfirmation": true,
-      "reason": "The job both recommends a forecast and records downstream decisions/tasks. The generic DECIDE flow does not establish whether updating the forecast is a mutation or only a prepared recommendation, so L3 + approval is the conservative valid provisional state pending a product decision.",
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -508,17 +507,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-ANALYTICS-009",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -1138,17 +1137,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-007",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -1183,17 +1182,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRM-PO-013",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -1243,17 +1242,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-CRO-006",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -1453,17 +1452,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-CS-DIR-007",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -1678,17 +1677,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-CVM-005",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -2023,17 +2022,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-DATA-SCI-008",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -2728,17 +2727,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-012",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -2758,17 +2757,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-MKT-DIR-015",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -3418,17 +3417,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-REV-FIN-016",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -3463,17 +3462,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-REVOPS-008",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -3598,17 +3597,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-DIR-006",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -3688,17 +3687,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-005",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -3718,17 +3717,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-SALES-MGR-007",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {
@@ -3883,17 +3882,17 @@
     },
     {
       "jtbdId": "ACC-JTBD-SDR-006",
-      "semanticClass": "B_MOVE_TO_L2_NO_APPROVAL",
+      "semanticClass": "HUMAN_CONFIRMATION_REQUIRED",
       "old": {
         "targetAutonomy": "L3",
         "humanApprovalRequired": false
       },
       "new": {
-        "targetAutonomy": "L2",
-        "humanApprovalRequired": false
+        "targetAutonomy": "L3",
+        "humanApprovalRequired": true
       },
-      "needsHumanConfirmation": false,
-      "reason": "The desired flow builds scenarios and recommends an option; execution beyond the delegated boundary is explicitly gated. The stated job can therefore remain a recommendation/preparation job at L2 without approval.",
+      "needsHumanConfirmation": true,
+      "reason": "The flow recommends an option but also records the decision and downstream tasks. The catalogue does not distinguish an analysis-artifact write from a committed business decision or execution-driving task, so L3 + approval is the conservative valid provisional state pending a product decision.",
       "reviewArtifact": "approval-boundary-review-v1.1.json"
     },
     {

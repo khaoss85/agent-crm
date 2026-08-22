@@ -35,13 +35,19 @@ for jtbd_id in sorted(affected):
     record = by_id[jtbd_id]
     design = record["agentic_design"]
     pattern = design["pattern"]
-    if jtbd_id == "ACC-JTBD-AE-012":
+    authoritative_effects = [
+        step for step in record["use_case"]["primary_flow"]
+        if any(marker in step.lower() for marker in (
+            "registra decisione", "task downstream", "applica ", "crea ", "aggiorna ",
+        ))
+    ]
+    if pattern == "DECIDE" and authoritative_effects:
         semantic_class = "HUMAN_CONFIRMATION_REQUIRED"
         proposed = {"targetAutonomy": "L3", "humanApprovalRequired": True}
         reason = (
-            "The job both recommends a forecast and records downstream decisions/tasks. "
-            "The generic DECIDE flow does not establish whether updating the forecast is a "
-            "mutation or only a prepared recommendation, so L3 + approval is the conservative "
+            "The flow recommends an option but also records the decision and downstream tasks. "
+            "The catalogue does not distinguish an analysis-artifact write from a committed "
+            "business decision or execution-driving task, so L3 + approval is the conservative "
             "valid provisional state pending a product decision."
         )
         needs_confirmation = True
@@ -92,8 +98,9 @@ for jtbd_id in sorted(affected):
             "sensitiveData": affected[jtbd_id].get(
                 "sensitivity", existing_reviews.get(jtbd_id, {}).get("evidence", {}).get("sensitiveData", [])
             ),
-            "actsOrMutates": pattern != "DECIDE" or jtbd_id == "ACC-JTBD-AE-012",
-            "recommendationOrPreparationOnly": pattern == "DECIDE" and jtbd_id != "ACC-JTBD-AE-012",
+            "authoritativeEffectCandidates": authoritative_effects,
+            "actsOrMutates": pattern != "DECIDE" or bool(authoritative_effects),
+            "recommendationOrPreparationOnly": pattern == "DECIDE" and not authoritative_effects,
         },
         "reason": reason,
         "needsHumanConfirmation": needs_confirmation,
@@ -111,8 +118,8 @@ write_json("quality/approval-boundary-review-v1.1.json", {
     "priorProposalProvenance": (
         "No 264/16 artifact or needs_human_confirmation field was found in reachable Git history "
         "or PR #108/#109 discussion. The 264/16 split survives only in the PR #111 integrator "
-        "handover; the catalogue's 16 DECIDE contradictions independently reproduce a 16-row "
-        "decision family, but one is the AE-012 ambiguity, leaving 15 confirmed L2 rows."
+        "handover. All 16 DECIDE contradictions contain the same unresolved decision/task write "
+        "and therefore remain in the human-confirmation queue rather than being classified by pattern."
     ),
     "summary": summary,
     "reviews": reviews,
@@ -226,11 +233,26 @@ write_json("quality/semantic-review-packet-v1.1.json", {
 
 # Produce a complete, reproducible ownership audit without treating ownership as evidence.
 pillars = read_json("roadmap/pillars.json")["pillars"]
+capability_pillars = read_json("roadmap/capability_pillars.json")["capabilityPillars"]
 assignments = [json.loads(line) for line in (ROOT / "roadmap/assignments.jsonl").read_text().splitlines()]
 private_fields = {"priority", "businessValue", "competitiveRationale", "commercialSequencing", "roadmapScore"}
 audits = []
 for assignment in assignments:
     pillar = pillars.get(assignment["pillar"])
+    record = by_id[assignment["jtbdId"]]
+    candidate_pillars = sorted({
+        capability_pillars[capability]
+        for capability in record["capabilities"]["core"]
+        if capability in capability_pillars and capability_pillars[capability] is not None
+    })
+    semantically_supported = assignment["pillar"] in candidate_pillars
+    override_rationale = assignment.get("overrideRationale")
+    if semantically_supported:
+        semantic_status = "semantically_supported"
+    elif override_rationale:
+        semantic_status = "explicit_override_with_rationale"
+    else:
+        semantic_status = "needs_human_review"
     checks = {
         "pillarRegistered": pillar is not None,
         "editionRegisteredForPillar": pillar is not None and assignment["edition"] == pillar["edition"],
@@ -240,8 +262,23 @@ for assignment in assignments:
         "deferredReasonPresentWhenNeeded": assignment["disposition"] not in {"deferred", "out of scope"} or bool(assignment["deferredReason"]),
         "noPrivateFields": not (private_fields & assignment.keys()),
     }
-    audits.append({"jtbdId": assignment["jtbdId"], "disposition": assignment["disposition"], "checks": checks,
-                   "reason": "Ownership was checked against the registered pillar metadata; it remains planning metadata and supplies no coverage evidence."})
+    audits.append({
+        "jtbdId": assignment["jtbdId"], "disposition": assignment["disposition"],
+        "structuralStatus": "structurally_valid" if all(checks.values()) else "structurally_invalid",
+        "semanticStatus": semantic_status,
+        "semanticEvidence": {
+            "job": record["job_statement"]["canonical"],
+            "coreCapabilities": record["capabilities"]["core"],
+            "candidatePillars": candidate_pillars,
+            "assignedPillar": assignment["pillar"],
+            "track": assignment["roadmapTrack"],
+            "milestoneOrEpic": assignment["milestoneOrEpic"],
+            "dependencies": assignment["dependencies"],
+            "overrideRationale": override_rationale,
+        },
+        "checks": checks,
+        "reason": "Ownership is semantically supported by a candidate pillar, explicitly overridden with a rationale, or queued for human review; it remains planning metadata and supplies no coverage evidence.",
+    })
 write_json("roadmap/assignment-audit-v1.1.json", {
     "assignmentAuditContract": 1,
     "catalogueVersion": prior["catalogueTo"],
@@ -250,6 +287,8 @@ write_json("roadmap/assignment-audit-v1.1.json", {
         "unassigned": len(records) - len(audits),
         "dispositions": dict(sorted(collections.Counter(item["disposition"] for item in audits).items())),
         "failedChecks": sum(not value for item in audits for value in item["checks"].values()),
+        "structurallyValid": sum(item["structuralStatus"] == "structurally_valid" for item in audits),
+        "semanticStatuses": dict(sorted(collections.Counter(item["semanticStatus"] for item in audits).items())),
     },
     "coverageEffect": "NONE",
     "audits": audits,
@@ -258,6 +297,14 @@ write_json("roadmap/assignment-audit-v1.1.json", {
 # Ground every reverse-audit conclusion in the named capability rather than a shared template.
 reverse = read_json("quality/REVERSE_CAPABILITY_AUDIT.json")
 capabilities = {item["capability_id"]: item for item in read_json("catalog/capabilities.json")}
+taxonomy_evidence = {
+    "AUT-016": ("DEV-005 App e plugin framework", "Workflow blueprints are authoring/templates, which duplicates the developer-platform extension surface rather than workflow execution.", "relocate"),
+    "AUT-018": ("AIA-004 Tool use e action execution", "An agent-trigger is an invocation mode for agent action execution, not a distinct workflow reliability capability.", "consolidate"),
+    "COL-002": ("COL-003 Note e conversation summary", "Comments and mentions share the conversational-record boundary with notes and summaries; the atomic record versus collaboration boundary is undefined.", "split"),
+    "COL-010": ("AUT-009 Notification e escalation", "Change communication duplicates notification delivery unless it is narrowed to a distinct adoption outcome.", "rename"),
+    "DEV-006": ("AIA-004 Tool use e action execution", "Custom actions overlap the agent/tool action contract, while serverless functions are deployment plumbing; the combined capability crosses two categories.", "split"),
+    "GOV-012": ("DEV-007 Connector SDK", "Connector governance belongs to the connector lifecycle, while vendor governance is a procurement/compliance concern; the combined capability crosses categories.", "split"),
+}
 for capability_id, audit in reverse["orphanCapabilities"].items():
     capability = capabilities[capability_id]
     if audit["classification"] == "missing desired job":
@@ -272,9 +319,11 @@ for capability_id, audit in reverse["orphanCapabilities"].items():
             "administration outcome is separately approved."
         )
     elif audit["classification"] == "taxonomy error":
+        competitor, boundary, action = taxonomy_evidence[capability_id]
         conclusion = (
-            f"“{capability['name']}” currently has no owning job and overlaps a taxonomy boundary; "
-            "human review must relocate or consolidate the capability before attaching desired jobs."
+            f"“{capability['name']}” ({capability['description']}) competes with {competitor}. "
+            f"{boundary} This is a taxonomy defect rather than a missing job or roadmap debt because "
+            f"the ambiguity is which capability/category owns the same concept. Recommended human action: {action}."
         )
     else:
         conclusion = (
@@ -284,6 +333,9 @@ for capability_id, audit in reverse["orphanCapabilities"].items():
     audit["capabilityName"] = capability["name"]
     audit["capabilityDefinition"] = capability["description"]
     audit["reason"] = conclusion
+    if audit["classification"] == "taxonomy error":
+        competitor, boundary, action = taxonomy_evidence[capability_id]
+        audit["taxonomyEvidence"] = {"competingCapabilityOrCategory": competitor, "duplicatedOrMisplacedBoundary": boundary, "recommendedHumanAction": action}
 reverse["plt004"] = reverse["orphanCapabilities"]["PLT-004"]
 pillar_reasons = {
     "signature-order": "Signature/order is enabling execution plumbing in the current catalogue; no direct signer/order-administration outcome is approved.",

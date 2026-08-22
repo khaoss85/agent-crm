@@ -58,11 +58,10 @@ test('approval ambiguity remains explicit and every contradiction stays reviewed
   const review = JSON.parse(readFileSync(join(ROOT, 'docs/jtbd/quality/approval-boundary-review-v1.1.json'), 'utf8'));
   assert.equal(review.reviews.length, 280);
   assert.equal(Object.values(review.summary).reduce((sum, count) => sum + count, 0), review.reviews.length);
-  assert.deepEqual(new Set(review.reviews.map((row) => row.semanticClass)), new Set([
-    'A_KEEP_L3_REQUIRE_APPROVAL',
-    'B_MOVE_TO_L2_NO_APPROVAL',
-    'HUMAN_CONFIRMATION_REQUIRED',
-  ]));
+  const validClasses = new Set([
+    'A_KEEP_L3_REQUIRE_APPROVAL', 'B_MOVE_TO_L2_NO_APPROVAL', 'HUMAN_CONFIRMATION_REQUIRED',
+  ]);
+  assert.ok(review.reviews.every((row) => validClasses.has(row.semanticClass)));
   const ambiguous = review.reviews.filter((row) => row.semanticClass === 'HUMAN_CONFIRMATION_REQUIRED');
   assert.ok(ambiguous.length > 0, 'the human-confirmation queue cannot silently disappear');
   for (const row of ambiguous) {
@@ -70,6 +69,48 @@ test('approval ambiguity remains explicit and every contradiction stays reviewed
     assert.deepEqual(row.proposed, { targetAutonomy: 'L3', humanApprovalRequired: true });
   }
   assert.equal(ambiguous.find((row) => row.jtbdId === 'ACC-JTBD-AE-012')?.needsHumanConfirmation, true);
+  for (const row of review.reviews.filter((item) => item.evidence.pattern === 'DECIDE')) {
+    if (row.evidence.authoritativeEffectCandidates.length > 0) {
+      assert.notEqual(row.semanticClass, 'B_MOVE_TO_L2_NO_APPROVAL', `${row.jtbdId} writes a decision/task`);
+      assert.deepEqual(row.proposed, { targetAutonomy: 'L3', humanApprovalRequired: true });
+    }
+  }
+});
+
+test('roadmap audit separates structure, semantic support, overrides, and human review', () => {
+  const audit = JSON.parse(readFileSync(join(ROOT, 'docs/jtbd/roadmap/assignment-audit-v1.1.json'), 'utf8'));
+  assert.equal(audit.summary.structurallyValid, 600);
+  const cro = audit.audits.find((row) => row.jtbdId === 'ACC-JTBD-CRO-002');
+  assert.equal(cro.semanticStatus, 'semantically_supported');
+  assert.equal(cro.semanticEvidence.assignedPillar, 'core-crm-revenue');
+  assert.ok(cro.semanticEvidence.candidatePillars.includes('core-crm-revenue'));
+  const unrelated = clone(cro);
+  unrelated.semanticEvidence.assignedPillar = 'billing';
+  unrelated.semanticEvidence.overrideRationale = null;
+  const status = unrelated.semanticEvidence.candidatePillars.includes(unrelated.semanticEvidence.assignedPillar)
+    ? 'semantically_supported'
+    : unrelated.semanticEvidence.overrideRationale ? 'explicit_override_with_rationale' : 'needs_human_review';
+  assert.equal(status, 'needs_human_review');
+});
+
+test('taxonomy errors name concrete competing evidence and a human action', () => {
+  const reverse = JSON.parse(readFileSync(join(ROOT, 'docs/jtbd/quality/REVERSE_CAPABILITY_AUDIT.json'), 'utf8'));
+  for (const [id, row] of Object.entries(reverse.orphanCapabilities)) {
+    if (row.classification !== 'taxonomy error') continue;
+    assert.ok(row.taxonomyEvidence?.competingCapabilityOrCategory, id);
+    assert.ok(row.taxonomyEvidence?.duplicatedOrMisplacedBoundary, id);
+    assert.match(row.taxonomyEvidence?.recommendedHumanAction, /^(relocate|consolidate|rename|split|retain with rationale)$/, id);
+    assert.ok(row.reason.includes(row.taxonomyEvidence.competingCapabilityOrCategory), id);
+    assert.ok(!/^.+overlaps a taxonomy boundary/.test(row.reason), id);
+  }
+});
+
+test('README canonical byte count equals the file and manifest', () => {
+  const catalog = readFileSync(join(ROOT, 'docs/jtbd/catalog/jtbd.jsonl'));
+  const manifest = JSON.parse(readFileSync(join(ROOT, 'docs/jtbd/manifest.json'), 'utf8'));
+  const bytes = manifest.files.find((row) => row.path === 'catalog/jtbd.jsonl').bytes;
+  assert.equal(catalog.byteLength, bytes);
+  assert.ok(readFileSync(join(ROOT, 'docs/jtbd/README.md'), 'utf8').includes(`${bytes.toLocaleString('en-US')} bytes`));
 });
 
 test('every desired job has a complete public roadmap disposition and no private priority', () => {
@@ -100,6 +141,25 @@ test('refuses unknown pillars and assignment metadata that contradicts the regis
     assignments[0] = { ...assignments[0], ...mutation };
     const { problems } = checkWorld({ ...world, assignments });
     assert.ok(codes(problems).has('JTBD_ROADMAP_RESOLUTION_UNKNOWN'));
+  }
+});
+
+test('roadmap dependencies are arrays of unique registered pillar ids', () => {
+  const validId = Object.keys(world.pillars.pillars)[0];
+  for (const dependencies of [
+    'billing',
+    ['does-not-exist'],
+    [validId, 'does-not-exist'],
+    [validId, validId],
+  ]) {
+    const assignments = clone(world.assignments);
+    assignments[0].dependencies = dependencies;
+    assert.ok(codes(checkWorld({ ...world, assignments }).problems).has('JTBD_ROADMAP_RESOLUTION_UNKNOWN'));
+  }
+  for (const dependencies of [[], [validId]]) {
+    const assignments = clone(world.assignments);
+    assignments[0].dependencies = dependencies;
+    assert.ok(!codes(checkWorld({ ...world, assignments }).problems).has('JTBD_ROADMAP_RESOLUTION_UNKNOWN'));
   }
 });
 

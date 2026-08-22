@@ -505,6 +505,19 @@ export function checkWorld(world) {
     for (const field of required) if (assignment[field] === undefined || assignment[field] === null || assignment[field] === '') {
       problems.push({ code: 'JTBD_ROADMAP_ORPHAN', message: `${assignment.jtbdId}: assignment lacks ${field}` });
     }
+    if (!Array.isArray(assignment.dependencies)) {
+      problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: dependencies must be an array of registered pillar ids` });
+    } else {
+      const seenDependencies = new Set();
+      for (const dependency of assignment.dependencies) {
+        if (typeof dependency !== 'string' || !world.pillars?.pillars?.[dependency]) {
+          problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: dependency "${dependency}" is not a registered pillar id` });
+        } else if (seenDependencies.has(dependency)) {
+          problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: dependency "${dependency}" is duplicated` });
+        }
+        seenDependencies.add(dependency);
+      }
+    }
     if (['deferred', 'out of scope'].includes(assignment.disposition) && !assignment.deferredReason) {
       problems.push({ code: 'JTBD_ROADMAP_ORPHAN', message: `${assignment.jtbdId}: ${assignment.disposition} requires a reason` });
     }
