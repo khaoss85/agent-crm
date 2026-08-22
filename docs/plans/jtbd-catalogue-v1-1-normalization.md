@@ -25,6 +25,7 @@ The desired catalogue is `docs/jtbd/catalog/jtbd.jsonl`; quality candidates are 
 ## Progress log
 - 2026-08-21: plan created; correction and roadmap generation started from merged migration-readiness main.
 - 2026-08-21: 280 contradictions resolved by reviewed rule; catalogue checksum moved; every desired job assigned to a coherent roadmap slice; reverse audit and proved-finding dispositions recorded.
+- 2026-08-22: independent review fixes preserve null package ownership, validate pillar metadata and actual private field names, and explicitly retire the stale MASTER v1.0 rendering.
 
 ## Decision log
 - L3 implies approval. Contradictory LOW/MEDIUM rows retain their explicit no-approval intent by moving to L2; no HIGH-risk row is affected.
@@ -32,4 +33,4 @@ The desired catalogue is `docs/jtbd/catalog/jtbd.jsonl`; quality candidates are 
 - Proved wording/dependency defects not safely correctable mechanically are deferred individually for human semantic review, never silently discarded.
 
 ## Outcome and follow-up
-Pending implementation and human product review. No next-front implementation is part of this plan.
+Implementation and verification complete; human product review remains pending while the PR stays open. No next-front implementation is part of this plan.

@@ -1,5 +1,7 @@
 # Accordo — Master JTBD, Use Case & Coverage Document
 
+> **HISTORICAL V1.0 SNAPSHOT — NOT CANONICAL FOR CATALOGUE V1.1.** Current desired-state records, autonomy and approval boundaries are defined only by `catalog/jtbd.jsonl`. This snapshot remains for provenance and must not be used as current catalogue evidence.
+
 > Documento desired-state per progettazione, audit del repository, roadmap e benchmark di Accordo.  
 > Versione `2026-08-20.1`. La copertura implementata è separata e parte da `NOT_ASSESSED`.
 

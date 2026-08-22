@@ -7,7 +7,7 @@ This directory is a desired-state requirements corpus, not a claim that Accordo 
 ## Canonical raw files
 
 - `catalog/jtbd.jsonl` — 4,611,152 bytes / 600 complete records.
-- `MASTER.md` — 370,072 bytes.
+- `MASTER.md` — historical v1.0 rendered snapshot; **not canonical** for current records.
 - `catalog/personas.json` — 30 personas.
 - `catalog/capabilities.json` — 225 atomic capabilities.
 - `catalog/e2e_scenarios.json` — 10 cross-functional scenarios.
@@ -38,11 +38,11 @@ stderr, so the output parses).
 and the path `data/jtbd.jsonl` (the real path is `catalog/jtbd.jsonl`). Six
 references in total, at lines 60, 68, 84–86 and 1021.
 
-They are **NOT_IMPLEMENTED**, not missing by accident. `MASTER.md` is frozen by
-the SHA-256 in `manifest.json` and cannot be edited without moving the
-catalogue's checksum, so the correction is recorded here instead of silently
-diverging the corpus. Treat those four names as historical: do not run them, and
-do not add a tool merely because a document mentions it.
+They are **NOT_IMPLEMENTED**, not missing by accident. `MASTER.md` is retained as a
+historical v1.0 rendered snapshot and is not a canonical representation of v1.1;
+current desired-state records come only from `catalog/jtbd.jsonl`. Treat those four
+names as historical: do not run them, and do not add a tool merely because a
+document mentions it.
 
 The prompts under `prompts/` have been corrected to the real paths and mark the
 absent tools inline.

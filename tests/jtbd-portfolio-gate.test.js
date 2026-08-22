@@ -60,7 +60,37 @@ test('every desired job has a complete public roadmap disposition and no private
   assert.equal(new Set(assignments.map((row) => row.jtbdId)).size, 600);
   for (const row of assignments) {
     for (const field of ['disposition', 'pillar', 'edition', 'roadmapTrack', 'milestoneOrEpic', 'dependencies']) assert.notEqual(row[field], undefined);
-    for (const field of ['priority', 'businessValue', 'competitiveRationale', 'commercialSequence']) assert.ok(!(field in row));
+    for (const field of [...PRIVATE_CATALOG_FIELDS, 'priority', 'businessValue', 'competitiveRationale', 'commercialSequence']) assert.ok(!(field in row));
+  }
+});
+
+test('explicit assignment keeps a registered null package instead of an inferred package', () => {
+  const record = world.records.find((row) => row.core.some((capability) => world.capabilityPillars[capability] && world.pillars.pillars[world.capabilityPillars[capability]]?.package));
+  assert.ok(record);
+  const assignment = { ...world.assignments.find((row) => row.jtbdId === record.id), pillar: 'billing' };
+  const roadmap = buildOverlays({ ...world, assignments: world.assignments.map((row) => row.jtbdId === record.id ? assignment : row) }).roadmap;
+  assert.equal(roadmap.find((row) => row.jtbdId === record.id).package, null);
+});
+
+test('refuses unknown pillars and assignment metadata that contradicts the registry', () => {
+  for (const mutation of [
+    { pillar: 'does-not-exist' },
+    { edition: 'private-managed-cloud' },
+    { roadmapTrack: 'Invented track' },
+  ]) {
+    const assignments = clone(world.assignments);
+    assignments[0] = { ...assignments[0], ...mutation };
+    const { problems } = checkWorld({ ...world, assignments });
+    assert.ok(codes(problems).has('JTBD_ROADMAP_RESOLUTION_UNKNOWN'));
+  }
+});
+
+test('refuses the catalogue commercial field names in public assignments', () => {
+  for (const privateField of PRIVATE_CATALOG_FIELDS) {
+    const assignments = clone(world.assignments);
+    assignments[0][privateField] = privateField === 'competitive_benchmark' ? [] : 5;
+    const { problems } = checkWorld({ ...world, assignments });
+    assert.ok(codes(problems).has('JTBD_PRIVATE_FIELD_PUBLISHED'), privateField);
   }
 });
 

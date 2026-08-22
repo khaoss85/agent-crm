@@ -307,7 +307,10 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
         ? (explicit.edition === 'private-managed-cloud' ? 'private_managed_cloud' : 'public_oss_pillar')
         : resolution,
       pillar: explicit?.pillar ?? (entry ? winner : null),
-      package: explicitPillar?.package ?? (entry ? entry.package : null),
+      // An explicit assignment owns the complete pillar projection. In particular, `null`
+      // is a meaningful package value for framework pillars; it must not fall through to
+      // the capability-inferred pillar's package.
+      package: explicit ? explicitPillar?.package ?? null : (entry ? entry.package : null),
       edition: explicit?.edition ?? (entry ? entry.edition : null),
       roadmapTrack: explicit?.roadmapTrack ?? (entry ? entry.roadmapTrack : null),
       milestone: explicit?.milestoneOrEpic ?? milestone,
@@ -487,6 +490,17 @@ export function checkWorld(world) {
       problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: duplicate or unknown roadmap assignment` });
     }
     assignmentIds.add(assignment.jtbdId);
+    const registeredPillar = world.pillars?.pillars?.[assignment.pillar];
+    if (!registeredPillar) {
+      problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: assignment names unknown pillar "${assignment.pillar}"` });
+    } else {
+      if (assignment.edition !== registeredPillar.edition) {
+        problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: assignment edition "${assignment.edition}" disagrees with pillar "${assignment.pillar}" (${registeredPillar.edition})` });
+      }
+      if (assignment.roadmapTrack !== registeredPillar.roadmapTrack) {
+        problems.push({ code: 'JTBD_ROADMAP_RESOLUTION_UNKNOWN', message: `${assignment.jtbdId}: assignment roadmapTrack disagrees with pillar "${assignment.pillar}"` });
+      }
+    }
     const required = ['disposition', 'pillar', 'edition', 'roadmapTrack', 'milestoneOrEpic', 'dependencies'];
     for (const field of required) if (assignment[field] === undefined || assignment[field] === null || assignment[field] === '') {
       problems.push({ code: 'JTBD_ROADMAP_ORPHAN', message: `${assignment.jtbdId}: assignment lacks ${field}` });
@@ -494,7 +508,7 @@ export function checkWorld(world) {
     if (['deferred', 'out of scope'].includes(assignment.disposition) && !assignment.deferredReason) {
       problems.push({ code: 'JTBD_ROADMAP_ORPHAN', message: `${assignment.jtbdId}: ${assignment.disposition} requires a reason` });
     }
-    for (const privateField of ['priority', 'businessValue', 'competitiveRationale', 'commercialSequence']) {
+    for (const privateField of [...PRIVATE_CATALOG_FIELDS, 'priority', 'businessValue', 'competitiveRationale', 'commercialSequence']) {
       if (Object.prototype.hasOwnProperty.call(assignment, privateField)) {
         problems.push({ code: 'JTBD_PRIVATE_FIELD_PUBLISHED', message: `${assignment.jtbdId}: public roadmap assignment carries ${privateField}` });
       }
