@@ -197,6 +197,11 @@
       "generated": false,
       "why": "Public status, track, milestone and dependencies stay; private priority and commercial rationale never enter this file."
     },
+    "docs/jtbd/roadmap/override-reviews.json": {
+      "classification": "KEEP_PUBLIC",
+      "generated": false,
+      "why": "Reviewed technical ownership exceptions use a closed public basis and an existing evidence path; commercial judgement is not accepted."
+    },
     "docs/jtbd/quality/REVERSE_CAPABILITY_AUDIT.json": {
       "classification": "MOVE_PRIVATE",
       "generated": false,

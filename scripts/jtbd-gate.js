@@ -147,6 +147,7 @@ const PATHS = Object.freeze({
   coverageOverlay: 'docs/jtbd/coverage/coverage.overlay.jsonl',
   roadmapOverlay: 'docs/jtbd/roadmap/roadmap.overlay.jsonl',
   assignments: 'docs/jtbd/roadmap/assignments.jsonl',
+  overrideReviews: 'docs/jtbd/roadmap/override-reviews.json',
   classification: 'docs/jtbd/PUBLIC_PRIVATE.json',
   truth: 'docs/repository-truth.json',
   matrix: 'docs/benchmarks/CRM_JTBD_MATRIX.md',
@@ -154,15 +155,23 @@ const PATHS = Object.freeze({
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
-const isReviewedTechnicalOverride = (assignment, rationale) => {
-  const review = assignment?.overrideReview;
+const TECHNICAL_OWNERSHIP_RATIONALES = Object.freeze({
+  architecture_boundary: 'Ownership follows the reviewed public architecture boundary.',
+  delivery_responsibility: 'Ownership follows the reviewed public delivery responsibility.',
+  orchestration_owner: 'Ownership follows the reviewed public orchestration responsibility.',
+  public_dependency: 'Ownership follows the reviewed public dependency boundary.',
+});
+
+const isReviewedTechnicalOverride = (assignment, rationale, reviewsById, evidencePaths) => {
+  const review = reviewsById.get(assignment?.overrideReviewId);
   const reviewedAt = typeof review?.reviewedAt === 'string' ? review.reviewedAt : '';
   const timestamp = Date.parse(reviewedAt);
-  return rationale.length >= 40
-    && /\b(architectur(?:e|al)|boundary|capabilit(?:y|ies)|deliver(?:y|able)|dependency|orchestrat(?:e|ion|or)|package|public api|service owner)\b/i.test(rationale)
-    && review && typeof review === 'object' && !Array.isArray(review)
+  return review && typeof review === 'object' && !Array.isArray(review)
+    && review.jtbdId === assignment.jtbdId && review.pillar === assignment.pillar
+    && review.technicalRationale === rationale
+    && TECHNICAL_OWNERSHIP_RATIONALES[review.ownershipBasis] === rationale
     && typeof review.reviewedBy === 'string' && review.reviewedBy.trim().length >= 3
-    && typeof review.evidence === 'string' && review.evidence.trim().length >= 8
+    && typeof review.evidencePath === 'string' && evidencePaths.has(review.evidencePath)
     && Number.isFinite(timestamp) && new Date(timestamp).toISOString() === reviewedAt;
 };
 
@@ -230,10 +239,11 @@ const readJson = (rootDir, rel, problems) => {
  *
  * Pure over what it is handed, so a test can move one input and watch exactly one field move.
  */
-export function buildOverlays({ records, assessments, crosswalk, capabilityPillars, pillars, assignments = [] }) {
+export function buildOverlays({ records, assessments, crosswalk, capabilityPillars, pillars, assignments = [], overrideReviews = { reviews: [] }, reviewEvidencePaths = new Set() }) {
   const problems = [];
   const byId = new Map(assessments.map((entry) => [entry.jtbdId, entry]));
   const assignmentById = new Map(assignments.map((entry) => [entry.jtbdId, entry]));
+  const reviewsById = new Map((overrideReviews.reviews ?? []).map((entry) => [entry.reviewId, entry]));
   const precedence = pillars.precedence;
   const registry = pillars.pillars;
 
@@ -317,9 +327,17 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
     const overrideRationale = typeof explicit?.overrideRationale === 'string'
       ? explicit.overrideRationale.trim()
       : '';
-    const reviewedOverride = explicit ? isReviewedTechnicalOverride(explicit, overrideRationale) : false;
+    const reviewedOverride = explicit
+      ? isReviewedTechnicalOverride(explicit, overrideRationale, reviewsById, reviewEvidencePaths)
+      : false;
     const candidateOwner = explicit ? candidatePillars.includes(explicit.pillar) : true;
     const settled = ['implemented', 'in progress', 'planned'].includes(explicit?.disposition);
+    if (explicit && overrideRationale && !reviewedOverride) {
+      problems.push({
+        code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
+        message: `${record.id}: overrideRationale is not bound to a registered technical ownership basis and existing public review evidence`,
+      });
+    }
     if (explicit && !candidateOwner && !reviewedOverride && settled) {
       problems.push({
         code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
@@ -332,12 +350,6 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
       problems.push({
         code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED',
         message: `${record.id}: unsupported pillar "${explicit.pillar}" is deferred, but deferredReason does not make the ownership ambiguity explicit`,
-      });
-    }
-    if (overrideRationale && /\b(priority score|business value|competitive|commercial (?:timing|sequenc(?:e|ing))|win\/?loss|roi|market demand|revenue potential)\b/i.test(overrideRationale)) {
-      problems.push({
-        code: 'JTBD_PRIVATE_FIELD_PUBLISHED',
-        message: `${record.id}: overrideRationale must explain public technical ownership, not private commercial prioritisation`,
       });
     }
     roadmap.push({
@@ -358,8 +370,8 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
       ownerStatus: explicit?.disposition ?? ownerStatus,
       deferredReason: explicit?.deferredReason ?? null,
       publicLimitation: explicit?.publicLimitation ?? null,
-      ...(overrideRationale ? { overrideRationale } : {}),
-      ...(reviewedOverride ? { overrideReview: explicit.overrideReview } : {}),
+      ...(reviewedOverride ? { overrideRationale } : {}),
+      ...(reviewedOverride ? { overrideReviewId: explicit.overrideReviewId } : {}),
       candidatePillars,
       unownedCoreCapabilities: unowned,
       coreCapabilities: record.core.length,
@@ -689,6 +701,13 @@ export async function loadWorld(rootDir = ROOT) {
   const truth = readJson(rootDir, PATHS.truth, problems);
   const classification = readJson(rootDir, PATHS.classification, problems);
   const assignments = readJsonl(rootDir, PATHS.assignments, problems);
+  const overrideReviews = readJson(rootDir, PATHS.overrideReviews, problems) ?? { reviews: [] };
+  const reviewEvidencePaths = new Set((overrideReviews.reviews ?? [])
+    .filter((review) => typeof review.evidencePath === 'string'
+      && typeof review.reviewId === 'string'
+      && existsSync(join(rootDir, review.evidencePath))
+      && readFileSync(join(rootDir, review.evidencePath), 'utf8').includes(review.reviewId))
+    .map((review) => review.evidencePath));
   const assessments = assessmentsDoc?.assessments ?? [];
   const digests = new Map();
   for (const entry of assessments) {
@@ -708,6 +727,8 @@ export async function loadWorld(rootDir = ROOT) {
     truth,
     classification,
     assignments,
+    overrideReviews,
+    reviewEvidencePaths,
     matrixText: existsSync(join(rootDir, PATHS.matrix)) ? readFileSync(join(rootDir, PATHS.matrix), 'utf8') : '',
     coverageText: readOverlay(rootDir, PATHS.coverageOverlay, problems),
     roadmapText: readOverlay(rootDir, PATHS.roadmapOverlay, problems),

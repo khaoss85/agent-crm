@@ -182,14 +182,25 @@ test('semantic roadmap ownership permits a candidate, reviewed override, or huma
 
   const reviewedOverride = replace({
     ...unsupported,
-    overrideRationale: 'Billing owns delivery because its public API is the orchestration boundary.',
-    overrideReview: {
-      reviewedBy: 'product-architecture-council',
-      reviewedAt: '2026-08-22T10:00:00.000Z',
-      evidence: 'PR-111 ownership review',
-    },
+    overrideRationale: 'Ownership follows the reviewed public orchestration responsibility.',
+    overrideReviewId: 'review-cro-002-billing',
   });
-  assert.ok(!codes(checkWorld({ ...world, assignments: reviewedOverride }).problems)
+  const overrideReviews = { reviews: [{
+    reviewId: 'review-cro-002-billing',
+    jtbdId: source.jtbdId,
+    pillar: 'billing',
+    ownershipBasis: 'orchestration_owner',
+    technicalRationale: 'Ownership follows the reviewed public orchestration responsibility.',
+    reviewedBy: 'product-architecture-council',
+    reviewedAt: '2026-08-22T10:00:00.000Z',
+    evidencePath: 'docs/jtbd/roadmap/OWNERSHIP.md',
+  }] };
+  assert.ok(!codes(checkWorld({
+    ...world,
+    assignments: reviewedOverride,
+    overrideReviews,
+    reviewEvidencePaths: new Set(['docs/jtbd/roadmap/OWNERSHIP.md']),
+  }).problems)
     .has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
 
   const humanDeferred = replace({
@@ -216,20 +227,17 @@ test('semantic ownership overrides cannot publish commercial rationale', () => {
       disposition: 'planned',
       overrideRationale,
     } : row);
-    assert.ok(codes(checkWorld({ ...world, assignments }).problems).has('JTBD_PRIVATE_FIELD_PUBLISHED'));
+    assert.ok(codes(checkWorld({ ...world, assignments }).problems).has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
   }
 });
 
-test('semantic ownership overrides require meaningful rationale and structured review evidence', () => {
+test('semantic ownership overrides require a closed technical basis and existing review evidence', () => {
   const source = world.assignments.find((row) => row.jtbdId === 'ACC-JTBD-CRO-002');
   const billing = world.pillars.pillars.billing;
   for (const mutation of [
     { overrideRationale: 'x' },
-    { overrideRationale: 'Billing owns delivery because its public API is the orchestration boundary.' },
-    {
-      overrideRationale: 'Billing owns delivery because its public API is the orchestration boundary.',
-      overrideReview: { reviewedBy: 'ab', reviewedAt: 'yesterday', evidence: 'short' },
-    },
+    { overrideRationale: 'Ownership follows the reviewed public orchestration responsibility.' },
+    { overrideRationale: 'Ownership follows the reviewed public orchestration responsibility.', overrideReviewId: 'not-real' },
   ]) {
     const assignments = world.assignments.map((row) => row.jtbdId === source.jtbdId ? {
       ...row,
