@@ -202,6 +202,11 @@
       "generated": false,
       "why": "Reviewed technical ownership exceptions use a closed public basis and an existing evidence path; commercial judgement is not accepted."
     },
+    "docs/jtbd/reviews/ownership/README.md": {
+      "classification": "KEEP_PUBLIC",
+      "generated": false,
+      "why": "Documents the independent, exact-marker evidence required for a public technical ownership override."
+    },
     "docs/jtbd/quality/REVERSE_CAPABILITY_AUDIT.json": {
       "classification": "MOVE_PRIVATE",
       "generated": false,

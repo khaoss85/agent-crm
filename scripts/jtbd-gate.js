@@ -161,6 +161,7 @@ const TECHNICAL_OWNERSHIP_RATIONALES = Object.freeze({
   orchestration_owner: 'Ownership follows the reviewed public orchestration responsibility.',
   public_dependency: 'Ownership follows the reviewed public dependency boundary.',
 });
+const OVERRIDE_EVIDENCE_PREFIX = 'docs/jtbd/reviews/ownership/';
 
 const isReviewedTechnicalOverride = (assignment, rationale, reviewsById, evidenceKeys) => {
   const review = reviewsById.get(assignment?.overrideReviewId);
@@ -171,7 +172,8 @@ const isReviewedTechnicalOverride = (assignment, rationale, reviewsById, evidenc
     && review.technicalRationale === rationale
     && TECHNICAL_OWNERSHIP_RATIONALES[review.ownershipBasis] === rationale
     && typeof review.reviewedBy === 'string' && review.reviewedBy.trim().length >= 3
-    && typeof review.evidencePath === 'string' && review.evidencePath !== PATHS.overrideReviews
+    && typeof review.evidencePath === 'string'
+    && review.evidencePath.startsWith(OVERRIDE_EVIDENCE_PREFIX) && review.evidencePath.endsWith('.md')
     && evidenceKeys.has(`${review.reviewId}\0${review.evidencePath}`)
     && Number.isFinite(timestamp) && new Date(timestamp).toISOString() === reviewedAt;
 };
@@ -257,27 +259,45 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
   const reviewRows = registryEnvelopeValid ? overrideReviews.reviews : [];
   const byId = new Map(assessments.map((entry) => [entry.jtbdId, entry]));
   const assignmentById = new Map(assignments.map((entry) => [entry.jtbdId, entry]));
+  const precedence = pillars.precedence;
+  const registry = pillars.pillars;
   const reviewsById = new Map();
   const allowedReviewFields = new Set([
     'reviewId', 'jtbdId', 'pillar', 'ownershipBasis', 'technicalRationale',
     'reviewedBy', 'reviewedAt', 'evidencePath',
   ]);
   for (const review of reviewRows) {
+    if (!review || typeof review !== 'object' || Array.isArray(review)) {
+      problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${PATHS.overrideReviews}: every review must be a plain object` });
+      continue;
+    }
     const unknown = Object.keys(review).filter((field) => !allowedReviewFields.has(field));
-    if (unknown.length) {
+    const missing = [...allowedReviewFields].filter((field) => !Object.prototype.hasOwnProperty.call(review, field));
+    if (unknown.length || missing.length) {
       problems.push({
         code: 'JTBD_PRIVATE_FIELD_PUBLISHED',
-        message: `${review.reviewId ?? 'override review'}: public ownership review has unsupported field(s): ${unknown.join(', ')}`,
+        message: `${review.reviewId ?? 'override review'}: public ownership review schema differs (unknown: ${unknown.join(', ') || 'none'}; missing: ${missing.join(', ') || 'none'})`,
       });
+    }
+    const reviewedAt = typeof review.reviewedAt === 'string' ? review.reviewedAt : '';
+    const reviewedTimestamp = Date.parse(reviewedAt);
+    const validEntry = typeof review.reviewId === 'string' && /^JTBD-OWNER-OVERRIDE-[A-Z0-9-]+$/.test(review.reviewId)
+      && records.some((record) => record.id === review.jtbdId)
+      && Boolean(registry[review.pillar])
+      && TECHNICAL_OWNERSHIP_RATIONALES[review.ownershipBasis] === review.technicalRationale
+      && typeof review.reviewedBy === 'string' && review.reviewedBy.trim().length >= 3
+      && Number.isFinite(reviewedTimestamp) && new Date(reviewedTimestamp).toISOString() === reviewedAt
+      && typeof review.evidencePath === 'string'
+      && review.evidencePath.startsWith(OVERRIDE_EVIDENCE_PREFIX) && review.evidencePath.endsWith('.md')
+      && reviewEvidenceKeys.has(`${review.reviewId}\0${review.evidencePath}`);
+    if (!validEntry) {
+      problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${review.reviewId ?? 'override review'}: invalid or unevidenced public ownership review` });
     }
     if (reviewsById.has(review.reviewId)) {
       problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${review.reviewId}: duplicate ownership review id` });
     }
     reviewsById.set(review.reviewId, review);
   }
-  const precedence = pillars.precedence;
-  const registry = pillars.pillars;
-
   // Which crosswalk rows name each canonical job, so ownership follows the crosswalk and
   // never the coverage overlay. A milestone is a plan; a status is a claim; they are
   // deliberately read from different places.
@@ -737,10 +757,11 @@ export async function loadWorld(rootDir = ROOT) {
   const reviewEvidenceKeys = new Set(reviewRows
     .filter((review) => typeof review.evidencePath === 'string'
       && typeof review.reviewId === 'string'
-      && review.evidencePath !== PATHS.overrideReviews
+      && review.evidencePath.startsWith(OVERRIDE_EVIDENCE_PREFIX) && review.evidencePath.endsWith('.md')
       && resolve(rootDir, review.evidencePath).startsWith(`${resolve(rootDir)}/`)
       && existsSync(resolve(rootDir, review.evidencePath))
-      && readFileSync(resolve(rootDir, review.evidencePath), 'utf8').includes(review.reviewId))
+      && readFileSync(resolve(rootDir, review.evidencePath), 'utf8').split(/\r?\n/)
+        .includes(`<!-- jtbd-owner-review: ${review.reviewId} -->`))
     .map((review) => `${review.reviewId}\0${review.evidencePath}`));
   const assessments = assessmentsDoc?.assessments ?? [];
   const digests = new Map();

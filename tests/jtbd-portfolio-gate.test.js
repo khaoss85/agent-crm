@@ -183,23 +183,23 @@ test('semantic roadmap ownership permits a candidate, reviewed override, or huma
   const reviewedOverride = replace({
     ...unsupported,
     overrideRationale: 'Ownership follows the reviewed public orchestration responsibility.',
-    overrideReviewId: 'review-cro-002-billing',
+    overrideReviewId: 'JTBD-OWNER-OVERRIDE-CRO-002-BILLING',
   });
   const overrideReviews = { contract: 1, reviews: [{
-    reviewId: 'review-cro-002-billing',
+    reviewId: 'JTBD-OWNER-OVERRIDE-CRO-002-BILLING',
     jtbdId: source.jtbdId,
     pillar: 'billing',
     ownershipBasis: 'orchestration_owner',
     technicalRationale: 'Ownership follows the reviewed public orchestration responsibility.',
     reviewedBy: 'product-architecture-council',
     reviewedAt: '2026-08-22T10:00:00.000Z',
-    evidencePath: 'docs/jtbd/roadmap/OWNERSHIP.md',
+    evidencePath: 'docs/jtbd/reviews/ownership/CRO-002.md',
   }] };
   assert.ok(!codes(checkWorld({
     ...world,
     assignments: reviewedOverride,
     overrideReviews,
-    reviewEvidenceKeys: new Set(['review-cro-002-billing\0docs/jtbd/roadmap/OWNERSHIP.md']),
+    reviewEvidenceKeys: new Set(['JTBD-OWNER-OVERRIDE-CRO-002-BILLING\0docs/jtbd/reviews/ownership/CRO-002.md']),
   }).problems)
     .has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
 
@@ -214,11 +214,11 @@ test('semantic roadmap ownership permits a candidate, reviewed override, or huma
 
 test('override reviews bind evidence per id and reject fields outside the public schema', () => {
   const review = {
-    reviewId: 'review-one', jtbdId: 'ACC-JTBD-CRO-002', pillar: 'billing',
+    reviewId: 'JTBD-OWNER-OVERRIDE-ONE', jtbdId: 'ACC-JTBD-CRO-002', pillar: 'billing',
     ownershipBasis: 'orchestration_owner',
     technicalRationale: 'Ownership follows the reviewed public orchestration responsibility.',
     reviewedBy: 'product-architecture-council', reviewedAt: '2026-08-22T10:00:00.000Z',
-    evidencePath: 'docs/jtbd/roadmap/OWNERSHIP.md',
+    evidencePath: 'docs/jtbd/reviews/ownership/ONE.md',
   };
   const assignment = world.assignments.find((row) => row.jtbdId === review.jtbdId);
   const billing = world.pillars.pillars.billing;
@@ -228,12 +228,12 @@ test('override reviews bind evidence per id and reject fields outside the public
   } : row);
   const wrongKey = checkWorld({
     ...world, assignments, overrideReviews: { contract: 1, reviews: [review] },
-    reviewEvidenceKeys: new Set(['another-review\0docs/jtbd/roadmap/OWNERSHIP.md']),
+    reviewEvidenceKeys: new Set(['JTBD-OWNER-OVERRIDE-OTHER\0docs/jtbd/reviews/ownership/ONE.md']),
   }).problems;
   assert.ok(codes(wrongKey).has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
   const privateField = checkWorld({
     ...world, assignments, overrideReviews: { contract: 1, reviews: [{ ...review, business_value_1_5: 5 }] },
-    reviewEvidenceKeys: new Set(['review-one\0docs/jtbd/roadmap/OWNERSHIP.md']),
+    reviewEvidenceKeys: new Set(['JTBD-OWNER-OVERRIDE-ONE\0docs/jtbd/reviews/ownership/ONE.md']),
   }).problems;
   assert.ok(codes(privateField).has('JTBD_PRIVATE_FIELD_PUBLISHED'));
   for (const overrideReviews of [
@@ -243,10 +243,10 @@ test('override reviews bind evidence per id and reject fields outside the public
     assert.ok(codes(checkWorld({ ...world, overrideReviews }).problems)
       .has('JTBD_PRIVATE_FIELD_PUBLISHED'));
   }
-  const selfEvidenceReview = { ...review, evidencePath: 'docs/jtbd/roadmap/override-reviews.json' };
+  const selfEvidenceReview = { ...review, evidencePath: 'docs/jtbd/roadmap/assignments.jsonl' };
   const selfEvidence = checkWorld({
     ...world, assignments, overrideReviews: { contract: 1, reviews: [selfEvidenceReview] },
-    reviewEvidenceKeys: new Set(['review-one\0docs/jtbd/roadmap/override-reviews.json']),
+    reviewEvidenceKeys: new Set(['JTBD-OWNER-OVERRIDE-ONE\0docs/jtbd/roadmap/assignments.jsonl']),
   }).problems;
   assert.ok(codes(selfEvidence).has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
 });
