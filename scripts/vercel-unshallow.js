@@ -4,14 +4,17 @@
  * Gives a Vercel build the git history the public-claims gate requires.
  *
  * Git-linked Vercel builds clone shallow, and `scripts/site-check.js` fails
- * closed on a shallow checkout — correctly: measuredAgainst.sha cannot be
- * proven an ancestor of HEAD without the connecting commits. The container's
+ * closed when that checkout cannot resolve and connect measuredAgainst.sha to
+ * HEAD. A shallow marker alone is not the verdict; bounded history can contain
+ * the complete connecting path. The container's
  * configured remote has no credentials, so a plain `git fetch --unshallow`
  * fails; the repository is public, so a fetch addressed at the GitHub URL —
  * composed from the VERCEL_GIT_* variables every git build provides — needs
  * none. The helper reads the current ledger and exits 0 only after git reports
- * complete history, resolves that measured commit, and proves it is an ancestor
- * of HEAD. A zero-exit fetch with an unmet post-condition falls through to the
+ * enough history to resolve that measured commit and prove it is an ancestor of
+ * HEAD. Shallow state is inspected, not treated as a proxy for missing proof: a
+ * bounded deepen may leave the marker while making ancestry provable. A
+ * zero-exit fetch with an unmet post-condition falls through to the
  * next bounded strategy instead of masking the failure the gate would report.
  *
  * This exists as a file because vercel.json caps buildCommand at 256
@@ -102,7 +105,7 @@ export function restoreProvenance(options = {}) {
   }
 
   const final = verifyProvenance(runGit, measuredSha);
-  error(`vercel-unshallow: unable to prove ${measuredSha} is available, in complete history, and an ancestor of HEAD (${final.reason}).`);
+  error(`vercel-unshallow: unable to prove ${measuredSha} is available and an ancestor of HEAD (${final.reason}).`);
   return 1;
 }
 
@@ -110,14 +113,15 @@ export function restoreProvenance(options = {}) {
 function verifyProvenance(runGit, measuredSha) {
   const shallow = runGit(['rev-parse', '--is-shallow-repository']);
   if (shallow.status !== 0) return { ok: false, notGit: true, reason: 'git state unavailable' };
-  if (String(shallow.stdout ?? '').trim() !== 'false') {
-    return { ok: false, notGit: false, reason: 'checkout is shallow' };
+  const shallowState = String(shallow.stdout ?? '').trim();
+  if (shallowState !== 'true' && shallowState !== 'false') {
+    return { ok: false, notGit: false, reason: 'git returned an invalid shallow-state probe' };
   }
   const object = runGit(['cat-file', '-e', `${measuredSha}^{commit}`]);
   if (object.status !== 0) return { ok: false, notGit: false, reason: `commit ${measuredSha} is unavailable` };
   const ancestor = runGit(['merge-base', '--is-ancestor', measuredSha, 'HEAD']);
   if (ancestor.status !== 0) return { ok: false, notGit: false, reason: `${measuredSha} is not an ancestor of HEAD` };
-  return { ok: true, notGit: false, reason: 'verified' };
+  return { ok: true, notGit: false, reason: shallowState === 'true' ? 'verified in bounded shallow history' : 'verified' };
 }
 
 /** @param {GitResult} run */

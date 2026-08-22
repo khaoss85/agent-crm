@@ -77,7 +77,7 @@ test('zero-exit fetch without its post-condition falls back and never claims suc
       calls.push(args);
       if (args[0] === 'fetch') {
         fetches += 1;
-        if (fetches === 2) Object.assign(state, { shallow: false, object: true, ancestor: true });
+        if (fetches === 2) Object.assign(state, { object: true, ancestor: true });
         return { status: 0, stdout: '' };
       }
       if (args[0] === 'rev-parse') return { status: 0, stdout: state.shallow ? 'true\n' : 'false\n' };
@@ -96,6 +96,25 @@ test('zero-exit fetch without its post-condition falls back and never claims suc
     false,
     'success occurred before the SHA-fetch fallback',
   );
+});
+
+test('bounded shallow history passes when the measured object and ancestry are proved', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-vercel-bounded-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeLedger(root, '7654321');
+  let fetches = 0;
+  const status = restoreProvenance({
+    cwd: root,
+    runGit(args) {
+      if (args[0] === 'rev-parse') return { status: 0, stdout: 'true\n' };
+      if (args[0] === 'cat-file' || args[0] === 'merge-base') return { status: 0 };
+      if (args[0] === 'fetch') fetches += 1;
+      return { status: 1 };
+    },
+    out() {}, error() {},
+  });
+  assert.equal(status, 0);
+  assert.equal(fetches, 0);
 });
 
 test('a failed first fetch reaches fallback; all failed strategies exit nonzero', (t) => {

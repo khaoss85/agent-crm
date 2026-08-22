@@ -16,14 +16,14 @@ the authoritative fail-closed consumer.
    claim into a deployment success.
 2. Trust `git fetch`'s exit status: rejected because the observed preview did
    exactly that while remaining shallow and unable to resolve the measured SHA.
-3. Read the ledger and verify shallow state, object existence, and ancestry after
+3. Read the ledger and inspect shallow state while verifying object existence and ancestry after
    every bounded fetch strategy: chosen because it encodes the actual invariant,
    retains portability, and provides deterministic diagnostics.
 
 ## Milestones
 1. Make the helper read the current ledger and expose a testable orchestration
    function without adding an agent-facing command.
-2. Verify the three provenance post-conditions before initial or fetched success,
+2. Verify the three provenance probes before initial or fetched success,
    and continue to fallbacks after a zero-exit fetch with an unmet post-condition.
 3. Add real temporary-repository coverage plus deterministic failure-strategy
    coverage, then run repository and deployment gates.
@@ -38,8 +38,12 @@ Vercel checks.
   following gate still observed a shallow checkout; implementation started from
   merged PR #111 main.
 - 2026-08-22: implemented ledger-derived post-condition checks and fallback
-  iteration; six focused regressions pass, including two real temporary-repository
+  iteration; seven focused regressions pass, including two real temporary-repository
   histories. Local site, GTM, syntax and Node 22 smoke gates pass.
+- 2026-08-22: exact-head review exposed that a bounded deepen can leave the
+  shallow marker while making the measured ancestry provable. The invariant now
+  inspects that marker but accepts the same object-and-ancestry proof as
+  `site:check`; a seventh regression locks the bounded-history case.
 
 ## Decision log
 - A non-git checkout is now a failure: this build helper has no truthful success
