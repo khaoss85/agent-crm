@@ -171,7 +171,7 @@ const isReviewedTechnicalOverride = (assignment, rationale, reviewsById, evidenc
     && review.technicalRationale === rationale
     && TECHNICAL_OWNERSHIP_RATIONALES[review.ownershipBasis] === rationale
     && typeof review.reviewedBy === 'string' && review.reviewedBy.trim().length >= 3
-    && typeof review.evidencePath === 'string'
+    && typeof review.evidencePath === 'string' && review.evidencePath !== PATHS.overrideReviews
     && evidenceKeys.has(`${review.reviewId}\0${review.evidencePath}`)
     && Number.isFinite(timestamp) && new Date(timestamp).toISOString() === reviewedAt;
 };
@@ -242,6 +242,19 @@ const readJson = (rootDir, rel, problems) => {
  */
 export function buildOverlays({ records, assessments, crosswalk, capabilityPillars, pillars, assignments = [], overrideReviews = { reviews: [] }, reviewEvidenceKeys = new Set() }) {
   const problems = [];
+  const registryKeys = overrideReviews && typeof overrideReviews === 'object' && !Array.isArray(overrideReviews)
+    ? Object.keys(overrideReviews)
+    : [];
+  const registryEnvelopeValid = registryKeys.length === 2
+    && registryKeys.includes('contract') && registryKeys.includes('reviews')
+    && overrideReviews.contract === 1 && Array.isArray(overrideReviews.reviews);
+  if (!registryEnvelopeValid) {
+    problems.push({
+      code: 'JTBD_PRIVATE_FIELD_PUBLISHED',
+      message: `${PATHS.overrideReviews}: expected the closed public envelope { contract: 1, reviews: [...] }`,
+    });
+  }
+  const reviewRows = registryEnvelopeValid ? overrideReviews.reviews : [];
   const byId = new Map(assessments.map((entry) => [entry.jtbdId, entry]));
   const assignmentById = new Map(assignments.map((entry) => [entry.jtbdId, entry]));
   const reviewsById = new Map();
@@ -249,7 +262,7 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
     'reviewId', 'jtbdId', 'pillar', 'ownershipBasis', 'technicalRationale',
     'reviewedBy', 'reviewedAt', 'evidencePath',
   ]);
-  for (const review of overrideReviews.reviews ?? []) {
+  for (const review of reviewRows) {
     const unknown = Object.keys(review).filter((field) => !allowedReviewFields.has(field));
     if (unknown.length) {
       problems.push({
@@ -720,11 +733,14 @@ export async function loadWorld(rootDir = ROOT) {
   const classification = readJson(rootDir, PATHS.classification, problems);
   const assignments = readJsonl(rootDir, PATHS.assignments, problems);
   const overrideReviews = readJson(rootDir, PATHS.overrideReviews, problems) ?? { reviews: [] };
-  const reviewEvidenceKeys = new Set((overrideReviews.reviews ?? [])
+  const reviewRows = Array.isArray(overrideReviews.reviews) ? overrideReviews.reviews : [];
+  const reviewEvidenceKeys = new Set(reviewRows
     .filter((review) => typeof review.evidencePath === 'string'
       && typeof review.reviewId === 'string'
-      && existsSync(join(rootDir, review.evidencePath))
-      && readFileSync(join(rootDir, review.evidencePath), 'utf8').includes(review.reviewId))
+      && review.evidencePath !== PATHS.overrideReviews
+      && resolve(rootDir, review.evidencePath).startsWith(`${resolve(rootDir)}/`)
+      && existsSync(resolve(rootDir, review.evidencePath))
+      && readFileSync(resolve(rootDir, review.evidencePath), 'utf8').includes(review.reviewId))
     .map((review) => `${review.reviewId}\0${review.evidencePath}`));
   const assessments = assessmentsDoc?.assessments ?? [];
   const digests = new Map();

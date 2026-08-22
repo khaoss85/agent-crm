@@ -185,7 +185,7 @@ test('semantic roadmap ownership permits a candidate, reviewed override, or huma
     overrideRationale: 'Ownership follows the reviewed public orchestration responsibility.',
     overrideReviewId: 'review-cro-002-billing',
   });
-  const overrideReviews = { reviews: [{
+  const overrideReviews = { contract: 1, reviews: [{
     reviewId: 'review-cro-002-billing',
     jtbdId: source.jtbdId,
     pillar: 'billing',
@@ -227,15 +227,28 @@ test('override reviews bind evidence per id and reject fields outside the public
     disposition: 'planned', overrideRationale: review.technicalRationale, overrideReviewId: review.reviewId,
   } : row);
   const wrongKey = checkWorld({
-    ...world, assignments, overrideReviews: { reviews: [review] },
+    ...world, assignments, overrideReviews: { contract: 1, reviews: [review] },
     reviewEvidenceKeys: new Set(['another-review\0docs/jtbd/roadmap/OWNERSHIP.md']),
   }).problems;
   assert.ok(codes(wrongKey).has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
   const privateField = checkWorld({
-    ...world, assignments, overrideReviews: { reviews: [{ ...review, business_value_1_5: 5 }] },
+    ...world, assignments, overrideReviews: { contract: 1, reviews: [{ ...review, business_value_1_5: 5 }] },
     reviewEvidenceKeys: new Set(['review-one\0docs/jtbd/roadmap/OWNERSHIP.md']),
   }).problems;
   assert.ok(codes(privateField).has('JTBD_PRIVATE_FIELD_PUBLISHED'));
+  for (const overrideReviews of [
+    { contract: 999, reviews: [], business_value_1_5: 5 },
+    { contract: 1, reviews: 'not-an-array' },
+  ]) {
+    assert.ok(codes(checkWorld({ ...world, overrideReviews }).problems)
+      .has('JTBD_PRIVATE_FIELD_PUBLISHED'));
+  }
+  const selfEvidenceReview = { ...review, evidencePath: 'docs/jtbd/roadmap/override-reviews.json' };
+  const selfEvidence = checkWorld({
+    ...world, assignments, overrideReviews: { contract: 1, reviews: [selfEvidenceReview] },
+    reviewEvidenceKeys: new Set(['review-one\0docs/jtbd/roadmap/override-reviews.json']),
+  }).problems;
+  assert.ok(codes(selfEvidence).has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
 });
 
 test('semantic ownership overrides cannot publish commercial rationale', () => {
