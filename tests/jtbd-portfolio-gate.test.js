@@ -199,7 +199,7 @@ test('semantic roadmap ownership permits a candidate, reviewed override, or huma
     ...world,
     assignments: reviewedOverride,
     overrideReviews,
-    reviewEvidencePaths: new Set(['docs/jtbd/roadmap/OWNERSHIP.md']),
+    reviewEvidenceKeys: new Set(['review-cro-002-billing\0docs/jtbd/roadmap/OWNERSHIP.md']),
   }).problems)
     .has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
 
@@ -210,6 +210,32 @@ test('semantic roadmap ownership permits a candidate, reviewed override, or huma
   });
   assert.ok(!codes(checkWorld({ ...world, assignments: humanDeferred }).problems)
     .has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
+});
+
+test('override reviews bind evidence per id and reject fields outside the public schema', () => {
+  const review = {
+    reviewId: 'review-one', jtbdId: 'ACC-JTBD-CRO-002', pillar: 'billing',
+    ownershipBasis: 'orchestration_owner',
+    technicalRationale: 'Ownership follows the reviewed public orchestration responsibility.',
+    reviewedBy: 'product-architecture-council', reviewedAt: '2026-08-22T10:00:00.000Z',
+    evidencePath: 'docs/jtbd/roadmap/OWNERSHIP.md',
+  };
+  const assignment = world.assignments.find((row) => row.jtbdId === review.jtbdId);
+  const billing = world.pillars.pillars.billing;
+  const assignments = world.assignments.map((row) => row.jtbdId === review.jtbdId ? {
+    ...assignment, pillar: 'billing', edition: billing.edition, roadmapTrack: billing.roadmapTrack,
+    disposition: 'planned', overrideRationale: review.technicalRationale, overrideReviewId: review.reviewId,
+  } : row);
+  const wrongKey = checkWorld({
+    ...world, assignments, overrideReviews: { reviews: [review] },
+    reviewEvidenceKeys: new Set(['another-review\0docs/jtbd/roadmap/OWNERSHIP.md']),
+  }).problems;
+  assert.ok(codes(wrongKey).has('JTBD_ROADMAP_OWNER_UNSUPPORTED'));
+  const privateField = checkWorld({
+    ...world, assignments, overrideReviews: { reviews: [{ ...review, business_value_1_5: 5 }] },
+    reviewEvidenceKeys: new Set(['review-one\0docs/jtbd/roadmap/OWNERSHIP.md']),
+  }).problems;
+  assert.ok(codes(privateField).has('JTBD_PRIVATE_FIELD_PUBLISHED'));
 });
 
 test('semantic ownership overrides cannot publish commercial rationale', () => {

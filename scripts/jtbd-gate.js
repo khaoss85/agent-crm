@@ -162,7 +162,7 @@ const TECHNICAL_OWNERSHIP_RATIONALES = Object.freeze({
   public_dependency: 'Ownership follows the reviewed public dependency boundary.',
 });
 
-const isReviewedTechnicalOverride = (assignment, rationale, reviewsById, evidencePaths) => {
+const isReviewedTechnicalOverride = (assignment, rationale, reviewsById, evidenceKeys) => {
   const review = reviewsById.get(assignment?.overrideReviewId);
   const reviewedAt = typeof review?.reviewedAt === 'string' ? review.reviewedAt : '';
   const timestamp = Date.parse(reviewedAt);
@@ -171,7 +171,8 @@ const isReviewedTechnicalOverride = (assignment, rationale, reviewsById, evidenc
     && review.technicalRationale === rationale
     && TECHNICAL_OWNERSHIP_RATIONALES[review.ownershipBasis] === rationale
     && typeof review.reviewedBy === 'string' && review.reviewedBy.trim().length >= 3
-    && typeof review.evidencePath === 'string' && evidencePaths.has(review.evidencePath)
+    && typeof review.evidencePath === 'string'
+    && evidenceKeys.has(`${review.reviewId}\0${review.evidencePath}`)
     && Number.isFinite(timestamp) && new Date(timestamp).toISOString() === reviewedAt;
 };
 
@@ -239,11 +240,28 @@ const readJson = (rootDir, rel, problems) => {
  *
  * Pure over what it is handed, so a test can move one input and watch exactly one field move.
  */
-export function buildOverlays({ records, assessments, crosswalk, capabilityPillars, pillars, assignments = [], overrideReviews = { reviews: [] }, reviewEvidencePaths = new Set() }) {
+export function buildOverlays({ records, assessments, crosswalk, capabilityPillars, pillars, assignments = [], overrideReviews = { reviews: [] }, reviewEvidenceKeys = new Set() }) {
   const problems = [];
   const byId = new Map(assessments.map((entry) => [entry.jtbdId, entry]));
   const assignmentById = new Map(assignments.map((entry) => [entry.jtbdId, entry]));
-  const reviewsById = new Map((overrideReviews.reviews ?? []).map((entry) => [entry.reviewId, entry]));
+  const reviewsById = new Map();
+  const allowedReviewFields = new Set([
+    'reviewId', 'jtbdId', 'pillar', 'ownershipBasis', 'technicalRationale',
+    'reviewedBy', 'reviewedAt', 'evidencePath',
+  ]);
+  for (const review of overrideReviews.reviews ?? []) {
+    const unknown = Object.keys(review).filter((field) => !allowedReviewFields.has(field));
+    if (unknown.length) {
+      problems.push({
+        code: 'JTBD_PRIVATE_FIELD_PUBLISHED',
+        message: `${review.reviewId ?? 'override review'}: public ownership review has unsupported field(s): ${unknown.join(', ')}`,
+      });
+    }
+    if (reviewsById.has(review.reviewId)) {
+      problems.push({ code: 'JTBD_ROADMAP_OWNER_UNSUPPORTED', message: `${review.reviewId}: duplicate ownership review id` });
+    }
+    reviewsById.set(review.reviewId, review);
+  }
   const precedence = pillars.precedence;
   const registry = pillars.pillars;
 
@@ -328,7 +346,7 @@ export function buildOverlays({ records, assessments, crosswalk, capabilityPilla
       ? explicit.overrideRationale.trim()
       : '';
     const reviewedOverride = explicit
-      ? isReviewedTechnicalOverride(explicit, overrideRationale, reviewsById, reviewEvidencePaths)
+      ? isReviewedTechnicalOverride(explicit, overrideRationale, reviewsById, reviewEvidenceKeys)
       : false;
     const candidateOwner = explicit ? candidatePillars.includes(explicit.pillar) : true;
     const settled = ['implemented', 'in progress', 'planned'].includes(explicit?.disposition);
@@ -702,12 +720,12 @@ export async function loadWorld(rootDir = ROOT) {
   const classification = readJson(rootDir, PATHS.classification, problems);
   const assignments = readJsonl(rootDir, PATHS.assignments, problems);
   const overrideReviews = readJson(rootDir, PATHS.overrideReviews, problems) ?? { reviews: [] };
-  const reviewEvidencePaths = new Set((overrideReviews.reviews ?? [])
+  const reviewEvidenceKeys = new Set((overrideReviews.reviews ?? [])
     .filter((review) => typeof review.evidencePath === 'string'
       && typeof review.reviewId === 'string'
       && existsSync(join(rootDir, review.evidencePath))
       && readFileSync(join(rootDir, review.evidencePath), 'utf8').includes(review.reviewId))
-    .map((review) => review.evidencePath));
+    .map((review) => `${review.reviewId}\0${review.evidencePath}`));
   const assessments = assessmentsDoc?.assessments ?? [];
   const digests = new Map();
   for (const entry of assessments) {
@@ -728,7 +746,7 @@ export async function loadWorld(rootDir = ROOT) {
     classification,
     assignments,
     overrideReviews,
-    reviewEvidencePaths,
+    reviewEvidenceKeys,
     matrixText: existsSync(join(rootDir, PATHS.matrix)) ? readFileSync(join(rootDir, PATHS.matrix), 'utf8') : '',
     coverageText: readOverlay(rootDir, PATHS.coverageOverlay, problems),
     roadmapText: readOverlay(rootDir, PATHS.roadmapOverlay, problems),
