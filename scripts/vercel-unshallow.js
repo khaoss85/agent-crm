@@ -38,6 +38,7 @@ import { pathToFileURL } from 'node:url';
  *   cwd?: string,
  *   env?: NodeJS.ProcessEnv,
  *   runGit?: (args: string[]) => GitResult,
+ *   repositoryUrl?: string,
  *   out?: (message: string) => void,
  *   error?: (message: string) => void,
  * }} [options]
@@ -79,13 +80,11 @@ export function restoreProvenance(options = {}) {
   const attempts = [['fetch', '--quiet', '--unshallow']];
   const owner = env.VERCEL_GIT_REPO_OWNER;
   const slug = env.VERCEL_GIT_REPO_SLUG;
-  if (owner && slug) {
-    const publicUrl = `https://github.com/${owner}/${slug}.git`;
+  const publicUrl = options.repositoryUrl ?? (owner && slug ? `https://github.com/${owner}/${slug}.git` : null);
+  if (publicUrl) {
     attempts.push(
       ['fetch', '--quiet', '--unshallow', publicUrl],
-      ['fetch', '--quiet', publicUrl, measuredSha],
-      ['fetch', '--quiet', '--deepen=256', publicUrl, 'main'],
-      ['fetch', '--quiet', publicUrl, 'main'],
+      ['fetch', '--quiet', '--deepen=2147483647', publicUrl, 'main'],
     );
   }
 

@@ -11,7 +11,7 @@ import { restoreProvenance } from '../scripts/vercel-unshallow.js';
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
-function fixture() {
+function fixture(commitCount = 4) {
   const root = mkdtempSync(join(tmpdir(), 'accordo-vercel-history-'));
   const source = join(root, 'source');
   mkdirSync(source);
@@ -19,7 +19,7 @@ function fixture() {
   git(source, 'config', 'user.email', 'test@example.com');
   git(source, 'config', 'user.name', 'Test');
   let measured = '';
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < commitCount; index += 1) {
     writeFileSync(join(source, 'record.txt'), `${index}\n`);
     git(source, 'add', '.');
     git(source, 'commit', '-m', `commit ${index}`);
@@ -91,11 +91,36 @@ test('zero-exit fetch without its post-condition falls back and never claims suc
   assert.equal(fetches, 2);
   assert.match(messages[0], /exited 0 but provenance is still unproved/);
   assert.match(messages.at(-1), /provenance for abcdef1 verified/);
-  assert.equal(
-    calls.filter(([command]) => command === 'fetch').some((args) => args.includes('abcdef1')),
-    false,
-    'success occurred before the SHA-fetch fallback',
+  assert.deepEqual(
+    calls.filter(([command]) => command === 'fetch')[1].slice(0, 3),
+    ['fetch', '--quiet', '--unshallow'],
+    'the public unshallow fallback repaired this simulated checkout before maximum deepen was needed',
   );
+});
+
+test('the final fallback crosses a measured commit beyond 256 shallow commits', (t) => {
+  const value = fixture(271);
+  t.after(() => rmSync(value.root, { recursive: true, force: true }));
+  const clone = join(value.root, 'deep-clone');
+  git(value.root, 'clone', '--depth=1', `file://${value.source}`, clone);
+  writeLedger(clone, value.measured.slice(0, 7));
+  let fetches = 0;
+  const status = restoreProvenance({
+    cwd: clone,
+    repositoryUrl: `file://${value.source}`,
+    runGit(args) {
+      if (args[0] === 'fetch') {
+        fetches += 1;
+        if (fetches < 3) return { status: 0, stdout: '' };
+      }
+      return spawnSync('git', args, { cwd: clone, encoding: 'utf8' });
+    },
+    out() {}, error() {},
+  });
+  assert.equal(status, 0);
+  assert.equal(fetches, 3);
+  git(clone, 'cat-file', '-e', `${value.measured}^{commit}`);
+  git(clone, 'merge-base', '--is-ancestor', value.measured, 'HEAD');
 });
 
 test('bounded shallow history passes when the measured object and ancestry are proved', (t) => {
@@ -134,7 +159,7 @@ test('a failed first fetch reaches fallback; all failed strategies exit nonzero'
     out() {}, error(message) { errors.push(message); },
   });
   assert.equal(status, 1);
-  assert.equal(fetches, 5);
+  assert.equal(fetches, 3);
   assert.match(errors[1], /https:\/\/github.com\/owner\/repo\.git/);
   assert.match(errors[0], /failed: refused; trying the next strategy/);
   assert.match(errors.at(-1), /unable to prove 1234567/);

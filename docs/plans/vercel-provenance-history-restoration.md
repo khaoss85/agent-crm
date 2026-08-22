@@ -38,12 +38,16 @@ Vercel checks.
   following gate still observed a shallow checkout; implementation started from
   merged PR #111 main.
 - 2026-08-22: implemented ledger-derived post-condition checks and fallback
-  iteration; seven focused regressions pass, including two real temporary-repository
+  iteration; eight focused regressions pass, including real temporary-repository
   histories. Local site, GTM, syntax and Node 22 smoke gates pass.
 - 2026-08-22: exact-head review exposed that a bounded deepen can leave the
   shallow marker while making the measured ancestry provable. The invariant now
   inspects that marker but accepts the same object-and-ancestry proof as
   `site:check`; a seventh regression locks the bounded-history case.
+- 2026-08-22: fresh exact-head review reproduced a measurement more than 256
+  commits behind the shallow boundary. The ineffective abbreviated-SHA and plain
+  fetches were replaced with one maximum-depth recovery; a real 271-commit
+  repository regression proves the old bound is crossed.
 
 ## Decision log
 - A non-git checkout is now a failure: this build helper has no truthful success
