@@ -265,9 +265,9 @@ all untouched consumers continue on the compatibility path.
    PostgreSQL refusal; SQLite compatibility is unchanged.
    Verifier provider contract v2 returns two non-interchangeable operations:
    `verifyRequest(evidence)` for request identities and
-   `attestStartup(challenge)` for workload identity. The runtime supplies a
-   single-use challenge bound to repository fingerprint, tenant, data-plane
-   attestation, requested permission and migration-set fingerprint; the provider
+   `attestControlStartup(challenge)` and `attestDataStartup(challenge)` for ordered workload identity. The runtime supplies
+   single-use challenges bound to repository fingerprint, tenant, the relevant
+   plane attestation, requested permission and migration-set fingerprint; the provider
    returns a bounded verified-system identity plus evidence fingerprint/expiry
    or refusal. Request evidence cannot satisfy startup attestation. Missing
    method, replay/staleness, wrong tenant/migration set and refused permission all
@@ -309,10 +309,12 @@ all untouched consumers continue on the compatibility path.
    closed `{contract, adapter, connection, controlPlane, spine,
    identityVerifier}` envelope. One checked repository-contained verifier
    provider owns request verification and v2 startup attestation; no additional
-   identity-provider namespace is added. `attestStartup` receives bounded opaque
-   data/control connection challenges and returns authoritative external resource
-   ids plus workload identity in one fingerprinted attestation, or refuses when
-   either resource cannot be proved. Startup rejects identical ids and endpoint
+   identity-provider namespace is added. First `attestControlStartup` receives
+   only the opaque control challenge and proves workload plus control resource;
+   control bootstrap then completes. Next `attestDataStartup` is bound to the
+   first attestation fingerprint and receives the opaque data challenge, proving
+   the data resource before any data-plane DDL/lease. Either phase can refuse and
+   neither can be replayed/substituted for the other. Startup rejects identical ids and endpoint
    aliases; schema names, URLs and credentials are not identities. Fixtures cover
    malformed/escaping/hanging providers, missing attestations, identical URLs,
    aliases and genuinely separate databases.
@@ -362,7 +364,7 @@ all untouched consumers continue on the compatibility path.
    escaping paths), imports it before database connection, and requires one
    named factory with a versioned data-only provider contract. The factory
    receives only its bounded provider configuration and returns the v2
-   `{verifyRequest, attestStartup}` operations defined above; it reads credentials through the deployment environment
+   `{verifyRequest, attestControlStartup, attestDataStartup}` operations defined above; it reads credentials through the deployment environment
    or secret manager, never through CLI arguments or public results. Production
    mode requires this reference; local mode refuses a configured production
    verifier rather than silently changing trust. Factory, `serve`, MCP and any
@@ -642,6 +644,11 @@ credential-output scans and pool/client/timer shutdown checks.
    promotes its events once in the live recovery path; absence authorizes one
    retry with the same IDs/key; inability to prove either remains unknown and
    refuses further mutation. This is bounded transaction recovery, not a claim
+   Raw caller keys are tenant-local inputs: the runtime namespaces/digests them
+   with the canonical tenant before data-plane lookup. Reuse under another tenant
+   is permitted as an independent outcome and reveals nothing about the first;
+   changed subject/operation/target/version/payload within the same tenant is the
+   divergent replay refusal. No global cross-tenant key registry is introduced.
    of a general durable outbox: a process death during external event dispatch
    can still omit or duplicate event delivery until Spine v3, and that limitation is
    published. Clear the DX Gate for the idempotency input: it prevents a user
@@ -785,9 +792,10 @@ SQLite remains green.
    deterministic IDs/key authorize one safe retry, never a second record.
    Repeat reconciliation in a fresh process and reconstruct exactly one
    successful trace from the committed trace intent before returning success.
-   Replay the same key with a changed tenant, verified subject, operation,
-   target and payload independently; each receives the same bounded divergent-
-   replay refusal and cannot read or suppress the original outcome. Black-hole
+   Replay the same key with a changed verified subject, operation, target and
+   payload independently inside one tenant; each receives the bounded divergent-
+   replay refusal. Reuse the raw key in another tenant and prove an independent
+   namespaced outcome with no read/suppression/disclosure across planes. Black-hole
    an established client mid-query and prove the per-operation deadline destroys
    it, releases the slot and allows a fresh pooled query to succeed.
    At the intent and finalize COMMIT boundaries of a real three-phase external
