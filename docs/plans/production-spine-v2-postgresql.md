@@ -100,6 +100,10 @@ first two consumers demonstrate them; raw driver handles never cross it.
    implementation detail hidden behind HTTP.
 4. Record normalized receipts that contain domain objects and stable error
    codes, never driver messages, paths, timing or database-specific metadata.
+5. Freeze the released core migration identities before editing migration SQL:
+   version, name, source checksum and the schema shape observed after each
+   supported legacy upgrade point. These pinned baseline constants, reviewed in
+   M0, are the only authority a later checksum-ledger backfill may trust.
 
 Exit: the existing SQLite application remains byte-compatible at its public
 surfaces and the characterization fails when a storage-visible invariant moves.
@@ -150,7 +154,10 @@ all untouched consumers continue on the compatibility path.
 ### M2 — Complete the SQLite-side extraction
 
 1. Move remaining core modules, generated services, package services, audit,
-   trace, workflows and migration bookkeeping in reviewable groups.
+   trace, workflows, the Spine store and migration bookkeeping in reviewable
+   groups. Treat the Spine store as a dependency closure: its membership writes
+   use the control plane and its audit evidence currently uses the tenant data
+   plane, so changing either handle without the caller is forbidden.
 2. Convert service/application control flow on the new async composition path;
    preserve route and SDK response shapes. Keep the characterized synchronous
    SQLite factory and its service methods valid for existing in-process callers,
@@ -160,6 +167,16 @@ all untouched consumers continue on the compatibility path.
    business consumer reaches `DatabaseSync`, `.raw.prepare()` or `.raw.exec()`.
 4. Keep the provisioning-side tenant resolver separate from the application
    binding; the application handle still cannot name a second tenant.
+5. Make cross-plane Spine writes explicitly recoverable rather than pretending
+   two independent databases share an atomic transaction. In the same control-
+   plane transaction as a membership/organization mutation, persist a bounded,
+   immutable audit intent with a deterministic idempotency key. Finalization
+   copies that evidence to the tenant audit log and marks the intent delivered;
+   a failed finalization leaves visible pending evidence, never an unaudited
+   mutation or an unhandled rejection. Retry/restart reconciliation is explicit
+   and idempotent, and a caller response states committed-with-pending-audit
+   rather than returning a false rollback. This is bounded recovery for a
+   security write, not the general durable jobs/outbox promised by Spine v3.
 
 Exit: SQLite passes the full suite through the portable contract, and the raw
 SQLite driver is private to the SQLite adapter. Both the legacy synchronous
@@ -186,7 +203,14 @@ characterization suites.
    explicit backfill; if that requires a new flag/surface, clear the DX Gate
    rather than adding a side-door script.
 4. Preserve append-only name/checksum semantics. An applied migration whose
-   authoritative intent changes must fail closed on both adapters.
+   authoritative intent changes must fail closed on both adapters. Upgrade the
+   legacy core `schema_migrations(version, name, applied_at)` ledger through a
+   versioned migration: accept/backfill only an exact version+name tuple from
+   M0's pinned released baseline **and** a matching observed schema shape, and
+   write the pinned checksum rather than hashing whatever source happens to ship
+   in the upgrade. An unknown tuple, missing object or divergent schema refuses
+   startup. Migrations first applied under the new ledger record and validate
+   their checksum normally.
 5. Implement prepared parameter binding, result normalization, nested
    savepoints, transaction connection affinity, rollback, conflict mapping and
    deterministic close over PostgreSQL.
@@ -228,6 +252,15 @@ SQLite remains green.
 7. Test migration restart, concurrent migration startup, transaction rollback,
    two-connection races, exact reads beyond page bounds, hostile input and
    normalized constraint/conflict errors on PostgreSQL.
+8. Fault-inject every point between a control-plane authorization mutation, its
+   local audit intent and tenant-audit finalization. Prove the mutation plus
+   intent are atomic, pending evidence survives restart, reconciliation records
+   exactly one audit row, divergent replay is refused, and no success response
+   claims a rollback that did not occur.
+9. Upgrade a real legacy core database whose ledger has no checksum and prove
+   only M0's pinned baseline is backfilled. Change a historical name, schema
+   object and current source independently; each must refuse rather than bless
+   the checkout's bytes as history.
 
 Exit: PostgreSQL per-tenant storage is executable evidence rather than a
 configuration claim, and SQLite/PostgreSQL differences cannot escape the
@@ -263,11 +296,16 @@ The implementation PR is complete only with machine-readable receipts for:
 - one contract suite, unchanged, passing against SQLite and PostgreSQL;
 - full application verification against both adapters;
 - deterministic migration/checksum equivalence and restart;
+- safe legacy core-ledger backfill from pinned release identities, never from
+  mutable current source;
 - rollback after each significant write and correct savepoint nesting;
 - two-connection conflict behavior with no raw driver error;
 - one-tenant-per-instance isolation across domain, audit and trace reads;
 - persistent data-plane ownership: an aliased database and a conflicting
   first-boot race both fail closed before the application receives a handle;
+- recoverable cross-plane Spine audit: every committed authorization mutation
+  has atomic local evidence and converges idempotently to exactly one tenant
+  audit row;
 - no credential or storage locator in public schema, errors, audit or trace;
 - the SQLite characterization unchanged from M0;
 - the synchronous SQLite in-process API and starter remain valid, while the
