@@ -253,7 +253,12 @@ all untouched consumers continue on the compatibility path.
    verifier rather than silently changing trust. Factory, `serve`, MCP and any
    HTTP entry point use the same resolver. Add fixture providers for success,
    malformed export, throw/reject, escaping path and credential-sentinel tests,
-   and prove no listener/database handle exists before verifier resolution.
+   and prove no listener/database handle exists before verifier resolution. Run
+   provider initialization under one documented bounded startup deadline with
+   an abort signal where the provider supports it; always clear the timer,
+   abandon/ignore late settlement and return a stable verifier-timeout code.
+   A hanging fixture must make each child process exit nonzero within the bound
+   with no open listener/database and no credential in diagnostics.
 
 Exit: SQLite passes the full suite through the portable contract, and the raw
 SQLite driver is private to the SQLite adapter. Both the legacy synchronous
@@ -309,7 +314,10 @@ characterization suites.
    evaluating/committing a transition. A serialization/deadlock loser receives
    one bounded retry only where the whole operation is replay-safe; otherwise it
    returns a stable conflict and produces no audit, event or trace claiming a
-   transition. Never retry a provider side effect implicitly.
+   transition. Never retry a provider side effect implicitly. Set adapter-owned
+   per-transaction `lock_timeout` and `statement_timeout` locally (never rely on
+   server/account defaults); normalize either expiry to stable bounded storage
+   codes, roll back, and clear transaction-local state with the connection.
 6. Bind a PostgreSQL data plane by opaque connection configuration, not by a
    filesystem path. Never return a credential, URL, host or database name in
    the application object, tenant binding, doctor output, CLI/stdout, startup
@@ -375,6 +383,10 @@ SQLite remains green.
    prove at most one commits; the loser has a stable conflict/refusal and writes
    no contradictory audit/event/trace evidence. Repeat around an external
    operation and prove no automatic retry duplicates its provider call.
+   Hold the authoritative row lock past the configured deadline and prove the
+   contender returns the normalized timeout/conflict within a bounded interval,
+   rolls back, and writes no audit/event/trace evidence; then release the holder
+   and prove the pooled connection has no leaked timeout/transaction state.
 8. Fault-inject every point between a control-plane authorization mutation, its
    local audit intent and tenant-audit finalization. Prove the mutation plus
    intent are atomic, pending evidence survives restart, reconciliation records
@@ -453,6 +465,9 @@ The implementation PR is complete only with machine-readable receipts for:
 - production executables resolve one checked, repository-contained verifier
   provider contract before database/listener startup; malformed or escaping
   providers fail closed without leaking their configuration;
+- verifier-provider initialization and PostgreSQL lock/statement waits have
+  adapter-owned deadlines; hanging/held resources fail with stable codes, clean
+  timers/transactions and no mutation evidence;
 - competing same-record transitions preserve serialized behavior: one outcome
   commits, and no losing/retried path emits contradictory evidence or repeats an
   external side effect;
@@ -527,6 +542,9 @@ agent-facing rail.
   ADR-038's required verifier function. The shared deployment contract now names
   a checked repository-contained verifier provider with fail-before-connect
   resolution and executable child-process evidence.
+- 2026-08-23: the next review attacked non-settling verifier initialization and
+  an indefinitely held PostgreSQL row lock. Both now require explicit local
+  deadlines, cleanup/late-settlement behavior and hanging-resource regressions.
 
 ## Decision log
 
@@ -566,6 +584,9 @@ agent-facing rail.
 - **State transitions serialize at the record boundary.** Lock/CAS conflicts do
   not become two successful transitions, two evidence trails or a repeated
   provider call.
+- **Every external wait used for startup or serialization is bounded.** Verifier
+  initialization and PostgreSQL lock/statement waits own deadlines and cleanup;
+  timeout is a stable refusal, never an indefinitely pending process.
 
 ## Outcome and follow-up
 
