@@ -33,7 +33,7 @@ Generated: **2026-08-23**.
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | Real-Chromium checks remain manual and are **not in CI** — no workflow launches a browser, and `npm run smoke` is an in-process application smoke (`docs/ADMIN_SMOKE.md`). The Work v1 section has a **30-check** block, all passing, driven twice at `184e543`; it covers that section only and re-runs none of the earlier blocks. PR #58's desktop and mobile receipts still describe `ef8487a`, and nothing since has re-run them. |
 | CI | The latest completed integration run concluded `success` on both jobs, `verify` and `public-claims`, at its own exact head. This row records that a run passed; it does not claim any particular commit is still the head. GitHub Actions holds the current answer. |
-| Open PRs | **PR #99 — the OSS / managed-Cloud repository boundary — is open and deliberately unmerged**, awaiting a human decision. It is a design, five new documents under `docs/editions/` and nothing else: no file moved, none deleted, no private repository created, no licence changed. Merged this wave, in order: PR #95 (Customer Data Foundation v1, `2d74503`), PR #98 (**Production Spine v1**, `e30216c`) and the truth pass that carries this row. **Production Spine v1 is merged, and the sentence this row used to carry — "there is still no authentication, tenancy or role enforcement" — is retired**: tenancy and authorization now exist and are enforced. What does not exist is authentication. The framework authenticates nobody and ships no verifier, so "a human decided" still means an actor object said so — an actor now bounded by a fail-closed contract, a membership and a permission, and trustworthy exactly as far as the adapter a deployment supplies. |
+| Open PRs | **PR #118** is the measurement-only refresh for the merged Spine v2 M0 tree. It changes no runtime, test, JTBD or roadmap semantics. No other pull request is open. |
 | Public discovery | GitHub About and all 20 intent topics are live. Smithery `khaoss85/accordo` returns 200 and exposes the three production Docs MCP tools. The GitHub social preview is live and **stale**: it was rendered from a much older measurement and its replacement still needs a manual Settings upload, which is a human step no branch can take. |
 | npm | **`create-accordo@0.1.0` is live since 2026-08-19** — staged from CI through OIDC trusted publishing (run 32224731197, Sigstore provenance), approved by the maintainer with 2FA, and confirmed against the registry: the published shasum matches the CI assembly, `latest` resolves to `0.1.0`, and a clean-directory `npm create accordo` scaffolds a verifying project. `accordo@0.0.1` remains an **empty name reservation by design** (no framework library). The `@accordo` organization exists since 2026-08-19 and its scope is **deliberately empty**: `@accordo/mcp` was investigated and refused, because the project MCP server composes from the generated indexes of the tree it runs in and a published copy would answer about the wrong application (ADR-034). The MCP-registry submission is no longer blocked by it — `server.json` registers the remote documentation endpoint instead. `site/brand.json` records `npm.status: published`. |
 | Project bootstrap | **`create-accordo` is real source and its publication is live**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates the bounded publishable directory while the source manifest stays `private: true` — publication never lowered that wall, because what npm published is the assembly, which strips `private`. The staged path proved itself the hard way: one dispatch died `E401` (a `registry-url` placeholder token preempting OIDC), the next `ENEEDAUTH` (no matching trusted-publisher config), and run `32224731197` staged clean once the publisher allowed `npm stage publish`. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
@@ -111,28 +111,20 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. The default product task remains the first unchecked item in `TASKS.md`:
-   first-class Activity and Task modules with a reusable automatic follow-up
-   workflow. No GTM branch silently changes that product order.
-2. Before any remote CRM write surface, add tenant and role boundaries; the
-   authenticated Streamable HTTP project MCP and PostgreSQL adapter remain
-   separate platform work. The production Docs MCP is read-only framework
-   documentation and does not satisfy any of those production gates.
-3. The GTM stack and production promotion are complete. The active distribution
-   task is to configure the `create-accordo` trusted publisher on npm for
-   `khaoss85/agent-crm`, `stage-create-accordo.yml`, environment `npm-stage` and
-   stage-only permission; then rerun, inspect and approve with human 2FA.
-   Registry and marketplace claims remain blocked until a real receipt exists.
+1. Merge PR #118 after exact-head gates and technical review are clean, making
+   the post-M0 test-tree measurement current on `main`.
+2. Start **Production Spine v2 M1** on its dedicated branch: extract the
+   smallest dialect-neutral asynchronous storage contract over SQLite only and
+   prove it with the handwritten Company dependency closure plus one materially
+   different generated/package-owned resource.
+3. Preserve synchronous `createAccordoApp()` and every characterized v1 public
+   contract. M1 adds neither the production PostgreSQL adapter nor Cloud C0;
+   those remain later milestones in the ratified ExecPlan.
 
-Two parallel tracks run alongside and are not gated by domain progress: the
-**platform track** (domain package boundary, PostgreSQL,
-authentication, Jobs & durable outbox, Integration Runtime, Data Governance,
-Design-to-CRM, Cloud), the **Marketing & Growth track** (MK0–MK7 — design only;
-`MARKETING_GROWTH_OPERATIONS.md`) and the cross-cutting **Agent Experience
-track** (AX0–AX5 — AX0 is a strategy and a Skill, AX1 and AX2 are merged (AX2
-is a machine-readable plan *contract* — not a planner and not a runtime) and
-AX3–AX5 are not implemented; `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequencing and dependencies are in
-`EXECUTION_ROADMAP.md`.
+The independent longer-horizon tracks remain the private/public repository
+migration, Spine v3 jobs/outbox/scheduler, Spine v4 secrets/backups/observability,
+Customer Data Operations v2, Interactions, Billing, Marketing/Analytics, DX9,
+DX13 and a real comparative benchmark once both harnesses exist.
 
 ## Known platform limitations (not blockers, but not forgotten)
 
@@ -144,20 +136,18 @@ AX3–AX5 are not implemented; `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequenci
 
 ## Production blockers
 
-Everything below must land before the framework is safe for multi-user or
-public use. None of it is started.
+The framework now enforces one tenant per application instance and membership-
+based permissions, but it deliberately authenticates nobody. These remaining
+boundaries prevent a production PostgreSQL deployment from being claimed:
 
 | Blocker | Consequence today |
 |---|---|
-| No authentication | the HTTP server is local-development-only; actor headers are not identity |
-| No tenancy | no data boundary between customers |
-| No RBAC | approval keys are labels; only actor *type* is enforced |
-| No PostgreSQL adapter | SQLite only |
-| No durable outbox | post-commit event delivery dies with the process |
-| No scheduler | no renewal triggers, SLA timers, reminders or unattended follow-up |
-| No secret management | no real provider credential can be handled safely |
-| Browser E2E outside CI | UI regressions are caught manually |
-| No real provider adapters | every provider is an offline fixture |
+| No deployment authentication verifier | identity is only as trustworthy as the deployment adapter; the framework ships no verifier |
+| No PostgreSQL adapter | runtime storage remains SQLite-only; M0 is characterization and M1 is a SQLite seam |
+| No durable outbox or scheduler | post-commit delivery, renewal triggers, SLA timers and unattended work do not survive process loss |
+| No secret, backup or production-observability system | real provider credentials and recoverability cannot be operated safely |
+| Browser E2E remains outside CI | current Chromium receipts are manual and Admin regressions are not browser-gated on every push |
+| No real provider adapters | provider behavior remains offline fixture behavior |
 
 ## Implemented versus documentation-only
 
