@@ -172,6 +172,14 @@ surfaces and the characterization fails when a storage-visible invariant moves.
    database value fails with a stable bounded code rather than rounding. This is
    the executable proof that ordinary runtime
    queries—not only migrations—have a portable representation.
+   Treat identifiers as UTF-8 bytes under PostgreSQL's 63-byte limit. Render
+   physical table/column/index/constraint names through one deterministic map:
+   unchanged when safe, otherwise a bounded prefix plus collision-resistant
+   digest recorded in migration intent/state. Validate the complete rendered
+   namespace before bootstrap and never rely on server truncation or `IF NOT
+   EXISTS`. Long, multibyte and same-prefix legacy names must map distinctly and
+   stably or fail with a precise pre-connect diagnostic; SQLite history stays
+   byte-identical.
 
 Exit: both consumers pass the same contract and characterization tests while
 all untouched consumers continue on the compatibility path.
@@ -188,6 +196,17 @@ all untouched consumers continue on the compatibility path.
    SQLite factory and its service methods valid for existing in-process callers,
    starters and examples. Any later retirement is a separately versioned
    deprecation, not an incidental consequence of PostgreSQL.
+   Version package/action semantics before exposing async services:
+   `packageContract: 2` and `actionContract: 2` require actions and capability
+   consumers to await every service/context operation. Contract 1 retains its
+   synchronous SQLite semantics and is refused during PostgreSQL composition
+   with `PACKAGE_ASYNC_CONTRACT_REQUIRED` before migration or provider setup;
+   it is never handed Promise-shaped services. Migrate bundled packages
+   explicitly and keep an unchanged legacy custom-package fixture green on
+   SQLite and fail-closed on PostgreSQL. Clear the DX Gate: the failure prevented
+   is a Promise used as a domain value; synchronous v1 cannot represent an async
+   driver; v2 is the single portable contract; inspection publishes the version
+   as evidence; and authors gain one unconditional `await` rule across adapters.
 3. Delete the compatibility path only after a repository guard proves no
    business consumer reaches `DatabaseSync`, `.raw.prepare()` or `.raw.exec()`.
 4. Keep the provisioning-side tenant resolver separate from the application
@@ -317,7 +336,15 @@ characterization suites.
    transition. Never retry a provider side effect implicitly. Set adapter-owned
    per-transaction `lock_timeout` and `statement_timeout` locally (never rely on
    server/account defaults); normalize either expiry to stable bounded storage
-   codes, roll back, and clear transaction-local state with the connection.
+   codes, roll back, and clear transaction-local state with the connection. Run
+   every business-write outer transaction at PostgreSQL `SERIALIZABLE`, so
+   predicates spanning multiple rows retain SQLite's single-writer behavior.
+   Normalize serialization failures and retry only when the complete effect plan
+   proves no external operation occurred; a per-record lock alone is never the
+   portability guarantee. Configure client-side connection and pool-acquisition
+   deadlines separately from server deadlines. On expiry cancel/destroy the
+   pending client, release pool bookkeeping, clear timers/sockets and return a
+   stable unavailable/timeout code.
 6. Bind a PostgreSQL data plane by opaque connection configuration, not by a
    filesystem path. Never return a credential, URL, host or database name in
    the application object, tenant binding, doctor output, CLI/stdout, startup
@@ -387,6 +414,12 @@ SQLite remains green.
    contender returns the normalized timeout/conflict within a bounded interval,
    rolls back, and writes no audit/event/trace evidence; then release the holder
    and prove the pooled connection has no leaked timeout/transaction state.
+   Race two distinct leads for the final slot of a capacity-one routing target;
+   exactly one assignment commits and the serialization loser writes no audit,
+   event or trace. Point startup at a black-hole authentication endpoint and
+   exhaust a size-one pool with a held client; connection and acquisition each
+   refuse within their own bounds, clean pending resources, and allow process
+   shutdown/recovery.
 8. Fault-inject every point between a control-plane authorization mutation, its
    local audit intent and tenant-audit finalization. Prove the mutation plus
    intent are atomic, pending evidence survives restart, reconciliation records
@@ -453,6 +486,11 @@ The implementation PR is complete only with machine-readable receipts for:
   parameter order and normalized results;
 - PostgreSQL `BIGINT` preserves accepted integer/cents values as safe JavaScript
   numbers at the existing domain boundaries and refuses unsafe stored values;
+- package/action contract v2 makes async service semantics explicit across both
+  adapters; legacy contract-1 packages remain synchronous on SQLite and refuse
+  before PostgreSQL startup;
+- long or multibyte logical identifiers map deterministically to collision-free
+  PostgreSQL physical names or fail before bootstrap;
 - the SQLite characterization unchanged from M0;
 - the synchronous SQLite in-process API and starter remain valid, while the
   async factory has one unconditional startup/service contract on both adapters;
@@ -471,6 +509,10 @@ The implementation PR is complete only with machine-readable receipts for:
 - competing same-record transitions preserve serialized behavior: one outcome
   commits, and no losing/retried path emits contradictory evidence or repeats an
   external side effect;
+- serializable outer writes preserve cross-record predicates, including two
+  leads racing for one routing-capacity slot;
+- connection establishment and pool acquisition own client-side deadlines and
+  release their timers, sockets and slots on bounded refusal;
 - repository truth, GTM, site, smoke and clean-clone quality gates green.
 
 The implementation PR must document how PostgreSQL was supplied to CI (service
@@ -545,6 +587,10 @@ agent-facing rail.
 - 2026-08-23: the next review attacked non-settling verifier initialization and
   an indefinitely held PostgreSQL row lock. Both now require explicit local
   deadlines, cleanup/late-settlement behavior and hanging-resource regressions.
+- 2026-08-23: exact-head review expanded portability to third-party package
+  contracts, cross-record predicates, pre-session waits and PostgreSQL's 63-byte
+  identifier limit. Versioned async contracts, serializable writes, client-side
+  deadlines and deterministic physical-name mapping now cover those boundaries.
 
 ## Decision log
 
@@ -587,6 +633,14 @@ agent-facing rail.
 - **Every external wait used for startup or serialization is bounded.** Verifier
   initialization and PostgreSQL lock/statement waits own deadlines and cleanup;
   timeout is a stable refusal, never an indefinitely pending process.
+- **Legacy package code never receives async services accidentally.** Contract 1
+  remains SQLite/synchronous; PostgreSQL requires explicit v2 async package and
+  action contracts.
+- **Write portability includes predicates.** PostgreSQL business writes are
+  serializable, with retries forbidden after external effects.
+- **Logical identifiers are not physical identifiers.** One recorded renderer
+  maps names within PostgreSQL byte limits and proves namespace uniqueness before
+  DDL runs.
 
 ## Outcome and follow-up
 
