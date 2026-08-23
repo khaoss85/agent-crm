@@ -173,8 +173,10 @@ test('M0 freezes the MCP stdio executable composition and JSON-line transport', 
     { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'm0-stdio', version: '1' } } },
     { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
   ].map((message) => JSON.stringify(message)).join('\n') + '\n';
+  const env = { ...process.env };
+  delete env.CRM_DB_PATH;
   const run = spawnSync(process.execPath, ['--no-warnings', mcpBin], {
-    cwd: directory, input, encoding: 'utf8', timeout: 10_000,
+    cwd: directory, env, input, encoding: 'utf8', timeout: 10_000,
   });
   assert.equal(run.status, 0, run.stderr);
   const responses = run.stdout.trim().split('\n').map((line) => JSON.parse(line));
