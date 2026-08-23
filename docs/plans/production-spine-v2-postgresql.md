@@ -116,10 +116,15 @@ of an unsupported one rather than growing a general query language.
    not an implementation detail hidden behind HTTP.
 4. Characterize every executable composition entry point: `npm start`/`serve`,
    `crm db:migrate` and the project MCP stdio server. Record startup success,
-   migration completion, bounded JSON/stdout and clean shutdown for SQLite;
-   record the current stable refusal when PostgreSQL is requested before the
-   async path exists. A direct factory test is not evidence that an operator can
-   boot the selected adapter.
+   migration completion, bounded JSON/stdout and clean shutdown for SQLite.
+   Before the portable asynchronous storage-selection contract exists there is
+   no supported PostgreSQL selection path: legacy `--db` is SQLite filesystem-
+   path syntax, not an adapter selector. Characterize a PostgreSQL-shaped value
+   as that unsupported legacy hazard, never as PostgreSQL support. Before a real
+   PostgreSQL adapter or operator-facing selection lands, the versioned
+   deployment-storage boundary ratified below must replace the ambiguity with
+   explicit fail-closed selection and refusal semantics. A direct factory test
+   is not evidence that an operator can boot the selected adapter.
 5. Record normalized receipts that contain domain objects and stable error
    codes, never driver messages, paths, timing or database-specific metadata.
 6. Freeze the released core migration identities before editing migration SQL:
@@ -1101,6 +1106,8 @@ that were not already pinned elsewhere.
 | Package/action/capability v1 synchronous SQLite graph | `tests/spine-v2-m0-characterization.test.js` — Work v1 fixture | PROVED |
 | MCP discovery, annotations, executable stdio startup, bounded JSON and shutdown | `tests/spine-v2-m0-characterization.test.js` — direct and child-process MCP fixtures | PROVED |
 | Every application CLI command, fresh SQLite migration and real `serve` readiness/shutdown | `tests/spine-v2-m0-characterization.test.js` — `APP_COMMANDS` child-process matrix | PROVED |
+| Executable storage-selection behavior: legacy `--db` is a SQLite path and no executable currently selects PostgreSQL | `tests/spine-v2-m0-characterization.test.js` — PostgreSQL-shaped sentinel path fixture | PROVED |
+| Complete released SQLite physical schema after each v1 through v5 migration prefix, retaining plane identity | `tests/spine-v2-m0-characterization.test.js`; `tests/fixtures/spine-v2-m0-sqlite-schema.json` | PROVED |
 | Company, Contact and Opportunity HTTP create/read/list envelopes and shared state | `tests/api.test.js`; `tests/opportunity-pipeline-e2e.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
 | Generated-module HTTP and SDK create/exact-read/list shapes | `tests/generated-api-e2e.test.js`; `tests/generated-api.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
 | HTTP/SDK 401, 403, 404 and bounded error projection without driver/path disclosure | `tests/production-spine.test.js`; `tests/generated-api.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
@@ -1121,6 +1128,13 @@ milestone. In particular, the browser row relies on the reviewed Chromium
 receipts only because M0 leaves every Admin public byte unchanged; a later PR
 that changes those bytes must produce a new current-head browser receipt rather
 than inheriting this one.
+
+- 2026-08-23: exact-head review corrected two M0 evidence defects. The plan no
+  longer invents a pre-adapter PostgreSQL refusal: it records legacy `--db` as
+  SQLite path syntax and defers explicit selection/refusal to the ratified
+  deployment-storage boundary. A replayable, inspectable schema snapshot now
+  freezes tables, columns, defaults, keys, foreign keys, indexes, predicates,
+  checks and `STRICT` SQL after every released v1 through v5 prefix.
 
 - 2026-08-23: governance closeout verified on live GitHub. PR #111 merged as
   `51b276b`; Vercel provenance restoration merged in PR #112 as `8ca790a`;

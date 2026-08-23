@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +23,51 @@ const MCP_TOOL_NAMES = [
   'crm_list_approvals', 'crm_list_opportunities', 'crm_project_context',
   'crm_request_stage_change', 'crm_scaffold_module',
 ];
+const schemaSnapshotPath = join(root, 'tests/fixtures/spine-v2-m0-sqlite-schema.json');
+
+function quoteIdentifier(value) {
+  return `"${String(value).replaceAll('"', '""')}"`;
+}
+
+function rows(database, sql) {
+  return database.prepare(sql).all().map((row) => ({ ...row }));
+}
+
+function capturePhysicalSchema(database) {
+  const objects = rows(database, `
+    SELECT type, name, tbl_name AS tableName, sql
+      FROM sqlite_schema
+     WHERE name NOT LIKE 'sqlite_%' AND type IN ('table', 'index')
+     ORDER BY type, name
+  `);
+  const tables = objects.filter(({ type }) => type === 'table').map(({ name }) => name);
+  const tableDetails = Object.fromEntries(tables.map((name) => [name, {
+    columns: rows(database, `PRAGMA table_xinfo(${quoteIdentifier(name)})`),
+    foreignKeys: rows(database, `PRAGMA foreign_key_list(${quoteIdentifier(name)})`),
+    indexes: rows(database, `PRAGMA index_list(${quoteIdentifier(name)})`).map((index) => ({
+      ...index,
+      columns: rows(database, `PRAGMA index_xinfo(${quoteIdentifier(index.name)})`),
+    })),
+  }]));
+  return { objects, tables: tableDetails };
+}
+
+function releasedSchemaPrefixes() {
+  return [1, 2, 3, 4, 5].map((throughVersion) => {
+    const database = new DatabaseSync(':memory:');
+    try {
+      const migrations = CORE_MIGRATIONS_FOR_CHARACTERIZATION.filter(({ version }) => version <= throughVersion);
+      for (const { sql } of migrations) database.exec(sql);
+      return {
+        throughVersion,
+        migrations: migrations.map(({ plane, version, name }) => ({ plane, version, name })),
+        schema: capturePhysicalSchema(database),
+      };
+    } finally {
+      database.close();
+    }
+  });
+}
 
 function assertMigrated(dbPath, label) {
   assert.equal(existsSync(dbPath), true, `${label} creates its fresh SQLite database`);
@@ -67,6 +112,38 @@ test('M0 pins the released core migration SQL checksums', () => {
     { plane: 'data', version: 4, name: 'definition_versions', checksum: 'f2b4daf5f0dbee756ae2b04087c28c0debafcfe474fb78f976ac1dfdfde744a8' },
     { plane: 'control', version: 5, name: 'production_spine_identity', checksum: 'dd5ab2cc2a946e2f573bd1536952e18974c19a776b71074f4335602a47cc04fc' },
   ]);
+});
+
+test('M0 pins the complete physical SQLite schema after every released migration prefix', () => {
+  const actual = releasedSchemaPrefixes();
+  if (process.env.ACCORDO_UPDATE_M0_SCHEMA_SNAPSHOT === '1') {
+    writeFileSync(schemaSnapshotPath, `${JSON.stringify(actual, null, 2)}\n`);
+  }
+  const expected = JSON.parse(readFileSync(schemaSnapshotPath, 'utf8'));
+  assert.deepEqual(actual, expected);
+});
+
+test('M0 records PostgreSQL-shaped --db input as legacy SQLite path semantics, not adapter selection', () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'accordo-m0-db-semantics-'));
+  try {
+    const shapedInput = 'postgresql://sentinel.invalid/accordo';
+    const result = spawnSync(process.execPath, [cli, 'db:migrate', '--db', shapedInput], {
+      cwd: workspace,
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const sqlitePath = join(workspace, 'postgresql:', 'sentinel.invalid', 'accordo');
+    assert.equal(existsSync(sqlitePath), true, 'legacy --db resolves the string as a local filesystem path');
+    assert.equal(readFileSync(sqlitePath).subarray(0, 16).toString(), 'SQLite format 3\0');
+    const receipt = JSON.parse(result.stdout);
+    assert.equal(receipt.ok, true);
+    assert.equal(receipt.database, sqlitePath);
+    assert.equal(receipt.message, 'Migrations are current.');
+    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /PostgreSQL adapter|connected to PostgreSQL/i);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 test('M0 freezes the synchronous SQLite composition and mixed sync/async service contract', async (t) => {
