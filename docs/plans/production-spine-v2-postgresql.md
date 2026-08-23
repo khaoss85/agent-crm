@@ -336,6 +336,36 @@ SQLite driver is private to the SQLite adapter. Both the legacy synchronous
 SQLite composition and the new async SQLite composition pass their respective
 characterization suites.
 
+#### Production binding and idempotency details
+
+- The closed deployment envelope also carries a `controlPlane` connection. A
+  production PostgreSQL deployment requires one genuinely shared PostgreSQL
+  control plane under the same authenticated-TLS and secret rules, with its own
+  adapter-owned schema. Local SQLite control planes are dev/compatibility only.
+  Organization/membership state, provisioning leases, tenant→binding UUIDs and
+  pending audit intents live in that shared authority. Two instances with
+  isolated filesystems must converge on it; production startup with independent
+  local control planes refuses.
+- Every PostgreSQL write receives a caller-known idempotency key before work:
+  HTTP uses canonical `Idempotency-Key`, the SDK uses a closed
+  `{idempotencyKey}` option that forwards it, and direct service/action/workflow
+  calls use a versioned operation context. Keys use bounded canonical ASCII and
+  are required on PostgreSQL; response, error and reconciliation envelopes echo
+  them. SQLite legacy calls remain compatible when omitted. This public contract
+  must clear the DX Gate: it prevents unknowable ambiguous retries, replaces no
+  existing usable primitive, is one transport concept across all surfaces, and
+  exposes machine-readable reconciliation evidence.
+- An outcome durably records compare-and-set promotion state for its trace and
+  event intents. Sequential or concurrent identical-key reconciliation returns
+  the stored response after one live promotion; it cannot dispatch the intents
+  again. The separately stated crash-during-external-dispatch limitation remains.
+  Tests lose responses through HTTP, SDK, action, workflow and direct service,
+  then replay sequentially/concurrently and assert exactly one row, audit,
+  completed trace and live event promotion.
+- M4 races one tenant against two databases from instances with isolated local
+  filesystems and the shared control plane; one lease/binding wins. Starting the
+  same topology with independent/local control planes is a production refusal.
+
 ### M3 — Add PostgreSQL migrations and adapter
 
 1. Add one production PostgreSQL driver only after recording in `DECISIONS.md`
