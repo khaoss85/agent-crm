@@ -20,9 +20,20 @@ function assertMigrated(dbPath, label) {
   assert.equal(existsSync(dbPath), true, `${label} creates its fresh SQLite database`);
   const database = new DatabaseSync(dbPath);
   try {
-    const migrations = database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get();
-    assert.ok(migrations.count > 0, `${label} applies core migrations`);
-    assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'companies'").get());
+    const migrations = database.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all();
+    assert.deepEqual(migrations.map((row) => ({ ...row })), [
+      { version: 1, name: 'initial_crm_schema' },
+      { version: 2, name: 'opportunity_source_key' },
+      { version: 3, name: 'opportunity_pipeline_state' },
+      { version: 4, name: 'definition_versions' },
+      { version: 5, name: 'production_spine_identity' },
+    ], `${label} applies the complete ordered core migration set`);
+    const tables = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all();
+    assert.deepEqual(tables.map(({ name }) => name), [
+      'approvals', 'audit_events', 'companies', 'contacts', 'definition_versions',
+      'module_migrations', 'opportunities', 'schema_migrations', 'spine_memberships',
+      'spine_organizations', 'trace_spans', 'workflow_runs',
+    ]);
   } finally {
     database.close();
   }
