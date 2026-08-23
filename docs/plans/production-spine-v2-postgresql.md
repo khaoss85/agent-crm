@@ -269,6 +269,16 @@ characterization suites.
    domain handle is exposed. A mismatch fails startup with a stable code that
    echoes neither tenant id nor connection detail. The marker is storage
    enforcement metadata, not a row-tenancy filter and not caller-writable data.
+8. Own one fixed, versioned PostgreSQL schema name in the adapter and schema-
+   qualify the tenant marker, migration ledgers and every domain/audit/trace
+   object. Refuse or override connection-level `search_path`; it is never an
+   isolation input. Provisioning locks and claims the fixed qualified marker
+   before any other qualified object is inspected or created. The conformance
+   suite must connect two tenants to the same database with deliberately
+   divergent `search_path` options and prove the second binding still reaches
+   the same marker and refuses before migrations or domain access. It must also
+   change `search_path` between restarts and prove no object becomes hidden or
+   newly reachable.
 
 Exit: a PostgreSQL instance can boot, migrate and run the two-consumer slice;
 SQLite remains green.
@@ -351,6 +361,8 @@ The implementation PR is complete only with machine-readable receipts for:
 - one-tenant-per-instance isolation across domain, audit and trace reads;
 - persistent data-plane ownership: an aliased database and a conflicting
   first-boot race both fail closed before the application receives a handle;
+- adapter-owned schema qualification: divergent or changed `search_path` values
+  cannot create a second marker, hide a ledger or redirect a domain query;
 - recoverable cross-plane Spine audit: every committed authorization mutation
   has atomic local evidence and converges idempotently to exactly one tenant
   audit row;
@@ -425,6 +437,9 @@ agent-facing rail.
   the shipped CLI and MCP executables on synchronous-only composition. Their
   awaited PostgreSQL startup, migration, refusal and shutdown paths are now
   explicit M0/M2 characterization and exit evidence.
+- 2026-08-23: a second exact-head review attacked PostgreSQL `search_path` as an
+  alias around the singleton marker. The adapter now owns and qualifies one
+  fixed schema, and the isolation proof includes divergent and drifting paths.
 
 ## Decision log
 
@@ -446,6 +461,9 @@ agent-facing rail.
   never mutates a pre-state generated module or guesses its history.
 - **Opaque means absent from surfaces.** A PostgreSQL locator is configuration
   input only, never an application/doctor/CLI result or diagnostic.
+- **A database binding cannot depend on `search_path`.** Every storage object is
+  addressed through the adapter-owned qualified schema, so configuration cannot
+  manufacture an apparent second singleton inside the same database.
 
 ## Outcome and follow-up
 
