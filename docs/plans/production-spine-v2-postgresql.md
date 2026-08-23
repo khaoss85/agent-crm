@@ -394,19 +394,28 @@ characterization suites.
    database transaction. Configure client-side connection and pool-acquisition
    deadlines separately from server deadlines. On expiry cancel/destroy the
    pending client, release pool bookkeeping, clear timers/sockets and return a
-   stable unavailable/timeout code.
+   stable unavailable/timeout code. Wrap every query/execute on an established
+   client in its own client-side deadline as well: a mid-query network stall
+   destroys (never returns) that client, releases pool bookkeeping/timers and
+   returns a stable unknown-or-timeout result even when the server cannot deliver
+   its statement cancellation. A subsequent acquisition must prove pool recovery.
    Treat connection loss during `COMMIT` as `COMMIT_OUTCOME_UNKNOWN`, never a
    normal rollback and never an automatic callback retry. Every PostgreSQL write
    entry point carries a caller-visible idempotency key (or a runtime-generated
    key returned before execution where the protocol permits it); the same
    transaction stores a unique bounded outcome record with deterministic record
-   IDs, normalized response and event intents. After reconnect, reconciliation
+   IDs, normalized response, event intents and deterministic successful-trace
+   intent/run metadata. The unique key is scoped to canonical tenant, verified
+   subject fingerprint, operation/action, target and contract version and binds
+   a canonical fingerprint of the complete normalized request. Reusing it with
+   any divergent scope or bytes fails closed and reveals neither prior response
+   nor subject. After reconnect, reconciliation
    looks up that key: a committed outcome returns its canonical response and
    promotes its events once in the live recovery path; absence authorizes one
    retry with the same IDs/key; inability to prove either remains unknown and
    refuses further mutation. This is bounded transaction recovery, not a claim
    of a general durable outbox: a process death during external event dispatch
-   can still omit or duplicate delivery until Spine v3, and that limitation is
+   can still omit or duplicate event delivery until Spine v3, and that limitation is
    published. Clear the DX Gate for the idempotency input: it prevents a user
    retry from duplicating an ambiguously committed write; no existing request
    identity survives reconnect; one key applies uniformly to API/SDK/action
@@ -511,6 +520,13 @@ SQLite remains green.
    one event, while the documented process-death dispatch limitation remains
    explicit. Repeat with a pre-commit drop (ledger absent) and prove the same
    deterministic IDs/key authorize one safe retry, never a second record.
+   Repeat reconciliation in a fresh process and reconstruct exactly one
+   successful trace from the committed trace intent before returning success.
+   Replay the same key with a changed tenant, verified subject, operation,
+   target and payload independently; each receives the same bounded divergent-
+   replay refusal and cannot read or suppress the original outcome. Black-hole
+   an established client mid-query and prove the per-operation deadline destroys
+   it, releases the slot and allows a fresh pooled query to succeed.
 8. Fault-inject every point between a control-plane authorization mutation, its
    local audit intent and tenant-audit finalization. Prove the mutation plus
    intent are atomic, pending evidence survives restart, reconciliation records
@@ -613,10 +629,16 @@ The implementation PR is complete only with machine-readable receipts for:
   discards the first attempt and only committed evidence is promoted;
 - ambiguous commit acknowledgement is reconciled by a unique idempotency/outcome
   record and deterministic IDs; it is never mislabeled rollback or blindly retried;
+- outcome keys bind tenant, verified subject, operation, target, version and
+  canonical request bytes; divergent replay cannot observe or suppress history;
+- committed trace intent lets a fresh-process reconciliation reconstruct exactly
+  one successful trace before reporting an ambiguously acknowledged success;
 - a serialization loser retains one normalized failed trace for diagnosis while
   writing no audit/event/success evidence;
 - connection establishment and pool acquisition own client-side deadlines and
   release their timers, sockets and slots on bounded refusal;
+- every established-client query/execute owns a client-side deadline and destroys
+  a black-holed client so the pool can recover;
 - production PostgreSQL requires encrypted, certificate- and hostname-verified
   TLS; plaintext, downgrade and unverifiable endpoints fail before storage use;
 - repository truth, GTM, site, smoke and clean-clone quality gates green.
@@ -716,6 +738,9 @@ agent-facing rail.
 - 2026-08-23: review extended async versioning through operations/capabilities
   and added bounded idempotency/outcome reconciliation for lost COMMIT
   acknowledgements without claiming the still-deferred general durable outbox.
+- 2026-08-23: the next review bound idempotency outcomes to request/identity
+  fingerprints, persisted trace intent for fresh-process recovery, and added a
+  client-side deadline for mid-query network stalls.
 
 ## Decision log
 
@@ -776,6 +801,9 @@ agent-facing rail.
 - **Unknown commit is a third state.** A durable idempotency/outcome record and
   deterministic IDs decide reconciliation; neither rollback nor blind replay is
   inferred from a lost acknowledgement.
+- **Idempotency is request-bound, not key-truthiness.** Tenant, verified subject,
+  operation, target, version and canonical payload must all match; committed
+  trace intent survives the process that lost the acknowledgement.
 - **Production stdio is not an authentication transport.** It stays static-
   context-only; tenant data, trace/debug and source mutation all refuse. Remote
   authenticated MCP requires a separate verified-request contract.
