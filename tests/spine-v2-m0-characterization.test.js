@@ -89,6 +89,11 @@ test('M0 freezes package v1 as synchronous declaration and operation metadata', 
   assert.deepEqual(work.capabilities.map(({ name, version }) => ({ name, version })), [
     { name: 'follow-up', version: 1 },
   ]);
+  assert.equal(
+    Object.hasOwn(work.capabilities[0], 'capabilityContract'),
+    false,
+    'the current synchronous capability declaration predates capabilityContract',
+  );
   const opened = work.capabilities[0].create({
     modules: { get: () => ({ service: { listWhere: () => [] } }) },
   });
@@ -192,6 +197,11 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
     });
     child.once('exit', (code) => reject(new Error(`serve exited early (${code}): ${stderr}`)));
   });
+  const advertised = stdout.match(/Accordo running at (http:\/\/[^\s]+)/)?.[1];
+  assert.ok(advertised, stdout);
+  const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(10_000) });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).generatedResourceContract, 1);
   child.kill('SIGTERM');
   const exitCode = await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
