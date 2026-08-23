@@ -215,6 +215,31 @@ all untouched consumers continue on the compatibility path.
    propagate a stable bounded startup failure, and close the selected adapter on
    signal/error. Add end-to-end child-process tests for both adapters; calling
    `createAccordoAppAsync` directly is not sufficient evidence.
+8. Define one shared, versioned deployment-storage configuration loader used by
+   the factory, CLI and MCP rather than inventing flags independently. The
+   candidate contract is a path to a permission-restricted JSON document with a
+   closed `{contract, adapter, connection, spine}` envelope; `connection` is
+   consumed only by the adapter and never returned, while `spine` resolves the
+   canonical tenant through ADR-038's existing binding. Existing `--db` remains
+   SQLite-only. Supplying both surfaces, an unknown adapter/key, inline
+   credential CLI argument, missing/unreadable config, or PostgreSQL without a
+   resolved spine/tenant binding fails before a connection is opened. Explicit
+   CLI config takes precedence over a single documented environment path; there
+   is no precedence between PostgreSQL and `--db` because that combination is a
+   refusal. MCP uses the same loader and rules.
+   Clear the DX Simplicity Gate before naming the surface:
+   - **failure prevented:** three executables invent different adapter/tenant
+     selection and accidentally boot PostgreSQL unbound or print a credential;
+   - **existing primitive insufficient:** `--db` is a public SQLite path and
+     cannot safely carry a structured spine binding or secret connection input;
+   - **overlap bound:** one loader/contract selects deployment storage for every
+     executable; `--db` is retained only for SQLite compatibility;
+   - **portable evidence:** publish a versioned closed-schema parser and a
+     cross-entry-point matrix proving identical selection, precedence and stable
+     refusal codes with sentinel credentials absent from output;
+   - **simpler goal flow:** an operator supplies one configuration path to any
+     executable, never a command-specific set of adapter flags. If this cannot
+     be demonstrated, redesign rather than adding the surface.
 
 Exit: SQLite passes the full suite through the portable contract, and the raw
 SQLite driver is private to the SQLite adapter. Both the legacy synchronous
@@ -263,7 +288,14 @@ characterization suites.
    their checksum normally.
 5. Implement prepared parameter binding, result normalization, nested
    savepoints, transaction connection affinity, rollback, conflict mapping and
-   deterministic close over PostgreSQL.
+   deterministic close over PostgreSQL. Preserve SQLite's serialized-write
+   observable semantics with an explicit PostgreSQL rule: state-changing
+   actions/workflows lock the authoritative record (`SELECT … FOR UPDATE`) or
+   use a versioned compare-and-swap inside the outer transaction before
+   evaluating/committing a transition. A serialization/deadlock loser receives
+   one bounded retry only where the whole operation is replay-safe; otherwise it
+   returns a stable conflict and produces no audit, event or trace claiming a
+   transition. Never retry a provider side effect implicitly.
 6. Bind a PostgreSQL data plane by opaque connection configuration, not by a
    filesystem path. Never return a credential, URL, host or database name in
    the application object, tenant binding, doctor output, CLI/stdout, startup
@@ -271,7 +303,9 @@ characterization suites.
    the conformance fixture and scan every returned object and captured
    stdout/stderr/audit/trace payload for both the full URI and each component.
 7. Persist a singleton tenant-binding marker inside each PostgreSQL data plane.
-   First provisioning claims an empty database for exactly one canonical tenant
+   PostgreSQL composition is invalid without a successfully resolved ADR-038
+   spine binding and canonical tenant; there is no synthetic or unbound
+   PostgreSQL mode. First provisioning claims an empty database for exactly one canonical tenant
    in the same locked transaction that establishes the migration ledger; every
    later boot compares the configured binding with that marker before any
    domain handle is exposed. A mismatch fails startup with a stable code that
@@ -323,6 +357,10 @@ SQLite remains green.
    assert byte-equivalent JSON/domain-object numbers on SQLite and PostgreSQL.
    Inject `BIGINT` values beyond JavaScript's safe range directly and prove the
    read refuses instead of rounding or leaking a driver string.
+   Race two different terminal actions against the same pre-state record and
+   prove at most one commits; the loser has a stable conflict/refusal and writes
+   no contradictory audit/event/trace evidence. Repeat around an external
+   operation and prove no automatic retry duplicates its provider call.
 8. Fault-inject every point between a control-plane authorization mutation, its
    local audit intent and tenant-audit finalization. Prove the mutation plus
    intent are atomic, pending evidence survives restart, reconciliation records
@@ -395,6 +433,12 @@ The implementation PR is complete only with machine-readable receipts for:
 - `npm start`/`serve`, `crm db:migrate` and MCP stdio boot PostgreSQL through the
   awaited async composition path, refuse before serving on failed startup, and
   retain their characterized SQLite behavior;
+- one closed deployment-storage config selects adapter plus spine binding
+  identically for factory/CLI/MCP, is mutually exclusive with SQLite `--db`, and
+  PostgreSQL always refuses without a resolved canonical tenant;
+- competing same-record transitions preserve serialized behavior: one outcome
+  commits, and no losing/retried path emits contradictory evidence or repeats an
+  external side effect;
 - repository truth, GTM, site, smoke and clean-clone quality gates green.
 
 The implementation PR must document how PostgreSQL was supplied to CI (service
@@ -458,6 +502,10 @@ agent-facing rail.
 - 2026-08-23: exact-head review exposed PostgreSQL's 32-bit `INTEGER` as narrower
   than existing monetary contracts. Integer/cents columns now require `BIGINT`,
   checked safe-number normalization and cross-adapter persisted boundaries.
+- 2026-08-23: the next review closed three planning ambiguities: all executables
+  now share one versioned storage-config selection contract, PostgreSQL has no
+  unbound/synthetic-tenant mode, and same-record transitions require locking or
+  compare-and-swap with side-effect-safe conflict semantics.
 
 ## Decision log
 
@@ -485,6 +533,14 @@ agent-facing rail.
 - **A portable integer is a JavaScript safe integer.** PostgreSQL storage uses
   `BIGINT`; adapter reads convert only canonical in-range values and never round
   or expose driver-specific strings.
+- **PostgreSQL selection is one deployment contract.** Factory, CLI and MCP
+  consume the same closed config; legacy `--db` remains SQLite-only and cannot
+  be combined with it.
+- **PostgreSQL is always tenant-bound.** Absence or failure of the ADR-038 spine
+  binding refuses startup before connection/provisioning.
+- **State transitions serialize at the record boundary.** Lock/CAS conflicts do
+  not become two successful transitions, two evidence trails or a repeated
+  provider call.
 
 ## Outcome and follow-up
 
