@@ -286,11 +286,14 @@ all untouched consumers continue on the compatibility path.
    Control-plane bootstrap runs first, before any organization, lease, binding or
    audit-intent read. It uses the same verified startup attestation bound to the
    control-plane resource identity and control migration-set fingerprint, then
-   acquires a PostgreSQL advisory bootstrap lock that exists independently of
-   application tables. Inside one control-plane transaction it creates/evolves
+   begins a control-plane transaction and acquires
+   `pg_advisory_xact_lock`—never a session lock—using a fixed contract key that
+   exists independently of application tables. Inside that transaction it creates/evolves
    the control schema, writes its checksum ledger and inserts the immutable
    startup audit row (including actor/reason/resource/migration fingerprints).
-   Concurrent starters serialize on that lock and revalidate after acquisition.
+   Concurrent starters serialize on that lock and revalidate after acquisition;
+   commit/rollback releases it before the pooled client is returned. A second
+   instance must acquire it immediately after the first completes.
    Fault injection at every DDL/ledger/audit boundary proves all-or-none restart;
    only after this succeeds may data-plane attestation, lease or migration begin.
    Production MCP stdio remains static-context-only in this milestone: its transport has
@@ -540,6 +543,13 @@ characterization suites.
   is acknowledged before the second can start, and lost storage after the second
   response identifies exactly the remaining unacknowledged outcome. Chromium
   covers that two-identical-submissions/replaced-browser case.
+  Acknowledgement is its own idempotent operation: derive a child key from the
+  submission root plus the closed `admin-ack` scope and terminal outcome id. It
+  carries the verified Admin subject, compares tenant/subject/outcome ownership,
+  and atomically flips the flag plus writes one immutable audit row. Lost ack
+  responses reuse that child key/outcome; identical repeats add no write/audit,
+  while another subject or outcome is divergent/refused. Chromium loses the ack
+  response, replaces the browser and proves one acknowledgement/audit transition.
 - Both Admin transports accept a required submission context and forward the
   same canonical `Idempotency-Key`; raw mutation calls without that context fail
   before `fetch`. Real-Chromium PostgreSQL coverage drives an Opportunity stage
@@ -723,9 +733,15 @@ read occurs while response shape and status remain deterministic.
    intent commit, inspect the intent ledger before any provider call. After the
    provider returns but finalize commit is unknown/absent, reconcile the provider
    receipt and compare its provider, tenant/account scope, operation kind,
-   idempotency key, canonical request fingerprint and remote-object identity to
+   idempotency key and canonical request fingerprint to
    the immutable local intent. Missing/mismatched fields refuse as
    `PROVIDER_RECEIPT_MISMATCH` before finalize, with no hostile value echoed.
+   Compare remote-object identity only when the pre-call intent already names
+   one. When the provider assigns it, exact request-field validation first
+   authorizes a separate durable receipt phase that binds the returned remote id
+   and receipt fingerprint to the intent; retry/restart reads that binding before
+   finalize. A different later remote id refuses. Fault tests cover Signature's
+   initially-null `providerEnvelopeId`, crash after receipt binding and mismatch.
    Only an exact receipt resumes finalize—never replay the provider. A provider whose
    state cannot be proved leaves the operation pending for explicit recovery.
    This versioned external-operation/provider contract must clear the DX Gate and
