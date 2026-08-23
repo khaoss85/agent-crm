@@ -14,6 +14,9 @@ Cloud C0, authentication, durable jobs, secrets, backups or observability.
 PostgreSQL is not permission to claim general production readiness. The
 framework still authenticates nobody; a deployment adapter still supplies the
 verified identity described by ADR-038.
+<!-- truth: spine.authentication.framework_verifier=absent -->
+<!-- truth: spine.tenant.isolation.mode=one_tenant_per_instance -->
+<!-- truth: spine.postgresql.implemented=absent -->
 
 ## Current repository context
 
@@ -247,6 +250,14 @@ all untouched consumers continue on the compatibility path.
    CLI config takes precedence over a single documented environment path; there
    is no precedence between PostgreSQL and `--db` because that combination is a
    refusal. MCP uses the same loader and rules.
+   Before reading bytes, the loader uses a no-follow open/stat discipline and
+   requires a regular file owned by the effective process identity with no
+   group/other permission bits; symlinks, ownership mismatch, `0640`/`0644` and
+   post-open identity changes fail with one stable pre-parse code. On a platform
+   where ownership/mode cannot be proved, production config-file loading refuses
+   rather than assuming secrecy; a future platform secret adapter needs its own
+   contract. Fixtures cover every refusal and prove diagnostics contain neither
+   the path nor file bytes.
    Clear the DX Simplicity Gate before naming the surface:
    - **failure prevented:** three executables invent different adapter/tenant
      selection and accidentally boot PostgreSQL unbound or print a credential;
@@ -415,8 +426,10 @@ SQLite remains green.
    rolls back, and writes no audit/event/trace evidence; then release the holder
    and prove the pooled connection has no leaked timeout/transaction state.
    Race two distinct leads for the final slot of a capacity-one routing target;
-   exactly one assignment commits and the serialization loser writes no audit,
-   event or trace. Point startup at a black-hole authentication endpoint and
+   exactly one assignment commits and the serialization loser writes no audit
+   or event and no successful-transition span, while the existing action runtime
+   retains exactly one failed diagnostic trace with only the normalized conflict
+   code. Point startup at a black-hole authentication endpoint and
    exhaust a size-one pool with a held client; connection and acquisition each
    refuse within their own bounds, clean pending resources, and allow process
    shutdown/recovery.
@@ -511,6 +524,8 @@ The implementation PR is complete only with machine-readable receipts for:
   external side effect;
 - serializable outer writes preserve cross-record predicates, including two
   leads racing for one routing-capacity slot;
+- a serialization loser retains one normalized failed trace for diagnosis while
+  writing no audit/event/success evidence;
 - connection establishment and pool acquisition own client-side deadlines and
   release their timers, sockets and slots on bounded refusal;
 - repository truth, GTM, site, smoke and clean-clone quality gates green.
@@ -591,6 +606,9 @@ agent-facing rail.
   contracts, cross-record predicates, pre-session waits and PostgreSQL's 63-byte
   identifier limit. Versioned async contracts, serializable writes, client-side
   deadlines and deterministic physical-name mapping now cover those boundaries.
+- 2026-08-23: review bound current Spine claims to executable truth facts,
+  required deployment-config ownership/mode checks before parsing secrets, and
+  preserved the action runtime's failed trace for serialization losers.
 
 ## Decision log
 
@@ -641,6 +659,11 @@ agent-facing rail.
 - **Logical identifiers are not physical identifiers.** One recorded renderer
   maps names within PostgreSQL byte limits and proves namespace uniqueness before
   DDL runs.
+- **A secret-bearing file must prove its local secrecy before parsing.** Regular
+  file, owner and permission checks fail closed; unsupported platforms do not
+  silently assume an equivalent guarantee.
+- **Conflict evidence is diagnostic, not business evidence.** Serialization
+  losers emit one failed normalized trace and no audit, event or success span.
 
 ## Outcome and follow-up
 
