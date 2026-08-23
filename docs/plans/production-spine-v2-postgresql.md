@@ -143,6 +143,13 @@ SQLite driver is private to the SQLite adapter.
 5. Bind a PostgreSQL data plane by opaque connection configuration, not by a
    filesystem path. Never return a credential, URL, host or database name in
    schema metadata, audit, trace or an error.
+6. Persist a singleton tenant-binding marker inside each PostgreSQL data plane.
+   First provisioning claims an empty database for exactly one canonical tenant
+   in the same locked transaction that establishes the migration ledger; every
+   later boot compares the configured binding with that marker before any
+   domain handle is exposed. A mismatch fails startup with a stable code that
+   echoes neither tenant id nor connection detail. The marker is storage
+   enforcement metadata, not a row-tenancy filter and not caller-writable data.
 
 Exit: a PostgreSQL instance can boot, migrate and run the two-consumer slice;
 SQLite remains green.
@@ -155,10 +162,15 @@ SQLite remains green.
 3. Prove two tenant bindings use distinct PostgreSQL databases/data planes. A
    subject from tenant B receives the existing 404-before-403 cross-tenant
    refusal and cannot read tenant A's domain, audit or trace rows.
-4. Prove an application binding still has no operation that can select another
+4. Deliberately configure tenant B with tenant A's already-claimed PostgreSQL
+   database and prove boot is refused before migrations, modules, audit or
+   request handling can touch it. Race two first boots for different tenants
+   against one empty database and prove exactly one claim wins; the loser gets
+   the same bounded refusal and no mixed schema or rows.
+5. Prove an application binding still has no operation that can select another
    tenant. No `organization_id` filter is introduced and no shared database is
    claimed.
-5. Test migration restart, concurrent migration startup, transaction rollback,
+6. Test migration restart, concurrent migration startup, transaction rollback,
    two-connection races, exact reads beyond page bounds, hostile input and
    normalized constraint/conflict errors on PostgreSQL.
 
@@ -199,6 +211,8 @@ The implementation PR is complete only with machine-readable receipts for:
 - rollback after each significant write and correct savepoint nesting;
 - two-connection conflict behavior with no raw driver error;
 - one-tenant-per-instance isolation across domain, audit and trace reads;
+- persistent data-plane ownership: an aliased database and a conflicting
+  first-boot race both fail closed before the application receives a handle;
 - no credential or storage locator in public schema, errors, audit or trace;
 - the SQLite characterization unchanged from M0;
 - repository truth, GTM, site, smoke and clean-clone quality gates green.
