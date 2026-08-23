@@ -218,7 +218,8 @@ all untouched consumers continue on the compatibility path.
 8. Define one shared, versioned deployment-storage configuration loader used by
    the factory, CLI and MCP rather than inventing flags independently. The
    candidate contract is a path to a permission-restricted JSON document with a
-   closed `{contract, adapter, connection, spine}` envelope; `connection` is
+   closed `{contract, adapter, connection, spine, identityVerifier}` envelope;
+   `connection` is
    consumed only by the adapter and never returned, while `spine` resolves the
    canonical tenant through ADR-038's existing binding. Existing `--db` remains
    SQLite-only. Supplying both surfaces, an unknown adapter/key, inline
@@ -236,10 +237,23 @@ all untouched consumers continue on the compatibility path.
      executable; `--db` is retained only for SQLite compatibility;
    - **portable evidence:** publish a versioned closed-schema parser and a
      cross-entry-point matrix proving identical selection, precedence and stable
-     refusal codes with sentinel credentials absent from output;
+   refusal codes with sentinel credentials absent from output;
    - **simpler goal flow:** an operator supplies one configuration path to any
-     executable, never a command-specific set of adapter flags. If this cannot
-     be demonstrated, redesign rather than adding the surface.
+   executable, never a command-specific set of adapter flags. If this cannot
+   be demonstrated, redesign rather than adding the surface.
+   `identityVerifier` is a checked repository-relative ESM provider reference,
+   not executable code or a credential in JSON. The shared loader resolves its
+   real path inside the project root (rejecting absolute, escaping and symlink-
+   escaping paths), imports it before database connection, and requires one
+   named factory with a versioned data-only provider contract. The factory
+   receives only its bounded provider configuration and returns ADR-038's
+   verifier function; it reads credentials through the deployment environment
+   or secret manager, never through CLI arguments or public results. Production
+   mode requires this reference; local mode refuses a configured production
+   verifier rather than silently changing trust. Factory, `serve`, MCP and any
+   HTTP entry point use the same resolver. Add fixture providers for success,
+   malformed export, throw/reject, escaping path and credential-sentinel tests,
+   and prove no listener/database handle exists before verifier resolution.
 
 Exit: SQLite passes the full suite through the portable contract, and the raw
 SQLite driver is private to the SQLite adapter. Both the legacy synchronous
@@ -436,6 +450,9 @@ The implementation PR is complete only with machine-readable receipts for:
 - one closed deployment-storage config selects adapter plus spine binding
   identically for factory/CLI/MCP, is mutually exclusive with SQLite `--db`, and
   PostgreSQL always refuses without a resolved canonical tenant;
+- production executables resolve one checked, repository-contained verifier
+  provider contract before database/listener startup; malformed or escaping
+  providers fail closed without leaking their configuration;
 - competing same-record transitions preserve serialized behavior: one outcome
   commits, and no losing/retried path emits contradictory evidence or repeats an
   external side effect;
@@ -506,6 +523,10 @@ agent-facing rail.
   now share one versioned storage-config selection contract, PostgreSQL has no
   unbound/synthetic-tenant mode, and same-record transitions require locking or
   compare-and-swap with side-effect-safe conflict semantics.
+- 2026-08-23: exact-head review proved a data-only spine binding could not supply
+  ADR-038's required verifier function. The shared deployment contract now names
+  a checked repository-contained verifier provider with fail-before-connect
+  resolution and executable child-process evidence.
 
 ## Decision log
 
@@ -536,6 +557,10 @@ agent-facing rail.
 - **PostgreSQL selection is one deployment contract.** Factory, CLI and MCP
   consume the same closed config; legacy `--db` remains SQLite-only and cannot
   be combined with it.
+- **Verifier code is a provider, not JSON.** The deployment document references
+  one repository-contained versioned factory; every executable resolves it
+  before opening storage or a listener, and credentials stay in the deployment
+  environment/secret manager.
 - **PostgreSQL is always tenant-bound.** Absence or failure of the ADR-038 spine
   binding refuses startup before connection/provisioning.
 - **State transitions serialize at the record boundary.** Lock/CAS conflicts do
