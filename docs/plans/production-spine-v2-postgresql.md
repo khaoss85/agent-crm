@@ -566,6 +566,15 @@ characterization suites.
   two consumers shape it, but it must be deterministic, domain-separated and
   collision-tested. A child outcome stores its parent/root fingerprint so it
   cannot be replayed under another request.
+- Before any child mutation, the runtime commits a durable parent intent under
+  tenant+root key containing the normalized request and canonical child-plan
+  fingerprints, expected child identities and verified subject/scope. Replay
+  loads and compares that intent first; any changed plan refuses before deriving
+  or executing a child. Parent-intent creation is idempotent and independently
+  audited. A crash after intent or after any child leaves the parent pending and
+  replay resumes only missing matching children. Fault coverage commits child
+  one, kills the process, changes/adds a child under the root and proves zero new
+  child writes/evidence before the parent divergent-replay refusal.
 - Stable child identity is a semantic id supplied by the workflow/operation
   plan—record id, declared step id plus stable business key, or a checked stable
   ordinal from an immutable canonical input array. It is never object/map/set
