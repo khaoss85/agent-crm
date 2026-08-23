@@ -82,8 +82,7 @@ test('M0 freezes current SQLite MCP discovery and mutation annotations', async (
   });
   assert.equal(initialized.result.serverInfo.name, 'accordo');
   const listed = await mcp.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-  const tools = new Map(listed.result.tools.map((tool) => [tool.name, tool]));
-  assert.deepEqual([...tools.keys()].sort(), [
+  const expectedNames = [
     'crm_create_opportunity',
     'crm_decide_approval',
     'crm_doctor',
@@ -93,7 +92,11 @@ test('M0 freezes current SQLite MCP discovery and mutation annotations', async (
     'crm_project_context',
     'crm_request_stage_change',
     'crm_scaffold_module',
-  ]);
+  ];
+  const rawNames = listed.result.tools.map((tool) => tool.name).sort();
+  assert.deepEqual(rawNames, expectedNames, 'discovery has no missing or duplicate tool names');
+  assert.equal(new Set(rawNames).size, rawNames.length, 'tool names are unique before dispatch lookup');
+  const tools = new Map(listed.result.tools.map((tool) => [tool.name, tool]));
   for (const [name, tool] of tools) {
     const readOnly = ['crm_doctor', 'crm_get_trace', 'crm_list_approvals', 'crm_list_opportunities', 'crm_project_context'].includes(name);
     assert.deepEqual(tool.annotations, {
