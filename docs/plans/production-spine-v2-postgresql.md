@@ -237,6 +237,16 @@ all untouched consumers continue on the compatibility path.
    propagate a stable bounded startup failure, and close the selected adapter on
    signal/error. Add end-to-end child-process tests for both adapters; calling
    `createAccordoAppAsync` directly is not sufficient evidence.
+   Production MCP stdio remains read-only in this milestone: its transport has
+   no per-request verifier evidence, and existing write tools use asserted local
+   actors. Do not invent identity headers inside JSON-RPC. At production
+   discovery omit every CRM write tool (or return one stable pre-service
+   `MCP_PRODUCTION_WRITE_UNAVAILABLE` refusal for legacy discovery), while
+   read-only schema/context resources remain available through authorized
+   application reads. Prove every current write tool is unreachable before its
+   service/workflow with zero audit/event/trace. A future authenticated remote
+   MCP is a separate DX/identity contract and must clear the DX Gate; this plan
+   does not claim it.
 8. Define one shared, versioned deployment-storage configuration loader used by
    the factory, CLI and MCP rather than inventing flags independently. The
    candidate contract is a path to a permission-restricted JSON document with a
@@ -284,11 +294,13 @@ all untouched consumers continue on the compatibility path.
    HTTP entry point use the same resolver. Add fixture providers for success,
    malformed export, throw/reject, escaping path and credential-sentinel tests,
    and prove no listener/database handle exists before verifier resolution. Run
-   provider initialization under one documented bounded startup deadline with
+   the entire resolution pipeline—realpath checks, dynamic module evaluation
+   and provider factory initialization—under one documented bounded startup deadline with
    an abort signal where the provider supports it; always clear the timer,
    abandon/ignore late settlement and return a stable verifier-timeout code.
    A hanging fixture must make each child process exit nonzero within the bound
-   with no open listener/database and no credential in diagnostics.
+   with no open listener/database and no credential in diagnostics. Include a
+   provider whose top-level `await` never settles, not only a hanging factory.
 
 Exit: SQLite passes the full suite through the portable contract, and the raw
 SQLite driver is private to the SQLite adapter. Both the legacy synchronous
@@ -376,6 +388,17 @@ characterization suites.
    domain handle is exposed. A mismatch fails startup with a stable code that
    echoes neither tenant id nor connection detail. The marker is storage
    enforcement metadata, not a row-tenancy filter and not caller-writable data.
+   Introduce a portable `TENANT_BINDING_CONTRACT = 2` rather than overloading
+   v1's filesystem shape. V2 publishes only `{contract, adapter, tenantBound,
+   controlPlaneAdapter, dataPlaneIsolation}` with closed vocabularies and no
+   path/connection locator; PostgreSQL uses it, and SQLite may implement it on
+   the async path. The synchronous SQLite factory and exported v1 binding retain
+   `root`, `dataPlanePath` and `controlPlanePath` byte-for-byte for compatibility.
+   `spine.describe()`, application schema/inspection and Repository Truth derive
+   enforcement from the v2 discriminated descriptor, never from the presence of
+   a path. Contract-shape, v1 compatibility and false filesystem-claim tests are
+   required, and the horizontal binding contract is recorded in the Legacy
+   Alignment Matrix.
 8. Own one fixed, versioned PostgreSQL schema name in the adapter and schema-
    qualify the tenant marker, migration ledgers and every domain/audit/trace
    object. Refuse or override connection-level `search_path`; it is never an
@@ -525,6 +548,10 @@ The implementation PR is complete only with machine-readable receipts for:
 - production executables resolve one checked, repository-contained verifier
   provider contract before database/listener startup; malformed or escaping
   providers fail closed without leaking their configuration;
+- production MCP stdio exposes no CRM write path until a per-request verified-
+  identity transport exists; every legacy write tool refuses before services;
+- tenant binding contract v2 describes SQLite/PostgreSQL isolation without a
+  locator, while synchronous SQLite retains its v1 filesystem shape;
 - verifier-provider initialization and PostgreSQL lock/statement waits have
   adapter-owned deadlines; hanging/held resources fail with stable codes, clean
   timers/transactions and no mutation evidence;
@@ -623,6 +650,10 @@ agent-facing rail.
 - 2026-08-23: fresh review found that a transaction retry could reuse the outer
   event/trace buffers and publish rolled-back attempt evidence. Buffers are now
   attempt-local with an injected commit-conflict-then-success regression.
+- 2026-08-23: review closed the remaining executable/binding edges: production
+  MCP writes fail before services instead of using asserted actors, tenant
+  binding v2 is portable and discriminated, and the verifier deadline covers
+  module evaluation including non-settling top-level `await`.
 
 ## Decision log
 
@@ -680,6 +711,10 @@ agent-facing rail.
   losers emit one failed normalized trace and no audit, event or success span.
 - **A retry is a new evidence attempt.** Events and trace steps from a rolled-
   back attempt are discarded; only the committed attempt can be promoted.
+- **Production stdio is not an authentication transport.** It stays read-only;
+  remote authenticated MCP writes require a separate verified-request contract.
+- **Binding evidence is discriminated, not inferred from paths.** V2 describes
+  the adapter/isolation without locators; legacy synchronous SQLite keeps v1.
 
 ## Outcome and follow-up
 
