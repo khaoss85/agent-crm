@@ -21,19 +21,26 @@ function assertMigrated(dbPath, label) {
   const database = new DatabaseSync(dbPath);
   try {
     const migrations = database.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all();
-    assert.deepEqual(migrations.map((row) => ({ ...row })), [
+    const baselineMigrations = [
       { version: 1, name: 'initial_crm_schema' },
       { version: 2, name: 'opportunity_source_key' },
       { version: 3, name: 'opportunity_pipeline_state' },
       { version: 4, name: 'definition_versions' },
       { version: 5, name: 'production_spine_identity' },
-    ], `${label} applies the complete ordered core migration set`);
+    ];
+    assert.deepEqual(
+      migrations.slice(0, baselineMigrations.length).map((row) => ({ ...row })),
+      baselineMigrations,
+      `${label} preserves and applies the complete released M0 migration prefix`,
+    );
+    assert.ok(migrations.length >= baselineMigrations.length, `${label} may append only forward migrations`);
     const tables = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all();
-    assert.deepEqual(tables.map(({ name }) => name), [
+    const tableNames = new Set(tables.map(({ name }) => name));
+    for (const name of [
       'approvals', 'audit_events', 'companies', 'contacts', 'definition_versions',
       'module_migrations', 'opportunities', 'schema_migrations', 'spine_memberships',
       'spine_organizations', 'trace_spans', 'workflow_runs',
-    ]);
+    ]) assert.equal(tableNames.has(name), true, `${label} retains M0 table ${name}`);
   } finally {
     database.close();
   }
