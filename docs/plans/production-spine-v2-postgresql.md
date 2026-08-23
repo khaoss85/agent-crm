@@ -315,9 +315,9 @@ all untouched consumers continue on the compatibility path.
    identity-provider namespace is added. First `discoverControlResource` proves
    the external control identity without DDL; `attestControlStartup` receives
    the challenge bound to that discovery and proves workload authorization;
-   control bootstrap then completes. Next `attestDataStartup` is bound to the
-   first attestation fingerprint; `discoverDataResource` proves the external data
-   identity, and `attestDataStartup` receives its bound challenge before any
+   control bootstrap then completes. Next `discoverDataResource` proves the
+   external data identity; `attestDataStartup` receives a challenge bound to the
+   control-attestation and data-discovery fingerprints before any
    data-plane DDL/lease. Any phase can refuse and
    neither can be replayed/substituted for the other. Startup rejects identical ids and endpoint
    aliases; schema names, URLs and credentials are not identities. Fixtures cover
@@ -494,9 +494,9 @@ characterization suites.
   credential-free in outputs and fail-closed when the deployment cannot prove an
   external identity. A physical/logical clone with a different attested resource
   id therefore conflicts before writes; two endpoints claiming the same
-  attestation are probed concurrently and refused as ambiguous. Portable
-  deployments without such an authority may run one process only and cannot
-  claim clone/failover safety. M4 uses a fixture identity authority to start the
+  attestation are probed concurrently and refused as ambiguous. Production
+  PostgreSQL refuses entirely when this authority is unavailable; there is no
+  authority-free “single process” exception. M4 uses a fixture identity authority to start the
   original and clone concurrently and proves one pre-write lease winner.
 
 ##### Admin submission keys
@@ -532,7 +532,14 @@ characterization suites.
   the key itself was lost with browser storage—and is compacted only under the
   expiry/tombstone rule. A replacement browser first queries this scope and
   acknowledges/reconciles the retained terminal outcome before enabling a new
-  equivalent submission.
+  equivalent submission. The server also stores an immutable per-subject
+  submission sequence and explicit client-acknowledged flag. Discovery returns
+  only unacknowledged outcomes in sequence order; the Admin must acknowledge the
+  prior terminal outcome before enabling an equivalent deliberate submission.
+  Thus two intentional identical payloads have distinct keys/sequences, the first
+  is acknowledged before the second can start, and lost storage after the second
+  response identifies exactly the remaining unacknowledged outcome. Chromium
+  covers that two-identical-submissions/replaced-browser case.
 - Both Admin transports accept a required submission context and forward the
   same canonical `Idempotency-Key`; raw mutation calls without that context fail
   before `fetch`. Real-Chromium PostgreSQL coverage drives an Opportunity stage
