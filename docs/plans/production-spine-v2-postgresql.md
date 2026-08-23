@@ -366,6 +366,13 @@ characterization suites.
   must clear the DX Gate: it prevents unknowable ambiguous retries, replaces no
   existing usable primitive, is one transport concept across all surfaces, and
   exposes machine-readable reconciliation evidence.
+- Verified provider webhooks are the bounded exception to caller header
+  transport. Only after signature/provider verification succeeds, the webhook
+  adapter derives the root outcome identity from the closed provider name,
+  canonical event id and payload fingerprint already used for divergent-replay
+  defense. Unverified bytes never choose a key. Lost-COMMIT, identical delivery
+  and same-event/different-payload fixtures traverse the real signature webhook
+  route and converge/refuse under the same outcome contract.
 - An outcome durably records compare-and-set promotion state for its trace and
   event intents. Sequential or concurrent identical-key reconciliation returns
   the stored response after one live promotion; it cannot dispatch the intents
@@ -401,6 +408,18 @@ characterization suites.
   the revoked original cannot accept another connection or write. This fail-
   closed offline protocol is the boundary of per-tenant Spine v2; transparent
   automatic failover would require a stronger coordinator and is not claimed.
+  Before either original or clone receives a write handle, a deployment-supplied
+  data-plane identity provider must attest a non-clonable external resource
+  identity (for example a platform-signed database resource id) and binding
+  generation; the shared control plane leases that attested identity, not the
+  marker copied inside the database. The provider contract is versioned,
+  credential-free in outputs and fail-closed when the deployment cannot prove an
+  external identity. A physical/logical clone with a different attested resource
+  id therefore conflicts before writes; two endpoints claiming the same
+  attestation are probed concurrently and refused as ambiguous. Portable
+  deployments without such an authority may run one process only and cannot
+  claim clone/failover safety. M4 uses a fixture identity authority to start the
+  original and clone concurrently and proves one pre-write lease winner.
 
 ##### Admin submission keys
 
@@ -429,7 +448,13 @@ characterization suites.
   pending-outcome lookup for the verified user so a cleared/replaced browser can
   rediscover unresolved submission metadata without learning another subject's
   keys. Only a proved committed/rolled-back/cancelled-before-dispatch terminal
-  outcome removes the browser/server pending entry; page teardown never does.
+  outcome removes the browser entry only after client acknowledgement. Server
+  terminal submission metadata remains discoverable by tenant, verified subject,
+  operation scope and request fingerprint for the full replay window—even when
+  the key itself was lost with browser storage—and is compacted only under the
+  expiry/tombstone rule. A replacement browser first queries this scope and
+  acknowledges/reconciles the retained terminal outcome before enabling a new
+  equivalent submission.
 - Both Admin transports accept a required submission context and forward the
   same canonical `Idempotency-Key`; raw mutation calls without that context fail
   before `fetch`. Real-Chromium PostgreSQL coverage drives an Opportunity stage
@@ -461,6 +486,11 @@ characterization suites.
   dynamic workflow fan-out and changed fan-out under the same root. Every replay
   converges to exactly one parent result and one set of domain rows, audits,
   events and final traces; sibling writes never share a key.
+  The production HTTP demo routes themselves are stable refusals because their
+  shipped implementation replaces the verified requester with hard-coded demo
+  actors. The fan-out fixture invokes the internal operation only with an
+  explicit verified operation context propagated unchanged to every child
+  outcome/audit; no production route may discard or substitute that subject.
 
 ##### Application CLI PostgreSQL matrix
 
