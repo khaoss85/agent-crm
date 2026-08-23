@@ -106,9 +106,15 @@ of an unsupported one rather than growing a general query language.
    reads/writes, the starter installer and every checked example that reads a
    return value without `await`. This is a shipped consumer contract, not an
    implementation detail hidden behind HTTP.
-4. Record normalized receipts that contain domain objects and stable error
+4. Characterize every executable composition entry point: `npm start`/`serve`,
+   `crm db:migrate` and the project MCP stdio server. Record startup success,
+   migration completion, bounded JSON/stdout and clean shutdown for SQLite;
+   record the current stable refusal when PostgreSQL is requested before the
+   async path exists. A direct factory test is not evidence that an operator can
+   boot the selected adapter.
+5. Record normalized receipts that contain domain objects and stable error
    codes, never driver messages, paths, timing or database-specific metadata.
-5. Freeze the released core migration identities before editing migration SQL:
+6. Freeze the released core migration identities before editing migration SQL:
    version, name, source checksum and the schema shape observed after each
    supported legacy upgrade point. These pinned baseline constants, reviewed in
    M0, are the only authority a later checksum-ledger backfill may trust.
@@ -196,6 +202,13 @@ all untouched consumers continue on the compatibility path.
    CLI JSON must never expose a PostgreSQL URL, host, database, user, password or
    driver error. The compatibility SQLite surface may retain its documented
    path where existing callers require it; the portable contract never does.
+7. Migrate `serve`, `crm db:migrate` and MCP stdio composition onto the
+   unconditional async factory when PostgreSQL is selected, while retaining the
+   characterized synchronous SQLite path. Each entry point must await startup
+   and migrations before accepting a request or writing a success response,
+   propagate a stable bounded startup failure, and close the selected adapter on
+   signal/error. Add end-to-end child-process tests for both adapters; calling
+   `createAccordoAppAsync` directly is not sufficient evidence.
 
 Exit: SQLite passes the full suite through the portable contract, and the raw
 SQLite driver is private to the SQLite adapter. Both the legacy synchronous
@@ -352,6 +365,9 @@ The implementation PR is complete only with machine-readable receipts for:
 - the SQLite characterization unchanged from M0;
 - the synchronous SQLite in-process API and starter remain valid, while the
   async factory has one unconditional startup/service contract on both adapters;
+- `npm start`/`serve`, `crm db:migrate` and MCP stdio boot PostgreSQL through the
+  awaited async composition path, refuse before serving on failed startup, and
+  retain their characterized SQLite behavior;
 - repository truth, GTM, site, smoke and clean-clone quality gates green.
 
 The implementation PR must document how PostgreSQL was supplied to CI (service
@@ -405,6 +421,10 @@ agent-facing rail.
   gaps: runtime query portability, credential-bearing in-process/CLI surfaces,
   and generated registries predating `module.state.json`. The plan now gives
   each a fail-closed contract and executable regression fixture.
+- 2026-08-23: fresh exact-head review found that direct factory coverage left
+  the shipped CLI and MCP executables on synchronous-only composition. Their
+  awaited PostgreSQL startup, migration, refusal and shutdown paths are now
+  explicit M0/M2 characterization and exit evidence.
 
 ## Decision log
 
