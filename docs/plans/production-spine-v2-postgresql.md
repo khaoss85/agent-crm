@@ -352,7 +352,12 @@ characterization suites.
    predicates spanning multiple rows retain SQLite's single-writer behavior.
    Normalize serialization failures and retry only when the complete effect plan
    proves no external operation occurred; a per-record lock alone is never the
-   portability guarantee. Configure client-side connection and pool-acquisition
+   portability guarantee. Each retry attempt owns fresh transaction-local event
+   and trace-step buffers nested inside the attempt, not one buffer around the
+   retry loop. A serialization rollback discards them before another callback is
+   entered; only the committed attempt promotes events for post-commit dispatch
+   and steps into the one final trace. Audit rows remain inside the rolled-back
+   database transaction. Configure client-side connection and pool-acquisition
    deadlines separately from server deadlines. On expiry cancel/destroy the
    pending client, release pool bookkeeping, clear timers/sockets and return a
    stable unavailable/timeout code.
@@ -433,6 +438,10 @@ SQLite remains green.
    exhaust a size-one pool with a held client; connection and acquisition each
    refuse within their own bounds, clean pending resources, and allow process
    shutdown/recovery.
+   Force one replay-safe action to reach commit with an emitted event/trace step,
+   inject a serialization failure, then let its second attempt commit. Assert
+   exactly one audit row, one dispatched event and one successful-attempt step;
+   no event or trace step from the rolled-back attempt survives.
 8. Fault-inject every point between a control-plane authorization mutation, its
    local audit intent and tenant-audit finalization. Prove the mutation plus
    intent are atomic, pending evidence survives restart, reconciliation records
@@ -524,6 +533,8 @@ The implementation PR is complete only with machine-readable receipts for:
   external side effect;
 - serializable outer writes preserve cross-record predicates, including two
   leads racing for one routing-capacity slot;
+- serialization retries use attempt-local event and trace buffers; rollback
+  discards the first attempt and only committed evidence is promoted;
 - a serialization loser retains one normalized failed trace for diagnosis while
   writing no audit/event/success evidence;
 - connection establishment and pool acquisition own client-side deadlines and
@@ -609,6 +620,9 @@ agent-facing rail.
 - 2026-08-23: review bound current Spine claims to executable truth facts,
   required deployment-config ownership/mode checks before parsing secrets, and
   preserved the action runtime's failed trace for serialization losers.
+- 2026-08-23: fresh review found that a transaction retry could reuse the outer
+  event/trace buffers and publish rolled-back attempt evidence. Buffers are now
+  attempt-local with an injected commit-conflict-then-success regression.
 
 ## Decision log
 
@@ -664,6 +678,8 @@ agent-facing rail.
   silently assume an equivalent guarantee.
 - **Conflict evidence is diagnostic, not business evidence.** Serialization
   losers emit one failed normalized trace and no audit, event or success span.
+- **A retry is a new evidence attempt.** Events and trace steps from a rolled-
+  back attempt are discarded; only the committed attempt can be promoted.
 
 ## Outcome and follow-up
 
