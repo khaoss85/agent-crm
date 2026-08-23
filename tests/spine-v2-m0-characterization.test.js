@@ -4,13 +4,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createMcpServer } from '../packages/mcp/src/index.js';
+import { CORE_MIGRATIONS_FOR_CHARACTERIZATION } from '../packages/core/src/database.js';
 import createWorkPackage from '../packages/work/src/index.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -54,27 +55,11 @@ function assertMigrated(dbPath, label) {
 }
 
 test('M0 pins the released core migration SQL checksums', () => {
-  const source = readFileSync(join(root, 'packages/core/src/database.js'), 'utf8');
-  const dataStart = source.indexOf('const DATA_PLANE_MIGRATIONS');
-  const controlStart = source.indexOf('const CONTROL_PLANE_MIGRATIONS');
-  const planesEnd = source.indexOf('const MIGRATION_PLANES');
-  assert.ok(dataStart >= 0 && controlStart > dataStart && planesEnd > controlStart);
-  const migrations = [];
-  for (const [plane, section] of [
-    ['data', source.slice(dataStart, controlStart)],
-    ['control', source.slice(controlStart, planesEnd)],
-  ]) {
-    const pattern = /version:\s*(\d+),[\s\S]*?name:\s*'([^']+)',[\s\S]*?sql:\s*`([\s\S]*?)`,\s*\n\s*}/g;
-    for (const match of section.matchAll(pattern)) {
-      if (Number(match[1]) > 5) continue;
-      migrations.push({
-        plane,
-        version: Number(match[1]),
-        name: match[2],
-        checksum: createHash('sha256').update(match[3]).digest('hex'),
-      });
-    }
-  }
+  const migrations = CORE_MIGRATIONS_FOR_CHARACTERIZATION
+    .filter(({ version }) => version <= 5)
+    .map(({ plane, version, name, sql }) => ({
+      plane, version, name, checksum: createHash('sha256').update(sql).digest('hex'),
+    }));
   assert.deepEqual(migrations, [
     { plane: 'data', version: 1, name: 'initial_crm_schema', checksum: '2d386db73f44bc6da6e76942ba8dba2ee37d6799e5442e9c894d035848a2555e' },
     { plane: 'data', version: 2, name: 'opportunity_source_key', checksum: 'deed722482124ab96deb2f884ab4e0fb9308318f9411cc8b67e1bf5552d0093a' },
