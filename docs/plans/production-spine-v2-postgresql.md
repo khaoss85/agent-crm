@@ -406,7 +406,13 @@ characterization suites.
 - Every PostgreSQL write receives a caller-known idempotency key before work:
   HTTP uses canonical `Idempotency-Key`, the SDK uses a closed
   `{idempotencyKey}` option that forwards it, and direct service/action/workflow
-  calls use a versioned operation context. Keys use bounded canonical ASCII and
+  calls use a versioned operation context. Keys use a closed format with an
+  issuance bucket plus at least 128 bits of cryptographically generated random
+  material encoded canonically; short/free-form/predictable values refuse before
+  lookup or allocation. Admin/SDK/CLI generators use the platform CSPRNG and
+  never counters, record ids or user input. Collision tests cover malformed,
+  low-entropy-shaped and duplicate generated keys; cross-subject key material is
+  never disclosed. Keys otherwise use bounded canonical ASCII and
   are required on PostgreSQL; response, error and reconciliation envelopes echo
   them. SQLite legacy calls remain compatible when omitted. This public contract
   must clear the DX Gate: it prevents unknowable ambiguous retries, replaces no
@@ -627,11 +633,17 @@ credential-output scans and pool/client/timer shutdown checks.
 
 Production HTTP `GET /health` no longer calls `app.doctor()` or any tenant
 service. It returns one bounded storage-independent liveness/readiness contract
-derived from process startup completion and, when needed, an adapter-level
+derived from process startup completion, current unexpired writer lease/
+attestation authority and, when needed, an adapter-level
 `SELECT 1`-style connectivity probe that exposes no counts, tenant, schema,
 locator or provider detail. Authenticated operational diagnostics are a separate
 surface; route tests inject hostile tenant rows and prove no module/workflow/audit
 read occurs while response shape and status remain deterministic.
+Lease renewal refusal/revocation flips readiness false before tenant operations
+are routed; recovery requires a fresh successful attestation/lease. The public
+response reveals only ready/not-ready and a closed generic reason code, never
+tenant, provider, expiry, generation or resource identity. Tests boot ready,
+refuse renewal and prove health becomes non-ready while liveness remains true.
 The Admin stops treating health as tenant metrics. It feature-detects the
 readiness-only contract and loads counts from a separate authenticated,
 tenant-bound dashboard-metrics read that passes the verified user through
