@@ -280,6 +280,16 @@ all untouched consumers continue on the compatibility path.
    contract exists. Fault injection before/after every DDL, ledger and audit
    write proves restart yields either none of the unit or schema+ledger+audit
    together exactly once.
+   Control-plane bootstrap runs first, before any organization, lease, binding or
+   audit-intent read. It uses the same verified startup attestation bound to the
+   control-plane resource identity and control migration-set fingerprint, then
+   acquires a PostgreSQL advisory bootstrap lock that exists independently of
+   application tables. Inside one control-plane transaction it creates/evolves
+   the control schema, writes its checksum ledger and inserts the immutable
+   startup audit row (including actor/reason/resource/migration fingerprints).
+   Concurrent starters serialize on that lock and revalidate after acquisition.
+   Fault injection at every DDL/ledger/audit boundary proves all-or-none restart;
+   only after this succeeds may data-plane attestation, lease or migration begin.
    Production MCP stdio remains static-context-only in this milestone: its transport has
    no per-request verifier evidence, and existing write tools use asserted local
    actors. Do not invent identity headers inside JSON-RPC. At production
@@ -297,11 +307,15 @@ all untouched consumers continue on the compatibility path.
    the factory, CLI and MCP rather than inventing flags independently. The
    candidate contract is a path to a permission-restricted JSON document with a
    closed `{contract, adapter, connection, controlPlane, spine,
-   identityVerifier, dataPlaneIdentity}` envelope; both provider fields are
+   identityVerifier, dataPlaneIdentity, controlPlaneIdentity}` envelope; all provider fields are
    checked repository-contained versioned provider references with bounded
    configuration under the same path/permission/deadline rules. The loader
    rejects missing `dataPlaneIdentity` for multi-instance/clone-capable mode and
    exercises malformed, escaping, hanging and mismatched attestation fixtures.
+   Data/control identity providers attest authoritative external resource ids
+   before DDL. Startup refuses identical ids and different endpoints that alias
+   one resource; schema names, URLs and credentials are not identities. Fixtures
+   cover identical URLs, endpoint aliases and genuinely separate databases.
    `connection` is
    consumed only by the adapter and never returned, while `spine` resolves the
    canonical tenant through ADR-038's existing binding. Existing `--db` remains
