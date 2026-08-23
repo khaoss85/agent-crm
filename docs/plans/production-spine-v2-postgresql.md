@@ -105,10 +105,15 @@ of an unsupported one rather than growing a general query language.
    transaction rollback, restart persistence, migration adoption and two-
    connection contention.
 3. Characterize the in-process API separately: synchronous
-   `createAccordoApp()`, immediate access to `app.modules`, synchronous service
-   reads/writes, the starter installer and every checked example that reads a
-   return value without `await`. This is a shipped consumer contract, not an
-   implementation detail hidden behind HTTP.
+   `createAccordoApp()` and immediate access to `app.modules`; exact lookup/list
+   service reads currently return domain values synchronously, while public
+   service creates/updates and other event-emitting mutations retain their
+   declared Promise contract. Freeze that operation-by-operation mixed shape,
+   the starter installer and every checked example that reads a return value
+   without `await`. Do not describe all service writes as synchronous merely
+   because SQLite executes their statements synchronously: callers already await
+   mutations such as `companies.create()`. This is a shipped consumer contract,
+   not an implementation detail hidden behind HTTP.
 4. Characterize every executable composition entry point: `npm start`/`serve`,
    `crm db:migrate` and the project MCP stdio server. Record startup success,
    migration completion, bounded JSON/stdout and clean shutdown for SQLite;
