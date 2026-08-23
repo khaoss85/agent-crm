@@ -163,8 +163,14 @@ surfaces and the characterization fails when a storage-visible invariant moves.
    it from returning.
 6. Exercise the first two consumers against both adapter renderers before a
    PostgreSQL connection exists: assert byte-exact SQLite/PostgreSQL rendering,
-   parameter order, null/boolean/time normalization, identifier allowlisting and
-   refusal of raw SQL. This is the executable proof that ordinary runtime
+   parameter order, null/boolean/time/integer normalization, identifier
+   allowlisting and refusal of raw SQL. Integer normalization retains the
+   repository's JavaScript safe-integer contract: PostgreSQL renders persisted
+   integer and monetary-cent fields as 64-bit `BIGINT`, binds safe integers
+   without precision loss and converts returned driver strings to `number` only
+   after a canonical decimal and `Number.isSafeInteger` check. An out-of-range
+   database value fails with a stable bounded code rather than rounding. This is
+   the executable proof that ordinary runtime
    queries—not only migrations—have a portable representation.
 
 Exit: both consumers pass the same contract and characterization tests while
@@ -221,7 +227,9 @@ characterization suites.
    why it removes more complexity than a home-grown wire protocol. Pin and audit
    it; never wrap an import in `try/catch`.
 2. Represent migration intent in an authoritative form that renders explicit
-   SQLite and PostgreSQL SQL. Do not translate arbitrary SQL at runtime.
+   SQLite and PostgreSQL SQL. Map every manifest/core integer—including every
+   cents field—to PostgreSQL `BIGINT`, not 32-bit `INTEGER`, while retaining each
+   domain validator's narrower bounds. Do not translate arbitrary SQL at runtime.
 3. Version generated `module.state.json` additively. Preserve every v1
    `{name, checksum, sql}` SQLite migration byte-for-byte; never regenerate or
    reinterpret that applied history. For a legacy evolved module, derive and
@@ -309,7 +317,12 @@ SQLite remains green.
    claimed.
 7. Test migration restart, concurrent migration startup, transaction rollback,
    two-connection races, exact reads beyond page bounds, hostile input and
-   normalized constraint/conflict errors on PostgreSQL.
+   normalized constraint/conflict errors on PostgreSQL. Persist and read the
+   monetary boundaries already accepted by the repository, including delivery's
+   1,000,000,000,000-cent value and a generic safe-integer boundary fixture;
+   assert byte-equivalent JSON/domain-object numbers on SQLite and PostgreSQL.
+   Inject `BIGINT` values beyond JavaScript's safe range directly and prove the
+   read refuses instead of rounding or leaking a driver string.
 8. Fault-inject every point between a control-plane authorization mutation, its
    local audit intent and tenant-audit finalization. Prove the mutation plus
    intent are atomic, pending evidence survives restart, reconciliation records
@@ -374,6 +387,8 @@ The implementation PR is complete only with machine-readable receipts for:
 - ordinary service statements use the dialect-neutral runtime-query contract;
   raw SQLite SQL is rejected at the portable boundary and both renderers retain
   parameter order and normalized results;
+- PostgreSQL `BIGINT` preserves accepted integer/cents values as safe JavaScript
+  numbers at the existing domain boundaries and refuses unsafe stored values;
 - the SQLite characterization unchanged from M0;
 - the synchronous SQLite in-process API and starter remain valid, while the
   async factory has one unconditional startup/service contract on both adapters;
@@ -440,6 +455,9 @@ agent-facing rail.
 - 2026-08-23: a second exact-head review attacked PostgreSQL `search_path` as an
   alias around the singleton marker. The adapter now owns and qualifies one
   fixed schema, and the isolation proof includes divergent and drifting paths.
+- 2026-08-23: exact-head review exposed PostgreSQL's 32-bit `INTEGER` as narrower
+  than existing monetary contracts. Integer/cents columns now require `BIGINT`,
+  checked safe-number normalization and cross-adapter persisted boundaries.
 
 ## Decision log
 
@@ -464,6 +482,9 @@ agent-facing rail.
 - **A database binding cannot depend on `search_path`.** Every storage object is
   addressed through the adapter-owned qualified schema, so configuration cannot
   manufacture an apparent second singleton inside the same database.
+- **A portable integer is a JavaScript safe integer.** PostgreSQL storage uses
+  `BIGINT`; adapter reads convert only canonical in-range values and never round
+  or expose driver-specific strings.
 
 ## Outcome and follow-up
 
