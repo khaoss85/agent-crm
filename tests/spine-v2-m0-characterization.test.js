@@ -16,6 +16,18 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const cli = join(root, 'packages/cli/bin/accordo.js');
 const actor = { type: 'user', id: 'spine-v2-characterization' };
 
+function assertMigrated(dbPath, label) {
+  assert.equal(existsSync(dbPath), true, `${label} creates its fresh SQLite database`);
+  const database = new DatabaseSync(dbPath);
+  try {
+    const migrations = database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get();
+    assert.ok(migrations.count > 0, `${label} applies core migrations`);
+    assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'companies'").get());
+  } finally {
+    database.close();
+  }
+}
+
 test('M0 freezes the synchronous SQLite composition and mixed sync/async service contract', async (t) => {
   const app = createAccordoApp({ dbPath: ':memory:' });
   t.after(() => app.close());
@@ -45,7 +57,7 @@ test('M0 freezes the synchronous SQLite composition and mixed sync/async service
     entityType: row.entity_type,
     entityId: row.entity_id,
     data: JSON.parse(row.data_json),
-    createdAtIsUtc: /^\d{4}-\d{2}-\d{2}T.*Z$/.test(row.created_at),
+    createdAtIsUtc: Number.isFinite(Date.parse(row.created_at)) && new Date(row.created_at).toISOString() === row.created_at,
   })), [
     {
       actorType: actor.type,
@@ -66,6 +78,13 @@ test('M0 freezes package v1 as synchronous declaration and operation metadata', 
   assert.deepEqual(work.capabilities.map(({ name, version }) => ({ name, version })), [
     { name: 'follow-up', version: 1 },
   ]);
+  const opened = work.capabilities[0].create({
+    modules: { get: () => ({ service: { listWhere: () => [] } }) },
+  });
+  assert.deepEqual(Object.keys(opened).sort(), ['createFollowUp', 'findBySourceKey']);
+  const exactRead = opened.findBySourceKey('m0:missing');
+  assert.equal(exactRead, null);
+  assert.equal(typeof exactRead?.then, 'undefined', 'v1 capability exact reads are synchronous');
   assert.deepEqual(work.actions.map(({ name, actionContract }) => ({ name, actionContract })), [
     { name: 'complete', actionContract: 1 },
     { name: 'cancel', actionContract: 1 },
@@ -131,15 +150,7 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
     }
     if (command === 'doctor') assert.equal(receipt.ok, true);
     if (command === 'workflow:list' || command === 'trace:list') assert.ok(Array.isArray(receipt.items));
-    assert.equal(existsSync(dbPath), true, `${command} creates its fresh SQLite database`);
-    const database = new DatabaseSync(dbPath);
-    try {
-      const migrations = database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get();
-      assert.ok(migrations.count > 0, `${command} applies core migrations`);
-      assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'companies'").get());
-    } finally {
-      database.close();
-    }
+    assertMigrated(dbPath, command);
   }
 
   const source = readFileSync(new URL('../packages/cli/src/commands.js', import.meta.url), 'utf8');
@@ -183,4 +194,5 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
   });
   assert.equal(exitCode, 0, stderr);
   assert.match(stdout, /Database: .*serve\.sqlite/);
+  assertMigrated(servePath, 'serve');
 });
