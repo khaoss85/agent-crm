@@ -166,7 +166,7 @@ test('M0 freezes current SQLite MCP discovery and mutation annotations', async (
   assert.equal(tools.get('crm_scaffold_module').annotations.destructiveHint, false);
 });
 
-test('M0 freezes the MCP stdio executable composition and JSON-line transport', (t) => {
+test('M0 freezes the MCP stdio executable composition and JSON-line transport', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'accordo-spine-v2-mcp-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const input = [
@@ -175,11 +175,36 @@ test('M0 freezes the MCP stdio executable composition and JSON-line transport', 
   ].map((message) => JSON.stringify(message)).join('\n') + '\n';
   const env = { ...process.env };
   delete env.CRM_DB_PATH;
-  const run = spawnSync(process.execPath, ['--no-warnings', mcpBin], {
-    cwd: directory, env, input, encoding: 'utf8', timeout: 10_000,
+  const child = spawn(process.execPath, ['--no-warnings', mcpBin], {
+    cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'],
   });
-  assert.equal(run.status, 0, run.stderr);
-  const responses = run.stdout.trim().split('\n').map((line) => JSON.parse(line));
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  child.stdin.end(input);
+  const exitCode = await new Promise((resolve, reject) => {
+    let timedOut = false;
+    let force;
+    const terminate = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      force = setTimeout(() => {
+        child.kill('SIGKILL');
+        reject(new Error(`MCP stdio did not stop after input EOF: ${stderr}`));
+      }, 1_000);
+    }, 10_000);
+    child.once('exit', (code) => {
+      clearTimeout(terminate);
+      if (force) clearTimeout(force);
+      if (timedOut) reject(new Error(`MCP stdio required SIGTERM after input EOF (exit ${code}): ${stderr}`));
+      else resolve(code);
+    });
+  });
+  assert.equal(exitCode, 0, stderr);
+  const responses = stdout.trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(responses.map(({ id }) => id), [1, 2]);
   assert.equal(responses[0].result.serverInfo.name, 'accordo');
   assert.deepEqual(responses[1].result.tools.map((tool) => tool.name).sort(), MCP_TOOL_NAMES);
