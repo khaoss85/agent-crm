@@ -124,6 +124,23 @@ surfaces and the characterization fails when a storage-visible invariant moves.
    PostgreSQL configuration rather than returning a promise conditionally. The
    two factories may share composition descriptions and registries, but a
    caller never has to inspect an option to learn whether startup is async.
+   Clear the DX Simplicity Gate before accepting that name or surface:
+   - **failure prevented:** an agent treats a conditionally promise-returning
+     `createAccordoApp()` as an application, or forgets to await PostgreSQL
+     startup, and proceeds with an uninitialised security boundary;
+   - **why extension is insufficient:** PostgreSQL connection and migrations
+     cannot complete synchronously, while changing the existing factory to
+     always return a promise breaks every characterized SQLite caller;
+   - **overlap bound:** the old factory is the compatibility-only SQLite
+     contract; the new factory is the only portable composition contract, not
+     a second way to do the same PostgreSQL job;
+   - **portable evidence:** publish a versioned application-composition contract
+     in code and assert its startup/result shape over both adapters, including
+     type-level or executable proof that PostgreSQL cannot be selected through
+     the synchronous factory;
+   - **simpler goal flow:** a production caller has one unconditional `await`
+     path, never a storage-dependent return type. If implementation cannot show
+     that net simplification, keep the surface deferred and redesign the seam.
 5. Remove direct `raw` access from those consumers and add a guard that prevents
    it from returning.
 
@@ -156,15 +173,27 @@ characterization suites.
    it; never wrap an import in `try/catch`.
 2. Represent migration intent in an authoritative form that renders explicit
    SQLite and PostgreSQL SQL. Do not translate arbitrary SQL at runtime.
-3. Preserve append-only name/checksum semantics. An applied migration whose
+3. Version generated `module.state.json` additively. Preserve every v1
+   `{name, checksum, sql}` SQLite migration byte-for-byte; never regenerate or
+   reinterpret that applied history. For a legacy evolved module, derive and
+   check in a separately named PostgreSQL **bootstrap** from the state's
+   normalized current manifest for use only on an empty PostgreSQL data plane,
+   plus dialect-specific entries for every later evolution. The bootstrap has
+   its own checksum and provenance pointing at the v1 state fingerprint; it is
+   not recorded as the old revisions having run on PostgreSQL. Refuse a
+   non-empty data plane or a state whose current manifest cannot produce the
+   bootstrap. Extend the existing module-evolution authority to perform this
+   explicit backfill; if that requires a new flag/surface, clear the DX Gate
+   rather than adding a side-door script.
+4. Preserve append-only name/checksum semantics. An applied migration whose
    authoritative intent changes must fail closed on both adapters.
-4. Implement prepared parameter binding, result normalization, nested
+5. Implement prepared parameter binding, result normalization, nested
    savepoints, transaction connection affinity, rollback, conflict mapping and
    deterministic close over PostgreSQL.
-5. Bind a PostgreSQL data plane by opaque connection configuration, not by a
+6. Bind a PostgreSQL data plane by opaque connection configuration, not by a
    filesystem path. Never return a credential, URL, host or database name in
    schema metadata, audit, trace or an error.
-6. Persist a singleton tenant-binding marker inside each PostgreSQL data plane.
+7. Persist a singleton tenant-binding marker inside each PostgreSQL data plane.
    First provisioning claims an empty database for exactly one canonical tenant
    in the same locked transaction that establishes the migration ledger; every
    later boot compares the configured binding with that marker before any
@@ -180,18 +209,23 @@ SQLite remains green.
 1. Run the same storage conformance suite against SQLite and PostgreSQL.
 2. Run the full technical suite against both adapters, not two hand-selected
    smoke paths.
-3. Prove two tenant bindings use distinct PostgreSQL databases/data planes. A
+3. Start from a stateVersion-1 fixture with at least two evolved generated
+   module revisions. Prove its SQLite migration bytes/checksums never move,
+   its PostgreSQL bootstrap creates the current schema on an empty database,
+   later dialect migrations apply in order, restart is idempotent, and a
+   non-empty/adversarial target is refused rather than adopted.
+4. Prove two tenant bindings use distinct PostgreSQL databases/data planes. A
    subject from tenant B receives the existing 404-before-403 cross-tenant
    refusal and cannot read tenant A's domain, audit or trace rows.
-4. Deliberately configure tenant B with tenant A's already-claimed PostgreSQL
+5. Deliberately configure tenant B with tenant A's already-claimed PostgreSQL
    database and prove boot is refused before migrations, modules, audit or
    request handling can touch it. Race two first boots for different tenants
    against one empty database and prove exactly one claim wins; the loser gets
    the same bounded refusal and no mixed schema or rows.
-5. Prove an application binding still has no operation that can select another
+6. Prove an application binding still has no operation that can select another
    tenant. No `organization_id` filter is introduced and no shared database is
    claimed.
-6. Test migration restart, concurrent migration startup, transaction rollback,
+7. Test migration restart, concurrent migration startup, transaction rollback,
    two-connection races, exact reads beyond page bounds, hostile input and
    normalized constraint/conflict errors on PostgreSQL.
 
