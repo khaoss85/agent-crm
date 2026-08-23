@@ -93,7 +93,12 @@ first two consumers demonstrate them; raw driver handles never cross it.
    SQLite for CRUD, managed-action refusal, audit/event/trace exactness,
    transaction rollback, restart persistence, migration adoption and two-
    connection contention.
-3. Record normalized receipts that contain domain objects and stable error
+3. Characterize the in-process API separately: synchronous
+   `createAccordoApp()`, immediate access to `app.modules`, synchronous service
+   reads/writes, the starter installer and every checked example that reads a
+   return value without `await`. This is a shipped consumer contract, not an
+   implementation detail hidden behind HTTP.
+4. Record normalized receipts that contain domain objects and stable error
    codes, never driver messages, paths, timing or database-specific metadata.
 
 Exit: the existing SQLite application remains byte-compatible at its public
@@ -107,8 +112,19 @@ surfaces and the characterization fails when a storage-visible invariant moves.
 2. Implement that contract over SQLite without changing schema or behaviour.
 3. Migrate two materially different consumers first: the handwritten Company
    module and one generated/package-owned resource with migrations, exact reads,
-   audit and an action. Do not declare the seam generic until both pass.
-4. Remove direct `raw` access from those consumers and add a guard that prevents
+   audit and an action. The Company slice includes its dependency closure — at
+   minimum Contact and Opportunity creation and every workflow/action that calls
+   Company synchronously — or an explicit adapter facade that retains the old
+   call semantics. Tests must prove a missing Company still refuses before any
+   dependent write and produces no unhandled rejection or raw constraint error.
+   Do not declare the seam generic until both consumers pass.
+4. Introduce a versioned asynchronous composition entry point for portable
+   storage (provisionally `createAccordoAppAsync`). Existing
+   `createAccordoApp()` remains the synchronous SQLite contract and refuses a
+   PostgreSQL configuration rather than returning a promise conditionally. The
+   two factories may share composition descriptions and registries, but a
+   caller never has to inspect an option to learn whether startup is async.
+5. Remove direct `raw` access from those consumers and add a guard that prevents
    it from returning.
 
 Exit: both consumers pass the same contract and characterization tests while
@@ -118,15 +134,20 @@ all untouched consumers continue on the compatibility path.
 
 1. Move remaining core modules, generated services, package services, audit,
    trace, workflows and migration bookkeeping in reviewable groups.
-2. Convert public service/application control flow to async only where the
-   contract requires it; preserve route and SDK response shapes.
+2. Convert service/application control flow on the new async composition path;
+   preserve route and SDK response shapes. Keep the characterized synchronous
+   SQLite factory and its service methods valid for existing in-process callers,
+   starters and examples. Any later retirement is a separately versioned
+   deprecation, not an incidental consequence of PostgreSQL.
 3. Delete the compatibility path only after a repository guard proves no
    business consumer reaches `DatabaseSync`, `.raw.prepare()` or `.raw.exec()`.
 4. Keep the provisioning-side tenant resolver separate from the application
    binding; the application handle still cannot name a second tenant.
 
 Exit: SQLite passes the full suite through the portable contract, and the raw
-SQLite driver is private to the SQLite adapter.
+SQLite driver is private to the SQLite adapter. Both the legacy synchronous
+SQLite composition and the new async SQLite composition pass their respective
+characterization suites.
 
 ### M3 — Add PostgreSQL migrations and adapter
 
@@ -215,6 +236,8 @@ The implementation PR is complete only with machine-readable receipts for:
   first-boot race both fail closed before the application receives a handle;
 - no credential or storage locator in public schema, errors, audit or trace;
 - the SQLite characterization unchanged from M0;
+- the synchronous SQLite in-process API and starter remain valid, while the
+  async factory has one unconditional startup/service contract on both adapters;
 - repository truth, GTM, site, smoke and clean-clone quality gates green.
 
 The implementation PR must document how PostgreSQL was supplied to CI (service
