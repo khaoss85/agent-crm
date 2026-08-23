@@ -431,6 +431,11 @@ characterization suites.
   bucket is a different key and cannot address the old outcome. Boundary tests
   cover byte-equivalent response replay before compaction, after tombstoning, at
   expiry and after deletion.
+  On first acceptance the server compares the bucket to its injected UTC clock:
+  no older than the replay window plus a documented client-skew allowance and no
+  farther in the future than that allowance. Both are contract constants;
+  out-of-window keys refuse before mutation and allocate no outcome. Tests hit
+  both exact boundaries and one unit beyond with the injected clock.
 - M4 races one tenant against two databases from instances with isolated local
   filesystems and the shared control plane; one lease/binding wins. Starting the
   same topology with independent/local control planes is a production refusal.
@@ -669,7 +674,11 @@ credential-output scans and pool/client/timer shutdown checks.
    any provider without both idempotency and reconciliation. After an unknown
    intent commit, inspect the intent ledger before any provider call. After the
    provider returns but finalize commit is unknown/absent, reconcile the provider
-   receipt and resume finalize only—never replay the provider. A provider whose
+   receipt and compare its provider, tenant/account scope, operation kind,
+   idempotency key, canonical request fingerprint and remote-object identity to
+   the immutable local intent. Missing/mismatched fields refuse as
+   `PROVIDER_RECEIPT_MISMATCH` before finalize, with no hostile value echoed.
+   Only an exact receipt resumes finalize—never replay the provider. A provider whose
    state cannot be proved leaves the operation pending for explicit recovery.
    This versioned external-operation/provider contract must clear the DX Gate and
    is bounded to the existing three-phase runtime, not a general job system.
@@ -802,7 +811,9 @@ SQLite remains green.
    operation, inject both pre-commit and post-commit connection loss. Assert the
    provider is called exactly once with one idempotency key, reconciliation reads
    its receipt, only finalize is resumed, and the operation converges without a
-   second side effect. An unprovable provider stays pending. For ordinary unknown
+   second side effect. Return another tenant/operation/object receipt for the
+   correct lookup key and prove intent matching refuses before finalize without
+   provider replay. An unprovable provider stays pending. For ordinary unknown
    commit recovery, assert exactly one run id exists throughout: pending becomes
    the final completed/failed trace with no contradictory failure row.
 8. Fault-inject every point between a control-plane authorization mutation, its
