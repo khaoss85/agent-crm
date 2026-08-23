@@ -17,6 +17,11 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const cli = join(root, 'packages/cli/bin/accordo.js');
 const mcpBin = join(root, 'packages/mcp/bin/server.js');
 const actor = { type: 'user', id: 'spine-v2-characterization' };
+const MCP_TOOL_NAMES = [
+  'crm_create_opportunity', 'crm_decide_approval', 'crm_doctor', 'crm_get_trace',
+  'crm_list_approvals', 'crm_list_opportunities', 'crm_project_context',
+  'crm_request_stage_change', 'crm_scaffold_module',
+];
 
 function assertMigrated(dbPath, label) {
   assert.equal(existsSync(dbPath), true, `${label} creates its fresh SQLite database`);
@@ -55,10 +60,15 @@ test('M0 pins the released core migration SQL checksums', () => {
   const planesEnd = source.indexOf('const MIGRATION_PLANES');
   assert.ok(dataStart >= 0 && controlStart > dataStart && planesEnd > controlStart);
   const migrations = [];
-  for (const section of [source.slice(dataStart, controlStart), source.slice(controlStart, planesEnd)]) {
+  for (const [plane, section] of [
+    ['data', source.slice(dataStart, controlStart)],
+    ['control', source.slice(controlStart, planesEnd)],
+  ]) {
     const pattern = /version:\s*(\d+),[\s\S]*?name:\s*'([^']+)',[\s\S]*?sql:\s*`([\s\S]*?)`,\s*\n\s*}/g;
     for (const match of section.matchAll(pattern)) {
+      if (Number(match[1]) > 5) continue;
       migrations.push({
+        plane,
         version: Number(match[1]),
         name: match[2],
         checksum: createHash('sha256').update(match[3]).digest('hex'),
@@ -66,11 +76,11 @@ test('M0 pins the released core migration SQL checksums', () => {
     }
   }
   assert.deepEqual(migrations, [
-    { version: 1, name: 'initial_crm_schema', checksum: '2d386db73f44bc6da6e76942ba8dba2ee37d6799e5442e9c894d035848a2555e' },
-    { version: 2, name: 'opportunity_source_key', checksum: 'deed722482124ab96deb2f884ab4e0fb9308318f9411cc8b67e1bf5552d0093a' },
-    { version: 3, name: 'opportunity_pipeline_state', checksum: 'fccd2e6dd49aa73245b301b08bfc7f4dc167e7154a24cd5c56fcb66e444a8c6b' },
-    { version: 4, name: 'definition_versions', checksum: 'f2b4daf5f0dbee756ae2b04087c28c0debafcfe474fb78f976ac1dfdfde744a8' },
-    { version: 5, name: 'production_spine_identity', checksum: 'dd5ab2cc2a946e2f573bd1536952e18974c19a776b71074f4335602a47cc04fc' },
+    { plane: 'data', version: 1, name: 'initial_crm_schema', checksum: '2d386db73f44bc6da6e76942ba8dba2ee37d6799e5442e9c894d035848a2555e' },
+    { plane: 'data', version: 2, name: 'opportunity_source_key', checksum: 'deed722482124ab96deb2f884ab4e0fb9308318f9411cc8b67e1bf5552d0093a' },
+    { plane: 'data', version: 3, name: 'opportunity_pipeline_state', checksum: 'fccd2e6dd49aa73245b301b08bfc7f4dc167e7154a24cd5c56fcb66e444a8c6b' },
+    { plane: 'data', version: 4, name: 'definition_versions', checksum: 'f2b4daf5f0dbee756ae2b04087c28c0debafcfe474fb78f976ac1dfdfde744a8' },
+    { plane: 'control', version: 5, name: 'production_spine_identity', checksum: 'dd5ab2cc2a946e2f573bd1536952e18974c19a776b71074f4335602a47cc04fc' },
   ]);
 });
 
@@ -153,19 +163,8 @@ test('M0 freezes current SQLite MCP discovery and mutation annotations', async (
   });
   assert.equal(initialized.result.serverInfo.name, 'accordo');
   const listed = await mcp.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-  const expectedNames = [
-    'crm_create_opportunity',
-    'crm_decide_approval',
-    'crm_doctor',
-    'crm_get_trace',
-    'crm_list_approvals',
-    'crm_list_opportunities',
-    'crm_project_context',
-    'crm_request_stage_change',
-    'crm_scaffold_module',
-  ];
   const rawNames = listed.result.tools.map((tool) => tool.name).sort();
-  assert.deepEqual(rawNames, expectedNames, 'discovery has no missing or duplicate tool names');
+  assert.deepEqual(rawNames, MCP_TOOL_NAMES, 'discovery has no missing or duplicate tool names');
   assert.equal(new Set(rawNames).size, rawNames.length, 'tool names are unique before dispatch lookup');
   const tools = new Map(listed.result.tools.map((tool) => [tool.name, tool]));
   for (const [name, tool] of tools) {
@@ -196,7 +195,7 @@ test('M0 freezes the MCP stdio executable composition and JSON-line transport', 
   const responses = run.stdout.trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(responses.map(({ id }) => id), [1, 2]);
   assert.equal(responses[0].result.serverInfo.name, 'accordo');
-  assert.equal(responses[1].result.tools.length, 9);
+  assert.deepEqual(responses[1].result.tools.map((tool) => tool.name).sort(), MCP_TOOL_NAMES);
   assertMigrated(join(directory, 'data/accordo.sqlite'), 'MCP stdio');
 });
 
