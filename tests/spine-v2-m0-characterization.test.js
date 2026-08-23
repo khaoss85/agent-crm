@@ -6,11 +6,12 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createMcpServer } from '../packages/mcp/src/index.js';
 import createWorkPackage from '../packages/work/src/index.js';
 
-const root = new URL('..', import.meta.url).pathname;
+const root = fileURLToPath(new URL('..', import.meta.url));
 const cli = join(root, 'packages/cli/bin/accordo.js');
 const actor = { type: 'user', id: 'spine-v2-characterization' };
 
@@ -33,10 +34,27 @@ test('M0 freezes the synchronous SQLite composition and mixed sync/async service
   assert.deepEqual(app.services.companies.list({ limit: 1 }).map(({ id }) => id), [company.id]);
 
   const audits = app.database.raw.prepare(
-    "SELECT action, entity_type, entity_id FROM audit_events WHERE entity_id = ? ORDER BY created_at, id",
+    `SELECT actor_type, actor_id, action, entity_type, entity_id, data_json, created_at
+       FROM audit_events WHERE entity_id = ? ORDER BY created_at, id`,
   ).all(company.id);
-  assert.deepEqual(audits.map((row) => ({ ...row })), [
-    { action: 'company.created', entity_type: 'company', entity_id: company.id },
+  assert.deepEqual(audits.map((row) => ({
+    actorType: row.actor_type,
+    actorId: row.actor_id,
+    action: row.action,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    data: JSON.parse(row.data_json),
+    createdAtIsUtc: /^\d{4}-\d{2}-\d{2}T.*Z$/.test(row.created_at),
+  })), [
+    {
+      actorType: actor.type,
+      actorId: actor.id,
+      action: 'company.created',
+      entityType: 'company',
+      entityId: company.id,
+      data: company,
+      createdAtIsUtc: true,
+    },
   ]);
 });
 
@@ -47,7 +65,11 @@ test('M0 freezes package v1 as synchronous declaration and operation metadata', 
   assert.deepEqual(work.capabilities.map(({ name, version }) => ({ name, version })), [
     { name: 'follow-up', version: 1 },
   ]);
-  assert.ok(work.actions.every((action) => action.actionContract === 1));
+  assert.deepEqual(work.actions.map(({ name, actionContract }) => ({ name, actionContract })), [
+    { name: 'complete', actionContract: 1 },
+    { name: 'cancel', actionContract: 1 },
+    { name: 'add-note', actionContract: 1 },
+  ]);
 });
 
 test('M0 freezes current SQLite MCP discovery and mutation annotations', async (t) => {
@@ -91,8 +113,14 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
   child.stderr.setEncoding('utf8');
   child.stdout.on('data', (chunk) => { stdout += chunk; });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  });
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`serve did not start: ${stderr}`)), 10_000);
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`serve did not start: ${stderr}`));
+    }, 10_000);
     child.stdout.on('data', () => {
       if (!stdout.includes('Accordo running at')) return;
       clearTimeout(timeout);
