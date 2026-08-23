@@ -2,8 +2,9 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,7 @@ import createWorkPackage from '../packages/work/src/index.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const cli = join(root, 'packages/cli/bin/accordo.js');
+const mcpBin = join(root, 'packages/mcp/bin/server.js');
 const actor = { type: 'user', id: 'spine-v2-characterization' };
 
 function assertMigrated(dbPath, label) {
@@ -45,6 +47,32 @@ function assertMigrated(dbPath, label) {
     database.close();
   }
 }
+
+test('M0 pins the released core migration SQL checksums', () => {
+  const source = readFileSync(join(root, 'packages/core/src/database.js'), 'utf8');
+  const dataStart = source.indexOf('const DATA_PLANE_MIGRATIONS');
+  const controlStart = source.indexOf('const CONTROL_PLANE_MIGRATIONS');
+  const planesEnd = source.indexOf('const MIGRATION_PLANES');
+  assert.ok(dataStart >= 0 && controlStart > dataStart && planesEnd > controlStart);
+  const migrations = [];
+  for (const section of [source.slice(dataStart, controlStart), source.slice(controlStart, planesEnd)]) {
+    const pattern = /version:\s*(\d+),[\s\S]*?name:\s*'([^']+)',[\s\S]*?sql:\s*`([\s\S]*?)`,\s*\n\s*}/g;
+    for (const match of section.matchAll(pattern)) {
+      migrations.push({
+        version: Number(match[1]),
+        name: match[2],
+        checksum: createHash('sha256').update(match[3]).digest('hex'),
+      });
+    }
+  }
+  assert.deepEqual(migrations, [
+    { version: 1, name: 'initial_crm_schema', checksum: '2d386db73f44bc6da6e76942ba8dba2ee37d6799e5442e9c894d035848a2555e' },
+    { version: 2, name: 'opportunity_source_key', checksum: 'deed722482124ab96deb2f884ab4e0fb9308318f9411cc8b67e1bf5552d0093a' },
+    { version: 3, name: 'opportunity_pipeline_state', checksum: 'fccd2e6dd49aa73245b301b08bfc7f4dc167e7154a24cd5c56fcb66e444a8c6b' },
+    { version: 4, name: 'definition_versions', checksum: 'f2b4daf5f0dbee756ae2b04087c28c0debafcfe474fb78f976ac1dfdfde744a8' },
+    { version: 5, name: 'production_spine_identity', checksum: 'dd5ab2cc2a946e2f573bd1536952e18974c19a776b71074f4335602a47cc04fc' },
+  ]);
+});
 
 test('M0 freezes the synchronous SQLite composition and mixed sync/async service contract', async (t) => {
   const app = createAccordoApp({ dbPath: ':memory:' });
@@ -152,6 +180,24 @@ test('M0 freezes current SQLite MCP discovery and mutation annotations', async (
   assert.equal(tools.get('crm_project_context').annotations.readOnlyHint, true);
   assert.equal(tools.get('crm_request_stage_change').annotations.readOnlyHint, false);
   assert.equal(tools.get('crm_scaffold_module').annotations.destructiveHint, false);
+});
+
+test('M0 freezes the MCP stdio executable composition and JSON-line transport', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'accordo-spine-v2-mcp-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const input = [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'm0-stdio', version: '1' } } },
+    { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+  ].map((message) => JSON.stringify(message)).join('\n') + '\n';
+  const run = spawnSync(process.execPath, ['--no-warnings', mcpBin], {
+    cwd: directory, input, encoding: 'utf8', timeout: 10_000,
+  });
+  assert.equal(run.status, 0, run.stderr);
+  const responses = run.stdout.trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(responses.map(({ id }) => id), [1, 2]);
+  assert.equal(responses[0].result.serverInfo.name, 'accordo');
+  assert.equal(responses[1].result.tools.length, 9);
+  assertMigrated(join(directory, 'data/accordo.sqlite'), 'MCP stdio');
 });
 
 test('M0 freezes every application CLI command on SQLite, including serve shutdown', async (t) => {
