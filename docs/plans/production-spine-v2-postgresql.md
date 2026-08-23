@@ -263,6 +263,23 @@ all untouched consumers continue on the compatibility path.
    process fixtures cover valid attestation, missing permission, replay and audit
    exactness. The unauthenticated `crm db:migrate` command remains a stable
    PostgreSQL refusal; SQLite compatibility is unchanged.
+   Verifier provider contract v2 returns two non-interchangeable operations:
+   `verifyRequest(evidence)` for request identities and
+   `attestStartup(challenge)` for workload identity. The runtime supplies a
+   single-use challenge bound to repository fingerprint, tenant, data-plane
+   attestation, requested permission and migration-set fingerprint; the provider
+   returns a bounded verified-system identity plus evidence fingerprint/expiry
+   or refusal. Request evidence cannot satisfy startup attestation. Missing
+   method, replay/staleness, wrong tenant/migration set and refused permission all
+   fail before DDL in provider and child-process fixtures.
+   PostgreSQL applies each transactional DDL unit, its name/checksum ledger row
+   and immutable migration audit row in the same data-plane transaction. Audit
+   carries the verified startup claims/reason and challenge/migration-set
+   fingerprints, never credentials. A dialect operation that cannot participate
+   is unsupported until an explicit durable pre-DDL intent/reconciliation
+   contract exists. Fault injection before/after every DDL, ledger and audit
+   write proves restart yields either none of the unit or schema+ledger+audit
+   together exactly once.
    Production MCP stdio remains static-context-only in this milestone: its transport has
    no per-request verifier evidence, and existing write tools use asserted local
    actors. Do not invent identity headers inside JSON-RPC. At production
@@ -330,8 +347,8 @@ all untouched consumers continue on the compatibility path.
    real path inside the project root (rejecting absolute, escaping and symlink-
    escaping paths), imports it before database connection, and requires one
    named factory with a versioned data-only provider contract. The factory
-   receives only its bounded provider configuration and returns ADR-038's
-   verifier function; it reads credentials through the deployment environment
+   receives only its bounded provider configuration and returns the v2
+   `{verifyRequest, attestStartup}` operations defined above; it reads credentials through the deployment environment
    or secret manager, never through CLI arguments or public results. Production
    mode requires this reference; local mode refuses a configured production
    verifier rather than silently changing trust. Factory, `serve`, MCP and any
