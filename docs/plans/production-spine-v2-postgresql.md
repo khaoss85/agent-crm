@@ -620,6 +620,14 @@ derived from process startup completion and, when needed, an adapter-level
 locator or provider detail. Authenticated operational diagnostics are a separate
 surface; route tests inject hostile tenant rows and prove no module/workflow/audit
 read occurs while response shape and status remain deterministic.
+The Admin stops treating health as tenant metrics. It feature-detects the
+readiness-only contract and loads counts from a separate authenticated,
+tenant-bound dashboard-metrics read that passes the verified user through
+authorization and queries authoritative services with bounded aggregate methods
+(never paged-list inference). Missing permission produces a bounded unavailable
+metrics state while the rest of the dashboard still renders; no fallback calls
+doctor/health counts. Chromium covers permitted/refused metrics and a health
+response without `counts`, proving opportunities/approvals/traces still render.
 
 ### M3 — Add PostgreSQL migrations and adapter
 
@@ -903,7 +911,9 @@ adapter contract.
    `docs/repository-truth.json`.
 3. Add horizontal rows for the storage contract and each new async
    `packageContract: 2`, `actionContract: 2`, `operationContract: 2` and
-   `capabilityContract: 2` to
+   `capabilityContract: 2`, plus a distinct idempotency/outcome-reconciliation
+   evidence-discipline row covering issuance, divergent replay, unknown commit
+   and external-phase recovery, to
    `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, recording every existing
    domain as `aligned | partial | deferred | not_applicable | needs_extraction`
    with one-line reasons. Do not refactor a domain opportunistically to make a
