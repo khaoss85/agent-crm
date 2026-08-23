@@ -425,7 +425,7 @@
       "authority": "measurement.git",
       "evidence": [
         "git merge-base --is-ancestor <sha> HEAD",
-        "sha:204a93e"
+        "sha:5a9b7fb"
       ],
       "scope": "measurement",
       "status": "current",
@@ -433,13 +433,13 @@
     },
     {
       "id": "measurement.source_sha",
-      "value": "204a93e",
+      "value": "5a9b7fb",
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.sha"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
@@ -452,7 +452,7 @@
         "site/claims.json#measuredAgainst.tests"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
@@ -465,18 +465,18 @@
         "site/claims.json#measuredAgainst.testFiles"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_tree_current",
-      "value": "false",
+      "value": "true",
       "authority": "measurement.git",
       "evidence": [
         "git rev-parse <sha>:tests versus HEAD:tests",
-        "measuredTree:ad86bbf1106e"
+        "measuredTree:b8f6cb90540f"
       ],
       "scope": "measurement",
       "status": "current",
@@ -761,5 +761,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "5a547f87a5d09ff467f0147b6fcdae6301ce9afa829bde2e8af8a8e7499e0b83"
+  "fingerprint": "63dd816aa04b9a44755f5da52083f0b136e52c71e9093938f8aa7fdd7a1f28ea"
 }
