@@ -20,20 +20,20 @@ the suite. This file used to own a second SHA and a second count of its own, and
 a test pinned both in place — which is how a status file becomes the most
 confidently wrong document in a repository.
 
-Generated: **2026-08-18**.
+Generated: **2026-08-23**.
 
 ## Snapshot
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **The coding-agent DX wave**, merged in this order: PR #64 (CI keep-alive), PR #65 (**M16a** — renewal & expansion operations, the fourth domain package), PR #66 (**DX5** — `project verify`) and PR #67 (**DX6** — a second scenario). DX6 now ships **two** checked-in scenarios and two journeys over two different compositions — a sales funnel on the wall clock, and a service SLA/escalation story on an injected, stepped clock — which moved the **report** contract to `scenarioRunContract: 2` while the **document** contract stayed at `1`. The rule that came out of it is ADR-029. Then **Work v1** (PR #70, ADR-030): one package-native Task and Activity domain, held against an opaque subject envelope, consumed by three business events through a declared capability that refuses to write unless it is inside the caller's transaction. It claims no `M`-number, because taking one would assert a position in a sequence a horizontal capability does not have. Its adversarial review found seven defects, one of them a reachable half Task/Activity pair, and answered the browser-only timeline defect with a new shared read surface (ADR-008 addendum 2). Then **DX10** (PR #71, ADR-031): `accordo solution verify <plan> --evidence <doc>` grades each requirement of a checked-in Solution Plan against authorities that ran in the same invocation, over an evidence document that has **no status field** — it may point at proof and never declare it. Its review found eight defects, two critical: an evidence author could reach `verified` by labelling a behavioural requirement `structural`, and a requirement could be verified from a run of a **different application**. The first of those reached exit 0 through the real CLI on this repository before it was closed. Then the **AX3 benchmark** (PR #72): a frozen protocol with a receipt contract, a shell classifier checked against bash itself over a cross-product differential oracle, and the first frozen panel — one arm produced valid runs, two are recorded `NOT_RUN`, `comparative: false`, and no rate exists in the record, which is kept in-repo beside its receipts. Then the **rail-selection guidance** (PR #74): one "Selecting an Accordo rail" section, byte-identical in `CLAUDE.md` and `AGENTS.md` — a question→rail table, boundary discriminators and a smallest-rail selection rule. Guidance, not orchestration: no command, tool, router or Skill change. Then the AX3 benchmark's **second frozen panel** (PR #75): the re-run against the new instruction surface, landed as internal evidence from a rewritten branch history — `comparative: false`, no rate, receipts and the invalidated first attempt retained, a receipt being six evidence files and never the apparatus config tree. Then the **Commercial Operations extraction** (PR #79): the second legacy domain leaves `packages/core` for the optional `packages/commercial` on the Lead Intelligence pattern — LA0-Commercial frozen before the move and replayed after with zero asserted observations changed; two declared capabilities (`commercial-quotes@1`, `commercial-quote-binding@1`) sized by the Signature domain's measured consumption; the ambient `app.commercial`/action-context/AX1 wiring gone with no fallback; `external-operation.js` deliberately kept in core; catalog sync's app method recorded as the bounded residue that motivates the package application-operation decision. Its independent review found one Medium defect — the offered capabilities had no behavioural coverage — fixed with a regression suite before merge. Then the **Signature & Order extraction** (PR #84): the third and last legacy domain leaves `packages/core` for the optional `packages/signature`, implementing **ADR-032** exactly within its five-item core boundary — operations are package-declared and attached generically, the enumerated routes delegate to composed aliases, and the raw-body webhook stays the explicit kernel adapter on measured grounds. All three LA0 baselines replayed with byte-identical asserted fingerprints (Signature 110 observations, Commercial 107, Intelligence 151). Moving `order` ownership made Contract Activation's actions a declarable record-level dependency: signature offers `signature-orders@1`, contracts declares it, and — by reviewer decision — contracts moved to **version 5**, because a package version describes its composition contract, including `requires`, not only its consumer-visible records/actions. The second reviewer decision closed the applicationOperations v1 context to exactly the keys its two real consumers use (`config`, `database`, `events`, `modules`, `runExternal`) — the unused bounded trace writer is deferred by the ADR-032 implementation addendum until a first real consumer migrates onto it. With this merge **every former legacy domain is package-native**; `external-operation.js` stays in core as the recorded neutral runner, and M16b amendment execution is architecturally unblocked (Commercial and Signature are reachable through declared capabilities) and remains unimplemented. Then **signed commercial terms** (PR #87, ADR-033): the M16b prerequisite — a public-writable `quote-term` draft that binds nothing, frozen write-once into `quote-version-term` at submit, carried inside the canonical signed document bytes and the `documentHash`, reproduced at completion into a write-once `order-term`, and consumed verbatim by activation as `signed-order-terms`, with `contract-lifecycle-source@2` deriving `signed: true` only from that chain. Termless versions canonicalize byte-identically; old orders are never backfilled and a genuine pre-terms database upgrades with history read back byte-identical; activation on a signed order refuses manual term inputs (`SIGNED_TERMS_AUTHORITATIVE`). All three LA0 baselines replayed byte-identical. Its independent review confirmed every priority attack held — no path presents unsigned terms as signed — and locked the one uncovered degradation branch (older commercial reader) with a revert-verified test. M16b itself remained unimplemented until the next entry. Then **M16b — renewal and amendment execution** (PR #89, ADR-035): a human executes a governed successor commercial agreement from immutable signed evidence. Lifecycle (v2) owns the renewal cycle — `amendment-run`, five human-driven actions, `planned → awaiting_signed_order | ready → executed` with `abandoned` from any non-terminal and **no clock input on any transition**; Contracts (v7) owns the immutable successor activation and lineage behind the declared `contracts-successor-activation@1` edge. The planning action writes nothing at all, and a `ready` plan authorizes nothing: execution recomputes every fact inside its transaction and still refuses an Order activated underneath it. **No historical row is updated anywhere** — the successor is its own signed Order, hash, term, Contract, Version, Lines, Subscription and obligations, written through the activation path M12 already used, plus one immutable succession row with database-enforced uniqueness. Terms not inside signed document bytes refuse (`SUCCESSOR_TERMS_NOT_SIGNED`); classification is derived from the line delta and falls back to `commercial_change` rather than claim a narrower label; no MRR/ARR/TCV, billing, invoicing, payment, tax, revenue recognition, scheduler, notification, RBAC or cancellation exists. Evidence: a third checked-in scenario over a fourth composition, 40 real-Chromium Admin checks run twice by the author, all three LA0 baselines byte-identical, and exactly two JTBD rows moved to *partially supported* with their partials named. Its independent review confirmed every priority attack held and recorded one **pre-existing** Medium, reproduced against plain activation as a control: a signed term snapshot is consumed without re-verifying its own `termsFingerprint`, so a direct-SQL tamper that leaves the document hash intact propagates as signed. It is inherited from ADR-033, has no public or HTTP write path, stays detectable because M16b records the fingerprint immutably, and is deliberately left for a capability-level verifier on `commercial-quotes` rather than duplicating the hash authority inside Contracts. Then **signed-term integrity** (PR #92, ADR-036): that finding is closed. Commercial owns the authority and exposes a read-only verifier through **`commercial-quotes@2`**, offered beside a byte-identical `@1`; every consumer calls it before terms may be described as signed, `order-term` evidence written, a Contract activated, `contract-lifecycle-source` `signed: true` derived, an M16b successor planned or executed, or authoritative Admin evidence rendered. Proven red-first: **twelve of thirteen tamper cases passed silently** against the previous main and now fail closed with no activation, no successor, no audit, no event, no provider call and no hostile value echoed. Its independent review found the fix one anchor short of its own threat model — linkage compared row to row while the attacker is precisely the party that writes rows, so a consistently rewritten pair, and even an inserted pair for an order whose document signed no term, were accepted — and closed it by anchoring verification to the **canonical signed document bytes**, with both forgeries kept as regressions; the consumption guard, defeated twice in review, now discovers its roots from the filesystem and keys on stored field names. That review also ran the browser matrix independently — **40 of 40 twice**, plus a new check proving a corrupted snapshot refuses server-side with the refusal visible and no retry control — which corrects this branch's earlier claim that no browser binary existed. ADR-036 also records the package-version versus capability-version doctrine (the blanket "additive reads never need a bump" is retired), **linear successor v1**, and that signed provenance is **never backfilled**. Then **Customer Data Foundation v1** (PR #95, ADR-037): the trustworthy data layer beneath a customer view, package-native and **not a CDP**. `packages/customer-data` requires nothing and adds four things beside the existing records rather than copying them — identity, provenance, lineage and projection — through the ADR-030 subject envelope: six managed records, three ADR-032 operations, three human-only actions, `customer-identity@1` (four reads, no way to *decide* identity) and a fingerprinted `deterministic-customer-match@1`. **Canonical identity is a logical link**: the decision deletes nothing, rewrites nothing and cascades nowhere, and the scenario fingerprints both business rows as bytes before and after to prove it. A preview writes nothing at all; an apply recomputes in one transaction with an idempotency key derived from the payload rather than a clock, and `accepted + rejected + skipped` always equals the row count. Matching is three exact rules with **no tie-break** — ambiguity becomes durable evidence for a person. A profile section whose package is not composed reads `available: false` with a reason and a **null** count, never a zero, and states `completeTimeline: false` about itself. Its independent review found four defects, one **High**: nine call sites asked a display-paged read for 1,000 rows while the page clamps at 500, so past 250 decided pairs the profile reported *no canonical identity decision recorded* for a record a human had linked, and the duplicate guard stopped firing — a record was driven into being canonical of one cluster and alias of another. Three Mediums followed: a stored label served as current truth, an unreachable domain reference reported as zero, and an ADR that documented five context keys while six shipped. Then **Production Spine v1** (PR #98, ADR-038): the runtime stops trusting the caller. `normalizeActor()` used to return `SYSTEM_ACTOR` — the strongest identity in the framework — for `null`, a string or an unknown type, and `actorFromRequest()` invented `{type: 'user', id: 'api-user'}` when the headers were missing; the safest input produced the strongest identity, and no record carried a tenant at all. The decision is Option C, stated as **the framework authenticates nobody and owns everything after that**: a deployment adapter verifies the request and supplies a bounded `IDENTITY_CONTRACT = 1` context in four kinds that never blur (`verified-user`, `system`, `asserted-local`, `anonymous`), carrying a *fingerprint* of the claims and never a token, credential or secret. The framework owns the rest — tenant selection, membership, the authorization decision over eleven bounded permissions in five role bundles, the audit evidence and a fail-closed boundary with 401 → 404 → 403 ordering, `trustedSystemActor(reason)` as the only privileged construction path, and server-controlled keys **stripped** from request payloads rather than overridden, so object spread order stopped being load-bearing. `ACCORDO_MODE` has **no default**: an unset mode is an error, because "I forgot to configure it" and "I meant the permissive one" must not be the same input, and production **fails startup** without a verifier and a tenant strategy. Tenancy is **one tenant per application instance, enforced rather than documented**: `bindTenantStorage()` returns a handle with no `databasePathFor`, so a second tenant is unreachable rather than refused by a check; a `dbPath` beside a spine is refused with `SPINE_DATA_PLANE_PATH_NOT_CONFIGURABLE`; control and data planes are separate files with separate migration lists, so a crossing write raises `no such table`. Row-level tenancy over 86+ tables was **not** attempted — a half-migrated version of it is worse than none, because it *looks* isolated — and nothing in this repository may call this shared-database multi-tenancy. Its review found F-2 first as the subtler lie: the boundary shipped **declared and not delivered**, `createTenantStorage` defined and nothing calling it, and the scenario observed `tenantStrategyIsDatabasePerTenant` while the journey composed two applications by hand. That was closed by enforcement, not by wording. An **Accordo Organization is not a CRM Company** — the tenant is a customer of the software, the Company is a customer inside one tenant's data — and blurring them is how one tenant's customer list leaks into another's authorization model. Membership administration carries two non-negotiables: nobody grants a permission they do not hold, and the last active administrator cannot demote or suspend themselves, so an organization cannot become permanently unadministrable. `requiredApprovalKey` values stay **descriptive labels** rather than enforced permissions, because promoting them would change the meaning of records already written. **`PRODUCTION_SPINE_ABSENT` was narrowed, never deleted**: what the mode, the verifier, the tenant binding and the memberships actually are remain runtime facts a source inspection cannot see. |
-| Measured at | `5a9b7fb` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
+| Latest merged milestone | **Production Spine v2 M0 characterization**, merged by PR #117 as `d1174fe`. M0 freezes the released SQLite migration identities and complete physical schema after every v1–v5 prefix, the existing synchronous and mixed Promise public contracts, executable CLI/MCP behavior, and the legacy `--db` SQLite-path ambiguity. It adds no PostgreSQL adapter or M1 storage seam; the next bounded implementation milestone is M1. |
+| Measured at | `d1174fe` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
 | Tests | Measured, never typed. `npm run verify` is green on a clean tree at the commit above; **how many** tests that was lives in `site/claims.json` `measuredAgainst` and in no other file (ADR-027). |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | Real-Chromium checks remain manual and are **not in CI** — no workflow launches a browser, and `npm run smoke` is an in-process application smoke (`docs/ADMIN_SMOKE.md`). The Work v1 section has a **30-check** block, all passing, driven twice at `184e543`; it covers that section only and re-runs none of the earlier blocks. PR #58's desktop and mobile receipts still describe `ef8487a`, and nothing since has re-run them. |
 | CI | The latest completed integration run concluded `success` on both jobs, `verify` and `public-claims`, at its own exact head. This row records that a run passed; it does not claim any particular commit is still the head. GitHub Actions holds the current answer. |
-| Open PRs | **PR #99 — the OSS / managed-Cloud repository boundary — is open and deliberately unmerged**, awaiting a human decision. It is a design, five new documents under `docs/editions/` and nothing else: no file moved, none deleted, no private repository created, no licence changed. Merged this wave, in order: PR #95 (Customer Data Foundation v1, `2d74503`), PR #98 (**Production Spine v1**, `e30216c`) and the truth pass that carries this row. **Production Spine v1 is merged, and the sentence this row used to carry — "there is still no authentication, tenancy or role enforcement" — is retired**: tenancy and authorization now exist and are enforced. What does not exist is authentication. The framework authenticates nobody and ships no verifier, so "a human decided" still means an actor object said so — an actor now bounded by a fail-closed contract, a membership and a permission, and trustworthy exactly as far as the adapter a deployment supplies. |
+| Open PRs | None at this snapshot. PR #118 is the measurement-only change that produces this post-merge state; once merged it is history, not remaining work. |
 | Public discovery | GitHub About and all 20 intent topics are live. Smithery `khaoss85/accordo` returns 200 and exposes the three production Docs MCP tools. The GitHub social preview is live and **stale**: it was rendered from a much older measurement and its replacement still needs a manual Settings upload, which is a human step no branch can take. |
 | npm | **`create-accordo@0.1.0` is live since 2026-08-19** — staged from CI through OIDC trusted publishing (run 32224731197, Sigstore provenance), approved by the maintainer with 2FA, and confirmed against the registry: the published shasum matches the CI assembly, `latest` resolves to `0.1.0`, and a clean-directory `npm create accordo` scaffolds a verifying project. `accordo@0.0.1` remains an **empty name reservation by design** (no framework library). The `@accordo` organization exists since 2026-08-19 and its scope is **deliberately empty**: `@accordo/mcp` was investigated and refused, because the project MCP server composes from the generated indexes of the tree it runs in and a published copy would answer about the wrong application (ADR-034). The MCP-registry submission is no longer blocked by it — `server.json` registers the remote documentation endpoint instead. `site/brand.json` records `npm.status: published`. |
 | Project bootstrap | **`create-accordo` is real source and its publication is live**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates the bounded publishable directory while the source manifest stays `private: true` — publication never lowered that wall, because what npm published is the assembly, which strips `private`. The staged path proved itself the hard way: one dispatch died `E401` (a `registry-url` placeholder token preempting OIDC), the next `ENEEDAUTH` (no matching trusted-publisher config), and run `32224731197` staged clean once the publisher allowed `npm stage publish`. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
@@ -111,28 +111,19 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. The default product task remains the first unchecked item in `TASKS.md`:
-   first-class Activity and Task modules with a reusable automatic follow-up
-   workflow. No GTM branch silently changes that product order.
-2. Before any remote CRM write surface, add tenant and role boundaries; the
-   authenticated Streamable HTTP project MCP and PostgreSQL adapter remain
-   separate platform work. The production Docs MCP is read-only framework
-   documentation and does not satisfy any of those production gates.
-3. The GTM stack and production promotion are complete. The active distribution
-   task is to configure the `create-accordo` trusted publisher on npm for
-   `khaoss85/agent-crm`, `stage-create-accordo.yml`, environment `npm-stage` and
-   stage-only permission; then rerun, inspect and approve with human 2FA.
-   Registry and marketplace claims remain blocked until a real receipt exists.
+1. Start **Production Spine v2 M1** on its dedicated branch: extract the
+   smallest dialect-neutral asynchronous storage contract over SQLite only and
+   prove it with the handwritten Company dependency closure plus one materially
+   different generated/package-owned resource.
+2. Preserve synchronous `createAccordoApp()` and every characterized v1 public
+   contract. M1 adds neither the production PostgreSQL adapter nor Cloud C0;
+   those remain later milestones in the ratified ExecPlan.
 
-Two parallel tracks run alongside and are not gated by domain progress: the
-**platform track** (domain package boundary, PostgreSQL,
-authentication, Jobs & durable outbox, Integration Runtime, Data Governance,
-Design-to-CRM, Cloud), the **Marketing & Growth track** (MK0–MK7 — design only;
-`MARKETING_GROWTH_OPERATIONS.md`) and the cross-cutting **Agent Experience
-track** (AX0–AX5 — AX0 is a strategy and a Skill, AX1 and AX2 are merged (AX2
-is a machine-readable plan *contract* — not a planner and not a runtime) and
-AX3–AX5 are not implemented; `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequencing and dependencies are in
-`EXECUTION_ROADMAP.md`.
+The GTM stack and production promotion are complete; they are not queued work.
+The independent longer-horizon tracks remain the private/public repository
+migration, Spine v3 jobs/outbox/scheduler, Spine v4 secrets/backups/observability,
+Customer Data Operations v2, Interactions, Billing, Marketing/Analytics, DX9,
+DX13 and a real comparative benchmark once both harnesses exist.
 
 ## Known platform limitations (not blockers, but not forgotten)
 
@@ -144,49 +135,39 @@ AX3–AX5 are not implemented; `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`). Sequenci
 
 ## Production blockers
 
-Everything below must land before the framework is safe for multi-user or
-public use. None of it is started.
+The framework now enforces one tenant per application instance and membership-
+based permissions, but it deliberately authenticates nobody. These remaining
+boundaries prevent a production PostgreSQL deployment from being claimed:
 
 | Blocker | Consequence today |
 |---|---|
-| No authentication | the HTTP server is local-development-only; actor headers are not identity |
-| No tenancy | no data boundary between customers |
-| No RBAC | approval keys are labels; only actor *type* is enforced |
-| No PostgreSQL adapter | SQLite only |
-| No durable outbox | post-commit event delivery dies with the process |
-| No scheduler | no renewal triggers, SLA timers, reminders or unattended follow-up |
-| No secret management | no real provider credential can be handled safely |
-| Browser E2E outside CI | UI regressions are caught manually |
-| No real provider adapters | every provider is an offline fixture |
+| No deployment authentication verifier | identity is only as trustworthy as the deployment adapter; the framework ships no verifier |
+| No PostgreSQL adapter | runtime storage remains SQLite-only; M0 is characterization and M1 is a SQLite seam |
+| No durable outbox or scheduler | post-commit delivery, renewal triggers, SLA timers and unattended work do not survive process loss |
+| No secret, backup or production-observability system | real provider credentials and recoverability cannot be operated safely |
+| Browser E2E remains outside CI | current Chromium receipts are manual and Admin regressions are not browser-gated on every push |
+| No real provider adapters | provider behavior remains offline fixture behavior |
 
 ## Implemented versus documentation-only
 
-**Implemented (merged):** module manifest and factory; module evolution and
-adoption; generated API/SDK/Admin; references; actions; core adapters;
-pipelines; Lead Intelligence, Commercial Operations and Signature & Order —
-all three now **package-native** (`packages/{intelligence,commercial,signature}`),
-so every former legacy domain composes optionally and detaches without deleting
-rows; Contract activation and subscriptions (contracts package **version 5**,
-carrying its declared `signature/signature-orders@1` requirement); the public domain-package contract, the
-delivery handover and delivery execution; deterministic application inspection
-(AX1); delivery economics (M14b1); delivery change, deliverables and acceptance
-evidence (M14b2); machine-readable Solution Plans (AX2); **Service operations
-(M15)**; **renewal & expansion operations (M16a) — recorded intent and a
-hand-off, nothing that renews, cancels, signs, prices or schedules**; the coding-agent
-DX rungs **DX1, DX3, DX4, DX5, DX6, DX10 and LA0**; the project bootstrap
-(`create-accordo`, source only — nothing is published); MCP server; CLI.
+**Implemented (merged):** manifest/factory/evolution; generated API, SDK and
+Admin; references, actions, workflows, pipelines, audit and trace; the optional
+Lead Intelligence, Commercial, Signature, Contracts, Delivery, Service and Work
+packages; contract activation plus governed renewal and amendment execution;
+Production Spine v1 one-instance/one-tenant binding and membership permissions;
+the checked SEE/PLAN/BUILD/CHECK/PROVE rails; CLI and MCP; and the live
+`create-accordo@0.1.0` bootstrap package. Production Spine v2 M0 is executable
+characterization only: it adds neither PostgreSQL storage nor a portable storage
+seam.
 
-**Documentation only (no code):** billing, invoicing, revenue recognition and
-everything else downstream of activation; renewal *execution* and amendment
-(M16b — M16a records the intent and stops; the Signature extraction leaves it
-architecturally **unblocked** — Commercial and Signature are reachable through
-declared capabilities — and still entirely unimplemented); Analytics Studio; Integration Runtime;
-Jobs & durable outbox; Data Governance; Design-to-CRM; Accordo Cloud; a
-published **framework library** on npm (the create package is live; the framework
-itself is vendored by it, never installed); PostgreSQL; authentication; Marketing & Growth (MK0–MK7);
-the Agent Experience track beyond AX2 — except the AX3 benchmark, which
-exists and has run (observation only: no product surface, no published
-number, `comparative: false`); DX2 and DX9.
+**Not implemented:** the PostgreSQL production adapter and later Spine v2
+milestones; deployment authentication; billing, invoicing and revenue
+recognition; Interactions; Marketing/Analytics; remote package registry
+install/update/uninstall; durable jobs/outbox/scheduler; secrets, backups and
+production observability; shared-database row tenancy; and Cloud C0. The AX3
+benchmark remains observation-only (`comparative: false`), not a product
+capability or published performance claim. The framework library itself is not
+an npm package: the live create package vendors the framework into a project.
 
 ## Keeping this file honest
 
