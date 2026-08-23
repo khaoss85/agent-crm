@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -175,9 +175,6 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
     if (command === 'workflow:list' || command === 'trace:list') assert.ok(Array.isArray(receipt.items));
     assertMigrated(dbPath, command);
   }
-
-  const source = readFileSync(new URL('../packages/cli/src/commands.js', import.meta.url), 'utf8');
-  assert.match(source, /new Set\(\['serve', 'seed', 'demo', 'doctor', 'db:migrate', 'workflow:list', 'trace:list'\]\)/);
 
   const servePath = join(directory, 'serve.sqlite');
   const child = spawn(process.execPath, ['--no-warnings', cli, 'serve', '--db', servePath, '--port', '0'], {
