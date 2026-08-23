@@ -199,14 +199,18 @@ all untouched consumers continue on the compatibility path.
    SQLite factory and its service methods valid for existing in-process callers,
    starters and examples. Any later retirement is a separately versioned
    deprecation, not an incidental consequence of PostgreSQL.
-   Version package/action semantics before exposing async services:
-   `packageContract: 2` and `actionContract: 2` require actions and capability
-   consumers to await every service/context operation. Contract 1 retains its
+   Version every nested package execution seam before exposing async services:
+   `packageContract: 2`, `actionContract: 2`, `operationContract: 2` and
+   `capabilityContract: 2` require actions, operations and capability consumers
+   to await every service/context/dependency operation. Contract 1 variants retain their
    synchronous SQLite semantics and is refused during PostgreSQL composition
    with `PACKAGE_ASYNC_CONTRACT_REQUIRED` before migration or provider setup;
    it is never handed Promise-shaped services. Migrate bundled packages
    explicitly and keep an unchanged legacy custom-package fixture green on
-   SQLite and fail-closed on PostgreSQL. Clear the DX Gate: the failure prevented
+   SQLite and fail-closed on PostgreSQL. Package validation rejects any mixed
+   graph (for example package/action v2 exposing capability/operation v1) and
+   declared capability requirements select an explicit async-capable version
+   before application startup. Clear the DX Gate: the failure prevented
    is a Promise used as a domain value; synchronous v1 cannot represent an async
    driver; v2 is the single portable contract; inspection publishes the version
    as evidence; and authors gain one unconditional `await` rule across adapters.
@@ -391,6 +395,23 @@ characterization suites.
    deadlines separately from server deadlines. On expiry cancel/destroy the
    pending client, release pool bookkeeping, clear timers/sockets and return a
    stable unavailable/timeout code.
+   Treat connection loss during `COMMIT` as `COMMIT_OUTCOME_UNKNOWN`, never a
+   normal rollback and never an automatic callback retry. Every PostgreSQL write
+   entry point carries a caller-visible idempotency key (or a runtime-generated
+   key returned before execution where the protocol permits it); the same
+   transaction stores a unique bounded outcome record with deterministic record
+   IDs, normalized response and event intents. After reconnect, reconciliation
+   looks up that key: a committed outcome returns its canonical response and
+   promotes its events once in the live recovery path; absence authorizes one
+   retry with the same IDs/key; inability to prove either remains unknown and
+   refuses further mutation. This is bounded transaction recovery, not a claim
+   of a general durable outbox: a process death during external event dispatch
+   can still omit or duplicate delivery until Spine v3, and that limitation is
+   published. Clear the DX Gate for the idempotency input: it prevents a user
+   retry from duplicating an ambiguously committed write; no existing request
+   identity survives reconnect; one key applies uniformly to API/SDK/action
+   writes; response/error contracts expose the key and stable status as evidence;
+   and retry becomes one reconciliation call rather than manual record hunting.
 6. Bind a PostgreSQL data plane by opaque connection configuration, not by a
    filesystem path. Never return a credential, URL, host or database name in
    the application object, tenant binding, doctor output, CLI/stdout, startup
@@ -484,6 +505,12 @@ SQLite remains green.
    inject a serialization failure, then let its second attempt commit. Assert
    exactly one audit row, one dispatched event and one successful-attempt step;
    no event or trace step from the rolled-back attempt survives.
+   Drop the client connection after PostgreSQL applies `COMMIT` but before its
+   acknowledgement. Reconcile with the same idempotency key and prove exactly
+   one domain record, audit row and successful trace; the live recovery dispatches
+   one event, while the documented process-death dispatch limitation remains
+   explicit. Repeat with a pre-commit drop (ledger absent) and prove the same
+   deterministic IDs/key authorize one safe retry, never a second record.
 8. Fault-inject every point between a control-plane authorization mutation, its
    local audit intent and tenant-audit finalization. Prove the mutation plus
    intent are atomic, pending evidence survives restart, reconciliation records
@@ -552,9 +579,9 @@ The implementation PR is complete only with machine-readable receipts for:
   parameter order and normalized results;
 - PostgreSQL `BIGINT` preserves accepted integer/cents values as safe JavaScript
   numbers at the existing domain boundaries and refuses unsafe stored values;
-- package/action contract v2 makes async service semantics explicit across both
-  adapters; legacy contract-1 packages remain synchronous on SQLite and refuse
-  before PostgreSQL startup;
+- package/action/operation/capability contract v2 makes async service semantics
+  explicit across both adapters; mixed or legacy-v1 graphs remain synchronous
+  on SQLite and refuse before PostgreSQL startup;
 - long or multibyte logical identifiers map deterministically to collision-free
   PostgreSQL physical names or fail before bootstrap;
 - the SQLite characterization unchanged from M0;
@@ -584,6 +611,8 @@ The implementation PR is complete only with machine-readable receipts for:
   leads racing for one routing-capacity slot;
 - serialization retries use attempt-local event and trace buffers; rollback
   discards the first attempt and only committed evidence is promoted;
+- ambiguous commit acknowledgement is reconciled by a unique idempotency/outcome
+  record and deterministic IDs; it is never mislabeled rollback or blindly retried;
 - a serialization loser retains one normalized failed trace for diagnosis while
   writing no audit/event/success evidence;
 - connection establishment and pool acquisition own client-side deadlines and
@@ -684,6 +713,9 @@ agent-facing rail.
 - 2026-08-23: exact-head review added a fail-closed authenticated-TLS policy for
   PostgreSQL, including real trusted-CA, plaintext, downgrade, chain and hostname
   fixtures before tenant claim.
+- 2026-08-23: review extended async versioning through operations/capabilities
+  and added bounded idempotency/outcome reconciliation for lost COMMIT
+  acknowledgements without claiming the still-deferred general durable outbox.
 
 ## Decision log
 
@@ -727,8 +759,8 @@ agent-facing rail.
   initialization and PostgreSQL lock/statement waits own deadlines and cleanup;
   timeout is a stable refusal, never an indefinitely pending process.
 - **Legacy package code never receives async services accidentally.** Contract 1
-  remains SQLite/synchronous; PostgreSQL requires explicit v2 async package and
-  action contracts.
+  remains SQLite/synchronous; PostgreSQL requires an all-v2 async package,
+  action, operation and capability graph.
 - **Write portability includes predicates.** PostgreSQL business writes are
   serializable, with retries forbidden after external effects.
 - **Logical identifiers are not physical identifiers.** One recorded renderer
@@ -741,6 +773,9 @@ agent-facing rail.
   losers emit one failed normalized trace and no audit, event or success span.
 - **A retry is a new evidence attempt.** Events and trace steps from a rolled-
   back attempt are discarded; only the committed attempt can be promoted.
+- **Unknown commit is a third state.** A durable idempotency/outcome record and
+  deterministic IDs decide reconciliation; neither rollback nor blind replay is
+  inferred from a lost acknowledgement.
 - **Production stdio is not an authentication transport.** It stays static-
   context-only; tenant data, trace/debug and source mutation all refuse. Remote
   authenticated MCP requires a separate verified-request contract.
