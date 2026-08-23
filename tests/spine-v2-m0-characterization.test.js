@@ -152,7 +152,16 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
     child.once('exit', (code) => reject(new Error(`serve exited early (${code}): ${stderr}`)));
   });
   child.kill('SIGTERM');
-  const exitCode = await new Promise((resolve) => child.once('exit', resolve));
+  const exitCode = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`serve did not stop after SIGTERM: ${stderr}`));
+    }, 10_000);
+    child.once('exit', (code) => {
+      clearTimeout(timeout);
+      resolve(code);
+    });
+  });
   assert.equal(exitCode, 0, stderr);
   assert.match(stdout, /Database: .*serve\.sqlite/);
 });
