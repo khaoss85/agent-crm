@@ -83,6 +83,26 @@ test('M0 freezes current SQLite MCP discovery and mutation annotations', async (
   assert.equal(initialized.result.serverInfo.name, 'accordo');
   const listed = await mcp.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const tools = new Map(listed.result.tools.map((tool) => [tool.name, tool]));
+  assert.deepEqual([...tools.keys()].sort(), [
+    'crm_create_opportunity',
+    'crm_decide_approval',
+    'crm_doctor',
+    'crm_get_trace',
+    'crm_list_approvals',
+    'crm_list_opportunities',
+    'crm_project_context',
+    'crm_request_stage_change',
+    'crm_scaffold_module',
+  ]);
+  for (const [name, tool] of tools) {
+    const readOnly = ['crm_doctor', 'crm_get_trace', 'crm_list_approvals', 'crm_list_opportunities', 'crm_project_context'].includes(name);
+    assert.deepEqual(tool.annotations, {
+      readOnlyHint: readOnly,
+      destructiveHint: false,
+      idempotentHint: readOnly,
+      openWorldHint: false,
+    }, name);
+  }
   assert.equal(tools.get('crm_project_context').annotations.readOnlyHint, true);
   assert.equal(tools.get('crm_request_stage_change').annotations.readOnlyHint, false);
   assert.equal(tools.get('crm_scaffold_module').annotations.destructiveHint, false);
@@ -91,9 +111,8 @@ test('M0 freezes current SQLite MCP discovery and mutation annotations', async (
 test('M0 freezes every application CLI command on SQLite, including serve shutdown', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'accordo-spine-v2-m0-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const dbPath = join(directory, 'application.sqlite');
-
   for (const command of ['db:migrate', 'seed', 'demo', 'doctor', 'workflow:list', 'trace:list']) {
+    const dbPath = join(directory, `${command.replace(':', '-')}.sqlite`);
     const run = spawnSync(process.execPath, ['--no-warnings', cli, command, '--db', dbPath], {
       cwd: root, encoding: 'utf8', timeout: 30_000,
     });
@@ -104,7 +123,8 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
   const source = readFileSync(new URL('../packages/cli/src/commands.js', import.meta.url), 'utf8');
   assert.match(source, /new Set\(\['serve', 'seed', 'demo', 'doctor', 'db:migrate', 'workflow:list', 'trace:list'\]\)/);
 
-  const child = spawn(process.execPath, ['--no-warnings', cli, 'serve', '--db', dbPath, '--port', '0'], {
+  const servePath = join(directory, 'serve.sqlite');
+  const child = spawn(process.execPath, ['--no-warnings', cli, 'serve', '--db', servePath, '--port', '0'], {
     cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
@@ -131,5 +151,5 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
   child.kill('SIGTERM');
   const exitCode = await new Promise((resolve) => child.once('exit', resolve));
   assert.equal(exitCode, 0, stderr);
-  assert.match(stdout, /Database: .*application\.sqlite/);
+  assert.match(stdout, /Database: .*serve\.sqlite/);
 });
