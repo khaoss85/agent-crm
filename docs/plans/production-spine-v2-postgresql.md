@@ -584,7 +584,7 @@ never falls back to `--db`/SQLite.
 | `seed` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED` before composition/write; current CLI has no verified operator transport and hard-coded actors are not identity. |
 | `demo` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED`; demonstrations cannot bypass production authorization. |
 | `doctor` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED`; current doctor reads tenant record, workflow and audit counts. Source-only `project doctor` remains `NOT_APPLICATION_BOUND`. |
-| `workflow:list` | `READ_ONLY_SUPPORTED` | Async composition, deterministic result and clean close. |
+| `workflow:list` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED`; application composition could run startup migrations. A future source-only registry reader may become `NOT_APPLICATION_BOUND` separately. |
 | `trace:list` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED`; local config access is not authorization to tenant traces. |
 
 Non-application CLI commands remain `NOT_APPLICATION_BOUND` and do not load the
@@ -596,6 +596,14 @@ if an unclassified command appears. It runs every command on SQLite, every
 supported command on PostgreSQL, every declared refusal, missing/malformed key
 cases, lost-response replay for mutators, no-SQLite-fallback sentinels,
 credential-output scans and pool/client/timer shutdown checks.
+
+Production HTTP `GET /health` no longer calls `app.doctor()` or any tenant
+service. It returns one bounded storage-independent liveness/readiness contract
+derived from process startup completion and, when needed, an adapter-level
+`SELECT 1`-style connectivity probe that exposes no counts, tenant, schema,
+locator or provider detail. Authenticated operational diagnostics are a separate
+surface; route tests inject hostile tenant rows and prove no module/workflow/audit
+read occurs while response shape and status remain deterministic.
 
 ### M3 — Add PostgreSQL migrations and adapter
 
@@ -673,11 +681,12 @@ credential-output scans and pool/client/timer shutdown checks.
    key returned before execution where the protocol permits it); the same
    transaction stores a unique bounded outcome record with deterministic record
    IDs, normalized response, event intents and deterministic successful-trace
-   intent/run metadata. The unique key is scoped to canonical tenant, verified
-   subject fingerprint, operation/action, target and contract version and binds
-   a canonical fingerprint of the complete normalized request. Reusing it with
-   any divergent scope or bytes fails closed and reveals neither prior response
-   nor subject. After reconnect, reconciliation
+   intent/run metadata. The unique lookup identity is exactly the canonical
+   tenant namespace plus raw caller key. Its stored immutable scope contains the
+   verified subject fingerprint, operation/action, target, contract version and
+   canonical request fingerprint. Lookup happens by tenant+raw key first; only
+   then are all stored scope fields compared. Any mismatch is divergent replay,
+   never absence, and reveals neither prior response nor subject. After reconnect, reconciliation
    looks up that key: a committed outcome returns its canonical response and
    promotes its events once in the live recovery path; absence authorizes one
    retry with the same IDs/key; inability to prove either remains unknown and
