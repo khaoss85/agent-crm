@@ -243,6 +243,17 @@ const MIGRATION_PLANES = Object.freeze({
   control: CONTROL_PLANE_MIGRATIONS,
 });
 
+/**
+ * Internal M0 characterization seam. It exposes the evaluated descriptors the
+ * SQLite migrator actually consumes, so the pre-PostgreSQL checksum baseline is
+ * independent of this file's object-literal formatting. It is deliberately not
+ * re-exported from `packages/core/index.js` and is not a product API.
+ */
+export const CORE_MIGRATIONS_FOR_CHARACTERIZATION = Object.freeze([
+  ...DATA_PLANE_MIGRATIONS.map((migration) => Object.freeze({ plane: 'data', ...migration })),
+  ...CONTROL_PLANE_MIGRATIONS.map((migration) => Object.freeze({ plane: 'control', ...migration })),
+]);
+
 /** The migration versions each plane owns, published so a test can pin them. */
 export const MIGRATION_VERSIONS = Object.freeze({
   combined: Object.freeze(MIGRATION_PLANES.combined.map((m) => m.version)),

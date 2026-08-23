@@ -105,16 +105,26 @@ of an unsupported one rather than growing a general query language.
    transaction rollback, restart persistence, migration adoption and two-
    connection contention.
 3. Characterize the in-process API separately: synchronous
-   `createAccordoApp()`, immediate access to `app.modules`, synchronous service
-   reads/writes, the starter installer and every checked example that reads a
-   return value without `await`. This is a shipped consumer contract, not an
-   implementation detail hidden behind HTTP.
+   `createAccordoApp()` and immediate access to `app.modules`; exact lookup/list
+   service reads currently return domain values synchronously, while public
+   service creates/updates and other event-emitting mutations retain their
+   declared Promise contract. Freeze that operation-by-operation mixed shape,
+   the starter installer and every checked example that reads a return value
+   without `await`. Do not describe all service writes as synchronous merely
+   because SQLite executes their statements synchronously: callers already await
+   mutations such as `companies.create()`. This is a shipped consumer contract,
+   not an implementation detail hidden behind HTTP.
 4. Characterize every executable composition entry point: `npm start`/`serve`,
    `crm db:migrate` and the project MCP stdio server. Record startup success,
-   migration completion, bounded JSON/stdout and clean shutdown for SQLite;
-   record the current stable refusal when PostgreSQL is requested before the
-   async path exists. A direct factory test is not evidence that an operator can
-   boot the selected adapter.
+   migration completion, bounded JSON/stdout and clean shutdown for SQLite.
+   Before the portable asynchronous storage-selection contract exists there is
+   no supported PostgreSQL selection path: legacy `--db` is SQLite filesystem-
+   path syntax, not an adapter selector. Characterize a PostgreSQL-shaped value
+   as that unsupported legacy hazard, never as PostgreSQL support. Before a real
+   PostgreSQL adapter or operator-facing selection lands, the versioned
+   deployment-storage boundary ratified below must replace the ambiguity with
+   explicit fail-closed selection and refusal semantics. A direct factory test
+   is not evidence that an operator can boot the selected adapter.
 5. Record normalized receipts that contain domain objects and stable error
    codes, never driver messages, paths, timing or database-specific metadata.
 6. Freeze the released core migration identities before editing migration SQL:
@@ -1073,6 +1083,58 @@ scripts invoked by existing `verify`/`project verify` authorities over a new
 agent-facing rail.
 
 ## Progress log
+
+- 2026-08-23: M0 characterization started from merged plan commit `c78c310` on
+  `claude/spine-v2-m0-characterization`. The first bounded slice freezes the
+  synchronous SQLite application shape, mixed sync/async module-service calls,
+  exact audit evidence, package/action/capability v1 declarations, MCP tool
+  discovery annotations, and all seven application-bound CLI commands including
+  real `serve` startup and signal-driven shutdown. It changes no runtime behavior
+  and introduces no PostgreSQL adapter.
+
+### M0 completion map
+
+This is the exhaustive M0 evidence map. `ALREADY_PROVED_BY_EXISTING_TEST` means
+the named executable existed at the branch point and was rerun for M0; it is not
+an assumption or a pointer to prose. The M0-specific suite adds only the gaps
+that were not already pinned elsewhere.
+
+| M0 requirement | Executable proof / fixture | Status |
+| --- | --- | --- |
+| Released core migration identity, plane and SQL bytes | `tests/spine-v2-m0-characterization.test.js` — migration checksum fixture | PROVED |
+| Synchronous `createAccordoApp()`, immediate modules, synchronous exact reads and Promise mutations | `tests/spine-v2-m0-characterization.test.js` — in-process contract fixture | PROVED |
+| Package/action/capability v1 synchronous SQLite graph | `tests/spine-v2-m0-characterization.test.js` — Work v1 fixture | PROVED |
+| MCP discovery, annotations, executable stdio startup, bounded JSON and shutdown | `tests/spine-v2-m0-characterization.test.js` — direct and child-process MCP fixtures | PROVED |
+| Every application CLI command, fresh SQLite migration and real `serve` readiness/shutdown | `tests/spine-v2-m0-characterization.test.js` — `APP_COMMANDS` child-process matrix | PROVED |
+| Executable storage-selection behavior: legacy `--db` is a SQLite path and no executable currently selects PostgreSQL | `tests/spine-v2-m0-characterization.test.js` — PostgreSQL-shaped sentinel path fixture | PROVED |
+| Complete released SQLite physical schema after each v1 through v5 migration prefix, retaining plane identity | `tests/spine-v2-m0-characterization.test.js`; `tests/fixtures/spine-v2-m0-sqlite-schema.json` | PROVED |
+| Company, Contact and Opportunity HTTP create/read/list envelopes and shared state | `tests/api.test.js`; `tests/opportunity-pipeline-e2e.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
+| Generated-module HTTP and SDK create/exact-read/list shapes | `tests/generated-api-e2e.test.js`; `tests/generated-api.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
+| HTTP/SDK 401, 403, 404 and bounded error projection without driver/path disclosure | `tests/production-spine.test.js`; `tests/generated-api.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
+| Stage-change success, managed-field refusal, approval and human-decision boundary | `tests/opportunity-pipeline-e2e.test.js`; `tests/workflow.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
+| Rollback, audit atomicity, publish-after-commit, successful/failed trace and commit failure | `tests/action-runtime-semantics.test.js`; `tests/opportunity-pipeline-e2e.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
+| Same-record contention and cross-record aggregate atomicity over independent SQLite connections | `tests/action-runtime-semantics.test.js`; `tests/opportunity-pipeline-e2e.test.js`; `tests/lead-conversion-e2e.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
+| Unbound local storage and bound one-tenant-per-instance data/control-plane descriptions | `tests/production-spine.test.js`; `tests/spine-tenancy-truth.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
+| A bound instance cannot address or disclose a second tenant | `tests/production-spine.test.js`; `tests/spine-tenancy-truth.test.js`; `tests/spine-route-authorization.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
+| Evolved `module.state.json` history: deterministic schema, immutable migration, exact reads and restart persistence | `tests/module-evolution-factory.test.js` — evolution, checksum, exact-read and detach/reattach fixtures | ALREADY_PROVED_BY_EXISTING_TEST |
+| Pre-state legacy registry/migration adoption, verification, read/write and restart | `tests/module-evolution-factory.test.js` — pre-state adoption and regenerated-registry fixtures | ALREADY_PROVED_BY_EXISTING_TEST |
+| Checked starter install and existing in-process return-value compatibility | `tests/project-bootstrap.test.js`; the M0 in-process fixture | ALREADY_PROVED_BY_EXISTING_TEST |
+| Admin boot/list/read, stage action/approval, generated mutation, visible refusal and persistence | `tests/admin-core.test.js`; `tests/admin-actions.test.js`; `tests/admin-modules.test.js`; `tests/admin-pipeline.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
+| Real-Chromium Admin behavior at the unchanged public asset bytes | `docs/ADMIN_SMOKE.md` browser receipts plus `git diff c78c310 -- apps/admin/public` (empty for M0) | ALREADY_PROVED_BY_EXISTING_TEST |
+| Public doctor, CLI, serve, MCP, schema/context, audit and trace projections remain credential-free and bounded | `tests/production-spine.test.js`; `tests/admin-spine.test.js`; `tests/spine-v2-m0-characterization.test.js` | ALREADY_PROVED_BY_EXISTING_TEST |
+
+M0 has no unproved requirement and no requirement reclassified out of the
+milestone. In particular, the browser row relies on the reviewed Chromium
+receipts only because M0 leaves every Admin public byte unchanged; a later PR
+that changes those bytes must produce a new current-head browser receipt rather
+than inheriting this one.
+
+- 2026-08-23: exact-head review corrected two M0 evidence defects. The plan no
+  longer invents a pre-adapter PostgreSQL refusal: it records legacy `--db` as
+  SQLite path syntax and defers explicit selection/refusal to the ratified
+  deployment-storage boundary. A replayable, inspectable schema snapshot now
+  freezes tables, columns, defaults, keys, foreign keys, indexes, predicates,
+  checks and `STRICT` SQL after every released v1 through v5 prefix.
 
 - 2026-08-23: governance closeout verified on live GitHub. PR #111 merged as
   `51b276b`; Vercel provenance restoration merged in PR #112 as `8ca790a`;

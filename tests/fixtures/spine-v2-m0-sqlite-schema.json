@@ -1,0 +1,6170 @@
+[
+  {
+    "throughVersion": 1,
+    "migrations": [
+      {
+        "plane": "data",
+        "version": 1,
+        "name": "initial_crm_schema"
+      }
+    ],
+    "schema": {
+      "objects": [
+        {
+          "type": "index",
+          "name": "approvals_one_pending_per_opportunity",
+          "tableName": "approvals",
+          "sql": "CREATE UNIQUE INDEX approvals_one_pending_per_opportunity\n        ON approvals(opportunity_id)\n        WHERE status = 'pending'"
+        },
+        {
+          "type": "index",
+          "name": "audit_events_created_at",
+          "tableName": "audit_events",
+          "sql": "CREATE INDEX audit_events_created_at ON audit_events(created_at DESC)"
+        },
+        {
+          "type": "index",
+          "name": "audit_events_entity",
+          "tableName": "audit_events",
+          "sql": "CREATE INDEX audit_events_entity ON audit_events(entity_type, entity_id)"
+        },
+        {
+          "type": "index",
+          "name": "trace_spans_run_id",
+          "tableName": "trace_spans",
+          "sql": "CREATE INDEX trace_spans_run_id ON trace_spans(run_id)"
+        },
+        {
+          "type": "table",
+          "name": "approvals",
+          "tableName": "approvals",
+          "sql": "CREATE TABLE approvals (\n        id TEXT PRIMARY KEY,\n        opportunity_id TEXT NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,\n        status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),\n        reason TEXT NOT NULL,\n        requested_by TEXT NOT NULL,\n        decided_by TEXT,\n        requested_at TEXT NOT NULL,\n        decided_at TEXT\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "audit_events",
+          "tableName": "audit_events",
+          "sql": "CREATE TABLE audit_events (\n        id TEXT PRIMARY KEY,\n        actor_type TEXT NOT NULL,\n        actor_id TEXT NOT NULL,\n        action TEXT NOT NULL,\n        entity_type TEXT NOT NULL,\n        entity_id TEXT NOT NULL,\n        data_json TEXT NOT NULL,\n        created_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "companies",
+          "tableName": "companies",
+          "sql": "CREATE TABLE companies (\n        id TEXT PRIMARY KEY,\n        name TEXT NOT NULL,\n        domain TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "contacts",
+          "tableName": "contacts",
+          "sql": "CREATE TABLE contacts (\n        id TEXT PRIMARY KEY,\n        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,\n        first_name TEXT NOT NULL,\n        last_name TEXT NOT NULL,\n        email TEXT NOT NULL UNIQUE,\n        role TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "opportunities",
+          "tableName": "opportunities",
+          "sql": "CREATE TABLE opportunities (\n        id TEXT PRIMARY KEY,\n        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE RESTRICT,\n        contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL,\n        name TEXT NOT NULL,\n        type TEXT NOT NULL CHECK(type IN ('new_business', 'renewal', 'upsell')),\n        value_cents INTEGER NOT NULL CHECK(value_cents >= 0),\n        currency TEXT NOT NULL,\n        stage TEXT NOT NULL CHECK(stage IN ('discovery', 'qualification', 'proposal', 'approval_pending', 'negotiation', 'won', 'lost')),\n        owner TEXT NOT NULL,\n        expected_close_date TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "trace_spans",
+          "tableName": "trace_spans",
+          "sql": "CREATE TABLE trace_spans (\n        id TEXT PRIMARY KEY,\n        run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,\n        parent_span_id TEXT,\n        name TEXT NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'compensated')),\n        input_json TEXT,\n        output_json TEXT,\n        error TEXT,\n        started_at TEXT NOT NULL,\n        finished_at TEXT\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "workflow_runs",
+          "tableName": "workflow_runs",
+          "sql": "CREATE TABLE workflow_runs (\n        id TEXT PRIMARY KEY,\n        workflow_name TEXT NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed')),\n        input_json TEXT NOT NULL,\n        output_json TEXT,\n        error TEXT,\n        started_at TEXT NOT NULL,\n        finished_at TEXT\n      ) STRICT"
+        }
+      ],
+      "tables": {
+        "approvals": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "opportunity_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "reason",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "requested_by",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "decided_by",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "requested_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "decided_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "opportunities",
+              "from": "opportunity_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "approvals_one_pending_per_opportunity",
+              "unique": 1,
+              "origin": "c",
+              "partial": 1,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "opportunity_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_approvals_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "audit_events": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "actor_type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "actor_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "action",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "entity_type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "entity_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "data_json",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "audit_events_created_at",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 7,
+                  "name": "created_at",
+                  "desc": 1,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "audit_events_entity",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 4,
+                  "name": "entity_type",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": 5,
+                  "name": "entity_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 2,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 2,
+              "name": "sqlite_autoindex_audit_events_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "companies": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "domain",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_companies_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "contacts": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "company_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "first_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "last_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "email",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "role",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "companies",
+              "from": "company_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_contacts_2",
+              "unique": 1,
+              "origin": "u",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 4,
+                  "name": "email",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_contacts_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "opportunities": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "company_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "contact_id",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "value_cents",
+              "type": "INTEGER",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "currency",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "stage",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 8,
+              "name": "owner",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 9,
+              "name": "expected_close_date",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 10,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 11,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "contacts",
+              "from": "contact_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "SET NULL",
+              "match": "NONE"
+            },
+            {
+              "id": 1,
+              "seq": 0,
+              "table": "companies",
+              "from": "company_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "RESTRICT",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_opportunities_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "trace_spans": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "run_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "parent_span_id",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "input_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "output_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "error",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 8,
+              "name": "started_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 9,
+              "name": "finished_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "workflow_runs",
+              "from": "run_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "trace_spans_run_id",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "run_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_trace_spans_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "workflow_runs": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "workflow_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "input_json",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "output_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "error",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "started_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "finished_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_workflow_runs_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "throughVersion": 2,
+    "migrations": [
+      {
+        "plane": "data",
+        "version": 1,
+        "name": "initial_crm_schema"
+      },
+      {
+        "plane": "data",
+        "version": 2,
+        "name": "opportunity_source_key"
+      }
+    ],
+    "schema": {
+      "objects": [
+        {
+          "type": "index",
+          "name": "approvals_one_pending_per_opportunity",
+          "tableName": "approvals",
+          "sql": "CREATE UNIQUE INDEX approvals_one_pending_per_opportunity\n        ON approvals(opportunity_id)\n        WHERE status = 'pending'"
+        },
+        {
+          "type": "index",
+          "name": "audit_events_created_at",
+          "tableName": "audit_events",
+          "sql": "CREATE INDEX audit_events_created_at ON audit_events(created_at DESC)"
+        },
+        {
+          "type": "index",
+          "name": "audit_events_entity",
+          "tableName": "audit_events",
+          "sql": "CREATE INDEX audit_events_entity ON audit_events(entity_type, entity_id)"
+        },
+        {
+          "type": "index",
+          "name": "opportunities_source_key",
+          "tableName": "opportunities",
+          "sql": "CREATE UNIQUE INDEX opportunities_source_key\n        ON opportunities(source_key)\n        WHERE source_key IS NOT NULL"
+        },
+        {
+          "type": "index",
+          "name": "trace_spans_run_id",
+          "tableName": "trace_spans",
+          "sql": "CREATE INDEX trace_spans_run_id ON trace_spans(run_id)"
+        },
+        {
+          "type": "table",
+          "name": "approvals",
+          "tableName": "approvals",
+          "sql": "CREATE TABLE approvals (\n        id TEXT PRIMARY KEY,\n        opportunity_id TEXT NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,\n        status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),\n        reason TEXT NOT NULL,\n        requested_by TEXT NOT NULL,\n        decided_by TEXT,\n        requested_at TEXT NOT NULL,\n        decided_at TEXT\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "audit_events",
+          "tableName": "audit_events",
+          "sql": "CREATE TABLE audit_events (\n        id TEXT PRIMARY KEY,\n        actor_type TEXT NOT NULL,\n        actor_id TEXT NOT NULL,\n        action TEXT NOT NULL,\n        entity_type TEXT NOT NULL,\n        entity_id TEXT NOT NULL,\n        data_json TEXT NOT NULL,\n        created_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "companies",
+          "tableName": "companies",
+          "sql": "CREATE TABLE companies (\n        id TEXT PRIMARY KEY,\n        name TEXT NOT NULL,\n        domain TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "contacts",
+          "tableName": "contacts",
+          "sql": "CREATE TABLE contacts (\n        id TEXT PRIMARY KEY,\n        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,\n        first_name TEXT NOT NULL,\n        last_name TEXT NOT NULL,\n        email TEXT NOT NULL UNIQUE,\n        role TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "opportunities",
+          "tableName": "opportunities",
+          "sql": "CREATE TABLE opportunities (\n        id TEXT PRIMARY KEY,\n        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE RESTRICT,\n        contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL,\n        name TEXT NOT NULL,\n        type TEXT NOT NULL CHECK(type IN ('new_business', 'renewal', 'upsell')),\n        value_cents INTEGER NOT NULL CHECK(value_cents >= 0),\n        currency TEXT NOT NULL,\n        stage TEXT NOT NULL CHECK(stage IN ('discovery', 'qualification', 'proposal', 'approval_pending', 'negotiation', 'won', 'lost')),\n        owner TEXT NOT NULL,\n        expected_close_date TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      , source_key TEXT) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "trace_spans",
+          "tableName": "trace_spans",
+          "sql": "CREATE TABLE trace_spans (\n        id TEXT PRIMARY KEY,\n        run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,\n        parent_span_id TEXT,\n        name TEXT NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'compensated')),\n        input_json TEXT,\n        output_json TEXT,\n        error TEXT,\n        started_at TEXT NOT NULL,\n        finished_at TEXT\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "workflow_runs",
+          "tableName": "workflow_runs",
+          "sql": "CREATE TABLE workflow_runs (\n        id TEXT PRIMARY KEY,\n        workflow_name TEXT NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed')),\n        input_json TEXT NOT NULL,\n        output_json TEXT,\n        error TEXT,\n        started_at TEXT NOT NULL,\n        finished_at TEXT\n      ) STRICT"
+        }
+      ],
+      "tables": {
+        "approvals": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "opportunity_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "reason",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "requested_by",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "decided_by",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "requested_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "decided_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "opportunities",
+              "from": "opportunity_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "approvals_one_pending_per_opportunity",
+              "unique": 1,
+              "origin": "c",
+              "partial": 1,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "opportunity_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_approvals_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "audit_events": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "actor_type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "actor_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "action",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "entity_type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "entity_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "data_json",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "audit_events_created_at",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 7,
+                  "name": "created_at",
+                  "desc": 1,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "audit_events_entity",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 4,
+                  "name": "entity_type",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": 5,
+                  "name": "entity_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 2,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 2,
+              "name": "sqlite_autoindex_audit_events_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "companies": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "domain",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_companies_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "contacts": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "company_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "first_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "last_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "email",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "role",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "companies",
+              "from": "company_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_contacts_2",
+              "unique": 1,
+              "origin": "u",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 4,
+                  "name": "email",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_contacts_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "opportunities": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "company_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "contact_id",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "value_cents",
+              "type": "INTEGER",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "currency",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "stage",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 8,
+              "name": "owner",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 9,
+              "name": "expected_close_date",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 10,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 11,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 12,
+              "name": "source_key",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "contacts",
+              "from": "contact_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "SET NULL",
+              "match": "NONE"
+            },
+            {
+              "id": 1,
+              "seq": 0,
+              "table": "companies",
+              "from": "company_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "RESTRICT",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "opportunities_source_key",
+              "unique": 1,
+              "origin": "c",
+              "partial": 1,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 12,
+                  "name": "source_key",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_opportunities_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "trace_spans": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "run_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "parent_span_id",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "input_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "output_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "error",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 8,
+              "name": "started_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 9,
+              "name": "finished_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "workflow_runs",
+              "from": "run_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "trace_spans_run_id",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "run_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_trace_spans_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "workflow_runs": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "workflow_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "input_json",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "output_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "error",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "started_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "finished_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_workflow_runs_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "throughVersion": 3,
+    "migrations": [
+      {
+        "plane": "data",
+        "version": 1,
+        "name": "initial_crm_schema"
+      },
+      {
+        "plane": "data",
+        "version": 2,
+        "name": "opportunity_source_key"
+      },
+      {
+        "plane": "data",
+        "version": 3,
+        "name": "opportunity_pipeline_state"
+      }
+    ],
+    "schema": {
+      "objects": [
+        {
+          "type": "index",
+          "name": "approvals_one_pending_per_opportunity",
+          "tableName": "approvals",
+          "sql": "CREATE UNIQUE INDEX approvals_one_pending_per_opportunity\n        ON approvals(opportunity_id)\n        WHERE status = 'pending'"
+        },
+        {
+          "type": "index",
+          "name": "audit_events_created_at",
+          "tableName": "audit_events",
+          "sql": "CREATE INDEX audit_events_created_at ON audit_events(created_at DESC)"
+        },
+        {
+          "type": "index",
+          "name": "audit_events_entity",
+          "tableName": "audit_events",
+          "sql": "CREATE INDEX audit_events_entity ON audit_events(entity_type, entity_id)"
+        },
+        {
+          "type": "index",
+          "name": "opportunities_pipeline_stage",
+          "tableName": "opportunities",
+          "sql": "CREATE INDEX opportunities_pipeline_stage\n        ON opportunities(pipeline_key, pipeline_stage)"
+        },
+        {
+          "type": "index",
+          "name": "opportunities_source_key",
+          "tableName": "opportunities",
+          "sql": "CREATE UNIQUE INDEX opportunities_source_key\n        ON opportunities(source_key)\n        WHERE source_key IS NOT NULL"
+        },
+        {
+          "type": "index",
+          "name": "trace_spans_run_id",
+          "tableName": "trace_spans",
+          "sql": "CREATE INDEX trace_spans_run_id ON trace_spans(run_id)"
+        },
+        {
+          "type": "table",
+          "name": "approvals",
+          "tableName": "approvals",
+          "sql": "CREATE TABLE approvals (\n        id TEXT PRIMARY KEY,\n        opportunity_id TEXT NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,\n        status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),\n        reason TEXT NOT NULL,\n        requested_by TEXT NOT NULL,\n        decided_by TEXT,\n        requested_at TEXT NOT NULL,\n        decided_at TEXT\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "audit_events",
+          "tableName": "audit_events",
+          "sql": "CREATE TABLE audit_events (\n        id TEXT PRIMARY KEY,\n        actor_type TEXT NOT NULL,\n        actor_id TEXT NOT NULL,\n        action TEXT NOT NULL,\n        entity_type TEXT NOT NULL,\n        entity_id TEXT NOT NULL,\n        data_json TEXT NOT NULL,\n        created_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "companies",
+          "tableName": "companies",
+          "sql": "CREATE TABLE companies (\n        id TEXT PRIMARY KEY,\n        name TEXT NOT NULL,\n        domain TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "contacts",
+          "tableName": "contacts",
+          "sql": "CREATE TABLE contacts (\n        id TEXT PRIMARY KEY,\n        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,\n        first_name TEXT NOT NULL,\n        last_name TEXT NOT NULL,\n        email TEXT NOT NULL UNIQUE,\n        role TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "opportunities",
+          "tableName": "opportunities",
+          "sql": "CREATE TABLE opportunities (\n        id TEXT PRIMARY KEY,\n        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE RESTRICT,\n        contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL,\n        name TEXT NOT NULL,\n        type TEXT NOT NULL CHECK(type IN ('new_business', 'renewal', 'upsell')),\n        value_cents INTEGER NOT NULL CHECK(value_cents >= 0),\n        currency TEXT NOT NULL,\n        stage TEXT NOT NULL CHECK(stage IN ('discovery', 'qualification', 'proposal', 'approval_pending', 'negotiation', 'won', 'lost')),\n        owner TEXT NOT NULL,\n        expected_close_date TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      , source_key TEXT, pipeline_key TEXT, pipeline_stage TEXT, stage_entered_at TEXT, closed_at TEXT, close_reason TEXT) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "trace_spans",
+          "tableName": "trace_spans",
+          "sql": "CREATE TABLE trace_spans (\n        id TEXT PRIMARY KEY,\n        run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,\n        parent_span_id TEXT,\n        name TEXT NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'compensated')),\n        input_json TEXT,\n        output_json TEXT,\n        error TEXT,\n        started_at TEXT NOT NULL,\n        finished_at TEXT\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "workflow_runs",
+          "tableName": "workflow_runs",
+          "sql": "CREATE TABLE workflow_runs (\n        id TEXT PRIMARY KEY,\n        workflow_name TEXT NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed')),\n        input_json TEXT NOT NULL,\n        output_json TEXT,\n        error TEXT,\n        started_at TEXT NOT NULL,\n        finished_at TEXT\n      ) STRICT"
+        }
+      ],
+      "tables": {
+        "approvals": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "opportunity_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "reason",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "requested_by",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "decided_by",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "requested_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "decided_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "opportunities",
+              "from": "opportunity_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "approvals_one_pending_per_opportunity",
+              "unique": 1,
+              "origin": "c",
+              "partial": 1,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "opportunity_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_approvals_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "audit_events": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "actor_type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "actor_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "action",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "entity_type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "entity_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "data_json",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "audit_events_created_at",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 7,
+                  "name": "created_at",
+                  "desc": 1,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "audit_events_entity",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 4,
+                  "name": "entity_type",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": 5,
+                  "name": "entity_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 2,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 2,
+              "name": "sqlite_autoindex_audit_events_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "companies": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "domain",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_companies_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "contacts": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "company_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "first_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "last_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "email",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "role",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "companies",
+              "from": "company_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_contacts_2",
+              "unique": 1,
+              "origin": "u",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 4,
+                  "name": "email",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_contacts_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "opportunities": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "company_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "contact_id",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "value_cents",
+              "type": "INTEGER",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "currency",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "stage",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 8,
+              "name": "owner",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 9,
+              "name": "expected_close_date",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 10,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 11,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 12,
+              "name": "source_key",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 13,
+              "name": "pipeline_key",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 14,
+              "name": "pipeline_stage",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 15,
+              "name": "stage_entered_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 16,
+              "name": "closed_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 17,
+              "name": "close_reason",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "contacts",
+              "from": "contact_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "SET NULL",
+              "match": "NONE"
+            },
+            {
+              "id": 1,
+              "seq": 0,
+              "table": "companies",
+              "from": "company_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "RESTRICT",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "opportunities_pipeline_stage",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 13,
+                  "name": "pipeline_key",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": 14,
+                  "name": "pipeline_stage",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 2,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "opportunities_source_key",
+              "unique": 1,
+              "origin": "c",
+              "partial": 1,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 12,
+                  "name": "source_key",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 2,
+              "name": "sqlite_autoindex_opportunities_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "trace_spans": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "run_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "parent_span_id",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "input_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "output_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "error",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 8,
+              "name": "started_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 9,
+              "name": "finished_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "workflow_runs",
+              "from": "run_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "trace_spans_run_id",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "run_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_trace_spans_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "workflow_runs": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "workflow_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "input_json",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "output_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "error",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "started_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "finished_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_workflow_runs_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "throughVersion": 4,
+    "migrations": [
+      {
+        "plane": "data",
+        "version": 1,
+        "name": "initial_crm_schema"
+      },
+      {
+        "plane": "data",
+        "version": 2,
+        "name": "opportunity_source_key"
+      },
+      {
+        "plane": "data",
+        "version": 3,
+        "name": "opportunity_pipeline_state"
+      },
+      {
+        "plane": "data",
+        "version": 4,
+        "name": "definition_versions"
+      }
+    ],
+    "schema": {
+      "objects": [
+        {
+          "type": "index",
+          "name": "approvals_one_pending_per_opportunity",
+          "tableName": "approvals",
+          "sql": "CREATE UNIQUE INDEX approvals_one_pending_per_opportunity\n        ON approvals(opportunity_id)\n        WHERE status = 'pending'"
+        },
+        {
+          "type": "index",
+          "name": "audit_events_created_at",
+          "tableName": "audit_events",
+          "sql": "CREATE INDEX audit_events_created_at ON audit_events(created_at DESC)"
+        },
+        {
+          "type": "index",
+          "name": "audit_events_entity",
+          "tableName": "audit_events",
+          "sql": "CREATE INDEX audit_events_entity ON audit_events(entity_type, entity_id)"
+        },
+        {
+          "type": "index",
+          "name": "opportunities_pipeline_stage",
+          "tableName": "opportunities",
+          "sql": "CREATE INDEX opportunities_pipeline_stage\n        ON opportunities(pipeline_key, pipeline_stage)"
+        },
+        {
+          "type": "index",
+          "name": "opportunities_source_key",
+          "tableName": "opportunities",
+          "sql": "CREATE UNIQUE INDEX opportunities_source_key\n        ON opportunities(source_key)\n        WHERE source_key IS NOT NULL"
+        },
+        {
+          "type": "index",
+          "name": "trace_spans_run_id",
+          "tableName": "trace_spans",
+          "sql": "CREATE INDEX trace_spans_run_id ON trace_spans(run_id)"
+        },
+        {
+          "type": "table",
+          "name": "approvals",
+          "tableName": "approvals",
+          "sql": "CREATE TABLE approvals (\n        id TEXT PRIMARY KEY,\n        opportunity_id TEXT NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,\n        status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),\n        reason TEXT NOT NULL,\n        requested_by TEXT NOT NULL,\n        decided_by TEXT,\n        requested_at TEXT NOT NULL,\n        decided_at TEXT\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "audit_events",
+          "tableName": "audit_events",
+          "sql": "CREATE TABLE audit_events (\n        id TEXT PRIMARY KEY,\n        actor_type TEXT NOT NULL,\n        actor_id TEXT NOT NULL,\n        action TEXT NOT NULL,\n        entity_type TEXT NOT NULL,\n        entity_id TEXT NOT NULL,\n        data_json TEXT NOT NULL,\n        created_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "companies",
+          "tableName": "companies",
+          "sql": "CREATE TABLE companies (\n        id TEXT PRIMARY KEY,\n        name TEXT NOT NULL,\n        domain TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "contacts",
+          "tableName": "contacts",
+          "sql": "CREATE TABLE contacts (\n        id TEXT PRIMARY KEY,\n        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,\n        first_name TEXT NOT NULL,\n        last_name TEXT NOT NULL,\n        email TEXT NOT NULL UNIQUE,\n        role TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "definition_versions",
+          "tableName": "definition_versions",
+          "sql": "CREATE TABLE definition_versions (\n        id TEXT PRIMARY KEY,\n        type TEXT NOT NULL,\n        name TEXT NOT NULL,\n        version INTEGER NOT NULL,\n        fingerprint TEXT NOT NULL,\n        registered_at TEXT NOT NULL,\n        UNIQUE(type, name, version)\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "opportunities",
+          "tableName": "opportunities",
+          "sql": "CREATE TABLE opportunities (\n        id TEXT PRIMARY KEY,\n        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE RESTRICT,\n        contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL,\n        name TEXT NOT NULL,\n        type TEXT NOT NULL CHECK(type IN ('new_business', 'renewal', 'upsell')),\n        value_cents INTEGER NOT NULL CHECK(value_cents >= 0),\n        currency TEXT NOT NULL,\n        stage TEXT NOT NULL CHECK(stage IN ('discovery', 'qualification', 'proposal', 'approval_pending', 'negotiation', 'won', 'lost')),\n        owner TEXT NOT NULL,\n        expected_close_date TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      , source_key TEXT, pipeline_key TEXT, pipeline_stage TEXT, stage_entered_at TEXT, closed_at TEXT, close_reason TEXT) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "trace_spans",
+          "tableName": "trace_spans",
+          "sql": "CREATE TABLE trace_spans (\n        id TEXT PRIMARY KEY,\n        run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,\n        parent_span_id TEXT,\n        name TEXT NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'compensated')),\n        input_json TEXT,\n        output_json TEXT,\n        error TEXT,\n        started_at TEXT NOT NULL,\n        finished_at TEXT\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "workflow_runs",
+          "tableName": "workflow_runs",
+          "sql": "CREATE TABLE workflow_runs (\n        id TEXT PRIMARY KEY,\n        workflow_name TEXT NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed')),\n        input_json TEXT NOT NULL,\n        output_json TEXT,\n        error TEXT,\n        started_at TEXT NOT NULL,\n        finished_at TEXT\n      ) STRICT"
+        }
+      ],
+      "tables": {
+        "approvals": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "opportunity_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "reason",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "requested_by",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "decided_by",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "requested_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "decided_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "opportunities",
+              "from": "opportunity_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "approvals_one_pending_per_opportunity",
+              "unique": 1,
+              "origin": "c",
+              "partial": 1,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "opportunity_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_approvals_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "audit_events": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "actor_type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "actor_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "action",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "entity_type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "entity_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "data_json",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "audit_events_created_at",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 7,
+                  "name": "created_at",
+                  "desc": 1,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "audit_events_entity",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 4,
+                  "name": "entity_type",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": 5,
+                  "name": "entity_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 2,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 2,
+              "name": "sqlite_autoindex_audit_events_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "companies": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "domain",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_companies_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "contacts": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "company_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "first_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "last_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "email",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "role",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "companies",
+              "from": "company_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_contacts_2",
+              "unique": 1,
+              "origin": "u",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 4,
+                  "name": "email",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_contacts_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "definition_versions": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "version",
+              "type": "INTEGER",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "fingerprint",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "registered_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_definition_versions_2",
+              "unique": 1,
+              "origin": "u",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "type",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": 2,
+                  "name": "name",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 2,
+                  "cid": 3,
+                  "name": "version",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 3,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_definition_versions_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "opportunities": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "company_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "contact_id",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "value_cents",
+              "type": "INTEGER",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "currency",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "stage",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 8,
+              "name": "owner",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 9,
+              "name": "expected_close_date",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 10,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 11,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 12,
+              "name": "source_key",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 13,
+              "name": "pipeline_key",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 14,
+              "name": "pipeline_stage",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 15,
+              "name": "stage_entered_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 16,
+              "name": "closed_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 17,
+              "name": "close_reason",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "contacts",
+              "from": "contact_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "SET NULL",
+              "match": "NONE"
+            },
+            {
+              "id": 1,
+              "seq": 0,
+              "table": "companies",
+              "from": "company_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "RESTRICT",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "opportunities_pipeline_stage",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 13,
+                  "name": "pipeline_key",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": 14,
+                  "name": "pipeline_stage",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 2,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "opportunities_source_key",
+              "unique": 1,
+              "origin": "c",
+              "partial": 1,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 12,
+                  "name": "source_key",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 2,
+              "name": "sqlite_autoindex_opportunities_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "trace_spans": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "run_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "parent_span_id",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "input_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "output_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "error",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 8,
+              "name": "started_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 9,
+              "name": "finished_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "workflow_runs",
+              "from": "run_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "trace_spans_run_id",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "run_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_trace_spans_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "workflow_runs": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "workflow_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "input_json",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "output_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "error",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "started_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "finished_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_workflow_runs_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "throughVersion": 5,
+    "migrations": [
+      {
+        "plane": "data",
+        "version": 1,
+        "name": "initial_crm_schema"
+      },
+      {
+        "plane": "data",
+        "version": 2,
+        "name": "opportunity_source_key"
+      },
+      {
+        "plane": "data",
+        "version": 3,
+        "name": "opportunity_pipeline_state"
+      },
+      {
+        "plane": "data",
+        "version": 4,
+        "name": "definition_versions"
+      },
+      {
+        "plane": "control",
+        "version": 5,
+        "name": "production_spine_identity"
+      }
+    ],
+    "schema": {
+      "objects": [
+        {
+          "type": "index",
+          "name": "approvals_one_pending_per_opportunity",
+          "tableName": "approvals",
+          "sql": "CREATE UNIQUE INDEX approvals_one_pending_per_opportunity\n        ON approvals(opportunity_id)\n        WHERE status = 'pending'"
+        },
+        {
+          "type": "index",
+          "name": "audit_events_created_at",
+          "tableName": "audit_events",
+          "sql": "CREATE INDEX audit_events_created_at ON audit_events(created_at DESC)"
+        },
+        {
+          "type": "index",
+          "name": "audit_events_entity",
+          "tableName": "audit_events",
+          "sql": "CREATE INDEX audit_events_entity ON audit_events(entity_type, entity_id)"
+        },
+        {
+          "type": "index",
+          "name": "opportunities_pipeline_stage",
+          "tableName": "opportunities",
+          "sql": "CREATE INDEX opportunities_pipeline_stage\n        ON opportunities(pipeline_key, pipeline_stage)"
+        },
+        {
+          "type": "index",
+          "name": "opportunities_source_key",
+          "tableName": "opportunities",
+          "sql": "CREATE UNIQUE INDEX opportunities_source_key\n        ON opportunities(source_key)\n        WHERE source_key IS NOT NULL"
+        },
+        {
+          "type": "index",
+          "name": "spine_memberships_subject",
+          "tableName": "spine_memberships",
+          "sql": "CREATE INDEX spine_memberships_subject\n        ON spine_memberships(subject)"
+        },
+        {
+          "type": "index",
+          "name": "trace_spans_run_id",
+          "tableName": "trace_spans",
+          "sql": "CREATE INDEX trace_spans_run_id ON trace_spans(run_id)"
+        },
+        {
+          "type": "table",
+          "name": "approvals",
+          "tableName": "approvals",
+          "sql": "CREATE TABLE approvals (\n        id TEXT PRIMARY KEY,\n        opportunity_id TEXT NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,\n        status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),\n        reason TEXT NOT NULL,\n        requested_by TEXT NOT NULL,\n        decided_by TEXT,\n        requested_at TEXT NOT NULL,\n        decided_at TEXT\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "audit_events",
+          "tableName": "audit_events",
+          "sql": "CREATE TABLE audit_events (\n        id TEXT PRIMARY KEY,\n        actor_type TEXT NOT NULL,\n        actor_id TEXT NOT NULL,\n        action TEXT NOT NULL,\n        entity_type TEXT NOT NULL,\n        entity_id TEXT NOT NULL,\n        data_json TEXT NOT NULL,\n        created_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "companies",
+          "tableName": "companies",
+          "sql": "CREATE TABLE companies (\n        id TEXT PRIMARY KEY,\n        name TEXT NOT NULL,\n        domain TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "contacts",
+          "tableName": "contacts",
+          "sql": "CREATE TABLE contacts (\n        id TEXT PRIMARY KEY,\n        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,\n        first_name TEXT NOT NULL,\n        last_name TEXT NOT NULL,\n        email TEXT NOT NULL UNIQUE,\n        role TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "definition_versions",
+          "tableName": "definition_versions",
+          "sql": "CREATE TABLE definition_versions (\n        id TEXT PRIMARY KEY,\n        type TEXT NOT NULL,\n        name TEXT NOT NULL,\n        version INTEGER NOT NULL,\n        fingerprint TEXT NOT NULL,\n        registered_at TEXT NOT NULL,\n        UNIQUE(type, name, version)\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "opportunities",
+          "tableName": "opportunities",
+          "sql": "CREATE TABLE opportunities (\n        id TEXT PRIMARY KEY,\n        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE RESTRICT,\n        contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL,\n        name TEXT NOT NULL,\n        type TEXT NOT NULL CHECK(type IN ('new_business', 'renewal', 'upsell')),\n        value_cents INTEGER NOT NULL CHECK(value_cents >= 0),\n        currency TEXT NOT NULL,\n        stage TEXT NOT NULL CHECK(stage IN ('discovery', 'qualification', 'proposal', 'approval_pending', 'negotiation', 'won', 'lost')),\n        owner TEXT NOT NULL,\n        expected_close_date TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      , source_key TEXT, pipeline_key TEXT, pipeline_stage TEXT, stage_entered_at TEXT, closed_at TEXT, close_reason TEXT) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "spine_memberships",
+          "tableName": "spine_memberships",
+          "sql": "CREATE TABLE spine_memberships (\n        id TEXT PRIMARY KEY,\n        organization_id TEXT NOT NULL REFERENCES spine_organizations(id) ON DELETE CASCADE,\n        subject TEXT NOT NULL,\n        issuer TEXT,\n        role TEXT NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('active', 'suspended')),\n        granted_by_subject TEXT,\n        granted_reason TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        UNIQUE(organization_id, subject)\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "spine_organizations",
+          "tableName": "spine_organizations",
+          "sql": "CREATE TABLE spine_organizations (\n        id TEXT PRIMARY KEY,\n        slug TEXT NOT NULL UNIQUE,\n        name TEXT NOT NULL,\n        provenance TEXT NOT NULL CHECK(provenance IN ('operator-configured', 'local-development-migration')),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "trace_spans",
+          "tableName": "trace_spans",
+          "sql": "CREATE TABLE trace_spans (\n        id TEXT PRIMARY KEY,\n        run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,\n        parent_span_id TEXT,\n        name TEXT NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'compensated')),\n        input_json TEXT,\n        output_json TEXT,\n        error TEXT,\n        started_at TEXT NOT NULL,\n        finished_at TEXT\n      ) STRICT"
+        },
+        {
+          "type": "table",
+          "name": "workflow_runs",
+          "tableName": "workflow_runs",
+          "sql": "CREATE TABLE workflow_runs (\n        id TEXT PRIMARY KEY,\n        workflow_name TEXT NOT NULL,\n        status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed')),\n        input_json TEXT NOT NULL,\n        output_json TEXT,\n        error TEXT,\n        started_at TEXT NOT NULL,\n        finished_at TEXT\n      ) STRICT"
+        }
+      ],
+      "tables": {
+        "approvals": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "opportunity_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "reason",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "requested_by",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "decided_by",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "requested_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "decided_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "opportunities",
+              "from": "opportunity_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "approvals_one_pending_per_opportunity",
+              "unique": 1,
+              "origin": "c",
+              "partial": 1,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "opportunity_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_approvals_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "audit_events": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "actor_type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "actor_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "action",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "entity_type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "entity_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "data_json",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "audit_events_created_at",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 7,
+                  "name": "created_at",
+                  "desc": 1,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "audit_events_entity",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 4,
+                  "name": "entity_type",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": 5,
+                  "name": "entity_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 2,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 2,
+              "name": "sqlite_autoindex_audit_events_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "companies": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "domain",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_companies_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "contacts": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "company_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "first_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "last_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "email",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "role",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "companies",
+              "from": "company_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_contacts_2",
+              "unique": 1,
+              "origin": "u",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 4,
+                  "name": "email",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_contacts_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "definition_versions": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "version",
+              "type": "INTEGER",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "fingerprint",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "registered_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_definition_versions_2",
+              "unique": 1,
+              "origin": "u",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "type",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": 2,
+                  "name": "name",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 2,
+                  "cid": 3,
+                  "name": "version",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 3,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_definition_versions_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "opportunities": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "company_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "contact_id",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "type",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "value_cents",
+              "type": "INTEGER",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "currency",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "stage",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 8,
+              "name": "owner",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 9,
+              "name": "expected_close_date",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 10,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 11,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 12,
+              "name": "source_key",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 13,
+              "name": "pipeline_key",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 14,
+              "name": "pipeline_stage",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 15,
+              "name": "stage_entered_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 16,
+              "name": "closed_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 17,
+              "name": "close_reason",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "contacts",
+              "from": "contact_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "SET NULL",
+              "match": "NONE"
+            },
+            {
+              "id": 1,
+              "seq": 0,
+              "table": "companies",
+              "from": "company_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "RESTRICT",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "opportunities_pipeline_stage",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 13,
+                  "name": "pipeline_key",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": 14,
+                  "name": "pipeline_stage",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 2,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "opportunities_source_key",
+              "unique": 1,
+              "origin": "c",
+              "partial": 1,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 12,
+                  "name": "source_key",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 2,
+              "name": "sqlite_autoindex_opportunities_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "spine_memberships": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "organization_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "subject",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "issuer",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "role",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "granted_by_subject",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "granted_reason",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 8,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 9,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "spine_organizations",
+              "from": "organization_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "spine_memberships_subject",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 2,
+                  "name": "subject",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_spine_memberships_2",
+              "unique": 1,
+              "origin": "u",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "organization_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": 2,
+                  "name": "subject",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 2,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 2,
+              "name": "sqlite_autoindex_spine_memberships_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "spine_organizations": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "slug",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "provenance",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "created_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "updated_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_spine_organizations_2",
+              "unique": 1,
+              "origin": "u",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "slug",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_spine_organizations_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "trace_spans": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "run_id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "parent_span_id",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "input_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "output_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "error",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 8,
+              "name": "started_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 9,
+              "name": "finished_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [
+            {
+              "id": 0,
+              "seq": 0,
+              "table": "workflow_runs",
+              "from": "run_id",
+              "to": "id",
+              "on_update": "NO ACTION",
+              "on_delete": "CASCADE",
+              "match": "NONE"
+            }
+          ],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "trace_spans_run_id",
+              "unique": 0,
+              "origin": "c",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 1,
+                  "name": "run_id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            },
+            {
+              "seq": 1,
+              "name": "sqlite_autoindex_trace_spans_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        },
+        "workflow_runs": {
+          "columns": [
+            {
+              "cid": 0,
+              "name": "id",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 1,
+              "hidden": 0
+            },
+            {
+              "cid": 1,
+              "name": "workflow_name",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 2,
+              "name": "status",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 3,
+              "name": "input_json",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 4,
+              "name": "output_json",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 5,
+              "name": "error",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 6,
+              "name": "started_at",
+              "type": "TEXT",
+              "notnull": 1,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            },
+            {
+              "cid": 7,
+              "name": "finished_at",
+              "type": "TEXT",
+              "notnull": 0,
+              "dflt_value": null,
+              "pk": 0,
+              "hidden": 0
+            }
+          ],
+          "foreignKeys": [],
+          "indexes": [
+            {
+              "seq": 0,
+              "name": "sqlite_autoindex_workflow_runs_1",
+              "unique": 1,
+              "origin": "pk",
+              "partial": 0,
+              "columns": [
+                {
+                  "seqno": 0,
+                  "cid": 0,
+                  "name": "id",
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 1
+                },
+                {
+                  "seqno": 1,
+                  "cid": -1,
+                  "name": null,
+                  "desc": 0,
+                  "coll": "BINARY",
+                  "key": 0
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+]
