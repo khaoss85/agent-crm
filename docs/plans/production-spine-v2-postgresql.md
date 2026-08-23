@@ -471,16 +471,15 @@ characterization suites.
   Every outer write registers an in-flight intent under the current shared
   control-plane lease before opening its data transaction and closes it only
   after commit/rollback is known. Normal renewal cannot change generation while
-  an intent exists. Restore/rebind is offline: stop writers, revoke the old data-
-  plane credential/network route, verify the old server has no application
-  sessions or prepared/in-flight transactions, drain/resolve every intent, then
-  increment generation and update only the selected clone marker. Transfer
-  blocks/refuses if a transaction is paused between lease proof and data commit;
-  it never times out into a second writer. M4 pauses at exactly that boundary,
-  proves handoff cannot advance, drains the commit, and then promotes the clone;
-  the revoked original cannot accept another connection or write. This fail-
-  closed offline protocol is the boundary of per-tenant Spine v2; transparent
-  automatic failover would require a stronger coordinator and is not claimed.
+  an intent exists. Every renewal obtains a fresh `attestDataStartup` challenge
+  bound to the current resource/generation and cannot extend beyond attestation
+  expiry. Refused, revoked, expired or changed evidence stops renewal and makes
+  the tenant unavailable; the verified renewal actor/evidence fingerprint and
+  result are immutably audited. This milestone has no restore/rebind, clone
+  promotion or automatic failover surface: a copied database/resource mismatch
+  is a stable startup refusal, and changing the authoritative binding remains
+  deferred to Spine v4 backup/restore design. M4 pauses a write at the lease
+  boundary and proves expiry cannot transfer authority or permit a second writer.
   Intent registration, normal closure and recovery resolution each carry the
   verified operation subject/claims fingerprint, parent outcome key, tenant,
   binding generation and reason into immutable control-plane audit rows. Register
@@ -749,10 +748,8 @@ read occurs while response shape and status remain deterministic.
    resource ids, generation and reason. Compensating cleanup is a separately
    audited outcome tied to the same claim/idempotency identity; it cannot silently
    delete the mapping. Fault tests assert exact claim/cleanup audit counts.
-   Restore/rebind is an explicit offline human
-   operation with expected old/new UUIDs, exclusive tenant downtime, a backup/
-   restore receipt and immutable audit. Specify compensating cleanup when either
-   side of first claim fails; do not pretend cross-database atomicity.
+   There is no supported update/rebind operation in Spine v2; normal startup and
+   every public surface refuse any requested mapping change.
    Introduce a portable `TENANT_BINDING_CONTRACT = 2` rather than overloading
    v1's filesystem shape. V2 publishes only `{contract, adapter, tenantBound,
    controlPlaneAdapter, dataPlaneIsolation}` with closed vocabularies and no
@@ -801,8 +798,8 @@ SQLite remains green.
    the same bounded refusal and no mixed schema or rows.
    Race the same tenant against two distinct empty PostgreSQL databases and prove
    the control-plane UUID mapping permits exactly one binding; the loser cannot
-   migrate or accept writes. Exercise restore/rebind plus wrong-expected-UUID,
-   concurrent-startup and partial-first-claim failure/cleanup cases.
+   migrate or accept writes. Exercise requested rebind/clone promotion as stable
+   refusals plus concurrent-startup and partial-first-claim failure/cleanup cases.
 6. Prove an application binding still has no operation that can select another
    tenant. No `organization_id` filter is introduced and no shared database is
    claimed.
@@ -912,7 +909,7 @@ The implementation PR is complete only with machine-readable receipts for:
 - persistent data-plane ownership: an aliased database and a conflicting
   first-boot race both fail closed before the application receives a handle;
 - authoritative control-plane tenant→binding UUID prevents one tenant from
-  claiming two data planes; restore/rebind is explicit, offline and audited;
+  claiming two data planes; Spine v2 exposes no rebind/clone-promotion surface;
 - adapter-owned schema qualification: divergent or changed `search_path` values
   cannot create a second marker, hide a ledger or redirect a domain query;
 - recoverable cross-plane Spine audit: every committed authorization mutation
@@ -1163,7 +1160,7 @@ agent-facing rail.
   the adapter/isolation without locators; legacy synchronous SQLite keeps v1.
 - **Tenant and data plane bind in both directions.** The database marker blocks
   two tenants per plane; the control-plane UUID mapping blocks two planes per
-  tenant. Rebinding is offline, expected-value checked and audited.
+  tenant. Spine v2 exposes no rebind or clone-promotion operation.
 - **Bundled compatibility is executable.** V1 synchronous definitions remain
   selected by `createAccordoApp()`; v2 promises never leak through that registry.
 - **Production database transport is authenticated.** Encryption without chain
