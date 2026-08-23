@@ -217,7 +217,12 @@ all untouched consumers continue on the compatibility path.
 5. Make cross-plane Spine writes explicitly recoverable rather than pretending
    two independent databases share an atomic transaction. In the same control-
    plane transaction as a membership/organization mutation, persist a bounded,
-   immutable audit intent with a deterministic idempotency key. Finalization
+   immutable audit intent with a deterministic idempotency key and canonical
+   destination tenant binding. Finalization claims only intents matching the
+   current instance binding, re-verifies that tenant against the data-plane
+   marker inside delivery, and refuses without marking delivery on mismatch.
+   Two instances sharing one control plane must prove neither can claim, copy or
+   complete the other's pending intent. Finalization
    copies that evidence to the tenant audit log and marks the intent delivered;
    a failed finalization leaves visible pending evidence, never an unaudited
    mutation or an unhandled rejection. Retry/restart reconciliation is explicit
@@ -237,14 +242,17 @@ all untouched consumers continue on the compatibility path.
    propagate a stable bounded startup failure, and close the selected adapter on
    signal/error. Add end-to-end child-process tests for both adapters; calling
    `createAccordoAppAsync` directly is not sufficient evidence.
-   Production MCP stdio remains read-only in this milestone: its transport has
+   Production MCP stdio remains static-context-only in this milestone: its transport has
    no per-request verifier evidence, and existing write tools use asserted local
    actors. Do not invent identity headers inside JSON-RPC. At production
-   discovery omit every CRM write tool (or return one stable pre-service
-   `MCP_PRODUCTION_WRITE_UNAVAILABLE` refusal for legacy discovery), while
-   read-only schema/context resources remain available through authorized
-   application reads. Prove every current write tool is unreachable before its
-   service/workflow with zero audit/event/trace. A future authenticated remote
+   discovery allowlists only non-sensitive checked source context. Omit or
+   refuse every tenant-data read (`crm_list_*`, trace/audit/debug), every prompt
+   that can reveal runtime data, and every code/filesystem mutation including
+   scaffolding even when it defaults dry-run. Legacy calls return one stable
+   pre-service `MCP_PRODUCTION_SURFACE_UNAVAILABLE` refusal. Prove every current
+   data-bearing or code-generating tool/resource/prompt is unreachable before
+   service/workflow/filesystem access with zero audit/event/trace/source change.
+   A future authenticated remote
    MCP is a separate DX/identity contract and must clear the DX Gate; this plan
    does not claim it.
 8. Define one shared, versioned deployment-storage configuration loader used by
@@ -451,7 +459,8 @@ SQLite remains green.
    operation and prove no automatic retry duplicates its provider call.
    Hold the authoritative row lock past the configured deadline and prove the
    contender returns the normalized timeout/conflict within a bounded interval,
-   rolls back, and writes no audit/event/trace evidence; then release the holder
+   rolls back, writes no audit/event/success span, and retains exactly one failed
+   diagnostic trace containing only the normalized timeout/conflict; then release the holder
    and prove the pooled connection has no leaked timeout/transaction state.
    Race two distinct leads for the final slot of a capacity-one routing target;
    exactly one assignment commits and the serialization loser writes no audit
@@ -521,6 +530,8 @@ The implementation PR is complete only with machine-readable receipts for:
 - recoverable cross-plane Spine audit: every committed authorization mutation
   has atomic local evidence and converges idempotently to exactly one tenant
   audit row;
+- pending audit intents are tenant-bound; another instance sharing the control
+  plane cannot claim or deliver them into its data plane;
 - no credential or storage locator in public schema, errors, audit or trace;
 - no credential or storage locator in the application object, tenant binding,
   doctor, CLI/stdout or startup diagnostics;
@@ -548,8 +559,9 @@ The implementation PR is complete only with machine-readable receipts for:
 - production executables resolve one checked, repository-contained verifier
   provider contract before database/listener startup; malformed or escaping
   providers fail closed without leaking their configuration;
-- production MCP stdio exposes no CRM write path until a per-request verified-
-  identity transport exists; every legacy write tool refuses before services;
+- production MCP stdio exposes only static non-sensitive checked context until
+  a per-request verified-identity transport exists; tenant-data, trace/debug and
+  code/filesystem surfaces refuse before their authorities;
 - tenant binding contract v2 describes SQLite/PostgreSQL isolation without a
   locator, while synchronous SQLite retains its v1 filesystem shape;
 - verifier-provider initialization and PostgreSQL lock/statement waits have
@@ -654,6 +666,9 @@ agent-facing rail.
   MCP writes fail before services instead of using asserted actors, tenant
   binding v2 is portable and discriminated, and the verifier deadline covers
   module evaluation including non-settling top-level `await`.
+- 2026-08-23: fresh review narrowed production stdio to static non-sensitive
+  context, tenant-bound pending-audit reconciliation, and one retained failed
+  diagnostic trace after lock timeout.
 
 ## Decision log
 
@@ -711,8 +726,9 @@ agent-facing rail.
   losers emit one failed normalized trace and no audit, event or success span.
 - **A retry is a new evidence attempt.** Events and trace steps from a rolled-
   back attempt are discarded; only the committed attempt can be promoted.
-- **Production stdio is not an authentication transport.** It stays read-only;
-  remote authenticated MCP writes require a separate verified-request contract.
+- **Production stdio is not an authentication transport.** It stays static-
+  context-only; tenant data, trace/debug and source mutation all refuse. Remote
+  authenticated MCP requires a separate verified-request contract.
 - **Binding evidence is discriminated, not inferred from paths.** V2 describes
   the adapter/isolation without locators; legacy synchronous SQLite keeps v1.
 
