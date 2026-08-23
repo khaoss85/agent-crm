@@ -269,7 +269,8 @@ all untouched consumers continue on the compatibility path.
 8. Define one shared, versioned deployment-storage configuration loader used by
    the factory, CLI and MCP rather than inventing flags independently. The
    candidate contract is a path to a permission-restricted JSON document with a
-   closed `{contract, adapter, connection, spine, identityVerifier}` envelope;
+   closed `{contract, adapter, connection, controlPlane, spine,
+   identityVerifier}` envelope;
    `connection` is
    consumed only by the adapter and never returned, while `spine` resolves the
    canonical tenant through ADR-038's existing binding. Existing `--db` remains
@@ -375,16 +376,21 @@ characterization suites.
 - M4 races one tenant against two databases from instances with isolated local
   filesystems and the shared control plane; one lease/binding wins. Starting the
   same topology with independent/local control planes is a production refusal.
-- Clones are fenced, not trusted because they copied the same marker. The shared
-  control plane issues a monotonically increasing binding generation and an
-  exclusive renewable writer lease; every outer write transaction proves the
-  current generation/lease before commit. Restore/rebind increments generation
-  under the exclusive lease and updates the selected data plane marker. An
-  original or clone with a stale generation becomes read/write unavailable even
-  across a network partition once it cannot renew/prove the lease. M4 starts an
-  original and byte-for-byte clone concurrently, proves one writer generation,
-  then promotes the clone through the offline restore procedure and proves the
-  original is fenced before accepting another write.
+- Clones are fenced, not trusted because they copied the same marker. There is no
+  automatic writer transfer on lease expiry: expiry makes the tenant unavailable.
+  Every outer write registers an in-flight intent under the current shared
+  control-plane lease before opening its data transaction and closes it only
+  after commit/rollback is known. Normal renewal cannot change generation while
+  an intent exists. Restore/rebind is offline: stop writers, revoke the old data-
+  plane credential/network route, verify the old server has no application
+  sessions or prepared/in-flight transactions, drain/resolve every intent, then
+  increment generation and update only the selected clone marker. Transfer
+  blocks/refuses if a transaction is paused between lease proof and data commit;
+  it never times out into a second writer. M4 pauses at exactly that boundary,
+  proves handoff cannot advance, drains the commit, and then promotes the clone;
+  the revoked original cannot accept another connection or write. This fail-
+  closed offline protocol is the boundary of per-tenant Spine v2; transparent
+  automatic failover would require a stronger coordinator and is not claimed.
 
 ##### Admin submission keys
 
@@ -455,12 +461,12 @@ never falls back to `--db`/SQLite.
 | Command | PostgreSQL classification | Required behavior |
 |---|---|---|
 | `serve` | `READ_ONLY_SUPPORTED` at startup; hosted HTTP mutations use their transport keys | Async composition, await readiness, then listen; bounded signal/error close. |
-| `db:migrate` | `MUTATING_SUPPORTED_WITH_IDEMPOTENCY` | Require caller root key; derive stable child keys from dialect/migration name+checksum; replay returns the applied outcome. |
+| `db:migrate` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED`; migration uses the application startup authority after a deployment adapter supplies verified system/operator context, not this unauthenticated CLI. |
 | `seed` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED` before composition/write; current CLI has no verified operator transport and hard-coded actors are not identity. |
 | `demo` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED`; demonstrations cannot bypass production authorization. |
 | `doctor` | `READ_ONLY_SUPPORTED` | Async composition and bounded storage descriptor only; never reveal locators. |
 | `workflow:list` | `READ_ONLY_SUPPORTED` | Async composition, deterministic result and clean close. |
-| `trace:list` | `READ_ONLY_SUPPORTED` | Async composition through tenant authorization, bounded read and clean close. |
+| `trace:list` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED`; local config access is not authorization to tenant traces. |
 
 Non-application CLI commands remain `NOT_APPLICATION_BOUND` and do not load the
 deployment-storage configuration. No current `APP_COMMANDS` entry is silently
