@@ -280,7 +280,11 @@ all untouched consumers continue on the compatibility path.
    the factory, CLI and MCP rather than inventing flags independently. The
    candidate contract is a path to a permission-restricted JSON document with a
    closed `{contract, adapter, connection, controlPlane, spine,
-   identityVerifier}` envelope;
+   identityVerifier, dataPlaneIdentity}` envelope; both provider fields are
+   checked repository-contained versioned provider references with bounded
+   configuration under the same path/permission/deadline rules. The loader
+   rejects missing `dataPlaneIdentity` for multi-instance/clone-capable mode and
+   exercises malformed, escaping, hanging and mismatched attestation fixtures.
    `connection` is
    consumed only by the adapter and never returned, while `spine` resolves the
    canonical tenant through ADR-038's existing binding. Existing `--db` remains
@@ -384,12 +388,16 @@ characterization suites.
   contract publishes a bounded replay/reconciliation window longer than every
   supported client retry/offline recovery interval. During that window a full
   outcome may compact to a minimal immutable tombstone containing scope/request/
-  terminal fingerprints and promotion state, so matching replay remains
+  terminal fingerprints, promotion state and the normalized canonical response
+  (or a stable immutable result locator plus the exact renderer needed to rebuild
+  that response), so matching replay returns the same contract-shaped result and
+  remains
   idempotent and divergent replay still refuses. After the window, the key is
   structurally expired and is always refused before mutation; only then may its
   tombstone be deleted/archived. Reissuing the same random portion with a newer
   bucket is a different key and cannot address the old outcome. Boundary tests
-  cover replay before compaction, after tombstoning, at expiry and after deletion.
+  cover byte-equivalent response replay before compaction, after tombstoning, at
+  expiry and after deletion.
 - M4 races one tenant against two databases from instances with isolated local
   filesystems and the shared control plane; one lease/binding wins. Starting the
   same topology with independent/local control planes is a production refusal.
