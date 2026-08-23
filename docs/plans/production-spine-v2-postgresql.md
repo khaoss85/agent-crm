@@ -416,6 +416,15 @@ characterization suites.
   defense. Unverified bytes never choose a key. Lost-COMMIT, identical delivery
   and same-event/different-payload fixtures traverse the real signature webhook
   route and converge/refuse under the same outcome contract.
+  Successful verification returns a bounded provider-event evidence envelope,
+  not merely event data: provider/account identity, canonical tenant binding,
+  event/payload fingerprints and the closed webhook-processing permission. The
+  server maps that verified evidence through the trusted-system constructor to
+  one non-user system operation context; hard-coded `signature:<provider>` actors
+  never authorize production writes. Outcome subject scope and audit record the
+  evidence fingerprint/reason, never a secret or asserted provider string.
+  Wrong tenant/account/permission and forged actor fixtures refuse before writes;
+  the valid route asserts exact system subject, audit and outcome evidence.
   Provider-event keys use a separate fixed contract-version namespace with no
   client issuance bucket: verified provider+event identity is timeless replay
   identity. Their minimal event-id/payload/terminal tombstone is retained for the
@@ -438,16 +447,22 @@ characterization suites.
   that response), so matching replay returns the same contract-shaped result and
   remains
   idempotent and divergent replay still refuses. After the window, the key is
-  structurally expired and is always refused before mutation; only then may its
-  tombstone be deleted/archived. Reissuing the same random portion with a newer
+  structurally expired for a brand-new mutation; its tombstone remains until the
+  accepted outcome's `reconcileUntil`. Reissuing the same random portion with a newer
   bucket is a different key and cannot address the old outcome. Boundary tests
   cover byte-equivalent response replay before compaction, after tombstoning, at
   expiry and after deletion.
   On first acceptance the server compares the bucket to its injected UTC clock:
-  no older than the replay window plus a documented client-skew allowance and no
+  no older than the documented client-skew allowance and no
   farther in the future than that allowance. Both are contract constants;
   out-of-window keys refuse before mutation and allocate no outcome. Tests hit
-  both exact boundaries and one unit beyond with the injected clock.
+  both exact boundaries and one unit beyond with the injected clock. Acceptance
+  persists `reconcileUntil = max(bucket + replayWindow, acceptedAt +
+  minimumRecoveryHorizon)`. After issuance expiry an absent outcome can never
+  create a mutation, but a retained matching outcome remains reconcilable until
+  `reconcileUntil`; tombstone deletion waits for that instant. Tests accept at
+  both skew edges, lose the response across the bucket/window boundary and prove
+  the full minimum recovery horizon.
 - M4 races one tenant against two databases from instances with isolated local
   filesystems and the shared control plane; one lease/binding wins. Starting the
   same topology with independent/local control planes is a production refusal.
@@ -857,7 +872,9 @@ adapter contract.
    application inspection limitations, bootstrap/starter copy and the
    Repository Truth authorities in the same PR. Regenerate
    `docs/repository-truth.json`.
-3. Add the horizontal storage-contract row to
+3. Add horizontal rows for the storage contract and each new async
+   `packageContract: 2`, `actionContract: 2`, `operationContract: 2` and
+   `capabilityContract: 2` to
    `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, recording every existing
    domain as `aligned | partial | deferred | not_applicable | needs_extraction`
    with one-line reasons. Do not refactor a domain opportunistically to make a
