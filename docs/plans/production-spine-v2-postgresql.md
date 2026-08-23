@@ -79,9 +79,17 @@ conformance suite. This applies the two-consumer rule before declaring a
 generic seam and keeps each milestone runnable.
 
 The contract is not a query builder and not an ORM. Its candidate operations are
-bounded prepared execution/query methods, transaction scoping, migration
-application and close. Exact names and result shapes are decided only after the
-first two consumers demonstrate them; raw driver handles never cross it.
+bounded prepared execution/query methods over a small dialect-neutral statement
+object, transaction scoping, migration application and close. A statement owns
+canonical SQL intent plus ordered parameters; each adapter renders its own
+placeholders and the few explicitly supported syntax differences. Service code
+must not pass SQLite SQL (`?`, SQLite-only functions or pragmas) through the
+portable boundary, and the PostgreSQL adapter must not guess by translating an
+arbitrary SQL string. Exact names, supported clauses and normalized result
+shapes are frozen only after the first two consumers demonstrate them; raw
+driver handles and dialect SQL never cross the contract. If the two consumers
+need materially different query shapes, add only those shapes and prove refusal
+of an unsupported one rather than growing a general query language.
 
 ## Milestones
 
@@ -147,6 +155,11 @@ surfaces and the characterization fails when a storage-visible invariant moves.
      that net simplification, keep the surface deferred and redesign the seam.
 5. Remove direct `raw` access from those consumers and add a guard that prevents
    it from returning.
+6. Exercise the first two consumers against both adapter renderers before a
+   PostgreSQL connection exists: assert byte-exact SQLite/PostgreSQL rendering,
+   parameter order, null/boolean/time normalization, identifier allowlisting and
+   refusal of raw SQL. This is the executable proof that ordinary runtime
+   queries—not only migrations—have a portable representation.
 
 Exit: both consumers pass the same contract and characterization tests while
 all untouched consumers continue on the compatibility path.
@@ -177,6 +190,12 @@ all untouched consumers continue on the compatibility path.
    and idempotent, and a caller response states committed-with-pending-audit
    rather than returning a false rollback. This is bounded recovery for a
    security write, not the general durable jobs/outbox promised by Spine v3.
+6. Replace storage details on every public/in-process surface with a bounded
+   descriptor such as `{adapter, available}`. In particular, `app.database`,
+   `app.tenantBinding`, `app.doctor()`, `serve`, `db:migrate`, startup logs and
+   CLI JSON must never expose a PostgreSQL URL, host, database, user, password or
+   driver error. The compatibility SQLite surface may retain its documented
+   path where existing callers require it; the portable contract never does.
 
 Exit: SQLite passes the full suite through the portable contract, and the raw
 SQLite driver is private to the SQLite adapter. Both the legacy synchronous
@@ -202,6 +221,16 @@ characterization suites.
    bootstrap. Extend the existing module-evolution authority to perform this
    explicit backfill; if that requires a new flag/surface, clear the DX Gate
    rather than adding a side-door script.
+   A generated registry entry that predates `module.state.json` is a separate
+   supported legacy input, not an empty state: before PostgreSQL startup, adopt
+   its checked SQLite migration through the existing module-evolution authority,
+   verify the generated source and observed SQLite schema against the adopted
+   revision, and check in the resulting state plus PostgreSQL bootstrap. Runtime
+   startup must refuse `LEGACY_MODULE_STATE_REQUIRED`; it must never silently
+   synthesize or write source state during deployment. Provide a fixture for
+   this exact pre-state registry shape and prove adoption is deterministic,
+   preserves its original SQLite bytes/checksum and produces the same current
+   schema as a natively stateful module.
 4. Preserve append-only name/checksum semantics. An applied migration whose
    authoritative intent changes must fail closed on both adapters. Upgrade the
    legacy core `schema_migrations(version, name, applied_at)` ledger through a
@@ -216,7 +245,10 @@ characterization suites.
    deterministic close over PostgreSQL.
 6. Bind a PostgreSQL data plane by opaque connection configuration, not by a
    filesystem path. Never return a credential, URL, host or database name in
-   schema metadata, audit, trace or an error.
+   the application object, tenant binding, doctor output, CLI/stdout, startup
+   logs, schema metadata, audit, trace or an error. Add sentinel credentials to
+   the conformance fixture and scan every returned object and captured
+   stdout/stderr/audit/trace payload for both the full URI and each component.
 7. Persist a singleton tenant-binding marker inside each PostgreSQL data plane.
    First provisioning claims an empty database for exactly one canonical tenant
    in the same locked transaction that establishes the migration ledger; every
@@ -238,6 +270,9 @@ SQLite remains green.
    its PostgreSQL bootstrap creates the current schema on an empty database,
    later dialect migrations apply in order, restart is idempotent, and a
    non-empty/adversarial target is refused rather than adopted.
+   Repeat the proof from a pre-state generated registry entry: PostgreSQL boot
+   refuses until the explicit checked-in adoption/backfill has run, then the
+   empty PostgreSQL bootstrap and later evolution behave identically.
 4. Prove two tenant bindings use distinct PostgreSQL databases/data planes. A
    subject from tenant B receives the existing 404-before-403 cross-tenant
    refusal and cannot read tenant A's domain, audit or trace rows.
@@ -307,6 +342,13 @@ The implementation PR is complete only with machine-readable receipts for:
   has atomic local evidence and converges idempotently to exactly one tenant
   audit row;
 - no credential or storage locator in public schema, errors, audit or trace;
+- no credential or storage locator in the application object, tenant binding,
+  doctor, CLI/stdout or startup diagnostics;
+- pre-state generated modules require explicit deterministic adoption and then
+  pass the same PostgreSQL bootstrap/evolution suite as stateful modules;
+- ordinary service statements use the dialect-neutral runtime-query contract;
+  raw SQLite SQL is rejected at the portable boundary and both renderers retain
+  parameter order and normalized results;
 - the SQLite characterization unchanged from M0;
 - the synchronous SQLite in-process API and starter remain valid, while the
   async factory has one unconditional startup/service contract on both adapters;
@@ -359,6 +401,10 @@ agent-facing rail.
 - 2026-08-23: inspected ADR-038, the tenant binding, database composition,
   migration planes, raw SQLite consumers, quality gates and legacy-alignment
   rule. Plan written; implementation has not started.
+- 2026-08-23: exact-head review identified three remaining implementation-plan
+  gaps: runtime query portability, credential-bearing in-process/CLI surfaces,
+  and generated registries predating `module.state.json`. The plan now gives
+  each a fail-closed contract and executable regression fixture.
 
 ## Decision log
 
@@ -373,6 +419,13 @@ agent-facing rail.
   generated/package consumer must shape the contract.
 - **No data-migration promise.** Adapter conformance and moving an existing
   tenant's live data are separate correctness problems.
+- **Portable queries are structured, not translated.** Adapters render a
+  bounded statement contract; neither service code nor the PostgreSQL adapter
+  smuggles arbitrary SQLite SQL through the seam.
+- **Legacy source adoption is explicit and checked in.** PostgreSQL startup
+  never mutates a pre-state generated module or guesses its history.
+- **Opaque means absent from surfaces.** A PostgreSQL locator is configuration
+  input only, never an application/doctor/CLI result or diagnostic.
 
 ## Outcome and follow-up
 
