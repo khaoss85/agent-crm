@@ -150,32 +150,24 @@ boundaries prevent a production PostgreSQL deployment from being claimed:
 
 ## Implemented versus documentation-only
 
-**Implemented (merged):** module manifest and factory; module evolution and
-adoption; generated API/SDK/Admin; references; actions; core adapters;
-pipelines; Lead Intelligence, Commercial Operations and Signature & Order —
-all three now **package-native** (`packages/{intelligence,commercial,signature}`),
-so every former legacy domain composes optionally and detaches without deleting
-rows; Contract activation and subscriptions (contracts package **version 5**,
-carrying its declared `signature/signature-orders@1` requirement); the public domain-package contract, the
-delivery handover and delivery execution; deterministic application inspection
-(AX1); delivery economics (M14b1); delivery change, deliverables and acceptance
-evidence (M14b2); machine-readable Solution Plans (AX2); **Service operations
-(M15)**; **renewal & expansion operations (M16a) — recorded intent and a
-hand-off, nothing that renews, cancels, signs, prices or schedules**; the coding-agent
-DX rungs **DX1, DX3, DX4, DX5, DX6, DX10 and LA0**; the project bootstrap
-(`create-accordo`, source only — nothing is published); MCP server; CLI.
+**Implemented (merged):** manifest/factory/evolution; generated API, SDK and
+Admin; references, actions, workflows, pipelines, audit and trace; the optional
+Lead Intelligence, Commercial, Signature, Contracts, Delivery, Service and Work
+packages; contract activation plus governed renewal and amendment execution;
+Production Spine v1 one-instance/one-tenant binding and membership permissions;
+the checked SEE/PLAN/BUILD/CHECK/PROVE rails; CLI and MCP; and the live
+`create-accordo@0.1.0` bootstrap package. Production Spine v2 M0 is executable
+characterization only: it adds neither PostgreSQL storage nor a portable storage
+seam.
 
-**Documentation only (no code):** billing, invoicing, revenue recognition and
-everything else downstream of activation; renewal *execution* and amendment
-(M16b — M16a records the intent and stops; the Signature extraction leaves it
-architecturally **unblocked** — Commercial and Signature are reachable through
-declared capabilities — and still entirely unimplemented); Analytics Studio; Integration Runtime;
-Jobs & durable outbox; Data Governance; Design-to-CRM; Accordo Cloud; a
-published **framework library** on npm (the create package is live; the framework
-itself is vendored by it, never installed); PostgreSQL; authentication; Marketing & Growth (MK0–MK7);
-the Agent Experience track beyond AX2 — except the AX3 benchmark, which
-exists and has run (observation only: no product surface, no published
-number, `comparative: false`); DX2 and DX9.
+**Not implemented:** the PostgreSQL production adapter and later Spine v2
+milestones; deployment authentication; billing, invoicing and revenue
+recognition; Interactions; Marketing/Analytics; remote package registry
+install/update/uninstall; durable jobs/outbox/scheduler; secrets, backups and
+production observability; shared-database row tenancy; and Cloud C0. The AX3
+benchmark remains observation-only (`comparative: false`), not a product
+capability or published performance claim. The framework library itself is not
+an npm package: the live create package vendors the framework into a project.
 
 ## Keeping this file honest
 
