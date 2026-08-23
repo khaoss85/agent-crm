@@ -421,6 +421,23 @@ characterization suites.
    identity survives reconnect; one key applies uniformly to API/SDK/action
    writes; response/error contracts expose the key and stable status as evidence;
    and retry becomes one reconciliation call rather than manual record hunting.
+   `COMMIT_OUTCOME_UNKNOWN` is not recorded as an ordinary failed action trace.
+   The runtime writes one deterministic pending trace/run identity (or defers the
+   terminal insert) and reconciliation finalizes that same primary-keyed run to
+   completed or failed with one span set; it never inserts a second contradictory
+   run. Pending is a recovery state, not success evidence, and remains visible
+   until the outcome is proved.
+   External-operation phases use a stricter v2 contract. Intent and finalize each
+   have their own durable phase key/outcome; the provider call receives a stable
+   provider idempotency key and the provider must implement read-only reconcile
+   by that key. PostgreSQL composition refuses legacy `externalOperation: 1` or
+   any provider without both idempotency and reconciliation. After an unknown
+   intent commit, inspect the intent ledger before any provider call. After the
+   provider returns but finalize commit is unknown/absent, reconcile the provider
+   receipt and resume finalize only—never replay the provider. A provider whose
+   state cannot be proved leaves the operation pending for explicit recovery.
+   This versioned external-operation/provider contract must clear the DX Gate and
+   is bounded to the existing three-phase runtime, not a general job system.
 6. Bind a PostgreSQL data plane by opaque connection configuration, not by a
    filesystem path. Never return a credential, URL, host or database name in
    the application object, tenant binding, doctor output, CLI/stdout, startup
@@ -527,6 +544,13 @@ SQLite remains green.
    replay refusal and cannot read or suppress the original outcome. Black-hole
    an established client mid-query and prove the per-operation deadline destroys
    it, releases the slot and allows a fresh pooled query to succeed.
+   At the intent and finalize COMMIT boundaries of a real three-phase external
+   operation, inject both pre-commit and post-commit connection loss. Assert the
+   provider is called exactly once with one idempotency key, reconciliation reads
+   its receipt, only finalize is resumed, and the operation converges without a
+   second side effect. An unprovable provider stays pending. For ordinary unknown
+   commit recovery, assert exactly one run id exists throughout: pending becomes
+   the final completed/failed trace with no contradictory failure row.
 8. Fault-inject every point between a control-plane authorization mutation, its
    local audit intent and tenant-audit finalization. Prove the mutation plus
    intent are atomic, pending evidence survives restart, reconciliation records
@@ -633,6 +657,10 @@ The implementation PR is complete only with machine-readable receipts for:
   canonical request bytes; divergent replay cannot observe or suppress history;
 - committed trace intent lets a fresh-process reconciliation reconstruct exactly
   one successful trace before reporting an ambiguously acknowledged success;
+- unknown commits retain one pending run identity that reconciliation finalizes;
+  no contradictory failed/completed trace pair is inserted;
+- external-operation v2 reconciles durable intent/finalize phases and an
+  idempotent provider receipt; it never replays a provider after unknown finalize;
 - a serialization loser retains one normalized failed trace for diagnosis while
   writing no audit/event/success evidence;
 - connection establishment and pool acquisition own client-side deadlines and
@@ -741,6 +769,9 @@ agent-facing rail.
 - 2026-08-23: the next review bound idempotency outcomes to request/identity
   fingerprints, persisted trace intent for fresh-process recovery, and added a
   client-side deadline for mid-query network stalls.
+- 2026-08-23: review separated external-operation phase recovery from ordinary
+  transaction replay and required one pending trace identity through unknown-
+  commit reconciliation, preventing duplicate providers and contradictory runs.
 
 ## Decision log
 
@@ -801,6 +832,11 @@ agent-facing rail.
 - **Unknown commit is a third state.** A durable idempotency/outcome record and
   deterministic IDs decide reconciliation; neither rollback nor blind replay is
   inferred from a lost acknowledgement.
+- **Unknown commit owns one pending trace.** Reconciliation finalizes that run;
+  it never appends a contradictory terminal trace.
+- **An external provider is never a transaction callback retry.** Phase ledgers,
+  provider idempotency and read-only reconciliation resume finalize without
+  repeating an irreversible call; unsupported v1 providers refuse PostgreSQL.
 - **Idempotency is request-bound, not key-truthiness.** Tenant, verified subject,
   operation, target, version and canonical payload must all match; committed
   trace intent survives the process that lost the acknowledgement.
