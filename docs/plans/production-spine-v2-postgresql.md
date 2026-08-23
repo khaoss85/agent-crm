@@ -246,13 +246,23 @@ all untouched consumers continue on the compatibility path.
    CLI JSON must never expose a PostgreSQL URL, host, database, user, password or
    driver error. The compatibility SQLite surface may retain its documented
    path where existing callers require it; the portable contract never does.
-7. Migrate `serve`, `crm db:migrate` and MCP stdio composition onto the
+7. Migrate `serve` and MCP stdio composition onto the
    unconditional async factory when PostgreSQL is selected, while retaining the
    characterized synchronous SQLite path. Each entry point must await startup
    and migrations before accepting a request or writing a success response,
    propagate a stable bounded startup failure, and close the selected adapter on
    signal/error. Add end-to-end child-process tests for both adapters; calling
    `createAccordoAppAsync` directly is not sufficient evidence.
+   Production startup migrations run only after the deployment verifier provider
+   returns a bounded, verified workload/startup system identity with an explicit
+   `schema:migrate` permission, claims fingerprint and reason. That identity is
+   carried into immutable migration audit evidence together with adapter,
+   migration names/checksums and the deployment idempotency root; it is never
+   synthesized from config presence. Missing/refused startup attestation or
+   permission makes startup fail before DDL. The provider contract and child-
+   process fixtures cover valid attestation, missing permission, replay and audit
+   exactness. The unauthenticated `crm db:migrate` command remains a stable
+   PostgreSQL refusal; SQLite compatibility is unchanged.
    Production MCP stdio remains static-context-only in this milestone: its transport has
    no per-request verifier evidence, and existing write tools use asserted local
    actors. Do not invent identity headers inside JSON-RPC. At production
@@ -464,7 +474,7 @@ never falls back to `--db`/SQLite.
 | `db:migrate` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED`; migration uses the application startup authority after a deployment adapter supplies verified system/operator context, not this unauthenticated CLI. |
 | `seed` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED` before composition/write; current CLI has no verified operator transport and hard-coded actors are not identity. |
 | `demo` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED`; demonstrations cannot bypass production authorization. |
-| `doctor` | `READ_ONLY_SUPPORTED` | Async composition and bounded storage descriptor only; never reveal locators. |
+| `doctor` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED`; current doctor reads tenant record, workflow and audit counts. Source-only `project doctor` remains `NOT_APPLICATION_BOUND`. |
 | `workflow:list` | `READ_ONLY_SUPPORTED` | Async composition, deterministic result and clean close. |
 | `trace:list` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED`; local config access is not authorization to tenant traces. |
 
@@ -793,7 +803,7 @@ The implementation PR is complete only with machine-readable receipts for:
 - the SQLite characterization unchanged from M0;
 - the synchronous SQLite in-process API and starter remain valid, while the
   async factory has one unconditional startup/service contract on both adapters;
-- `npm start`/`serve`, `crm db:migrate` and MCP stdio boot PostgreSQL through the
+- `npm start`/`serve` and MCP stdio boot PostgreSQL through the
   awaited async composition path, refuse before serving on failed startup, and
   retain their characterized SQLite behavior;
 - one closed deployment-storage config selects adapter plus spine binding
