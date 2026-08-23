@@ -307,15 +307,15 @@ all untouched consumers continue on the compatibility path.
    the factory, CLI and MCP rather than inventing flags independently. The
    candidate contract is a path to a permission-restricted JSON document with a
    closed `{contract, adapter, connection, controlPlane, spine,
-   identityVerifier, dataPlaneIdentity, controlPlaneIdentity}` envelope; all provider fields are
-   checked repository-contained versioned provider references with bounded
-   configuration under the same path/permission/deadline rules. The loader
-   rejects missing `dataPlaneIdentity` for multi-instance/clone-capable mode and
-   exercises malformed, escaping, hanging and mismatched attestation fixtures.
-   Data/control identity providers attest authoritative external resource ids
-   before DDL. Startup refuses identical ids and different endpoints that alias
-   one resource; schema names, URLs and credentials are not identities. Fixtures
-   cover identical URLs, endpoint aliases and genuinely separate databases.
+   identityVerifier}` envelope. One checked repository-contained verifier
+   provider owns request verification and v2 startup attestation; no additional
+   identity-provider namespace is added. `attestStartup` receives bounded opaque
+   data/control connection challenges and returns authoritative external resource
+   ids plus workload identity in one fingerprinted attestation, or refuses when
+   either resource cannot be proved. Startup rejects identical ids and endpoint
+   aliases; schema names, URLs and credentials are not identities. Fixtures cover
+   malformed/escaping/hanging providers, missing attestations, identical URLs,
+   aliases and genuinely separate databases.
    `connection` is
    consumed only by the adapter and never returned, while `spine` resolves the
    canonical tenant through ADR-038's existing binding. Existing `--db` remains
@@ -686,7 +686,12 @@ credential-output scans and pool/client/timer shutdown checks.
    records `{canonicalTenant, bindingUuid}` under an exclusive provisioning lease
    before exposing an application handle. Startup requires marker and mapping to
    agree. Two databases racing for one tenant yield one winner; normal startup
-   never overwrites the mapping. Restore/rebind is an explicit offline human
+   never overwrites the mapping. The verified startup identity flows into the
+   first-claim transaction and immutable audit with tenant, binding UUID, both
+   resource ids, generation and reason. Compensating cleanup is a separately
+   audited outcome tied to the same claim/idempotency identity; it cannot silently
+   delete the mapping. Fault tests assert exact claim/cleanup audit counts.
+   Restore/rebind is an explicit offline human
    operation with expected old/new UUIDs, exclusive tenant downtime, a backup/
    restore receipt and immutable audit. Specify compensating cleanup when either
    side of first claim fails; do not pretend cross-database atomicity.
