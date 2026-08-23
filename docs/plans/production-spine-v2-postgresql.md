@@ -268,6 +268,16 @@ all untouched consumers continue on the compatibility path.
    CLI config takes precedence over a single documented environment path; there
    is no precedence between PostgreSQL and `--db` because that combination is a
    refusal. MCP uses the same loader and rules.
+   PostgreSQL production connections require authenticated TLS as part of this
+   closed contract: encryption on, certificate-chain verification against an
+   explicit deployment trust source, and hostname verification for the selected
+   endpoint. Plaintext, `sslmode=disable|allow|prefer`, verification-disabled
+   settings, embedded trust material in public output, downgrade, expired or
+   untrusted certificates and hostname mismatch all fail before tenant claim or
+   migration. No permissive production default exists; a loopback-only test
+   exception is explicit test harness state and cannot enter a deployment
+   document. Integration fixtures prove trusted-CA success and every refusal
+   against real TLS endpoints, with credentials absent from diagnostics.
    Before reading bytes, the loader uses a no-follow open/stat discipline and
    requires a regular file owned by the effective process identity with no
    group/other permission bits; symlinks, ownership mismatch, `0640`/`0644` and
@@ -578,6 +588,8 @@ The implementation PR is complete only with machine-readable receipts for:
   writing no audit/event/success evidence;
 - connection establishment and pool acquisition own client-side deadlines and
   release their timers, sockets and slots on bounded refusal;
+- production PostgreSQL requires encrypted, certificate- and hostname-verified
+  TLS; plaintext, downgrade and unverifiable endpoints fail before storage use;
 - repository truth, GTM, site, smoke and clean-clone quality gates green.
 
 The implementation PR must document how PostgreSQL was supplied to CI (service
@@ -669,6 +681,9 @@ agent-facing rail.
 - 2026-08-23: fresh review narrowed production stdio to static non-sensitive
   context, tenant-bound pending-audit reconciliation, and one retained failed
   diagnostic trace after lock timeout.
+- 2026-08-23: exact-head review added a fail-closed authenticated-TLS policy for
+  PostgreSQL, including real trusted-CA, plaintext, downgrade, chain and hostname
+  fixtures before tenant claim.
 
 ## Decision log
 
@@ -731,6 +746,9 @@ agent-facing rail.
   authenticated MCP requires a separate verified-request contract.
 - **Binding evidence is discriminated, not inferred from paths.** V2 describes
   the adapter/isolation without locators; legacy synchronous SQLite keeps v1.
+- **Production database transport is authenticated.** Encryption without chain
+  and hostname verification is not sufficient and cannot be configured as a
+  permissive fallback.
 
 ## Outcome and follow-up
 
