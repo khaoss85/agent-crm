@@ -366,6 +366,84 @@ characterization suites.
   filesystems and the shared control plane; one lease/binding wins. Starting the
   same topology with independent/local control planes is a production refusal.
 
+##### Admin submission keys
+
+- The Admin creates one root key at the user-submission boundary, before calling
+  either direct `api()` or generated-module `moduleClient.request()`. The form or
+  action controller—not the low-level request helper—owns it. A deliberate click,
+  approval decision, stage change, demo request or generated-resource mutation
+  creates a new key; transport code never invents a replacement.
+- The controller retains that key with the immutable normalized request
+  fingerprint while the submission is pending or its outcome is unknown. A
+  retry caused by timeout, lost response or an explicit “check/retry” control
+  reuses the key and the exact request. It is discarded only after a proved
+  terminal response, cancellation before dispatch, or page teardown. Browser
+  reload recovery stores pending keys and fingerprints in session-scoped storage
+  without credentials or response data and removes them after reconciliation.
+- The first submit disables the control synchronously. A double-click or Enter+
+  click joins the same pending promise and therefore sends at most the same key/
+  fingerprint; it never becomes a second deliberate submission. After terminal
+  completion, a new deliberate submit receives a new key. Reusing a retained key
+  with changed fields is refused client-side and remains a server-side divergent-
+  replay refusal.
+- Both Admin transports accept a required submission context and forward the
+  same canonical `Idempotency-Key`; raw mutation calls without that context fail
+  before `fetch`. Real-Chromium PostgreSQL coverage drives an Opportunity stage
+  change, approval decision, generated-module create/update, lost-response
+  reconciliation, double submission and changed-payload replay. It asserts exact
+  domain/audit/event/final-trace counts and one key per logical submission.
+
+##### Root and child keys for fan-out
+
+- A logical request owns one caller-known root key and one parent outcome. Every
+  nested write derives a child key from the root context, a closed semantic
+  operation scope and a stable child identity. The derivation is a versioned
+  runtime contract; its cryptographic encoding is an implementation detail until
+  two consumers shape it, but it must be deterministic, domain-separated and
+  collision-tested. A child outcome stores its parent/root fingerprint so it
+  cannot be replayed under another request.
+- Stable child identity is a semantic id supplied by the workflow/operation
+  plan—record id, declared step id plus stable business key, or a checked stable
+  ordinal from an immutable canonical input array. It is never object/map/set
+  iteration order, database return order, clock, randomness or retry count. Two
+  same-type siblings therefore have distinct declared identities while a full
+  replay derives byte-identical child keys.
+- Dynamic fan-out first materializes and fingerprints a canonical child plan,
+  sorts it by its unique semantic identity, refuses duplicates, and only then
+  executes. Adding/removing/reordering children under the same root changes the
+  parent request fingerprint and is a divergent replay, not a partial extension.
+- M4 fixtures cover `/api/demo/seed` (Company, Contact, two Opportunity
+  siblings), lost response plus full replay, an unknown commit on one child, a
+  dynamic workflow fan-out and changed fan-out under the same root. Every replay
+  converges to exactly one parent result and one set of domain rows, audits,
+  events and final traces; sibling writes never share a key.
+
+##### Application CLI PostgreSQL matrix
+
+The implementation reads the canonical `APP_COMMANDS` export/authority rather
+than duplicating an unchecked list. PostgreSQL selection is always explicit and
+never falls back to `--db`/SQLite.
+
+| Command | PostgreSQL classification | Required behavior |
+|---|---|---|
+| `serve` | `READ_ONLY_SUPPORTED` at startup; hosted HTTP mutations use their transport keys | Async composition, await readiness, then listen; bounded signal/error close. |
+| `db:migrate` | `MUTATING_SUPPORTED_WITH_IDEMPOTENCY` | Require caller root key; derive stable child keys from dialect/migration name+checksum; replay returns the applied outcome. |
+| `seed` | `MUTATING_SUPPORTED_WITH_IDEMPOTENCY` | Require caller root key and the fan-out child plan; no implicit key and no SQLite fallback. |
+| `demo` | `MUTATING_SUPPORTED_WITH_IDEMPOTENCY` | Require caller root key and reuse the same seed/demo parent-child contract. |
+| `doctor` | `READ_ONLY_SUPPORTED` | Async composition and bounded storage descriptor only; never reveal locators. |
+| `workflow:list` | `READ_ONLY_SUPPORTED` | Async composition, deterministic result and clean close. |
+| `trace:list` | `READ_ONLY_SUPPORTED` | Async composition through tenant authorization, bounded read and clean close. |
+
+Non-application CLI commands remain `NOT_APPLICATION_BOUND` and do not load the
+deployment-storage configuration. No current `APP_COMMANDS` entry is silently
+unsupported; if implementation cannot satisfy one, it must add a documented
+`STABLE_REFUSAL_ON_POSTGRESQL` row and regression before code lands rather than
+falling back. Child-process coverage enumerates the live canonical set and fails
+if an unclassified command appears. It runs every command on SQLite, every
+supported command on PostgreSQL, every declared refusal, missing/malformed key
+cases, lost-response replay for mutators, no-SQLite-fallback sentinels,
+credential-output scans and pool/client/timer shutdown checks.
+
 ### M3 — Add PostgreSQL migrations and adapter
 
 1. Add one production PostgreSQL driver only after recording in `DECISIONS.md`
