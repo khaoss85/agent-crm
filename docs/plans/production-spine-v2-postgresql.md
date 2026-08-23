@@ -246,7 +246,7 @@ all untouched consumers continue on the compatibility path.
    CLI JSON must never expose a PostgreSQL URL, host, database, user, password or
    driver error. The compatibility SQLite surface may retain its documented
    path where existing callers require it; the portable contract never does.
-7. Migrate `serve` and MCP stdio composition onto the
+7. Migrate `serve` composition onto the
    unconditional async factory when PostgreSQL is selected, while retaining the
    characterized synchronous SQLite path. Each entry point must await startup
    and migrations before accepting a request or writing a success response,
@@ -296,7 +296,7 @@ all untouched consumers continue on the compatibility path.
    instance must acquire it immediately after the first completes.
    Fault injection at every DDL/ledger/audit boundary proves all-or-none restart;
    only after this succeeds may data-plane attestation, lease or migration begin.
-   Production MCP stdio remains static-context-only in this milestone: its transport has
+   Production MCP stdio remains static-context-only and source-only in this milestone: it does not load deployment storage, compose the application, connect, migrate or invoke startup attestation. Its transport has
    no per-request verifier evidence, and existing write tools use asserted local
    actors. Do not invent identity headers inside JSON-RPC. At production
    discovery allowlists only non-sensitive checked source context. Omit or
@@ -477,8 +477,11 @@ characterization suites.
   an intent exists. Every renewal obtains a fresh `attestDataStartup` challenge
   bound to the current resource/generation and cannot extend beyond attestation
   expiry. Refused, revoked, expired or changed evidence stops renewal and makes
-  the tenant unavailable; the verified renewal actor/evidence fingerprint and
-  result are immutably audited. This milestone has no restore/rebind, clone
+  the tenant unavailable. Successful renewal is one control-plane transaction:
+  compare-and-set the expected lease/generation/expiry and insert the immutable
+  audit row carrying verified renewal actor/evidence fingerprint and result;
+  either both commit or neither does. Fault injection around update/audit/commit
+  proves no unaudited authority extension and no audit without renewal. This milestone has no restore/rebind, clone
   promotion or automatic failover surface: a copied database/resource mismatch
   is a stable startup refusal, and changing the authoritative binding remains
   deferred to Spine v4 backup/restore design. M4 pauses a write at the lease
@@ -979,7 +982,7 @@ The implementation PR is complete only with machine-readable receipts for:
 - the SQLite characterization unchanged from M0;
 - the synchronous SQLite in-process API and starter remain valid, while the
   async factory has one unconditional startup/service contract on both adapters;
-- `npm start`/`serve` and MCP stdio boot PostgreSQL through the
+- `npm start`/`serve` boots PostgreSQL through the
   awaited async composition path, refuse before serving on failed startup, and
   retain their characterized SQLite behavior;
 - one closed deployment-storage config selects adapter plus spine binding
@@ -988,7 +991,7 @@ The implementation PR is complete only with machine-readable receipts for:
 - production executables resolve one checked, repository-contained verifier
   provider contract before database/listener startup; malformed or escaping
   providers fail closed without leaking their configuration;
-- production MCP stdio exposes only static non-sensitive checked context until
+- production MCP stdio opens no application/storage and exposes only static non-sensitive checked context until
   a per-request verified-identity transport exists; tenant-data, trace/debug and
   code/filesystem surfaces refuse before their authorities;
 - tenant binding contract v2 describes SQLite/PostgreSQL isolation without a
