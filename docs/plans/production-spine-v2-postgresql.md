@@ -1074,6 +1074,14 @@ agent-facing rail.
 
 ## Progress log
 
+- 2026-08-23: M0 characterization started from merged plan commit `c78c310` on
+  `claude/spine-v2-m0-characterization`. The first bounded slice freezes the
+  synchronous SQLite application shape, mixed sync/async module-service calls,
+  exact audit evidence, package/action/capability v1 declarations, MCP tool
+  discovery annotations, and all seven application-bound CLI commands including
+  real `serve` startup and signal-driven shutdown. It changes no runtime behavior
+  and introduces no PostgreSQL adapter.
+
 - 2026-08-23: governance closeout verified on live GitHub. PR #111 merged as
   `51b276b`; Vercel provenance restoration merged in PR #112 as `8ca790a`;
   post-governance truth merged in PR #113 as `240ffd4`.
