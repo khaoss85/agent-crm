@@ -362,9 +362,29 @@ characterization suites.
   Tests lose responses through HTTP, SDK, action, workflow and direct service,
   then replay sequentially/concurrently and assert exactly one row, audit,
   completed trace and live event promotion.
+- Keys carry a validated issuance bucket inside their canonical format. The
+  contract publishes a bounded replay/reconciliation window longer than every
+  supported client retry/offline recovery interval. During that window a full
+  outcome may compact to a minimal immutable tombstone containing scope/request/
+  terminal fingerprints and promotion state, so matching replay remains
+  idempotent and divergent replay still refuses. After the window, the key is
+  structurally expired and is always refused before mutation; only then may its
+  tombstone be deleted/archived. Reissuing the same random portion with a newer
+  bucket is a different key and cannot address the old outcome. Boundary tests
+  cover replay before compaction, after tombstoning, at expiry and after deletion.
 - M4 races one tenant against two databases from instances with isolated local
   filesystems and the shared control plane; one lease/binding wins. Starting the
   same topology with independent/local control planes is a production refusal.
+- Clones are fenced, not trusted because they copied the same marker. The shared
+  control plane issues a monotonically increasing binding generation and an
+  exclusive renewable writer lease; every outer write transaction proves the
+  current generation/lease before commit. Restore/rebind increments generation
+  under the exclusive lease and updates the selected data plane marker. An
+  original or clone with a stale generation becomes read/write unavailable even
+  across a network partition once it cannot renew/prove the lease. M4 starts an
+  original and byte-for-byte clone concurrently, proves one writer generation,
+  then promotes the clone through the offline restore procedure and proves the
+  original is fenced before accepting another write.
 
 ##### Admin submission keys
 
@@ -377,15 +397,23 @@ characterization suites.
   fingerprint while the submission is pending or its outcome is unknown. A
   retry caused by timeout, lost response or an explicit “check/retry” control
   reuses the key and the exact request. It is discarded only after a proved
-  terminal response, cancellation before dispatch, or page teardown. Browser
-  reload recovery stores pending keys and fingerprints in session-scoped storage
-  without credentials or response data and removes them after reconciliation.
+  terminal response or cancellation proved to precede dispatch. Browser reload
+  recovery uses the durable mechanism below.
 - The first submit disables the control synchronously. A double-click or Enter+
   click joins the same pending promise and therefore sends at most the same key/
   fingerprint; it never becomes a second deliberate submission. After terminal
   completion, a new deliberate submit receives a new key. Reusing a retained key
   with changed fields is refused client-side and remains a server-side divergent-
   replay refusal.
+- Unknown submissions are never discarded on page teardown. The Admin persists
+  their key, issued-at value, route/scope and request fingerprint in origin-bound
+  durable browser storage (no credentials or response/domain payload), restores
+  them across tab/browser restart, and reconciles them before enabling an
+  equivalent new submission. The server exposes an authenticated, tenant-bound
+  pending-outcome lookup for the verified user so a cleared/replaced browser can
+  rediscover unresolved submission metadata without learning another subject's
+  keys. Only a proved committed/rolled-back/cancelled-before-dispatch terminal
+  outcome removes the browser/server pending entry; page teardown never does.
 - Both Admin transports accept a required submission context and forward the
   same canonical `Idempotency-Key`; raw mutation calls without that context fail
   before `fetch`. Real-Chromium PostgreSQL coverage drives an Opportunity stage
@@ -428,8 +456,8 @@ never falls back to `--db`/SQLite.
 |---|---|---|
 | `serve` | `READ_ONLY_SUPPORTED` at startup; hosted HTTP mutations use their transport keys | Async composition, await readiness, then listen; bounded signal/error close. |
 | `db:migrate` | `MUTATING_SUPPORTED_WITH_IDEMPOTENCY` | Require caller root key; derive stable child keys from dialect/migration name+checksum; replay returns the applied outcome. |
-| `seed` | `MUTATING_SUPPORTED_WITH_IDEMPOTENCY` | Require caller root key and the fan-out child plan; no implicit key and no SQLite fallback. |
-| `demo` | `MUTATING_SUPPORTED_WITH_IDEMPOTENCY` | Require caller root key and reuse the same seed/demo parent-child contract. |
+| `seed` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED` before composition/write; current CLI has no verified operator transport and hard-coded actors are not identity. |
+| `demo` | `STABLE_REFUSAL_ON_POSTGRESQL` | Refuse `CLI_VERIFIED_OPERATOR_REQUIRED`; demonstrations cannot bypass production authorization. |
 | `doctor` | `READ_ONLY_SUPPORTED` | Async composition and bounded storage descriptor only; never reveal locators. |
 | `workflow:list` | `READ_ONLY_SUPPORTED` | Async composition, deterministic result and clean close. |
 | `trace:list` | `READ_ONLY_SUPPORTED` | Async composition through tenant authorization, bounded read and clean close. |
