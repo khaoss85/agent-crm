@@ -263,11 +263,14 @@ all untouched consumers continue on the compatibility path.
    process fixtures cover valid attestation, missing permission, replay and audit
    exactness. The unauthenticated `crm db:migrate` command remains a stable
    PostgreSQL refusal; SQLite compatibility is unchanged.
-   Verifier provider contract v2 returns two non-interchangeable operations:
+   Verifier provider contract v2 returns ordered non-interchangeable operations:
    `verifyRequest(evidence)` for request identities and
-   `attestControlStartup(challenge)` and `attestDataStartup(challenge)` for ordered workload identity. The runtime supplies
-   single-use challenges bound to repository fingerprint, tenant, the relevant
-   plane attestation, requested permission and migration-set fingerprint; the provider
+   `discoverControlResource(opaqueHandle)`, `attestControlStartup(challenge)`,
+   `discoverDataResource(opaqueHandle)` and `attestDataStartup(challenge)` for
+   workload/resource identity. Discovery returns a signed/fingerprinted external
+   resource id without authorizing DDL. The runtime then supplies single-use
+   challenges bound to repository fingerprint, tenant, that discovered resource
+   fingerprint, requested permission and migration-set fingerprint; the provider
    returns a bounded verified-system identity plus evidence fingerprint/expiry
    or refusal. Request evidence cannot satisfy startup attestation. Missing
    method, replay/staleness, wrong tenant/migration set and refused permission all
@@ -308,12 +311,14 @@ all untouched consumers continue on the compatibility path.
    candidate contract is a path to a permission-restricted JSON document with a
    closed `{contract, adapter, connection, controlPlane, spine,
    identityVerifier}` envelope. One checked repository-contained verifier
-   provider owns request verification and v2 startup attestation; no additional
-   identity-provider namespace is added. First `attestControlStartup` receives
-   only the opaque control challenge and proves workload plus control resource;
+   provider owns request verification and v2 discovery/startup attestation; no additional
+   identity-provider namespace is added. First `discoverControlResource` proves
+   the external control identity without DDL; `attestControlStartup` receives
+   the challenge bound to that discovery and proves workload authorization;
    control bootstrap then completes. Next `attestDataStartup` is bound to the
-   first attestation fingerprint and receives the opaque data challenge, proving
-   the data resource before any data-plane DDL/lease. Either phase can refuse and
+   first attestation fingerprint; `discoverDataResource` proves the external data
+   identity, and `attestDataStartup` receives its bound challenge before any
+   data-plane DDL/lease. Any phase can refuse and
    neither can be replayed/substituted for the other. Startup rejects identical ids and endpoint
    aliases; schema names, URLs and credentials are not identities. Fixtures cover
    malformed/escaping/hanging providers, missing attestations, identical URLs,
@@ -364,7 +369,8 @@ all untouched consumers continue on the compatibility path.
    escaping paths), imports it before database connection, and requires one
    named factory with a versioned data-only provider contract. The factory
    receives only its bounded provider configuration and returns the v2
-   `{verifyRequest, attestControlStartup, attestDataStartup}` operations defined above; it reads credentials through the deployment environment
+   `{verifyRequest, discoverControlResource, attestControlStartup,
+   discoverDataResource, attestDataStartup}` operations defined above; it reads credentials through the deployment environment
    or secret manager, never through CLI arguments or public results. Production
    mode requires this reference; local mode refuses a configured production
    verifier rather than silently changing trust. Factory, `serve`, MCP and any
@@ -410,6 +416,12 @@ characterization suites.
   defense. Unverified bytes never choose a key. Lost-COMMIT, identical delivery
   and same-event/different-payload fixtures traverse the real signature webhook
   route and converge/refuse under the same outcome contract.
+  Provider-event keys use a separate fixed contract-version namespace with no
+  client issuance bucket: verified provider+event identity is timeless replay
+  identity. Their minimal event-id/payload/terminal tombstone is retained for the
+  provider event ledger's lifetime and is not compacted under ordinary client-key
+  expiry. Redelivery before/after client bucket boundaries derives the same key;
+  delayed delivery is accepted if provider verification/event policy accepts it.
 - An outcome durably records compare-and-set promotion state for its trace and
   event intents. Sequential or concurrent identical-key reconciliation returns
   the stored response after one live promotion; it cannot dispatch the intents
@@ -454,6 +466,12 @@ characterization suites.
   the revoked original cannot accept another connection or write. This fail-
   closed offline protocol is the boundary of per-tenant Spine v2; transparent
   automatic failover would require a stronger coordinator and is not claimed.
+  Intent registration, normal closure and recovery resolution each carry the
+  verified operation subject/claims fingerprint, parent outcome key, tenant,
+  binding generation and reason into immutable control-plane audit rows. Register
+  plus open-audit are atomic; close/resolve never deletes history and writes one
+  terminal audit transition. Replay adds neither intent nor audit. Fault tests
+  assert exact evidence for success, rollback, unknown commit and offline drain.
   Before either original or clone receives a write handle, a deployment-supplied
   data-plane identity provider must attest a non-clonable external resource
   identity (for example a platform-signed database resource id) and binding
