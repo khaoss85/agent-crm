@@ -214,6 +214,13 @@ all untouched consumers continue on the compatibility path.
    is a Promise used as a domain value; synchronous v1 cannot represent an async
    driver; v2 is the single portable contract; inspection publishes the version
    as evidence; and authors gain one unconditional `await` rule across adapters.
+   Bundled packages ship explicit dual definitions during compatibility: their
+   existing v1 synchronous package/action/operation/capability graph remains
+   selected by `createAccordoApp()`/SQLite, while async composition selects v2.
+   Shared pure policy/metadata may be reused, but a promise-returning v2 function
+   never enters the synchronous registry. Run every bundled composition, starter
+   and package conformance fixture through the sync factory after migration,
+   alongside v2; retiring v1 is a separate deprecation.
 3. Delete the compatibility path only after a repository guard proves no
    business consumer reaches `DatabaseSync`, `.raw.prepare()` or `.raw.exec()`.
 4. Keep the provisioning-side tenant resolver separate from the application
@@ -453,6 +460,15 @@ characterization suites.
    domain handle is exposed. A mismatch fails startup with a stable code that
    echoes neither tenant id nor connection detail. The marker is storage
    enforcement metadata, not a row-tenancy filter and not caller-writable data.
+   Persist the inverse authority in the shared control plane: each data plane
+   owns a random immutable public binding UUID (never a locator), and first claim
+   records `{canonicalTenant, bindingUuid}` under an exclusive provisioning lease
+   before exposing an application handle. Startup requires marker and mapping to
+   agree. Two databases racing for one tenant yield one winner; normal startup
+   never overwrites the mapping. Restore/rebind is an explicit offline human
+   operation with expected old/new UUIDs, exclusive tenant downtime, a backup/
+   restore receipt and immutable audit. Specify compensating cleanup when either
+   side of first claim fails; do not pretend cross-database atomicity.
    Introduce a portable `TENANT_BINDING_CONTRACT = 2` rather than overloading
    v1's filesystem shape. V2 publishes only `{contract, adapter, tenantBound,
    controlPlaneAdapter, dataPlaneIsolation}` with closed vocabularies and no
@@ -499,6 +515,10 @@ SQLite remains green.
    request handling can touch it. Race two first boots for different tenants
    against one empty database and prove exactly one claim wins; the loser gets
    the same bounded refusal and no mixed schema or rows.
+   Race the same tenant against two distinct empty PostgreSQL databases and prove
+   the control-plane UUID mapping permits exactly one binding; the loser cannot
+   migrate or accept writes. Exercise restore/rebind plus wrong-expected-UUID,
+   concurrent-startup and partial-first-claim failure/cleanup cases.
 6. Prove an application binding still has no operation that can select another
    tenant. No `organization_id` filter is introduced and no shared database is
    claimed.
@@ -602,6 +622,8 @@ The implementation PR is complete only with machine-readable receipts for:
 - one-tenant-per-instance isolation across domain, audit and trace reads;
 - persistent data-plane ownership: an aliased database and a conflicting
   first-boot race both fail closed before the application receives a handle;
+- authoritative control-plane tenant→binding UUID prevents one tenant from
+  claiming two data planes; restore/rebind is explicit, offline and audited;
 - adapter-owned schema qualification: divergent or changed `search_path` values
   cannot create a second marker, hide a ledger or redirect a domain query;
 - recoverable cross-plane Spine audit: every committed authorization mutation
@@ -622,6 +644,8 @@ The implementation PR is complete only with machine-readable receipts for:
 - package/action/operation/capability contract v2 makes async service semantics
   explicit across both adapters; mixed or legacy-v1 graphs remain synchronous
   on SQLite and refuse before PostgreSQL startup;
+- every bundled package retains an explicit v1 synchronous definition for the
+  legacy factory while async composition selects its v2 graph;
 - long or multibyte logical identifiers map deterministically to collision-free
   PostgreSQL physical names or fail before bootstrap;
 - the SQLite characterization unchanged from M0;
@@ -772,6 +796,9 @@ agent-facing rail.
 - 2026-08-23: review separated external-operation phase recovery from ordinary
   transaction replay and required one pending trace identity through unknown-
   commit reconciliation, preventing duplicate providers and contradictory runs.
+- 2026-08-23: review closed inverse tenant split-brain with a control-plane
+  tenant→binding UUID and required dual v1/v2 bundled definitions so synchronous
+  SQLite composition remains executable compatibility evidence.
 
 ## Decision log
 
@@ -845,6 +872,11 @@ agent-facing rail.
   authenticated MCP requires a separate verified-request contract.
 - **Binding evidence is discriminated, not inferred from paths.** V2 describes
   the adapter/isolation without locators; legacy synchronous SQLite keeps v1.
+- **Tenant and data plane bind in both directions.** The database marker blocks
+  two tenants per plane; the control-plane UUID mapping blocks two planes per
+  tenant. Rebinding is offline, expected-value checked and audited.
+- **Bundled compatibility is executable.** V1 synchronous definitions remain
+  selected by `createAccordoApp()`; v2 promises never leak through that registry.
 - **Production database transport is authenticated.** Encryption without chain
   and hostname verification is not sufficient and cannot be configured as a
   permissive fallback.
