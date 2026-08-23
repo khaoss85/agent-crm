@@ -3,10 +3,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createMcpServer } from '../packages/mcp/src/index.js';
 import createWorkPackage from '../packages/work/src/index.js';
@@ -120,7 +121,25 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
       cwd: root, encoding: 'utf8', timeout: 30_000,
     });
     assert.equal(run.status, 0, `${command}: ${run.stderr}`);
-    assert.doesNotThrow(() => JSON.parse(run.stdout), `${command} writes one JSON document`);
+    const receipt = JSON.parse(run.stdout);
+    assert.equal(typeof receipt, 'object', `${command} writes one JSON object`);
+    if (command === 'db:migrate') assert.equal(receipt.ok, true);
+    if (command === 'seed') assert.ok(receipt.company?.id);
+    if (command === 'demo') {
+      assert.ok(receipt.seeded?.company?.id);
+      assert.equal(receipt.results?.length, 2);
+    }
+    if (command === 'doctor') assert.equal(receipt.ok, true);
+    if (command === 'workflow:list' || command === 'trace:list') assert.ok(Array.isArray(receipt.items));
+    assert.equal(existsSync(dbPath), true, `${command} creates its fresh SQLite database`);
+    const database = new DatabaseSync(dbPath);
+    try {
+      const migrations = database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get();
+      assert.ok(migrations.count > 0, `${command} applies core migrations`);
+      assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'companies'").get());
+    } finally {
+      database.close();
+    }
   }
 
   const source = readFileSync(new URL('../packages/cli/src/commands.js', import.meta.url), 'utf8');
