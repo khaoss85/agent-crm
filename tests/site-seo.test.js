@@ -17,10 +17,12 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync, statSync, unlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { STRATEGIC_PAGES, inspectStrategicSurfaces, markdownPath } from '../scripts/site-strategic-pages.js';
+import { checkoutSha } from '../scripts/site-provenance.js';
 
 const repo = process.cwd();
 const builder = join(repo, 'scripts/site-build.js');
@@ -66,7 +68,11 @@ function build(options = {}) {
     writeFileSync(path, `${JSON.stringify(edited, null, 2)}\n`);
   }
 
-  const run = spawnSync(process.execPath, ['--no-warnings', builder], { cwd: root, encoding: 'utf8' });
+  const run = spawnSync(process.execPath, ['--no-warnings', builder], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, NODE_ENV: 'test', ACCORDO_SITE_TEST_CHECKOUT_SHA: '1111111111111111111111111111111111111111' },
+  });
   assert.equal(run.status, 0, `site-build failed in the fixture root: ${run.stderr}`);
 
   const dist = join(root, 'site/dist');
@@ -105,6 +111,13 @@ const canonicalOf = (html) => {
   const match = /<link rel="canonical" href="([^"]*)"/.exec(html);
   return match ? match[1] : null;
 };
+
+test('deployment provenance trusts the checkout rather than inherited SHA variables', () => {
+  assert.equal(
+    checkoutSha({ cwd: repo, env: { ...process.env, SOURCE_SHA: 'wrong', VERCEL_GIT_COMMIT_SHA: 'also-wrong' } }),
+    spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim(),
+  );
+});
 
 test('every published page carries the head a crawler and an answer engine both need', (t) => {
   const site = build();
@@ -162,6 +175,80 @@ test('every published page carries the head a crawler and an answer engine both 
     assert.ok(existsSync(join(site.dist, image.slice(ORIGIN.length + 1))), `${where} og:image ${image} is not published`);
 
     assert.ok(!html.includes('{{'), `${where} an unresolved template token reached the output`);
+  }
+});
+
+test('human product pages and deployment provenance are generated together', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+  for (const page of ['product.html', 'solutions.html', 'how-it-works.html', 'developers.html', 'for-ai-agents.html', 'proof.html']) {
+    assert.ok(site.pages.includes(page), `${page} is missing from the human and agent journey`);
+  }
+  const provenance = JSON.parse(site.read('version.json'));
+  assert.equal(provenance.provenanceContract, 2);
+  assert.equal(provenance.commit, '1111111111111111111111111111111111111111');
+  assert.equal(provenance.branch, 'local');
+  assert.equal(provenance.measuredAgainst, JSON.parse(readFileSync(join(repo, 'site/claims.json'), 'utf8')).measuredAgainst.sha);
+  assert.equal(provenance.repository, brand.repository.value);
+});
+
+test('every strategic HTML page advertises its generated Markdown peer, and the site gate detects removal', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+  assert.deepEqual(inspectStrategicSurfaces({ outDir: site.dist, origin: ORIGIN }), []);
+  for (const page of STRATEGIC_PAGES) {
+    assert.ok(existsSync(join(site.dist, markdownPath(page))), `${page} has no generated Markdown peer`);
+  }
+  unlinkSync(join(site.dist, markdownPath(STRATEGIC_PAGES[0])));
+  assert.match(inspectStrategicSurfaces({ outDir: site.dist, origin: ORIGIN }).join('\n'), /strategic Markdown equivalent is missing/);
+});
+
+test('strategic Markdown preserves executable blocks and block boundaries', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+  const developers = site.read('developers.md');
+  assert.match(developers, /```text\nnpm create accordo my-crm\ncd my-crm\nnpm run crm -- app inspect --json\n```/);
+
+  const how = site.read('how-it-works.md');
+  assert.match(how, /1\. See[\s\S]*2\. Plan[\s\S]*3\. Build[\s\S]*4\. Prove technical health[\s\S]*5\. Prove one business journey/);
+  assert.match(how, /5\. Prove one business journey[\s\S]*choose the scenario that matches the job\.\n\nImplementation truth stays separate\./);
+  assert.doesNotMatch(how, /Prove one business journey[^\n]*Implementation truth stays separate/);
+
+  const home = site.read('index.md');
+  assert.doesNotMatch(home, /\)\[/, 'adjacent calls to action need a Markdown block boundary');
+});
+
+test('human journeys keep technical verification, scenario proof and ledger claims distinct', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+  const how = site.read('how-it-works.html');
+  assert.match(how, /project verify --json/);
+  assert.match(how, /does not run a business journey/);
+  assert.match(how, /scenario run lead-to-won --json/);
+
+  const developers = site.read('developers.html');
+  const ledger = JSON.parse(site.read('claims.json'));
+  const mutation = ledger.claims.find((claim) => claim.id === 'C-16');
+  assert.ok(mutation);
+  assert.match(developers, new RegExp(mutation.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(developers, new RegExp(mutation.limitation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+
+  const service = site.read('solution-service-operations.html');
+  const serviceClaim = ledger.claims.find((claim) => claim.id === 'C-24');
+  assert.ok(serviceClaim.evidence.tests.includes('tests/service-operations-e2e.test.js'));
+  assert.match(service, new RegExp(serviceClaim.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(service, new RegExp(serviceClaim.limitation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(service, /claim:C-12|evidence\.html#C-12/);
+});
+
+test('current public sources never restore the retired authentication-tenancy-RBAC composite', () => {
+  const retired = /no authentication,?\s+(?:no\s+)?tenancy\s+(?:and|or)\s+(?:no\s+)?(?:RBAC|role(?:-based)? access control)(?:\s+exists)?/i;
+  for (const path of [
+    ...readdirSync(join(repo, 'site/templates')).map((name) => join(repo, 'site/templates', name)),
+    join(repo, 'site/answers.json'),
+    join(repo, 'site/tools.json'),
+  ]) {
+    assert.doesNotMatch(readFileSync(path, 'utf8'), retired, `${relative(repo, path)} restores a stale negative claim`);
   }
 });
 

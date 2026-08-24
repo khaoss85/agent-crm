@@ -75,10 +75,9 @@ Everything on this site is held to the same standard, and a post is not an excep
 - **Every factual sentence traces to a file in this repository, and cites it.** A sentence with no
   evidence is deleted rather than softened.
 - The standing limitations from `site/claims.json` are rendered on every post page automatically:
-  there is no authentication, tenancy or RBAC (L-01), persistence is local SQLite (L-02), there is
+  authentication verification must be supplied by deployment; authorization and one-tenant-per-instance isolation are enforced (L-01), persistence is local SQLite (L-02), there is
   no scheduler (L-04), no adapter sends anything to anyone (L-05), the build benchmark has not been
-  run (L-03), and nothing is installable — the two published package names are empty reservations
-  (L-08). A post cannot opt out of them.
+  run (L-03), and the published scaffolder vendors framework source rather than installing a versioned framework dependency (L-08). A post cannot opt out of them.
 
 ## Adding one
 

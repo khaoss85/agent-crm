@@ -523,7 +523,7 @@
         "The inspector parses neither. Job status and gate status are prose maintained by people; `crm scenario run <scenario> --json` (DX6) reads the generated job index separately and reports what a business journey established and what it did not, without changing any status. Two scenarios ship.",
         "Browser end-to-end coverage is not in CI. It is run manually, and the document names that as the largest coverage gap rather than leaving it to be discovered.",
         "None of the ten production gates in section 4 is met: no PostgreSQL conformance suite, no coverage threshold, no mutation tests for versioned policies, no property-based tests, no fuzzing, no dependency scanning in CI, no backup-and-restore rehearsal, no tenant-escape tests and no permission-matrix tests.",
-        "Permission and tenant tests cannot exist yet, because there is no authentication, tenancy or role-based access control to test.",
+        "Authentication-verifier tests remain a deployment concern. Authorization and one-tenant-per-instance isolation are framework-enforced; shared-database row tenancy is not provided.",
         "npm run verify proves the tests pass. It does not prove the tests would catch a regression — that is a separate instrument, and it found a real gap the first time it ran.",
         "No test count is quoted here. Two files in this repository carry different figures from different commits, and neither was re-run for this page."
       ],
