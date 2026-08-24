@@ -92,7 +92,7 @@ backfill this matrix prevents.
 | Domain | Status | Reason |
 |---|---|---|
 | Core CRM (Sales) | `partial` | Company uses the seam; Contact and Opportunity retain their old persistence behind the characterized Company dependency closure until M2 |
-| Work | `aligned` | its generated resources keep generated migration participation and use the shared storage-backed service template for exact reads, mutations, audit and managed actions |
+| Work | `partial` | its selected generated resource runtime keeps migration participation and uses structured storage for exact reads, mutations, audit and managed actions; `packages/work/src/legacy-tasks.js` and `migrateLegacyTasks(...)` still perform raw SQLite-specific legacy migration reads and are explicitly deferred to M2 |
 | Pipeline | `deferred` | runtime pipeline persistence remains direct SQLite and is sequenced for M2 |
 | Lead Intelligence | `deferred` | package persistence is outside the two-consumer M1 slice; M2 owns migration |
 | Commercial Operations | `deferred` | package persistence is outside the two-consumer M1 slice; M2 owns migration |

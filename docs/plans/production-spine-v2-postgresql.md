@@ -1101,6 +1101,9 @@ agent-facing rail.
   unknown shapes/operators and unsafe identifiers fail closed. Contact and
   Opportunity retain their persistence until M2 but keep the characterized
   synchronous Company lookup dependency, including fail-before-write behavior.
+  This proves only the selected generated Work runtime: the raw SQLite legacy
+  reads in `packages/work/src/legacy-tasks.js` remain visible as `partial` in the
+  Legacy Alignment Matrix and are deferred to M2.
 
 - 2026-08-23: M0 characterization started from merged plan commit `c78c310` on
   `claude/spine-v2-m0-characterization`. The first bounded slice freezes the

@@ -62,6 +62,46 @@ test('M1 SQLite adapter exposes async writes, synchronous compatibility reads an
   }
 });
 
+test('M1 refuses every read/write method mismatch before SQLite executes it', async () => {
+  const database = createDatabase({ path: ':memory:' });
+  const mismatch = (fn) => assert.throws(fn, (error) => error?.code === 'STORAGE_METHOD_STATEMENT_MISMATCH');
+  const row = (id, name) => ({
+    kind: 'insert', table: 'companies', values: [
+      { column: 'id', value: id }, { column: 'name', value: name }, { column: 'domain', value: null },
+      { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
+      { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
+    ],
+  });
+  const select = { kind: 'select', table: 'companies', columns: '*', where: [] };
+  const count = { kind: 'count', table: 'companies', where: [] };
+  const update = (name) => ({
+    kind: 'update', table: 'companies', values: [{ column: 'name', value: name }],
+    where: [{ column: 'id', op: 'eq', value: 'kept' }],
+  });
+  try {
+    database.storage.sync.execute(row('kept', 'Kept'));
+
+    mismatch(() => database.storage.sync.maybeOne(row('maybe-insert', 'Wrong')));
+    mismatch(() => database.storage.sync.many(row('many-insert', 'Wrong')));
+    mismatch(() => database.storage.sync.maybeOne(update('maybe-update')));
+    mismatch(() => database.storage.sync.many(update('many-update')));
+    await assert.rejects(database.storage.execute(select), (error) => error?.code === 'STORAGE_METHOD_STATEMENT_MISMATCH');
+    await assert.rejects(database.storage.execute(count), (error) => error?.code === 'STORAGE_METHOD_STATEMENT_MISMATCH');
+
+    assert.deepEqual(database.storage.sync.many(select).map(({ id, name }) => ({ id, name })), [{ id: 'kept', name: 'Kept' }]);
+    assert.equal(database.storage.sync.maybeOne(count).n, 1);
+    assert.deepEqual(database.storage.sync.many(count).map(({ n }) => ({ n })), [{ n: 1 }]);
+
+    database.storage.sync.execute(update('Updated'));
+    assert.equal(database.storage.sync.maybeOne({
+      kind: 'select', table: 'companies', columns: ['name'],
+      where: [{ column: 'id', op: 'eq', value: 'kept' }],
+    }).name, 'Updated');
+  } finally {
+    database.close();
+  }
+});
+
 test('Company dependency closure preserves missing-company refusal without partial writes', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'accordo-m1-company-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

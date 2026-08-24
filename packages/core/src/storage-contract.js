@@ -4,9 +4,20 @@ import { AppError } from './errors.js';
 
 export const STORAGE_CONTRACT = 1;
 const IDENTIFIER = /^[a-z][a-z0-9_]*$/;
+const WRITE_KINDS = new Set(['insert', 'update']);
+const READ_KINDS = new Set(['select', 'count']);
 
 function refuse(message, details) {
   throw new AppError(message, { code: 'STORAGE_STATEMENT_UNSUPPORTED', status: 500, details });
+}
+
+function requireMethodKind(method, statement, allowed) {
+  const kind = statement && typeof statement === 'object' ? statement.kind : undefined;
+  if (!allowed.has(kind)) {
+    throw new AppError(`Storage ${method} cannot execute statement kind "${String(kind)}"`, {
+      code: 'STORAGE_METHOD_STATEMENT_MISMATCH', status: 500, details: { method, kind },
+    });
+  }
 }
 
 function identifier(value, label) {
@@ -113,9 +124,18 @@ export function createSqliteStorage(raw, transaction, transactionAsync) {
     return { prepared: raw.prepare(rendered.sql), params: rendered.params };
   };
   const sync = Object.freeze({
-    execute(statement) { const query = prepared(statement); return query.prepared.run(...query.params); },
-    maybeOne(statement) { const query = prepared(statement); return query.prepared.get(...query.params) ?? null; },
-    many(statement) { const query = prepared(statement); return query.prepared.all(...query.params); },
+    execute(statement) {
+      requireMethodKind('execute', statement, WRITE_KINDS);
+      const query = prepared(statement); return query.prepared.run(...query.params);
+    },
+    maybeOne(statement) {
+      requireMethodKind('maybeOne', statement, READ_KINDS);
+      const query = prepared(statement); return query.prepared.get(...query.params) ?? null;
+    },
+    many(statement) {
+      requireMethodKind('many', statement, READ_KINDS);
+      const query = prepared(statement); return query.prepared.all(...query.params);
+    },
     transaction,
     savepoint(name, fn) {
       const safeName = identifier(name, 'savepoint');
