@@ -5,8 +5,7 @@ unfired, and what is waiting on a human. Positioning and category are in `CATEGO
 channel mechanics are in `AGENT_DISCOVERY.md`; the content engine and its quality gates are in
 `ORGANIC_GROWTH.md`. This document is the operating plan that sits on top of them.
 
-Written against `HEAD` on 2026-08-07 with 373 tests passing. Volatile facts live in
-`../PROJECT_STATUS.md`; this file holds the plan.
+This is the current operating GTM strategy. Durable positioning comes from `MASTER_PLAN.md` and `CATEGORY.md`; volatile milestone, distribution, measurement and deployment state comes only from `../PROJECT_STATUS.md`, `../repository-truth.json`, `../../site/brand.json` and `../../site/claims.json`. Dated launch preparation is a historical input, not current state.
 
 ---
 
@@ -29,13 +28,11 @@ So the strategy is:
 1. **Scope the promise to the mechanism that exists** — done, and enforced.
 2. **Make honesty mechanical on every surface**, because verifiable restraint is the one asset
    a better-funded competitor cannot copy by writing a better headline.
-3. **Build everything brand-token-driven**, so the pending name decision costs one edit.
+3. **Build everything from canonical entity and truth sources**, so a product or implementation fact moves once.
 4. **Find the truth about agent build success privately and first**, before spending a launch
    on a number nobody has measured.
 
-The objective for the next ten weeks is not traffic. It is: **reduce the set of things blocking
-launch to exactly the five human decisions in `MASTER_PLAN.md` §10 — and prove it with an exit
-code.**
+The objective for the next ten weeks is not traffic. It is: **make the product understandable to a human, retrievable by search and agents, and independently checkable without duplicating volatile state.**
 
 ---
 
@@ -184,7 +181,7 @@ Sourcing, caveats and the places the alternative genuinely wins are maintained i
 | Brand tokens — name, domain, npm scope, licence, palette | `site/brand.json` | ✅ |
 | Landing page and evidence page, built from the ledger, `noindex` | `site/templates/`, `npm run site:build` | ✅ |
 | Claims gate — evidence exists, limitation present, three surfaces enforced, brand leaks, eleven overclaim patterns, ledger freshness | `scripts/site-check.js` | ✅ |
-| Distribution manifests for Claude, Codex, Gemini CLI, npm and the MCP registry, validated; real npm packages and registry entry remain unpublished | `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/`, `gemini-extension.json`, `package.json`, `packages/create-accordo/package.json`, `server.json` | ✅ |
+| Distribution manifests for Claude, Codex, Gemini CLI, npm and the MCP registry, validated; the create package is published; other distribution entries retain their independently recorded state | `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/`, `gemini-extension.json`, `package.json`, `packages/create-accordo/package.json`, `server.json` | ✅ |
 | Manifest gate — paths resolve, reserved names are refused, names agree, skill portability is reported, and every first-contact surface carries Custom CRM, Customer Hub, Smart CRM and bounded CDP + CRM intent | `scripts/distribution-check.js`, `tests/distribution-intent.test.js` | ✅ |
 | README rewritten against what the tests prove, with limits before capabilities | `README.md` | ✅ |
 | Security posture stated rather than implied | `SECURITY.md` | ✅ |

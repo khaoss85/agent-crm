@@ -43,6 +43,24 @@ const answersPath = join(root, 'site', 'answers.json');
 const answers = existsSync(answersPath) ? JSON.parse(readFileSync(answersPath, 'utf8')) : null;
 const brand = JSON.parse(readFileSync(join(siteDir, 'brand.json'), 'utf8'));
 
+// A stale negative is still a false public claim. This retired composite conflates three
+// separate facts: the framework ships no verifier; authorization is enforced; isolation is one
+// tenant per application instance. Refuse the old composite on authored and generated surfaces.
+const staleNegativeClaims = [
+  /no authentication,?\s+(?:no\s+)?tenancy\s+(?:and|or)\s+(?:no\s+)?(?:RBAC|role(?:-based)? access control)(?:\s+exists)?/i,
+  /there is no authentication,?\s+tenancy\s+(?:and|or)\s+roles?/i,
+];
+for (const path of [
+  ...collect(join(siteDir, 'templates'), '.html'),
+  ...collect(siteDir, '.json'),
+  ...collect(outDir, '.html'),
+]) {
+  const text = readFileSync(path, 'utf8');
+  for (const pattern of staleNegativeClaims) {
+    if (pattern.test(text)) fail(`${relative(root, path)}: stale negative merges authentication, authorization and tenant isolation; state them separately from repository truth.`);
+  }
+}
+
 // ---------------------------------------------------------------- 1 & 2. ledger integrity
 
 const seen = new Set();

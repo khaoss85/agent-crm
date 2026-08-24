@@ -8,13 +8,13 @@ The canonical entry point to the strategy. Read this first; follow the links for
 
 The open-source, agent-native CRM framework: Claude Code and Codex use it to generate bespoke CRM applications — deterministic workflows, human approvals, audit and trace built in — as code the customer owns.
 
-## 2. Current status
+## 2. Stable strategy and current state
 
-**Volatile status lives in `docs/PROJECT_STATUS.md`** — merged milestone, the commit the public numbers were measured at, open PRs, next task and production blockers. The test count is not there either: it is measured into `site/claims.json` `measuredAgainst` and cited from there (ADR-027). It is updated in every milestone merge PR; this file deliberately no longer carries numbers that go stale.
+This plan contains durable product strategy only. Accordo is the chosen public name, the repository is MIT-licensed, and ownership means the published scaffolder vendors framework source into the customer project. Those decisions are recorded in `site/brand.json` and ADR-023; they are not launch checkboxes.
 
-Stable facts: milestones **M0–M11 are merged and proven in-repo** — the vertical from lead capture through enrichment, scoring, routing, qualification, conversion, pipeline, composite quoting, discount approval, verified signature evidence and an immutable Order (ADR-001…ADR-017). Working title `accordo`; **no public name chosen**. The repository license is currently **MIT**; final pre-launch confirmation is a pending human decision. The benchmark is designed and **not yet executed**.
+All volatile implementation state—merged work, open work, distribution, production boundaries and measurement provenance—lives in `docs/PROJECT_STATUS.md` and generated `docs/repository-truth.json`. Public implementation claims come from `site/claims.json`. This document must not restate milestone coverage, package inventory, test measurements, benchmark results or deployment state.
 
-A **Platform Alignment Gate** (`PLATFORM_ALIGNMENT_GATE.md`, ADR-018) was taken after M11 and before further domain code: it draws the core-versus-domain boundary, defines the capability model, corrects the post-Order roadmap and adds the missing platform tracks. It changed no runtime code.
+Product Truth describes the coherent system Accordo is designed to let a coding agent build. Repository Truth separately describes what the current tree proves. A target workflow below is not a capability claim; evidence status is always resolved through the JTBD coverage overlay and claims ledger.
 
 ## 3. Medusa-to-CRM mapping (short form)
 
@@ -123,13 +123,9 @@ Ship capability → prove it (benchmark/starter) → document as CI-tested recip
 
 Definitions and measurement protocols: `EXECUTION_ROADMAP.md` (metrics) and `CRM_BUILD_BENCHMARK.md` (protocols).
 
-## 10. Pending human decisions
+## 10. Decisions that remain human-governed
 
-1. **Public name** — candidates only, none chosen (`BRAND_REQUIREMENTS.md`); registrar + trademark verification required.
-2. **Final license confirmation** before public launch (MIT is the current repository license; keep-or-change is an explicit ADR-gated decision).
-3. **Telemetry policy** (opt-in metrics) before any collection ships.
-4. **All external submissions** (marketplaces, directories, template galleries) and account creations.
-5. **All public launch claims and timing**; every published number must trace to the benchmark protocol.
+Trademark clearance, telemetry policy, marketplace submissions, public launch timing and any future licensing change remain human decisions. Current operational state and action owners belong in `docs/PROJECT_STATUS.md` or the relevant dated launch record, never here.
 
 ## 11. Reading order
 
