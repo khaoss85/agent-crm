@@ -814,37 +814,41 @@ export async function readAuthorities({ rootDir }) {
     // that exposes storage and deliberately has no raw driver. Every generated
     // operation is driven; an alias/bracket/raw bypass therefore throws rather
     // than being hidden by a token scan.
-    const generatedPlan = planModule({
-      rootDir,
-      manifest: {
-        manifestVersion: 1, name: 'truth-storage-probe',
-        fields: [
-          { name: 'name', type: 'string', required: true },
-          { name: 'status', type: 'enum', values: ['open', 'closed'], writable: 'managed', default: 'open' },
-        ],
-      },
-    });
-    const serviceFile = generatedPlan.files.find((file) => {
-      const normalized = file.path.split(/[\\/]/).join('/');
-      return /\/src\/[^/]+-service\.js$/.test(normalized);
-    });
-    if (!serviceFile) throw new Error('generated storage probe did not produce a service artifact');
-    const managedPlan = planModule({
-      rootDir,
-      manifest: {
-        manifestVersion: 1, name: 'truth-managed-storage-probe',
-        fields: [
-          { name: 'status', type: 'enum', values: ['open', 'closed'], writable: 'managed', default: 'open' },
-        ],
-      },
-    });
-    const managedServiceFile = managedPlan.files.find((file) => {
-      const normalized = file.path.split(/[\\/]/).join('/');
-      return /\/src\/[^/]+-service\.js$/.test(normalized);
-    });
-    if (!managedServiceFile) throw new Error('generated managed-storage probe did not produce a service artifact');
     const generatedRoot = mkdtempSync(join(tmpdir(), 'accordo-truth-generated-'));
     try {
+      // Give planning an isolated, empty module registry. The authority must
+      // not read an un-fingerprinted project module tree merely to generate a
+      // synthetic conformance artifact.
+      mkdirSync(join(generatedRoot, 'packages/modules'), { recursive: true });
+      const generatedPlan = planModule({
+        rootDir: generatedRoot,
+        manifest: {
+          manifestVersion: 1, name: 'truth-storage-probe',
+          fields: [
+            { name: 'name', type: 'string', required: true },
+            { name: 'status', type: 'enum', values: ['open', 'closed'], writable: 'managed', default: 'open' },
+          ],
+        },
+      });
+      const serviceFile = generatedPlan.files.find((file) => {
+        const normalized = file.path.split(/[\\/]/).join('/');
+        return /\/src\/[^/]+-service\.js$/.test(normalized);
+      });
+      if (!serviceFile) throw new Error('generated storage probe did not produce a service artifact');
+      const managedPlan = planModule({
+        rootDir: generatedRoot,
+        manifest: {
+          manifestVersion: 1, name: 'truth-managed-storage-probe',
+          fields: [
+            { name: 'status', type: 'enum', values: ['open', 'closed'], writable: 'managed', default: 'open' },
+          ],
+        },
+      });
+      const managedServiceFile = managedPlan.files.find((file) => {
+        const normalized = file.path.split(/[\\/]/).join('/');
+        return /\/src\/[^/]+-service\.js$/.test(normalized);
+      });
+      if (!managedServiceFile) throw new Error('generated managed-storage probe did not produce a service artifact');
       writeFileSync(join(generatedRoot, 'package.json'), '{"type":"module"}\n');
       for (const source of ['errors.js', 'validation.js', 'time.js']) {
         const target = join(generatedRoot, 'packages/core/src', source);
