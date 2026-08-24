@@ -83,3 +83,8 @@ npm run site:build     # renders site/dist
 npm run gtm:check      # every claim still has its evidence and its limitation
 npm run site:shots     # social preview and page captures
 ```
+
+
+## Source provenance
+
+Every site build publishes `/version.json` with the exact source SHA. Vercel supplies `VERCEL_GIT_COMMIT_SHA`; a local build uses checked-out HEAD. A maintainer can compare `curl -sS https://accordo.dev/version.json` with the expected main commit without a token. The production branch and alias are Vercel account state and still require an account holder to inspect or change.

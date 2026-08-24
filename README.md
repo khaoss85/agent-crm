@@ -1,10 +1,15 @@
 # Accordo
 
-> **Describe your sales process to your coding agent; own the CRM it builds.**
+> **Build the customer and revenue system your business actually runs.**
 
-An open-source framework that Claude Code, Codex and Gemini CLI use to generate a CRM
-application as code you own — deterministic workflows, policy-gated human approvals,
-audit and trace built in.
+Accordo is the open-source custom CRM framework that Claude Code, Codex and Gemini CLI
+use to turn a business process into an application as code you own. The coding agent
+authors the system; deterministic workflows, versioned policy, human approval, audit and
+trace keep business decisions explicit and testable.
+
+Human product overview: [accordo.dev](https://accordo.dev/) · coding-agent entry point:
+[For AI agents](https://accordo.dev/for-ai-agents.html) · current implementation proof:
+[claims ledger](https://accordo.dev/evidence.html).
 
 The name is chosen and the domain registered. `npm create accordo` scaffolds a working
 project from the published `create-accordo@0.1.0`; the `accordo` package itself remains

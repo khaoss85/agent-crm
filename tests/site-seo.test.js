@@ -66,7 +66,11 @@ function build(options = {}) {
     writeFileSync(path, `${JSON.stringify(edited, null, 2)}\n`);
   }
 
-  const run = spawnSync(process.execPath, ['--no-warnings', builder], { cwd: root, encoding: 'utf8' });
+  const run = spawnSync(process.execPath, ['--no-warnings', builder], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, SOURCE_SHA: 'fixture-source-sha' },
+  });
   assert.equal(run.status, 0, `site-build failed in the fixture root: ${run.stderr}`);
 
   const dist = join(root, 'site/dist');
@@ -162,6 +166,29 @@ test('every published page carries the head a crawler and an answer engine both 
     assert.ok(existsSync(join(site.dist, image.slice(ORIGIN.length + 1))), `${where} og:image ${image} is not published`);
 
     assert.ok(!html.includes('{{'), `${where} an unresolved template token reached the output`);
+  }
+});
+
+test('human product pages and deployment provenance are generated together', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+  for (const page of ['product.html', 'solutions.html', 'how-it-works.html', 'developers.html', 'for-ai-agents.html', 'proof.html']) {
+    assert.ok(site.pages.includes(page), `${page} is missing from the human and agent journey`);
+  }
+  const provenance = JSON.parse(site.read('version.json'));
+  assert.equal(provenance.provenanceContract, 1);
+  assert.equal(provenance.sourceSha, 'fixture-source-sha');
+  assert.equal(provenance.repository, brand.repository.value);
+});
+
+test('current public sources never restore the retired authentication-tenancy-RBAC composite', () => {
+  const retired = /no authentication,?\s+(?:no\s+)?tenancy\s+(?:and|or)\s+(?:no\s+)?(?:RBAC|role(?:-based)? access control)(?:\s+exists)?/i;
+  for (const path of [
+    ...readdirSync(join(repo, 'site/templates')).map((name) => join(repo, 'site/templates', name)),
+    join(repo, 'site/answers.json'),
+    join(repo, 'site/tools.json'),
+  ]) {
+    assert.doesNotMatch(readFileSync(path, 'utf8'), retired, `${relative(repo, path)} restores a stale negative claim`);
   }
 });
 

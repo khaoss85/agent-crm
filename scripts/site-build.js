@@ -25,6 +25,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, existsSync, copyFileSync, statSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import { buildJobPages, buildAnswerPages, hasOwnPage, STATUS_MEANING } from './site-pages.js';
 import { buildClusterPages, readBlogPosts } from './site-clusters.js';
@@ -52,6 +53,10 @@ mkdirSync(outDir, { recursive: true });
  * absolute origin, and inventing one per template is how a site ends up with three of them.
  */
 const ORIGIN = `https://${brand.domain.value}`;
+const sourceSha = process.env.VERCEL_GIT_COMMIT_SHA || process.env.SOURCE_SHA || execFileSync('git', ['rev-parse', 'HEAD'], {
+  cwd: root,
+  encoding: 'utf8',
+}).trim();
 
 /**
  * Every page written to dist, in the order it was written. The sitemap is derived from this rather
@@ -171,6 +176,17 @@ writeFileSync(join(outDir, 'claims.json'), `${JSON.stringify({
   sourceVisibility: repositoryIsPublic
     ? { repository: brand.repository.value, note: 'Evidence paths resolve in the public repository.' }
     : { repository: null, note: 'The repository is not public yet, so every evidence path names a real file you cannot fetch. Treat them as citations, not as links.' },
+}, null, 2)}\n`);
+
+// Cheap deployment freshness: the public artifact identifies the exact source tree. Vercel
+// supplies its immutable commit; local builds use HEAD and avoid secrets or account APIs.
+writeFileSync(join(outDir, 'version.json'), `${JSON.stringify({
+  provenanceContract: 1,
+  product: brand.name.value,
+  sourceSha,
+  repository: brand.repository.value,
+  generatedAt: process.env.VERCEL_GIT_COMMIT_SHA ? new Date().toISOString() : null,
+  note: 'generatedAt is deployment metadata, not product or benchmark evidence.',
 }, null, 2)}\n`);
 
 // Non-template assets are copied verbatim.
