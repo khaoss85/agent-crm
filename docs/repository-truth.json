@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "a096e71e1c74c6e6bf34936b448d7fbd179f713b34d2de54c085beff1022ebde",
+  "sourceSha": "920db3924e7be5f0e8815b73bc010d24cad45ef6acb0fd24113fb1a5756cc1e1",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -85,6 +85,16 @@
       "reads": [
         "packages/app/src/spine.js",
         "packages/core/src/authorization.js"
+      ]
+    },
+    {
+      "id": "storage.contract",
+      "kind": "source",
+      "reads": [
+        "packages/cli/src/module-factory.js",
+        "packages/core/src/storage-contract.js",
+        "packages/modules/company/src/company-service.js",
+        "packages/work/src/legacy-tasks.js"
       ]
     },
     {
@@ -682,6 +692,50 @@
       ]
     },
     {
+      "id": "spine.storage.company_runtime",
+      "value": "implemented",
+      "authority": "storage.contract",
+      "evidence": [
+        "packages/modules/company/src/company-service.js#CompanyService"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "spine.storage.contract",
+      "value": 1,
+      "authority": "storage.contract",
+      "evidence": [
+        "packages/core/src/storage-contract.js#STORAGE_CONTRACT"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "spine.storage.generated_runtime",
+      "value": "implemented",
+      "authority": "storage.contract",
+      "evidence": [
+        "packages/cli/src/module-factory.js#serviceTemplate"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "spine.storage.work_legacy_raw",
+      "value": "implemented",
+      "authority": "storage.contract",
+      "evidence": [
+        "packages/work/src/legacy-tasks.js#migrateLegacyTasks"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
       "id": "spine.tenant.crm_data_plane_enforced",
       "value": "enforced_by_binding",
       "authority": "tenant.storage",
@@ -761,5 +815,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "ee5ab65f25c53e87a1cbe445d652fb75b60181c5367a9ea2e0a206a7f9811c80"
+  "fingerprint": "ccdac032fc3c6e1d89771e51c87065e915b31b6055b23fb05b5d8ca893b25002"
 }

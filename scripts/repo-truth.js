@@ -186,6 +186,10 @@ export const AUTHORITY_SOURCES = Object.freeze([
   'packages/core/src/runtime-mode.js',
   'packages/core/src/tenant-storage.js',
   'packages/core/src/tenant-binding.js',
+  'packages/core/src/storage-contract.js',
+  'packages/modules/company/src/company-service.js',
+  'packages/cli/src/module-factory.js',
+  'packages/work/src/legacy-tasks.js',
   'packages/core/src/package-composition.js',
   'packages/core/src/package-registry.js',
   'packages/app/src/spine.js',
@@ -765,6 +769,16 @@ export async function readAuthorities({ rootDir }) {
       mode: { allowsAssertedActors: false },
     });
     bundle.anonymousAllowed = decision.allowed === true;
+
+    const storageContract = await import(url('packages/core/src/storage-contract.js'));
+    const companySource = readFileSync(join(rootDir, 'packages/modules/company/src/company-service.js'), 'utf8');
+    const generatedSource = readFileSync(join(rootDir, 'packages/cli/src/module-factory.js'), 'utf8');
+    const workLegacySource = readFileSync(join(rootDir, 'packages/work/src/legacy-tasks.js'), 'utf8');
+    bundle.storageContract = storageContract.STORAGE_CONTRACT;
+    bundle.companyUsesStorage = /database\.storage\./.test(companySource) && !/database\.raw/.test(companySource);
+    bundle.generatedRuntimeUsesStorage = /database\.storage\.sync/.test(generatedSource)
+      && !/database\.raw/.test(generatedSource);
+    bundle.workLegacyUsesRaw = /database\.raw/.test(workLegacySource);
   } catch (error) {
     unavailable(`the spine authorities could not be read: ${/** @type {any} */ (error)?.message ?? error}`);
     return bundle;
@@ -1198,6 +1212,36 @@ export function buildFacts(bundle) {
     scope: 'framework',
   });
 
+  add({
+    id: 'spine.storage.contract',
+    value: bundle.storageContract,
+    shape: 'contract',
+    authority: 'storage.contract',
+    evidence: ['packages/core/src/storage-contract.js#STORAGE_CONTRACT'],
+    scope: 'framework',
+  });
+  add({
+    id: 'spine.storage.company_runtime',
+    value: bundle.companyUsesStorage ? 'implemented' : 'absent',
+    authority: 'storage.contract',
+    evidence: ['packages/modules/company/src/company-service.js#CompanyService'],
+    scope: 'framework',
+  });
+  add({
+    id: 'spine.storage.generated_runtime',
+    value: bundle.generatedRuntimeUsesStorage ? 'implemented' : 'absent',
+    authority: 'storage.contract',
+    evidence: ['packages/cli/src/module-factory.js#serviceTemplate'],
+    scope: 'framework',
+  });
+  add({
+    id: 'spine.storage.work_legacy_raw',
+    value: bundle.workLegacyUsesRaw ? 'implemented' : 'absent',
+    authority: 'storage.contract',
+    evidence: ['packages/work/src/legacy-tasks.js#migrateLegacyTasks'],
+    scope: 'framework',
+  });
+
   for (const [id, rule] of Object.entries(DECLARED_ABSENCE)) {
     const declaration = (bundle.spineNotModeled ?? []).find((entry) => rule.match.test(String(entry)));
     if (!declaration) {
@@ -1498,6 +1542,7 @@ export function buildFacts(bundle) {
     { id: 'spine.contract', kind: 'source', reads: ['packages/app/src/spine.js', 'packages/core/src/authorization.js'] },
     { id: 'runtime.mode', kind: 'source', reads: ['packages/core/src/runtime-mode.js'] },
     { id: 'tenant.storage', kind: 'source', reads: ['packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js'] },
+    { id: 'storage.contract', kind: 'source', reads: ['packages/core/src/storage-contract.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js'] },
     { id: 'reference.composition', kind: 'source', reads: REFERENCE_PACKAGES.map(([, path]) => path).concat(['packages/core/src/package-composition.js']) },
     { id: 'cli.rails', kind: 'source', reads: ['packages/cli/src/commands.js', ...RAILS.map(([, , path]) => path)] },
     { id: 'jtbd.portfolio', kind: 'source', reads: JTBD_PORTFOLIO_SOURCES },
