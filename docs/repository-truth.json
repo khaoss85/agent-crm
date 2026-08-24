@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "60a3e6058db37233b0961553beefbea9d41d6900ca644695d3e24204bd0cb72f",
+  "sourceSha": "b2c210f911ffbcdc84986620af2f513feb8b6b909e462c60d33d5f0d2b2a9586",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -92,6 +92,7 @@
       "kind": "source",
       "reads": [
         "packages/cli/src/module-factory.js",
+        "packages/core/index.js",
         "packages/core/src/errors.js",
         "packages/core/src/module-evolution.js",
         "packages/core/src/module-manifest.js",
@@ -99,6 +100,7 @@
         "packages/core/src/time.js",
         "packages/core/src/validation.js",
         "packages/modules/company/src/company-service.js",
+        "packages/work/src/follow-up.js",
         "packages/work/src/legacy-tasks.js"
       ]
     },
@@ -820,5 +822,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "f5face55b0214ae2b56c4c6739f98b972d6063f96c518bb90fd43f634963c07a"
+  "fingerprint": "5912ef627aaebb175345f47fcfe6029c4eb1bc5b46bb97b5fc6eb84ef4571061"
 }
