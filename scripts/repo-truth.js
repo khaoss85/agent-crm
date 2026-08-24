@@ -181,6 +181,7 @@ export const JTBD_PORTFOLIO_SOURCES = Object.freeze([
 ]);
 
 export const AUTHORITY_SOURCES = Object.freeze([
+  'scripts/repo-truth.js',
   'packages/core/src/identity.js',
   'packages/core/src/authorization.js',
   'packages/core/src/runtime-mode.js',
@@ -1714,7 +1715,7 @@ export function buildFacts(bundle) {
     { id: 'spine.contract', kind: 'source', reads: ['packages/app/src/spine.js', 'packages/core/src/authorization.js'] },
     { id: 'runtime.mode', kind: 'source', reads: ['packages/core/src/runtime-mode.js'] },
     { id: 'tenant.storage', kind: 'source', reads: ['packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js'] },
-    { id: 'storage.contract', kind: 'source', reads: ['packages/core/src/storage-contract.js', 'packages/core/src/errors.js', 'packages/core/src/validation.js', 'packages/core/src/time.js', 'packages/core/src/actor.js', 'packages/core/src/module-manifest.js', 'packages/core/src/module-evolution.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js', 'packages/work/src/follow-up.js', 'packages/core/index.js'] },
+    { id: 'storage.contract', kind: 'source', reads: ['scripts/repo-truth.js', 'packages/core/src/storage-contract.js', 'packages/core/src/errors.js', 'packages/core/src/validation.js', 'packages/core/src/time.js', 'packages/core/src/actor.js', 'packages/core/src/module-manifest.js', 'packages/core/src/module-evolution.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js', 'packages/work/src/follow-up.js', 'packages/core/index.js'] },
     { id: 'reference.composition', kind: 'source', reads: REFERENCE_PACKAGES.map(([, path]) => path).concat(['packages/core/src/package-composition.js']) },
     { id: 'cli.rails', kind: 'source', reads: ['packages/cli/src/commands.js', ...RAILS.map(([, , path]) => path)] },
     { id: 'jtbd.portfolio', kind: 'source', reads: JTBD_PORTFOLIO_SOURCES },
