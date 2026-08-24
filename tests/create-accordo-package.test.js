@@ -119,7 +119,6 @@ test('public copy tracks the published create package without conflating it with
   assert.equal(brand.npm.status, 'published');
 
   const surfaces = Object.fromEntries([
-    'site/templates/index.html',
     'docs/marketing/PENDING_HUMAN_SUBMISSION.md',
     'docs/marketing/LAUNCH_PACKET.md',
     'docs/strategy/DISTRIBUTION_SUBMISSIONS.md',
@@ -142,11 +141,14 @@ test('public copy tracks the published create package without conflating it with
       `${path} tells a user to install the framework as a library`);
   }
 
-  const site = surfaces['site/templates/index.html'];
+  // The homepage uses the tokenized live command and deliberately carries no registry version:
+  // distribution state belongs to brand.json, not durable buyer copy.
+  const site = readFileSync(join(repoRoot, 'site/templates/index.html'), 'utf8');
+  assert.match(site, /\{\{brand\.createCommand\}\}/);
   const ownershipCopy = `${site}\n${readFileSync(join(repoRoot, 'docs/marketing/OBJECTIONS.md'), 'utf8')}`;
   assert.doesNotMatch(ownershipCopy, /dependency you could delete|delete and still ship/i,
     'ownership means keeping vendored source, not deleting the framework');
-  assert.match(site, /deleting the copied framework\s+breaks the application/i);
+  assert.match(ownershipCopy, /deleting the copied framework\s+breaks the application/i);
 });
 
 test('two assemblies pack byte-identically, install offline and create a working project', async (t) => {

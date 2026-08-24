@@ -25,10 +25,11 @@
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, existsSync, copyFileSync, statSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
-import { execFileSync } from 'node:child_process';
 
 import { buildJobPages, buildAnswerPages, hasOwnPage, STATUS_MEANING } from './site-pages.js';
 import { buildClusterPages, readBlogPosts } from './site-clusters.js';
+import { STRATEGIC_PAGES, markdownPath } from './site-strategic-pages.js';
+import { checkoutSha } from './site-provenance.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -53,10 +54,8 @@ mkdirSync(outDir, { recursive: true });
  * absolute origin, and inventing one per template is how a site ends up with three of them.
  */
 const ORIGIN = `https://${brand.domain.value}`;
-const sourceSha = process.env.VERCEL_GIT_COMMIT_SHA || process.env.SOURCE_SHA || execFileSync('git', ['rev-parse', 'HEAD'], {
-  cwd: root,
-  encoding: 'utf8',
-}).trim();
+const sourceSha = checkoutSha({ cwd: root });
+const sourceBranch = process.env.VERCEL_GIT_COMMIT_REF || 'local';
 
 /**
  * Every page written to dist, in the order it was written. The sitemap is derived from this rather
@@ -106,6 +105,17 @@ const templates = readdirSync(join(siteDir, 'templates')).filter((name) => name.
 for (const page of templates) {
   const source = readFileSync(join(siteDir, 'templates', page), 'utf8');
   emit(page, render(source, page), { jsonLd: STRUCTURED_DATA[page] ?? [] });
+}
+
+// HTML is the canonical human authority. Markdown is generated from the rendered page so there
+// is no second body of marketing copy for an agent or answer engine to retrieve after it drifts.
+for (const page of STRATEGIC_PAGES) {
+  const htmlPath = join(outDir, page);
+  if (!existsSync(htmlPath)) {
+    unresolved.push({ file: page, token: 'strategic page declared but not emitted' });
+    continue;
+  }
+  writeFileSync(join(outDir, markdownPath(page)), htmlToMarkdown(readFileSync(htmlPath, 'utf8'), page));
 }
 
 // The catalogue pages. They are generated rather than written because the thing being published is
@@ -181,12 +191,15 @@ writeFileSync(join(outDir, 'claims.json'), `${JSON.stringify({
 // Cheap deployment freshness: the public artifact identifies the exact source tree. Vercel
 // supplies its immutable commit; local builds use HEAD and avoid secrets or account APIs.
 writeFileSync(join(outDir, 'version.json'), `${JSON.stringify({
-  provenanceContract: 1,
+  provenanceContract: 2,
   product: brand.name.value,
-  sourceSha,
+  commit: sourceSha,
+  branch: sourceBranch,
   repository: brand.repository.value,
-  generatedAt: process.env.VERCEL_GIT_COMMIT_SHA ? new Date().toISOString() : null,
-  note: 'generatedAt is deployment metadata, not product or benchmark evidence.',
+  measuredAgainst: ledger.measuredAgainst.sha,
+  generatedAt: ledger.measuredAgainst.date,
+  generation: process.env.VERCEL ? 'vercel' : 'local',
+  note: 'Build provenance only. It is not product, benchmark or deployment-readiness evidence.',
 }, null, 2)}\n`);
 
 // Non-template assets are copied verbatim.
@@ -410,12 +423,35 @@ function seoBlock(path, title, description, jsonLd) {
     `  <meta name="twitter:title" content="${escapeHtml(title)}" />`,
     `  <meta name="twitter:description" content="${escapeHtml(description)}" />`,
     `  <meta name="twitter:image" content="${escapeHtml(image)}" />`,
+    ...(STRATEGIC_PAGES.includes(path)
+      ? [`  <link rel="alternate" type="text/markdown" href="${escapeHtml(`${ORIGIN}/${markdownPath(path)}`)}" title="Markdown equivalent" />`]
+      : []),
   ];
   for (const block of jsonLd) {
     lines.push(`  <script type="application/ld+json">${jsonLdText(block)}</script>`);
   }
   return lines.join('\n');
 }
+
+/** Generate retrieval text from canonical rendered HTML; never maintain parallel copy. */
+function htmlToMarkdown(html, path) {
+  const main = firstMatch(html, /<main[^>]*>([\s\S]*?)<\/main>/) || html;
+  const text = main
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n')
+    .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n')
+    .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n')
+    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1')
+    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`')
+    .replace(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&rarr;/g, '→').replace(/&amp;/g, '&').replace(/&ldquo;|&rdquo;/g, '"').replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return `${text}\n\n---\nCanonical: ${canonicalUrl(path)}\nImplementation evidence: ${ORIGIN}/claims.json\nBuild provenance: ${ORIGIN}/version.json\n`;
+}
+
 
 /**
  * JSON-LD is data, not script, but it still sits inside a `<script>` element: a literal `</script>`

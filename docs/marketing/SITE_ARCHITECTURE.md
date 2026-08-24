@@ -19,7 +19,17 @@ Volatile facts do not belong in a product template. Authentication-verifier stat
 | Coding-agent execution | discovery → canonical definition → agent guide → machine corpus → inspect/plan/build/prove | `/for-ai-agents.html`, `/llms.txt`, `/llms-full.txt`, `/tools.html`, Docs MCP |
 | Engineering evidence | claim → capability → test/benchmark → limitation → repository SHA | `/proof.html`, `/evidence.html`, `/claims.json`, `/jobs.json`, `/version.json` |
 
-Human navigation is intent-led: Product, Solutions, How it works, Developers, For AI agents, Resources and GitHub. Retrieval clusters remain crawlable and linked from Resources; existing URLs are retained.
+Human navigation is intent-led: Product, Solutions, How it works, Developers, For AI agents, Product proof, Resources and GitHub. Retrieval clusters remain crawlable and linked from Resources; existing URLs are retained.
+
+Generated inventory (checked against the build): `jobs.html` over 76 job pages; `answers.html` over 15 answer pages.
+
+| Cluster | Hub | Spokes |
+|---|---|---:|
+| **Capabilities** | `capabilities.html` | 6 |
+| **Agent tools** | `tools.html` | 8 |
+| **Concepts** | `concepts.html` | 8 |
+| **Compare** | `compare.html` | 9 |
+| **Glossary** | `glossary.html` | 10 |
 
 ## 3. Source and generation contract
 
@@ -34,7 +44,7 @@ Human navigation is intent-led: Product, Solutions, How it works, Developers, Fo
 
 ## 4. Linking, canonical and machine relationships
 
-Every strategic page has one intent, unique title/description, one H1, absolute canonical URL, OpenGraph metadata and real initial HTML. Existing retrieval spokes link to their hubs and evidence. Product pages link progressively into proof rather than forcing evidence mechanics above the fold. `head.html` exposes llms, jobs, claims, RSS and deployment provenance alternatives. Markdown spokes are generated from the same JSON as HTML; duplicate manual copies are forbidden.
+Every strategic page has one intent, unique title/description, one H1, absolute canonical URL, OpenGraph metadata and real initial HTML. Existing retrieval spokes link to their hubs and evidence. Product pages link progressively into proof rather than forcing evidence mechanics above the fold. `head.html` exposes llms, jobs, claims, RSS and deployment provenance alternatives. Retrieval-spoke Markdown is generated from the same JSON as HTML. Every strategic human page in `scripts/site-strategic-pages.js` also receives a Markdown peer generated from its rendered canonical HTML; duplicate manual copies are forbidden. `site:check` fails if the peer, the HTML `rel="alternate"`, or the Markdown backlink to canonical HTML is missing or mismatched.
 
 `.html` remains canonical because existing URLs and file-based screenshot checks depend on it. Clean URLs are not introduced. The sitemap is derived from emitted pages, internal links are checked against emitted output, and robots follow public repository status.
 
@@ -46,4 +56,4 @@ Public numeric benchmarks require: measurement, buyer relevance, scenario/fixtur
 
 ## 6. Deployment freshness
 
-Every build emits `/version.json` with `provenanceContract`, repository and exact source SHA. Vercel supplies `VERCEL_GIT_COMMIT_SHA`; local builds use HEAD. Comparing the deployed artifact with expected main makes source/deployment drift detectable without secrets. Production alias and branch configuration remain account-level state and require a human with Vercel access to verify or change.
+Every build emits `/version.json` contract v2 with the exact checked-out commit, branch metadata, claims `measuredAgainst` SHA, deterministic generation metadata and repository. Git is the authority for the commit: inherited deployment SHA variables cannot override the checked-out source. A full test-only SHA injection is accepted only for an isolated `NODE_ENV=test` fixture without Git. Comparing the deployed artifact with expected main makes source/deployment drift detectable without secrets. Production alias and branch configuration remain account-level state and require a human with Vercel access to verify or change.

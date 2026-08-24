@@ -1,6 +1,6 @@
 # Product truth and public-surface reconciliation audit — 2026-08-24
 
-Inspected repository HEAD: `82371d28509e3c8c7e8c857a30cf68d671f95563`. GitHub showed open PR #119 (`feat(spine): begin M1 SQLite storage contract slice`, head `d9fea948…`) against that commit; it is parallel runtime work and none of its unmerged claims are predicted here. Recent merged PRs #117–118 establish the Production Spine v2 M0 characterization and measurement baseline.
+Inspected repository HEAD: `82371d28509e3c8c7e8c857a30cf68d671f95563`. GitHub showed open PR #119 (`feat(spine): begin M1 SQLite storage contract slice`, head `ba9710fa…`) against that commit; it is parallel runtime work and none of its unmerged claims are predicted here. Recent merged PRs #117–118 establish the Production Spine v2 M0 characterization and measurement baseline.
 
 | Surface | Finding | Class | Resolution |
 |---|---|---|---|
@@ -17,3 +17,7 @@ Inspected repository HEAD: `82371d28509e3c8c7e8c857a30cf68d671f95563`. GitHub sh
 | SEO/AEO | Human strategic pages and intent-led internal links were absent | SEO_AEO_DRIFT | Added canonical strategic pages, metadata, sitemap inclusion and machine alternatives |
 
 No stale positive numeric benchmark was found in the public site: the benchmark remains unexecuted where the canonical protocol says so. The major stale positive pattern was older GTM distribution prose; it is not used as a runtime authority. Historical ADRs and dated records remain historical and were not rewritten.
+
+## Parallel implementation reconciliation
+
+Final integration compared PR #120 (`a4c27ed…`) and PR #121 (`8a04f80…`) rather than merging either mechanically. PR #120 supplies the canonical human IA and proof/benchmark documentation. PR #121 contributes generated canonical-HTML-to-Markdown peers, llms discovery, richer provenance and broader regression protection. The final branch resolves every review thread from both PRs; only it should merge.

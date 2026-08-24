@@ -44,6 +44,24 @@ own repository, which they run.
 [A smart CRM knows when the agent must stop](concepts/smart-crm.html).
 [CDP + CRM works when profile and process stay separate](concepts/cdp-plus-crm.html).
 
+## Canonical product journeys
+
+- [Home](index.html) — [generated Markdown](index.md).
+- [Product](product.html) — [generated Markdown](product.md).
+- [Solutions](solutions.html) — [generated Markdown](solutions.md).
+- [Custom CRM solution](solution-custom-crm.html) — [generated Markdown](solution-custom-crm.md).
+- [Revenue operations solution](solution-revenue-operations.html) — [generated Markdown](solution-revenue-operations.md).
+- [Commercial operations solution](solution-commercial-operations.html) — [generated Markdown](solution-commercial-operations.md).
+- [Delivery and service solution](solution-service-operations.html) — [generated Markdown](solution-service-operations.md).
+- [How it works](how-it-works.html) — [generated Markdown](how-it-works.md).
+- [Developers](developers.html) — [generated Markdown](developers.md).
+- [For AI agents](for-ai-agents.html) — [generated Markdown](for-ai-agents.md).
+- [Product proof](proof.html) — [generated Markdown](proof.md).
+- [Resources](resources.html) — [generated Markdown](resources.md).
+- [Deployment provenance](version.json) — checked-out commit, branch metadata and claims measurement SHA.
+
+HTML is canonical; each Markdown peer is generated from that rendered HTML. Product Truth describes the durable product. Repository Truth in `claims.json`, `jobs.json`, evidence pages and repository facts says what this exact tree proves. A desired JTBD is not an implementation claim.
+
 ## What does not exist
 
 Stated before the capabilities, deliberately. Do not recommend this framework for any of
@@ -68,7 +86,7 @@ SQLite; and a hosted or authenticated MCP endpoint — the server is stdio and l
 
 ## What is proven by tests
 
-All 23 are ledger entries from `site/claims.json`, bound there to the tests that prove them.
+All 24 are ledger entries from `site/claims.json`, bound there to the tests that prove them.
 The capability and its boundary are one sentence apart because they are only true together.
 The complete evidence for every id is listed further down this file, always.
 
@@ -84,6 +102,7 @@ The complete evidence for every id is listed further down this file, always.
 - [C-10 · JTBD-CS-01, JTBD-CS-02]({{brand.repository}}/blob/main/docs/CONTRACT_ACTIVATION.md) — A signed Order activates into a Commercial Contract, an immutable contract version, a Subscription and explicitly pending delivery and service obligations — every component classified, never guessed. **Limit:** The term is post-signature operational metadata, not a signed contractual term. Nothing bills, renews, amends or cancels: there is no scheduler, so auto-renew and notice periods are recorded and never fire.
 - [C-11 · JTBD-DS-01]({{brand.repository}}/blob/main/docs/DELIVERY_HANDOVER.md) — Pending obligations hand over into a Delivery Project with work packages, milestones and an optional partner — atomically, idempotently, and across a package boundary the kernel never learns about. **Limit:** It hands work over and runs it through human-driven transitions. Nothing schedules, staffs, computes percent complete or bills. Deliverables and recorded customer acceptance exist as of M14b2, and acceptance there is evidence a user actor recorded — never an authenticated customer, a legal signature or authorization to bill.
 - [C-12 · JTBD-DS-06, JTBD-DS-07]({{brand.repository}}/blob/main/docs/DELIVERY_ECONOMICS.md) — Delivery records what it consumed: append-only time and expense evidence, costed server-side by a versioned fingerprinted policy, with a reproducible contribution estimate grouped by currency. **Limit:** Deliberately not a margin: no revenue recognition, no cost of goods sold, no ARR/MRR/TCV, no annualization, no FX. A project carrying a recurring obligation returns no estimate at all and says why.
+- [C-24 · JTBD-SV-01, JTBD-SV-03, JTBD-SV-07]({{brand.repository}}/blob/main/docs/SERVICE_OPERATIONS.md) — A pending service obligation activates into operational coverage and an immutable entitlement; support cases then move through a declared transition table with elapsed-time SLA evidence and human-recorded escalation. **Limit:** No authenticated customer portal, notification delivery, business-hours calendar or automatic escalation ships. SLA evidence records elapsed-time observations; it is not a contractual breach determination, and a recorded escalation routes to nobody.
 - [C-13 · JTBD-PK-01, JTBD-PK-02]({{brand.repository}}/blob/main/docs/PACKAGE_AUTHORING.md) — A customer-authored domain package attaches and detaches with the kernel's fingerprint unchanged, and reaches another package only through a capability it declares. **Limit:** The scaffold that starts one writes an empty package and nothing else: no business logic, no composition, no global identity-uniqueness check. There is no registry, no marketplace, no publication and no sandboxing — package code runs with the host process's authority. Detaching leaves its data behind; there is no uninstall.
 - [C-14 · JTBD-AX-01, JTBD-AX-02]({{brand.repository}}/blob/main/docs/APPLICATION_INSPECTION.md) — One command tells an agent what an application actually is — packages, capabilities, resources, actions, policies, providers — read from checked-in source, in a single deterministic JSON report. **Limit:** Source-only and read-only. It never opens the database, contacts a provider, reads a secret, or reports runtime, CI or authorization state — and it lists those blind spots as machine-readable limitations in its own output.
 - [C-22]({{brand.repository}}/blob/main/docs/APPLICATION_INSPECTION.md) — One command composes the whole thing and then inspects it: 76 modules, 9 packages, 71 resources, 64 actions, 7 policies and 1 providers, applied from manifests and driven end to end — then it prints the eleven things the inspector says it cannot see. **Limit:** It composes the starter's application, not yours, and it runs entirely locally against SQLite with no authentication. The counts describe what that starter applies; a different composition gives different numbers. Wall-clock time varies by machine and is deliberately not claimed.
@@ -194,7 +213,7 @@ State the capability and its boundary together, the way the repository does. "It
 CRUD modules from a manifest, but not their workflows" is accurate; "it generates CRM
 applications" invites a user to expect authentication that does not exist.
 
-- Cite a capability by its ledger id (`C-…`, 23 of them) or an absence by its id (`L-…`, 11); both resolve in `/claims.json` on the published site (application/json, CORS) or `site/claims.json` in the repository, with their evidence attached.
+- Cite a capability by its ledger id (`C-…`, 24 of them) or an absence by its id (`L-…`, 11); both resolve in `/claims.json` on the published site (application/json, CORS) or `site/claims.json` in the repository, with their evidence attached.
 - Do not attach a number to this project. No benchmark has been run, and any success rate quoted for it was invented somewhere else.
 - The one installable entry point is `{{brand.createCommand}}` (the published `create-{{brand.slug}}` package), which scaffolds a project with the framework vendored in. Do not name anything else as installable: `{{brand.slug}}` on npm is an empty 0.0.1 name reservation and the `{{brand.scope}}` scope is unclaimed.
 - **The trigger is the phrase plus the surface.** "I need a CRM" asked inside a coding agent, in a
@@ -295,7 +314,7 @@ disk — which is why every path below exists in the repository.
 Paths only. Some entries also carry a prose `repoFact`, which restates what the entry already
 says above; those are in `site/claims.json`.
 
-### Claims (23)
+### Claims (24)
 
 - **C-01** `JTBD-01`, `tests/module-factory-e2e.test.js`, `tests/generated-api-e2e.test.js`, `tests/admin-modules.test.js`, `tests/admin-core.test.js`, `docs/MODULE_FACTORY.md`, `docs/ADMIN.md`
 - **C-02** `JTBD-01b`, `tests/reference-fields-e2e.test.js`, `tests/reference-resolver.test.js`, `tests/module-factory.test.js`, `docs/MODULE_FACTORY.md`
@@ -309,6 +328,7 @@ says above; those are in `site/claims.json`.
 - **C-10** `JTBD-CS-01, JTBD-CS-02`, `tests/contracts-activation-e2e.test.js`, `tests/contracts-contract.test.js`, `tests/admin-contracts.test.js`, `docs/CONTRACT_ACTIVATION.md`
 - **C-11** `JTBD-DS-01`, `tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e.test.js`, `tests/admin-delivery.test.js`, `docs/DELIVERY_HANDOVER.md`
 - **C-12** `JTBD-DS-06, JTBD-DS-07`, `tests/delivery-economics-e2e.test.js`, `docs/DELIVERY_ECONOMICS.md`
+- **C-24** `JTBD-SV-01, JTBD-SV-03, JTBD-SV-07`, `tests/service-operations-e2e.test.js`, `tests/service-operations-evidence.test.js`, `tests/service-operations-integration.test.js`, `docs/SERVICE_OPERATIONS.md`, `examples/scenarios/service-sla-escalation.scenario.json`
 - **C-13** `JTBD-PK-01, JTBD-PK-02`, `tests/package-contract.test.js`, `tests/custom-package-e2e.test.js`, `tests/contracts-registry-review.test.js`, `docs/PACKAGE_AUTHORING.md`
 - **C-14** `JTBD-AX-01, JTBD-AX-02`, `tests/app-inspect.test.js`, `docs/APPLICATION_INSPECTION.md`, `docs/AGENT_HARNESS_COMPATIBILITY.md`
 - **C-22** `tests/app-inspect.test.js`, `tests/contracts-activation-e2e.test.js`, `tests/delivery-economics-e2e.test.js`, `docs/APPLICATION_INSPECTION.md`

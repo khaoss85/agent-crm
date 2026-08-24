@@ -34,6 +34,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { readBlogPosts } from './site-clusters.js';
+import { STRATEGIC_PAGES, markdownPath } from './site-strategic-pages.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -249,6 +250,7 @@ function compose({ full }) {
     header(full),
     statusSection(),
     whatItIsSection(),
+    productJourneySection(),
     doesNotExistSection(),
     provenSection(full),
     jobCoverageSection(),
@@ -267,6 +269,25 @@ function compose({ full }) {
   }
 
   return `${blocks.join('\n\n').replace(/\n{3,}/g, '\n\n').trim()}\n`;
+}
+
+function productJourneySection() {
+  const labels = {
+    'index.html': 'Home', 'product.html': 'Product', 'solutions.html': 'Solutions',
+    'solution-custom-crm.html': 'Custom CRM solution',
+    'solution-revenue-operations.html': 'Revenue operations solution',
+    'solution-commercial-operations.html': 'Commercial operations solution',
+    'solution-service-operations.html': 'Delivery and service solution',
+    'how-it-works.html': 'How it works', 'developers.html': 'Developers',
+    'for-ai-agents.html': 'For AI agents', 'proof.html': 'Product proof', 'resources.html': 'Resources',
+  };
+  return [
+    '## Canonical product journeys', '',
+    ...STRATEGIC_PAGES.map((path) => `- [${labels[path]}](${path}) — [generated Markdown](${markdownPath(path)}).`),
+    '- [Deployment provenance](version.json) — checked-out commit, branch metadata and claims measurement SHA.',
+    '',
+    'HTML is canonical; each Markdown peer is generated from that rendered HTML. Product Truth describes the durable product. Repository Truth in `claims.json`, `jobs.json`, evidence pages and repository facts says what this exact tree proves. A desired JTBD is not an implementation claim.',
+  ].join('\n');
 }
 
 function writingSection() {

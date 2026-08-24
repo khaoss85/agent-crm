@@ -53,3 +53,17 @@ Expected: all repository gates pass; generated HTML/Markdown and machine assets 
 The repository-controlled scope is complete. Product Truth now drives the human story and Repository Truth remains progressive, commit-bound proof. Desired JTBD, current coverage and benchmark result contracts stay separate. A deployed SHA is observable at `/version.json`, so production drift is detectable without Vercel credentials.
 
 Human-only: an account holder must confirm or change the Vercel production branch and alias, deploy this commit, and compare the served `/version.json` SHA with merged main. Trademark clearance and external distribution submissions retain their existing human governance.
+
+## Final integration addendum — 2026-08-24
+
+The final integrator inspected live main `82371d28509e3c8c7e8c857a30cf68d671f95563`, PR #120 head `a4c27ed35600157fe4369aa90483faca1279112d`, and PR #121 head `8a04f8035a5a4eb5164bfb676442ba6c57fbf09b`. PR #120 remains the human-product baseline: dedicated solution pages, Developers, Resources, Product Proof, benchmark architecture, deployment guide, reconciliation audit and focused SEO tests. From PR #121 the integration ports generated strategic Markdown, HTML Markdown alternates, llms discovery, richer deployment provenance, the broader stale-negative scan and stronger outcome/ownership copy where it improves the baseline without collapsing the IA.
+
+Review findings resolved in this integration:
+
+1. deployment commit provenance comes only from `git rev-parse HEAD`; inherited `SOURCE_SHA` and `VERCEL_GIT_COMMIT_SHA` cannot override the checkout, and only a no-Git `NODE_ENV=test` fixture accepts a dedicated full-SHA injection;
+2. the delivery/service solution now resolves through service-specific claim C-24 and its service operation suites rather than delivery-economics C-12;
+3. the Developers mutation guarantee resolves through C-16 and carries its asserted-actor/non-attestation limitation;
+4. How It Works separates `project verify` technical health from `scenario run lead-to-won` business-journey evidence;
+5. `site:check` calls the shared strategic-surface inspector and fails on a missing Markdown output, missing/misdirected alternate, wrong HTML canonical, or missing Markdown backlink; the regression test deletes an output and observes the failure.
+
+Tests that required the old homepage to carry registry-version and tour-count literals were corrected: volatile distribution state remains in `site/brand.json`, and composition counts remain in evidence-bearing surfaces rather than buyer-first hero copy. The integration also fixed the pre-existing broken ownership concept link exposed by the full internal-link test.

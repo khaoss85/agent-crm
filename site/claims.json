@@ -255,6 +255,26 @@
       ]
     },
     {
+      "id": "C-24",
+      "text": "A pending service obligation activates into operational coverage and an immutable entitlement; support cases then move through a declared transition table with elapsed-time SLA evidence and human-recorded escalation.",
+      "evidence": {
+        "jtbd": "JTBD-SV-01, JTBD-SV-03, JTBD-SV-07",
+        "tests": [
+          "tests/service-operations-e2e.test.js",
+          "tests/service-operations-evidence.test.js",
+          "tests/service-operations-integration.test.js"
+        ],
+        "docs": [
+          "docs/SERVICE_OPERATIONS.md",
+          "examples/scenarios/service-sla-escalation.scenario.json"
+        ]
+      },
+      "limitation": "No authenticated customer portal, notification delivery, business-hours calendar or automatic escalation ships. SLA evidence records elapsed-time observations; it is not a contractual breach determination, and a recorded escalation routes to nobody.",
+      "surfaces": [
+        "site"
+      ]
+    },
+    {
       "id": "C-13",
       "text": "A customer-authored domain package attaches and detaches with the kernel's fingerprint unchanged, and reaches another package only through a capability it declares.",
       "evidence": {
