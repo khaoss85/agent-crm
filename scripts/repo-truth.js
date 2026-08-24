@@ -922,28 +922,46 @@ export async function readAuthorities({ rootDir }) {
         };
         const create = await drive(() => service.create({ name: 'Probe', note: null }));
         const created = create.result;
+        const get = await drive(() => service.get(created.id));
+        const list = await drive(() => service.list());
         const listWithMembership = await drive(() => service.list({ where: { status: ['open'] } }));
+        const listWhere = await drive(() => service.listWhere({ id: created.id }));
         const listWhereNull = await drive(() => service.listWhere({ note: null }));
+        const countWhere = await drive(() => service.countWhere({ id: created.id }));
         const countWhereMembership = await drive(() => service.countWhere({ status: ['open'] }));
+        const update = await drive(() => service.update(created.id, { name: 'Updated' }));
+        const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }));
+        const createManaged = await drive(() => managedService.createManaged({ status: 'open' }));
         const operations = {
           create: create.calls,
-          get: (await drive(() => service.get(created.id))).calls,
-          list: (await drive(() => service.list())).calls,
+          get: get.calls,
+          list: list.calls,
           listWithMembership: listWithMembership.calls,
-          listWhere: (await drive(() => service.listWhere({ id: created.id }))).calls,
+          listWhere: listWhere.calls,
           listWhereNull: listWhereNull.calls,
-          countWhere: (await drive(() => service.countWhere({ id: created.id }))).calls,
+          countWhere: countWhere.calls,
           countWhereMembership: countWhereMembership.calls,
-          update: (await drive(() => service.update(created.id, { name: 'Updated' }))).calls,
-          applyManaged: (await drive(() => service.applyManaged(created.id, { status: 'closed' }))).calls,
-          createManaged: (await drive(() => managedService.createManaged({ status: 'open' }))).calls,
+          update: update.calls,
+          applyManaged: applyManaged.calls,
+          createManaged: createManaged.calls,
         };
-        const predicateResultsValid = listWithMembership.result.length === 1
+        const resultsValid = created.name === 'Probe'
+          && created.note === null
+          && get.result.id === created.id
+          && list.result.length === 1
+          && list.result[0].id === created.id
+          && listWithMembership.result.length === 1
           && listWithMembership.result[0].id === created.id
+          && listWhere.result.length === 1
+          && listWhere.result[0].id === created.id
           && listWhereNull.result.length === 1
           && listWhereNull.result[0].id === created.id
-          && countWhereMembership.result === 1;
-        bundle.generatedRuntimeUsesStorage = predicateResultsValid && canonical(operations) === canonical({
+          && countWhere.result === 1
+          && countWhereMembership.result === 1
+          && update.result.name === 'Updated'
+          && applyManaged.result.status === 'closed'
+          && createManaged.result.status === 'open';
+        bundle.generatedRuntimeUsesStorage = resultsValid && canonical(operations) === canonical({
           create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
           get: [['maybeOne', 'select']],
           list: [['many', 'select']],
