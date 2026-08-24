@@ -971,8 +971,8 @@ export async function readAuthorities({ rootDir }) {
           && listWhereNull.result[0].id === created.id
           && countWhere.result === 1
           && countWhereMembership.result === 1
-          && update.result.name === 'Updated'
-          && applyManaged.result.status === 'closed'
+          && canonical(update.result) === canonical({ ...created, name: 'Updated', updatedAt: update.result.updatedAt })
+          && canonical(applyManaged.result) === canonical({ ...update.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
           && createManaged.result.status === 'open'
           && canonical(getManaged.result) === canonical(createManaged.result);
         bundle.generatedRuntimeUsesStorage = resultsValid && canonical(operations) === canonical({
