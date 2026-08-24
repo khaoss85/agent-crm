@@ -771,14 +771,66 @@ export async function readAuthorities({ rootDir }) {
     bundle.anonymousAllowed = decision.allowed === true;
 
     const storageContract = await import(url('packages/core/src/storage-contract.js'));
-    const companySource = readFileSync(join(rootDir, 'packages/modules/company/src/company-service.js'), 'utf8');
-    const generatedSource = readFileSync(join(rootDir, 'packages/cli/src/module-factory.js'), 'utf8');
-    const workLegacySource = readFileSync(join(rootDir, 'packages/work/src/legacy-tasks.js'), 'utf8');
+    const { CompanyService } = await import(url('packages/modules/company/src/company-service.js'));
+    const { planModule } = await import(url('packages/cli/src/module-factory.js'));
+    const { migrateLegacyTasks } = await import(url('packages/work/src/legacy-tasks.js'));
     bundle.storageContract = storageContract.STORAGE_CONTRACT;
-    bundle.companyUsesStorage = /database\.storage\./.test(companySource) && !/database\.raw/.test(companySource);
-    bundle.generatedRuntimeUsesStorage = /database\.storage\.sync/.test(generatedSource)
-      && !/database\.raw/.test(generatedSource);
-    bundle.workLegacyUsesRaw = /database\.raw/.test(workLegacySource);
+
+    // Behavior probe: a Company create/get/list must reach only the storage
+    // methods supplied by this fake handle. A comment or a dead token cannot
+    // satisfy it, and any attempted raw access throws because no raw exists.
+    const companyCalls = [];
+    const companyRow = {
+      id: 'truth-company', name: 'Truth Company', domain: null,
+      created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
+    };
+    const companyService = new CompanyService({
+      database: { storage: {
+        sync: {
+          savepoint(name, fn) { companyCalls.push(['savepoint', name]); return fn(); },
+          execute(statement) { companyCalls.push(['execute', statement.kind]); },
+          maybeOne(statement) { companyCalls.push(['maybeOne', statement.kind]); return companyRow; },
+          many(statement) { companyCalls.push(['many', statement.kind]); return [companyRow]; },
+        },
+      } },
+      audit: { record() {} }, events: { async emit() {} },
+    });
+    await companyService.create({ name: companyRow.name });
+    companyService.get(companyRow.id);
+    companyService.list();
+    bundle.companyUsesStorage = canonical(companyCalls) === canonical([
+      ['savepoint', 'company_create'], ['execute', 'insert'], ['maybeOne', 'select'], ['many', 'select'],
+    ]);
+
+    // Structural probe over the artifact the generator actually emits, not
+    // over its own source. It requires every M1 operation family and rejects
+    // any generated raw-driver escape.
+    const generatedPlan = planModule({
+      rootDir,
+      manifest: {
+        manifestVersion: 1, name: 'truth-storage-probe',
+        fields: [
+          { name: 'name', type: 'string', required: true },
+          { name: 'status', type: 'enum', values: ['open', 'closed'], writable: 'managed', default: 'open' },
+        ],
+      },
+    });
+    const generatedService = generatedPlan.files.find((file) => /\/src\/[^/]+-service\.js$/.test(file.path))?.content ?? '';
+    bundle.generatedRuntimeUsesStorage = [
+      "kind: 'insert'", "kind: 'select'", "kind: 'count'", "kind: 'update'",
+      'database.storage.sync.savepoint',
+    ].every((token) => generatedService.includes(token))
+      && !/database\.raw|DatabaseSync/.test(generatedService);
+
+    // Behavior probe for the deliberately retained compatibility path. The
+    // fake service permits entry; the only way to answer that the table is
+    // absent is to invoke the supplied raw SQLite-shaped prepare/get pair.
+    let legacyPrepareCalls = 0;
+    const legacyReport = await migrateLegacyTasks({
+      modules: { get: () => ({ service: { createManaged() {}, listWhere() { return []; } } }) },
+      database: { raw: { prepare() { legacyPrepareCalls += 1; return { get: () => null }; } } },
+    });
+    bundle.workLegacyUsesRaw = legacyPrepareCalls === 1 && legacyReport.found === 0;
   } catch (error) {
     unavailable(`the spine authorities could not be read: ${/** @type {any} */ (error)?.message ?? error}`);
     return bundle;
