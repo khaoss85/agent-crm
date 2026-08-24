@@ -87,6 +87,15 @@ test('M1 refuses every read/write method mismatch before SQLite executes it', as
     mismatch(() => database.storage.sync.many(update('many-update')));
     await assert.rejects(database.storage.execute(select), (error) => error?.code === 'STORAGE_METHOD_STATEMENT_MISMATCH');
     await assert.rejects(database.storage.execute(count), (error) => error?.code === 'STORAGE_METHOD_STATEMENT_MISMATCH');
+    for (const where of [
+      [{ column: 'domain', op: 'is-null', value: 'kept' }],
+      [{ column: 'id', op: 'eq', values: ['kept'] }],
+      [{ column: 'id', op: 'in', value: 'kept', values: ['kept'] }],
+    ]) {
+      assert.throws(() => database.storage.sync.execute({
+        kind: 'update', table: 'companies', values: [{ column: 'name', value: 'Wrong' }], where,
+      }), (error) => error?.code === 'STORAGE_STATEMENT_UNSUPPORTED');
+    }
 
     assert.deepEqual(database.storage.sync.many(select).map(({ id, name }) => ({ id, name })), [{ id: 'kept', name: 'Kept' }]);
     assert.equal(database.storage.sync.maybeOne(count).n, 1);

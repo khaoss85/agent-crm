@@ -46,10 +46,19 @@ function predicates(where = []) {
   const params = [];
   const sql = where.map((entry) => {
     closed(entry, ['column', 'op', 'value', 'values'], 'storage predicate');
-    const column = identifier(entry.column, 'predicate column');
-    if (entry.op === 'eq') { params.push(entry.value); return `${column} = ?`; }
-    if (entry.op === 'is-null') return `${column} IS NULL`;
+    if (entry.op === 'eq') {
+      closed(entry, ['column', 'op', 'value'], 'equality predicate');
+      if (!Object.hasOwn(entry, 'value')) refuse('Equality predicate requires value');
+      const column = identifier(entry.column, 'predicate column');
+      params.push(entry.value); return `${column} = ?`;
+    }
+    if (entry.op === 'is-null') {
+      closed(entry, ['column', 'op'], 'null predicate');
+      return `${identifier(entry.column, 'predicate column')} IS NULL`;
+    }
     if (entry.op === 'in' && Array.isArray(entry.values) && entry.values.length > 0) {
+      closed(entry, ['column', 'op', 'values'], 'membership predicate');
+      const column = identifier(entry.column, 'predicate column');
       params.push(...entry.values);
       return `${column} IN (${entry.values.map(() => '?').join(', ')})`;
     }
