@@ -190,6 +190,8 @@ export const AUTHORITY_SOURCES = Object.freeze([
   'packages/core/src/errors.js',
   'packages/core/src/validation.js',
   'packages/core/src/time.js',
+  'packages/core/src/module-manifest.js',
+  'packages/core/src/module-evolution.js',
   'packages/modules/company/src/company-service.js',
   'packages/cli/src/module-factory.js',
   'packages/work/src/legacy-tasks.js',
@@ -824,6 +826,20 @@ export async function readAuthorities({ rootDir }) {
       return /\/src\/[^/]+-service\.js$/.test(normalized);
     });
     if (!serviceFile) throw new Error('generated storage probe did not produce a service artifact');
+    const managedPlan = planModule({
+      rootDir,
+      manifest: {
+        manifestVersion: 1, name: 'truth-managed-storage-probe',
+        fields: [
+          { name: 'status', type: 'enum', values: ['open', 'closed'], writable: 'managed', default: 'open' },
+        ],
+      },
+    });
+    const managedServiceFile = managedPlan.files.find((file) => {
+      const normalized = file.path.split(/[\\/]/).join('/');
+      return /\/src\/[^/]+-service\.js$/.test(normalized);
+    });
+    if (!managedServiceFile) throw new Error('generated managed-storage probe did not produce a service artifact');
     const generatedRoot = mkdtempSync(join(tmpdir(), 'accordo-truth-generated-'));
     try {
       writeFileSync(join(generatedRoot, 'package.json'), '{"type":"module"}\n');
@@ -835,11 +851,19 @@ export async function readAuthorities({ rootDir }) {
       const generatedPath = join(generatedRoot, ...serviceFile.path.split(/[\\/]/));
       mkdirSync(dirname(generatedPath), { recursive: true });
       writeFileSync(generatedPath, serviceFile.content);
+      const managedGeneratedPath = join(generatedRoot, ...managedServiceFile.path.split(/[\\/]/));
+      mkdirSync(dirname(managedGeneratedPath), { recursive: true });
+      writeFileSync(managedGeneratedPath, managedServiceFile.content);
       const generatedModule = await import(`${pathToFileURL(generatedPath).href}?truth-probe=1`);
+      const managedGeneratedModule = await import(`${pathToFileURL(managedGeneratedPath).href}?truth-probe=1`);
       const GeneratedService = Object.values(generatedModule).find(
         (value) => typeof value === 'function' && /Service$/.test(value.name),
       );
+      const ManagedGeneratedService = Object.values(managedGeneratedModule).find(
+        (value) => typeof value === 'function' && /Service$/.test(value.name),
+      );
       if (!GeneratedService) throw new Error('generated storage probe service export is unavailable');
+      if (!ManagedGeneratedService) throw new Error('generated managed-storage probe service export is unavailable');
       const generatedCalls = [];
       let generatedRow = null;
       const sync = {
@@ -860,6 +884,9 @@ export async function readAuthorities({ rootDir }) {
       const service = new GeneratedService({
         database: { storage: { sync } }, audit: { record() {} }, events: { async emit() {} },
       });
+      const managedService = new ManagedGeneratedService({
+        database: { storage: { sync } }, audit: { record() {} }, events: { async emit() {} },
+      });
       /** @param {() => unknown | Promise<unknown>} run */
       const drive = async (run) => {
         const start = generatedCalls.length;
@@ -876,6 +903,7 @@ export async function readAuthorities({ rootDir }) {
         countWhere: (await drive(() => service.countWhere({ id: created.id }))).calls,
         update: (await drive(() => service.update(created.id, { name: 'Updated' }))).calls,
         applyManaged: (await drive(() => service.applyManaged(created.id, { status: 'closed' }))).calls,
+        createManaged: (await drive(() => managedService.createManaged({ status: 'open' }))).calls,
       };
       bundle.generatedRuntimeUsesStorage = canonical(operations) === canonical({
         create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
@@ -885,6 +913,7 @@ export async function readAuthorities({ rootDir }) {
         countWhere: [['maybeOne', 'count']],
         update: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
         applyManaged: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+        createManaged: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
       });
     } finally {
       rmSync(generatedRoot, { recursive: true, force: true });
@@ -1662,7 +1691,7 @@ export function buildFacts(bundle) {
     { id: 'spine.contract', kind: 'source', reads: ['packages/app/src/spine.js', 'packages/core/src/authorization.js'] },
     { id: 'runtime.mode', kind: 'source', reads: ['packages/core/src/runtime-mode.js'] },
     { id: 'tenant.storage', kind: 'source', reads: ['packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js'] },
-    { id: 'storage.contract', kind: 'source', reads: ['packages/core/src/storage-contract.js', 'packages/core/src/errors.js', 'packages/core/src/validation.js', 'packages/core/src/time.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js'] },
+    { id: 'storage.contract', kind: 'source', reads: ['packages/core/src/storage-contract.js', 'packages/core/src/errors.js', 'packages/core/src/validation.js', 'packages/core/src/time.js', 'packages/core/src/module-manifest.js', 'packages/core/src/module-evolution.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js'] },
     { id: 'reference.composition', kind: 'source', reads: REFERENCE_PACKAGES.map(([, path]) => path).concat(['packages/core/src/package-composition.js']) },
     { id: 'cli.rails', kind: 'source', reads: ['packages/cli/src/commands.js', ...RAILS.map(([, , path]) => path)] },
     { id: 'jtbd.portfolio', kind: 'source', reads: JTBD_PORTFOLIO_SOURCES },
