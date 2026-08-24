@@ -26,7 +26,7 @@ Generated: **2026-08-24**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **Production Spine v2 M1 SQLite storage contract**, merged by PR #119 as `cc2a1a6`. The internal closed statement seam is proved by the handwritten Company slice and selected generated Work runtime. Work remains `partial`: `packages/work/src/legacy-tasks.js` retains raw SQLite-specific compatibility reads for M2. M1 adds no PostgreSQL adapter and changes no public sync/async contract. |
+| Latest merged milestone | **Production Spine v2 M1**, merged by PR #119 as `cc2a1a6`. The authoritative milestone scope and its declared legacy-alignment limitations remain in `docs/plans/production-spine-v2-postgresql.md` and `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`; this volatile status row does not restate them as an independent truth authority. PostgreSQL remains absent. <!-- truth: spine.postgresql.implemented=absent --> |
 | Measured at | `cc2a1a6` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
 | Tests | Measured, never typed. `npm run verify` is green on a clean tree at the commit above; **how many** tests that was lives in `site/claims.json` `measuredAgainst` and in no other file (ADR-027). |
 | Smoke | `npm run smoke` green |
