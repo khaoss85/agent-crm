@@ -5,11 +5,14 @@ import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { AppError, ConflictError } from './errors.js';
+import { createSqliteStorage } from './storage-contract.js';
 
 /**
  * @typedef {{
  *   raw: DatabaseSync,
+ *   storage: ReturnType<typeof createSqliteStorage>,
  *   path: string,
+ *   plane: 'combined'|'data'|'control',
  *   close: () => void,
  *   transaction: <T>(fn: () => T) => T,
  *   transactionAsync: <T>(fn: () => Promise<T>) => Promise<T>
@@ -431,41 +434,46 @@ export function createDatabase(options = {}) {
     }
   }
 
+  const transaction = (fn) => {
+    begin();
+    try {
+      const result = fn();
+      raw.exec('COMMIT;');
+      return result;
+    } catch (error) {
+      rollbackSafely(error);
+      throw isBusyError(error)
+        ? new ConflictError('The database is busy with a concurrent write; retry the request', { transient: true })
+        : error;
+    } finally {
+      inOuterTransaction = false;
+    }
+  };
+  const transactionAsync = async (fn) => {
+    begin();
+    try {
+      const result = await fn();
+      raw.exec('COMMIT;');
+      return result;
+    } catch (error) {
+      rollbackSafely(error);
+      throw isBusyError(error)
+        ? new ConflictError('The database is busy with a concurrent write; retry the request', { transient: true })
+        : error;
+    } finally {
+      inOuterTransaction = false;
+    }
+  };
+  const storage = createSqliteStorage(raw, transaction, transactionAsync);
+
   return {
     raw,
+    storage,
     path: dbPath,
     /** Which migration plane this file received. Published so a test can pin it. */
     plane,
     close: () => raw.close(),
-    transaction: (fn) => {
-      begin();
-      try {
-        const result = fn();
-        raw.exec('COMMIT;');
-        return result;
-      } catch (error) {
-        rollbackSafely(error);
-        throw isBusyError(error)
-          ? new ConflictError('The database is busy with a concurrent write; retry the request', { transient: true })
-          : error;
-      } finally {
-        inOuterTransaction = false;
-      }
-    },
-    transactionAsync: async (fn) => {
-      begin();
-      try {
-        const result = await fn();
-        raw.exec('COMMIT;');
-        return result;
-      } catch (error) {
-        rollbackSafely(error);
-        throw isBusyError(error)
-          ? new ConflictError('The database is busy with a concurrent write; retry the request', { transient: true })
-          : error;
-      } finally {
-        inOuterTransaction = false;
-      }
-    },
+    transaction,
+    transactionAsync,
   };
 }

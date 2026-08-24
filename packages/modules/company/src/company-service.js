@@ -24,17 +24,23 @@ export class CompanyService {
       updatedAt: timestamp,
     };
 
-    this.database.raw.prepare(`
-      INSERT INTO companies(id, name, domain, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(company.id, company.name, company.domain, company.createdAt, company.updatedAt);
-
-    this.audit.record({
-      actor: context.actor,
-      action: 'company.created',
-      entityType: 'company',
-      entityId: company.id,
-      data: company,
+    this.database.storage.sync.savepoint('company_create', () => {
+      this.database.storage.sync.execute({
+        kind: 'insert', table: 'companies', values: [
+          { column: 'id', value: company.id },
+          { column: 'name', value: company.name },
+          { column: 'domain', value: company.domain },
+          { column: 'created_at', value: company.createdAt },
+          { column: 'updated_at', value: company.updatedAt },
+        ],
+      });
+      this.audit.record({
+        actor: context.actor,
+        action: 'company.created',
+        entityType: 'company',
+        entityId: company.id,
+        data: company,
+      });
     });
     await this.events.emit('company.created', company);
     return company;
@@ -42,7 +48,9 @@ export class CompanyService {
 
   /** @param {string} id */
   get(id) {
-    const row = this.database.raw.prepare('SELECT * FROM companies WHERE id = ?').get(id);
+    const row = this.database.storage.sync.maybeOne({
+      kind: 'select', table: 'companies', columns: '*', where: [{ column: 'id', op: 'eq', value: id }],
+    });
     if (!row) throw new NotFoundError('Company', id);
     return mapCompanyRow(row);
   }
@@ -50,9 +58,10 @@ export class CompanyService {
   /** @param {{limit?: number}} [filters] */
   list(filters = {}) {
     const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
-    return this.database.raw.prepare(`
-      SELECT * FROM companies ORDER BY created_at DESC LIMIT ?
-    `).all(limit).map(mapCompanyRow);
+    return this.database.storage.sync.many({
+      kind: 'select', table: 'companies', columns: '*',
+      orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
+    }).map(mapCompanyRow);
   }
 }
 

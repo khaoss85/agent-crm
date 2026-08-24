@@ -549,8 +549,6 @@ function toDbExpression(field, valueExpression) {
  */
 function serviceTemplate(manifest, names, referenceTargets = {}) {
   const entity = names.camel;
-  const columns = ['id', ...manifest.fields.map((field) => field.column), 'created_at', 'updated_at'];
-  const placeholders = columns.map(() => '?').join(', ');
   const hasReferences = manifest.fields.some((field) => field.type === 'reference');
   const managedFields = manifest.fields.filter((field) => field.writable === 'managed');
   const publicFields = manifest.fields.filter((field) => field.writable !== 'managed');
@@ -580,14 +578,12 @@ function serviceTemplate(manifest, names, referenceTargets = {}) {
       return `      ${field.name}: ${valueExpr(field, `input.${field.name}`)},`;
     })
     .join('\n');
-  const insertValues = [
-    `      ${entity}.id,`,
-    ...manifest.fields.map(
-      (field) => `      ${toDbExpression(field, `${entity}.${field.name}`)},`,
-    ),
-    `      ${entity}.createdAt,`,
-    `      ${entity}.updatedAt,`,
-  ].join('\n');
+  const insertEntries = [
+    `{ column: 'id', value: ${entity}.id }`,
+    ...manifest.fields.map((field) => `{ column: '${field.column}', value: ${toDbExpression(field, `${entity}.${field.name}`)} }`),
+    `{ column: 'created_at', value: ${entity}.createdAt }`,
+    `{ column: 'updated_at', value: ${entity}.updatedAt }`,
+  ].join(',\n          ');
 
   // Public update only touches public fields; managed fields go through applyManaged.
   const updateBranches = publicFields
@@ -595,8 +591,7 @@ function serviceTemplate(manifest, names, referenceTargets = {}) {
       [
         `    if (Object.hasOwn(input, '${field.name}')) {`,
         `      const value = ${valueExpr(field, `input.${field.name}`)};`,
-        `      assignments.push('${field.column} = ?');`,
-        `      params.push(${toDbExpression(field, 'value')});`,
+        `      assignments.push({ column: '${field.column}', value: ${toDbExpression(field, 'value')} });`,
         `      changes.${field.name} = value;`,
         '    }',
       ].join('\n'),
@@ -618,8 +613,7 @@ function serviceTemplate(manifest, names, referenceTargets = {}) {
       return [
         `      if (Object.hasOwn(patch, '${field.name}')) {`,
         valueLine,
-        `        assignments.push('${field.column} = ?');`,
-        `        params.push(${toDbExpression(field, 'value')});`,
+        `        assignments.push({ column: '${field.column}', value: ${toDbExpression(field, 'value')} });`,
         `        changes.${field.name} = value;`,
         '      }',
       ].join('\n');
@@ -682,14 +676,9 @@ ${hasReferences ? `
    * @param {() => T} fn
    */
   #mutation(fn) {
-    this.database.raw.exec("SAVEPOINT ${sanitizeSavepoint(manifest.name)}_mutation;");
     try {
-      const result = fn();
-      this.database.raw.exec("RELEASE SAVEPOINT ${sanitizeSavepoint(manifest.name)}_mutation;");
-      return result;
+      return this.database.storage.sync.savepoint('${sanitizeSavepoint(manifest.name)}_mutation', fn);
     } catch (error) {
-      this.database.raw.exec("ROLLBACK TO SAVEPOINT ${sanitizeSavepoint(manifest.name)}_mutation;");
-      this.database.raw.exec("RELEASE SAVEPOINT ${sanitizeSavepoint(manifest.name)}_mutation;");
       if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
         throw new ConflictError('${conflictMessage}');
       }
@@ -725,12 +714,11 @@ ${managedFields
   .join('\n')}
 
     this.#mutation(() => {
-      this.database.raw.prepare(\`
-        INSERT INTO ${manifest.table}(${columns.join(', ')})
-        VALUES (${placeholders})
-      \`).run(
-${insertValues}
-      );
+      this.database.storage.sync.execute({
+        kind: 'insert', table: '${manifest.table}', values: [
+          ${insertEntries}
+        ],
+      });
       this.audit.record({
         actor: context.actor,
         action: '${manifest.name}.created',
@@ -753,12 +741,11 @@ ${createAssignments}
     };
 
     this.#mutation(() => {
-      this.database.raw.prepare(\`
-        INSERT INTO ${manifest.table}(${columns.join(', ')})
-        VALUES (${placeholders})
-      \`).run(
-${insertValues}
-      );
+      this.database.storage.sync.execute({
+        kind: 'insert', table: '${manifest.table}', values: [
+          ${insertEntries}
+        ],
+      });
       this.audit.record({
         actor: context.actor,
         action: '${manifest.name}.created',
@@ -773,7 +760,10 @@ ${insertValues}
 `}
   /** @param {string} id */
   get(id) {
-    const row = this.database.raw.prepare('SELECT * FROM ${manifest.table} WHERE id = ?').get(id);
+    const row = this.database.storage.sync.maybeOne({
+      kind: 'select', table: '${manifest.table}', columns: '*',
+      where: [{ column: 'id', op: 'eq', value: id }],
+    });
     if (!row) throw new NotFoundError('${names.pascal}', id);
     return map${names.pascal}Row(row);
   }
@@ -790,9 +780,10 @@ ${insertValues}
     // still a bounded DISPLAY read, so the ordering and the 1..500 bound are
     // unchanged and a correctness decision still belongs to listWhere.
     const where = this.#where(filters.where ?? {});
-    return this.database.raw.prepare(\`
-      SELECT * FROM ${manifest.table}\${where.clause} ORDER BY created_at DESC, id LIMIT ?
-    \`).all(...where.params, limit).map(map${names.pascal}Row);
+    return this.database.storage.sync.many({
+      kind: 'select', table: '${manifest.table}', columns: '*', where,
+      orderBy: [{ column: 'created_at', direction: 'desc' }, { column: 'id', direction: 'asc' }], limit,
+    }).map(map${names.pascal}Row);
   }
 
   // Exact-match correctness queries (ADR-015): unlike the paged list(), these
@@ -802,66 +793,60 @@ ${insertValues}
   /** @param {Record<string, unknown>} [filters] */
   listWhere(filters = {}) {
     const where = this.#where(filters);
-    return this.database.raw.prepare(\`
-      SELECT * FROM ${manifest.table}\${where.clause} ORDER BY created_at DESC, id
-    \`).all(...where.params).map(map${names.pascal}Row);
+    return this.database.storage.sync.many({
+      kind: 'select', table: '${manifest.table}', columns: '*', where,
+      orderBy: [{ column: 'created_at', direction: 'desc' }, { column: 'id', direction: 'asc' }],
+    }).map(map${names.pascal}Row);
   }
 
   /** @param {Record<string, unknown>} [filters] */
   countWhere(filters = {}) {
     const where = this.#where(filters);
-    return Number(this.database.raw.prepare(\`
-      SELECT COUNT(*) AS n FROM ${manifest.table}\${where.clause}
-    \`).get(...where.params).n);
+    return Number(this.database.storage.sync.maybeOne({
+      kind: 'count', table: '${manifest.table}', where,
+    }).n);
   }
 
   /** @param {Record<string, unknown>} filters */
   #where(filters) {
     const columns = ${JSON.stringify(Object.fromEntries([['id', 'id'], ...manifest.fields.filter((field) => field.type !== 'reference' || true).map((field) => [field.name, field.column])]))};
     /** @type {string[]} */
-    const clauses = [];
-    /** @type {unknown[]} */
-    const params = [];
+    const predicates = [];
     for (const [field, value] of Object.entries(filters ?? {})) {
       if (!Object.hasOwn(columns, field)) {
         throw new ValidationError('Unknown filter field: ' + field, { field });
       }
       const column = columns[/** @type {keyof typeof columns} */ (field)];
       if (value === null) {
-        clauses.push(column + ' IS NULL');
+        predicates.push({ column, op: 'is-null' });
       } else if (Array.isArray(value)) {
         if (value.length === 0) throw new ValidationError('Filter array for ' + field + ' must not be empty', { field });
-        clauses.push(column + ' IN (' + value.map(() => '?').join(', ') + ')');
-        params.push(...value.map((item) => (typeof item === 'boolean' ? (item ? 1 : 0) : item)));
+        predicates.push({ column, op: 'in', values: value.map((item) => (typeof item === 'boolean' ? (item ? 1 : 0) : item)) });
       } else {
-        clauses.push(column + ' = ?');
-        params.push(typeof value === 'boolean' ? (value ? 1 : 0) : value);
+        predicates.push({ column, op: 'eq', value: typeof value === 'boolean' ? (value ? 1 : 0) : value });
       }
     }
-    return { clause: clauses.length ? ' WHERE ' + clauses.join(' AND ') : '', params };
+    return predicates;
   }
 
 ${isReadOnly ? `` : `  /** @param {string} id @param {Record<string, unknown>} input @param {{actor?: unknown}} [context] */
   async update(id, input, context = {}) {
 ${hasManaged ? `    this.#rejectManagedInput(input);\n` : ''}    this.get(id);
-    /** @type {string[]} */
+    /** @type {Array<{column: string, value: unknown}>} */
     const assignments = [];
-    /** @type {unknown[]} */
-    const params = [];
     /** @type {Record<string, unknown>} */
     const changes = {};
 
 ${updateBranches}
 
     if (!assignments.length) return this.get(id);
-    assignments.push('updated_at = ?');
-    params.push(nowIso());
-    params.push(id);
+    assignments.push({ column: 'updated_at', value: nowIso() });
 
     const updated = this.#mutation(() => {
-      this.database.raw.prepare(
-        \`UPDATE ${manifest.table} SET \${assignments.join(', ')} WHERE id = ?\`,
-      ).run(...params);
+      this.database.storage.sync.execute({
+        kind: 'update', table: '${manifest.table}', values: assignments,
+        where: [{ column: 'id', op: 'eq', value: id }],
+      });
       const current = this.get(id);
       this.audit.record({
         actor: context.actor,
@@ -890,24 +875,21 @@ ${updateBranches}
   /** @param {string} id @param {Record<string, unknown>} patch @param {{actor?: unknown}} [context] */
   async applyManaged(id, patch, context = {}) {
     this.get(id);
-    /** @type {string[]} */
+    /** @type {Array<{column: string, value: unknown}>} */
     const assignments = [];
-    /** @type {unknown[]} */
-    const params = [];
     /** @type {Record<string, unknown>} */
     const changes = {};
 
 ${managedBranches}
 
     if (!assignments.length) return this.get(id);
-    assignments.push('updated_at = ?');
-    params.push(nowIso());
-    params.push(id);
+    assignments.push({ column: 'updated_at', value: nowIso() });
 
     const updated = this.#mutation(() => {
-      this.database.raw.prepare(
-        \`UPDATE ${manifest.table} SET \${assignments.join(', ')} WHERE id = ?\`,
-      ).run(...params);
+      this.database.storage.sync.execute({
+        kind: 'update', table: '${manifest.table}', values: assignments,
+        where: [{ column: 'id', op: 'eq', value: id }],
+      });
       const current = this.get(id);
       this.audit.record({
         actor: context.actor,

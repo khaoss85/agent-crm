@@ -25,42 +25,35 @@ export class AuditLog {
       data: event.data ?? {},
       createdAt: nowIso(),
     };
-    this.database.raw.prepare(`
-      INSERT INTO audit_events(
-        id, actor_type, actor_id, action, entity_type, entity_id, data_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      item.id,
-      item.actorType,
-      item.actorId,
-      item.action,
-      item.entityType,
-      item.entityId,
-      JSON.stringify(item.data),
-      item.createdAt,
-    );
+    this.database.storage.sync.execute({
+      kind: 'insert', table: 'audit_events', values: [
+        { column: 'id', value: item.id },
+        { column: 'actor_type', value: item.actorType },
+        { column: 'actor_id', value: item.actorId },
+        { column: 'action', value: item.action },
+        { column: 'entity_type', value: item.entityType },
+        { column: 'entity_id', value: item.entityId },
+        { column: 'data_json', value: JSON.stringify(item.data) },
+        { column: 'created_at', value: item.createdAt },
+      ],
+    });
     return item;
   }
 
   /** @param {{limit?: number, entityType?: string, entityId?: string}} [filters] */
   list(filters = {}) {
-    const clauses = [];
-    const params = [];
+    const where = [];
     if (filters.entityType) {
-      clauses.push('entity_type = ?');
-      params.push(filters.entityType);
+      where.push({ column: 'entity_type', op: 'eq', value: filters.entityType });
     }
     if (filters.entityId) {
-      clauses.push('entity_id = ?');
-      params.push(filters.entityId);
+      where.push({ column: 'entity_id', op: 'eq', value: filters.entityId });
     }
-    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
-    const rows = this.database.raw.prepare(`
-      SELECT * FROM audit_events ${where}
-      ORDER BY created_at DESC
-      LIMIT ?
-    `).all(...params, limit);
+    const rows = this.database.storage.sync.many({
+      kind: 'select', table: 'audit_events', columns: '*', where,
+      orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
+    });
     return rows.map(mapAuditRow);
   }
 }
