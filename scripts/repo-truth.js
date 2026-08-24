@@ -187,6 +187,9 @@ export const AUTHORITY_SOURCES = Object.freeze([
   'packages/core/src/tenant-storage.js',
   'packages/core/src/tenant-binding.js',
   'packages/core/src/storage-contract.js',
+  'packages/core/src/errors.js',
+  'packages/core/src/validation.js',
+  'packages/core/src/time.js',
   'packages/modules/company/src/company-service.js',
   'packages/cli/src/module-factory.js',
   'packages/work/src/legacy-tasks.js',
@@ -857,17 +860,32 @@ export async function readAuthorities({ rootDir }) {
       const service = new GeneratedService({
         database: { storage: { sync } }, audit: { record() {} }, events: { async emit() {} },
       });
-      const created = await service.create({ name: 'Probe' });
-      service.get(created.id);
-      service.list();
-      service.listWhere({ id: created.id });
-      service.countWhere({ id: created.id });
-      await service.update(created.id, { name: 'Updated' });
-      await service.applyManaged(created.id, { status: 'closed' });
-      const observed = new Set(generatedCalls.map(([method, kind]) => `${method}:${kind}`));
-      bundle.generatedRuntimeUsesStorage = [
-        'execute:insert', 'execute:update', 'maybeOne:select', 'maybeOne:count', 'many:select',
-      ].every((entry) => observed.has(entry)) && generatedCalls.filter(([method]) => method === 'savepoint').length >= 3;
+      /** @param {() => unknown | Promise<unknown>} run */
+      const drive = async (run) => {
+        const start = generatedCalls.length;
+        const result = await run();
+        return { result, calls: generatedCalls.slice(start) };
+      };
+      const create = await drive(() => service.create({ name: 'Probe' }));
+      const created = create.result;
+      const operations = {
+        create: create.calls,
+        get: (await drive(() => service.get(created.id))).calls,
+        list: (await drive(() => service.list())).calls,
+        listWhere: (await drive(() => service.listWhere({ id: created.id }))).calls,
+        countWhere: (await drive(() => service.countWhere({ id: created.id }))).calls,
+        update: (await drive(() => service.update(created.id, { name: 'Updated' }))).calls,
+        applyManaged: (await drive(() => service.applyManaged(created.id, { status: 'closed' }))).calls,
+      };
+      bundle.generatedRuntimeUsesStorage = canonical(operations) === canonical({
+        create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+        get: [['maybeOne', 'select']],
+        list: [['many', 'select']],
+        listWhere: [['many', 'select']],
+        countWhere: [['maybeOne', 'count']],
+        update: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+        applyManaged: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+      });
     } finally {
       rmSync(generatedRoot, { recursive: true, force: true });
     }
@@ -1644,7 +1662,7 @@ export function buildFacts(bundle) {
     { id: 'spine.contract', kind: 'source', reads: ['packages/app/src/spine.js', 'packages/core/src/authorization.js'] },
     { id: 'runtime.mode', kind: 'source', reads: ['packages/core/src/runtime-mode.js'] },
     { id: 'tenant.storage', kind: 'source', reads: ['packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js'] },
-    { id: 'storage.contract', kind: 'source', reads: ['packages/core/src/storage-contract.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js'] },
+    { id: 'storage.contract', kind: 'source', reads: ['packages/core/src/storage-contract.js', 'packages/core/src/errors.js', 'packages/core/src/validation.js', 'packages/core/src/time.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js'] },
     { id: 'reference.composition', kind: 'source', reads: REFERENCE_PACKAGES.map(([, path]) => path).concat(['packages/core/src/package-composition.js']) },
     { id: 'cli.rails', kind: 'source', reads: ['packages/cli/src/commands.js', ...RAILS.map(([, , path]) => path)] },
     { id: 'jtbd.portfolio', kind: 'source', reads: JTBD_PORTFOLIO_SOURCES },
