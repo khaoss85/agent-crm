@@ -25,16 +25,20 @@ function identifier(value, label) {
   return `"${value}"`;
 }
 
-function closed(value, allowed, label) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) refuse(`${label} must be an object`);
+function closed(value, allowed, label, required = []) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+    refuse(`${label} must be a plain object`);
+  }
   const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
   if (unknown.length) refuse(`Unsupported ${label} field`, { field: unknown[0] });
+  const missing = required.find((key) => !Object.hasOwn(value, key));
+  if (missing) refuse(`${label} requires own field`, { field: missing });
 }
 
 function values(entries, label) {
   if (!Array.isArray(entries) || entries.length === 0) refuse(`${label} requires values`);
   const bound = entries.map((entry) => {
-    closed(entry, ['column', 'value'], `${label} value`);
+    closed(entry, ['column', 'value'], `${label} value`, ['column', 'value']);
     return { column: identifier(entry.column, `${label} column`), value: entry.value };
   });
   if (new Set(bound.map((entry) => entry.column)).size !== bound.length) refuse(`${label} columns must be unique`);
@@ -45,19 +49,18 @@ function predicates(where = []) {
   if (!Array.isArray(where)) refuse('Storage where must be an array');
   const params = [];
   const sql = where.map((entry) => {
-    closed(entry, ['column', 'op', 'value', 'values'], 'storage predicate');
+    closed(entry, ['column', 'op', 'value', 'values'], 'storage predicate', ['column', 'op']);
     if (entry.op === 'eq') {
-      closed(entry, ['column', 'op', 'value'], 'equality predicate');
-      if (!Object.hasOwn(entry, 'value')) refuse('Equality predicate requires value');
+      closed(entry, ['column', 'op', 'value'], 'equality predicate', ['column', 'op', 'value']);
       const column = identifier(entry.column, 'predicate column');
       params.push(entry.value); return `${column} = ?`;
     }
     if (entry.op === 'is-null') {
-      closed(entry, ['column', 'op'], 'null predicate');
+      closed(entry, ['column', 'op'], 'null predicate', ['column', 'op']);
       return `${identifier(entry.column, 'predicate column')} IS NULL`;
     }
     if (entry.op === 'in' && Array.isArray(entry.values) && entry.values.length > 0) {
-      closed(entry, ['column', 'op', 'values'], 'membership predicate');
+      closed(entry, ['column', 'op', 'values'], 'membership predicate', ['column', 'op', 'values']);
       const column = identifier(entry.column, 'predicate column');
       params.push(...entry.values);
       return `${column} IN (${entry.values.map(() => '?').join(', ')})`;
@@ -69,12 +72,12 @@ function predicates(where = []) {
 
 /** Render the closed M1 statement vocabulary for the SQLite adapter. */
 export function renderSqliteStatement(statement) {
-  if (!statement || typeof statement !== 'object' || typeof statement.kind !== 'string') {
+  if (!statement || typeof statement !== 'object' || !Object.hasOwn(statement, 'kind') || typeof statement.kind !== 'string') {
     refuse('Storage statement must be a structured object');
   }
   const table = identifier(statement.table, 'table');
   if (statement.kind === 'insert') {
-    closed(statement, ['kind', 'table', 'values'], 'insert statement');
+    closed(statement, ['kind', 'table', 'values'], 'insert statement', ['kind', 'table', 'values']);
     const bound = values(statement.values, 'Insert');
     const columns = bound.map((entry) => entry.column);
     return {
@@ -85,7 +88,8 @@ export function renderSqliteStatement(statement) {
   if (statement.kind === 'select' || statement.kind === 'count') {
     closed(statement, statement.kind === 'count'
       ? ['kind', 'table', 'where']
-      : ['kind', 'table', 'columns', 'where', 'orderBy', 'limit'], `${statement.kind} statement`);
+      : ['kind', 'table', 'columns', 'where', 'orderBy', 'limit'], `${statement.kind} statement`,
+      statement.kind === 'count' ? ['kind', 'table'] : ['kind', 'table', 'columns']);
     const where = predicates(statement.where);
     const selection = statement.kind === 'count'
       ? 'COUNT(*) AS "n"'
@@ -98,7 +102,7 @@ export function renderSqliteStatement(statement) {
     if (statement.kind === 'select' && statement.orderBy !== undefined) {
       if (!Array.isArray(statement.orderBy)) refuse('Storage orderBy must be an array');
       const order = statement.orderBy.map((entry) => {
-        closed(entry, ['column', 'direction'], 'storage order');
+        closed(entry, ['column', 'direction'], 'storage order', ['column']);
         const direction = entry.direction ?? 'asc';
         if (direction !== 'asc' && direction !== 'desc') refuse('Unsupported storage order direction');
         return `${identifier(entry.column, 'order column')} ${direction.toUpperCase()}`;
@@ -113,7 +117,7 @@ export function renderSqliteStatement(statement) {
     return { sql, params };
   }
   if (statement.kind === 'update') {
-    closed(statement, ['kind', 'table', 'values', 'where'], 'update statement');
+    closed(statement, ['kind', 'table', 'values', 'where'], 'update statement', ['kind', 'table', 'values', 'where']);
     const bound = values(statement.values, 'Update');
     const where = predicates(statement.where);
     if (!where.sql) refuse('Update requires a predicate');
@@ -135,7 +139,9 @@ export function createSqliteStorage(raw, transaction, transactionAsync) {
   const sync = Object.freeze({
     execute(statement) {
       requireMethodKind('execute', statement, WRITE_KINDS);
-      const query = prepared(statement); return query.prepared.run(...query.params);
+      const query = prepared(statement);
+      const result = query.prepared.run(...query.params);
+      return Object.freeze({ affectedRows: Number(result.changes) });
     },
     maybeOne(statement) {
       requireMethodKind('maybeOne', statement, READ_KINDS);

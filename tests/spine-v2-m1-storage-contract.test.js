@@ -31,6 +31,16 @@ test('M1 renders only its closed statement vocabulary with ordered bindings', ()
   ]) {
     assert.throws(() => renderSqliteStatement(statement), (error) => error?.code === 'STORAGE_STATEMENT_UNSUPPORTED');
   }
+  const inheritedStatement = Object.create({ kind: 'insert', table: 'companies', values: [] });
+  const inheritedValue = Object.assign(Object.create({ column: 'id', value: 'polluted' }), {});
+  assert.throws(() => renderSqliteStatement(inheritedStatement), (error) => error?.code === 'STORAGE_STATEMENT_UNSUPPORTED');
+  assert.throws(() => renderSqliteStatement({
+    kind: 'insert', table: 'companies', values: [inheritedValue],
+  }), (error) => error?.code === 'STORAGE_STATEMENT_UNSUPPORTED');
+  assert.throws(() => renderSqliteStatement({
+    kind: 'update', table: 'companies', values: [{ column: 'name', value: 'Wrong' }],
+    where: [Object.create({ column: 'domain', op: 'is-null' })],
+  }), (error) => error?.code === 'STORAGE_STATEMENT_UNSUPPORTED');
 });
 
 test('M1 SQLite adapter exposes async writes, synchronous compatibility reads and rollback', async () => {
@@ -79,7 +89,7 @@ test('M1 refuses every read/write method mismatch before SQLite executes it', as
     where: [{ column: 'id', op: 'eq', value: 'kept' }],
   });
   try {
-    database.storage.sync.execute(row('kept', 'Kept'));
+    assert.deepEqual(database.storage.sync.execute(row('kept', 'Kept')), { affectedRows: 1 });
 
     mismatch(() => database.storage.sync.maybeOne(row('maybe-insert', 'Wrong')));
     mismatch(() => database.storage.sync.many(row('many-insert', 'Wrong')));
@@ -101,7 +111,7 @@ test('M1 refuses every read/write method mismatch before SQLite executes it', as
     assert.equal(database.storage.sync.maybeOne(count).n, 1);
     assert.deepEqual(database.storage.sync.many(count).map(({ n }) => ({ n })), [{ n: 1 }]);
 
-    database.storage.sync.execute(update('Updated'));
+    assert.deepEqual(database.storage.sync.execute(update('Updated')), { affectedRows: 1 });
     assert.equal(database.storage.sync.maybeOne({
       kind: 'select', table: 'companies', columns: ['name'],
       where: [{ column: 'id', op: 'eq', value: 'kept' }],
