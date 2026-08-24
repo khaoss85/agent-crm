@@ -64,6 +64,10 @@ const targets = [
     note: '390px mobile home — hero, Flow and tap affordance',
   },
   {
+    name: 'home-wide.png', file: 'index.html', width: 1920, height: 1080, scale: 1,
+    note: 'Wide desktop home — continuous full-width marquee coverage',
+  },
+  {
     name: 'home-reduced-motion.png', file: 'index.html', width: 1270, height: 1100, scale: 1,
     args: ['--force-prefers-reduced-motion'],
     note: 'Home with reduced motion — complete static Flow story',
@@ -72,6 +76,7 @@ const targets = [
     ['product', 'product.html'],
     ['solutions', 'solutions.html'],
     ['custom-crm', 'solution-custom-crm.html'],
+    ['revenue-operations', 'solution-revenue-operations.html'],
     ['commercial-operations', 'solution-commercial-operations.html'],
     ['service-operations', 'solution-service-operations.html'],
     ['how-it-works', 'how-it-works.html'],

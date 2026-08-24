@@ -69,6 +69,7 @@ Make the repository-controlled public site feel distinctive, alive and product-l
 - 2026-08-24: Implemented the semantic palette, responsive Flow hero, discount authority sequence, ambient rail, scenario flows, proof gate, editorial rhythm and affordance contract without JavaScript or dependencies.
 - 2026-08-24: Added focused semantic/affordance/reduced-motion tests and expanded browser receipts to fifteen frames across the requested journeys, mobile and reduced motion; visually inspected Home desktop/mobile, Commercial Operations and Product Proof in detail and the complete generated matrix for successful rendering.
 - 2026-08-24: `gtm:check`, repository truth, llms generation, focused site/SEO tests and screenshot generation pass. Full verification was retried under an on-demand Node 22 runtime; syntax and the running suite remained green through the emitted checks, but the repository-wide process did not terminate within the available validation window and was stopped rather than reported as a pass.
+- 2026-08-24: Final review refinement closed three confirmed defects: the marquee now repeats two complete equal-width sequences and translates exactly one half; semantic state labels use dedicated AA foreground tokens; and Revenue Operations plus a 1920px home receipt join the Chromium matrix. Focused tests now prove the sequence equality, exact translation and light-theme contrast pairs.
 
 ## Decision log
 

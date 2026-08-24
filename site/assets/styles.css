@@ -847,6 +847,11 @@ tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, transparent
   --pending-soft: #fff3bd;
   --data: #20b8d8;
   --data-soft: #dff8fd;
+  --flow-ink: #176b2a;
+  --agent-ink: #4c2fc5;
+  --human-ink: #9b292d;
+  --pending-ink: #665000;
+  --data-ink: #00677a;
   --display: "Arial Rounded MT Bold", "Avenir Next", Avenir, var(--sans);
   --shadow: 0 22px 60px rgba(23, 25, 18, .09);
 }
@@ -857,6 +862,8 @@ tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, transparent
     --line: #34382e; --accent: #58e36d; --accent-soft: #17351d;
     --agent: #9a88ff; --agent-soft: #292342; --human: #ff8580; --human-soft: #402321;
     --pending: #f2cd5d; --pending-soft: #3a3219; --data: #54cee7; --data-soft: #17343a;
+    --flow-ink: #8cf39a; --agent-ink: #c8bcff; --human-ink: #ffb5b0;
+    --pending-ink: #ffe080; --data-ink: #9eeafa;
   }
 }
 
@@ -876,7 +883,7 @@ h1 em, h2 em { color: var(--agent); font-style: normal; }
 .flow-hero > :not(.approval-demo) { grid-column: 1; }
 .flow-hero .approval-demo { grid-column: 2; grid-row: 1 / 6; }
 .flow-hero h1 { font-size: clamp(3.6rem, 5.5vw, 6.2rem); }
-.eyebrow, .kicker { font-family: var(--mono); letter-spacing: .11em; }
+.eyebrow, .kicker { font-family: var(--mono); letter-spacing: .11em; color: var(--flow-ink); }
 
 .button { border-radius: 999px; transition: transform .16s ease, box-shadow .16s ease, background .16s ease; }
 .button:hover { transform: translateY(-3px); box-shadow: 0 8px 0 color-mix(in srgb, var(--ink) 18%, transparent); }
@@ -901,17 +908,18 @@ h1 em, h2 em { color: var(--agent); font-style: normal; }
 .approval-flow li:nth-child(4) { animation-delay: 1.65s; }
 .approval-flow strong { align-self: start; font: 850 clamp(1.05rem, 1.5vw, 1.4rem)/1 var(--display); text-transform: uppercase; }
 .approval-flow small { grid-column: 1 / -1; color: var(--muted); }
-.state-agent { color: var(--agent); background: var(--agent-soft) !important; }
-.state-policy { color: color-mix(in srgb, var(--pending) 70%, var(--ink)); background: var(--pending-soft) !important; }
-.state-human { color: color-mix(in srgb, var(--human) 82%, var(--ink)); background: var(--human-soft) !important; }
-.state-evidence { color: color-mix(in srgb, var(--data) 75%, var(--ink)); background: var(--data-soft) !important; }
+.state-agent { color: var(--agent-ink); background: var(--agent-soft) !important; }
+.state-policy { color: var(--pending-ink); background: var(--pending-soft) !important; }
+.state-human { color: var(--human-ink); background: var(--human-soft) !important; }
+.state-evidence { color: var(--data-ink); background: var(--data-soft) !important; }
 @keyframes flow-arrive { to { opacity: 1; transform: none; } }
 
 .flow-marquee { overflow: hidden; padding: 13px 0; border-block: 2px solid var(--ink); background: var(--accent); color: #10120e; }
-.flow-marquee > div { display: flex; width: max-content; gap: 34px; animation: flow-rail 28s linear infinite; }
+.flow-marquee-track { display: flex; width: max-content; animation: flow-rail 28s linear infinite; }
+.flow-marquee-set { display: flex; flex: none; justify-content: space-around; gap: 34px; min-width: 100vw; padding-inline: 17px; }
 .flow-marquee span { display: inline-flex; align-items: center; gap: 34px; font: 850 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; white-space: nowrap; }
 .flow-marquee span::after { content: '→'; }
-@keyframes flow-rail { to { transform: translateX(-40%); } }
+@keyframes flow-rail { to { transform: translateX(-50%); } }
 
 main > .shell > section { position: relative; padding-block: clamp(72px, 10vw, 132px); }
 main > .shell:nth-of-type(even) > section::before { content: ''; position: absolute; inset: 12% -4vw; z-index: -1; border-radius: 48px; background: color-mix(in srgb, var(--surface) 70%, transparent); }
@@ -971,6 +979,6 @@ main > .shell:nth-of-type(even) > section::before { content: ''; position: absol
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   .approval-flow li { opacity: 1; transform: none; }
-  .flow-marquee > div { transform: none; }
+  .flow-marquee-track { transform: none; }
   .button:hover, .solution-grid a:hover, .resource-grid a:hover { transform: none; }
 }
