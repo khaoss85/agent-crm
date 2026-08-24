@@ -833,6 +833,7 @@ export async function readAuthorities({ rootDir }) {
           manifestVersion: 1, name: 'truth-storage-probe',
           fields: [
             { name: 'name', type: 'string', required: true },
+            { name: 'note', type: 'string', required: false },
             { name: 'status', type: 'enum', values: ['open', 'closed'], writable: 'managed', default: 'open' },
           ],
         },
@@ -919,22 +920,30 @@ export async function readAuthorities({ rootDir }) {
           const result = await run();
           return { result, calls: generatedCalls.slice(start) };
         };
-        const create = await drive(() => service.create({ name: 'Probe' }));
+        const create = await drive(() => service.create({ name: 'Probe', note: null }));
         const created = create.result;
+        const listWithMembership = await drive(() => service.list({ where: { status: ['open'] } }));
+        const listWhereNull = await drive(() => service.listWhere({ note: null }));
+        const countWhereMembership = await drive(() => service.countWhere({ status: ['open'] }));
         const operations = {
           create: create.calls,
           get: (await drive(() => service.get(created.id))).calls,
           list: (await drive(() => service.list())).calls,
-          listWithMembership: (await drive(() => service.list({ where: { status: ['open'] } }))).calls,
+          listWithMembership: listWithMembership.calls,
           listWhere: (await drive(() => service.listWhere({ id: created.id }))).calls,
-          listWhereNull: (await drive(() => service.listWhere({ name: null }))).calls,
+          listWhereNull: listWhereNull.calls,
           countWhere: (await drive(() => service.countWhere({ id: created.id }))).calls,
-          countWhereMembership: (await drive(() => service.countWhere({ status: ['open'] }))).calls,
+          countWhereMembership: countWhereMembership.calls,
           update: (await drive(() => service.update(created.id, { name: 'Updated' }))).calls,
           applyManaged: (await drive(() => service.applyManaged(created.id, { status: 'closed' }))).calls,
           createManaged: (await drive(() => managedService.createManaged({ status: 'open' }))).calls,
         };
-        bundle.generatedRuntimeUsesStorage = canonical(operations) === canonical({
+        const predicateResultsValid = listWithMembership.result.length === 1
+          && listWithMembership.result[0].id === created.id
+          && listWhereNull.result.length === 1
+          && listWhereNull.result[0].id === created.id
+          && countWhereMembership.result === 1;
+        bundle.generatedRuntimeUsesStorage = predicateResultsValid && canonical(operations) === canonical({
           create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
           get: [['maybeOne', 'select']],
           list: [['many', 'select']],
