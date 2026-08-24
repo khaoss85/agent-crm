@@ -849,6 +849,9 @@ export async function readAuthorities({ rootDir }) {
         return /\/src\/[^/]+-service\.js$/.test(normalized);
       });
       if (!managedServiceFile) throw new Error('generated managed-storage probe did not produce a service artifact');
+      const migrationFile = generatedPlan.files.find((file) => /migration\.js$/.test(file.path));
+      const managedMigrationFile = managedPlan.files.find((file) => /migration\.js$/.test(file.path));
+      if (!migrationFile || !managedMigrationFile) throw new Error('generated storage probe did not produce migration artifacts');
       writeFileSync(join(generatedRoot, 'package.json'), '{"type":"module"}\n');
       for (const source of ['errors.js', 'validation.js', 'time.js']) {
         const target = join(generatedRoot, 'packages/core/src', source);
@@ -861,8 +864,14 @@ export async function readAuthorities({ rootDir }) {
       const managedGeneratedPath = join(generatedRoot, ...managedServiceFile.path.split(/[\\/]/));
       mkdirSync(dirname(managedGeneratedPath), { recursive: true });
       writeFileSync(managedGeneratedPath, managedServiceFile.content);
+      const migrationPath = join(generatedRoot, ...migrationFile.path.split(/[\\/]/));
+      const managedMigrationPath = join(generatedRoot, ...managedMigrationFile.path.split(/[\\/]/));
+      writeFileSync(migrationPath, migrationFile.content);
+      writeFileSync(managedMigrationPath, managedMigrationFile.content);
       const generatedModule = await import(`${pathToFileURL(generatedPath).href}?truth-probe=1`);
       const managedGeneratedModule = await import(`${pathToFileURL(managedGeneratedPath).href}?truth-probe=1`);
+      const migrationModule = await import(`${pathToFileURL(migrationPath).href}?truth-probe=1`);
+      const managedMigrationModule = await import(`${pathToFileURL(managedMigrationPath).href}?truth-probe=1`);
       const GeneratedService = Object.values(generatedModule).find(
         (value) => typeof value === 'function' && /Service$/.test(value.name),
       );
@@ -872,62 +881,63 @@ export async function readAuthorities({ rootDir }) {
       if (!GeneratedService) throw new Error('generated storage probe service export is unavailable');
       if (!ManagedGeneratedService) throw new Error('generated managed-storage probe service export is unavailable');
       const generatedCalls = [];
-      let generatedRow = null;
-      const sync = {
-        savepoint(name, fn) { generatedCalls.push(['savepoint', name]); return fn(); },
-        execute(statement) {
-          storageContract.renderSqliteStatement(statement);
-          generatedCalls.push(['execute', statement.kind]);
-          if (statement.kind === 'insert') generatedRow = Object.fromEntries(statement.values.map((entry) => [entry.column, entry.value]));
-          if (statement.kind === 'update' && generatedRow) {
-            for (const entry of statement.values) generatedRow[entry.column] = entry.value;
-          }
-        },
-        maybeOne(statement) {
-          storageContract.renderSqliteStatement(statement);
-          generatedCalls.push(['maybeOne', statement.kind]);
-          return statement.kind === 'count' ? { n: generatedRow ? 1 : 0 } : generatedRow;
-        },
-        many(statement) {
-          storageContract.renderSqliteStatement(statement);
-          generatedCalls.push(['many', statement.kind]);
-          return generatedRow ? [generatedRow] : [];
-        },
-      };
-      const service = new GeneratedService({
-        database: { storage: { sync } }, audit: { record() {} }, events: { async emit() {} },
+      const migration = Object.values(migrationModule).find((value) => Array.isArray(value))?.[0];
+      const managedMigration = Object.values(managedMigrationModule).find((value) => Array.isArray(value))?.[0];
+      if (!migration?.sql || !managedMigration?.sql) throw new Error('generated storage migration exports are unavailable');
+      const { DatabaseSync } = await import('node:sqlite');
+      const raw = new DatabaseSync(':memory:');
+      const managedRaw = new DatabaseSync(':memory:');
+      raw.exec(migration.sql);
+      managedRaw.exec(managedMigration.sql);
+      const realSync = storageContract.createSqliteStorage(raw, (fn) => fn(), async (fn) => fn()).sync;
+      const managedRealSync = storageContract.createSqliteStorage(managedRaw, (fn) => fn(), async (fn) => fn()).sync;
+      const tracked = (actual) => ({
+        savepoint(name, fn) { generatedCalls.push(['savepoint', name]); return actual.savepoint(name, fn); },
+        execute(statement) { generatedCalls.push(['execute', statement.kind]); return actual.execute(statement); },
+        maybeOne(statement) { generatedCalls.push(['maybeOne', statement.kind]); return actual.maybeOne(statement); },
+        many(statement) { generatedCalls.push(['many', statement.kind]); return actual.many(statement); },
       });
-      const managedService = new ManagedGeneratedService({
-        database: { storage: { sync } }, audit: { record() {} }, events: { async emit() {} },
-      });
-      /** @param {() => unknown | Promise<unknown>} run */
-      const drive = async (run) => {
-        const start = generatedCalls.length;
-        const result = await run();
-        return { result, calls: generatedCalls.slice(start) };
+      const sync = tracked(realSync);
+      const managedSync = tracked(managedRealSync);
+      try {
+        const service = new GeneratedService({
+          database: { storage: { sync } }, audit: { record() {} }, events: { async emit() {} },
+        });
+        const managedService = new ManagedGeneratedService({
+          database: { storage: { sync: managedSync } }, audit: { record() {} }, events: { async emit() {} },
+        });
+        /** @param {() => unknown | Promise<unknown>} run */
+        const drive = async (run) => {
+          const start = generatedCalls.length;
+          const result = await run();
+          return { result, calls: generatedCalls.slice(start) };
+        };
+        const create = await drive(() => service.create({ name: 'Probe' }));
+        const created = create.result;
+        const operations = {
+          create: create.calls,
+          get: (await drive(() => service.get(created.id))).calls,
+          list: (await drive(() => service.list())).calls,
+          listWhere: (await drive(() => service.listWhere({ id: created.id }))).calls,
+          countWhere: (await drive(() => service.countWhere({ id: created.id }))).calls,
+          update: (await drive(() => service.update(created.id, { name: 'Updated' }))).calls,
+          applyManaged: (await drive(() => service.applyManaged(created.id, { status: 'closed' }))).calls,
+          createManaged: (await drive(() => managedService.createManaged({ status: 'open' }))).calls,
+        };
+        bundle.generatedRuntimeUsesStorage = canonical(operations) === canonical({
+          create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          get: [['maybeOne', 'select']],
+          list: [['many', 'select']],
+          listWhere: [['many', 'select']],
+          countWhere: [['maybeOne', 'count']],
+          update: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          applyManaged: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          createManaged: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
+        });
+      } finally {
+        raw.close();
+        managedRaw.close();
       };
-      const create = await drive(() => service.create({ name: 'Probe' }));
-      const created = create.result;
-      const operations = {
-        create: create.calls,
-        get: (await drive(() => service.get(created.id))).calls,
-        list: (await drive(() => service.list())).calls,
-        listWhere: (await drive(() => service.listWhere({ id: created.id }))).calls,
-        countWhere: (await drive(() => service.countWhere({ id: created.id }))).calls,
-        update: (await drive(() => service.update(created.id, { name: 'Updated' }))).calls,
-        applyManaged: (await drive(() => service.applyManaged(created.id, { status: 'closed' }))).calls,
-        createManaged: (await drive(() => managedService.createManaged({ status: 'open' }))).calls,
-      };
-      bundle.generatedRuntimeUsesStorage = canonical(operations) === canonical({
-        create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
-        get: [['maybeOne', 'select']],
-        list: [['many', 'select']],
-        listWhere: [['many', 'select']],
-        countWhere: [['maybeOne', 'count']],
-        update: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
-        applyManaged: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
-        createManaged: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
-      });
     } finally {
       rmSync(generatedRoot, { recursive: true, force: true });
     }
