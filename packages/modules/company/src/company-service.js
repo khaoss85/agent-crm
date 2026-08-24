@@ -24,22 +24,23 @@ export class CompanyService {
       updatedAt: timestamp,
     };
 
-    await this.database.storage.execute({
-      kind: 'insert', table: 'companies', values: [
-        { column: 'id', value: company.id },
-        { column: 'name', value: company.name },
-        { column: 'domain', value: company.domain },
-        { column: 'created_at', value: company.createdAt },
-        { column: 'updated_at', value: company.updatedAt },
-      ],
-    });
-
-    this.audit.record({
-      actor: context.actor,
-      action: 'company.created',
-      entityType: 'company',
-      entityId: company.id,
-      data: company,
+    this.database.storage.sync.transaction(() => {
+      this.database.storage.sync.execute({
+        kind: 'insert', table: 'companies', values: [
+          { column: 'id', value: company.id },
+          { column: 'name', value: company.name },
+          { column: 'domain', value: company.domain },
+          { column: 'created_at', value: company.createdAt },
+          { column: 'updated_at', value: company.updatedAt },
+        ],
+      });
+      this.audit.record({
+        actor: context.actor,
+        action: 'company.created',
+        entityType: 'company',
+        entityId: company.id,
+        data: company,
+      });
     });
     await this.events.emit('company.created', company);
     return company;

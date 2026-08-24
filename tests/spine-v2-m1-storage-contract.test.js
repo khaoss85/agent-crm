@@ -122,6 +122,26 @@ test('Company dependency closure preserves missing-company refusal without parti
   assert.equal(app.audit.list({ limit: 500 }).length, 0);
 });
 
+test('Company insert and audit commit before an unrelated async transaction can roll back', async (t) => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  t.after(() => app.close());
+  const create = app.services.companies.create(
+    { name: 'Atomic Company', domain: 'atomic.example' },
+    { actor: { type: 'user', id: 'm1-atomicity' } },
+  );
+  const unrelated = app.database.transactionAsync(async () => {
+    await Promise.resolve();
+    throw new Error('unrelated rollback');
+  });
+  await assert.rejects(unrelated, /unrelated rollback/);
+  const company = await create;
+  assert.equal(app.services.companies.get(company.id).name, 'Atomic Company');
+  const audit = app.audit.list({ entityType: 'company', entityId: company.id });
+  assert.deepEqual(audit.map(({ action, actorId }) => ({ action, actorId })), [
+    { action: 'company.created', actorId: 'm1-atomicity' },
+  ]);
+});
+
 test('the two migrated consumer sources have no raw-driver escape', () => {
   const company = readFileSync(new URL('../packages/modules/company/src/company-service.js', import.meta.url), 'utf8');
   const generated = readFileSync(new URL('../packages/cli/src/module-factory.js', import.meta.url), 'utf8');
