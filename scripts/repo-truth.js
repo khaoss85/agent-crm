@@ -36,8 +36,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -802,9 +802,10 @@ export async function readAuthorities({ rootDir }) {
       ['savepoint', 'company_create'], ['execute', 'insert'], ['maybeOne', 'select'], ['many', 'select'],
     ]);
 
-    // Structural probe over the artifact the generator actually emits, not
-    // over its own source. It requires every M1 operation family and rejects
-    // any generated raw-driver escape.
+    // Execute the artifact the generator actually emits against a fake handle
+    // that exposes storage and deliberately has no raw driver. Every generated
+    // operation is driven; an alias/bracket/raw bypass therefore throws rather
+    // than being hidden by a token scan.
     const generatedPlan = planModule({
       rootDir,
       manifest: {
@@ -815,12 +816,61 @@ export async function readAuthorities({ rootDir }) {
         ],
       },
     });
-    const generatedService = generatedPlan.files.find((file) => /\/src\/[^/]+-service\.js$/.test(file.path))?.content ?? '';
-    bundle.generatedRuntimeUsesStorage = [
-      "kind: 'insert'", "kind: 'select'", "kind: 'count'", "kind: 'update'",
-      'database.storage.sync.savepoint',
-    ].every((token) => generatedService.includes(token))
-      && !/database\.raw|DatabaseSync/.test(generatedService);
+    const serviceFile = generatedPlan.files.find((file) => {
+      const normalized = file.path.split(/[\\/]/).join('/');
+      return /\/src\/[^/]+-service\.js$/.test(normalized);
+    });
+    if (!serviceFile) throw new Error('generated storage probe did not produce a service artifact');
+    const generatedRoot = mkdtempSync(join(tmpdir(), 'accordo-truth-generated-'));
+    try {
+      writeFileSync(join(generatedRoot, 'package.json'), '{"type":"module"}\n');
+      for (const source of ['errors.js', 'validation.js', 'time.js']) {
+        const target = join(generatedRoot, 'packages/core/src', source);
+        mkdirSync(join(generatedRoot, 'packages/core/src'), { recursive: true });
+        writeFileSync(target, readFileSync(join(rootDir, 'packages/core/src', source), 'utf8'));
+      }
+      const generatedPath = join(generatedRoot, ...serviceFile.path.split(/[\\/]/));
+      mkdirSync(dirname(generatedPath), { recursive: true });
+      writeFileSync(generatedPath, serviceFile.content);
+      const generatedModule = await import(`${pathToFileURL(generatedPath).href}?truth-probe=1`);
+      const GeneratedService = Object.values(generatedModule).find(
+        (value) => typeof value === 'function' && /Service$/.test(value.name),
+      );
+      if (!GeneratedService) throw new Error('generated storage probe service export is unavailable');
+      const generatedCalls = [];
+      let generatedRow = null;
+      const sync = {
+        savepoint(name, fn) { generatedCalls.push(['savepoint', name]); return fn(); },
+        execute(statement) {
+          generatedCalls.push(['execute', statement.kind]);
+          if (statement.kind === 'insert') generatedRow = Object.fromEntries(statement.values.map((entry) => [entry.column, entry.value]));
+          if (statement.kind === 'update' && generatedRow) {
+            for (const entry of statement.values) generatedRow[entry.column] = entry.value;
+          }
+        },
+        maybeOne(statement) {
+          generatedCalls.push(['maybeOne', statement.kind]);
+          return statement.kind === 'count' ? { n: generatedRow ? 1 : 0 } : generatedRow;
+        },
+        many(statement) { generatedCalls.push(['many', statement.kind]); return generatedRow ? [generatedRow] : []; },
+      };
+      const service = new GeneratedService({
+        database: { storage: { sync } }, audit: { record() {} }, events: { async emit() {} },
+      });
+      const created = await service.create({ name: 'Probe' });
+      service.get(created.id);
+      service.list();
+      service.listWhere({ id: created.id });
+      service.countWhere({ id: created.id });
+      await service.update(created.id, { name: 'Updated' });
+      await service.applyManaged(created.id, { status: 'closed' });
+      const observed = new Set(generatedCalls.map(([method, kind]) => `${method}:${kind}`));
+      bundle.generatedRuntimeUsesStorage = [
+        'execute:insert', 'execute:update', 'maybeOne:select', 'maybeOne:count', 'many:select',
+      ].every((entry) => observed.has(entry)) && generatedCalls.filter(([method]) => method === 'savepoint').length >= 3;
+    } finally {
+      rmSync(generatedRoot, { recursive: true, force: true });
+    }
 
     // Behavior probe for the deliberately retained compatibility path. The
     // fake service permits entry; the only way to answer that the table is
