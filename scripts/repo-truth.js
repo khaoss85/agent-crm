@@ -922,6 +922,16 @@ export async function readAuthorities({ rootDir }) {
         };
         const create = await drive(() => service.create({ name: 'Probe', note: null }));
         const created = create.result;
+        realSync.execute({
+          kind: 'insert', table: 'truth_storage_probes', values: [
+            { column: 'id', value: 'truth-nonmatching' },
+            { column: 'name', value: 'Other' },
+            { column: 'note', value: 'not-null' },
+            { column: 'status', value: 'closed' },
+            { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
+            { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
+          ],
+        });
         const get = await drive(() => service.get(created.id));
         const list = await drive(() => service.list());
         const listWithMembership = await drive(() => service.list({ where: { status: ['open'] } }));
@@ -932,6 +942,7 @@ export async function readAuthorities({ rootDir }) {
         const update = await drive(() => service.update(created.id, { name: 'Updated' }));
         const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }));
         const createManaged = await drive(() => managedService.createManaged({ status: 'open' }));
+        const getManaged = await drive(() => managedService.get(createManaged.result.id));
         const operations = {
           create: create.calls,
           get: get.calls,
@@ -944,12 +955,14 @@ export async function readAuthorities({ rootDir }) {
           update: update.calls,
           applyManaged: applyManaged.calls,
           createManaged: createManaged.calls,
+          getManaged: getManaged.calls,
         };
         const resultsValid = created.name === 'Probe'
           && created.note === null
           && get.result.id === created.id
-          && list.result.length === 1
-          && list.result[0].id === created.id
+          && list.result.length === 2
+          && list.result.some((row) => row.id === created.id)
+          && list.result.some((row) => row.id === 'truth-nonmatching')
           && listWithMembership.result.length === 1
           && listWithMembership.result[0].id === created.id
           && listWhere.result.length === 1
@@ -960,7 +973,9 @@ export async function readAuthorities({ rootDir }) {
           && countWhereMembership.result === 1
           && update.result.name === 'Updated'
           && applyManaged.result.status === 'closed'
-          && createManaged.result.status === 'open';
+          && createManaged.result.status === 'open'
+          && getManaged.result.id === createManaged.result.id
+          && getManaged.result.status === 'open';
         bundle.generatedRuntimeUsesStorage = resultsValid && canonical(operations) === canonical({
           create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
           get: [['maybeOne', 'select']],
@@ -973,6 +988,7 @@ export async function readAuthorities({ rootDir }) {
           update: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           applyManaged: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           createManaged: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
+          getManaged: [['maybeOne', 'select']],
         });
       } finally {
         raw.close();
