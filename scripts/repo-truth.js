@@ -876,6 +876,7 @@ export async function readAuthorities({ rootDir }) {
       const sync = {
         savepoint(name, fn) { generatedCalls.push(['savepoint', name]); return fn(); },
         execute(statement) {
+          storageContract.renderSqliteStatement(statement);
           generatedCalls.push(['execute', statement.kind]);
           if (statement.kind === 'insert') generatedRow = Object.fromEntries(statement.values.map((entry) => [entry.column, entry.value]));
           if (statement.kind === 'update' && generatedRow) {
@@ -883,10 +884,15 @@ export async function readAuthorities({ rootDir }) {
           }
         },
         maybeOne(statement) {
+          storageContract.renderSqliteStatement(statement);
           generatedCalls.push(['maybeOne', statement.kind]);
           return statement.kind === 'count' ? { n: generatedRow ? 1 : 0 } : generatedRow;
         },
-        many(statement) { generatedCalls.push(['many', statement.kind]); return generatedRow ? [generatedRow] : []; },
+        many(statement) {
+          storageContract.renderSqliteStatement(statement);
+          generatedCalls.push(['many', statement.kind]);
+          return generatedRow ? [generatedRow] : [];
+        },
       };
       const service = new GeneratedService({
         database: { storage: { sync } }, audit: { record() {} }, events: { async emit() {} },
