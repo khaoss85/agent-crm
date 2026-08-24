@@ -1084,12 +1084,23 @@ agent-facing rail.
 
 ## Progress log
 
-- 2026-08-23: M1 opened from measured main `82371d2` on
+- 2026-08-23: M1 opened from main `82371d2` on
   `claude/spine-v2-m1-storage-contract`. Its causal boundary is unchanged: the
   SQLite-only dialect-neutral storage seam must prove the handwritten Company
   dependency closure and one generated/package-owned resource before it may be
   called generic. No PostgreSQL adapter, M2 work or public compatibility change
   belongs in this branch.
+  Measurement provenance remains owned by `site/claims.json`, Repository Truth
+  and `docs/PROJECT_STATUS.md`; this progress entry does not reinterpret it.
+
+- 2026-08-24: M1 implements `storageContract: 1` over SQLite only. Company is
+  the handwritten consumer; the generated service template, exercised by the
+  package-owned Work records and their actions, is the materially different
+  consumer. The seam supports structured insert, select/count and predicate-
+  bound update statements, explicit outer transactions and savepoints. Raw SQL,
+  unknown shapes/operators and unsafe identifiers fail closed. Contact and
+  Opportunity retain their persistence until M2 but keep the characterized
+  synchronous Company lookup dependency, including fail-before-write behavior.
 
 - 2026-08-23: M0 characterization started from merged plan commit `c78c310` on
   `claude/spine-v2-m0-characterization`. The first bounded slice freezes the

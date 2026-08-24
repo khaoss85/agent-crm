@@ -515,6 +515,31 @@ double quotes passed both the CLI and the conformance helper. It now matches any
 quote style and `import()`/`require()` as well.
 
 
+### ADR-018 addendum 7 — the storage seam earns core ownership from two unlike consumers
+
+Production Spine v2 M1 adds `storageContract: 1` to core as reusable runtime
+machinery, not Sales or Work behavior. The proof is deliberately two-sided: the
+handwritten Company service needs asynchronous mutation with synchronous exact
+and paged compatibility reads, while the package-owned generated Work resources
+need generated migrations, structural filters/counts, savepoint-scoped audit
+mutations and managed actions. The same closed statement vocabulary serves both.
+
+The vocabulary is insert, select/count and predicate-bound update, with equality,
+null and non-empty membership predicates plus deterministic ordering and a
+positive limit. Identifiers are allowlisted. Arbitrary SQL, placeholder strings,
+PRAGMA, delete and unsupported predicates fail with
+`STORAGE_STATEMENT_UNSUPPORTED`; the adapter never translates SQLite SQL.
+SQLite alone implements the contract in M1. Its synchronous facade preserves the
+released v1 exact-read surface, while mutation callers may use the asynchronous
+methods. Savepoints and outer transactions remain explicit. No public command,
+factory or package contract is added, so the DX surface does not grow.
+
+Contact and Opportunity retain their existing persistence temporarily, but their
+Company dependency crosses the migrated synchronous exact-read facade. A missing
+Company therefore still refuses before either dependent write. M2 owns the rest
+of the SQLite extraction; this addendum must not be read as repository-wide raw
+driver removal or as PostgreSQL support.
+
 ## ADR-019 — Safe generated-module evolution through explicit revisions and append-only named migrations
 
 **Status:** accepted (Module Evolution v1).
