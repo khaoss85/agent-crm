@@ -56,7 +56,7 @@ Human-only: an account holder must confirm or change the Vercel production branc
 
 ## Final integration addendum — 2026-08-24
 
-The final integrator inspected live main `82371d28509e3c8c7e8c857a30cf68d671f95563`, PR #120 head `a4c27ed35600157fe4369aa90483faca1279112d`, and PR #121 head `8a04f8035a5a4eb5164bfb676442ba6c57fbf09b`. PR #120 remains the human-product baseline: dedicated solution pages, Developers, Resources, Product Proof, benchmark architecture, deployment guide, reconciliation audit and focused SEO tests. From PR #121 the integration ports generated strategic Markdown, HTML Markdown alternates, llms discovery, richer deployment provenance, the broader stale-negative scan and stronger outcome/ownership copy where it improves the baseline without collapsing the IA.
+The final integrator began from main `82371d28509e3c8c7e8c857a30cf68d671f95563`, then fetched and rebased onto live main `cc2a1a6d9e8641af579ee0c486c5435907278ad6` after Production Spine v2 M1 PR #119 merged. It inspected head `a4c27ed35600157fe4369aa90483faca1279112d`, and PR #121 head `8a04f8035a5a4eb5164bfb676442ba6c57fbf09b`. PR #120 remains the human-product baseline: dedicated solution pages, Developers, Resources, Product Proof, benchmark architecture, deployment guide, reconciliation audit and focused SEO tests. From PR #121 the integration ports generated strategic Markdown, HTML Markdown alternates, llms discovery, richer deployment provenance, the broader stale-negative scan and stronger outcome/ownership copy where it improves the baseline without collapsing the IA.
 
 Review findings resolved in this integration:
 

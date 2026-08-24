@@ -1,6 +1,6 @@
 # Product truth and public-surface reconciliation audit — 2026-08-24
 
-Inspected repository HEAD: `82371d28509e3c8c7e8c857a30cf68d671f95563`. GitHub showed open PR #119 (`feat(spine): begin M1 SQLite storage contract slice`, head `ba9710fa…`) against that commit; it is parallel runtime work and none of its unmerged claims are predicted here. Recent merged PRs #117–118 establish the Production Spine v2 M0 characterization and measurement baseline.
+Initial repository HEAD was `82371d28509e3c8c7e8c857a30cf68d671f95563`. During final integration PR #119 merged as `cc2a1a6d9e8641af579ee0c486c5435907278ad6`; the branch was rebased onto that live main and repository truth was rechecked. M1 introduces the internal SQLite storage contract and changes no public PostgreSQL boundary, so this site neither predicts nor widens its claims.
 
 | Surface | Finding | Class | Resolution |
 |---|---|---|---|
