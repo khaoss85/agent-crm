@@ -142,6 +142,30 @@ test('Company insert and audit commit before an unrelated async transaction can 
   ]);
 });
 
+test('Company creation joins an existing outer transaction through a savepoint', async (t) => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  t.after(() => app.close());
+  await assert.rejects(app.database.transactionAsync(async () => {
+    await app.services.companies.create(
+      { name: 'Rolled-back Company' },
+      { actor: { type: 'user', id: 'm1-nested' } },
+    );
+    throw new Error('outer rollback');
+  }), /outer rollback/);
+  assert.equal(app.services.companies.list().length, 0);
+  assert.equal(app.audit.list({ entityType: 'company' }).length, 0);
+
+  let committed;
+  await app.database.transactionAsync(async () => {
+    committed = await app.services.companies.create(
+      { name: 'Committed Company' },
+      { actor: { type: 'user', id: 'm1-nested' } },
+    );
+  });
+  assert.equal(app.services.companies.get(committed.id).name, 'Committed Company');
+  assert.equal(app.audit.list({ entityType: 'company', entityId: committed.id }).length, 1);
+});
+
 test('the two migrated consumer sources have no raw-driver escape', () => {
   const company = readFileSync(new URL('../packages/modules/company/src/company-service.js', import.meta.url), 'utf8');
   const generated = readFileSync(new URL('../packages/cli/src/module-factory.js', import.meta.url), 'utf8');

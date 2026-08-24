@@ -24,7 +24,7 @@ export class CompanyService {
       updatedAt: timestamp,
     };
 
-    this.database.storage.sync.transaction(() => {
+    this.database.storage.sync.savepoint('company_create', () => {
       this.database.storage.sync.execute({
         kind: 'insert', table: 'companies', values: [
           { column: 'id', value: company.id },
