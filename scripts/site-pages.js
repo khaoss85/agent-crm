@@ -545,8 +545,9 @@ export function buildAnswerPages({ answers, ledger, brand, origin }) {
           '      </div>',
         ].filter(Boolean).join('\n')),
         `      <h2 id="limits">Where this stops</h2>
-      <p>Nothing on this page implies the framework is deployable. There is no authentication, tenancy
-      or RBAC, so it is local-development-only whatever any single answer says.
+      <p>Nothing on this page implies deployment readiness. The framework ships no authentication
+      verifier; authorization is framework-enforced; tenant isolation is one tenant per application
+      instance, not shared-database row tenancy. Read the exact repository posture before deployment.
       <a href="{{page.root}}evidence.html">Every claim and every limitation</a> is on one page, and
       <a href="{{page.root}}answers.html#limits">the questions this project refuses to answer</a> are
       published beside them.</p>`,

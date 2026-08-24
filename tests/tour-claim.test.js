@@ -2,8 +2,8 @@
 
 /**
  * `npm run tour` composes the starter application and prints what it contains. Those counts are
- * quoted on the landing page, in the launch packet, in the go-to-market plan and in the skill
- * packaging document — five places, one measurement.
+ * quoted in evidence-bearing launch, strategy, README, answer and concept surfaces. The human
+ * landing page deliberately carries no composition counts.
  *
  * They drifted. Merging M14b2 added records and actions, and every one of those documents went on
  * saying 55 modules and 35 actions, which would have shipped a false number onto a public page
@@ -34,7 +34,6 @@ const LABELS = ['modules', 'packages', 'resources', 'actions', 'policies', 'prov
 const QUOTING_SURFACES = [
   { path: 'docs/marketing/LAUNCH_PACKET.md', order: 'count-first' },
   { path: 'docs/strategy/GO_TO_MARKET.md', order: 'count-first' },
-  { path: 'site/templates/index.html', order: 'label-first' },
   { path: 'README.md', order: 'label-first' },
   // The answer pages quote the composition in prose, and they are the pages an answer engine
   // is most likely to lift a number out of.

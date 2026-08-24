@@ -234,6 +234,42 @@ h2 { margin: 0 0 16px; font-size: clamp(27px, 4vw, 40px); letter-spacing: -.035e
 h3 { margin: 0 0 8px; font-size: 17px; letter-spacing: -.015em; font-weight: 750; }
 .section-lede { max-width: 60ch; color: var(--muted); margin: 0 0 40px; font-size: 17px; }
 
+/* Human product journey. Retrieval pages keep the compact components below; these layouts give
+   the product pages a slower rhythm and make the lifecycle readable without knowing the CLI. */
+.hero-product { padding-top: clamp(62px, 7vw, 96px); padding-bottom: 64px; }
+.hero-product h1 { max-width: 18ch; font-size: clamp(44px, 6vw, 72px); }
+.hero-proof { margin-top: 48px; padding: 18px 22px; border-left: 3px solid var(--accent); background: var(--surface); display: grid; gap: 2px; max-width: 620px; font-size: 18px; }
+.hero-proof strong { font-size: 24px; }
+.choice-grid,.feature-grid,.proof-strip { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+.choice-grid article,.feature-grid article,.proof-strip article { padding:24px; border:1px solid var(--line); border-radius:16px; background:var(--surface); }
+.choice-grid .choice-accent { border-color:var(--accent); box-shadow:var(--shadow); }
+.lifecycle { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:1px; padding:1px; margin:34px 0; list-style:none; background:var(--line); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+.lifecycle li { min-width:0; min-height:76px; padding:18px 14px; background:var(--surface); font-weight:700; position:relative; }
+.lifecycle li:not(:last-child)::after { content:'→'; position:absolute; right:8px; bottom:7px; color:var(--accent); z-index:2; }
+.system-rails { display:flex; gap:10px; flex-wrap:wrap; padding:16px; border:1px solid var(--accent); border-radius:14px; background:var(--accent-soft); }
+.system-rails span { flex:1; min-width:150px; text-align:center; font-size:13px; font-weight:750; }
+.boundary-note { margin-top:28px; padding:18px 20px; border:1px solid var(--line); border-radius:12px; color:var(--muted); background:var(--paper); }
+.feature-grid { grid-template-columns:repeat(2,1fr); }
+.feature-grid article a,.section-link a { color:var(--accent); font-weight:700; text-underline-offset:3px; }
+.agent-loop { list-style:none; padding:0; display:grid; grid-template-columns:repeat(5,1fr); gap:10px; }
+.agent-loop li { padding:20px 16px; border-top:3px solid var(--accent); background:var(--surface); }
+.agent-loop strong,.agent-loop span { display:block; }.agent-loop span { margin-top:8px; color:var(--muted); font-size:14px; }
+.solution-grid,.resource-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; }
+.solution-grid a,.resource-grid a { padding:22px; border:1px solid var(--line); border-radius:14px; background:var(--surface); text-decoration:none; }
+.solution-grid a:hover,.resource-grid a:hover { border-color:var(--accent); }.solution-grid strong,.solution-grid span { display:block; }.solution-grid span { color:var(--muted); margin-top:6px; }
+.proof-strip article { display:grid; gap:8px; }.proof-strip span { color:var(--muted); }
+.final-cta { text-align:center; padding-block:110px; }.final-cta h2 { margin-inline:auto; max-width:24ch; }.final-cta .cta { justify-content:center; }
+.outcome-chain { display:flex; gap:8px; flex-wrap:wrap; }.outcome-chain span { padding:10px 14px; border-radius:999px; background:var(--accent-soft); font-weight:700; font-size:13px; }
+.journey-detail { margin-top:26px; display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.journey-detail p,.benchmark-note,.proof-note { margin:0; padding:20px; border:1px solid var(--line); border-radius:14px; background:var(--surface); }
+.benchmark-note { max-width:720px; }
+.benchmark-note strong,.benchmark-note span,.proof-dimension { display:block; }
+.benchmark-note p { margin:6px 0; color:var(--ink); }
+.benchmark-note span,.proof-dimension { color:var(--muted); font-size:13px; }
+.feature-grid .limit { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+@media (max-width:760px){.choice-grid,.feature-grid,.proof-strip,.agent-loop,.solution-grid,.resource-grid{grid-template-columns:1fr}.hero-product{padding-top:58px}.hero-product h1{font-size:clamp(40px,12vw,58px)}section{padding:58px 0}.lifecycle{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){.journey-detail{grid-template-columns:1fr}.nav-menu-panel{max-height:calc(100vh - 100px);overflow:auto}.hero-proof{margin-top:32px}.final-cta{padding-block:76px}}
+
 /* ---------------------------------------------------------------- cards */
 
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }

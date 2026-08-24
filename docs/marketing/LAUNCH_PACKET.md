@@ -18,7 +18,7 @@ sentence to the test behind it. Strip the bracketed ids before posting; keep the
 
 | Blocker | Consequence for the launch |
 |---|---|
-| No public name | Every channel asks for a product name and a URL. The working title is documented as unusable (`docs/strategy/BRAND_REQUIREMENTS.md`) |
+| Trademark clearance | The chosen name and registered domain are canonical in `site/brand.json`; formal clearance remains human-governed. |
 | Repository not public | The primary call to action is "read the test". A 404 is a worse first impression than silence |
 | Benchmark not run [L-03] | The strongest version of this story is a scoreboard with failures in it. Without a number, the launch is an announcement, and announcements about frameworks with no users do not travel |
 | No production spine [L-01] | The first comment on any thread will be "can I deploy it". The answer is no, and it needs to be *our* sentence, not a commenter's discovery |
@@ -78,7 +78,7 @@ before a commenter gets to say them.
 >   `npm create accordo` (the published `create-accordo@0.1.0`) scaffolds the project by copying
 >   the framework source into it — what it installs is the scaffolder, not a framework library —
 >   so upgrading means merging source rather than bumping a version. [L-08]
-> - **Do not put real customer data in it.** No auth, no tenancy, no export, no erasure path — so
+> - **Do not put real customer data in it.** No framework authentication verifier, no export and no erasure path; authorization is enforced and isolation is one tenant per application instance — so
 >   you could not service a data-subject access or deletion request. If you are in the EU that is
 >   disqualifying today, and it should be. (What does hold: lead scoring is deterministic,
 >   versioned and explainable, not a model's judgement about a person.) [L-09]

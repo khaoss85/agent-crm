@@ -8,13 +8,13 @@ The canonical entry point to the strategy. Read this first; follow the links for
 
 The open-source, agent-native CRM framework: Claude Code and Codex use it to generate bespoke CRM applications — deterministic workflows, human approvals, audit and trace built in — as code the customer owns.
 
-## 2. Current status
+## 2. Stable strategy and current state
 
-**Volatile status lives in `docs/PROJECT_STATUS.md`** — merged milestone, the commit the public numbers were measured at, open PRs, next task and production blockers. The test count is not there either: it is measured into `site/claims.json` `measuredAgainst` and cited from there (ADR-027). It is updated in every milestone merge PR; this file deliberately no longer carries numbers that go stale.
+This plan contains durable product strategy only. Accordo is the chosen public name, the repository is MIT-licensed, and ownership means the published scaffolder vendors framework source into the customer project. Those decisions are recorded in `site/brand.json` and ADR-023; they are not launch checkboxes.
 
-Stable facts: milestones **M0–M11 are merged and proven in-repo** — the vertical from lead capture through enrichment, scoring, routing, qualification, conversion, pipeline, composite quoting, discount approval, verified signature evidence and an immutable Order (ADR-001…ADR-017). Working title `accordo`; **no public name chosen**. The repository license is currently **MIT**; final pre-launch confirmation is a pending human decision. The benchmark is designed and **not yet executed**.
+All volatile implementation state—merged work, open work, distribution, production boundaries and measurement provenance—lives in `docs/PROJECT_STATUS.md` and generated `docs/repository-truth.json`. Public implementation claims come from `site/claims.json`. This document must not restate milestone coverage, package inventory, test measurements, benchmark results or deployment state.
 
-A **Platform Alignment Gate** (`PLATFORM_ALIGNMENT_GATE.md`, ADR-018) was taken after M11 and before further domain code: it draws the core-versus-domain boundary, defines the capability model, corrects the post-Order roadmap and adds the missing platform tracks. It changed no runtime code.
+Product Truth describes the coherent system Accordo is designed to let a coding agent build. Repository Truth separately describes what the current tree proves. A target workflow below is not a capability claim; evidence status is always resolved through the JTBD coverage overlay and claims ledger.
 
 ## 3. Medusa-to-CRM mapping (short form)
 
@@ -49,35 +49,35 @@ Brief + business process + design reference → the agent scaffolds, generates m
 
 **Accordo Cloud** is the named product track for the optional managed operating layer — Control Plane, managed runtime, agent operations CLI/MCP, plugin operations, public benchmark deployment — gated by the Production Spine (Phase 6) and specified in `AGENT_CRM_CLOUD.md` (design only; nothing implemented). The open-source framework and the self-hosting path remain first-class forever; Cloud is optional and must never create lock-in.
 
-### Product workstreams (design only, unbuilt)
+### Product workstreams
 
 Five named workstreams extend the CRM capability track beyond the Opportunity pipeline, covering the complete commercial lifecycle — and, with Marketing, what happens before a lead exists at all:
 
 ```text
 Marketing & Growth         (funnel insight, campaign proposal, journeys, experiments,
-                            paid media, attribution — MK0–MK7, design only)
-→ Lead Intelligence        (enrichment, explainable scoring, versioned routing — M9, done)
-→ Sales                    (pipeline — M8, done)
-→ Commercial Operations    (catalog, composite quotes, discounts, approvals — M10, done)
-→ Signature and Order      (verified evidence, immutable Order — M11, done)
-→ Contract / Subscription  (activation, terms, entitlements, renewal — M12, next)
-→ Delivery                 (handover, commesse, partners, economics, acceptance — M13/M14)
-→ Service                  (contracts, entitlements, SLA, support — M15)
+                            paid media, attribution)
+→ Lead Intelligence        (enrichment, explainable scoring, versioned routing)
+→ Sales                    (pipeline)
+→ Commercial Operations    (catalog, composite quotes, discounts, approvals)
+→ Signature and Order      (verified evidence, immutable Order)
+→ Contract / Subscription  (activation, terms, entitlements, renewal)
+→ Delivery                 (handover, commesse, partners, economics, acceptance)
+→ Service                  (contracts, entitlements, SLA, support)
 → Customer Success
 → Renewal and Upsell       (feeds back into Lead Intelligence and Sales)
 ```
 
-- **Lead Intelligence & Routing** and **Commercial Operations / CPQ** — `REVENUE_OPERATIONS.md` (M9–M11, **merged**).
-- **Contract, Subscription and Renewal** — `CONTRACT_SUBSCRIPTION_RENEWAL.md` (M12; the layer between an immutable Order and everything recurring — added at the alignment gate because Delivery cannot be built on an Order alone).
-- **Delivery & Service Operations** — `DELIVERY_SERVICE.md` (M13–M15; the CRM equivalent of ecommerce fulfillment).
-- **Analytics Studio** — `ANALYTICS_STUDIO.md` (M16; safe semantic metrics, no agent-generated raw SQL).
-- **Marketing & Growth Operations** — `MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md` (MK0–MK7; a **parallel** package-native track, not a successor to Delivery. It proposes before it sends: MK1 needs no provider at all, MK4 is hard-blocked on durable automation and MK7 on Analytics Studio).
+- **Lead Intelligence & Routing** and **Commercial Operations / CPQ** — `REVENUE_OPERATIONS.md`.
+- **Contract, Subscription and Renewal** — `CONTRACT_SUBSCRIPTION_RENEWAL.md`; the layer between an immutable Order and everything recurring.
+- **Delivery & Service Operations** — `DELIVERY_SERVICE.md`; the CRM equivalent of ecommerce fulfillment.
+- **Analytics Studio** — `ANALYTICS_STUDIO.md`; safe semantic metrics, no agent-generated raw SQL.
+- **Marketing & Growth Operations** — `MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md`; a parallel package-native track, not a successor to Delivery.
 
-Every workstream follows the same delivery model — native deterministic primitives + provider contracts + code-first versioned policies + Agent Skills + starter + JTBD evidence + reproducible E2E benchmark. **M9–M11 are merged; M12 onward is not implemented.**
+Every workstream follows the same delivery model — native deterministic primitives + provider contracts + code-first versioned policies + Agent Skills + starter + JTBD evidence + reproducible E2E benchmark. Current coverage is deliberately delegated to `docs/PROJECT_STATUS.md`, the JTBD coverage overlay and `site/claims.json`.
 
 ### The experience that reaches all of them
 
-The pillars are *what* the framework can do. The **objective-driven agent experience** is *how a user gets there*: they supply a business objective and its constraints, and the agent discovers installed packages and capabilities, analyses the gap, chooses or creates packages, proposes a reviewable plan, builds checked-in source, verifies it, and asks only for sensitive approvals. It is cross-cutting — the AX0–AX5 track in `EXECUTION_ROADMAP.md` — not a thirteenth pillar. AX0 is a strategy and a Skill; **AX1–AX5 are not implemented**. See `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`.
+The pillars are *what* the framework can do. The **objective-driven agent experience** is *how a user gets there*: they supply a business objective and its constraints, and the agent discovers installed packages and capabilities, analyses the gap, chooses or creates packages, proposes a reviewable plan, builds checked-in source, verifies it, and asks only for sensitive approvals. It is cross-cutting — the AX track in `EXECUTION_ROADMAP.md` — not a thirteenth pillar. See `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`; current coverage remains in the operational authorities above.
 
 ### The twelve pillars
 
@@ -123,13 +123,9 @@ Ship capability → prove it (benchmark/starter) → document as CI-tested recip
 
 Definitions and measurement protocols: `EXECUTION_ROADMAP.md` (metrics) and `CRM_BUILD_BENCHMARK.md` (protocols).
 
-## 10. Pending human decisions
+## 10. Decisions that remain human-governed
 
-1. **Public name** — candidates only, none chosen (`BRAND_REQUIREMENTS.md`); registrar + trademark verification required.
-2. **Final license confirmation** before public launch (MIT is the current repository license; keep-or-change is an explicit ADR-gated decision).
-3. **Telemetry policy** (opt-in metrics) before any collection ships.
-4. **All external submissions** (marketplaces, directories, template galleries) and account creations.
-5. **All public launch claims and timing**; every published number must trace to the benchmark protocol.
+Trademark clearance, telemetry policy, marketplace submissions, public launch timing and any future licensing change remain human decisions. Current operational state and action owners belong in `docs/PROJECT_STATUS.md` or the relevant dated launch record, never here.
 
 ## 11. Reading order
 

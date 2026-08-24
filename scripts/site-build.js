@@ -28,6 +28,8 @@ import { join, dirname, relative } from 'node:path';
 
 import { buildJobPages, buildAnswerPages, hasOwnPage, STATUS_MEANING } from './site-pages.js';
 import { buildClusterPages, readBlogPosts } from './site-clusters.js';
+import { STRATEGIC_PAGES, markdownPath } from './site-strategic-pages.js';
+import { checkoutSha } from './site-provenance.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -52,6 +54,8 @@ mkdirSync(outDir, { recursive: true });
  * absolute origin, and inventing one per template is how a site ends up with three of them.
  */
 const ORIGIN = `https://${brand.domain.value}`;
+const sourceSha = checkoutSha({ cwd: root });
+const sourceBranch = process.env.VERCEL_GIT_COMMIT_REF || 'local';
 
 /**
  * Every page written to dist, in the order it was written. The sitemap is derived from this rather
@@ -101,6 +105,17 @@ const templates = readdirSync(join(siteDir, 'templates')).filter((name) => name.
 for (const page of templates) {
   const source = readFileSync(join(siteDir, 'templates', page), 'utf8');
   emit(page, render(source, page), { jsonLd: STRUCTURED_DATA[page] ?? [] });
+}
+
+// HTML is the canonical human authority. Markdown is generated from the rendered page so there
+// is no second body of marketing copy for an agent or answer engine to retrieve after it drifts.
+for (const page of STRATEGIC_PAGES) {
+  const htmlPath = join(outDir, page);
+  if (!existsSync(htmlPath)) {
+    unresolved.push({ file: page, token: 'strategic page declared but not emitted' });
+    continue;
+  }
+  writeFileSync(join(outDir, markdownPath(page)), htmlToMarkdown(readFileSync(htmlPath, 'utf8'), page));
 }
 
 // The catalogue pages. They are generated rather than written because the thing being published is
@@ -171,6 +186,20 @@ writeFileSync(join(outDir, 'claims.json'), `${JSON.stringify({
   sourceVisibility: repositoryIsPublic
     ? { repository: brand.repository.value, note: 'Evidence paths resolve in the public repository.' }
     : { repository: null, note: 'The repository is not public yet, so every evidence path names a real file you cannot fetch. Treat them as citations, not as links.' },
+}, null, 2)}\n`);
+
+// Cheap deployment freshness: the public artifact identifies the exact source tree. Vercel
+// supplies its immutable commit; local builds use HEAD and avoid secrets or account APIs.
+writeFileSync(join(outDir, 'version.json'), `${JSON.stringify({
+  provenanceContract: 2,
+  product: brand.name.value,
+  commit: sourceSha,
+  branch: sourceBranch,
+  repository: brand.repository.value,
+  measuredAgainst: ledger.measuredAgainst.sha,
+  generatedAt: ledger.measuredAgainst.date,
+  generation: process.env.VERCEL ? 'vercel' : 'local',
+  note: 'Build provenance only. It is not product, benchmark or deployment-readiness evidence.',
 }, null, 2)}\n`);
 
 // Non-template assets are copied verbatim.
@@ -394,12 +423,48 @@ function seoBlock(path, title, description, jsonLd) {
     `  <meta name="twitter:title" content="${escapeHtml(title)}" />`,
     `  <meta name="twitter:description" content="${escapeHtml(description)}" />`,
     `  <meta name="twitter:image" content="${escapeHtml(image)}" />`,
+    ...(STRATEGIC_PAGES.includes(path)
+      ? [`  <link rel="alternate" type="text/markdown" href="${escapeHtml(`${ORIGIN}/${markdownPath(path)}`)}" title="Markdown equivalent" />`]
+      : []),
   ];
   for (const block of jsonLd) {
     lines.push(`  <script type="application/ld+json">${jsonLdText(block)}</script>`);
   }
   return lines.join('\n');
 }
+
+/** Generate retrieval text from canonical rendered HTML; never maintain parallel copy. */
+function htmlToMarkdown(html, path) {
+  const main = firstMatch(html, /<main[^>]*>([\s\S]*?)<\/main>/) || html;
+  const text = main
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, (_match, contents) => {
+      const code = contents.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '$1').trim();
+      return `\n\n\`\`\`text\n${code}\n\`\`\`\n\n`;
+    })
+    .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n')
+    .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n')
+    .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n')
+    .replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_match, contents) => {
+      const items = [...contents.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)];
+      return `\n\n${items.map((item, index) => `${index + 1}. ${item[1]}`).join('\n\n')}\n\n`;
+    })
+    .replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_match, contents) => {
+      const items = [...contents.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)];
+      return `\n\n${items.map((item) => `- ${item[1]}`).join('\n\n')}\n\n`;
+    })
+    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`')
+    .replace(/<\/a>\s*<a/gi, '</a>\n\n<a')
+    .replace(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?(?:address|article|aside|blockquote|div|fieldset|figcaption|figure|footer|header|main|nav|p|section)[^>]*>/gi, '\n\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&rarr;/g, '→').replace(/&amp;/g, '&').replace(/&ldquo;|&rdquo;/g, '"').replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return `${text}\n\n---\nCanonical: ${canonicalUrl(path)}\nImplementation evidence: ${ORIGIN}/claims.json\nBuild provenance: ${ORIGIN}/version.json\n`;
+}
+
 
 /**
  * JSON-LD is data, not script, but it still sits inside a `<script>` element: a literal `</script>`

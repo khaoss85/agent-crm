@@ -22,7 +22,7 @@ Position against the two defaults a buyer actually weighs:
 - A TypeScript/Node framework of CRM modules (companies, contacts, opportunities, activities…), deterministic workflows with trace and compensation, policy-gated human approvals, actor identity, audit — plus declarative module manifests that generate migrations and infrastructure deterministically.
 - An agent surface as first-class product: repository skills, project MCP, docs MCP, AGENTS.md/CLAUDE.md conventions, dry-run-by-default code generation.
 - A create-CLI that scaffolds an owned application: the customer's repo, the customer's deploy target, the customer's license terms.
-- Permissively licensed (MIT today; final license is an explicit Phase 1 human decision).
+- MIT-licensed; the published scaffolder vendors the framework source into the customer project.
 
 ## What the product is not
 
@@ -38,10 +38,10 @@ Twenty is the strongest player and is converging on adjacent messaging ("designe
 | Axis | Twenty | This framework |
 |---|---|---|
 | What the agent produces | Extension apps (entities, serverless logic functions, UI widgets) deployed **into Twenty's runtime** | A standalone application in the customer's repo |
-| Who owns the running system | Twenty's platform (fixed schema engine, workflow runtime, React shell) | The customer — framework as dependency, like any npm library |
+| Who owns the running system | Twenty's platform (fixed schema engine, workflow runtime, React shell) | The customer — framework source is vendored into the project |
 | License shape | AGPL core + `@license Enterprise` files (SSO, advanced RBAC gated) + MIT SDK ([LICENSE](https://github.com/twentyhq/twenty/blob/main/LICENSE)) | Permissive core, no enterprise-gated files |
 | Process semantics | Their workflow engine, their permission model | Deterministic workflows + policy + human approval you define per project, testable at the boundary |
-| Deep customization path | Fork a large Nx monorepo, carry AGPL + weekly release train | Regenerate/extend your own code |
+| Deep customization path | Fork a large Nx monorepo, carry AGPL + weekly release train | Extend and merge changes into the vendored source you own |
 | MCP | Native MCP confirmed for Cloud workspaces (self-host parity unverified) | MCP first-class in every generated project, local or deployed |
 
 The honest counterpoint we keep in view: Twenty's marketing will *sound* like ours. The proof that separates us is the benchmark — agents building complete CRMs from briefs, transcripts published — and the ownership test any developer can apply in one question: *"if the vendor disappears tomorrow, what are you left with?"* With Twenty: an AGPL platform to operate. With us: your own application.

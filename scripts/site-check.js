@@ -30,6 +30,7 @@ import {
   inspectStatusMeasurement,
   scansForLooseCounts,
 } from './measurement.js';
+import { inspectStrategicSurfaces } from './site-strategic-pages.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -42,6 +43,27 @@ const ledger = JSON.parse(readFileSync(join(siteDir, 'claims.json'), 'utf8'));
 const answersPath = join(root, 'site', 'answers.json');
 const answers = existsSync(answersPath) ? JSON.parse(readFileSync(answersPath, 'utf8')) : null;
 const brand = JSON.parse(readFileSync(join(siteDir, 'brand.json'), 'utf8'));
+
+// A stale negative is still a false public claim. This retired composite conflates three
+// separate facts: the framework ships no verifier; authorization is enforced; isolation is one
+// tenant per application instance. Refuse the old composite on authored and generated surfaces.
+const staleNegativeClaims = [
+  /no authentication,?\s+(?:no\s+)?tenancy\s+(?:and|or)\s+(?:no\s+)?(?:RBAC|role(?:-based)? access control)(?:\s+exists)?/i,
+  /there is no authentication,?\s+tenancy\s+(?:and|or)\s+roles?/i,
+];
+for (const path of [
+  ...collect(join(siteDir, 'templates'), '.html'),
+  ...collect(join(siteDir, 'blog'), '.md'),
+  ...collect(siteDir, '.json'),
+  ...collect(join(siteDir, 'assets'), '.txt'),
+  ...collect(outDir, '.html'),
+  ...collect(outDir, '.md'),
+]) {
+  const text = readFileSync(path, 'utf8');
+  for (const pattern of staleNegativeClaims) {
+    if (pattern.test(text)) fail(`${relative(root, path)}: stale negative merges authentication, authorization and tenant isolation; state them separately from repository truth.`);
+  }
+}
 
 // ---------------------------------------------------------------- 1 & 2. ledger integrity
 
@@ -85,6 +107,21 @@ for (const limitation of ledger.limitations) {
 
 const templates = collect(join(siteDir, 'templates'), '.html').concat(collect(join(siteDir, 'partials'), '.html'));
 const templateSource = templates.map((path) => readFileSync(path, 'utf8')).join('\n');
+
+// Strategic HTML and generated Markdown are one surface. The HTML is canonical; every page must
+// advertise exactly the generated peer the build wrote, and the Markdown must point back to that
+// canonical URL. This is checked here (not only in a test) so deleting either emission fails the
+// same `npm run site:check` maintainers already use before deployment.
+for (const problem of inspectStrategicSurfaces({ outDir, origin: `https://${brand.domain.value}` })) fail(problem);
+
+const versionPath = join(outDir, 'version.json');
+if (!existsSync(versionPath)) fail('site/dist/version.json: deployment provenance artifact is missing');
+else {
+  const version = JSON.parse(readFileSync(versionPath, 'utf8'));
+  if (version.provenanceContract !== 2) fail('site/dist/version.json: unknown provenance contract');
+  if (!/^[0-9a-f]{40}$/i.test(String(version.commit))) fail('site/dist/version.json: commit is not a full Git SHA');
+  if (version.measuredAgainst !== ledger.measuredAgainst.sha) fail('site/dist/version.json: measuredAgainst drifted from claims.json');
+}
 
 // A page may render the whole ledger at once, which covers every entry by construction.
 const rendersWholeLedger = {
