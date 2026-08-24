@@ -210,8 +210,12 @@ test('strategic Markdown preserves executable blocks and block boundaries', (t) 
   assert.match(developers, /```text\nnpm create accordo my-crm\ncd my-crm\nnpm run crm -- app inspect --json\n```/);
 
   const how = site.read('how-it-works.md');
-  assert.match(how, /- Prove one business journey[\s\S]*choose the scenario that matches the job\.\nImplementation truth stays separate\./);
-  assert.doesNotMatch(how, /- Prove one business journey[^\n]*Implementation truth stays separate/);
+  assert.match(how, /1\. See[\s\S]*2\. Plan[\s\S]*3\. Build[\s\S]*4\. Prove technical health[\s\S]*5\. Prove one business journey/);
+  assert.match(how, /5\. Prove one business journey[\s\S]*choose the scenario that matches the job\.\n\nImplementation truth stays separate\./);
+  assert.doesNotMatch(how, /Prove one business journey[^\n]*Implementation truth stays separate/);
+
+  const home = site.read('index.md');
+  assert.doesNotMatch(home, /\)\[/, 'adjacent calls to action need a Markdown block boundary');
 });
 
 test('human journeys keep technical verification, scenario proof and ledger claims distinct', (t) => {

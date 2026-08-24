@@ -446,10 +446,19 @@ function htmlToMarkdown(html, path) {
     .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n')
     .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n')
     .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n')
-    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1\n')
+    .replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_match, contents) => {
+      const items = [...contents.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)];
+      return `\n\n${items.map((item, index) => `${index + 1}. ${item[1]}`).join('\n\n')}\n\n`;
+    })
+    .replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_match, contents) => {
+      const items = [...contents.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)];
+      return `\n\n${items.map((item) => `- ${item[1]}`).join('\n\n')}\n\n`;
+    })
     .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`')
+    .replace(/<\/a>\s*<a/gi, '</a>\n\n<a')
     .replace(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)')
     .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?(?:address|article|aside|blockquote|div|fieldset|figcaption|figure|footer|header|main|nav|p|section)[^>]*>/gi, '\n\n')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&rarr;/g, '→').replace(/&amp;/g, '&').replace(/&ldquo;|&rdquo;/g, '"').replace(/&#39;/g, "'")
     .replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();

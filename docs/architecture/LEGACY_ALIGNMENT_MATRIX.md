@@ -82,6 +82,28 @@ providers, not where the domain lives.
 Columns are the six built domains. Read a row as: *does this domain use this
 horizontal capability the way the contract intends?*
 
+### Public site provenance contract v2 assessment
+
+`/version.json` v2 is a horizontal discovery contract for the generated public
+site, not a CRM runtime capability. It extends the one existing provenance
+artifact so a reader can compare checkout SHA and claims-measurement SHA without
+adding a command or rail. No domain reads it and no application behavior moves.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | project records do not consume public-site build metadata |
+| Pipeline | `not_applicable` | runtime pipeline composition is independent of the marketing deployment |
+| Lead Intelligence | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Commercial Operations | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Signature & Order | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Contract Activation | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Delivery | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Service | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Work | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Lifecycle | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Customer Data | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Custom-package fixture | `not_applicable` | customer packages receive no public-site deployment metadata |
+
 ### Storage contract v1 assessment (Production Spine v2 M1)
 
 The internal dialect-neutral storage seam is horizontal kernel machinery. M1

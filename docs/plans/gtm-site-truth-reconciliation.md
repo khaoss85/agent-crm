@@ -68,6 +68,14 @@ Review findings resolved in this integration:
 
 Tests that required the old homepage to carry registry-version and tour-count literals were corrected: volatile distribution state remains in `site/brand.json`, and composition counts remain in evidence-bearing surfaces rather than buyer-first hero copy. The integration also fixed the pre-existing broken ownership concept link exposed by the full internal-link test.
 
+### DX Simplicity Gate — deployment provenance v2
+
+- **Failure prevented:** a coding agent or maintainer can no longer mistake a deployment-provider environment variable for the source actually checked out and rendered, or compare the claims measurement SHA with the build SHA by guessing across unrelated artifacts.
+- **Why the existing primitive was insufficient:** the earlier provenance artifact admitted inherited `SOURCE_SHA` state and did not carry the claims ledger's independently measured SHA. `llms.txt` could locate content but could not establish which checkout emitted it.
+- **Overlap and workflow:** this extends the single existing `/version.json` artifact rather than adding a command, tool or namespace. One fetch now answers build checkout, claims measurement and generation context; no session gains another mandatory rail.
+- **Portability and evidence:** Git is the authority in every real checkout; an isolated no-Git test fixture is the only override. The contract has a version, full-SHA validation, a generator test and `site:check` enforcement.
+- **Horizontal assessment:** it changes public site discovery, not CRM runtime behavior. Every existing domain is `not_applicable` in the compatibility matrix; no package or application composition consumes the artifact.
+
 ### Visual acceptance record
 
 Chromium 140 reviewed the exact generated output at desktop and mobile widths for Home, Product, Solutions, Service Operations, How It Works, Product Proof, For AI Agents and Developers. The first pass found the desktop hero pushed its CTAs below the reference fold and the lifecycle rail hid its final stages; the integration reduced hero scale/padding and replaced horizontal clipping with a complete responsive grid. Final browser probes report `scrollWidth === innerWidth` on every reviewed page at 1270px and on Home at 390px. Keyboard traversal reaches the visible skip link first and the mobile `summary` menu with a visible focus outline. The final Vercel preview deployed successfully but is protected by Vercel SSO in this environment; account-level preview access remains a human boundary, while the reviewed bytes are the same `site:check` output the deployment built.
