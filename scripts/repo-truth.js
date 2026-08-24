@@ -960,6 +960,8 @@ export async function readAuthorities({ rootDir }) {
         const resultsValid = created.name === 'Probe'
           && created.note === null
           && get.result.id === created.id
+          && get.result.name === 'Probe'
+          && get.result.note === null
           && list.result.length === 2
           && list.result.some((row) => row.id === created.id)
           && list.result.some((row) => row.id === 'truth-nonmatching')
