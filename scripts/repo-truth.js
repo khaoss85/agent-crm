@@ -959,9 +959,7 @@ export async function readAuthorities({ rootDir }) {
         };
         const resultsValid = created.name === 'Probe'
           && created.note === null
-          && get.result.id === created.id
-          && get.result.name === 'Probe'
-          && get.result.note === null
+          && canonical(get.result) === canonical(created)
           && list.result.length === 2
           && list.result.some((row) => row.id === created.id)
           && list.result.some((row) => row.id === 'truth-nonmatching')
@@ -976,8 +974,7 @@ export async function readAuthorities({ rootDir }) {
           && update.result.name === 'Updated'
           && applyManaged.result.status === 'closed'
           && createManaged.result.status === 'open'
-          && getManaged.result.id === createManaged.result.id
-          && getManaged.result.status === 'open';
+          && canonical(getManaged.result) === canonical(createManaged.result);
         bundle.generatedRuntimeUsesStorage = resultsValid && canonical(operations) === canonical({
           create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
           get: [['maybeOne', 'select']],
