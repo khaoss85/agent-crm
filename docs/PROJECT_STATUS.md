@@ -20,20 +20,20 @@ the suite. This file used to own a second SHA and a second count of its own, and
 a test pinned both in place — which is how a status file becomes the most
 confidently wrong document in a repository.
 
-Generated: **2026-08-23**.
+Generated: **2026-08-24**.
 
 ## Snapshot
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **Production Spine v2 M0 characterization**, merged by PR #117 as `d1174fe`. M0 freezes the released SQLite migration identities and complete physical schema after every v1–v5 prefix, the existing synchronous and mixed Promise public contracts, executable CLI/MCP behavior, and the legacy `--db` SQLite-path ambiguity. It adds no PostgreSQL adapter or M1 storage seam; the next bounded implementation milestone is M1. |
-| Measured at | `d1174fe` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
+| Latest merged milestone | **Production Spine v2 M1 SQLite storage contract**, merged by PR #119 as `cc2a1a6`. The internal closed statement seam is proved by the handwritten Company slice and selected generated Work runtime. Work remains `partial`: `packages/work/src/legacy-tasks.js` retains raw SQLite-specific compatibility reads for M2. M1 adds no PostgreSQL adapter and changes no public sync/async contract. |
+| Measured at | `cc2a1a6` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
 | Tests | Measured, never typed. `npm run verify` is green on a clean tree at the commit above; **how many** tests that was lives in `site/claims.json` `measuredAgainst` and in no other file (ADR-027). |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | Real-Chromium checks remain manual and are **not in CI** — no workflow launches a browser, and `npm run smoke` is an in-process application smoke (`docs/ADMIN_SMOKE.md`). The Work v1 section has a **30-check** block, all passing, driven twice at `184e543`; it covers that section only and re-runs none of the earlier blocks. PR #58's desktop and mobile receipts still describe `ef8487a`, and nothing since has re-run them. |
 | CI | The latest completed integration run concluded `success` on both jobs, `verify` and `public-claims`, at its own exact head. This row records that a run passed; it does not claim any particular commit is still the head. GitHub Actions holds the current answer. |
-| Open PRs | None at this snapshot. PR #118 is the measurement-only change that produces this post-merge state; once merged it is history, not remaining work. |
+| Open PRs | None at this snapshot. The post-M1 measurement PR produces this post-merge state; once merged it is history, not remaining work. |
 | Public discovery | GitHub About and all 20 intent topics are live. Smithery `khaoss85/accordo` returns 200 and exposes the three production Docs MCP tools. The GitHub social preview is live and **stale**: it was rendered from a much older measurement and its replacement still needs a manual Settings upload, which is a human step no branch can take. |
 | npm | **`create-accordo@0.1.0` is live since 2026-08-19** — staged from CI through OIDC trusted publishing (run 32224731197, Sigstore provenance), approved by the maintainer with 2FA, and confirmed against the registry: the published shasum matches the CI assembly, `latest` resolves to `0.1.0`, and a clean-directory `npm create accordo` scaffolds a verifying project. `accordo@0.0.1` remains an **empty name reservation by design** (no framework library). The `@accordo` organization exists since 2026-08-19 and its scope is **deliberately empty**: `@accordo/mcp` was investigated and refused, because the project MCP server composes from the generated indexes of the tree it runs in and a published copy would answer about the wrong application (ADR-034). The MCP-registry submission is no longer blocked by it — `server.json` registers the remote documentation endpoint instead. `site/brand.json` records `npm.status: published`. |
 | Project bootstrap | **`create-accordo` is real source and its publication is live**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates the bounded publishable directory while the source manifest stays `private: true` — publication never lowered that wall, because what npm published is the assembly, which strips `private`. The staged path proved itself the hard way: one dispatch died `E401` (a `registry-url` placeholder token preempting OIDC), the next `ENEEDAUTH` (no matching trusted-publisher config), and run `32224731197` staged clean once the publisher allowed `npm stage publish`. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
@@ -111,13 +111,13 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. Start **Production Spine v2 M1** on its dedicated branch: extract the
-   smallest dialect-neutral asynchronous storage contract over SQLite only and
-   prove it with the handwritten Company dependency closure plus one materially
-   different generated/package-owned resource.
-2. Preserve synchronous `createAccordoApp()` and every characterized v1 public
-   contract. M1 adds neither the production PostgreSQL adapter nor Cloud C0;
-   those remain later milestones in the ratified ExecPlan.
+1. **Production Spine v2 M2 is ready but not started.** Its causal boundary is
+   the remaining SQLite extraction and compatibility work named by the merged
+   ExecPlan and Legacy Alignment Matrix, including the raw legacy Work reads in
+   `packages/work/src/legacy-tasks.js`.
+2. M2 must preserve the M0/M1 public contracts and must not be confused with the
+   later production PostgreSQL adapter milestone. Cloud C0 and shared-database
+   row tenancy remain outside this sequence.
 
 The GTM stack and production promotion are complete; they are not queued work.
 The independent longer-horizon tracks remain the private/public repository
