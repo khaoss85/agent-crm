@@ -40,6 +40,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const REPOSITORY_TRUTH_CONTRACT = 1;
@@ -959,7 +960,7 @@ export async function readAuthorities({ rootDir }) {
         };
         const resultsValid = created.name === 'Probe'
           && created.note === null
-          && canonical(get.result) === canonical(created)
+          && isDeepStrictEqual(get.result, created)
           && list.result.length === 2
           && list.result.some((row) => row.id === created.id)
           && list.result.some((row) => row.id === 'truth-nonmatching')
@@ -971,10 +972,10 @@ export async function readAuthorities({ rootDir }) {
           && listWhereNull.result[0].id === created.id
           && countWhere.result === 1
           && countWhereMembership.result === 1
-          && canonical(update.result) === canonical({ ...created, name: 'Updated', updatedAt: update.result.updatedAt })
-          && canonical(applyManaged.result) === canonical({ ...update.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
+          && isDeepStrictEqual(update.result, { ...created, name: 'Updated', updatedAt: update.result.updatedAt })
+          && isDeepStrictEqual(applyManaged.result, { ...update.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
           && createManaged.result.status === 'open'
-          && canonical(getManaged.result) === canonical(createManaged.result);
+          && isDeepStrictEqual(getManaged.result, createManaged.result);
         bundle.generatedRuntimeUsesStorage = resultsValid && canonical(operations) === canonical({
           create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
           get: [['maybeOne', 'select']],
