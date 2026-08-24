@@ -890,6 +890,7 @@ export async function readAuthorities({ rootDir }) {
       if (!GeneratedService) throw new Error('generated storage probe service export is unavailable');
       if (!ManagedGeneratedService) throw new Error('generated managed-storage probe service export is unavailable');
       const generatedCalls = [];
+      const generatedUpdateTimestamps = [];
       const migration = Object.values(migrationModule).find((value) => Array.isArray(value))?.[0];
       const managedMigration = Object.values(managedMigrationModule).find((value) => Array.isArray(value))?.[0];
       if (!migration?.sql || !managedMigration?.sql) throw new Error('generated storage migration exports are unavailable');
@@ -902,7 +903,13 @@ export async function readAuthorities({ rootDir }) {
       const managedRealSync = storageContract.createSqliteStorage(managedRaw, (fn) => fn(), async (fn) => fn()).sync;
       const tracked = (actual) => ({
         savepoint(name, fn) { generatedCalls.push(['savepoint', name]); return actual.savepoint(name, fn); },
-        execute(statement) { generatedCalls.push(['execute', statement.kind]); return actual.execute(statement); },
+        execute(statement) {
+          generatedCalls.push(['execute', statement.kind]);
+          if (statement.kind === 'update') {
+            generatedUpdateTimestamps.push(statement.values.find((entry) => entry.column === 'updated_at')?.value);
+          }
+          return actual.execute(statement);
+        },
         maybeOne(statement) { generatedCalls.push(['maybeOne', statement.kind]); return actual.maybeOne(statement); },
         many(statement) { generatedCalls.push(['many', statement.kind]); return actual.many(statement); },
       });
@@ -962,20 +969,24 @@ export async function readAuthorities({ rootDir }) {
           && created.note === null
           && isDeepStrictEqual(get.result, created)
           && list.result.length === 2
-          && list.result.some((row) => row.id === created.id)
-          && list.result.some((row) => row.id === 'truth-nonmatching')
+          && isDeepStrictEqual(list.result.find((row) => row.id === created.id), created)
+          && isDeepStrictEqual(list.result.find((row) => row.id === 'truth-nonmatching'), {
+            id: 'truth-nonmatching', name: 'Other', note: 'not-null', status: 'closed',
+            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+          })
           && listWithMembership.result.length === 1
-          && listWithMembership.result[0].id === created.id
+          && isDeepStrictEqual(listWithMembership.result[0], created)
           && listWhere.result.length === 1
-          && listWhere.result[0].id === created.id
+          && isDeepStrictEqual(listWhere.result[0], created)
           && listWhereNull.result.length === 1
-          && listWhereNull.result[0].id === created.id
+          && isDeepStrictEqual(listWhereNull.result[0], created)
           && countWhere.result === 1
           && countWhereMembership.result === 1
           && isDeepStrictEqual(update.result, { ...created, name: 'Updated', updatedAt: update.result.updatedAt })
           && isDeepStrictEqual(applyManaged.result, { ...update.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
           && createManaged.result.status === 'open'
-          && isDeepStrictEqual(getManaged.result, createManaged.result);
+          && isDeepStrictEqual(getManaged.result, createManaged.result)
+          && isDeepStrictEqual(generatedUpdateTimestamps, [update.result.updatedAt, applyManaged.result.updatedAt]);
         bundle.generatedRuntimeUsesStorage = resultsValid && canonical(operations) === canonical({
           create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
           get: [['maybeOne', 'select']],
