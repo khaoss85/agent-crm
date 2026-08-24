@@ -439,10 +439,14 @@ function htmlToMarkdown(html, path) {
   const text = main
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, (_match, contents) => {
+      const code = contents.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '$1').trim();
+      return `\n\n\`\`\`text\n${code}\n\`\`\`\n\n`;
+    })
     .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n')
     .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n')
     .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n')
-    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1')
+    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1\n')
     .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`')
     .replace(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)')
     .replace(/<br\s*\/?>/gi, '\n')

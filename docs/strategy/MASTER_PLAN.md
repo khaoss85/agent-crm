@@ -49,35 +49,35 @@ Brief + business process + design reference → the agent scaffolds, generates m
 
 **Accordo Cloud** is the named product track for the optional managed operating layer — Control Plane, managed runtime, agent operations CLI/MCP, plugin operations, public benchmark deployment — gated by the Production Spine (Phase 6) and specified in `AGENT_CRM_CLOUD.md` (design only; nothing implemented). The open-source framework and the self-hosting path remain first-class forever; Cloud is optional and must never create lock-in.
 
-### Product workstreams (design only, unbuilt)
+### Product workstreams
 
 Five named workstreams extend the CRM capability track beyond the Opportunity pipeline, covering the complete commercial lifecycle — and, with Marketing, what happens before a lead exists at all:
 
 ```text
 Marketing & Growth         (funnel insight, campaign proposal, journeys, experiments,
-                            paid media, attribution — MK0–MK7, design only)
-→ Lead Intelligence        (enrichment, explainable scoring, versioned routing — M9, done)
-→ Sales                    (pipeline — M8, done)
-→ Commercial Operations    (catalog, composite quotes, discounts, approvals — M10, done)
-→ Signature and Order      (verified evidence, immutable Order — M11, done)
-→ Contract / Subscription  (activation, terms, entitlements, renewal — M12, next)
-→ Delivery                 (handover, commesse, partners, economics, acceptance — M13/M14)
-→ Service                  (contracts, entitlements, SLA, support — M15)
+                            paid media, attribution)
+→ Lead Intelligence        (enrichment, explainable scoring, versioned routing)
+→ Sales                    (pipeline)
+→ Commercial Operations    (catalog, composite quotes, discounts, approvals)
+→ Signature and Order      (verified evidence, immutable Order)
+→ Contract / Subscription  (activation, terms, entitlements, renewal)
+→ Delivery                 (handover, commesse, partners, economics, acceptance)
+→ Service                  (contracts, entitlements, SLA, support)
 → Customer Success
 → Renewal and Upsell       (feeds back into Lead Intelligence and Sales)
 ```
 
-- **Lead Intelligence & Routing** and **Commercial Operations / CPQ** — `REVENUE_OPERATIONS.md` (M9–M11, **merged**).
-- **Contract, Subscription and Renewal** — `CONTRACT_SUBSCRIPTION_RENEWAL.md` (M12; the layer between an immutable Order and everything recurring — added at the alignment gate because Delivery cannot be built on an Order alone).
-- **Delivery & Service Operations** — `DELIVERY_SERVICE.md` (M13–M15; the CRM equivalent of ecommerce fulfillment).
-- **Analytics Studio** — `ANALYTICS_STUDIO.md` (M16; safe semantic metrics, no agent-generated raw SQL).
-- **Marketing & Growth Operations** — `MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md` (MK0–MK7; a **parallel** package-native track, not a successor to Delivery. It proposes before it sends: MK1 needs no provider at all, MK4 is hard-blocked on durable automation and MK7 on Analytics Studio).
+- **Lead Intelligence & Routing** and **Commercial Operations / CPQ** — `REVENUE_OPERATIONS.md`.
+- **Contract, Subscription and Renewal** — `CONTRACT_SUBSCRIPTION_RENEWAL.md`; the layer between an immutable Order and everything recurring.
+- **Delivery & Service Operations** — `DELIVERY_SERVICE.md`; the CRM equivalent of ecommerce fulfillment.
+- **Analytics Studio** — `ANALYTICS_STUDIO.md`; safe semantic metrics, no agent-generated raw SQL.
+- **Marketing & Growth Operations** — `MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md`; a parallel package-native track, not a successor to Delivery.
 
-Every workstream follows the same delivery model — native deterministic primitives + provider contracts + code-first versioned policies + Agent Skills + starter + JTBD evidence + reproducible E2E benchmark. **M9–M11 are merged; M12 onward is not implemented.**
+Every workstream follows the same delivery model — native deterministic primitives + provider contracts + code-first versioned policies + Agent Skills + starter + JTBD evidence + reproducible E2E benchmark. Current coverage is deliberately delegated to `docs/PROJECT_STATUS.md`, the JTBD coverage overlay and `site/claims.json`.
 
 ### The experience that reaches all of them
 
-The pillars are *what* the framework can do. The **objective-driven agent experience** is *how a user gets there*: they supply a business objective and its constraints, and the agent discovers installed packages and capabilities, analyses the gap, chooses or creates packages, proposes a reviewable plan, builds checked-in source, verifies it, and asks only for sensitive approvals. It is cross-cutting — the AX0–AX5 track in `EXECUTION_ROADMAP.md` — not a thirteenth pillar. AX0 is a strategy and a Skill; **AX1–AX5 are not implemented**. See `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`.
+The pillars are *what* the framework can do. The **objective-driven agent experience** is *how a user gets there*: they supply a business objective and its constraints, and the agent discovers installed packages and capabilities, analyses the gap, chooses or creates packages, proposes a reviewable plan, builds checked-in source, verifies it, and asks only for sensitive approvals. It is cross-cutting — the AX track in `EXECUTION_ROADMAP.md` — not a thirteenth pillar. See `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`; current coverage remains in the operational authorities above.
 
 ### The twelve pillars
 

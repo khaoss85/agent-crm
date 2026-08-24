@@ -203,6 +203,17 @@ test('every strategic HTML page advertises its generated Markdown peer, and the 
   assert.match(inspectStrategicSurfaces({ outDir: site.dist, origin: ORIGIN }).join('\n'), /strategic Markdown equivalent is missing/);
 });
 
+test('strategic Markdown preserves executable blocks and block boundaries', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+  const developers = site.read('developers.md');
+  assert.match(developers, /```text\nnpm create accordo my-crm\ncd my-crm\nnpm run crm -- app inspect --json\n```/);
+
+  const how = site.read('how-it-works.md');
+  assert.match(how, /- Prove one business journey[\s\S]*choose the scenario that matches the job\.\nImplementation truth stays separate\./);
+  assert.doesNotMatch(how, /- Prove one business journey[^\n]*Implementation truth stays separate/);
+});
+
 test('human journeys keep technical verification, scenario proof and ledger claims distinct', (t) => {
   const site = build();
   t.after(site.cleanup);
