@@ -158,6 +158,8 @@ function frameworkFixture(t) {
   const root = disposable(t, 'accordo-truth-fixture-');
   cpSync(join(repoRoot, 'packages'), join(root, 'packages'), { recursive: true });
   cpSync(join(repoRoot, 'package.json'), join(root, 'package.json'));
+  mkdirSync(join(root, 'scripts'), { recursive: true });
+  cpSync(join(repoRoot, 'scripts/repo-truth.js'), join(root, 'scripts/repo-truth.js'));
   for (const path of [BENCHMARK_PANEL.aggregate, BENCHMARK_PANEL.protocol]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     cpSync(join(repoRoot, path), join(root, path));

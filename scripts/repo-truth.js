@@ -40,7 +40,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const REPOSITORY_TRUTH_CONTRACT = 1;
 
@@ -712,6 +712,12 @@ export async function readAuthorities({ rootDir }) {
       continue;
     }
     digests.push([path, sha256(readFileSync(full, 'utf8'))]);
+  }
+  const targetGenerator = join(rootDir, 'scripts/repo-truth.js');
+  const executingGenerator = fileURLToPath(import.meta.url);
+  if (existsSync(targetGenerator)
+    && !readFileSync(targetGenerator).equals(readFileSync(executingGenerator))) {
+    unavailable('the target checkout has a different scripts/repo-truth.js than the generator executing this authority read');
   }
   const sourceSha = sha256(canonical(digests.slice().sort((a, b) => compare(a[0], b[0]))));
 
