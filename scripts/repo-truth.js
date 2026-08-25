@@ -674,9 +674,9 @@ export function gitIn(cwd) {
  * so a test can flip one authority value and watch the whole document move,
  * which is the "a runtime fact changed and the generated facts are stale" case.
  *
- * @param {{rootDir: string}} options
+ * @param {{rootDir: string, generatedProbeClock?: 'advancing' | 'stalled'}} options
  */
-export async function readAuthorities({ rootDir }) {
+export async function readAuthorities({ rootDir, generatedProbeClock = 'advancing' }) {
   /**
    * A **fatal** problem: a source authority could not be read, so no fact may be
    * derived at all and the document is refused whole.
@@ -919,11 +919,18 @@ export async function readAuthorities({ rootDir }) {
       const managedMigrationFile = managedPlan.files.find((file) => /migration\.js$/.test(file.path));
       if (!migrationFile || !managedMigrationFile) throw new Error('generated storage probe did not produce migration artifacts');
       writeFileSync(join(generatedRoot, 'package.json'), '{"type":"module"}\n');
-      for (const source of ['errors.js', 'validation.js', 'time.js']) {
+      for (const source of ['errors.js', 'validation.js']) {
         const target = join(generatedRoot, 'packages/core/src', source);
         mkdirSync(join(generatedRoot, 'packages/core/src'), { recursive: true });
         writeFileSync(target, readFileSync(join(rootDir, 'packages/core/src', source), 'utf8'));
       }
+      // The authority owns its clock so timestamp ordering is deterministic and
+      // cannot turn into a wall-clock spin. The stalled variant exists only to
+      // prove that a clock which cannot advance is refused with a stable code.
+      const probeTimePath = join(generatedRoot, 'packages/core/src/time.js');
+      writeFileSync(probeTimePath, generatedProbeClock === 'stalled'
+        ? `export function nowIso() { return '2026-01-01T00:00:00.000Z'; }\n`
+        : `let tick = 0;\nexport function nowIso() { return new Date(Date.UTC(2026, 0, 1, 0, 0, 0, tick++)).toISOString(); }\n`);
       const generatedPath = join(generatedRoot, ...serviceFile.path.split(/[\\/]/));
       mkdirSync(dirname(generatedPath), { recursive: true });
       writeFileSync(generatedPath, serviceFile.content);
@@ -985,9 +992,6 @@ export async function readAuthorities({ rootDir }) {
           const result = await run();
           return { result, calls: generatedCalls.slice(start) };
         };
-        const waitPast = (timestamp) => {
-          while (Date.now() <= Date.parse(timestamp)) { /* bounded to the next millisecond */ }
-        };
         const create = await drive(() => service.create({
           name: 'Probe', note: 'created-note', kind: 'primary', enabled: true,
         }));
@@ -1004,6 +1008,18 @@ export async function readAuthorities({ rootDir }) {
             { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
           ],
         });
+        realSync.execute({
+          kind: 'insert', table: 'truth_storage_probes', values: [
+            { column: 'id', value: 'truth-open-disabled' },
+            { column: 'name', value: 'Open Disabled' },
+            { column: 'note', value: 'conjunction-target' },
+            { column: 'kind', value: 'secondary' },
+            { column: 'enabled', value: 0 },
+            { column: 'status', value: 'open' },
+            { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
+            { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
+          ],
+        });
         const get = await drive(() => service.get(created.id));
         const list = await drive(() => service.list());
         const listWithMembership = await drive(() => service.list({ where: { status: ['open'] } }));
@@ -1013,7 +1029,9 @@ export async function readAuthorities({ rootDir }) {
         const countWhere = await drive(() => service.countWhere({ id: created.id }));
         const countWhereMembership = await drive(() => service.countWhere({ status: ['open'] }));
         const countWhereDisabled = await drive(() => service.countWhere({ enabled: false }));
-        waitPast(created.updatedAt);
+        const listWhereConjunction = await drive(() => service.listWhere({ status: 'open', enabled: false }));
+        const countWhereConjunction = await drive(() => service.countWhere({ status: 'open', enabled: false }));
+        const countWhereNoMatchConjunction = await drive(() => service.countWhere({ status: 'closed', enabled: true }));
         const update = await drive(() => service.update(created.id, {
           name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
         }));
@@ -1022,7 +1040,6 @@ export async function readAuthorities({ rootDir }) {
           name: 'Null Probe', note: null, kind: 'primary', enabled: true,
         }));
         const getNull = await drive(() => service.get(createNull.result.id));
-        waitPast(update.result.updatedAt);
         const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }));
         const getNonmatchingAfterManaged = await drive(() => service.get('truth-nonmatching'));
         const createManaged = await drive(() => managedService.createManaged({
@@ -1032,7 +1049,6 @@ export async function readAuthorities({ rootDir }) {
         const createManagedSibling = await drive(() => managedService.createManaged({
           name: 'Managed Sibling', note: 'sibling-note', status: 'open',
         }));
-        waitPast(createManaged.result.updatedAt);
         const updateManaged = await drive(() => managedService.applyManaged(createManaged.result.id, {
           name: 'Updated Managed Probe', note: null, status: 'closed',
         }));
@@ -1049,6 +1065,9 @@ export async function readAuthorities({ rootDir }) {
           countWhere: countWhere.calls,
           countWhereMembership: countWhereMembership.calls,
           countWhereDisabled: countWhereDisabled.calls,
+          listWhereConjunction: listWhereConjunction.calls,
+          countWhereConjunction: countWhereConjunction.calls,
+          countWhereNoMatchConjunction: countWhereNoMatchConjunction.calls,
           update: update.calls,
           getNonmatchingAfterUpdate: getNonmatchingAfterUpdate.calls,
           createNull: createNull.calls,
@@ -1062,19 +1081,28 @@ export async function readAuthorities({ rootDir }) {
           getManagedUpdated: getManagedUpdated.calls,
           getManagedSibling: getManagedSibling.calls,
         };
+        const mutationTimestampsAdvance = generatedUpdateTimestamps.every((timestamp, index) => {
+          const previous = index === 0 ? created.updatedAt
+            : index === 1 ? update.result.updatedAt
+              : createManaged.result.updatedAt;
+          return Number.isFinite(Date.parse(timestamp)) && Date.parse(timestamp) > Date.parse(previous);
+        });
+        if (!mutationTimestampsAdvance) {
+          throw new Error('generated mutation timestamps did not advance strictly');
+        }
         const resultsValid = created.name === 'Probe'
           && created.note === 'created-note'
           && created.kind === 'primary'
           && created.enabled === true
           && created.status === 'open'
           && isDeepStrictEqual(get.result, created)
-          && list.result.length === 2
+          && list.result.length === 3
           && isDeepStrictEqual(list.result.find((row) => row.id === created.id), created)
           && isDeepStrictEqual(list.result.find((row) => row.id === 'truth-nonmatching'), {
             id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'closed',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
           })
-          && listWithMembership.result.length === 1
+          && listWithMembership.result.length === 2
           && isDeepStrictEqual(listWithMembership.result[0], created)
           && listWhere.result.length === 1
           && isDeepStrictEqual(listWhere.result[0], created)
@@ -1086,8 +1114,12 @@ export async function readAuthorities({ rootDir }) {
           && listWhereEnabled.result.length === 1
           && isDeepStrictEqual(listWhereEnabled.result[0], created)
           && countWhere.result === 1
-          && countWhereMembership.result === 1
-          && countWhereDisabled.result === 1
+          && countWhereMembership.result === 2
+          && countWhereDisabled.result === 2
+          && listWhereConjunction.result.length === 1
+          && listWhereConjunction.result[0].id === 'truth-open-disabled'
+          && countWhereConjunction.result === 1
+          && countWhereNoMatchConjunction.result === 0
           && isDeepStrictEqual(update.result, {
             ...created, name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
             updatedAt: update.result.updatedAt,
@@ -1133,6 +1165,9 @@ export async function readAuthorities({ rootDir }) {
           countWhere: [['maybeOne', 'count']],
           countWhereMembership: [['maybeOne', 'count']],
           countWhereDisabled: [['maybeOne', 'count']],
+          listWhereConjunction: [['many', 'select']],
+          countWhereConjunction: [['maybeOne', 'count']],
+          countWhereNoMatchConjunction: [['maybeOne', 'count']],
           update: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           getNonmatchingAfterUpdate: [['maybeOne', 'select']],
           createNull: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],

@@ -211,6 +211,17 @@ function frameworkFixture(t) {
   };
 }
 
+
+test('a generated authority clock that cannot advance fails explicitly without waiting', async () => {
+  const started = Date.now();
+  const result = await readAuthorities({ rootDir: repoRoot, generatedProbeClock: 'stalled' });
+  assert.ok(Date.now() - started < 2_000, 'stalled authority must terminate within a hard test bound');
+  assert.notEqual(result.generatedRuntimeUsesStorage, true);
+  assert.ok(result.problems.some((problem) => problem.code === 'TRUTH_AUTHORITY_UNAVAILABLE'
+    && problem.message.includes('generated mutation timestamps did not advance strictly')),
+  `expected stable timestamp authority failure, got ${JSON.stringify(result.problems)}`);
+});
+
 // ─────────────────────────────────────────── the committed document is honest
 
 /**
