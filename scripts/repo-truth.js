@@ -825,12 +825,19 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     // prove exact timestamp ordering without a wall-clock spin. Prove the real
     // runtime clock separately, with a small hard bound: a regressed/constant
     // clock refuses the authority instead of being masked by the substitute.
+    const canonicalUtcTimestamp = (value) => typeof value === 'string'
+      && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+      && Number.isFinite(Date.parse(value))
+      && new Date(Date.parse(value)).toISOString() === value;
     const realClockStart = realNowIso();
+    if (!canonicalUtcTimestamp(realClockStart)) {
+      throw new Error('generated runtime clock did not return canonical ISO-8601 UTC');
+    }
     let realClockAdvanced = false;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 1));
       const candidate = realNowIso();
-      if (Number.isFinite(Date.parse(candidate)) && Date.parse(candidate) > Date.parse(realClockStart)) {
+      if (canonicalUtcTimestamp(candidate) && Date.parse(candidate) > Date.parse(realClockStart)) {
         realClockAdvanced = true;
         break;
       }
