@@ -1052,6 +1052,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           name: 'Null Probe', note: null, kind: 'primary', enabled: true,
         }));
         const getNull = await drive(() => service.get(createNull.result.id));
+        const partialUpdate = await drive(() => service.update(created.id, { note: null }));
         const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }));
         const getNonmatchingAfterManaged = await drive(() => service.get('truth-nonmatching'));
         const createManaged = await drive(() => managedService.createManaged({
@@ -1065,6 +1066,8 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           name: 'Updated Managed Probe', note: null, status: 'closed',
         }));
         const getManagedUpdated = await drive(() => managedService.get(createManaged.result.id));
+        const partialManagedUpdate = await drive(() => managedService.applyManaged(createManaged.result.id, { note: 'restored-note' }));
+        const getManagedPartial = await drive(() => managedService.get(createManaged.result.id));
         const getManagedSibling = await drive(() => managedService.get(createManagedSibling.result.id));
         const operations = {
           create: create.calls,
@@ -1084,6 +1087,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           getNonmatchingAfterUpdate: getNonmatchingAfterUpdate.calls,
           createNull: createNull.calls,
           getNull: getNull.calls,
+          partialUpdate: partialUpdate.calls,
           applyManaged: applyManaged.calls,
           getNonmatchingAfterManaged: getNonmatchingAfterManaged.calls,
           createManaged: createManaged.calls,
@@ -1091,14 +1095,20 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           createManagedSibling: createManagedSibling.calls,
           updateManaged: updateManaged.calls,
           getManagedUpdated: getManagedUpdated.calls,
+          partialManagedUpdate: partialManagedUpdate.calls,
+          getManagedPartial: getManagedPartial.calls,
           getManagedSibling: getManagedSibling.calls,
         };
-        const mutationTimestampsAdvance = generatedUpdateTimestamps.every((timestamp, index) => {
-          const previous = index === 0 ? created.updatedAt
-            : index === 1 ? update.result.updatedAt
-              : createManaged.result.updatedAt;
-          return Number.isFinite(Date.parse(timestamp)) && Date.parse(timestamp) > Date.parse(previous);
-        });
+        const priorMutationTimestamps = [
+          created.updatedAt,
+          update.result.updatedAt,
+          partialUpdate.result.updatedAt,
+          createManaged.result.updatedAt,
+          updateManaged.result.updatedAt,
+        ];
+        const mutationTimestampsAdvance = generatedUpdateTimestamps.length === priorMutationTimestamps.length
+          && generatedUpdateTimestamps.every((timestamp, index) => Number.isFinite(Date.parse(timestamp))
+            && Date.parse(timestamp) > Date.parse(priorMutationTimestamps[index]));
         if (!mutationTimestampsAdvance) {
           throw new Error('generated mutation timestamps did not advance strictly');
         }
@@ -1148,8 +1158,11 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           && createNull.result.enabled === true
           && createNull.result.status === 'open'
           && isDeepStrictEqual(getNull.result, createNull.result)
-          && isDeepStrictEqual(applyManaged.result, { ...update.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
-          && Date.parse(applyManaged.result.updatedAt) > Date.parse(update.result.updatedAt)
+          && isDeepStrictEqual(partialUpdate.result, {
+            ...update.result, note: null, updatedAt: partialUpdate.result.updatedAt,
+          })
+          && isDeepStrictEqual(applyManaged.result, { ...partialUpdate.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
+          && Date.parse(applyManaged.result.updatedAt) > Date.parse(partialUpdate.result.updatedAt)
           && isDeepStrictEqual(getNonmatchingAfterManaged.result, getNonmatchingAfterUpdate.result)
           && createManaged.result.name === 'Managed Probe'
           && createManaged.result.note === 'managed-note'
@@ -1162,9 +1175,14 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           && Object.hasOwn(updateManaged.result, 'note')
           && Date.parse(updateManaged.result.updatedAt) > Date.parse(createManaged.result.updatedAt)
           && isDeepStrictEqual(getManagedUpdated.result, updateManaged.result)
+          && isDeepStrictEqual(partialManagedUpdate.result, {
+            ...updateManaged.result, note: 'restored-note', updatedAt: partialManagedUpdate.result.updatedAt,
+          })
+          && isDeepStrictEqual(getManagedPartial.result, partialManagedUpdate.result)
           && isDeepStrictEqual(getManagedSibling.result, createManagedSibling.result)
           && isDeepStrictEqual(generatedUpdateTimestamps, [
-            update.result.updatedAt, applyManaged.result.updatedAt, updateManaged.result.updatedAt,
+            update.result.updatedAt, partialUpdate.result.updatedAt, applyManaged.result.updatedAt,
+            updateManaged.result.updatedAt, partialManagedUpdate.result.updatedAt,
           ]);
         bundle.generatedRuntimeUsesStorage = resultsValid && canonical(operations) === canonical({
           create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
@@ -1184,6 +1202,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           getNonmatchingAfterUpdate: [['maybeOne', 'select']],
           createNull: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
           getNull: [['maybeOne', 'select']],
+          partialUpdate: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           applyManaged: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           getNonmatchingAfterManaged: [['maybeOne', 'select']],
           createManaged: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
@@ -1191,6 +1210,8 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           createManagedSibling: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
           updateManaged: [['maybeOne', 'select'], ['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           getManagedUpdated: [['maybeOne', 'select']],
+          partialManagedUpdate: [['maybeOne', 'select'], ['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          getManagedPartial: [['maybeOne', 'select']],
           getManagedSibling: [['maybeOne', 'select']],
         });
       } finally {
