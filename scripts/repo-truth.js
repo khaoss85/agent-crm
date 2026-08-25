@@ -814,11 +814,28 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     bundle.anonymousAllowed = decision.allowed === true;
 
     const storageContract = await import(url('packages/core/src/storage-contract.js'));
+    const { nowIso: realNowIso } = await import(url('packages/core/src/time.js'));
     const { CORE_MIGRATIONS_FOR_CHARACTERIZATION } = await import(url('packages/core/src/database.js'));
     const { CompanyService } = await import(url('packages/modules/company/src/company-service.js'));
     const { planModule } = await import(url('packages/cli/src/module-factory.js'));
     const { migrateLegacyTasks } = await import(url('packages/work/src/legacy-tasks.js'));
     bundle.storageContract = storageContract.STORAGE_CONTRACT;
+
+    // The generated-service probe substitutes a deterministic clock so it can
+    // prove exact timestamp ordering without a wall-clock spin. Prove the real
+    // runtime clock separately, with a small hard bound: a regressed/constant
+    // clock refuses the authority instead of being masked by the substitute.
+    const realClockStart = realNowIso();
+    let realClockAdvanced = false;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      const candidate = realNowIso();
+      if (Number.isFinite(Date.parse(candidate)) && Date.parse(candidate) > Date.parse(realClockStart)) {
+        realClockAdvanced = true;
+        break;
+      }
+    }
+    if (!realClockAdvanced) throw new Error('generated runtime clock did not advance within the bounded probe');
 
     // Behavior probe: Company statements must render and execute through the
     // real M1 SQLite adapter. The isolated schema makes a bad table, column,
