@@ -462,6 +462,25 @@ names its own fix.
 
 ## 10. Sequencing, by leverage
 
+> **Status, re-checked 2026-08-25.** This list was written on 2026-08-07 and five of its seven
+> items have since closed. The analysis below is left as written — it is a dated document, and
+> the reasoning is what makes the ordering re-usable — but a reader picking it up as a to-do list
+> should start at item 6.
+>
+> | # | State | Evidence, checkable now |
+> |---|---|---|
+> | 1 | **done** | `npm run distribution:check` passes and publishes 11 skills over an explicit tier (`generated-project` / `any-project`), with one maintainer-only skill held back. The gate this item said would fail until it was done no longer fails. |
+> | 2 | **done** | Every published skill description opens on the job phrase rather than the mechanism — `solve-business-goal` names "custom CRM, Customer Hub, policy-governed Smart CRM, or CDP + CRM" in its first clause, which is §5's mapping stated where the trigger actually reads it. |
+> | 3 | **done** | `site/brand.json`: `name.status: chosen`, `domain.status: registered`, `npm.status: published`. The `@accordo` scope remains deliberately empty (ADR-034), which is a decision rather than an open item. |
+> | 4 | **done** | `repository.status: public`. §3 is no longer worth zero. |
+> | 5 | **done** | `npm create accordo` is live — `create-accordo@0.1.0`, staged through OIDC trusted publishing and verified against the registry. The recommendation has a verb. `L-08` still travels with it: the command vendors the source, so upgrading is a merge. |
+> | 6 | **open, and now the only one** | No CPR receipt exists under `docs/benchmarks/`. It remains what §9 says it is: the one measurement that tells us whether items 1–5 were aimed correctly. |
+> | 7 | byproduct | Not a task, by construction. |
+>
+> An agent cannot close item 6 for you and should not try: CPR requires clean sessions of
+> separate agent products, and a session that has read this repository is contaminated by
+> definition. Preparing the prompts and the rubric is in scope; running them is not.
+
 Ordered by how much each unblocks, not by effort:
 
 1. **Make the skills portable** — rewrite the ten repo-bound skills to discover context through
