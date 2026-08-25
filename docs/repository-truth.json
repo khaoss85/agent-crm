@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "43545599f38c37b8709b7cb1d2ccc04187cf42747092b64fb7c3b7d2ebe25bfa",
+  "sourceSha": "2ed752fa290e233f7b216a2a8763a0a927ef6ae363d1a9a3038b03699eb96855",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -719,7 +719,9 @@
       ],
       "scope": "framework",
       "status": "current",
-      "limitations": []
+      "limitations": [
+        "STORAGE_FACT_IS_BOUNDED_PROBE"
+      ]
     },
     {
       "id": "spine.storage.contract",
@@ -741,7 +743,9 @@
       ],
       "scope": "framework",
       "status": "current",
-      "limitations": []
+      "limitations": [
+        "STORAGE_FACT_IS_BOUNDED_PROBE"
+      ]
     },
     {
       "id": "spine.storage.work_legacy_raw",
@@ -752,7 +756,9 @@
       ],
       "scope": "framework",
       "status": "current",
-      "limitations": []
+      "limitations": [
+        "STORAGE_FACT_IS_BOUNDED_PROBE"
+      ]
     },
     {
       "id": "spine.tenant.crm_data_plane_enforced",
@@ -781,6 +787,10 @@
     }
   ],
   "limitations": [
+    {
+      "code": "STORAGE_FACT_IS_BOUNDED_PROBE",
+      "message": "storage runtime facts come from bounded executable probes over named Company, generated-service and Work legacy operations and field shapes. They do not prove every checked-in service, schema shape or storage path"
+    },
     {
       "code": "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME",
       "message": "every fact is read from checked-in source or from a recorded receipt. Nothing here reports what a deployed instance is doing: which mode it chose, which tenant it is bound to, whether a verifier is configured and who holds which membership remain runtime facts"
@@ -834,5 +844,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "e78bf097e1e5d736e5c3134f39e638cb8d0ffd9e59a3907b199ea2c52a61610a"
+  "fingerprint": "7340d6f85dba53b0985ca467808c57f2b5481fcd82fe9c7c81846b9c2d01eea1"
 }

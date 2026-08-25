@@ -106,6 +106,9 @@ export const TRUTH_PROBLEMS = Object.freeze([
  * acts on the boundary rather than discovering it.
  */
 export const TRUTH_LIMITATIONS = Object.freeze([
+  ['STORAGE_FACT_IS_BOUNDED_PROBE',
+    'storage runtime facts come from bounded executable probes over named Company, generated-service and Work '
+    + 'legacy operations and field shapes. They do not prove every checked-in service, schema shape or storage path'],
   ['TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME',
     'every fact is read from checked-in source or from a recorded receipt. Nothing here reports what a '
     + 'deployed instance is doing: which mode it chose, which tenant it is bound to, whether a verifier is '
@@ -1825,6 +1828,7 @@ export function buildFacts(bundle) {
     authority: 'storage.contract',
     evidence: ['packages/modules/company/src/company-service.js#CompanyService'],
     scope: 'framework',
+    limitations: ['STORAGE_FACT_IS_BOUNDED_PROBE'],
   });
   add({
     id: 'spine.storage.generated_runtime',
@@ -1832,6 +1836,7 @@ export function buildFacts(bundle) {
     authority: 'storage.contract',
     evidence: ['packages/cli/src/module-factory.js#serviceTemplate'],
     scope: 'framework',
+    limitations: ['STORAGE_FACT_IS_BOUNDED_PROBE'],
   });
   add({
     id: 'spine.storage.work_legacy_raw',
@@ -1839,6 +1844,7 @@ export function buildFacts(bundle) {
     authority: 'storage.contract',
     evidence: ['packages/work/src/legacy-tasks.js#migrateLegacyTasks'],
     scope: 'framework',
+    limitations: ['STORAGE_FACT_IS_BOUNDED_PROBE'],
   });
 
   for (const [id, rule] of Object.entries(DECLARED_ABSENCE)) {

@@ -309,6 +309,7 @@ Published in the document's own `limitations[]`, by code:
 
 | Code | Means |
 |---|---|
+| `STORAGE_FACT_IS_BOUNDED_PROBE` | Company, generated-service and Work storage facts cover only their named executable probes and field shapes, not every checked-in service, schema or storage path |
 | `TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME` | nothing here reports what a deployed instance is doing |
 | `REFERENCE_COMPOSITION_NOT_THE_PROJECT` | `packages/domains/generated/index.js` is empty here, so package facts describe a **reference** composition of the nine checked-in packages, not this checkout's |
 | `JTBD_ROWS_NOT_ENCODED` | no job status is a fact; only a person moves one |
