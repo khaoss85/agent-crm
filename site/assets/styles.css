@@ -960,6 +960,7 @@ main > .shell:nth-of-type(even) > section::before { content: ''; position: absol
 }
 
 @media (max-width: 720px) {
+  main > .shell:nth-of-type(even) > section::before { inset-inline: 0; }
   .shell { width: min(100% - 28px, 1140px); }
   .hero { padding-top: 58px; }
   .hero h1, .hero:not(.hero-product) h1 { font-size: clamp(2.85rem, 14vw, 4.7rem); line-height: .92; letter-spacing: -.06em; }
