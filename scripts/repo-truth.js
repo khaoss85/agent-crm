@@ -1218,12 +1218,19 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           updateManaged.result.updatedAt,
         ];
         const mutationTimestampsAdvance = generatedUpdateTimestamps.length === priorMutationTimestamps.length
-          && generatedUpdateTimestamps.every((timestamp, index) => Number.isFinite(Date.parse(timestamp))
+          && generatedUpdateTimestamps.every((timestamp, index) => canonicalUtcTimestamp(timestamp)
+            && canonicalUtcTimestamp(priorMutationTimestamps[index])
             && Date.parse(timestamp) > Date.parse(priorMutationTimestamps[index]));
+        const generatedCreateTimestampsCanonical = [
+          created, createPendingSeed.result, createConjunctionSeed.result, createClosedSeed.result,
+          createOmitted.result, createNull.result, createManaged.result, createManagedSibling.result,
+          createManagedOmitted.result, createManagedDefaults.result,
+        ].every((record) => canonicalUtcTimestamp(record.createdAt) && canonicalUtcTimestamp(record.updatedAt));
         if (!mutationTimestampsAdvance) {
           throw new Error('generated mutation timestamps did not advance strictly');
         }
-        const resultsValid = unknownPredicateRefused && emptyMembershipRefused
+        const resultsValid = generatedCreateTimestampsCanonical
+          && unknownPredicateRefused && emptyMembershipRefused
           && invalidPublicEnumRefused && invalidPublicBooleanRefused
           && invalidManagedEnumRefused && invalidManagedStringRefused
           && managedCreateRefusal === 'VALIDATION_ERROR'
