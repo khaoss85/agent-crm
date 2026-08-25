@@ -1041,42 +1041,24 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           name: 'Probe', note: 'created-note', kind: 'primary', enabled: true,
         }, { actor: probeActor }));
         const created = create.result;
-        realSync.execute({
-          kind: 'insert', table: 'truth_storage_probes', values: [
-            { column: 'id', value: 'truth-nonmatching' },
-            { column: 'name', value: 'Other' },
-            { column: 'note', value: null },
-            { column: 'kind', value: 'secondary' },
-            { column: 'enabled', value: 0 },
-            { column: 'status', value: 'pending' },
-            { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
-            { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
-          ],
-        });
-        realSync.execute({
-          kind: 'insert', table: 'truth_storage_probes', values: [
-            { column: 'id', value: 'truth-open-disabled' },
-            { column: 'name', value: 'Open Disabled' },
-            { column: 'note', value: 'conjunction-target' },
-            { column: 'kind', value: 'primary' },
-            { column: 'enabled', value: 0 },
-            { column: 'status', value: 'pending' },
-            { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
-            { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
-          ],
-        });
-        realSync.execute({
-          kind: 'insert', table: 'truth_storage_probes', values: [
-            { column: 'id', value: 'truth-closed' },
-            { column: 'name', value: 'Closed' },
-            { column: 'note', value: 'membership-target' },
-            { column: 'kind', value: 'secondary' },
-            { column: 'enabled', value: 0 },
-            { column: 'status', value: 'closed' },
-            { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
-            { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
-          ],
-        });
+        const createPendingSeed = await drive(() => service.create({
+          name: 'Other', note: null, kind: 'secondary', enabled: false,
+        }, { actor: probeActor }));
+        const pendingSeed = await drive(() => service.applyManaged(
+          createPendingSeed.result.id, { status: 'pending' }, { actor: probeActor },
+        ));
+        const createConjunctionSeed = await drive(() => service.create({
+          name: 'Open Disabled', note: 'conjunction-target', kind: 'primary', enabled: false,
+        }, { actor: probeActor }));
+        const conjunctionSeed = await drive(() => service.applyManaged(
+          createConjunctionSeed.result.id, { status: 'pending' }, { actor: probeActor },
+        ));
+        const createClosedSeed = await drive(() => service.create({
+          name: 'Closed', note: 'membership-target', kind: 'secondary', enabled: false,
+        }, { actor: probeActor }));
+        const closedSeed = await drive(() => service.applyManaged(
+          createClosedSeed.result.id, { status: 'closed' }, { actor: probeActor },
+        ));
         const get = await drive(() => service.get(created.id));
         const list = await drive(() => service.list());
         const listWithMembership = await drive(() => service.list({ where: { status: ['open', 'closed'] } }));
@@ -1101,7 +1083,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
         }, { actor: probeActor }));
         const listSiblingsAfterUpdate = await drive(() => service.list());
-        const getNonmatchingAfterUpdate = await drive(() => service.get('truth-nonmatching'));
+        const getNonmatchingAfterUpdate = await drive(() => service.get(pendingSeed.result.id));
         const createNull = await drive(() => service.create({
           name: 'Null Probe', note: null, kind: 'primary', enabled: true,
         }, { actor: probeActor }));
@@ -1110,7 +1092,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         const listSiblingsAfterPartialUpdate = await drive(() => service.list());
         const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }, { actor: probeActor }));
         const listSiblingsAfterManaged = await drive(() => service.list());
-        const getNonmatchingAfterManaged = await drive(() => service.get('truth-nonmatching'));
+        const getNonmatchingAfterManaged = await drive(() => service.get(pendingSeed.result.id));
         const createManaged = await drive(() => managedService.createManaged({
           name: 'Managed Probe', note: 'managed-note', status: 'open',
         }, { actor: probeActor }));
@@ -1138,6 +1120,12 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         const getManagedSibling = await drive(() => managedService.get(createManagedSibling.result.id));
         const operations = {
           create: create.calls,
+          createPendingSeed: createPendingSeed.calls,
+          pendingSeed: pendingSeed.calls,
+          createConjunctionSeed: createConjunctionSeed.calls,
+          conjunctionSeed: conjunctionSeed.calls,
+          createClosedSeed: createClosedSeed.calls,
+          closedSeed: closedSeed.calls,
           get: get.calls,
           list: list.calls,
           listWithMembership: listWithMembership.calls,
@@ -1180,14 +1168,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           getManagedDefaultsAfterPartial: getManagedDefaultsAfterPartial.calls,
           getManagedSibling: getManagedSibling.calls,
         };
-        const seededSiblings = [
-          { id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'pending',
-            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-          { id: 'truth-open-disabled', name: 'Open Disabled', note: 'conjunction-target', kind: 'primary', enabled: false, status: 'pending',
-            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-          { id: 'truth-closed', name: 'Closed', note: 'membership-target', kind: 'secondary', enabled: false, status: 'closed',
-            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-        ];
+        const seededSiblings = [pendingSeed.result, conjunctionSeed.result, closedSeed.result];
         const seededSiblingsUnchanged = [
           listSiblingsAfterUpdate.result, listSiblingsAfterPartialUpdate.result, listSiblingsAfterManaged.result,
         ].every((rows) => seededSiblings.every((expected) => isDeepStrictEqual(
@@ -1197,6 +1178,9 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           && [listSiblingsAfterPartialUpdate.result, listSiblingsAfterManaged.result]
             .every((rows) => isDeepStrictEqual(rows.find((row) => row.id === createNull.result.id), createNull.result));
         const priorMutationTimestamps = [
+          createPendingSeed.result.updatedAt,
+          createConjunctionSeed.result.updatedAt,
+          createClosedSeed.result.updatedAt,
           created.updatedAt,
           update.result.updatedAt,
           partialUpdate.result.updatedAt,
@@ -1211,7 +1195,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         }
         const resultsValid = managedCreateRefusal === 'VALIDATION_ERROR'
           && managedUpdateRefusal === 'VALIDATION_ERROR'
-          && generatedAudits.length === 12
+          && generatedAudits.length === 18
           && generatedAudits.every((entry) => isDeepStrictEqual(entry.actor, probeActor))
           && seededSiblingsUnchanged
           && created.name === 'Probe'
@@ -1222,31 +1206,21 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           && isDeepStrictEqual(get.result, created)
           && list.result.length === 4
           && isDeepStrictEqual(list.result.find((row) => row.id === created.id), created)
-          && isDeepStrictEqual(list.result.find((row) => row.id === 'truth-nonmatching'), {
-            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'pending',
-            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
-          })
+          && isDeepStrictEqual(list.result.find((row) => row.id === pendingSeed.result.id), pendingSeed.result)
           && listWithMembership.result.length === 2
           && isDeepStrictEqual(listWithMembership.result.find((row) => row.id === created.id), created)
-          && isDeepStrictEqual(listWithMembership.result.find((row) => row.id === 'truth-closed'), {
-            id: 'truth-closed', name: 'Closed', note: 'membership-target', kind: 'secondary',
-            enabled: false, status: 'closed', createdAt: '2026-01-01T00:00:00.000Z',
-            updatedAt: '2026-01-01T00:00:00.000Z',
-          })
+          && isDeepStrictEqual(listWithMembership.result.find((row) => row.id === closedSeed.result.id), closedSeed.result)
           && listWhere.result.length === 1
           && isDeepStrictEqual(listWhere.result[0], created)
           && listWhereNull.result.length === 1
-          && isDeepStrictEqual(listWhereNull.result[0], {
-            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'pending',
-            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
-          })
+          && isDeepStrictEqual(listWhereNull.result[0], pendingSeed.result)
           && listWhereEnabled.result.length === 1
           && isDeepStrictEqual(listWhereEnabled.result[0], created)
           && countWhere.result === 1
           && countWhereMembership.result === 2
           && countWhereDisabled.result === 3
           && listWhereConjunction.result.length === 1
-          && listWhereConjunction.result[0].id === 'truth-open-disabled'
+          && listWhereConjunction.result[0].id === conjunctionSeed.result.id
           && countWhereConjunction.result === 1
           && countWhereNoMatchConjunction.result === 0
           && Object.hasOwn(createOmitted.result, 'note')
@@ -1257,10 +1231,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
             updatedAt: update.result.updatedAt,
           })
           && Date.parse(update.result.updatedAt) > Date.parse(created.updatedAt)
-          && isDeepStrictEqual(getNonmatchingAfterUpdate.result, {
-            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'pending',
-            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
-          })
+          && isDeepStrictEqual(getNonmatchingAfterUpdate.result, pendingSeed.result)
           && Object.hasOwn(createNull.result, 'note')
           && createNull.result.note === null
           && createNull.result.name === 'Null Probe'
@@ -1303,11 +1274,18 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           && isDeepStrictEqual(getManagedDefaultsAfterPartial.result, createManagedDefaults.result)
           && isDeepStrictEqual(getManagedSibling.result, createManagedSibling.result)
           && isDeepStrictEqual(generatedUpdateTimestamps, [
+            pendingSeed.result.updatedAt, conjunctionSeed.result.updatedAt, closedSeed.result.updatedAt,
             update.result.updatedAt, partialUpdate.result.updatedAt, applyManaged.result.updatedAt,
             updateManaged.result.updatedAt, partialManagedUpdate.result.updatedAt,
           ]);
         bundle.generatedRuntimeUsesStorage = resultsValid && canonical(operations) === canonical({
           create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          createPendingSeed: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          pendingSeed: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          createConjunctionSeed: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          conjunctionSeed: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          createClosedSeed: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          closedSeed: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           get: [['maybeOne', 'select']],
           list: [['many', 'select']],
           listWithMembership: [['many', 'select']],
