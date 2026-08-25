@@ -1033,6 +1033,36 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           const result = await run();
           return { result, calls: generatedCalls.slice(start) };
         };
+        /** @param {() => unknown | Promise<unknown>} run */
+        const refusesWithoutEffects = async (run) => {
+          const callCount = generatedCalls.length;
+          const auditCount = generatedAudits.length;
+          try {
+            await run();
+            return false;
+          } catch (error) {
+            return error?.code === 'VALIDATION_ERROR'
+              && generatedCalls.length === callCount && generatedAudits.length === auditCount;
+          }
+        };
+        const unknownPredicateRefused = await refusesWithoutEffects(
+          () => service.listWhere({ unknown: 'value' }),
+        );
+        const emptyMembershipRefused = await refusesWithoutEffects(
+          () => service.listWhere({ status: [] }),
+        );
+        const invalidPublicEnumRefused = await refusesWithoutEffects(
+          () => service.create({ name: 'Invalid', kind: 'wrong', enabled: true }, { actor: probeActor }),
+        );
+        const invalidPublicBooleanRefused = await refusesWithoutEffects(
+          () => service.create({ name: 'Invalid', kind: 'primary', enabled: 'yes' }, { actor: probeActor }),
+        );
+        const invalidManagedEnumRefused = await refusesWithoutEffects(
+          () => managedService.createManaged({ status: 'wrong' }, { actor: probeActor }),
+        );
+        const invalidManagedStringRefused = await refusesWithoutEffects(
+          () => managedService.createManaged({ name: 42 }, { actor: probeActor }),
+        );
         let managedCreateRefusal = null;
         try {
           await service.create({ name: 'Refused', kind: 'primary', enabled: true, status: 'closed' }, { actor: probeActor });
@@ -1193,7 +1223,10 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         if (!mutationTimestampsAdvance) {
           throw new Error('generated mutation timestamps did not advance strictly');
         }
-        const resultsValid = managedCreateRefusal === 'VALIDATION_ERROR'
+        const resultsValid = unknownPredicateRefused && emptyMembershipRefused
+          && invalidPublicEnumRefused && invalidPublicBooleanRefused
+          && invalidManagedEnumRefused && invalidManagedStringRefused
+          && managedCreateRefusal === 'VALIDATION_ERROR'
           && managedUpdateRefusal === 'VALIDATION_ERROR'
           && generatedAudits.length === 18
           && generatedAudits.every((entry) => isDeepStrictEqual(entry.actor, probeActor))
