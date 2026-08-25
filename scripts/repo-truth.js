@@ -982,19 +982,25 @@ export async function readAuthorities({ rootDir }) {
         const update = await drive(() => service.update(created.id, {
           name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
         }));
+        const getNonmatchingAfterUpdate = await drive(() => service.get('truth-nonmatching'));
         const createNull = await drive(() => service.create({
           name: 'Null Probe', note: null, kind: 'primary', enabled: true,
         }));
         const getNull = await drive(() => service.get(createNull.result.id));
         const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }));
+        const getNonmatchingAfterManaged = await drive(() => service.get('truth-nonmatching'));
         const createManaged = await drive(() => managedService.createManaged({
           name: 'Managed Probe', note: 'managed-note', status: 'open',
         }));
         const getManagedCreated = await drive(() => managedService.get(createManaged.result.id));
+        const createManagedSibling = await drive(() => managedService.createManaged({
+          name: 'Managed Sibling', note: 'sibling-note', status: 'open',
+        }));
         const updateManaged = await drive(() => managedService.applyManaged(createManaged.result.id, {
           name: 'Updated Managed Probe', note: null, status: 'closed',
         }));
         const getManagedUpdated = await drive(() => managedService.get(createManaged.result.id));
+        const getManagedSibling = await drive(() => managedService.get(createManagedSibling.result.id));
         const operations = {
           create: create.calls,
           get: get.calls,
@@ -1007,13 +1013,17 @@ export async function readAuthorities({ rootDir }) {
           countWhereMembership: countWhereMembership.calls,
           countWhereDisabled: countWhereDisabled.calls,
           update: update.calls,
+          getNonmatchingAfterUpdate: getNonmatchingAfterUpdate.calls,
           createNull: createNull.calls,
           getNull: getNull.calls,
           applyManaged: applyManaged.calls,
+          getNonmatchingAfterManaged: getNonmatchingAfterManaged.calls,
           createManaged: createManaged.calls,
           getManagedCreated: getManagedCreated.calls,
+          createManagedSibling: createManagedSibling.calls,
           updateManaged: updateManaged.calls,
           getManagedUpdated: getManagedUpdated.calls,
+          getManagedSibling: getManagedSibling.calls,
         };
         const resultsValid = created.name === 'Probe'
           && created.note === 'created-note'
@@ -1045,6 +1055,10 @@ export async function readAuthorities({ rootDir }) {
             ...created, name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
             updatedAt: update.result.updatedAt,
           })
+          && isDeepStrictEqual(getNonmatchingAfterUpdate.result, {
+            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'closed',
+            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+          })
           && Object.hasOwn(createNull.result, 'note')
           && createNull.result.note === null
           && createNull.result.name === 'Null Probe'
@@ -1053,6 +1067,7 @@ export async function readAuthorities({ rootDir }) {
           && createNull.result.status === 'open'
           && isDeepStrictEqual(getNull.result, createNull.result)
           && isDeepStrictEqual(applyManaged.result, { ...update.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
+          && isDeepStrictEqual(getNonmatchingAfterManaged.result, getNonmatchingAfterUpdate.result)
           && createManaged.result.name === 'Managed Probe'
           && createManaged.result.note === 'managed-note'
           && createManaged.result.status === 'open'
@@ -1063,6 +1078,7 @@ export async function readAuthorities({ rootDir }) {
           })
           && Object.hasOwn(updateManaged.result, 'note')
           && isDeepStrictEqual(getManagedUpdated.result, updateManaged.result)
+          && isDeepStrictEqual(getManagedSibling.result, createManagedSibling.result)
           && isDeepStrictEqual(generatedUpdateTimestamps, [
             update.result.updatedAt, applyManaged.result.updatedAt, updateManaged.result.updatedAt,
           ]);
@@ -1078,13 +1094,17 @@ export async function readAuthorities({ rootDir }) {
           countWhereMembership: [['maybeOne', 'count']],
           countWhereDisabled: [['maybeOne', 'count']],
           update: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          getNonmatchingAfterUpdate: [['maybeOne', 'select']],
           createNull: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
           getNull: [['maybeOne', 'select']],
           applyManaged: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          getNonmatchingAfterManaged: [['maybeOne', 'select']],
           createManaged: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
           getManagedCreated: [['maybeOne', 'select']],
+          createManagedSibling: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
           updateManaged: [['maybeOne', 'select'], ['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           getManagedUpdated: [['maybeOne', 'select']],
+          getManagedSibling: [['maybeOne', 'select']],
         });
       } finally {
         raw.close();
