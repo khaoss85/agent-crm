@@ -173,6 +173,8 @@ Recorded so they are not lost, and deliberately not bundled into a domain milest
 
 ## JTBD portfolio normalization follow-ups
 
+- [x] **Public-site art direction, motion and affordance pass.** The accepted human and retrieval IA now share an Accordo-specific Flow language: semantic agent, policy, human, pending and evidence states; a scenario-led homepage and solution set; premium buyer-question proof; whole-link navigational cards; still informational surfaces; CSS-only choreography with a complete reduced-motion fallback; and a real-Chromium desktop/mobile acceptance matrix (`docs/plans/public-site-art-direction.md`). No runtime/domain behavior, claim record, URL, Markdown/llms surface or production dependency changed.
+
 The v1.1 ownership overlay sequences work but starts none of it. Product priority comes from reviewed ownership/dependencies, never raw JTBD counts.
 
 - [x] Enforce the candidate-owner / reviewed-override / human-deferral boundary in the canonical JTBD gate, including the registered non-candidate pillar mutation regression.

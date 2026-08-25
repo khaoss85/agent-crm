@@ -822,3 +822,163 @@ footer { border-top: 1px solid var(--line); padding: 44px 0 60px; color: var(--m
 
 /* Tables: row hover for scanability. */
 tbody tr:hover td { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+
+/* ==================================================================
+ * The Flow — public art direction
+ * Semantic color is product language: violet = agent, green = policy
+ * and valid flow, coral = human authority, yellow = pending/refused,
+ * cyan = data and evidence. Motion only reveals relationships already
+ * stated in semantic HTML; reduced-motion keeps the complete static story.
+ * ================================================================== */
+
+:root {
+  --paper: #f7f3e9;
+  --surface: #fffdf7;
+  --ink: #171912;
+  --muted: #62655b;
+  --line: #d9d5c8;
+  --accent: #35d04f;
+  --accent-soft: #dcfbdc;
+  --agent: #7457ff;
+  --agent-soft: #ebe6ff;
+  --human: #ff6b69;
+  --human-soft: #ffe6e1;
+  --pending: #f2c84b;
+  --pending-soft: #fff3bd;
+  --data: #20b8d8;
+  --data-soft: #dff8fd;
+  --flow-ink: #176b2a;
+  --agent-ink: #4c2fc5;
+  --human-ink: #9b292d;
+  --pending-ink: #665000;
+  --data-ink: #00677a;
+  --display: "Arial Rounded MT Bold", "Avenir Next", Avenir, var(--sans);
+  --shadow: 0 22px 60px rgba(23, 25, 18, .09);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --paper: #10120e; --surface: #171a14; --ink: #f7f3e9; --muted: #afb3a7;
+    --line: #34382e; --accent: #58e36d; --accent-soft: #17351d;
+    --agent: #9a88ff; --agent-soft: #292342; --human: #ff8580; --human-soft: #402321;
+    --pending: #f2cd5d; --pending-soft: #3a3219; --data: #54cee7; --data-soft: #17343a;
+    --flow-ink: #8cf39a; --agent-ink: #c8bcff; --human-ink: #ffb5b0;
+    --pending-ink: #ffe080; --data-ink: #9eeafa;
+  }
+}
+
+body {
+  background:
+    radial-gradient(circle at 84% 4%, color-mix(in srgb, var(--agent) 13%, transparent) 0 9rem, transparent 22rem),
+    radial-gradient(circle at 8% 38rem, color-mix(in srgb, var(--human) 9%, transparent) 0 8rem, transparent 24rem),
+    var(--paper);
+}
+
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; }
+h1 em, h2 em { color: var(--agent); font-style: normal; }
+.hero h1 { font-size: clamp(3.4rem, 8vw, 7.6rem); line-height: .91; letter-spacing: -.072em; max-width: 11ch; }
+.hero:not(.hero-product) h1 { font-size: clamp(3rem, 6.2vw, 6rem); max-width: 14ch; }
+.hero .lede { font-size: clamp(1.08rem, 1.7vw, 1.35rem); max-width: 63ch; }
+.flow-hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(420px, .95fr); column-gap: 54px; align-items: center; padding-bottom: 64px; }
+.flow-hero > :not(.approval-demo) { grid-column: 1; }
+.flow-hero .approval-demo { grid-column: 2; grid-row: 1 / 6; }
+.flow-hero h1 { font-size: clamp(3.6rem, 5.5vw, 6.2rem); }
+.eyebrow, .kicker { font-family: var(--mono); letter-spacing: .11em; color: var(--flow-ink); }
+
+.button { border-radius: 999px; transition: transform .16s ease, box-shadow .16s ease, background .16s ease; }
+.button:hover { transform: translateY(-3px); box-shadow: 0 8px 0 color-mix(in srgb, var(--ink) 18%, transparent); }
+.button:active { transform: translateY(0); box-shadow: none; }
+.button.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.button.primary:hover { background: var(--agent); border-color: var(--agent); }
+
+.approval-demo {
+  position: relative; margin-top: 58px; padding: 24px; overflow: hidden;
+  border: 2px solid var(--ink); border-radius: 28px; background: var(--surface);
+  box-shadow: 10px 10px 0 var(--ink);
+}
+.approval-demo::before { content: ''; position: absolute; inset: 114px auto 7%; left: 46px; width: 4px; height: auto; background: linear-gradient(180deg, var(--agent), var(--pending), var(--human), var(--data)); }
+.approval-demo-title { display: flex; justify-content: space-between; gap: 18px; margin-bottom: 30px; }
+.approval-demo-title span, .approval-flow span { font: 750 10px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+.approval-demo-title strong { font-size: clamp(1rem, 2vw, 1.35rem); }
+.approval-flow { position: relative; display: grid; grid-template-columns: 1fr; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.approval-flow li { position: relative; display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; min-height: 92px; padding: 17px 18px 17px 58px; border: 2px solid currentColor; border-radius: 18px; background: var(--surface); opacity: 0; transform: translateY(16px); animation: flow-arrive .5s cubic-bezier(.2,.8,.2,1) forwards; }
+.approval-flow li::before { content: ''; position: absolute; left: 18px; top: 50%; width: 15px; height: 15px; border-radius: 50%; background: currentColor; transform: translateY(-50%); }
+.approval-flow li:nth-child(2) { animation-delay: .55s; }
+.approval-flow li:nth-child(3) { animation-delay: 1.1s; }
+.approval-flow li:nth-child(4) { animation-delay: 1.65s; }
+.approval-flow strong { align-self: start; font: 850 clamp(1.05rem, 1.5vw, 1.4rem)/1 var(--display); text-transform: uppercase; }
+.approval-flow small { grid-column: 1 / -1; color: var(--muted); }
+.state-agent { color: var(--agent-ink); background: var(--agent-soft) !important; }
+.state-policy { color: var(--pending-ink); background: var(--pending-soft) !important; }
+.state-human { color: var(--human-ink); background: var(--human-soft) !important; }
+.state-evidence { color: var(--data-ink); background: var(--data-soft) !important; }
+@keyframes flow-arrive { to { opacity: 1; transform: none; } }
+
+.flow-marquee { overflow: hidden; padding: 13px 0; border-block: 2px solid var(--ink); background: var(--accent); color: #10120e; }
+.flow-marquee-track { display: flex; width: max-content; animation: flow-rail 28s linear infinite; }
+.flow-marquee-set { display: flex; flex: none; justify-content: space-around; gap: 34px; min-width: 100vw; padding-inline: 17px; }
+.flow-marquee span { display: inline-flex; align-items: center; gap: 34px; font: 850 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; white-space: nowrap; }
+.flow-marquee span::after { content: '→'; }
+@keyframes flow-rail { to { transform: translateX(-50%); } }
+
+main > .shell > section { position: relative; padding-block: clamp(72px, 10vw, 132px); }
+main > .shell:nth-of-type(even) > section::before { content: ''; position: absolute; inset: 12% -4vw; z-index: -1; border-radius: 48px; background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.editorial-choices { gap: 0; border-block: 2px solid var(--ink); }
+.editorial-choices article { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+.editorial-choices article + article { border-left: 1px solid var(--line); }
+.choice-number { color: var(--agent); font: 800 11px/1 var(--mono); }
+.choice-accent { background: var(--accent-soft) !important; }
+
+.lifecycle, .story-flow { position: relative; }
+.lifecycle::before, .story-flow::before { content: ''; position: absolute; left: 3%; right: 3%; top: 50%; height: 3px; background: var(--accent); z-index: 0; }
+.lifecycle li, .story-flow li { position: relative; z-index: 1; }
+
+.story-hero { padding-bottom: 70px; }
+.story-flow { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin: 48px 0 0; padding: 0; list-style: none; }
+.story-flow li { display: grid; place-items: center; min-height: 82px; padding: 10px; border: 2px solid var(--ink); border-radius: 50%; background: var(--surface); font: 750 11px/1.25 var(--mono); text-align: center; }
+
+/* Affordance contract: anchors move and carry an arrow; inert articles do not. */
+.solution-grid a, .resource-grid a { position: relative; padding-right: 48px; transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
+.solution-grid a::after, .resource-grid a::after { content: '↗'; position: absolute; right: 20px; top: 18px; color: var(--agent); font-size: 1.2rem; }
+.solution-grid a:hover, .resource-grid a:hover, .solution-grid a:focus-visible, .resource-grid a:focus-visible { transform: translateY(-4px); border-color: var(--agent); box-shadow: 6px 6px 0 var(--agent); }
+.feature-grid article, .choice-grid article, .proof-strip article { cursor: default; }
+
+.proof-strip { border: 2px solid var(--ink); border-radius: 28px; overflow: hidden; }
+.proof-strip article { border: 0; border-radius: 0; box-shadow: none; }
+.proof-strip article + article { border-left: 1px solid var(--line); }
+.proof-strip strong::before { content: 'QUESTION  '; color: var(--agent); font: 800 10px/1 var(--mono); letter-spacing: .1em; }
+.boundary-note { border-left-width: 5px; border-left-color: var(--pending); }
+
+@supports (animation-timeline: view()) {
+  main > .shell > section { animation: section-enter linear both; animation-timeline: view(); animation-range: entry 8% cover 24%; }
+  @keyframes section-enter { from { opacity: .35; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+}
+
+@media (max-width: 960px) {
+  .flow-hero { display: block; }
+  .flow-hero h1 { font-size: clamp(3.2rem, 10vw, 6rem); }
+}
+
+@media (max-width: 720px) {
+  .shell { width: min(100% - 28px, 1140px); }
+  .hero { padding-top: 58px; }
+  .hero h1, .hero:not(.hero-product) h1 { font-size: clamp(2.85rem, 14vw, 4.7rem); line-height: .92; letter-spacing: -.06em; }
+  .approval-demo { margin-top: 38px; padding: 18px; border-radius: 20px; box-shadow: 6px 6px 0 var(--ink); }
+  .approval-demo-title { display: grid; }
+  .approval-demo::before { inset: 126px auto 8%; left: 41px; width: 4px; height: auto; }
+  .approval-flow { grid-template-columns: 1fr; }
+  .approval-flow li { min-height: 104px; padding-left: 56px; }
+  .story-flow { grid-template-columns: repeat(2, 1fr); }
+  .story-flow::before { left: 25%; right: auto; top: 8%; bottom: 8%; width: 3px; height: auto; }
+  .story-flow li { min-height: 76px; border-radius: 18px; }
+  .editorial-choices { display: block; }
+  .editorial-choices article + article { border-left: 0; border-top: 1px solid var(--line); }
+  .proof-strip article + article { border-left: 0; border-top: 1px solid var(--line); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  .approval-flow li { opacity: 1; transform: none; }
+  .flow-marquee-track { transform: none; }
+  .button:hover, .solution-grid a:hover, .resource-grid a:hover { transform: none; }
+}
