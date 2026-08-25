@@ -827,14 +827,26 @@ export async function readAuthorities({ rootDir }) {
         audit: { record() {} }, events: { async emit() {} },
       });
       const companyCreated = await companyService.create({ name: 'Truth Company', domain: 'EXAMPLE.COM' });
+      const companyOther = await companyService.create({ name: 'Other Company', domain: 'OTHER.EXAMPLE' });
       const companyRead = companyService.get(companyCreated.id);
       const companyList = companyService.list();
+      let missingCompanyCode = null;
+      try {
+        companyService.get('truth-company-missing');
+      } catch (error) {
+        missingCompanyCode = /** @type {any} */ (error)?.code ?? null;
+      }
       bundle.companyUsesStorage = isDeepStrictEqual(companyCreated, companyRead)
         && companyCreated.domain === 'example.com'
-        && companyList.length === 1
-        && isDeepStrictEqual(companyList[0], companyCreated)
+        && companyOther.domain === 'other.example'
+        && companyList.length === 2
+        && companyList.some((company) => isDeepStrictEqual(company, companyCreated))
+        && companyList.some((company) => isDeepStrictEqual(company, companyOther))
+        && missingCompanyCode === 'NOT_FOUND'
         && canonical(companyCalls) === canonical([
-          ['savepoint', 'company_create'], ['execute', 'insert'], ['maybeOne', 'select'], ['many', 'select'],
+          ['savepoint', 'company_create'], ['execute', 'insert'],
+          ['savepoint', 'company_create'], ['execute', 'insert'],
+          ['maybeOne', 'select'], ['many', 'select'], ['maybeOne', 'select'],
         ]);
     } finally {
       companyRaw.close();
