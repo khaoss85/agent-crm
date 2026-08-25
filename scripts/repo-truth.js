@@ -722,6 +722,23 @@ export async function readAuthorities({ rootDir }) {
       unavailable(`authority source ${path} does not exist, so the facts it carries cannot be read at all`);
       continue;
     }
+    let regularFile = false;
+    try {
+      regularFile = lstatSync(full).isFile();
+    } catch (error) {
+      problems.push({
+        code: 'TRUTH_SURFACE_UNSAFE',
+        message: `authority source ${path} could not be verified as a regular file: ${/** @type {any} */ (error)?.code ?? 'filesystem refusal'}`,
+      });
+      continue;
+    }
+    if (!regularFile) {
+      problems.push({
+        code: 'TRUTH_SURFACE_UNSAFE',
+        message: `authority source ${path} is not a regular file. No fact is derived from a directory, device, socket or pipe.`,
+      });
+      continue;
+    }
     digests.push([path, sha256(readFileSync(full, 'utf8'))]);
   }
   const executingGenerator = fileURLToPath(import.meta.url);

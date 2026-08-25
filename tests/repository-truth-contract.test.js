@@ -472,6 +472,18 @@ test('an unsafe generator path is reported instead of followed by the identity c
   assert.ok(result.problems.some((problem) => problem.code === 'TRUTH_SURFACE_UNSAFE'));
 });
 
+test('a directory at an authority path is a stable refusal, never EISDIR', async (t) => {
+  const { root } = frameworkFixture(t);
+  const generator = join(root, 'scripts/repo-truth.js');
+  rmSync(generator);
+  mkdirSync(generator);
+
+  const result = await readAuthorities({ rootDir: root });
+  const problem = result.problems.find((entry) => entry.code === 'TRUTH_SURFACE_UNSAFE');
+  assert.ok(problem);
+  assert.match(problem.message, /not a regular file/);
+});
+
 test('a string literal that quotes the grammar is not a citation', () => {
   // `CITATION_JS` matched anywhere on a line, so this line inside the one bound
   // `.js` surface produced TRUTH_FACT_UNKNOWN for a citation nobody wrote. A

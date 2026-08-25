@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "a096e71e1c74c6e6bf34936b448d7fbd179f713b34d2de54c085beff1022ebde",
+  "sourceSha": "5097206f5176a591df4958ea51223a9672a59c05dd1a66897d21438e2591a0e2",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -85,6 +85,35 @@
       "reads": [
         "packages/app/src/spine.js",
         "packages/core/src/authorization.js"
+      ]
+    },
+    {
+      "id": "storage.contract",
+      "kind": "source",
+      "reads": [
+        "packages/cli/src/module-factory.js",
+        "packages/core/index.js",
+        "packages/core/src/action-runtime.js",
+        "packages/core/src/actor.js",
+        "packages/core/src/core-adapters.js",
+        "packages/core/src/database.js",
+        "packages/core/src/definition-fingerprint.js",
+        "packages/core/src/errors.js",
+        "packages/core/src/external-operation.js",
+        "packages/core/src/implementation-evidence.js",
+        "packages/core/src/module-evolution.js",
+        "packages/core/src/module-manifest.js",
+        "packages/core/src/money.js",
+        "packages/core/src/solution-plan.js",
+        "packages/core/src/spine-store.js",
+        "packages/core/src/storage-contract.js",
+        "packages/core/src/time.js",
+        "packages/core/src/timeout.js",
+        "packages/core/src/validation.js",
+        "packages/modules/company/src/company-service.js",
+        "packages/work/src/follow-up.js",
+        "packages/work/src/legacy-tasks.js",
+        "scripts/repo-truth.js"
       ]
     },
     {
@@ -439,7 +468,7 @@
         "site/claims.json#measuredAgainst.sha"
       ],
       "scope": "measurement",
-      "status": "current",
+      "status": "stale",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
@@ -452,7 +481,7 @@
         "site/claims.json#measuredAgainst.tests"
       ],
       "scope": "measurement",
-      "status": "current",
+      "status": "stale",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
@@ -465,14 +494,14 @@
         "site/claims.json#measuredAgainst.testFiles"
       ],
       "scope": "measurement",
-      "status": "current",
+      "status": "stale",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_tree_current",
-      "value": "true",
+      "value": "false",
       "authority": "measurement.git",
       "evidence": [
         "git rev-parse <sha>:tests versus HEAD:tests",
@@ -682,6 +711,50 @@
       ]
     },
     {
+      "id": "spine.storage.company_runtime",
+      "value": "implemented",
+      "authority": "storage.contract",
+      "evidence": [
+        "packages/modules/company/src/company-service.js#CompanyService"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "spine.storage.contract",
+      "value": 1,
+      "authority": "storage.contract",
+      "evidence": [
+        "packages/core/src/storage-contract.js#STORAGE_CONTRACT"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "spine.storage.generated_runtime",
+      "value": "implemented",
+      "authority": "storage.contract",
+      "evidence": [
+        "packages/cli/src/module-factory.js#serviceTemplate"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
+      "id": "spine.storage.work_legacy_raw",
+      "value": "implemented",
+      "authority": "storage.contract",
+      "evidence": [
+        "packages/work/src/legacy-tasks.js#migrateLegacyTasks"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": []
+    },
+    {
       "id": "spine.tenant.crm_data_plane_enforced",
       "value": "enforced_by_binding",
       "authority": "tenant.storage",
@@ -761,5 +834,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "ced96ad4214ead920eacd18da4eff141685364f11b56a04ba59c52997c127da3"
+  "fingerprint": "35db4a688e9d53259112609f3371c8d20f74998fb497051ae848577e83605f0f"
 }
