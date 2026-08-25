@@ -288,7 +288,17 @@ const brandLeaks = [
   { pattern: /\baccordo|pactio|vinculo|relato\b/i, why: 'a shortlisted name that has not been chosen' },
 ];
 // Text assets are authored copy too, so they are held to the same rule.
-const authored = templates.concat(collect(join(siteDir, 'assets'), '.txt'), collect(join(siteDir, 'assets'), '.svg'));
+//
+// Vendored font licences are the one exception, and only because the rule cannot apply to them:
+// site/assets/fonts/OFL.txt reproduces two upstream SIL Open Font Licence notices verbatim,
+// carrying the font authors' own project URLs. That text is not ours to route through
+// brand.json — the licence requires it to travel unaltered with the files — and a rename of this
+// project would not make a word of it wrong. Scoped to that directory, so a new .txt anywhere
+// else in assets is still authored copy.
+const vendoredFonts = join(siteDir, 'assets', 'fonts');
+const authored = templates
+  .concat(collect(join(siteDir, 'assets'), '.txt'), collect(join(siteDir, 'assets'), '.svg'))
+  .filter((path) => !path.startsWith(vendoredFonts));
 for (const path of authored) {
   const source = readFileSync(path, 'utf8');
   for (const line of source.split('\n')) {

@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "d7baaab328037d326359775754d965ab784615630febc5107ad55af54cd01d4f",
+  "sourceSha": "a096e71e1c74c6e6bf34936b448d7fbd179f713b34d2de54c085beff1022ebde",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -85,35 +85,6 @@
       "reads": [
         "packages/app/src/spine.js",
         "packages/core/src/authorization.js"
-      ]
-    },
-    {
-      "id": "storage.contract",
-      "kind": "source",
-      "reads": [
-        "packages/cli/src/module-factory.js",
-        "packages/core/index.js",
-        "packages/core/src/action-runtime.js",
-        "packages/core/src/actor.js",
-        "packages/core/src/core-adapters.js",
-        "packages/core/src/database.js",
-        "packages/core/src/definition-fingerprint.js",
-        "packages/core/src/errors.js",
-        "packages/core/src/external-operation.js",
-        "packages/core/src/implementation-evidence.js",
-        "packages/core/src/module-evolution.js",
-        "packages/core/src/module-manifest.js",
-        "packages/core/src/money.js",
-        "packages/core/src/solution-plan.js",
-        "packages/core/src/spine-store.js",
-        "packages/core/src/storage-contract.js",
-        "packages/core/src/time.js",
-        "packages/core/src/timeout.js",
-        "packages/core/src/validation.js",
-        "packages/modules/company/src/company-service.js",
-        "packages/work/src/follow-up.js",
-        "packages/work/src/legacy-tasks.js",
-        "scripts/repo-truth.js"
       ]
     },
     {
@@ -454,7 +425,7 @@
       "authority": "measurement.git",
       "evidence": [
         "git merge-base --is-ancestor <sha> HEAD",
-        "sha:cc2a1a6"
+        "sha:2c8b6f3"
       ],
       "scope": "measurement",
       "status": "current",
@@ -462,50 +433,50 @@
     },
     {
       "id": "measurement.source_sha",
-      "value": "cc2a1a6",
+      "value": "2c8b6f3",
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.sha"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_count",
-      "value": 1622,
+      "value": 1640,
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.tests"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_file_count",
-      "value": 138,
+      "value": 139,
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.testFiles"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_tree_current",
-      "value": "false",
+      "value": "true",
       "authority": "measurement.git",
       "evidence": [
         "git rev-parse <sha>:tests versus HEAD:tests",
-        "measuredTree:a1ee0cb0495b"
+        "measuredTree:1492089a0042"
       ],
       "scope": "measurement",
       "status": "current",
@@ -711,50 +682,6 @@
       ]
     },
     {
-      "id": "spine.storage.company_runtime",
-      "value": "implemented",
-      "authority": "storage.contract",
-      "evidence": [
-        "packages/modules/company/src/company-service.js#CompanyService"
-      ],
-      "scope": "framework",
-      "status": "current",
-      "limitations": []
-    },
-    {
-      "id": "spine.storage.contract",
-      "value": 1,
-      "authority": "storage.contract",
-      "evidence": [
-        "packages/core/src/storage-contract.js#STORAGE_CONTRACT"
-      ],
-      "scope": "framework",
-      "status": "current",
-      "limitations": []
-    },
-    {
-      "id": "spine.storage.generated_runtime",
-      "value": "implemented",
-      "authority": "storage.contract",
-      "evidence": [
-        "packages/cli/src/module-factory.js#serviceTemplate"
-      ],
-      "scope": "framework",
-      "status": "current",
-      "limitations": []
-    },
-    {
-      "id": "spine.storage.work_legacy_raw",
-      "value": "implemented",
-      "authority": "storage.contract",
-      "evidence": [
-        "packages/work/src/legacy-tasks.js#migrateLegacyTasks"
-      ],
-      "scope": "framework",
-      "status": "current",
-      "limitations": []
-    },
-    {
       "id": "spine.tenant.crm_data_plane_enforced",
       "value": "enforced_by_binding",
       "authority": "tenant.storage",
@@ -834,5 +761,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "bc3f2949bec42a65600305dc5bcb58b8de2cdfd5966641820228b30e8e335380"
+  "fingerprint": "ced96ad4214ead920eacd18da4eff141685364f11b56a04ba59c52997c127da3"
 }

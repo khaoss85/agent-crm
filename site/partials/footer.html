@@ -1,5 +1,12 @@
   <footer>
     <div class="shell">
+      <!-- The seal closes the page the way it opens it: four authorities, one accord. Shown
+           complete here because by the footer the story it abbreviates has been told. -->
+      <div class="footer-seal">
+        {{include:seal.html}}
+        <p class="mono">agent &middot; policy &middot; human &middot; evidence<br />one accord</p>
+      </div>
+
       <div class="footer-grid">
         <div>
           <h4>Start here</h4>
@@ -46,6 +53,12 @@
         </div>
       </div>
       <div class="colophon">
+        <!-- Relocated from the banner that used to sit above the wordmark. Still on every page,
+             still the first thing in the colophon, still stated without a hedge. -->
+        <p class="colophon-boundary">
+          <strong>{{status.headline}}</strong>
+          {{status.text}}
+        </p>
         <p>
           {{status.license}}
           {{status.name}}

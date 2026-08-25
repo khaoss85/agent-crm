@@ -199,9 +199,20 @@ If the design makes this feel like a disclaimer, the design has failed.
 `ink #e8ede9` · `muted #97a49b` · `line #2a332d` · `surface #161b18` ·
 `paper #0f1311` · `accent #6cc79b` · `accentSoft #1a2f26` · `warning #e0a856`
 
-Type: `Inter` / system sans, and `ui-monospace, SFMono-Regular, Menlo, Consolas`
-for every command, code, status and limitation code. **Monospace carries a lot of
-the identity here** — it is the voice of the machine reporting on itself.
+Type: **Bricolage Grotesque** for display and body, **Spline Sans Mono** for every
+command, code, status and limitation code — both vendored under `site/assets/fonts`
+and declared in `site/assets/styles.css`, never fetched from a font CDN (the site
+ships `font-src 'self'`). Every family ends in a system stack, so a blocked or slow
+font degrades to a rendered page rather than invisible text. The families live in
+`site/brand.json` `typography`; nothing hardcodes them.
+**Monospace carries a lot of the identity here** — it is the voice of the machine
+reporting on itself.
+
+The palette above is the product's, inherited verbatim from the Admin. The public
+site additionally carries the semantic actor colours in `brand.json` `flowColors` —
+violet agent, yellow policy, coral human, cyan evidence, green accord — which are
+product language rather than decoration: a colour appears when its actor enters the
+story. `docs/plans/public-site-flow-v3.md` is the current art direction.
 
 ## 9. Existing class names — keep these working
 
@@ -216,11 +227,26 @@ The generator emits these; renaming one breaks 113 pages.
 
 New classes are welcome. Renamed ones are not.
 
+`status-banner` is still styled and still safe to use, but nothing emits it any
+more: the implementation boundary it carried above the wordmark now renders in the
+colophon and in the proof section, so it reaches every page without sitting above
+the brand. See `docs/plans/public-site-flow-v3.md`.
+
 ## 10. Tone, and the words that are forbidden
 
 Quiet, dense, documentation-shaped. Closer to a well-made technical reference than
-to a SaaS landing page. No gradients as decoration, no drop shadows for depth, no
-animation beyond a focus ring, no stock illustration, no 3D shapes, no hero video.
+to a SaaS landing page. No gradients as decoration, no depth borrowed from a soft
+shadow, no stock illustration, no 3D shapes, no hero video.
+
+**On motion.** This section used to end "no animation beyond a focus ring", and the
+site outgrew that sentence in two passes without anyone editing it — first the
+approval demonstration and the marquee, then the signature scene. The rule it was
+reaching for is better stated as a test than as a prohibition, so here it is:
+**motion may only reveal a relationship the HTML already states.** The scene
+animates an ordered list that reads correctly with the stylesheet off; it adds no
+fact, and `prefers-reduced-motion` renders the story's ending rather than an empty
+stage. Decorative motion — something moving because movement is nice — is still
+out. `tests/site-art-direction.test.js` holds the reduced-motion half of this.
 
 A build gate **fails the deploy** if any of these words appear anywhere on the site:
 

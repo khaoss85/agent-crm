@@ -44,8 +44,23 @@
     "dangerSoft": "#fbe7e7"
   },
   "colorsNote": "Inherited verbatim from apps/admin/public/styles.css so the site and the product it ships are visibly the same thing.",
+  "siteColors": {
+    "paper": "#f7f3e9",
+    "ink": "#171912"
+  },
+  "siteColorsNote": "The public site's ground and its ink. Deliberately not in `colors` above: that block is the Admin's palette, inherited verbatim so the product and its site look like the same thing, and the site's warm paper is the one place the two intentionally differ. Read by site/assets/styles.css and by the theme-color meta tag, so the browser chrome on a phone matches the page instead of the Admin.",
+  "flowColors": {
+    "agent": "#7457ff",
+    "policy": "#f2c84b",
+    "human": "#ff6b69",
+    "evidence": "#20b8d8",
+    "accord": "#27b64a"
+  },
+  "flowColorsNote": "The four actors of the product's one decision, plus the green centre that is a valid business state. These are not decoration and not a second palette: violet is the agent, yellow the policy that stops it, coral the human who decides, cyan the evidence left behind, green the accord they reach. The site says a colour only when its actor enters the story, and the Accord Seal — assets/mark.svg — is those four arcs closing around the green. Kept here rather than as literals in the stylesheet because the mark, the social preview and the CSS must draw the same seal; site/assets/styles.css reads them as {{flow.agent}} and its siblings.",
   "typography": {
-    "sans": "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    "mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+    "sans": "'Bricolage Grotesque', 'Avenir Next', Avenir, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    "mono": "'Spline Sans Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+    "display": "'Bricolage Grotesque', 'Avenir Next', Avenir, ui-sans-serif, system-ui, sans-serif",
+    "note": "Both faces are vendored under site/assets/fonts as latin-subset variable woff2 and declared with @font-face in styles.css. They are not loaded from a font CDN: the site ships `font-src 'self'` (vercel.json), and a page that reaches a third party to render its own headline is the same kind of borrowed runtime the framework refuses. Every family ends in a system stack, so a blocked or slow font degrades to a rendered page rather than invisible text. Licences and attribution: site/assets/fonts/OFL.txt."
   }
 }
