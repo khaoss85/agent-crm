@@ -45,9 +45,9 @@ test('motion has a complete reduced-motion fallback', () => {
   assert.match(css, /\.flow-marquee-track \{ transform: none; \}/);
 });
 
-test('mobile editorial backgrounds stay inside the viewport', () => {
+test('editorial backgrounds never bleed beyond the fluid shell margin', () => {
   const css = read('site/assets/styles.css');
-  assert.match(css, /@media \(max-width: 720px\) \{[\s\S]*main > \.shell:nth-of-type\(even\) > section::before \{ inset-inline: 0; \}/);
+  assert.match(css, /inset: 12% max\(-4vw, min\(-22px, calc\(\(1140px - 100vw\) \/ 2\)\)\);/);
 });
 
 test('semantic foregrounds meet WCAG AA against their backgrounds in both themes', () => {
