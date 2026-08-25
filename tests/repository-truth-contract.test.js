@@ -461,6 +461,17 @@ test('a symlink at a bound path is refused, not followed — at the file and at 
   assert.equal(resolveSurfacePath(root, 'docs/never-existed.md').ok, true);
 });
 
+test('an unsafe generator path is reported instead of followed by the identity check', async (t) => {
+  const { root } = frameworkFixture(t);
+  const generator = join(root, 'scripts/repo-truth.js');
+  rmSync(generator);
+  mkdirSync(join(root, 'elsewhere'), { recursive: true });
+  symlinkSync(join(root, 'elsewhere'), generator);
+
+  const result = await readAuthorities({ rootDir: root });
+  assert.ok(result.problems.some((problem) => problem.code === 'TRUTH_SURFACE_UNSAFE'));
+});
+
 test('a string literal that quotes the grammar is not a citation', () => {
   // `CITATION_JS` matched anywhere on a line, so this line inside the one bound
   // `.js` surface produced TRUTH_FACT_UNKNOWN for a citation nobody wrote. A

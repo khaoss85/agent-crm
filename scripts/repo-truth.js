@@ -723,10 +723,10 @@ export async function readAuthorities({ rootDir }) {
     }
     digests.push([path, sha256(readFileSync(full, 'utf8'))]);
   }
-  const targetGenerator = join(rootDir, 'scripts/repo-truth.js');
   const executingGenerator = fileURLToPath(import.meta.url);
-  if (existsSync(targetGenerator)
-    && !readFileSync(targetGenerator).equals(readFileSync(executingGenerator))) {
+  const targetGeneratorDigest = digests.find(([path]) => path === 'scripts/repo-truth.js')?.[1];
+  if (targetGeneratorDigest
+    && targetGeneratorDigest !== sha256(readFileSync(executingGenerator, 'utf8'))) {
     unavailable('the target checkout has a different scripts/repo-truth.js than the generator executing this authority read');
   }
   const sourceSha = sha256(canonical(digests.slice().sort((a, b) => compare(a[0], b[0]))));
