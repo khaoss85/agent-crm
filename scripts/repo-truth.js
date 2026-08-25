@@ -900,6 +900,9 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           ['savepoint', 'company_create'], ['execute', 'insert'],
           ['maybeOne', 'select'], ['many', 'select'], ['maybeOne', 'select'],
         ]);
+      if (!bundle.companyUsesStorage) {
+        throw new Error('the Company storage behavior probe was inconclusive or regressed');
+      }
     } finally {
       companyRaw.close();
     }
@@ -1344,6 +1347,9 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           getManagedDefaultsAfterPartial: [['maybeOne', 'select']],
           getManagedSibling: [['maybeOne', 'select']],
         });
+        if (!bundle.generatedRuntimeUsesStorage) {
+          throw new Error('the generated storage behavior probe was inconclusive or regressed');
+        }
       } finally {
         raw.close();
         managedRaw.close();
@@ -1369,6 +1375,9 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     });
     bundle.workLegacyUsesRaw = legacyPrepareCalls === 2
       && legacyReport.found === 1 && legacyReport.wouldAdopt === 1;
+    if (!bundle.workLegacyUsesRaw) {
+      throw new Error('the Work legacy raw-read behavior probe was inconclusive or regressed');
+    }
   } catch (error) {
     unavailable(`the spine authorities could not be read: ${/** @type {any} */ (error)?.message ?? error}`);
     return bundle;
