@@ -1044,6 +1044,10 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         const listWhereConjunction = await drive(() => service.listWhere({ status: 'open', enabled: false }));
         const countWhereConjunction = await drive(() => service.countWhere({ status: 'open', enabled: false }));
         const countWhereNoMatchConjunction = await drive(() => service.countWhere({ status: 'closed', enabled: true }));
+        const createOmitted = await drive(() => service.create({
+          name: 'Omitted Note', kind: 'primary', enabled: true,
+        }));
+        const getOmitted = await drive(() => service.get(createOmitted.result.id));
         const update = await drive(() => service.update(created.id, {
           name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
         }));
@@ -1065,13 +1069,19 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         const createManagedSibling = await drive(() => managedService.createManaged({
           name: 'Managed Sibling', note: 'sibling-note', status: 'open',
         }));
+        const createManagedOmitted = await drive(() => managedService.createManaged({
+          name: 'Managed Omitted', status: 'open',
+        }));
+        const getManagedOmittedCreated = await drive(() => managedService.get(createManagedOmitted.result.id));
         const updateManaged = await drive(() => managedService.applyManaged(createManaged.result.id, {
           name: 'Updated Managed Probe', note: null, status: 'closed',
         }));
         const getManagedUpdated = await drive(() => managedService.get(createManaged.result.id));
         const getManagedSiblingAfterUpdate = await drive(() => managedService.get(createManagedSibling.result.id));
+        const getManagedOmittedAfterUpdate = await drive(() => managedService.get(createManagedOmitted.result.id));
         const partialManagedUpdate = await drive(() => managedService.applyManaged(createManaged.result.id, { note: 'restored-note' }));
         const getManagedPartial = await drive(() => managedService.get(createManaged.result.id));
+        const getManagedOmittedAfterPartial = await drive(() => managedService.get(createManagedOmitted.result.id));
         const getManagedSibling = await drive(() => managedService.get(createManagedSibling.result.id));
         const operations = {
           create: create.calls,
@@ -1087,6 +1097,8 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           listWhereConjunction: listWhereConjunction.calls,
           countWhereConjunction: countWhereConjunction.calls,
           countWhereNoMatchConjunction: countWhereNoMatchConjunction.calls,
+          createOmitted: createOmitted.calls,
+          getOmitted: getOmitted.calls,
           update: update.calls,
           listSiblingsAfterUpdate: listSiblingsAfterUpdate.calls,
           getNonmatchingAfterUpdate: getNonmatchingAfterUpdate.calls,
@@ -1100,11 +1112,15 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           createManaged: createManaged.calls,
           getManagedCreated: getManagedCreated.calls,
           createManagedSibling: createManagedSibling.calls,
+          createManagedOmitted: createManagedOmitted.calls,
+          getManagedOmittedCreated: getManagedOmittedCreated.calls,
           updateManaged: updateManaged.calls,
           getManagedUpdated: getManagedUpdated.calls,
           getManagedSiblingAfterUpdate: getManagedSiblingAfterUpdate.calls,
+          getManagedOmittedAfterUpdate: getManagedOmittedAfterUpdate.calls,
           partialManagedUpdate: partialManagedUpdate.calls,
           getManagedPartial: getManagedPartial.calls,
+          getManagedOmittedAfterPartial: getManagedOmittedAfterPartial.calls,
           getManagedSibling: getManagedSibling.calls,
         };
         const seededSiblings = [
@@ -1119,7 +1135,10 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           listSiblingsAfterUpdate.result, listSiblingsAfterPartialUpdate.result, listSiblingsAfterManaged.result,
         ].every((rows) => seededSiblings.every((expected) => isDeepStrictEqual(
           rows.find((row) => row.id === expected.id), expected,
-        )));
+        ))) && [listSiblingsAfterUpdate.result, listSiblingsAfterPartialUpdate.result, listSiblingsAfterManaged.result]
+          .every((rows) => isDeepStrictEqual(rows.find((row) => row.id === createOmitted.result.id), createOmitted.result))
+          && [listSiblingsAfterPartialUpdate.result, listSiblingsAfterManaged.result]
+            .every((rows) => isDeepStrictEqual(rows.find((row) => row.id === createNull.result.id), createNull.result));
         const priorMutationTimestamps = [
           created.updatedAt,
           update.result.updatedAt,
@@ -1164,6 +1183,9 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           && listWhereConjunction.result[0].id === 'truth-open-disabled'
           && countWhereConjunction.result === 1
           && countWhereNoMatchConjunction.result === 0
+          && Object.hasOwn(createOmitted.result, 'note')
+          && createOmitted.result.note === null
+          && isDeepStrictEqual(getOmitted.result, createOmitted.result)
           && isDeepStrictEqual(update.result, {
             ...created, name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
             updatedAt: update.result.updatedAt,
@@ -1197,11 +1219,16 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           && Object.hasOwn(updateManaged.result, 'note')
           && Date.parse(updateManaged.result.updatedAt) > Date.parse(createManaged.result.updatedAt)
           && isDeepStrictEqual(getManagedUpdated.result, updateManaged.result)
+          && Object.hasOwn(createManagedOmitted.result, 'note')
+          && createManagedOmitted.result.note === null
+          && isDeepStrictEqual(getManagedOmittedCreated.result, createManagedOmitted.result)
           && isDeepStrictEqual(getManagedSiblingAfterUpdate.result, createManagedSibling.result)
+          && isDeepStrictEqual(getManagedOmittedAfterUpdate.result, createManagedOmitted.result)
           && isDeepStrictEqual(partialManagedUpdate.result, {
             ...updateManaged.result, note: 'restored-note', updatedAt: partialManagedUpdate.result.updatedAt,
           })
           && isDeepStrictEqual(getManagedPartial.result, partialManagedUpdate.result)
+          && isDeepStrictEqual(getManagedOmittedAfterPartial.result, createManagedOmitted.result)
           && isDeepStrictEqual(getManagedSibling.result, createManagedSibling.result)
           && isDeepStrictEqual(generatedUpdateTimestamps, [
             update.result.updatedAt, partialUpdate.result.updatedAt, applyManaged.result.updatedAt,
@@ -1221,6 +1248,8 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           listWhereConjunction: [['many', 'select']],
           countWhereConjunction: [['maybeOne', 'count']],
           countWhereNoMatchConjunction: [['maybeOne', 'count']],
+          createOmitted: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          getOmitted: [['maybeOne', 'select']],
           update: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           listSiblingsAfterUpdate: [['many', 'select']],
           getNonmatchingAfterUpdate: [['maybeOne', 'select']],
@@ -1234,11 +1263,15 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           createManaged: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
           getManagedCreated: [['maybeOne', 'select']],
           createManagedSibling: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
+          createManagedOmitted: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
+          getManagedOmittedCreated: [['maybeOne', 'select']],
           updateManaged: [['maybeOne', 'select'], ['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           getManagedUpdated: [['maybeOne', 'select']],
           getManagedSiblingAfterUpdate: [['maybeOne', 'select']],
+          getManagedOmittedAfterUpdate: [['maybeOne', 'select']],
           partialManagedUpdate: [['maybeOne', 'select'], ['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           getManagedPartial: [['maybeOne', 'select']],
+          getManagedOmittedAfterPartial: [['maybeOne', 'select']],
           getManagedSibling: [['maybeOne', 'select']],
         });
       } finally {
