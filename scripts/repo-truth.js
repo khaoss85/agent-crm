@@ -968,6 +968,9 @@ export async function readAuthorities({ rootDir }) {
           const result = await run();
           return { result, calls: generatedCalls.slice(start) };
         };
+        const waitPast = (timestamp) => {
+          while (Date.now() <= Date.parse(timestamp)) { /* bounded to the next millisecond */ }
+        };
         const create = await drive(() => service.create({
           name: 'Probe', note: 'created-note', kind: 'primary', enabled: true,
         }));
@@ -993,6 +996,7 @@ export async function readAuthorities({ rootDir }) {
         const countWhere = await drive(() => service.countWhere({ id: created.id }));
         const countWhereMembership = await drive(() => service.countWhere({ status: ['open'] }));
         const countWhereDisabled = await drive(() => service.countWhere({ enabled: false }));
+        waitPast(created.updatedAt);
         const update = await drive(() => service.update(created.id, {
           name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
         }));
@@ -1001,6 +1005,7 @@ export async function readAuthorities({ rootDir }) {
           name: 'Null Probe', note: null, kind: 'primary', enabled: true,
         }));
         const getNull = await drive(() => service.get(createNull.result.id));
+        waitPast(update.result.updatedAt);
         const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }));
         const getNonmatchingAfterManaged = await drive(() => service.get('truth-nonmatching'));
         const createManaged = await drive(() => managedService.createManaged({
@@ -1010,6 +1015,7 @@ export async function readAuthorities({ rootDir }) {
         const createManagedSibling = await drive(() => managedService.createManaged({
           name: 'Managed Sibling', note: 'sibling-note', status: 'open',
         }));
+        waitPast(createManaged.result.updatedAt);
         const updateManaged = await drive(() => managedService.applyManaged(createManaged.result.id, {
           name: 'Updated Managed Probe', note: null, status: 'closed',
         }));
@@ -1069,6 +1075,7 @@ export async function readAuthorities({ rootDir }) {
             ...created, name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
             updatedAt: update.result.updatedAt,
           })
+          && Date.parse(update.result.updatedAt) > Date.parse(created.updatedAt)
           && isDeepStrictEqual(getNonmatchingAfterUpdate.result, {
             id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'closed',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
@@ -1081,6 +1088,7 @@ export async function readAuthorities({ rootDir }) {
           && createNull.result.status === 'open'
           && isDeepStrictEqual(getNull.result, createNull.result)
           && isDeepStrictEqual(applyManaged.result, { ...update.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
+          && Date.parse(applyManaged.result.updatedAt) > Date.parse(update.result.updatedAt)
           && isDeepStrictEqual(getNonmatchingAfterManaged.result, getNonmatchingAfterUpdate.result)
           && createManaged.result.name === 'Managed Probe'
           && createManaged.result.note === 'managed-note'
@@ -1091,6 +1099,7 @@ export async function readAuthorities({ rootDir }) {
             updatedAt: updateManaged.result.updatedAt,
           })
           && Object.hasOwn(updateManaged.result, 'note')
+          && Date.parse(updateManaged.result.updatedAt) > Date.parse(createManaged.result.updatedAt)
           && isDeepStrictEqual(getManagedUpdated.result, updateManaged.result)
           && isDeepStrictEqual(getManagedSibling.result, createManagedSibling.result)
           && isDeepStrictEqual(generatedUpdateTimestamps, [
