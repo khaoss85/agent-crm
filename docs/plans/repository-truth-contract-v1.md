@@ -145,6 +145,7 @@ code is deleted from the code and left standing in a document. That is instance
 | `spine.contract` | `SPINE_CONTRACT`, `PERMISSIONS`, `ROLE_BUNDLES`, `SPINE_NOT_MODELED` |
 | `identity.contract` | `IDENTITY_CONTRACT`, the four kinds |
 | `tenant.storage` | `TENANT_STORAGE_CONTRACT`, `TENANT_STRATEGY`, `TENANT_LIMITATIONS`, and a **structural probe** of `bindTenantStorage()`'s own returned shape |
+| `storage.contract` | the M1 storage contract plus bounded executable Company, generated-service and Work legacy probes, each carrying `STORAGE_FACT_IS_BOUNDED_PROBE` |
 | `runtime.mode` | `MODE_ENV`, and that the mode has no default |
 | `reference.composition` | the nine checked-in domain packages composed through `resolvePackageComposition` — the same function `PackageRegistry` throws from at startup |
 | `cli.rails` | the CLI dispatch table **and** the handler modules' exports, which must agree |
@@ -178,6 +179,10 @@ exactly one of them. A fact never blends kinds.
 **Domain packages (9)** — `domain.<name>.package_native` for commercial,
 contracts, customer-data, delivery, intelligence, lifecycle, service, signature
 and work.
+
+**Storage (4)** — `spine.storage.contract` · `spine.storage.company_runtime` ·
+`spine.storage.generated_runtime` · `spine.storage.work_legacy_raw`. The three
+runtime facts are explicitly bounded probes, not framework-wide extraction claims.
 
 **Rails (8)** — `rail.app_inspect.implemented` · `rail.solution_check.implemented` ·
 `rail.project_doctor.implemented` · `rail.package_scaffold.implemented` ·
@@ -460,20 +465,32 @@ survive widening from `site/` to `docs/` for **one** noun; seven nouns across
 twenty-one surfaces is a new gate with its own false-positive budget, and it needs
 count-shaped facts that do not exist yet.
 
+
+19. **2026-08-25 — Storage M1 executable authority added.** `storage.contract`
+    now executes the canonical Company schema through the SQLite storage adapter,
+    generates and boots public and all-managed services against their generated
+    migrations, and drives the retained Work legacy row-read path. The generated
+    probe covers exact and filtered reads, scalar/IN/null/boolean/conjunction
+    predicates, public and managed creates/partial updates/defaults, actor-retaining
+    audit, sibling isolation and strictly advancing canonical UTC timestamps. An
+    inconclusive probe refuses the authority rather than publishing absence. The
+    four `spine.storage.*` facts are cited from Project Status and the three runtime
+    facts publish `STORAGE_FACT_IS_BOUNDED_PROBE` so their scope travels with them.
+
 ## 12. Outcome and follow-up
 
 Measured on `claude/repository-truth-contract-v1`:
 
-- `docs/repository-truth.json` — 38 facts from 9 authorities (6 source, 1
-  receipt, 2 measurement), 13 published limitations.
-- 97 citations across 21 bound surfaces, one of which is source: the `app inspect`
+- `docs/repository-truth.json` — 48 facts from 11 authorities (8 source, 1
+  receipt, 2 measurement), 14 published limitations.
+- 102 citations across 21 bound surfaces, one of which is source: the `app inspect`
   `productionPosture` sentence, which is the first of the two failures in §2. It
   carries nine now, having asserted the identity-contract seam and shared-database
   tenancy while citing nothing for either.
 - `npm run repo:truth -- --check`: **~0.5 s** wall clock, one app-composition
   build and no scenario run, run as its own step in the `public-claims` CI job
   on every push and every pull request.
-- `tests/repository-truth-contract.test.js`: 58 tests, ~3.5 s, passing in both a
+- `tests/repository-truth-contract.test.js`: 75 tests, ~3.5 s, passing in both a
   full-history checkout and a `--depth 1` shallow clone.
 
 **Deliberately out of v1:** JTBD rows, `docs/editions/**`, any scenario-run
