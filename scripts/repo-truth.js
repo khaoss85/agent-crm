@@ -1035,14 +1035,15 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         };
         /** @param {() => unknown | Promise<unknown>} run */
         const refusesWithoutEffects = async (run) => {
-          const callCount = generatedCalls.length;
+          const mutationCallCount = generatedCalls.filter(([method]) => method === 'execute' || method === 'savepoint').length;
           const auditCount = generatedAudits.length;
           try {
             await run();
             return false;
           } catch (error) {
             return error?.code === 'VALIDATION_ERROR'
-              && generatedCalls.length === callCount && generatedAudits.length === auditCount;
+              && generatedCalls.filter(([method]) => method === 'execute' || method === 'savepoint').length === mutationCallCount
+              && generatedAudits.length === auditCount;
           }
         };
         const unknownPredicateRefused = await refusesWithoutEffects(
@@ -1051,11 +1052,20 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         const emptyMembershipRefused = await refusesWithoutEffects(
           () => service.listWhere({ status: [] }),
         );
+        const invalidPublicNameRefused = await refusesWithoutEffects(
+          () => service.create({ name: 42, kind: 'primary', enabled: true }, { actor: probeActor }),
+        );
+        const invalidPublicNoteRefused = await refusesWithoutEffects(
+          () => service.create({ name: 'Invalid', note: 42, kind: 'primary', enabled: true }, { actor: probeActor }),
+        );
         const invalidPublicEnumRefused = await refusesWithoutEffects(
           () => service.create({ name: 'Invalid', kind: 'wrong', enabled: true }, { actor: probeActor }),
         );
         const invalidPublicBooleanRefused = await refusesWithoutEffects(
           () => service.create({ name: 'Invalid', kind: 'primary', enabled: 'yes' }, { actor: probeActor }),
+        );
+        const invalidManagedNoteRefused = await refusesWithoutEffects(
+          () => managedService.createManaged({ note: 42 }, { actor: probeActor }),
         );
         const invalidManagedEnumRefused = await refusesWithoutEffects(
           () => managedService.createManaged({ status: 'wrong' }, { actor: probeActor }),
@@ -1071,6 +1081,18 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           name: 'Probe', note: 'created-note', kind: 'primary', enabled: true,
         }, { actor: probeActor }));
         const created = create.result;
+        const invalidPublicNameUpdateRefused = await refusesWithoutEffects(
+          () => service.update(created.id, { name: 42 }, { actor: probeActor }),
+        );
+        const invalidPublicNoteUpdateRefused = await refusesWithoutEffects(
+          () => service.update(created.id, { note: 42 }, { actor: probeActor }),
+        );
+        const invalidPublicEnumUpdateRefused = await refusesWithoutEffects(
+          () => service.update(created.id, { kind: 'wrong' }, { actor: probeActor }),
+        );
+        const invalidPublicBooleanUpdateRefused = await refusesWithoutEffects(
+          () => service.update(created.id, { enabled: 'yes' }, { actor: probeActor }),
+        );
         const createPendingSeed = await drive(() => service.create({
           name: 'Other', note: null, kind: 'secondary', enabled: false,
         }, { actor: probeActor }));
@@ -1127,6 +1149,15 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           name: 'Managed Probe', note: 'managed-note', status: 'open',
         }, { actor: probeActor }));
         const getManagedCreated = await drive(() => managedService.get(createManaged.result.id));
+        const invalidManagedNameUpdateRefused = await refusesWithoutEffects(
+          () => managedService.applyManaged(createManaged.result.id, { name: 42 }, { actor: probeActor }),
+        );
+        const invalidManagedNoteUpdateRefused = await refusesWithoutEffects(
+          () => managedService.applyManaged(createManaged.result.id, { note: 42 }, { actor: probeActor }),
+        );
+        const invalidManagedEnumUpdateRefused = await refusesWithoutEffects(
+          () => managedService.applyManaged(createManaged.result.id, { status: 'wrong' }, { actor: probeActor }),
+        );
         const createManagedSibling = await drive(() => managedService.createManaged({
           name: 'Managed Sibling', note: 'sibling-note', status: 'open',
         }, { actor: probeActor }));
@@ -1231,8 +1262,12 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         }
         const resultsValid = generatedCreateTimestampsCanonical
           && unknownPredicateRefused && emptyMembershipRefused
+          && invalidPublicNameRefused && invalidPublicNoteRefused
           && invalidPublicEnumRefused && invalidPublicBooleanRefused
-          && invalidManagedEnumRefused && invalidManagedStringRefused
+          && invalidPublicNameUpdateRefused && invalidPublicNoteUpdateRefused
+          && invalidPublicEnumUpdateRefused && invalidPublicBooleanUpdateRefused
+          && invalidManagedNoteRefused && invalidManagedEnumRefused && invalidManagedStringRefused
+          && invalidManagedNameUpdateRefused && invalidManagedNoteUpdateRefused && invalidManagedEnumUpdateRefused
           && managedCreateRefusal === 'VALIDATION_ERROR'
           && managedUpdateRefusal === 'VALIDATION_ERROR'
           && generatedAudits.length === 18
