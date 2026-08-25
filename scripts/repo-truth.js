@@ -1097,15 +1097,19 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           name: 'Managed Omitted', status: 'open',
         }));
         const getManagedOmittedCreated = await drive(() => managedService.get(createManagedOmitted.result.id));
+        const createManagedDefaults = await drive(() => managedService.createManaged({}));
+        const getManagedDefaultsCreated = await drive(() => managedService.get(createManagedDefaults.result.id));
         const updateManaged = await drive(() => managedService.applyManaged(createManaged.result.id, {
           name: 'Updated Managed Probe', note: null, status: 'closed',
         }));
         const getManagedUpdated = await drive(() => managedService.get(createManaged.result.id));
         const getManagedSiblingAfterUpdate = await drive(() => managedService.get(createManagedSibling.result.id));
         const getManagedOmittedAfterUpdate = await drive(() => managedService.get(createManagedOmitted.result.id));
+        const getManagedDefaultsAfterUpdate = await drive(() => managedService.get(createManagedDefaults.result.id));
         const partialManagedUpdate = await drive(() => managedService.applyManaged(createManaged.result.id, { note: 'restored-note' }));
         const getManagedPartial = await drive(() => managedService.get(createManaged.result.id));
         const getManagedOmittedAfterPartial = await drive(() => managedService.get(createManagedOmitted.result.id));
+        const getManagedDefaultsAfterPartial = await drive(() => managedService.get(createManagedDefaults.result.id));
         const getManagedSibling = await drive(() => managedService.get(createManagedSibling.result.id));
         const operations = {
           create: create.calls,
@@ -1138,13 +1142,17 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           createManagedSibling: createManagedSibling.calls,
           createManagedOmitted: createManagedOmitted.calls,
           getManagedOmittedCreated: getManagedOmittedCreated.calls,
+          createManagedDefaults: createManagedDefaults.calls,
+          getManagedDefaultsCreated: getManagedDefaultsCreated.calls,
           updateManaged: updateManaged.calls,
           getManagedUpdated: getManagedUpdated.calls,
           getManagedSiblingAfterUpdate: getManagedSiblingAfterUpdate.calls,
           getManagedOmittedAfterUpdate: getManagedOmittedAfterUpdate.calls,
+          getManagedDefaultsAfterUpdate: getManagedDefaultsAfterUpdate.calls,
           partialManagedUpdate: partialManagedUpdate.calls,
           getManagedPartial: getManagedPartial.calls,
           getManagedOmittedAfterPartial: getManagedOmittedAfterPartial.calls,
+          getManagedDefaultsAfterPartial: getManagedDefaultsAfterPartial.calls,
           getManagedSibling: getManagedSibling.calls,
         };
         const seededSiblings = [
@@ -1251,13 +1259,19 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           && Object.hasOwn(createManagedOmitted.result, 'note')
           && createManagedOmitted.result.note === null
           && isDeepStrictEqual(getManagedOmittedCreated.result, createManagedOmitted.result)
+          && createManagedDefaults.result.name === 'Managed Default'
+          && createManagedDefaults.result.status === 'open'
+          && createManagedDefaults.result.note === null
+          && isDeepStrictEqual(getManagedDefaultsCreated.result, createManagedDefaults.result)
           && isDeepStrictEqual(getManagedSiblingAfterUpdate.result, createManagedSibling.result)
           && isDeepStrictEqual(getManagedOmittedAfterUpdate.result, createManagedOmitted.result)
+          && isDeepStrictEqual(getManagedDefaultsAfterUpdate.result, createManagedDefaults.result)
           && isDeepStrictEqual(partialManagedUpdate.result, {
             ...updateManaged.result, note: 'restored-note', updatedAt: partialManagedUpdate.result.updatedAt,
           })
           && isDeepStrictEqual(getManagedPartial.result, partialManagedUpdate.result)
           && isDeepStrictEqual(getManagedOmittedAfterPartial.result, createManagedOmitted.result)
+          && isDeepStrictEqual(getManagedDefaultsAfterPartial.result, createManagedDefaults.result)
           && isDeepStrictEqual(getManagedSibling.result, createManagedSibling.result)
           && isDeepStrictEqual(generatedUpdateTimestamps, [
             update.result.updatedAt, partialUpdate.result.updatedAt, applyManaged.result.updatedAt,
@@ -1294,13 +1308,17 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           createManagedSibling: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
           createManagedOmitted: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
           getManagedOmittedCreated: [['maybeOne', 'select']],
+          createManagedDefaults: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
+          getManagedDefaultsCreated: [['maybeOne', 'select']],
           updateManaged: [['maybeOne', 'select'], ['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           getManagedUpdated: [['maybeOne', 'select']],
           getManagedSiblingAfterUpdate: [['maybeOne', 'select']],
           getManagedOmittedAfterUpdate: [['maybeOne', 'select']],
+          getManagedDefaultsAfterUpdate: [['maybeOne', 'select']],
           partialManagedUpdate: [['maybeOne', 'select'], ['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           getManagedPartial: [['maybeOne', 'select']],
           getManagedOmittedAfterPartial: [['maybeOne', 'select']],
+          getManagedDefaultsAfterPartial: [['maybeOne', 'select']],
           getManagedSibling: [['maybeOne', 'select']],
         });
       } finally {
