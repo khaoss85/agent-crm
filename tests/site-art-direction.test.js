@@ -45,6 +45,11 @@ test('motion has a complete reduced-motion fallback', () => {
   assert.match(css, /\.flow-marquee-track \{ transform: none; \}/);
 });
 
+test('mobile editorial backgrounds stay inside the viewport', () => {
+  const css = read('site/assets/styles.css');
+  assert.match(css, /@media \(max-width: 720px\) \{[\s\S]*main > \.shell:nth-of-type\(even\) > section::before \{ inset-inline: 0; \}/);
+});
+
 test('semantic foregrounds meet WCAG AA against their backgrounds in both themes', () => {
   const pairs = [
     ['light flow', '#176b2a', '#f7f3e9'],
