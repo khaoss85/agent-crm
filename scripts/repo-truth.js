@@ -792,31 +792,43 @@ export async function readAuthorities({ rootDir }) {
     const { migrateLegacyTasks } = await import(url('packages/work/src/legacy-tasks.js'));
     bundle.storageContract = storageContract.STORAGE_CONTRACT;
 
-    // Behavior probe: a Company create/get/list must reach only the storage
-    // methods supplied by this fake handle. A comment or a dead token cannot
-    // satisfy it, and any attempted raw access throws because no raw exists.
+    // Behavior probe: Company statements must render and execute through the
+    // real M1 SQLite adapter. The isolated schema makes a bad table, column,
+    // predicate or statement shape fail instead of being accepted by a fake.
     const companyCalls = [];
-    const companyRow = {
-      id: 'truth-company', name: 'Truth Company', domain: null,
-      created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
-    };
-    const companyService = new CompanyService({
-      database: { storage: {
-        sync: {
-          savepoint(name, fn) { companyCalls.push(['savepoint', name]); return fn(); },
-          execute(statement) { companyCalls.push(['execute', statement.kind]); },
-          maybeOne(statement) { companyCalls.push(['maybeOne', statement.kind]); return companyRow; },
-          many(statement) { companyCalls.push(['many', statement.kind]); return [companyRow]; },
-        },
-      } },
-      audit: { record() {} }, events: { async emit() {} },
-    });
-    await companyService.create({ name: companyRow.name });
-    companyService.get(companyRow.id);
-    companyService.list();
-    bundle.companyUsesStorage = canonical(companyCalls) === canonical([
-      ['savepoint', 'company_create'], ['execute', 'insert'], ['maybeOne', 'select'], ['many', 'select'],
-    ]);
+    const { DatabaseSync } = await import('node:sqlite');
+    const companyRaw = new DatabaseSync(':memory:');
+    try {
+      companyRaw.exec(`CREATE TABLE companies (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, domain TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      )`);
+      const companyActual = storageContract.createSqliteStorage(
+        companyRaw, (fn) => fn(), async (fn) => fn(),
+      ).sync;
+      const companySync = {
+        savepoint(name, fn) { companyCalls.push(['savepoint', name]); return companyActual.savepoint(name, fn); },
+        execute(statement) { companyCalls.push(['execute', statement.kind]); return companyActual.execute(statement); },
+        maybeOne(statement) { companyCalls.push(['maybeOne', statement.kind]); return companyActual.maybeOne(statement); },
+        many(statement) { companyCalls.push(['many', statement.kind]); return companyActual.many(statement); },
+      };
+      const companyService = new CompanyService({
+        database: { storage: { sync: companySync } },
+        audit: { record() {} }, events: { async emit() {} },
+      });
+      const companyCreated = await companyService.create({ name: 'Truth Company', domain: 'EXAMPLE.COM' });
+      const companyRead = companyService.get(companyCreated.id);
+      const companyList = companyService.list();
+      bundle.companyUsesStorage = isDeepStrictEqual(companyCreated, companyRead)
+        && companyCreated.domain === 'example.com'
+        && companyList.length === 1
+        && isDeepStrictEqual(companyList[0], companyCreated)
+        && canonical(companyCalls) === canonical([
+          ['savepoint', 'company_create'], ['execute', 'insert'], ['maybeOne', 'select'], ['many', 'select'],
+        ]);
+    } finally {
+      companyRaw.close();
+    }
 
     // Execute the artifact the generator actually emits against a fake handle
     // that exposes storage and deliberately has no raw driver. Every generated
@@ -948,6 +960,8 @@ export async function readAuthorities({ rootDir }) {
         const countWhere = await drive(() => service.countWhere({ id: created.id }));
         const countWhereMembership = await drive(() => service.countWhere({ status: ['open'] }));
         const update = await drive(() => service.update(created.id, { note: 'updated-note' }));
+        const createNull = await drive(() => service.create({ name: 'Null Probe', note: null }));
+        const getNull = await drive(() => service.get(createNull.result.id));
         const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }));
         const createManaged = await drive(() => managedService.createManaged({ status: 'open' }));
         const getManaged = await drive(() => managedService.get(createManaged.result.id));
@@ -961,6 +975,8 @@ export async function readAuthorities({ rootDir }) {
           countWhere: countWhere.calls,
           countWhereMembership: countWhereMembership.calls,
           update: update.calls,
+          createNull: createNull.calls,
+          getNull: getNull.calls,
           applyManaged: applyManaged.calls,
           createManaged: createManaged.calls,
           getManaged: getManaged.calls,
@@ -986,6 +1002,9 @@ export async function readAuthorities({ rootDir }) {
           && countWhere.result === 1
           && countWhereMembership.result === 1
           && isDeepStrictEqual(update.result, { ...created, note: 'updated-note', updatedAt: update.result.updatedAt })
+          && Object.hasOwn(createNull.result, 'note')
+          && createNull.result.note === null
+          && isDeepStrictEqual(getNull.result, createNull.result)
           && isDeepStrictEqual(applyManaged.result, { ...update.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
           && createManaged.result.status === 'open'
           && isDeepStrictEqual(getManaged.result, createManaged.result)
@@ -1000,6 +1019,8 @@ export async function readAuthorities({ rootDir }) {
           countWhere: [['maybeOne', 'count']],
           countWhereMembership: [['maybeOne', 'count']],
           update: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          createNull: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          getNull: [['maybeOne', 'select']],
           applyManaged: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           createManaged: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
           getManaged: [['maybeOne', 'select']],
