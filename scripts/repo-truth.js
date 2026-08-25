@@ -848,6 +848,7 @@ export async function readAuthorities({ rootDir }) {
             { name: 'name', type: 'string', required: true },
             { name: 'note', type: 'string', required: false },
             { name: 'kind', type: 'enum', values: ['primary', 'secondary'], required: true },
+            { name: 'enabled', type: 'boolean', required: true },
             { name: 'status', type: 'enum', values: ['open', 'closed'], writable: 'managed', default: 'open' },
           ],
         },
@@ -941,7 +942,9 @@ export async function readAuthorities({ rootDir }) {
           const result = await run();
           return { result, calls: generatedCalls.slice(start) };
         };
-        const create = await drive(() => service.create({ name: 'Probe', note: 'created-note', kind: 'primary' }));
+        const create = await drive(() => service.create({
+          name: 'Probe', note: 'created-note', kind: 'primary', enabled: true,
+        }));
         const created = create.result;
         realSync.execute({
           kind: 'insert', table: 'truth_storage_probes', values: [
@@ -949,6 +952,7 @@ export async function readAuthorities({ rootDir }) {
             { column: 'name', value: 'Other' },
             { column: 'note', value: null },
             { column: 'kind', value: 'secondary' },
+            { column: 'enabled', value: 0 },
             { column: 'status', value: 'closed' },
             { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
             { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
@@ -961,8 +965,12 @@ export async function readAuthorities({ rootDir }) {
         const listWhereNull = await drive(() => service.listWhere({ note: null }));
         const countWhere = await drive(() => service.countWhere({ id: created.id }));
         const countWhereMembership = await drive(() => service.countWhere({ status: ['open'] }));
-        const update = await drive(() => service.update(created.id, { note: 'updated-note', kind: 'secondary' }));
-        const createNull = await drive(() => service.create({ name: 'Null Probe', note: null, kind: 'primary' }));
+        const update = await drive(() => service.update(created.id, {
+          note: 'updated-note', kind: 'secondary', enabled: false,
+        }));
+        const createNull = await drive(() => service.create({
+          name: 'Null Probe', note: null, kind: 'primary', enabled: true,
+        }));
         const getNull = await drive(() => service.get(createNull.result.id));
         const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }));
         const createManaged = await drive(() => managedService.createManaged({ status: 'open' }));
@@ -989,7 +997,7 @@ export async function readAuthorities({ rootDir }) {
           && list.result.length === 2
           && isDeepStrictEqual(list.result.find((row) => row.id === created.id), created)
           && isDeepStrictEqual(list.result.find((row) => row.id === 'truth-nonmatching'), {
-            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', status: 'closed',
+            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'closed',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
           })
           && listWithMembership.result.length === 1
@@ -998,13 +1006,13 @@ export async function readAuthorities({ rootDir }) {
           && isDeepStrictEqual(listWhere.result[0], created)
           && listWhereNull.result.length === 1
           && isDeepStrictEqual(listWhereNull.result[0], {
-            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', status: 'closed',
+            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'closed',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
           })
           && countWhere.result === 1
           && countWhereMembership.result === 1
           && isDeepStrictEqual(update.result, {
-            ...created, note: 'updated-note', kind: 'secondary', updatedAt: update.result.updatedAt,
+            ...created, note: 'updated-note', kind: 'secondary', enabled: false, updatedAt: update.result.updatedAt,
           })
           && Object.hasOwn(createNull.result, 'note')
           && createNull.result.note === null
