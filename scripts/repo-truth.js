@@ -872,6 +872,8 @@ export async function readAuthorities({ rootDir }) {
         manifest: {
           manifestVersion: 1, name: 'truth-managed-storage-probe',
           fields: [
+            { name: 'name', type: 'string', required: true, writable: 'managed', default: 'Managed Default' },
+            { name: 'note', type: 'string', required: false, writable: 'managed' },
             { name: 'status', type: 'enum', values: ['open', 'closed'], writable: 'managed', default: 'open' },
           ],
         },
@@ -984,8 +986,14 @@ export async function readAuthorities({ rootDir }) {
         }));
         const getNull = await drive(() => service.get(createNull.result.id));
         const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }));
-        const createManaged = await drive(() => managedService.createManaged({ status: 'open' }));
-        const getManaged = await drive(() => managedService.get(createManaged.result.id));
+        const createManaged = await drive(() => managedService.createManaged({
+          name: 'Managed Probe', note: 'managed-note', status: 'open',
+        }));
+        const getManagedCreated = await drive(() => managedService.get(createManaged.result.id));
+        const updateManaged = await drive(() => managedService.applyManaged(createManaged.result.id, {
+          name: 'Updated Managed Probe', note: null, status: 'closed',
+        }));
+        const getManagedUpdated = await drive(() => managedService.get(createManaged.result.id));
         const operations = {
           create: create.calls,
           get: get.calls,
@@ -1002,7 +1010,9 @@ export async function readAuthorities({ rootDir }) {
           getNull: getNull.calls,
           applyManaged: applyManaged.calls,
           createManaged: createManaged.calls,
-          getManaged: getManaged.calls,
+          getManagedCreated: getManagedCreated.calls,
+          updateManaged: updateManaged.calls,
+          getManagedUpdated: getManagedUpdated.calls,
         };
         const resultsValid = created.name === 'Probe'
           && created.note === 'created-note'
@@ -1042,9 +1052,19 @@ export async function readAuthorities({ rootDir }) {
           && createNull.result.status === 'open'
           && isDeepStrictEqual(getNull.result, createNull.result)
           && isDeepStrictEqual(applyManaged.result, { ...update.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
+          && createManaged.result.name === 'Managed Probe'
+          && createManaged.result.note === 'managed-note'
           && createManaged.result.status === 'open'
-          && isDeepStrictEqual(getManaged.result, createManaged.result)
-          && isDeepStrictEqual(generatedUpdateTimestamps, [update.result.updatedAt, applyManaged.result.updatedAt]);
+          && isDeepStrictEqual(getManagedCreated.result, createManaged.result)
+          && isDeepStrictEqual(updateManaged.result, {
+            ...createManaged.result, name: 'Updated Managed Probe', note: null, status: 'closed',
+            updatedAt: updateManaged.result.updatedAt,
+          })
+          && Object.hasOwn(updateManaged.result, 'note')
+          && isDeepStrictEqual(getManagedUpdated.result, updateManaged.result)
+          && isDeepStrictEqual(generatedUpdateTimestamps, [
+            update.result.updatedAt, applyManaged.result.updatedAt, updateManaged.result.updatedAt,
+          ]);
         bundle.generatedRuntimeUsesStorage = resultsValid && canonical(operations) === canonical({
           create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
           get: [['maybeOne', 'select']],
@@ -1061,7 +1081,9 @@ export async function readAuthorities({ rootDir }) {
           getNull: [['maybeOne', 'select']],
           applyManaged: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           createManaged: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
-          getManaged: [['maybeOne', 'select']],
+          getManagedCreated: [['maybeOne', 'select']],
+          updateManaged: [['maybeOne', 'select'], ['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          getManagedUpdated: [['maybeOne', 'select']],
         });
       } finally {
         raw.close();
