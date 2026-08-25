@@ -1165,8 +1165,18 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
             id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'pending',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
           })
-          && isDeepStrictEqual(listWithMembership.result.map((row) => row.id).sort(),
-            [created.id, 'truth-closed', 'truth-open-disabled'].sort())
+          && listWithMembership.result.length === 3
+          && isDeepStrictEqual(listWithMembership.result.find((row) => row.id === created.id), created)
+          && isDeepStrictEqual(listWithMembership.result.find((row) => row.id === 'truth-open-disabled'), {
+            id: 'truth-open-disabled', name: 'Open Disabled', note: 'conjunction-target', kind: 'secondary',
+            enabled: false, status: 'open', createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          })
+          && isDeepStrictEqual(listWithMembership.result.find((row) => row.id === 'truth-closed'), {
+            id: 'truth-closed', name: 'Closed', note: 'membership-target', kind: 'secondary',
+            enabled: false, status: 'closed', createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          })
           && listWhere.result.length === 1
           && isDeepStrictEqual(listWhere.result[0], created)
           && listWhereNull.result.length === 1
