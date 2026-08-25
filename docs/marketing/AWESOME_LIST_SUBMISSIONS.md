@@ -1,13 +1,30 @@
 # Awesome-list submissions, prepared
 
-Two lists, two different mechanisms, and neither is a PR an agent can open from
-this repository. Everything below is written out so submitting is copy, paste,
-send — and so the wording is reviewed here rather than typed into a form at
-speed. `MASTER_PLAN.md` §10.4 stands: an agent prepares, a person submits.
+Four lists, three different mechanisms, and not one of them is a PR an agent can
+open from this repository. Everything below is written out so submitting is copy,
+paste, send — and so the wording is reviewed here rather than typed into a form
+at speed. `MASTER_PLAN.md` §10.4 stands: an agent prepares, a person submits.
 
-Both entries became honest only after `create-accordo@0.1.0` went live and the
-MCP Registry entry was published. These lists reject things that cannot be
-installed and used, and until 2026-08-19 that rejection would have been correct.
+The first two entries became honest only after `create-accordo@0.1.0` went live
+and the MCP Registry entry was published. These lists reject things that cannot
+be installed and used, and until 2026-08-19 that rejection would have been
+correct.
+
+**Two independent reasons the sending step is not agent work**, and they are
+worth separating because only one of them is ours:
+
+- Ours: `MASTER_PLAN.md` §10.4 and `PENDING_HUMAN_SUBMISSION.md`.
+- Theirs: `hesreallyhim/awesome-claude-code` CONTRIBUTING, verbatim — *"Although
+  resources themselves may be partially or entirely written by a coding agent,
+  resource recommendations must be created by human beings."* A submission from
+  an agent violates the destination's own rule, whatever ours says.
+
+A third reason is merely mechanical and should not be mistaken for either: this
+repository's execution environment refuses write access to third-party GitHub
+paths through its proxy (`POST /repos/…/forks` → 403, *"Write access to this
+GitHub API path is not permitted through this proxy"*), and `gh` is not
+installed. That is a fact about the sandbox, not a policy, and it would not
+license sending if it were lifted.
 
 ---
 
@@ -76,17 +93,25 @@ with `readOnlyHint: true`.
 
 ## 2. hesreallyhim/awesome-claude-code — an issue form, not a PR
 
-**Status: eligible from 2026-08-21. Do not send before then.**
+**Status: eligible — the age gate passed on 2026-08-18.**
 
 Its CONTRIBUTING is explicit — *"ALL RECOMMENDATIONS MUST BE MADE USING THE WEB
-UI ISSUE FORM TEMPLATE… Do not open a PR"* — and the acceptance rule is a
-resource **at least 14 days old** measured from the first commit on the default
-branch, **or** 100+ stars.
+UI ISSUE FORM TEMPLATE, OR YOU RISK BEING RESTRICTED FROM INTERACTING WITH THIS
+REPOSITORY TEMPORARILY"* — and the acceptance rule is a resource *"at least 14
+days old (14 days since first commit on default branch)"*, **or** at least 100
+stars.
 
-First commit on `main`: **2026-08-07**. That is 14 days on **2026-08-21**. The
-repository has 2 stars, so the age rule is the one that applies. Sending it
-early spends the submission on a bot rejection; the list also says only one
-resource may be recommended at a time, so there is no second shot to waste.
+First commit on `main`: **2026-08-04** (`7b0d2e6`, "Initial commit"). That is 14
+days on **2026-08-18**, which has passed. The repository has 2 stars, so the age
+rule is the one that carried it.
+
+> An earlier revision of this file said 2026-08-07 and derived 2026-08-21. That
+> was read from a single-branch shallow clone whose history did not reach the
+> first commit. Re-measured on a full 893-commit clone with
+> `git log --reverse --format='%H %ad' --date=short main`. The list is 53k stars
+> and the rule is bot-enforced; a date this file gets wrong is a date the bot
+> gets right, and the list allows only one recommendation at a time, so there is
+> no second shot to spend on an arithmetic error.
 
 Open the form: **Issues → New issue → "Recommend a resource"** on
 `hesreallyhim/awesome-claude-code`.
@@ -99,24 +124,143 @@ Open the form: **Issues → New issue → "Recommend a resource"** on
 | Author Name | `Aetha` |
 | Author Link | `https://github.com/khaoss85` |
 
-**Description** — one line, no emoji, a description rather than a pitch, which
-is what that CONTRIBUTING asks for:
+**Description** — the form's own guidance is *"1-3 sentences. Descriptive, not
+promotional. Don't address the reader. (10-500 characters.)"*, and CONTRIBUTING
+adds *"Resource descriptions should be written as _descriptions_ - not a sales
+pitch."* This is one sentence, 236 characters, no emoji, second person absent:
 
 ```
-Open-source CRM framework distributed as a Claude Code plugin with twelve skills for building CRM modules, deterministic workflows and domain packages; policy-gated approvals are enforced by merged tests rather than prompt instructions.
+Open-source CRM framework distributed as a Claude Code plugin with eleven skills for building CRM modules, deterministic workflows and domain packages; policy-gated approvals are enforced by merged tests rather than prompt instructions.
 ```
 
-**Checklist**: tick the first five. Leave the sixth unchecked — it is a trap
-that marks the submitter as not having read the form.
+> **Eleven, not twelve.** `.claude/skills/` holds twelve directories, but
+> `plugin.json` publishes `"skills": "./skills/"`, and `skills/` holds eleven.
+> `adversarial-review` is a maintainer skill for this repository's own merge
+> gate and is deliberately not in the installed bundle. The number a submitter
+> writes has to be the number a reader counts after `/plugin install`, which is
+> eleven. Re-check with `ls skills/ | wc -l` before sending, not against memory.
+
+**Checklist**: tick the first five. Leave the sixth unchecked — its label is
+*"Do not check the following box - leave it unchecked. By checking this box, I
+admit that I am not reading any of these statements."*
+
+The third box reads *"This resource is specific to Claude Code."* Tick it
+honestly: the submitted resource is the plugin — a `plugin.json`, a
+`marketplace.json` and eleven `SKILL.md` files — and that is Claude Code
+specific. The framework underneath is not, and the description does not claim
+it is.
+
+---
+
+## 3. travisvn/awesome-claude-skills — a pull request
+
+**Status: ready to send.** 14.8k stars, 1.9k forks; the largest list in this
+family by an order of magnitude, and the only additional one whose reach is
+worth the review time. Its CONTRIBUTING states no age or star gate, so the only
+question is fit, and the fit is direct: eleven installable `SKILL.md` files.
+
+Section: **Community Skills → Collections & Libraries** — a collection is what
+this is, and filing eleven skills under *Individual Skills* would be wrong.
+
+```markdown
+| **[Accordo](https://github.com/khaoss85/agent-crm)** | Eleven skills for building a custom CRM as code — modules, workflows, domain packages, commercial operations, contract activation, delivery and service — with commercial policy enforced by generated tests rather than prompt instructions. Ships a local project MCP; code generation is dry-run until `--apply`. |
+```
+
+**PR title**
+
+```
+Add Accordo (eleven CRM-building skills) to Community Skills
+```
+
+**PR body**
+
+```markdown
+Adds Accordo under Community Skills → Collections & Libraries.
+
+- Repository: https://github.com/khaoss85/agent-crm (MIT)
+- Install: `/plugin marketplace add khaoss85/agent-crm` then `/plugin install accordo`
+- Skills: eleven, each a `SKILL.md` with YAML frontmatter under `skills/`
+
+The skills build CRM modules, deterministic workflows and domain packages
+against an open-source framework in the same repository. Approval rules are
+generated as code and proven by tests that run in the project's merge gate, so
+a policy the agent is asked to bypass fails a test rather than a prompt.
+
+Actively maintained: commits on the default branch this week.
+```
+
+Nothing to check against a star threshold here, but do re-read the *Community
+Skills* headings before opening the PR — that README reorganises as it grows,
+and its own note says the section *"will be broken down into categories once
+there are enough community skills available"*.
+
+---
+
+## 4. sneg55/awesome-open-source-crm — a pull request
+
+**Status: ready to send, and rank it last.** 13 stars, 5 commits. Its retrieval
+value today is close to nothing. It is here for one reason: it is the only list
+found with a section headed **CRM Frameworks** — *"Platforms and frameworks for
+building custom CRM solutions"* — which is precisely and unusually the category
+this project has to be read as. A correct entry in the right category on a small
+list is still a correct entry; it costs ten minutes and it cannot mislead.
+
+Its four criteria, each checked rather than assumed: open source (MIT), commits
+within twelve months (this week), working software (`npm create accordo` is
+live on npm), CRM-related (the section is literally CRM frameworks).
+
+Entry, in the file's own table format:
+
+```markdown
+| [Accordo](https://github.com/khaoss85/agent-crm) | Framework for building a custom CRM as code with a coding agent: modules, deterministic workflows, commercial policy and audit, with approvals enforced by generated tests. Not a deployable CRM — it ships no authentication and no hosted product. | Node.js | ![GitHub stars](https://img.shields.io/github/stars/khaoss85/agent-crm?style=flat-square) |
+```
+
+The second sentence is not modesty, it is the whole reason this entry is safe to
+place on a list whose other rows are products a reader can deploy. Do not delete
+it to make the row shorter.
+
+---
+
+## Lists assessed and deliberately not submitted
+
+Recorded because "we looked and chose not to" is a different fact from "we did
+not look", and only the first one survives being asked about later.
+
+| List | Why not |
+|---|---|
+| **awesome-selfhosted/awesome-selfhosted** | Its inclusion rule is *"Free Software network services and web applications which can be hosted on your own server(s)."* Accordo is neither: it ships no authentication and states it is not deployable. An entry here would be an overclaim of exactly the shape `L-01` exists to prevent — and it would land in front of readers looking to deploy something tonight. |
+| **modelcontextprotocol/servers** | Not a community list. Its README is *"a collection of reference implementations"* maintained by the MCP steering group, and it routes community servers to the MCP Registry — where `io.github.khaoss85/agent-crm` already is. Nothing to submit. |
+| **ComposioHQ/awesome-claude-skills** | Self-describes as 1000+ entries. A list that accepts everything confers no signal on anything, and being in it does not make a retrieval step more likely to name us. Costs review time, returns nothing. |
+| **karanb192/awesome-claude-skills** | 498 stars, PRs welcome, criteria met — a genuine fit, just a smaller one than §3. Hold it as a second wave: submit §3 first, and if the entry lands, the same body transfers here almost verbatim. Sending both at once spends twice the attention on one announcement. |
+| **General open-source CRM roundups** (webkul, daily.dev, crm.org, marmelab) | Editorial articles, not lists with a submission mechanism. They are also product comparisons — Twenty, SuiteCRM, EspoCRM — so an entry would force the `P1` framing (*"an AI CRM"*) that `docs/benchmarks/CPR_PROTOCOL.md` names as the failure that matters most. Outreach to these is a different play with a different brief; it is not an awesome-list submission and it does not belong in this file. |
 
 ---
 
 ## What was checked before writing this
 
+Every fact below was fetched or measured in the session that wrote it, not
+recalled. The two errors this file carried until 2026-08-25 were both
+recall-shaped, which is the argument for the discipline rather than for trusting
+the outcome of it.
+
 - The MCP entry's facts against the live endpoint: three tools, all read-only.
-- Repository age against the awesome-claude-code rule, from
-  `git log --reverse` rather than from the GitHub creation date, because the
-  rule names the first commit and the two differ here (created 2026-08-04,
-  first commit 2026-08-07).
-- Both lists' CONTRIBUTING files, fetched rather than remembered — which is how
-  the "no PR" rule on the second list surfaced.
+- Repository age against the awesome-claude-code rule, from `git log --reverse`
+  on a **full** clone rather than from the GitHub creation date, because the rule
+  names the first commit. Created and first-committed are both 2026-08-04; the
+  earlier claim that they differed was an artefact of a shallow clone.
+- The published skill count from `skills/`, not `.claude/skills/`, because the
+  first is what `plugin.json` ships and the second is what this repository
+  develops.
+- All four lists' CONTRIBUTING and issue-form files, fetched rather than
+  remembered — which is how the "no PR" rule, the exact six checklist labels and
+  the 500-character description cap on list 2 surfaced.
+- Star and fork counts read off each repository page on 2026-08-25, and used
+  only to order the queue.
+
+## What could not be done here, and why
+
+Preparing is agent work and it is finished. Sending is not, for three reasons
+that are independent of each other — the destination's rule, this project's
+rule, and the sandbox — and all three are stated at the top of this file.
+`docs/marketing/PENDING_HUMAN_SUBMISSION.md` is the queue; these four entries
+are copy-paste-ready in it.
