@@ -490,8 +490,9 @@ Measured on `claude/repository-truth-contract-v1`:
 - `npm run repo:truth -- --check`: **~0.5 s** wall clock, one app-composition
   build and no scenario run, run as its own step in the `public-claims` CI job
   on every push and every pull request.
-- `tests/repository-truth-contract.test.js`: 75 tests, ~3.5 s, passing in both a
-  full-history checkout and a `--depth 1` shallow clone.
+- `node --test tests/repository-truth-contract.test.js`: passing in both a
+  full-history checkout and a `--depth 1` shallow clone; the measured suite ledger,
+  not this plan, owns test counts.
 
 **Deliberately out of v1:** JTBD rows, `docs/editions/**`, any scenario-run
 receipt (this repository checks none in: `scenario run` writes nothing into the
