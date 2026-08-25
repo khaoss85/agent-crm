@@ -26,7 +26,7 @@ Generated: **2026-08-24**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **Production Spine v2 M1 SQLite storage contract**, merged by PR #119 as `cc2a1a6`. The internal closed statement seam is proved by the handwritten Company slice and selected generated Work runtime. Work remains `partial`: `packages/work/src/legacy-tasks.js` retains raw SQLite-specific compatibility reads for M2. M1 adds no PostgreSQL adapter and changes no public sync/async contract. |
+| Latest merged milestone | **Production Spine v2 M1 SQLite storage contract**, merged by PR #119 as `cc2a1a6`. The internal storage contract exists; the handwritten Company slice uses it, and the current generated-service template is executable through it for the probed string, nullable-string and enum shapes across public and all-managed service paths. <!-- truth: spine.storage.contract=1 --><!-- truth: spine.storage.company_runtime=implemented --><!-- truth: spine.storage.generated_runtime=implemented --> Existing generated and legacy compatibility paths outside that bounded proof remain M2 work. In particular, Work remains `partial`: `packages/work/src/legacy-tasks.js` retains raw SQLite-specific compatibility reads. <!-- truth: spine.storage.work_legacy_raw=implemented --> M1 adds no PostgreSQL adapter. <!-- truth: spine.postgresql.implemented=absent --> |
 | Measured at | `28b5958` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
 | Tests | Measured, never typed. `npm run verify` is green on a clean tree at the commit above; **how many** tests that was lives in `site/claims.json` `measuredAgainst` and in no other file (ADR-027). |
 | Smoke | `npm run smoke` green |
