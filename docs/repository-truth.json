@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "0e3fc302c44a9e62fdc6d2adc9ec3ab0674707de5f4f1b5a57fa1a471f4bfefd",
+  "sourceSha": "fbd9b63b0d66fb08ae95e1d72acc6490b78a3814da9a3037fcb0bff144f45e53",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -96,6 +96,7 @@
         "packages/core/src/action-runtime.js",
         "packages/core/src/actor.js",
         "packages/core/src/core-adapters.js",
+        "packages/core/src/database.js",
         "packages/core/src/definition-fingerprint.js",
         "packages/core/src/errors.js",
         "packages/core/src/external-operation.js",
@@ -833,5 +834,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "5d28bce7e08cf77687d73789d098a3d1b1b57a10ead794c9dad86f2f5660610e"
+  "fingerprint": "bc3f2949bec42a65600305dc5bcb58b8de2cdfd5966641820228b30e8e335380"
 }

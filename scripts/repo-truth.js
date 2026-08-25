@@ -189,6 +189,7 @@ export const AUTHORITY_SOURCES = Object.freeze([
   'packages/core/src/tenant-storage.js',
   'packages/core/src/tenant-binding.js',
   'packages/core/src/storage-contract.js',
+  'packages/core/src/database.js',
   'packages/core/src/errors.js',
   'packages/core/src/validation.js',
   'packages/core/src/time.js',
@@ -796,6 +797,7 @@ export async function readAuthorities({ rootDir }) {
     bundle.anonymousAllowed = decision.allowed === true;
 
     const storageContract = await import(url('packages/core/src/storage-contract.js'));
+    const { CORE_MIGRATIONS_FOR_CHARACTERIZATION } = await import(url('packages/core/src/database.js'));
     const { CompanyService } = await import(url('packages/modules/company/src/company-service.js'));
     const { planModule } = await import(url('packages/cli/src/module-factory.js'));
     const { migrateLegacyTasks } = await import(url('packages/work/src/legacy-tasks.js'));
@@ -808,10 +810,9 @@ export async function readAuthorities({ rootDir }) {
     const { DatabaseSync } = await import('node:sqlite');
     const companyRaw = new DatabaseSync(':memory:');
     try {
-      companyRaw.exec(`CREATE TABLE companies (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL, domain TEXT,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-      )`);
+      for (const migration of CORE_MIGRATIONS_FOR_CHARACTERIZATION) {
+        if (migration.plane === 'data') companyRaw.exec(migration.sql);
+      }
       const companyActual = storageContract.createSqliteStorage(
         companyRaw, (fn) => fn(), async (fn) => fn(),
       ).sync;
@@ -1865,7 +1866,7 @@ export function buildFacts(bundle) {
     { id: 'spine.contract', kind: 'source', reads: ['packages/app/src/spine.js', 'packages/core/src/authorization.js'] },
     { id: 'runtime.mode', kind: 'source', reads: ['packages/core/src/runtime-mode.js'] },
     { id: 'tenant.storage', kind: 'source', reads: ['packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js'] },
-    { id: 'storage.contract', kind: 'source', reads: ['scripts/repo-truth.js', 'packages/core/src/storage-contract.js', 'packages/core/src/errors.js', 'packages/core/src/validation.js', 'packages/core/src/time.js', 'packages/core/src/actor.js', 'packages/core/src/module-manifest.js', 'packages/core/src/module-evolution.js', 'packages/core/src/timeout.js', 'packages/core/src/action-runtime.js', 'packages/core/src/external-operation.js', 'packages/core/src/core-adapters.js', 'packages/core/src/definition-fingerprint.js', 'packages/core/src/money.js', 'packages/core/src/solution-plan.js', 'packages/core/src/implementation-evidence.js', 'packages/core/src/spine-store.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js', 'packages/work/src/follow-up.js', 'packages/core/index.js'] },
+    { id: 'storage.contract', kind: 'source', reads: ['scripts/repo-truth.js', 'packages/core/src/storage-contract.js', 'packages/core/src/database.js', 'packages/core/src/errors.js', 'packages/core/src/validation.js', 'packages/core/src/time.js', 'packages/core/src/actor.js', 'packages/core/src/module-manifest.js', 'packages/core/src/module-evolution.js', 'packages/core/src/timeout.js', 'packages/core/src/action-runtime.js', 'packages/core/src/external-operation.js', 'packages/core/src/core-adapters.js', 'packages/core/src/definition-fingerprint.js', 'packages/core/src/money.js', 'packages/core/src/solution-plan.js', 'packages/core/src/implementation-evidence.js', 'packages/core/src/spine-store.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js', 'packages/work/src/follow-up.js', 'packages/core/index.js'] },
     { id: 'reference.composition', kind: 'source', reads: REFERENCE_PACKAGES.map(([, path]) => path).concat(['packages/core/src/package-composition.js']) },
     { id: 'cli.rails', kind: 'source', reads: ['packages/cli/src/commands.js', ...RAILS.map(([, , path]) => path)] },
     { id: 'jtbd.portfolio', kind: 'source', reads: JTBD_PORTFOLIO_SOURCES },
