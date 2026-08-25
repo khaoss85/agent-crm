@@ -963,8 +963,10 @@ export async function readAuthorities({ rootDir }) {
         const listWithMembership = await drive(() => service.list({ where: { status: ['open'] } }));
         const listWhere = await drive(() => service.listWhere({ id: created.id }));
         const listWhereNull = await drive(() => service.listWhere({ note: null }));
+        const listWhereEnabled = await drive(() => service.listWhere({ enabled: true }));
         const countWhere = await drive(() => service.countWhere({ id: created.id }));
         const countWhereMembership = await drive(() => service.countWhere({ status: ['open'] }));
+        const countWhereDisabled = await drive(() => service.countWhere({ enabled: false }));
         const update = await drive(() => service.update(created.id, {
           note: 'updated-note', kind: 'secondary', enabled: false,
         }));
@@ -982,8 +984,10 @@ export async function readAuthorities({ rootDir }) {
           listWithMembership: listWithMembership.calls,
           listWhere: listWhere.calls,
           listWhereNull: listWhereNull.calls,
+          listWhereEnabled: listWhereEnabled.calls,
           countWhere: countWhere.calls,
           countWhereMembership: countWhereMembership.calls,
+          countWhereDisabled: countWhereDisabled.calls,
           update: update.calls,
           createNull: createNull.calls,
           getNull: getNull.calls,
@@ -1009,8 +1013,11 @@ export async function readAuthorities({ rootDir }) {
             id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'closed',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
           })
+          && listWhereEnabled.result.length === 1
+          && isDeepStrictEqual(listWhereEnabled.result[0], created)
           && countWhere.result === 1
           && countWhereMembership.result === 1
+          && countWhereDisabled.result === 1
           && isDeepStrictEqual(update.result, {
             ...created, note: 'updated-note', kind: 'secondary', enabled: false, updatedAt: update.result.updatedAt,
           })
@@ -1028,8 +1035,10 @@ export async function readAuthorities({ rootDir }) {
           listWithMembership: [['many', 'select']],
           listWhere: [['many', 'select']],
           listWhereNull: [['many', 'select']],
+          listWhereEnabled: [['many', 'select']],
           countWhere: [['maybeOne', 'count']],
           countWhereMembership: [['maybeOne', 'count']],
+          countWhereDisabled: [['maybeOne', 'count']],
           update: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
           createNull: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
           getNull: [['maybeOne', 'select']],
