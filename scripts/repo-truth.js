@@ -837,7 +837,9 @@ export async function readAuthorities({ rootDir }) {
         missingCompanyCode = /** @type {any} */ (error)?.code ?? null;
       }
       bundle.companyUsesStorage = isDeepStrictEqual(companyCreated, companyRead)
+        && companyCreated.name === 'Truth Company'
         && companyCreated.domain === 'example.com'
+        && companyOther.name === 'Other Company'
         && companyOther.domain === 'other.example'
         && companyList.length === 2
         && companyList.some((company) => isDeepStrictEqual(company, companyCreated))
