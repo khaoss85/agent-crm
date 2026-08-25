@@ -815,11 +815,13 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
 
     const storageContract = await import(url('packages/core/src/storage-contract.js'));
     const { nowIso: realNowIso } = await import(url('packages/core/src/time.js'));
+    const { trustedSystemActor } = await import(url('packages/core/src/actor.js'));
     const { CORE_MIGRATIONS_FOR_CHARACTERIZATION } = await import(url('packages/core/src/database.js'));
     const { CompanyService } = await import(url('packages/modules/company/src/company-service.js'));
     const { planModule } = await import(url('packages/cli/src/module-factory.js'));
     const { migrateLegacyTasks } = await import(url('packages/work/src/legacy-tasks.js'));
     bundle.storageContract = storageContract.STORAGE_CONTRACT;
+    const probeActor = trustedSystemActor('execute the repository-truth storage authority');
 
     // The generated-service probe substitutes a deterministic clock so it can
     // prove exact timestamp ordering without a wall-clock spin. Prove the real
@@ -863,12 +865,17 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         maybeOne(statement) { companyCalls.push(['maybeOne', statement.kind]); return companyActual.maybeOne(statement); },
         many(statement) { companyCalls.push(['many', statement.kind]); return companyActual.many(statement); },
       };
+      const companyAudits = [];
       const companyService = new CompanyService({
         database: { storage: { sync: companySync } },
-        audit: { record() {} }, events: { async emit() {} },
+        audit: { record(entry) { companyAudits.push(entry); } }, events: { async emit() {} },
       });
-      const companyCreated = await companyService.create({ name: 'Truth Company', domain: 'EXAMPLE.COM' });
-      const companyOther = await companyService.create({ name: 'Other Company', domain: 'OTHER.EXAMPLE' });
+      const companyCreated = await companyService.create(
+        { name: 'Truth Company', domain: 'EXAMPLE.COM' }, { actor: probeActor },
+      );
+      const companyOther = await companyService.create(
+        { name: 'Other Company', domain: 'OTHER.EXAMPLE' }, { actor: probeActor },
+      );
       const companyRead = companyService.get(companyCreated.id);
       const companyList = companyService.list();
       let missingCompanyCode = null;
@@ -886,6 +893,8 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         && companyList.some((company) => isDeepStrictEqual(company, companyCreated))
         && companyList.some((company) => isDeepStrictEqual(company, companyOther))
         && missingCompanyCode === 'NOT_FOUND'
+        && companyAudits.length === 2
+        && companyAudits.every((entry) => isDeepStrictEqual(entry.actor, probeActor))
         && canonical(companyCalls) === canonical([
           ['savepoint', 'company_create'], ['execute', 'insert'],
           ['savepoint', 'company_create'], ['execute', 'insert'],
@@ -1004,11 +1013,13 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
       const sync = tracked(realSync);
       const managedSync = tracked(managedRealSync);
       try {
+        const generatedAudits = [];
+        const audit = { record(entry) { generatedAudits.push(entry); } };
         const service = new GeneratedService({
-          database: { storage: { sync } }, audit: { record() {} }, events: { async emit() {} },
+          database: { storage: { sync } }, audit, events: { async emit() {} },
         });
         const managedService = new ManagedGeneratedService({
-          database: { storage: { sync: managedSync } }, audit: { record() {} }, events: { async emit() {} },
+          database: { storage: { sync: managedSync } }, audit, events: { async emit() {} },
         });
         /** @param {() => unknown | Promise<unknown>} run */
         const drive = async (run) => {
@@ -1016,9 +1027,13 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           const result = await run();
           return { result, calls: generatedCalls.slice(start) };
         };
+        let managedCreateRefusal = null;
+        try {
+          await service.create({ name: 'Refused', kind: 'primary', enabled: true, status: 'closed' }, { actor: probeActor });
+        } catch (error) { managedCreateRefusal = error?.code ?? null; }
         const create = await drive(() => service.create({
           name: 'Probe', note: 'created-note', kind: 'primary', enabled: true,
-        }));
+        }, { actor: probeActor }));
         const created = create.result;
         realSync.execute({
           kind: 'insert', table: 'truth_storage_probes', values: [
@@ -1070,43 +1085,47 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         const countWhereNoMatchConjunction = await drive(() => service.countWhere({ kind: 'secondary', enabled: true }));
         const createOmitted = await drive(() => service.create({
           name: 'Omitted Note', kind: 'primary', enabled: true,
-        }));
+        }, { actor: probeActor }));
         const getOmitted = await drive(() => service.get(createOmitted.result.id));
+        let managedUpdateRefusal = null;
+        try {
+          await service.update(created.id, { status: 'closed' }, { actor: probeActor });
+        } catch (error) { managedUpdateRefusal = error?.code ?? null; }
         const update = await drive(() => service.update(created.id, {
           name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
-        }));
+        }, { actor: probeActor }));
         const listSiblingsAfterUpdate = await drive(() => service.list());
         const getNonmatchingAfterUpdate = await drive(() => service.get('truth-nonmatching'));
         const createNull = await drive(() => service.create({
           name: 'Null Probe', note: null, kind: 'primary', enabled: true,
-        }));
+        }, { actor: probeActor }));
         const getNull = await drive(() => service.get(createNull.result.id));
-        const partialUpdate = await drive(() => service.update(created.id, { note: null }));
+        const partialUpdate = await drive(() => service.update(created.id, { note: null }, { actor: probeActor }));
         const listSiblingsAfterPartialUpdate = await drive(() => service.list());
-        const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }));
+        const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }, { actor: probeActor }));
         const listSiblingsAfterManaged = await drive(() => service.list());
         const getNonmatchingAfterManaged = await drive(() => service.get('truth-nonmatching'));
         const createManaged = await drive(() => managedService.createManaged({
           name: 'Managed Probe', note: 'managed-note', status: 'open',
-        }));
+        }, { actor: probeActor }));
         const getManagedCreated = await drive(() => managedService.get(createManaged.result.id));
         const createManagedSibling = await drive(() => managedService.createManaged({
           name: 'Managed Sibling', note: 'sibling-note', status: 'open',
-        }));
+        }, { actor: probeActor }));
         const createManagedOmitted = await drive(() => managedService.createManaged({
           name: 'Managed Omitted', status: 'open',
-        }));
+        }, { actor: probeActor }));
         const getManagedOmittedCreated = await drive(() => managedService.get(createManagedOmitted.result.id));
-        const createManagedDefaults = await drive(() => managedService.createManaged({}));
+        const createManagedDefaults = await drive(() => managedService.createManaged({}, { actor: probeActor }));
         const getManagedDefaultsCreated = await drive(() => managedService.get(createManagedDefaults.result.id));
         const updateManaged = await drive(() => managedService.applyManaged(createManaged.result.id, {
           name: 'Updated Managed Probe', note: null, status: 'closed',
-        }));
+        }, { actor: probeActor }));
         const getManagedUpdated = await drive(() => managedService.get(createManaged.result.id));
         const getManagedSiblingAfterUpdate = await drive(() => managedService.get(createManagedSibling.result.id));
         const getManagedOmittedAfterUpdate = await drive(() => managedService.get(createManagedOmitted.result.id));
         const getManagedDefaultsAfterUpdate = await drive(() => managedService.get(createManagedDefaults.result.id));
-        const partialManagedUpdate = await drive(() => managedService.applyManaged(createManaged.result.id, { note: 'restored-note' }));
+        const partialManagedUpdate = await drive(() => managedService.applyManaged(createManaged.result.id, { note: 'restored-note' }, { actor: probeActor }));
         const getManagedPartial = await drive(() => managedService.get(createManaged.result.id));
         const getManagedOmittedAfterPartial = await drive(() => managedService.get(createManagedOmitted.result.id));
         const getManagedDefaultsAfterPartial = await drive(() => managedService.get(createManagedDefaults.result.id));
@@ -1184,7 +1203,11 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         if (!mutationTimestampsAdvance) {
           throw new Error('generated mutation timestamps did not advance strictly');
         }
-        const resultsValid = seededSiblingsUnchanged
+        const resultsValid = managedCreateRefusal === 'VALIDATION_ERROR'
+          && managedUpdateRefusal === 'VALIDATION_ERROR'
+          && generatedAudits.length === 12
+          && generatedAudits.every((entry) => isDeepStrictEqual(entry.actor, probeActor))
+          && seededSiblingsUnchanged
           && created.name === 'Probe'
           && created.note === 'created-note'
           && created.kind === 'primary'
@@ -1335,9 +1358,17 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     let legacyPrepareCalls = 0;
     const legacyReport = await migrateLegacyTasks({
       modules: { get: () => ({ service: { createManaged() {}, listWhere() { return []; } } }) },
-      database: { raw: { prepare() { legacyPrepareCalls += 1; return { get: () => null }; } } },
+      database: { raw: { prepare() {
+        legacyPrepareCalls += 1;
+        return {
+          get: () => ({ name: 'tasks' }),
+          all: () => [{ id: 'legacy-1', title: 'Legacy', status: 'open', due_at: null,
+            lead_id: 'lead-1', source_key: 'old-key', created_at: '2026-01-01T00:00:00.000Z' }],
+        };
+      } } },
     });
-    bundle.workLegacyUsesRaw = legacyPrepareCalls === 1 && legacyReport.found === 0;
+    bundle.workLegacyUsesRaw = legacyPrepareCalls === 2
+      && legacyReport.found === 1 && legacyReport.wouldAdopt === 1;
   } catch (error) {
     unavailable(`the spine authorities could not be read: ${/** @type {any} */ (error)?.message ?? error}`);
     return bundle;
