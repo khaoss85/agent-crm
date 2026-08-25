@@ -890,7 +890,11 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
       bundle.companyUsesStorage = isDeepStrictEqual(companyCreated, companyRead)
         && companyCreated.name === 'Truth Company'
         && companyCreated.domain === 'example.com'
+        && canonicalUtcTimestamp(companyCreated.createdAt)
+        && canonicalUtcTimestamp(companyCreated.updatedAt)
         && companyOther.name === 'Other Company'
+        && canonicalUtcTimestamp(companyOther.createdAt)
+        && canonicalUtcTimestamp(companyOther.updatedAt)
         && companyOther.domain === 'other.example'
         && companyList.length === 2
         && companyList.some((company) => isDeepStrictEqual(company, companyCreated))
