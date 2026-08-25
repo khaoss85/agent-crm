@@ -195,6 +195,15 @@ export const AUTHORITY_SOURCES = Object.freeze([
   'packages/core/src/actor.js',
   'packages/core/src/module-manifest.js',
   'packages/core/src/module-evolution.js',
+  'packages/core/src/timeout.js',
+  'packages/core/src/action-runtime.js',
+  'packages/core/src/external-operation.js',
+  'packages/core/src/core-adapters.js',
+  'packages/core/src/definition-fingerprint.js',
+  'packages/core/src/money.js',
+  'packages/core/src/solution-plan.js',
+  'packages/core/src/implementation-evidence.js',
+  'packages/core/src/spine-store.js',
   'packages/modules/company/src/company-service.js',
   'packages/cli/src/module-factory.js',
   'packages/work/src/legacy-tasks.js',
@@ -968,7 +977,7 @@ export async function readAuthorities({ rootDir }) {
         const countWhereMembership = await drive(() => service.countWhere({ status: ['open'] }));
         const countWhereDisabled = await drive(() => service.countWhere({ enabled: false }));
         const update = await drive(() => service.update(created.id, {
-          note: 'updated-note', kind: 'secondary', enabled: false,
+          name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
         }));
         const createNull = await drive(() => service.create({
           name: 'Null Probe', note: null, kind: 'primary', enabled: true,
@@ -1019,7 +1028,8 @@ export async function readAuthorities({ rootDir }) {
           && countWhereMembership.result === 1
           && countWhereDisabled.result === 1
           && isDeepStrictEqual(update.result, {
-            ...created, note: 'updated-note', kind: 'secondary', enabled: false, updatedAt: update.result.updatedAt,
+            ...created, name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
+            updatedAt: update.result.updatedAt,
           })
           && Object.hasOwn(createNull.result, 'note')
           && createNull.result.note === null
@@ -1826,7 +1836,7 @@ export function buildFacts(bundle) {
     { id: 'spine.contract', kind: 'source', reads: ['packages/app/src/spine.js', 'packages/core/src/authorization.js'] },
     { id: 'runtime.mode', kind: 'source', reads: ['packages/core/src/runtime-mode.js'] },
     { id: 'tenant.storage', kind: 'source', reads: ['packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js'] },
-    { id: 'storage.contract', kind: 'source', reads: ['scripts/repo-truth.js', 'packages/core/src/storage-contract.js', 'packages/core/src/errors.js', 'packages/core/src/validation.js', 'packages/core/src/time.js', 'packages/core/src/actor.js', 'packages/core/src/module-manifest.js', 'packages/core/src/module-evolution.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js', 'packages/work/src/follow-up.js', 'packages/core/index.js'] },
+    { id: 'storage.contract', kind: 'source', reads: ['scripts/repo-truth.js', 'packages/core/src/storage-contract.js', 'packages/core/src/errors.js', 'packages/core/src/validation.js', 'packages/core/src/time.js', 'packages/core/src/actor.js', 'packages/core/src/module-manifest.js', 'packages/core/src/module-evolution.js', 'packages/core/src/timeout.js', 'packages/core/src/action-runtime.js', 'packages/core/src/external-operation.js', 'packages/core/src/core-adapters.js', 'packages/core/src/definition-fingerprint.js', 'packages/core/src/money.js', 'packages/core/src/solution-plan.js', 'packages/core/src/implementation-evidence.js', 'packages/core/src/spine-store.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js', 'packages/work/src/follow-up.js', 'packages/core/index.js'] },
     { id: 'reference.composition', kind: 'source', reads: REFERENCE_PACKAGES.map(([, path]) => path).concat(['packages/core/src/package-composition.js']) },
     { id: 'cli.rails', kind: 'source', reads: ['packages/cli/src/commands.js', ...RAILS.map(([, , path]) => path)] },
     { id: 'jtbd.portfolio', kind: 'source', reads: JTBD_PORTFOLIO_SOURCES },

@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "5d738ebc3374124e257e880c2abe9814d3d72084e12e24971a8345f2630f7d22",
+  "sourceSha": "0a2a0b98a52834ecdaf4d63364887c525b6d2df27a075d421e241656e559c11e",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -93,12 +93,21 @@
       "reads": [
         "packages/cli/src/module-factory.js",
         "packages/core/index.js",
+        "packages/core/src/action-runtime.js",
         "packages/core/src/actor.js",
+        "packages/core/src/core-adapters.js",
+        "packages/core/src/definition-fingerprint.js",
         "packages/core/src/errors.js",
+        "packages/core/src/external-operation.js",
+        "packages/core/src/implementation-evidence.js",
         "packages/core/src/module-evolution.js",
         "packages/core/src/module-manifest.js",
+        "packages/core/src/money.js",
+        "packages/core/src/solution-plan.js",
+        "packages/core/src/spine-store.js",
         "packages/core/src/storage-contract.js",
         "packages/core/src/time.js",
+        "packages/core/src/timeout.js",
         "packages/core/src/validation.js",
         "packages/modules/company/src/company-service.js",
         "packages/work/src/follow-up.js",
@@ -824,5 +833,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "c739b50713e1ea7f31b40ff8e32657a2e794b33523a237dfa0e9ea4e2ff6379c"
+  "fingerprint": "5d28bce7e08cf77687d73789d098a3d1b1b57a10ead794c9dad86f2f5660610e"
 }
