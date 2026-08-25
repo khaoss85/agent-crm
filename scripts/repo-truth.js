@@ -928,13 +928,13 @@ export async function readAuthorities({ rootDir }) {
           const result = await run();
           return { result, calls: generatedCalls.slice(start) };
         };
-        const create = await drive(() => service.create({ name: 'Probe', note: null }));
+        const create = await drive(() => service.create({ name: 'Probe', note: 'created-note' }));
         const created = create.result;
         realSync.execute({
           kind: 'insert', table: 'truth_storage_probes', values: [
             { column: 'id', value: 'truth-nonmatching' },
             { column: 'name', value: 'Other' },
-            { column: 'note', value: 'not-null' },
+            { column: 'note', value: null },
             { column: 'status', value: 'closed' },
             { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
             { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
@@ -947,7 +947,7 @@ export async function readAuthorities({ rootDir }) {
         const listWhereNull = await drive(() => service.listWhere({ note: null }));
         const countWhere = await drive(() => service.countWhere({ id: created.id }));
         const countWhereMembership = await drive(() => service.countWhere({ status: ['open'] }));
-        const update = await drive(() => service.update(created.id, { name: 'Updated' }));
+        const update = await drive(() => service.update(created.id, { note: 'updated-note' }));
         const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }));
         const createManaged = await drive(() => managedService.createManaged({ status: 'open' }));
         const getManaged = await drive(() => managedService.get(createManaged.result.id));
@@ -966,12 +966,12 @@ export async function readAuthorities({ rootDir }) {
           getManaged: getManaged.calls,
         };
         const resultsValid = created.name === 'Probe'
-          && created.note === null
+          && created.note === 'created-note'
           && isDeepStrictEqual(get.result, created)
           && list.result.length === 2
           && isDeepStrictEqual(list.result.find((row) => row.id === created.id), created)
           && isDeepStrictEqual(list.result.find((row) => row.id === 'truth-nonmatching'), {
-            id: 'truth-nonmatching', name: 'Other', note: 'not-null', status: 'closed',
+            id: 'truth-nonmatching', name: 'Other', note: null, status: 'closed',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
           })
           && listWithMembership.result.length === 1
@@ -979,10 +979,13 @@ export async function readAuthorities({ rootDir }) {
           && listWhere.result.length === 1
           && isDeepStrictEqual(listWhere.result[0], created)
           && listWhereNull.result.length === 1
-          && isDeepStrictEqual(listWhereNull.result[0], created)
+          && isDeepStrictEqual(listWhereNull.result[0], {
+            id: 'truth-nonmatching', name: 'Other', note: null, status: 'closed',
+            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+          })
           && countWhere.result === 1
           && countWhereMembership.result === 1
-          && isDeepStrictEqual(update.result, { ...created, name: 'Updated', updatedAt: update.result.updatedAt })
+          && isDeepStrictEqual(update.result, { ...created, note: 'updated-note', updatedAt: update.result.updatedAt })
           && isDeepStrictEqual(applyManaged.result, { ...update.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
           && createManaged.result.status === 'open'
           && isDeepStrictEqual(getManaged.result, createManaged.result)
