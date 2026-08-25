@@ -45,6 +45,12 @@ test('motion has a complete reduced-motion fallback', () => {
   assert.match(css, /\.flow-marquee-track \{ transform: none; \}/);
 });
 
+test('editorial backgrounds never bleed beyond the fluid shell margin', () => {
+  const css = read('site/assets/styles.css');
+  assert.match(css, /inset: 12% max\(-4vw, min\(-22px, calc\(\(1140px - 100vw\) \/ 2\)\)\);/);
+  assert.match(css, /@media \(max-width: 720px\) \{[\s\S]*section::before \{ inset-inline: 0; \}/);
+});
+
 test('semantic foregrounds meet WCAG AA against their backgrounds in both themes', () => {
   const pairs = [
     ['light flow', '#176b2a', '#f7f3e9'],
