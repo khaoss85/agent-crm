@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "2ed752fa290e233f7b216a2a8763a0a927ef6ae363d1a9a3038b03699eb96855",
+  "sourceSha": "b9e27ba8d71a35d5be1762515aeefaa68e3f5920d9f93a0adc3522452c3d9afb",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -95,18 +95,24 @@
         "packages/core/index.js",
         "packages/core/src/action-runtime.js",
         "packages/core/src/actor.js",
+        "packages/core/src/authorization.js",
         "packages/core/src/core-adapters.js",
         "packages/core/src/database.js",
         "packages/core/src/definition-fingerprint.js",
         "packages/core/src/errors.js",
         "packages/core/src/external-operation.js",
+        "packages/core/src/identity.js",
         "packages/core/src/implementation-evidence.js",
         "packages/core/src/module-evolution.js",
         "packages/core/src/module-manifest.js",
         "packages/core/src/money.js",
+        "packages/core/src/package-registry.js",
+        "packages/core/src/runtime-mode.js",
         "packages/core/src/solution-plan.js",
         "packages/core/src/spine-store.js",
         "packages/core/src/storage-contract.js",
+        "packages/core/src/tenant-binding.js",
+        "packages/core/src/tenant-storage.js",
         "packages/core/src/time.js",
         "packages/core/src/timeout.js",
         "packages/core/src/validation.js",
@@ -844,5 +850,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "7340d6f85dba53b0985ca467808c57f2b5481fcd82fe9c7c81846b9c2d01eea1"
+  "fingerprint": "2c23d18f26fb6e0e7399bfe4aaf7a16313122e0c33b8d0f43eba515aa0eb4305"
 }
