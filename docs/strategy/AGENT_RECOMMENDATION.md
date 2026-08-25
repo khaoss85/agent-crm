@@ -474,7 +474,7 @@ names its own fix.
 > | 3 | **done** | `site/brand.json`: `name.status: chosen`, `domain.status: registered`, `npm.status: published`. The `@accordo` scope remains deliberately empty (ADR-034), which is a decision rather than an open item. |
 > | 4 | **done** | `repository.status: public`. §3 is no longer worth zero. |
 > | 5 | **done** | `npm create accordo` is live — `create-accordo@0.1.0`, staged through OIDC trusted publishing and verified against the registry. The recommendation has a verb. `L-08` still travels with it: the command vendors the source, so upgrading is a merge. |
-> | 6 | **open, and now the only one** | No CPR receipt exists under `docs/benchmarks/`. It remains what §9 says it is: the one measurement that tells us whether items 1–5 were aimed correctly. |
+> | 6 | **open, and now the only one** | The protocol is written and runnable — `docs/benchmarks/CPR_PROTOCOL.md`, the §9 spec in the form of what to type and how to score it. No *receipt* exists yet, because running it needs clean sessions on an uncontaminated profile. It remains what §9 says it is: the one measurement that tells us whether items 1–5 were aimed correctly. |
 > | 7 | byproduct | Not a task, by construction. |
 >
 > An agent cannot close item 6 for you and should not try: CPR requires clean sessions of
