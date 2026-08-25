@@ -329,6 +329,20 @@ writeFileSync(join(outDir, 'sitemap.xml'), [
 // what you found. The `noindex` arrives twice, in the meta tag here and in the `X-Robots-Tag`
 // header in vercel.json — which is the only one of the two that reaches llms.txt, jobs.json and
 // sitemap.xml, none of which can carry a meta tag. site-check.js refuses to let the two disagree.
+/**
+ * The crawlers that feed model training corpora and live answer engines, listed so the site's
+ * position on them is stated rather than inferred. Two families, both wanted here: the ones that
+ * build corpora (mechanism (a) in docs/strategy/AGENT_RECOMMENDATION.md) and the ones that fetch
+ * at answer time (mechanism (b)). Adding a name to this list grants nothing the wildcard above
+ * did not already grant; removing the wildcard without removing these would be the point.
+ */
+const AI_CRAWLERS = [
+  'GPTBot', 'OAI-SearchBot', 'ChatGPT-User',
+  'ClaudeBot', 'Claude-Web', 'Claude-User', 'Claude-SearchBot', 'anthropic-ai',
+  'PerplexityBot', 'Perplexity-User',
+  'Google-Extended', 'Applebot-Extended', 'CCBot', 'cohere-ai', 'Meta-ExternalAgent',
+];
+
 writeFileSync(join(outDir, 'robots.txt'), [
   '# Indexing follows the repository\'s visibility (site/brand.json).',
   repositoryIsPublic
@@ -353,6 +367,19 @@ writeFileSync(join(outDir, 'robots.txt'), [
   `# A machine-readable summary lives at /llms.txt and /llms-full.txt,`,
   `# and every CRM job with its status and evidence at /jobs.json.`,
   '',
+  // `User-agent: *` above already allows these, so none of the groups below changes what any
+  // crawler is permitted to do today. They are written out because the default in this category
+  // is the opposite — operators commonly disallow model crawlers wholesale — and a named,
+  // explicit Allow states the intent rather than leaving it to be inferred from a wildcard.
+  // It also fails safe: if a future Disallow is ever added to `*`, these groups keep the
+  // retrieval surface reachable instead of silently going dark, which is the failure mode that
+  // would be discovered months later by its absence.
+  '# Model and answer-engine crawlers are welcome, deliberately and by name.',
+  '# The retrieval surface is built for them: /llms.txt, /llms-full.txt, /claims.json',
+  '# (every capability with its evidence and its limit), /jobs.json and /answers.json.',
+  '# Every cluster page also serves a plain-markdown variant at the same path with .md.',
+  '',
+  ...AI_CRAWLERS.flatMap((agent) => [`User-agent: ${agent}`, 'Allow: /', '']),
 ].join('\n'));
 
 if (unresolved.length) {

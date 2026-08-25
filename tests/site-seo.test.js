@@ -286,6 +286,31 @@ test('structured data parses, and asserts nothing the page does not', (t) => {
   );
 });
 
+test('the landing title states the category, because that is what a model summarises from', (t) => {
+  const site = build();
+  t.after(site.cleanup);
+  const home = site.read('index.html');
+
+  const title = /<title>([\s\S]*?)<\/title>/.exec(home)?.[1] ?? '';
+  const description = metaContent(home, 'description') ?? '';
+
+  // docs/strategy/CATEGORY.md fixes the positioning as "the open-source framework coding agents
+  // use to build custom CRMs", and docs/strategy/AGENT_RECOMMENDATION.md §9 names the failure
+  // this guards: P1 product drift — being read as "a CRM you sign up for" — which it calls the
+  // failure that matters most, because it routes people who wanted a CRM straight into L-07.
+  //
+  // The title is the highest-weighted string a search result or a retrieval step ever sees, and
+  // it once said "build the customer and revenue system you actually run": no category noun at
+  // all. The words below are the category, not a keyword quota.
+  for (const word of [/framework/i, /\bCRM\b/, /agents?\b/i]) {
+    assert.match(title, word, `the landing title must state the category: ${word}`);
+  }
+  assert.match(description, /coding agent/i, 'and the description must say who builds with it');
+
+  // The same guard in the other direction: nothing here may present the framework as the product.
+  assert.doesNotMatch(title, /\b(all-in-one|platform|suite|sign up|free trial)\b/i);
+});
+
 test('the sitemap lists exactly the pages that were built', (t) => {
   const site = build();
   t.after(site.cleanup);
