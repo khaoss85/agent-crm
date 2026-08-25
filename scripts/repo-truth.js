@@ -1037,9 +1037,9 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
             { column: 'id', value: 'truth-open-disabled' },
             { column: 'name', value: 'Open Disabled' },
             { column: 'note', value: 'conjunction-target' },
-            { column: 'kind', value: 'secondary' },
+            { column: 'kind', value: 'primary' },
             { column: 'enabled', value: 0 },
-            { column: 'status', value: 'open' },
+            { column: 'status', value: 'pending' },
             { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
             { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
           ],
@@ -1065,9 +1065,9 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         const countWhere = await drive(() => service.countWhere({ id: created.id }));
         const countWhereMembership = await drive(() => service.countWhere({ status: ['open', 'closed'] }));
         const countWhereDisabled = await drive(() => service.countWhere({ enabled: false }));
-        const listWhereConjunction = await drive(() => service.listWhere({ status: 'open', enabled: false }));
-        const countWhereConjunction = await drive(() => service.countWhere({ status: 'open', enabled: false }));
-        const countWhereNoMatchConjunction = await drive(() => service.countWhere({ status: 'closed', enabled: true }));
+        const listWhereConjunction = await drive(() => service.listWhere({ kind: 'primary', enabled: false }));
+        const countWhereConjunction = await drive(() => service.countWhere({ kind: 'primary', enabled: false }));
+        const countWhereNoMatchConjunction = await drive(() => service.countWhere({ kind: 'secondary', enabled: true }));
         const createOmitted = await drive(() => service.create({
           name: 'Omitted Note', kind: 'primary', enabled: true,
         }));
@@ -1150,7 +1150,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         const seededSiblings = [
           { id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'pending',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
-          { id: 'truth-open-disabled', name: 'Open Disabled', note: 'conjunction-target', kind: 'secondary', enabled: false, status: 'open',
+          { id: 'truth-open-disabled', name: 'Open Disabled', note: 'conjunction-target', kind: 'primary', enabled: false, status: 'pending',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
           { id: 'truth-closed', name: 'Closed', note: 'membership-target', kind: 'secondary', enabled: false, status: 'closed',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
@@ -1189,13 +1189,8 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
             id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'pending',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
           })
-          && listWithMembership.result.length === 3
+          && listWithMembership.result.length === 2
           && isDeepStrictEqual(listWithMembership.result.find((row) => row.id === created.id), created)
-          && isDeepStrictEqual(listWithMembership.result.find((row) => row.id === 'truth-open-disabled'), {
-            id: 'truth-open-disabled', name: 'Open Disabled', note: 'conjunction-target', kind: 'secondary',
-            enabled: false, status: 'open', createdAt: '2026-01-01T00:00:00.000Z',
-            updatedAt: '2026-01-01T00:00:00.000Z',
-          })
           && isDeepStrictEqual(listWithMembership.result.find((row) => row.id === 'truth-closed'), {
             id: 'truth-closed', name: 'Closed', note: 'membership-target', kind: 'secondary',
             enabled: false, status: 'closed', createdAt: '2026-01-01T00:00:00.000Z',
@@ -1211,7 +1206,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           && listWhereEnabled.result.length === 1
           && isDeepStrictEqual(listWhereEnabled.result[0], created)
           && countWhere.result === 1
-          && countWhereMembership.result === 3
+          && countWhereMembership.result === 2
           && countWhereDisabled.result === 3
           && listWhereConjunction.result.length === 1
           && listWhereConjunction.result[0].id === 'truth-open-disabled'
