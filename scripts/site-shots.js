@@ -59,6 +59,34 @@ const targets = [
     scale: 2,
     note: 'Above the fold — the promise, the proof line and the two calls to action',
   },
+  {
+    name: 'home-mobile.png', file: 'index.html', width: 390, height: 1600, scale: 2,
+    note: '390px mobile home — hero, Flow and tap affordance',
+  },
+  {
+    name: 'home-wide.png', file: 'index.html', width: 1920, height: 1080, scale: 1,
+    note: 'Wide desktop home — continuous full-width marquee coverage',
+  },
+  {
+    name: 'home-reduced-motion.png', file: 'index.html', width: 1270, height: 1100, scale: 1,
+    args: ['--force-prefers-reduced-motion'],
+    note: 'Home with reduced motion — complete static Flow story',
+  },
+  ...[
+    ['product', 'product.html'],
+    ['solutions', 'solutions.html'],
+    ['custom-crm', 'solution-custom-crm.html'],
+    ['revenue-operations', 'solution-revenue-operations.html'],
+    ['commercial-operations', 'solution-commercial-operations.html'],
+    ['service-operations', 'solution-service-operations.html'],
+    ['how-it-works', 'how-it-works.html'],
+    ['product-proof', 'proof.html'],
+    ['for-ai-agents', 'for-ai-agents.html'],
+    ['developers', 'developers.html'],
+  ].map(([name, file]) => ({
+    name: `${name}.png`, file, width: 1270, height: 1300, scale: 1,
+    note: `${name} visual acceptance frame`,
+  })),
   // Full-page renders rather than per-section frames. A #fragment does not settle
   // before a headless screenshot fires, so anchor-targeted shots silently return
   // the hero — an image that looks fine and shows the wrong thing. Capturing the
@@ -113,6 +141,7 @@ try {
       '--hide-scrollbars',
       // Let layout and any web font settle before the frame is captured.
       '--virtual-time-budget=2000',
+      ...(target.args ?? []),
       `--force-device-scale-factor=${target.scale}`,
       `--screenshot=${join(shots, target.name)}`,
       `--window-size=${target.width},${target.height}`,

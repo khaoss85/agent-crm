@@ -9,16 +9,26 @@
 <body>
 {{include:nav.html}}
 <main id="main">
-  <div class="shell"><header class="hero hero-product">
+  <div class="shell"><header class="hero hero-product flow-hero">
     <p class="eyebrow">The open-source custom CRM framework for coding agents</p>
-    <h1>Build the customer and revenue system your business actually runs.</h1>
-    <p class="lede">Describe how your business sells and serves customers. Your coding agent builds the application around it. <strong>You own the source, the operating model and the evidence.</strong></p>
+    <h1>Your business is different.<br><em>Your CRM should be too.</em></h1>
+    <p class="lede">Describe how you sell and serve customers. Your coding agent builds the custom CRM around it&mdash;as source, rules and evidence you own.</p>
     <div class="cta"><a class="button primary" href="{{page.root}}product.html">Explore the product</a><a class="button secondary" href="{{page.root}}solutions.html">See what you can build</a></div>
-    <div class="hero-proof" aria-label="{{brand.name}} in one sentence"><span>Your agent can write the CRM.</span><strong>It can&rsquo;t approve the discount.</strong></div>
+    <div class="approval-demo" aria-label="Discount approval demonstration">
+      <div class="approval-demo-title"><span>Live product logic</span><strong>Your agent can write the CRM. It can&rsquo;t approve the discount.</strong></div>
+      <ol class="approval-flow">
+        <li class="state-agent"><span>Agent request</span><strong>&minus;25%</strong><small>Discount proposed</small></li>
+        <li class="state-policy"><span>Policy check</span><strong>Blocked</strong><small>Human approval required</small></li>
+        <li class="state-human"><span>Human decision</span><strong>Approved</strong><small>Authority stays human</small></li>
+        <li class="state-evidence"><span>Audit recorded</span><strong>Verified</strong><small>Flow continues with evidence</small></li>
+      </ol>
+    </div>
   </header></div>
 
+  <div class="flow-marquee" aria-label="{{brand.name}} use cases"><div class="flow-marquee-track"><div class="flow-marquee-set"><span>Custom CRM</span><span>Quote approval</span><span>Revenue ops</span><span>Service</span><span>Renewals</span><span>CPQ</span><span>Customer data</span></div><div class="flow-marquee-set" aria-hidden="true"><span>Custom CRM</span><span>Quote approval</span><span>Revenue ops</span><span>Service</span><span>Renewals</span><span>CPQ</span><span>Customer data</span></div></div></div>
+
   <div class="shell"><section aria-labelledby="choice"><p class="kicker">A third choice</p><h2 id="choice">Stop choosing between bending a platform and rebuilding CRM foundations.</h2>
-    <div class="choice-grid"><article><h3>Configure a CRM</h3><p>Fast when your process fits its model. Use one when you need a hosted, ready-made product now.</p></article><article class="choice-accent"><h3>Build with {{brand.name}}</h3><p>Start from explicit CRM primitives. Let the agent shape them around your process, in a repository you control.</p></article><article><h3>Generate from scratch</h3><p>Maximum freedom, but your team must re-derive policy, lifecycle rules, audit and verification.</p></article></div>
+    <div class="choice-grid editorial-choices"><article><span class="choice-number">01</span><h3>Configure a CRM</h3><p>Fast when your process fits. Use one when you need a hosted product now.</p></article><article class="choice-accent"><span class="choice-number">02</span><h3>Build with {{brand.name}}</h3><p>Start from CRM primitives. Let the agent shape them around your process, in a repository you control.</p></article><article><span class="choice-number">03</span><h3>Generate from scratch</h3><p>Maximum freedom, but your team must re-derive policy, audit and verification.</p></article></div>
     <p class="section-link"><a href="{{page.root}}compare.html">Compare the three paths and their trade-offs</a></p>
   </section></div>
 
