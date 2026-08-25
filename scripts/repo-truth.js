@@ -890,7 +890,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
             { name: 'note', type: 'string', required: false },
             { name: 'kind', type: 'enum', values: ['primary', 'secondary'], required: true },
             { name: 'enabled', type: 'boolean', required: true },
-            { name: 'status', type: 'enum', values: ['open', 'closed'], writable: 'managed', default: 'open' },
+            { name: 'status', type: 'enum', values: ['open', 'closed', 'pending'], writable: 'managed', default: 'open' },
           ],
         },
       });
@@ -1003,7 +1003,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
             { column: 'note', value: null },
             { column: 'kind', value: 'secondary' },
             { column: 'enabled', value: 0 },
-            { column: 'status', value: 'closed' },
+            { column: 'status', value: 'pending' },
             { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
             { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
           ],
@@ -1020,14 +1020,26 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
             { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
           ],
         });
+        realSync.execute({
+          kind: 'insert', table: 'truth_storage_probes', values: [
+            { column: 'id', value: 'truth-closed' },
+            { column: 'name', value: 'Closed' },
+            { column: 'note', value: 'membership-target' },
+            { column: 'kind', value: 'secondary' },
+            { column: 'enabled', value: 0 },
+            { column: 'status', value: 'closed' },
+            { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
+            { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
+          ],
+        });
         const get = await drive(() => service.get(created.id));
         const list = await drive(() => service.list());
-        const listWithMembership = await drive(() => service.list({ where: { status: ['open'] } }));
+        const listWithMembership = await drive(() => service.list({ where: { status: ['open', 'closed'] } }));
         const listWhere = await drive(() => service.listWhere({ id: created.id }));
         const listWhereNull = await drive(() => service.listWhere({ note: null }));
         const listWhereEnabled = await drive(() => service.listWhere({ enabled: true }));
         const countWhere = await drive(() => service.countWhere({ id: created.id }));
-        const countWhereMembership = await drive(() => service.countWhere({ status: ['open'] }));
+        const countWhereMembership = await drive(() => service.countWhere({ status: ['open', 'closed'] }));
         const countWhereDisabled = await drive(() => service.countWhere({ enabled: false }));
         const listWhereConjunction = await drive(() => service.listWhere({ status: 'open', enabled: false }));
         const countWhereConjunction = await drive(() => service.countWhere({ status: 'open', enabled: false }));
@@ -1096,26 +1108,26 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           && created.enabled === true
           && created.status === 'open'
           && isDeepStrictEqual(get.result, created)
-          && list.result.length === 3
+          && list.result.length === 4
           && isDeepStrictEqual(list.result.find((row) => row.id === created.id), created)
           && isDeepStrictEqual(list.result.find((row) => row.id === 'truth-nonmatching'), {
-            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'closed',
+            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'pending',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
           })
-          && listWithMembership.result.length === 2
-          && isDeepStrictEqual(listWithMembership.result[0], created)
+          && isDeepStrictEqual(listWithMembership.result.map((row) => row.id).sort(),
+            [created.id, 'truth-closed', 'truth-open-disabled'].sort())
           && listWhere.result.length === 1
           && isDeepStrictEqual(listWhere.result[0], created)
           && listWhereNull.result.length === 1
           && isDeepStrictEqual(listWhereNull.result[0], {
-            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'closed',
+            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'pending',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
           })
           && listWhereEnabled.result.length === 1
           && isDeepStrictEqual(listWhereEnabled.result[0], created)
           && countWhere.result === 1
-          && countWhereMembership.result === 2
-          && countWhereDisabled.result === 2
+          && countWhereMembership.result === 3
+          && countWhereDisabled.result === 3
           && listWhereConjunction.result.length === 1
           && listWhereConjunction.result[0].id === 'truth-open-disabled'
           && countWhereConjunction.result === 1
@@ -1126,7 +1138,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           })
           && Date.parse(update.result.updatedAt) > Date.parse(created.updatedAt)
           && isDeepStrictEqual(getNonmatchingAfterUpdate.result, {
-            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'closed',
+            id: 'truth-nonmatching', name: 'Other', note: null, kind: 'secondary', enabled: false, status: 'pending',
             createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
           })
           && Object.hasOwn(createNull.result, 'note')
