@@ -14,12 +14,12 @@
  * Tokens:
  *   {{brand.name}} {{brand.slug}} {{brand.promise}} {{brand.domain}}
  *   {{brand.repository}} {{brand.license}} {{brand.createCommand}}
- *   {{color.accent}} … {{font.sans}} {{font.mono}}
+ *   {{color.accent}} … {{site.paper}} … {{flow.agent}} … {{font.sans}} {{font.mono}} {{font.display}}
  *   {{measured.tests}} {{measured.sha}} {{measured.date}}
  *   {{claim:C-01}}              the claim sentence
  *   {{claim:C-01.limitation}}   the limitation that must travel with it
  *   {{limitation:L-01.headline}} {{limitation:L-01.text}}
- *   {{include:partial.html}}    inlines site/partials/<name>
+ *   {{include:partial.html}}    inlines site/partials/<name>, and partials may include partials
  *   {{year}}
  */
 
@@ -460,7 +460,18 @@ function htmlToMarkdown(html, path) {
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/?(?:address|article|aside|blockquote|div|fieldset|figcaption|figure|footer|header|main|nav|p|section)[^>]*>/gi, '\n\n')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&rarr;/g, '→').replace(/&amp;/g, '&').replace(/&ldquo;|&rdquo;/g, '"').replace(/&#39;/g, "'")
+    // The Markdown peer is what an answer engine retrieves, so an entity that survives into it is
+    // a literal `&middot;` in the text a model quotes back. Named entities first, then numeric,
+    // and `&amp;` last of all — decoding it earlier would turn `&amp;middot;` into a separator.
+    .replace(/&(rarr|larr|middot|mdash|ndash|minus|hellip|euro|nbsp|lsquo|rsquo|ldquo|rdquo|times|check|lt|gt);/g,
+      (_m, name) => ({
+        rarr: '→', larr: '←', middot: '·', mdash: '—', ndash: '–', minus: '−', hellip: '…',
+        euro: '€', nbsp: ' ', lsquo: '\u2018', rsquo: '\u2019', ldquo: '"', rdquo: '"',
+        times: '×', check: '✓', lt: '<', gt: '>',
+      })[name])
+    .replace(/&#(\d+);/g, (_m, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
     .replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   return `${text}\n\n---\nCanonical: ${canonicalUrl(path)}\nImplementation evidence: ${ORIGIN}/claims.json\nBuild provenance: ${ORIGIN}/version.json\n`;
 }
@@ -495,14 +506,25 @@ function firstMatch(text, pattern) {
 function render(source, file) {
   let output = source;
   // Includes first, so a partial's own tokens are resolved in the same pass.
-  output = output.replace(/\{\{include:([\w.-]+)\}\}/g, (_match, name) => {
-    const path = join(siteDir, 'partials', name);
-    if (!existsSync(path)) {
-      unresolved.push({ file, token: `include:${name}` });
-      return '';
+  //
+  // Repeated rather than run once, so a partial may include a partial: the mark is drawn in one
+  // place and pulled into the nav, the footer and half the templates, instead of eleven copies
+  // of the same five circles drifting apart one edit at a time. The depth cap is what stops a
+  // partial that includes itself from taking the build down.
+  for (let depth = 0; output.includes('{{include:'); depth += 1) {
+    if (depth >= 8) {
+      unresolved.push({ file, token: 'include: nested more than 8 deep — probably a cycle' });
+      break;
     }
-    return readFileSync(path, 'utf8');
-  });
+    output = output.replace(/\{\{include:([\w.-]+)\}\}/g, (_match, name) => {
+      const path = join(siteDir, 'partials', name);
+      if (!existsSync(path)) {
+        unresolved.push({ file, token: `include:${name}` });
+        return '';
+      }
+      return readFileSync(path, 'utf8');
+    });
+  }
 
   output = output.replace(/\{\{([\w.:-]+)\}\}/g, (match, token) => {
     const value = resolve(String(token));
@@ -616,6 +638,7 @@ function resolve(token) {
     'brand.nameStatus': brand.name.status,
     'font.sans': brand.typography.sans,
     'font.mono': brand.typography.mono,
+    'font.display': brand.typography.display,
     'measured.tests': String(ledger.measuredAgainst.tests),
     'measured.sha': ledger.measuredAgainst.sha,
     'measured.date': ledger.measuredAgainst.date,
@@ -625,6 +648,19 @@ function resolve(token) {
   if (token.startsWith('color.')) {
     const key = token.slice('color.'.length);
     return key in brand.colors ? brand.colors[key] : null;
+  }
+
+  // The semantic actor colors, kept in their own namespace because they mean something the
+  // product palette does not: each one names an actor in the decision the framework exists to
+  // govern. The mark, the social preview and the stylesheet all draw the seal from these.
+  if (token.startsWith('flow.')) {
+    const key = token.slice('flow.'.length);
+    return key in brand.flowColors ? brand.flowColors[key] : null;
+  }
+
+  if (token.startsWith('site.')) {
+    const key = token.slice('site.'.length);
+    return key in brand.siteColors ? brand.siteColors[key] : null;
   }
 
   return null;

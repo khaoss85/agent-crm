@@ -9,27 +9,135 @@
 <body>
 {{include:nav.html}}
 <main id="main">
-  <div class="shell"><header class="hero hero-product flow-hero">
-    <p class="eyebrow">The open-source custom CRM framework for coding agents</p>
-    <h1>Your business is different.<br><em>Your CRM should be too.</em></h1>
-    <p class="lede">Describe how you sell and serve customers. Your coding agent builds the custom CRM around it&mdash;as source, rules and evidence you own.</p>
-    <div class="cta"><a class="button primary" href="{{page.root}}product.html">Explore the product</a><a class="button secondary" href="{{page.root}}solutions.html">See what you can build</a></div>
-    <div class="approval-demo" aria-label="Discount approval demonstration">
-      <div class="approval-demo-title"><span>Live product logic</span><strong>Your agent can write the CRM. It can&rsquo;t approve the discount.</strong></div>
-      <ol class="approval-flow">
-        <li class="state-agent"><span>Agent request</span><strong>&minus;25%</strong><small>Discount proposed</small></li>
-        <li class="state-policy"><span>Policy check</span><strong>Blocked</strong><small>Human approval required</small></li>
-        <li class="state-human"><span>Human decision</span><strong>Approved</strong><small>Authority stays human</small></li>
-        <li class="state-evidence"><span>Audit recorded</span><strong>Verified</strong><small>Flow continues with evidence</small></li>
-      </ol>
-    </div>
-  </header></div>
+  <div class="shell">
+    <header class="hero hero-product flow-hero">
+      <!--
+        The seal, turning slowly: four authorities that only make a valid business state when
+        they close on the same decision. It carries no information the page does not also say
+        in words, so it is hidden from assistive technology and labelled underneath.
+      -->
+      <div class="hero-seal" aria-hidden="true">
+        {{include:seal.html}}
+        <p>agent &middot; policy &middot; human &middot; evidence<br />one accord</p>
+      </div>
+
+      <p class="eyebrow">The open-source custom CRM framework for coding agents</p>
+      <h1>Your business is different.<br /><em>Your CRM should be too.</em></h1>
+      <div class="hero-tail">
+        <p class="lede">Tell your coding agent how you sell and serve customers. {{brand.name}} gives it the rules. You keep the code.</p>
+        <div class="cta">
+          <a class="button primary" href="#flow">See how it decides</a>
+          <a class="button secondary" href="{{page.root}}developers.html">Keep the code</a>
+        </div>
+      </div>
+    </header>
+  </div>
+
+  <!--
+    The signature scene. Everything visible here is generated from the ordered list at the
+    bottom of this block plus the lifecycle stops above it: with the stylesheet off, a reader
+    gets the eight stages of the lifecycle and then the four states of the decision, in order,
+    as text. The motion places them in space and gives them a sequence; it does not add a fact.
+  -->
+  <div class="flow-scene" id="flow" role="img"
+       aria-label="A deal moves along the lifecycle. At Approval the agent's 25% discount request meets a policy gate, which blocks it; a human approver decides; the gate opens and the flow continues, leaving an audit record behind.">
+    <div class="flow-rail"></div>
+    <div class="flow-rail-live"></div>
+
+    <ol class="flow-stops">
+      <li style="--at: 5%; --at-y: 6%"><span>Lead</span></li>
+      <li style="--at: 19%; --at-y: 16%"><span>Qualification</span></li>
+      <li style="--at: 33%; --at-y: 27%"><span>Opportunity</span></li>
+      <li style="--at: 47%; --at-y: 38%"><span>Quote</span></li>
+      <li class="is-gate" style="--at: 61.5%; --at-y: 56%"><span>Approval</span></li>
+      <li style="--at: 74%; --at-y: 79%"><span>Order</span></li>
+      <li style="--at: 86%; --at-y: 88%"><span>Contract</span></li>
+      <li style="--at: 96%; --at-y: 95%"><span>Renewal</span></li>
+    </ol>
+
+    <p class="flow-gate-label">policy gate &middot; discount &gt; 20%</p>
+    <div class="flow-gate" aria-hidden="true"><i></i><i></i></div>
+    <div class="flow-dot" aria-hidden="true"></div>
+
+    <ol class="approval-flow">
+      <li class="state-agent"><span>Agent request</span><strong>&minus;25%</strong><small>The agent proposes the discount through a named workflow</small></li>
+      <li class="state-policy"><span>Policy check</span><strong>Blocked</strong><small>Above the threshold the transition refuses itself</small></li>
+      <li class="state-human"><span>Human decision</span><strong>Approved</strong><small>A named person decides; the agent cannot decide for them</small></li>
+      <li class="state-evidence"><span>Audit recorded</span><strong>Flow resumes</strong><small>The decision leaves a trace in your repository</small></li>
+    </ol>
+
+    <!-- Minted, not decorative: the seal appears at the instant the audit is written. Every
+         finished decision leaves one behind, which is what makes it the brand's mark. -->
+    <div class="flow-mint" aria-hidden="true">{{include:seal.html}}</div>
+  </div>
 
   <div class="flow-marquee" aria-label="{{brand.name}} use cases"><div class="flow-marquee-track"><div class="flow-marquee-set"><span>Custom CRM</span><span>Quote approval</span><span>Revenue ops</span><span>Service</span><span>Renewals</span><span>CPQ</span><span>Customer data</span></div><div class="flow-marquee-set" aria-hidden="true"><span>Custom CRM</span><span>Quote approval</span><span>Revenue ops</span><span>Service</span><span>Renewals</span><span>CPQ</span><span>Customer data</span></div></div></div>
 
-  <div class="shell"><section aria-labelledby="choice"><p class="kicker">A third choice</p><h2 id="choice">Stop choosing between bending a platform and rebuilding CRM foundations.</h2>
-    <div class="choice-grid editorial-choices"><article><span class="choice-number">01</span><h3>Configure a CRM</h3><p>Fast when your process fits. Use one when you need a hosted product now.</p></article><article class="choice-accent"><span class="choice-number">02</span><h3>Build with {{brand.name}}</h3><p>Start from CRM primitives. Let the agent shape them around your process, in a repository you control.</p></article><article><span class="choice-number">03</span><h3>Generate from scratch</h3><p>Maximum freedom, but your team must re-derive policy, audit and verification.</p></article></div>
+  <div class="shell"><section id="practice" class="spine-agent" aria-labelledby="practice-h"><p class="kicker">In practice</p><h2 id="practice-h">Describe the rule. Your agent ships it. Your team uses it.</h2><p class="section-lede">One sentence of business intent becomes a versioned policy in your repository — and the CRM screen your team opens obeys it.</p>
+    <div class="practice-grid">
+      <div>
+        <p class="practice-label">Business intent</p>
+        <p class="practice-intent">&ldquo;When a quote has more than 20% discount, a sales manager must approve it.&rdquo;</p>
+        <p class="practice-cli"><span>$ npm run crm -- app inspect --json</span><span>&rarr; composition read, not guessed</span><span>&rarr; plan bound to this application</span></p>
+      </div>
+
+      <span class="practice-arrow" aria-hidden="true">&rarr;</span>
+
+      <div>
+        <p class="practice-label">Source &middot; commercial/discount-policy.js</p>
+        <!--
+          Not pseudo-code: this is the shape a discount policy actually has in this repository
+          (`examples/starters/b2b-lead-qualification/commercial.js`). Discounts are basis
+          points, so the twenty percent in the sentence above is literally 2000 here — and the
+          three marked lines are the three the screen on the right is bound to.
+        -->
+        <div class="practice-source"><div><span class="k">export const</span> standardSalesDiscount = {</div><div>  name: <span class="s">'standard-sales-discount'</span>, version: <span class="n">1</span>,</div><div class="pair pair-policy">  config: { autoApproveMaxBps: <span class="n">2000</span>, <em class="mark">&#9679;</em></div><div class="pair pair-human">            approvalKey: <span class="s">'sales-manager'</span> }, <em class="mark">&#9679;</em></div><div>  evaluate({ maxLineDiscountBps, config }) {</div><div>    <span class="k">if</span> (maxLineDiscountBps &lt;= config.autoApproveMaxBps)</div><div>      <span class="k">return</span> { decision: <span class="s">'auto_approve'</span> };</div><div class="pair pair-evidence">    <span class="k">return</span> { decision: <span class="s">'approval_required'</span>, <em class="mark">&#9679;</em></div><div>             requiredApprovalKey: config.approvalKey };</div><div>  },</div><div>};</div></div>
+      </div>
+
+      <span class="practice-arrow" aria-hidden="true">&rarr;</span>
+
+      <div>
+        <p class="practice-label">Running CRM &middot; generated admin</p>
+        <!-- A demonstration with invented data, not a customer deployment and not a screenshot
+             of one. The point is the binding: every state below is produced by a line above. -->
+        <div class="practice-screen">
+          <div class="practice-screen-bar"><span>Opportunities / OPP-2041</span><b>&#9679; live</b></div>
+          <div class="practice-screen-body">
+            <p class="practice-record"><strong>Acme S.p.A.</strong><span>&euro;180,000</span></p>
+            <p class="practice-meta">Quote Q-1042 &middot; discount 25% &middot; 2500 bps</p>
+            <p class="practice-chip"><span aria-hidden="true">&#9679;</span> Approval required &middot; discount &gt; 20%</p>
+            <p class="practice-approver"><span>Approver &mdash; <strong>Sarah Rossi</strong> &middot; Sales Manager</span></p>
+            <p class="practice-actions"><a class="button primary" href="{{page.root}}how-it-works.html">Approve</a><a class="button secondary" href="{{page.root}}how-it-works.html">Reject</a></p>
+            <p class="practice-trace"><span class="refused">&#10005; agent transition refused &mdash; standard-sales-discount v1</span><span class="decided">&#10003; s.rossi approved &middot; 14:02</span><span class="recorded">&#10003; audit recorded &middot; run 4d2a91</span></p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="practice-note">Matching marks &mdash; the line of policy that governs the behavior.</p>
+
+    <div class="one-system">
+      <strong>The backend enforces it</strong>
+      <span>One application &mdash; UI, domain model, services, workflows, policy and audit &mdash; composed as source in your repository. The client asks; the server decides.</span>
+      <span class="sealed">
+        {{include:seal.html}}
+        <b>accord reached &middot; sealed</b>
+      </span>
+    </div>
+  </section></div>
+
+  <div class="shell"><section class="spine-policy" aria-labelledby="choice"><p class="kicker">A third choice</p><h2 id="choice">Stop choosing between bending a platform and rebuilding CRM foundations.</h2>
+    <div class="choice-grid editorial-choices"><article><span class="choice-number">01</span><h3>Configure a CRM</h3><p>Fast when your process fits. Use one when you need a hosted product now.</p></article><article class="choice-accent"><span class="choice-number">02 &middot; the third choice</span><h3>Build with {{brand.name}}</h3><p>Start from CRM primitives. Let the agent shape them around your process, in a repository you control.</p></article><article><span class="choice-number">03</span><h3>Generate from scratch</h3><p>Maximum freedom, but your team must re-derive policy, audit and verification.</p></article></div>
     <p class="section-link"><a href="{{page.root}}compare.html">Compare the three paths and their trade-offs</a></p>
+  </section></div>
+
+  <div class="shell"><section class="spine-human" aria-labelledby="authority"><p class="kicker">The signature moment</p><h2 id="authority">A rep wants to give 25% off. <em>Who gets to say yes?</em></h2>
+    <div class="authority-rows">
+      <div class="row-agent"><span>The agent</span><p>Writes the CRM, proposes the discount, and asks — through a named workflow, never a database write.</p></div>
+      <div class="row-policy"><span>The policy</span><p>Deterministic, versioned code — not a model&rsquo;s judgement. Anything above the threshold stops and waits.</p></div>
+      <div class="row-human"><span>The human</span><p>{{claim:C-04}}</p></div>
+    </div>
+    <p class="trace-line">&#10003; Every decision leaves a trace — audit and run history stay in your repository.</p>
+    <p class="section-link"><a href="{{page.root}}evidence.html#C-04">See the refusal proof and its boundary</a></p>
   </section></div>
 
   <div class="shell"><section aria-labelledby="system"><p class="kicker">One operating model</p><h2 id="system">From first signal to the next customer decision.</h2><p class="section-lede">Model the lifecycle as connected business outcomes—not a collection of disconnected objects.</p>
@@ -38,26 +146,39 @@
     <p class="boundary-note" data-limits><strong>Product model, not a coverage claim.</strong> The lifecycle is the durable system {{brand.name}} is designed to express. <a href="{{page.root}}evidence.html">Repository evidence</a> separately shows which parts this exact tree proves.</p>
   </section></div>
 
-  <div class="shell"><section aria-labelledby="different"><p class="kicker">Why it is different</p><h2 id="different">Business rules become reviewable software.</h2>
-    <div class="feature-grid"><article><h3>Process before schema</h3><p>Start with the job, decisions and boundaries. The data model follows the way the business works.</p></article><article><h3>Agents author; policy decides</h3><p>{{claim:C-03}}</p><a href="{{page.root}}evidence.html#C-03">See the proof and its boundary</a></article><article><h3>Human decisions stay human</h3><p>{{claim:C-04}}</p><a href="{{page.root}}evidence.html#C-04">See the refusal proof</a></article><article><h3>Source ownership is literal</h3><p>The scaffolder vendors framework source into your project. Upgrades are merges, not dependency bumps.</p><a href="{{page.root}}concepts/code-you-own.html">Understand the ownership mechanism</a></article></div>
+  <div class="shell"><section class="spine-agent" aria-labelledby="different"><p class="kicker">Why it is different</p><h2 id="different">Business rules become reviewable software.</h2>
+    <div class="feature-grid"><article><h3>Process before schema</h3><p>Start with the job, decisions and boundaries. The data model follows the way the business works.</p></article><article><h3>Agents author; policy decides</h3><p>{{claim:C-03}}</p><a href="{{page.root}}evidence.html#C-03">See the proof and its boundary</a></article><article><h3>Human decisions stay human</h3><p>Authority is a property of the system, asserted by a test — not a promise in a README.</p><a href="{{page.root}}evidence.html#C-04">See the refusal proof</a></article><article><h3>Source ownership is literal</h3><p>The scaffolder vendors framework source into your project. Upgrades are merges, not dependency bumps.</p><a href="{{page.root}}concepts/code-you-own.html">Understand the ownership mechanism</a></article></div>
   </section></div>
 
-  <div class="shell"><section aria-labelledby="agent-loop"><p class="kicker">The coding-agent experience</p><h2 id="agent-loop">Intent in. Checked-in system out.</h2>
+  <div class="shell"><section id="agent-loop-section" class="spine-ink" aria-labelledby="agent-loop"><p class="kicker">The coding-agent experience</p><h2 id="agent-loop">Intent in. Checked-in system out.</h2>
     <ol class="agent-loop"><li><strong>Describe</strong><span>State the business objective, constraints and decisions.</span></li><li><strong>Inspect</strong><span>The agent reads the composition instead of guessing what exists.</span></li><li><strong>Plan</strong><span>It binds a reviewable plan to that exact application.</span></li><li><strong>Build</strong><span>It composes packages, workflows, policy and UI as owned source.</span></li><li><strong>Prove</strong><span>Tests, scenarios, audit and trace show what worked—and what was not established.</span></li></ol>
     <div class="cta"><a class="button primary" href="{{page.root}}how-it-works.html">See how it works</a><a class="button secondary" href="{{page.root}}for-ai-agents.html">Give {{brand.name}} to your coding agent</a></div>
   </section></div>
 
-  <div class="shell"><section aria-labelledby="jobs"><p class="kicker">Jobs, grouped for humans</p><h2 id="jobs">Build around the commercial job in front of you.</h2>
+  <div class="shell"><section class="spine-agent" aria-labelledby="jobs"><p class="kicker">Jobs, grouped for humans</p><h2 id="jobs">Build around the commercial job in front of you.</h2>
     <div class="solution-grid"><a href="{{page.root}}solution-custom-crm.html"><strong>Custom CRM design</strong><span>Encode a non-standard sales process without forcing it into somebody else&rsquo;s object model.</span></a><a href="{{page.root}}solution-revenue-operations.html"><strong>Revenue operations</strong><span>Connect lead, opportunity, pricing, approval, order and the work after sale.</span></a><a href="{{page.root}}solution-commercial-operations.html"><strong>Quote &amp; approval</strong><span>Turn commercial rules into deterministic pricing, versioned policy and human gates.</span></a><a href="{{page.root}}solution-service-operations.html"><strong>Delivery &amp; service</strong><span>Carry customer context into delivery obligations, support and the next commercial decision.</span></a></div>
     <p class="boundary-note"><strong>Desired jobs are not implementation claims.</strong> Each solution page separates the job and target workflow from the capabilities and evidence currently available.</p>
   </section></div>
 
-  <div class="shell"><section aria-labelledby="proof"><p class="kicker">Progressive proof</p><h2 id="proof">Ask a business question. Follow it to executable evidence.</h2><p class="section-lede">The first screen explains the product. The proof layer shows the claim, capability, test, benchmark method, limitation and measured repository SHA.</p>
-    <div class="proof-strip"><article><strong>Can a rule be enforced?</strong><span>{{claim:C-03}}</span></article><article><strong>Can an agent verify the application?</strong><span>{{claim:C-14}}</span></article><article><strong>Can the source stand on its own?</strong><span>{{claim:C-17}}</span></article></div>
+  <div class="shell"><section class="spine-evidence" aria-labelledby="proof"><p class="kicker">Product proof</p><h2 id="proof">Claims travel with their tests.</h2><p class="section-lede">Every sentence on this page resolves against a ledger bound to the test suite. Follow any claim to the test that proves it — and to the boundary that travels with it.</p>
+    <div class="ledger-rows">
+      <div><b>C-03</b><span>{{claim:C-03}}</span><em>&#10003; workflow evidence</em></div>
+      <div><b>C-14</b><span>{{claim:C-14}}</span><em>&#10003; app-inspect evidence</em></div>
+      <div><b>C-17</b><span>{{claim:C-17}}</span><em>&#10003; no build step</em></div>
+      <p class="ledger-receipt">
+        {{include:seal.html}}
+        sealed &middot; measured at <strong>{{measured.sha}}</strong> &middot; {{measured.date}} &middot; <strong>{{measured.tests}} tests, 0 failing</strong>
+      </p>
+      <p class="boundary-note"><strong>{{status.headline}}</strong> {{status.text}}</p>
+    </div>
     <div class="cta"><a class="button primary" href="{{page.root}}proof.html">See product proof</a><a class="button secondary" href="{{page.root}}evidence.html">Inspect the full claims ledger</a></div>
   </section></div>
 
-  <div class="shell"><section class="final-cta" aria-labelledby="start"><p class="kicker">Choose your path</p><h2 id="start">Describe the system. Let your agent build it. Keep the result.</h2><div class="cta"><a class="button primary" href="{{page.root}}developers.html">Start with <code>{{brand.createCommand}}</code></a><a class="button secondary" href="{{brand.repository}}">Read the source</a></div></section></div>
+  <div class="shell"><section class="final-cta" aria-labelledby="start">
+    {{include:seal.html}}
+    <h2 id="start">Describe the system. Let your agent build it. <em>Keep the result.</em></h2>
+    <div class="cta"><a class="button primary" href="{{page.root}}developers.html">Start with <code>{{brand.createCommand}}</code></a><a class="button secondary" href="{{brand.repository}}">Read the source</a></div>
+  </section></div>
 </main>
 {{include:footer.html}}
 </body></html>

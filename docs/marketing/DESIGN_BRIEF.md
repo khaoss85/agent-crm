@@ -199,9 +199,20 @@ If the design makes this feel like a disclaimer, the design has failed.
 `ink #e8ede9` · `muted #97a49b` · `line #2a332d` · `surface #161b18` ·
 `paper #0f1311` · `accent #6cc79b` · `accentSoft #1a2f26` · `warning #e0a856`
 
-Type: `Inter` / system sans, and `ui-monospace, SFMono-Regular, Menlo, Consolas`
-for every command, code, status and limitation code. **Monospace carries a lot of
-the identity here** — it is the voice of the machine reporting on itself.
+Type: **Bricolage Grotesque** for display and body, **Spline Sans Mono** for every
+command, code, status and limitation code — both vendored under `site/assets/fonts`
+and declared in `site/assets/styles.css`, never fetched from a font CDN (the site
+ships `font-src 'self'`). Every family ends in a system stack, so a blocked or slow
+font degrades to a rendered page rather than invisible text. The families live in
+`site/brand.json` `typography`; nothing hardcodes them.
+**Monospace carries a lot of the identity here** — it is the voice of the machine
+reporting on itself.
+
+The palette above is the product's, inherited verbatim from the Admin. The public
+site additionally carries the semantic actor colours in `brand.json` `flowColors` —
+violet agent, yellow policy, coral human, cyan evidence, green accord — which are
+product language rather than decoration: a colour appears when its actor enters the
+story. `docs/plans/public-site-flow-v3.md` is the current art direction.
 
 ## 9. Existing class names — keep these working
 
@@ -215,6 +226,11 @@ The generator emits these; renaming one breaks 113 pages.
 `mono` · `limits-grid` · `limit-card` · `table-wrap`
 
 New classes are welcome. Renamed ones are not.
+
+`status-banner` is still styled and still safe to use, but nothing emits it any
+more: the implementation boundary it carried above the wordmark now renders in the
+colophon and in the proof section, so it reaches every page without sitting above
+the brand. See `docs/plans/public-site-flow-v3.md`.
 
 ## 10. Tone, and the words that are forbidden
 

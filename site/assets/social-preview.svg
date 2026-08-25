@@ -2,43 +2,74 @@
   <title>{{brand.name}} — {{brand.promise}}</title>
   <defs>
     <style>
-      .h { font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 800; letter-spacing: -2.6px; }
-      .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-      .s { font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 600; }
-      .k { font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 800; letter-spacing: 3.4px; }
+      /* Relative to this file's own location in the built site, so the card renders in the
+         display face wherever it is rasterised from. Every rule still ends in a system stack:
+         a preview that cannot reach the font must fall back, never fail to draw. */
+      @font-face {
+        font-family: 'Bricolage Grotesque';
+        src: url('fonts/bricolage-grotesque-latin-var.woff2') format('woff2-variations');
+        font-weight: 400 800;
+      }
+      @font-face {
+        font-family: 'Spline Sans Mono';
+        src: url('fonts/spline-sans-mono-latin-var.woff2') format('woff2-variations');
+        font-weight: 400 700;
+      }
+      .h { font-family: 'Bricolage Grotesque', 'Avenir Next', Avenir, system-ui, sans-serif; font-weight: 800; letter-spacing: -1.4px; }
+      .m { font-family: 'Spline Sans Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .s { font-family: 'Bricolage Grotesque', 'Avenir Next', Avenir, system-ui, sans-serif; font-weight: 500; }
+      .k { font-family: 'Spline Sans Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; letter-spacing: 3.4px; }
     </style>
   </defs>
 
-  <rect width="1280" height="640" fill="{{color.paper}}" />
-  <rect x="0" y="0" width="1280" height="6" fill="{{color.accent}}" />
+  <rect width="1280" height="640" fill="#f7f3e9" />
 
-  <!-- mark -->
-  <g transform="translate(88, 74) scale(2.0)">
-    <rect x="1.5" y="1.5" width="21" height="21" rx="6.5" stroke="{{color.accent}}" stroke-width="1.6" fill="none" />
-    <path d="M6 15.5 L10.2 15.5 L12 8.5 L13.8 15.5 L18 15.5" stroke="{{color.accent}}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none" />
-    <circle cx="12" cy="8.5" r="2.4" fill="{{color.accent}}" />
+  <!-- The Accord Seal, large and quiet in the corner: the mark should be recognisable
+       here before the wordmark is read. -->
+  <g transform="translate(1074, 96) scale(1.72)" opacity="0.92">
+    <circle cx="60" cy="60" r="44" fill="none" stroke="{{flow.agent}}" stroke-width="7" stroke-linecap="round" stroke-dasharray="58 218.5" />
+    <circle cx="60" cy="60" r="44" fill="none" stroke="{{flow.policy}}" stroke-width="7" stroke-linecap="round" stroke-dasharray="58 218.5" transform="rotate(90 60 60)" />
+    <circle cx="60" cy="60" r="44" fill="none" stroke="{{flow.human}}" stroke-width="7" stroke-linecap="round" stroke-dasharray="58 218.5" transform="rotate(180 60 60)" />
+    <circle cx="60" cy="60" r="44" fill="none" stroke="{{flow.evidence}}" stroke-width="7" stroke-linecap="round" stroke-dasharray="58 218.5" transform="rotate(270 60 60)" />
+    <circle cx="60" cy="60" r="11" fill="{{flow.accord}}" />
   </g>
-  <text class="k" x="146" y="103" font-size="15" fill="{{color.accent}}">{{brand.name}}</text>
+
+  <!-- wordmark -->
+  <g transform="translate(88, 66) scale(0.30)">
+    <circle cx="60" cy="60" r="44" fill="none" stroke="{{flow.agent}}" stroke-width="14" stroke-linecap="round" stroke-dasharray="54 222.5" />
+    <circle cx="60" cy="60" r="44" fill="none" stroke="{{flow.policy}}" stroke-width="14" stroke-linecap="round" stroke-dasharray="54 222.5" transform="rotate(90 60 60)" />
+    <circle cx="60" cy="60" r="44" fill="none" stroke="{{flow.human}}" stroke-width="14" stroke-linecap="round" stroke-dasharray="54 222.5" transform="rotate(180 60 60)" />
+    <circle cx="60" cy="60" r="44" fill="none" stroke="{{flow.evidence}}" stroke-width="14" stroke-linecap="round" stroke-dasharray="54 222.5" transform="rotate(270 60 60)" />
+    <circle cx="60" cy="60" r="15" fill="{{flow.accord}}" />
+  </g>
+  <text class="k" x="132" y="99" font-size="15" fill="#171912">{{brand.name}}</text>
 
   <!-- headline -->
-  <text class="h" x="88" y="222" font-size="63" fill="{{color.ink}}">Describe your sales process</text>
-  <text class="h" x="88" y="292" font-size="63" fill="{{color.ink}}">to your coding agent;</text>
-  <text class="h" x="88" y="362" font-size="63" fill="{{color.accent}}">own the CRM it builds.</text>
+  <text class="h" x="88" y="252" font-size="60" fill="#171912">Your business is different.</text>
+  <text class="h" x="88" y="322" font-size="60" fill="{{flow.agent}}">Your CRM should be too.</text>
 
   <!-- subhead -->
-  <text class="s" x="88" y="424" font-size="23" fill="{{color.muted}}">The framework Claude Code, Codex and Gemini CLI use to generate a CRM</text>
-  <text class="s" x="88" y="458" font-size="23" fill="{{color.muted}}">as reviewable code you own — not a tenant in someone else's platform.</text>
+  <text class="s" x="88" y="392" font-size="23" fill="#62655b">Tell your coding agent how you sell and serve customers.</text>
+  <text class="s" x="88" y="426" font-size="23" fill="#62655b">{{brand.name}} gives it the rules. You keep the code.</text>
 
-  <!-- evidence strip -->
-  <g transform="translate(88, 508)">
-    <rect x="0" y="0" width="1104" height="68" rx="16" fill="{{color.surface}}" stroke="{{color.line}}" stroke-width="1.5" />
-    <circle cx="32" cy="34" r="5" fill="{{color.accent}}" />
-    <text class="m" x="52" y="40" font-size="16" fill="{{color.ink}}">{{measured.tests}} tests</text>
-    <circle cx="200" cy="34" r="5" fill="{{color.accent}}" />
-    <text class="m" x="220" y="40" font-size="16" fill="{{color.ink}}">0 dependencies</text>
-    <circle cx="420" cy="34" r="5" fill="{{color.accent}}" />
-    <text class="m" x="440" y="40" font-size="16" fill="{{color.ink}}">deterministic approvals</text>
-    <circle cx="730" cy="34" r="5" fill="{{color.warning}}" />
-    <text class="m" x="750" y="40" font-size="16" fill="{{color.warning}}">no auth yet — see the limits</text>
+  <!-- The one decision, drawn: the agent proposes, policy stops it, a human decides,
+       evidence stays behind. Same line, same colours, same order as the homepage. -->
+  <g transform="translate(88, 520)">
+    <rect x="0" y="27" width="1104" height="2" fill="#ddd8c8" />
+    <rect x="0" y="27" width="742" height="2" fill="{{flow.accord}}" />
+
+    <circle cx="0" cy="28" r="6" fill="{{flow.agent}}" />
+    <text class="m" x="-2" y="14" font-size="13" font-weight="700" fill="#4c2fc5">AGENT PROPOSES</text>
+
+    <rect x="298" y="10" width="4" height="36" rx="2" fill="{{flow.policy}}" />
+    <text class="m" x="288" y="-2" font-size="13" font-weight="700" fill="#665000">POLICY STOPS</text>
+
+    <circle cx="600" cy="28" r="6" fill="{{flow.human}}" />
+    <text class="m" x="590" y="14" font-size="13" font-weight="700" fill="#9b292d">HUMAN DECIDES</text>
+
+    <circle cx="900" cy="28" r="6" fill="{{flow.evidence}}" />
+    <text class="m" x="890" y="14" font-size="13" font-weight="700" fill="#00677a">AUDIT RECORDED</text>
+
+    <text class="m" x="0" y="72" font-size="14" fill="#6f6a5a">{{measured.tests}} tests · 0 runtime dependencies · MIT · measured at {{measured.sha}}</text>
   </g>
 </svg>

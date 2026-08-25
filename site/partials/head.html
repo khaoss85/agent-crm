@@ -10,8 +10,19 @@
     the repository public.
   -->
   <link rel="stylesheet" href="{{page.root}}styles.css" />
+  <!--
+    Both faces are served from this origin, so the CSP stays `font-src 'self'`
+    and no page reaches a third party to render its own headline. They are
+    preloaded because @font-face inside the stylesheet is discovered a round
+    trip late, and the display face sets the first line a visitor reads.
+  -->
+  <link rel="preload" href="{{page.root}}fonts/bricolage-grotesque-latin-var.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+  <link rel="preload" href="{{page.root}}fonts/spline-sans-mono-latin-var.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
   <link rel="icon" href="{{page.root}}mark.svg" type="image/svg+xml" />
-  <meta name="theme-color" content="{{color.accent}}" />
+  <!-- The page's own ground, so the browser chrome on a phone continues the paper rather than
+       tinting itself the Admin's green. -->
+  <meta name="theme-color" content="{{site.paper}}" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#10120e" media="(prefers-color-scheme: dark)" />
   <link rel="license" href="https://opensource.org/licenses/MIT" />
   <link rel="alternate" type="text/plain" href="{{page.root}}llms.txt" title="Machine-readable summary" />
   <link rel="alternate" type="text/plain" href="{{page.root}}llms-full.txt" title="Machine-readable summary, full text" />

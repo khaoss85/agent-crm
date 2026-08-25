@@ -1,20 +1,18 @@
   <a class="skip" href="#main">Skip to content</a>
 
-  <div class="status-banner">
-    <div class="shell">
-      <strong>{{status.headline}}</strong>
-      <span>{{status.text}}</span>
-    </div>
-  </div>
+  <!--
+    The boundary this project refuses to bury — "not deployable to production" — used to sit in a
+    banner above the wordmark on every page. It has moved to the colophon in footer.html and to
+    the boundary line under the receipt on Product Proof. It is still on every page and still
+    unhedged; what changed is that a visitor now meets the durable product truth before the
+    current state of the implementation, which is the order those two things actually rank in.
+    Nothing about the sentence was softened in the move — {{status.text}} renders it verbatim.
+  -->
 
   <div class="shell">
     <nav class="nav" aria-label="Primary">
       <a class="wordmark" href="{{page.root}}index.html">
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <rect x="1.5" y="1.5" width="21" height="21" rx="6.5" stroke="currentColor" stroke-width="1.6" />
-          <path d="M6 15.5 L10.2 15.5 L12 8.5 L13.8 15.5 L18 15.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-          <circle cx="12" cy="8.5" r="2.4" fill="currentColor" />
-        </svg>
+        {{include:seal.html}}
         <span>{{brand.name}}</span>
       </a>
 
@@ -38,6 +36,10 @@
         <a href="{{page.root}}resources.html">Resources</a>
         <a href="{{brand.repository}}">GitHub</a>
       </div>
+
+      <!-- The one command the whole site is asking for, in the bar at every width. It is set in
+           the mono face because it is a thing you type, not a thing we say. -->
+      <a class="nav-start mono" href="{{page.root}}developers.html">{{brand.createCommand}}</a>
 
       <details class="nav-menu">
         <summary>
