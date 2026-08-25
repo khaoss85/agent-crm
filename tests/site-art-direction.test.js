@@ -56,14 +56,55 @@ test('reduced motion resolves the scene to the end of its story, not to an empty
   assert.match(reduced, /\.hero-seal \.seal \{ animation: none; \}/);
 });
 
-test('the full-bleed scene bleeds to the viewport and no further', () => {
+test('the full-bleed scene uses no viewport unit, because a viewport unit includes the scrollbar', () => {
   const css = read('site/assets/styles.css');
-  // 100vw plus a negative margin computed from the element's own centre is the only bleed
-  // technique here that cannot overshoot: the two always cancel, at every width, with no
-  // breakpoint to keep in sync. Anything wider than the viewport puts a horizontal scrollbar
-  // on the whole document, which was the regression this file was opened to prevent.
-  assert.match(css, /\.flow-scene \{[^}]*width: 100vw;[^}]*margin: [^;]*calc\(50% - 50vw\)/);
-  assert.doesNotMatch(css, /width: 10[1-9]vw|width: calc\(100vw \+/);
+
+  // This assertion previously said the opposite, and it was wrong.
+  //
+  // `width: 100vw` with `margin-inline: calc(50% - 50vw)` looks like it must cancel, and does —
+  // right up until the page is long enough to show a scrollbar. `100vw` is the viewport
+  // *including* the scrollbar; the 50% is resolved against a parent that excludes it; the
+  // element lands half a scrollbar too wide and every page gets a horizontal scrollbar.
+  // Measured in Chromium at 1280x700 with a 15px scrollbar: 7.5px of overflow on main's
+  // successor, 0px on main. Headless captures taken with --hide-scrollbars show none of it.
+  //
+  // The scene is a direct child of <main>, which has no width, padding or border, so `100%` is
+  // already exactly the width the viewport actually offers. No vw, nothing to cancel.
+  const block = /\.flow-scene \{([^}]*)\}/.exec(css)?.[1] ?? '';
+  assert.ok(block, '.flow-scene must exist');
+  // Only the box's own size and offsets are in question. A `vw` inside a clamp() that sets
+  // vertical spacing cannot put the element past the viewport edge, and banning it outright
+  // would be a rule about the letter rather than the defect.
+  const width = /width: ([^;]+);/.exec(block)?.[1]?.trim();
+  assert.equal(width, '100%');
+  assert.doesNotMatch(width ?? '', /vw/, '.flow-scene must not size itself in viewport units');
+
+  // The horizontal halves of the margin shorthand are the ones that can push the box sideways.
+  // Split on top-level spaces only — `clamp(26px, 4vw, 52px)` is one value, not three, and its
+  // vw is vertical spacing.
+  const margin = /margin: ([^;]+);/.exec(block)?.[1]?.trim() ?? '';
+  const parts = splitTopLevel(margin);
+  const inline = parts.length >= 2 ? [parts[1], parts[3] ?? parts[1]] : [];
+  for (const side of inline) {
+    assert.doesNotMatch(side, /vw/, `.flow-scene offsets itself sideways with "${side}"`);
+  }
+});
+
+test('a grid track that can shrink is paired with items that can shrink too', () => {
+  const css = read('site/assets/styles.css');
+
+  // `minmax(0, 1fr)` lets the *track* go below its content's min-content width. It says nothing
+  // about the *item*, whose automatic minimum size is still its own min-content — so the item
+  // overflows the track it was supposed to fit, and the page grows sideways instead of the
+  // source pane scrolling in its own box. Measured at 390px: a 303px track holding 366px items.
+  assert.match(css, /\.practice-grid > \* \{ min-width: 0; \}/);
+  for (const [, columns] of css.matchAll(/\.practice-grid \{[^}]*grid-template-columns: ([^;]+);/g)) {
+    // Every flexible track must be wrapped in minmax(0, …). Strip those, then any `fr` still
+    // standing is a bare one — `1fr` means `minmax(auto, 1fr)`, which is the whole problem.
+    const bare = columns.replace(/minmax\(0,\s*[\d.]*fr\)/g, '');
+    assert.doesNotMatch(bare, /[\d.]+fr/,
+      `bare fr track in "${columns.trim()}" — it cannot shrink, which defeats the min-width above`);
+  }
 });
 
 test('the page spine is one continuous line with an actor-coloured node per section', () => {
@@ -113,6 +154,31 @@ test('both typefaces are served from this origin, because the CSP allows no othe
   }
 });
 
+test('the dark code pane is measured against its own ground, not against paper', () => {
+  const css = read('site/assets/styles.css');
+
+  // Code panes are a dark terminal ground in both themes. Colours written for the light pane
+  // they replaced do not survive the move — --warning lands at 3.32:1 on #171912 and --accent at
+  // 2.68:1 — so every foreground the pane uses is stated in the pane's own palette and checked
+  // here against the pane, not against the page.
+  const pane = /\.code \{[^}]*background: (#[0-9a-f]{6});/i.exec(css)?.[1];
+  assert.ok(pane, '.code must state its own ground');
+
+  const block = css.slice(css.indexOf('.code { background: ' + pane));
+  const foregrounds = [...block.slice(0, 800).matchAll(/\.code[^{]*\{[^}]*color: (#[0-9a-f]{6})/gi)]
+    .map((match) => match[1]);
+  assert.ok(foregrounds.length >= 4, 'the pane states its own foregrounds');
+  for (const ink of foregrounds) {
+    const ratio = contrast(ink, pane);
+    assert.ok(ratio >= 4.5, `${ink} on the code pane ${pane} is ${ratio.toFixed(2)}:1`);
+  }
+
+  // The refusal receipt's mark was a border-color on a rule whose border-width this direction
+  // set to 0 — a silent loss on the page the site calls its most differentiated. It keeps a
+  // width of its own now.
+  assert.match(css, /\.code\.refusal \{[^}]*border-left: \d+px solid/);
+});
+
 test('the seal is drawn from the shared actor tokens, never from loose hex', () => {
   const brand = JSON.parse(read('site/brand.json'));
   const mark = read('site/assets/mark.svg');
@@ -120,6 +186,14 @@ test('the seal is drawn from the shared actor tokens, never from loose hex', () 
   // Four arcs, one per authority, closing on a green centre. The mark, the social preview, the
   // nav, the footer and the stylesheet all draw the same object; the moment one of them owns a
   // literal colour, the five copies start drifting apart.
+  // Both token groups reach the page unescaped, exactly as `color.*` always has — they are
+  // written straight into SVG attributes and CSS values. Pinning them to a literal hex is what
+  // makes that safe, so the shape is asserted rather than assumed.
+  for (const [group, keys] of [['siteColors', ['paper', 'ink']], ['flowColors', []]]) {
+    for (const key of keys) {
+      assert.match(brand[group][key] ?? '', /^#[0-9a-f]{6}$/i, `${group}.${key} must be a literal hex`);
+    }
+  }
   for (const actor of ['agent', 'policy', 'human', 'evidence', 'accord']) {
     assert.match(brand.flowColors[actor] ?? '', /^#[0-9a-f]{6}$/i, `flowColors.${actor} is missing`);
     assert.match(mark, new RegExp(`\\{\\{flow\\.${actor}\\}\\}`), `the mark must read flow.${actor} from brand.json`);
@@ -193,4 +267,27 @@ function contrast(foreground, background) {
   };
   const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
   return (lighter + .05) / (darker + .05);
+}
+
+/**
+ * A CSS shorthand's values, splitting on spaces that are not inside parentheses — so
+ * `clamp(26px, 4vw, 52px) 0 0` is three values rather than five.
+ * @param {string} value
+ */
+function splitTopLevel(value) {
+  const parts = [];
+  let depth = 0;
+  let current = '';
+  for (const character of value) {
+    if (character === '(') depth += 1;
+    if (character === ')') depth -= 1;
+    if (character === ' ' && depth === 0) {
+      if (current) parts.push(current);
+      current = '';
+      continue;
+    }
+    current += character;
+  }
+  if (current) parts.push(current);
+  return parts;
 }

@@ -993,6 +993,17 @@ h3 { font-size: 1.3rem; letter-spacing: -.014em; font-weight: 700; }
   letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
 }
 
+/* The implementation boundary, relocated here from the banner that used to sit above the
+   wordmark. Moving it is only defensible while it still reads as a statement rather than as
+   small print, so it keeps the pending rule and the page's ink — it is the one paragraph in the
+   colophon that is not a footnote. */
+.colophon-boundary {
+  margin: 0 0 14px; padding: 2px 0 2px 16px;
+  border-left: 3px solid var(--pending);
+  font-size: 14px; color: var(--ink);
+}
+.colophon-boundary strong { font-weight: 800; }
+
 /* ---------------------------------------------------------------- nav */
 
 body > .shell:has(> .nav) { background: color-mix(in srgb, var(--paper) 86%, transparent); }
@@ -1057,8 +1068,20 @@ body > .shell:has(> .nav) { background: color-mix(in srgb, var(--paper) 86%, tra
  * not already say.
  * ================================================================== */
 
+/* Full-bleed without a single `vw`, and that is the whole point of it.
+ *
+ * The obvious spelling — `width: 100vw` with `margin-inline: calc(50% - 50vw)` — is wrong on any
+ * desktop that draws a classic scrollbar: `100vw` is the viewport *including* the scrollbar, the
+ * negative margin is computed from a parent that excludes it, and the two no longer cancel. The
+ * element ends up half a scrollbar too wide and puts a horizontal scrollbar on every page. It is
+ * invisible in a headless capture taken with --hide-scrollbars, which is exactly how it survived
+ * into review: measured at 1280px it overflowed by 7.5px.
+ *
+ * This element is a direct child of <main>, which carries no width, padding or border, so its
+ * containing block is already the full content width the viewport actually has. `width: 100%`
+ * bleeds edge to edge by construction and cannot disagree with the scrollbar. */
 .flow-scene {
-  position: relative; width: 100vw; margin: clamp(26px, 4vw, 52px) calc(50% - 50vw) 0;
+  position: relative; width: 100%; margin: clamp(26px, 4vw, 52px) 0 0;
   height: 340px; overflow: hidden;
   --line-y: 210px;
   --gate-x: 61.5%;
@@ -1374,6 +1397,11 @@ main > .shell > section.spine-ink { --node: var(--ink); }
   display: grid; grid-template-columns: minmax(0, .62fr) 16px minmax(0, 1.32fr) 16px minmax(0, 1.06fr);
   gap: 16px; align-items: start; margin-top: 44px;
 }
+/* A grid item's automatic minimum size is its min-content, so a column narrower than the source
+   pane's longest unbroken line does not clip it — the item simply overflows the track and the
+   page grows sideways. The tracks are already minmax(0, …); this is the other half of that. */
+.practice-grid > * { min-width: 0; }
+.practice-trace span, .practice-meta { overflow-wrap: anywhere; }
 .practice-grid > .practice-arrow {
   align-self: center; text-align: center; font-family: var(--mono);
   font-size: 17px; color: var(--dim);
@@ -1481,7 +1509,7 @@ main > .shell > section.spine-ink { --node: var(--ink); }
 }
 
 @media (max-width: 1000px) {
-  .practice-grid { grid-template-columns: 1fr; gap: 14px; }
+  .practice-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .practice-grid > .practice-arrow { text-align: left; transform: rotate(90deg); width: 17px; }
 }
 
@@ -1684,6 +1712,12 @@ main > .shell > section.spine-ink { --node: var(--ink); }
 .card .limit { border-top-style: solid; }
 .limit-card { border: 0; border-left: 3px solid var(--pending); border-radius: 0; padding: 4px 0 4px 18px; }
 .table-wrap { border: 0; border-radius: 0; border-block: 1.5px solid var(--ink); }
+/* `table { min-width: 620px }` exists so a wide table scrolls inside .table-wrap instead of
+   crushing its columns. A table the generator emits *without* that wrapper has nothing to scroll
+   in, so the same rule pushes the whole document sideways on a phone — jobs.html has done this
+   since before the redesign, and a wider mono makes it worse. Unwrapped tables may shrink. */
+:not(.table-wrap) > table { min-width: 0; }
+:not(.table-wrap) > table th, :not(.table-wrap) > table td { overflow-wrap: anywhere; }
 th, td { border-bottom-color: var(--rule); }
 thead th { font-family: var(--mono); letter-spacing: .12em; }
 details { border: 0; border-top: 1.5px solid var(--rule); border-radius: 0; }
@@ -1692,10 +1726,26 @@ summary::after { color: var(--dim); }
 details > p { padding: 0 0 20px; }
 .callout { background: none; border-left: 3px solid var(--accord); border-radius: 0; padding: 4px 0 4px 22px; }
 .evidence code { background: none; border: 1px solid var(--data); color: var(--data-ink); }
+/* Inline code on these pages is mostly file paths, and a path has no break opportunity a
+   browser will take on its own — so on a phone it pushes the whole document sideways. This was
+   already true before the redesign and got worse with it, because Spline Sans Mono sets wider
+   than the system mono it replaced. Scoped to inline code: a <pre> block still scrolls in its
+   own box rather than reflowing, which is what a code sample wants. */
+:not(pre) > code { overflow-wrap: anywhere; }
+/* Code panes are now a dark terminal ground in *both* themes rather than a tinted surface, so
+   every colour inside them has to be re-checked against that ground rather than against paper.
+   Measured on #171912: --warning is 3.32:1 and --accent 2.68:1, so the two rules written for a
+   light pane are restated here in the pane's own palette. */
 .code { background: #171912; color: #d8dcd0; border: 0; border-radius: 12px; box-shadow: none; }
 .code .c { color: #8f9d94; }
 .code .k { color: #8cf39a; }
 .code .s { color: #f2cd5d; }
+.code .bad { color: #ff9d7a; }
+
+/* The refusal receipt is called the single most differentiated thing on this site, and it was
+   marked by a border colour on a rule that no longer has a border width to paint. It keeps its
+   mark, in the colour of the policy that did the refusing. */
+.code.refusal { border: 0; border-left: 4px solid var(--pending); border-radius: 4px 12px 12px 4px; }
 .boundary-block { border-radius: 0 12px 12px 0; }
 .section-block > h2::before { background: var(--accord); }
 ::selection { background: color-mix(in srgb, var(--agent) 24%, transparent); }

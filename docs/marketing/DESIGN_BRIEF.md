@@ -235,8 +235,18 @@ the brand. See `docs/plans/public-site-flow-v3.md`.
 ## 10. Tone, and the words that are forbidden
 
 Quiet, dense, documentation-shaped. Closer to a well-made technical reference than
-to a SaaS landing page. No gradients as decoration, no drop shadows for depth, no
-animation beyond a focus ring, no stock illustration, no 3D shapes, no hero video.
+to a SaaS landing page. No gradients as decoration, no depth borrowed from a soft
+shadow, no stock illustration, no 3D shapes, no hero video.
+
+**On motion.** This section used to end "no animation beyond a focus ring", and the
+site outgrew that sentence in two passes without anyone editing it — first the
+approval demonstration and the marquee, then the signature scene. The rule it was
+reaching for is better stated as a test than as a prohibition, so here it is:
+**motion may only reveal a relationship the HTML already states.** The scene
+animates an ordered list that reads correctly with the stylesheet off; it adds no
+fact, and `prefers-reduced-motion` renders the story's ending rather than an empty
+stage. Decorative motion — something moving because movement is nice — is still
+out. `tests/site-art-direction.test.js` holds the reduced-motion half of this.
 
 A build gate **fails the deploy** if any of these words appear anywhere on the site:
 

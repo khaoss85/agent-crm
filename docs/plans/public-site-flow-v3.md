@@ -127,6 +127,52 @@ separation — is preserved unchanged.
   that is checking the colour it used to be.
 - Browser receipts regenerated with `npm run site:shots`.
 
+## Adversarial review (pre-merge, AGENTS.md §10)
+
+Reviewed at `a9c4c52` against `origin/main` `bc03409` — merge-base equal to the base, one commit,
+no conflicts, `project doctor` valid with no problems, nothing tracked that must not be.
+
+Four defects confirmed and fixed in place. Three of them were invisible to every receipt taken
+during the build, which is the finding behind the finding:
+
+1. **High — 7.5px of horizontal overflow on every page.** `.flow-scene` used `width: 100vw` with
+   `margin-inline: calc(50% - 50vw)`. `100vw` includes the scrollbar; the 50% resolves against a
+   parent that excludes it; they stop cancelling the moment a scrollbar appears. Measured in
+   Chromium at 1280x700: 8px on the branch, 0px on main. **`npm run site:shots` passes
+   `--hide-scrollbars`, so no screenshot in this repository can ever show this class of defect.**
+   Fixed by dropping the viewport unit entirely — the scene is a direct child of `<main>`, so
+   `width: 100%` is already exactly full-bleed.
+2. **High — the test asserted the defect.** `site-art-direction.test.js` claimed the `100vw`
+   pattern "cannot overshoot". It was rewritten to assert the measured invariant, and a second
+   test now covers the grid failure below. A test that encodes a defect is part of the defect.
+3. **Medium — 49px of overflow at 390px** in the new *In practice* section. The desktop tracks
+   were `minmax(0, …)` but the narrow override was a bare `1fr`, and a grid *item*'s automatic
+   minimum size is its own min-content regardless of the track: a 303px track held 366px items.
+   Fixed with `minmax(0, 1fr)` plus `min-width: 0` on the items.
+4. **Medium — two silent losses inside the code pane.** Making `.code` a dark terminal ground in
+   both themes left two rules written for the light pane behind: `.code .bad` at 3.32:1 and
+   `.code.refusal`, whose mark was a `border-color` on a rule this direction had set to
+   `border: 0` — on the page the brief calls the most differentiated on the site. Both restated
+   in the pane's own palette; a test now measures every pane foreground against the pane.
+
+Also corrected: `.colophon-boundary` was introduced with no rule at all — the one paragraph whose
+prominence justifies moving the boundary out of the banner; and §10 of `DESIGN_BRIEF.md` still
+forbade "animation beyond a focus ring", which the site outgrew two passes ago. The prohibition
+is replaced by the rule it was reaching for, which is testable: motion may only reveal a
+relationship the HTML already states.
+
+Pre-existing defects the redesign amplified, and improved on the way past: inline `<code>` holding
+file paths had no break opportunity (Spline Sans Mono sets wider than the system mono it
+replaced), and generated tables emitted without a `.table-wrap` inherited a `min-width: 620px`
+with nothing to scroll in. `evidence.html` went from 32px of overflow at 390px to 0; `jobs.html`
+from 259px to 23px, and to 0 at 768px and above.
+
+Not applicable to this milestone, and stated rather than skipped: public-boundary bypass,
+state-machine algebra, transaction and fault injection, idempotency, two-connection concurrency,
+exact query beyond page bounds, immutable boundaries, provider timeout, replay and reconciliation,
+audit/event/trace exactness, schema compatibility. No runtime, domain or persistence code is in
+the diff.
+
 ## Residual limitations
 
 - The generated CRM screen is a demonstration with invented data (Acme S.p.A., Sarah Rossi). It
@@ -135,3 +181,10 @@ separation — is preserved unchanged.
   letters. On "Quote & approval" — a solution-card title — it reads a little like a link
   underline. It is a characteristic of the face, not a defect, and no stylistic set changes it.
 - The 12s pairing cycle and the 16s scene cycle are independent; they are not meant to line up.
+- `jobs.html` still overflows by 23px at 390px and 93px at 320px. It renders a four-column
+  generated table with no `.table-wrap`, which is a shape in `scripts/site-pages.js` rather than
+  in this stylesheet; fixing it properly is its own change. It is better than it was.
+- `npm run site:shots` captures with `--hide-scrollbars`. Every image it produces is taken in a
+  world where the scrollbar has no width, so it cannot show a scrollbar-induced layout defect.
+  The overflow probe used in this review is a page that reports `documentElement.scrollWidth -
+  clientWidth` and names the widest unclipped element; it is worth folding into the receipts.
