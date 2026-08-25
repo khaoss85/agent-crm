@@ -91,6 +91,7 @@ is not a state they can be in; disagreement is a failure instead.
 | `spine.contract` | `SPINE_CONTRACT`, `PERMISSIONS`, `ROLE_BUNDLES`, `SPINE_NOT_MODELED` |
 | `runtime.mode` | `MODE_ENV`, and production's refusal to start without a verifier |
 | `tenant.storage` | `TENANT_STRATEGY`, `TENANT_LIMITATIONS`, and a **structural probe of `bindTenantStorage()`'s own returned shape** |
+| `storage.contract` | the M1 contract constant; Company `create/get/list` executed through the real SQLite adapter; generated public and managed services executed against their generated schemas; and the retained Work legacy raw-read probe |
 | `reference.composition` | the nine checked-in domain packages composed through `resolvePackageComposition` — the same function `PackageRegistry` throws from at startup |
 | `cli.rails` | the CLI dispatch table **and** each handler module's export, which must agree |
 
@@ -135,6 +136,16 @@ the vocabulary. A fact that could only ever take one value proves nothing.
 (`SPINE_VERIFIER_REQUIRED`) is what makes
 `spine.authentication.framework_verifier=absent` a positive statement about the seam
 rather than an observation of silence.
+
+**Storage facts are bounded executable probes, not repository-wide extraction claims.**
+The Company probe executes only `create`, exact `get` and `list` against an isolated
+SQLite schema through the M1 adapter. The synthetic generated probes execute public
+string, nullable-string, enum and boolean paths, managed enum paths, the closed
+predicate shapes, and complete mutation/readback checks against their generated
+schemas. They prove those selected runtimes and the generator template use the
+contract; they do not claim every checked-in generated service is migrated. The Work
+probe deliberately detects that `legacy-tasks.js` still reaches the raw migration
+source, so it remains visible M2 residue rather than being mistaken for alignment.
 
 ## The rule that matters most
 
