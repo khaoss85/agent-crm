@@ -1006,6 +1006,9 @@ export async function readAuthorities({ rootDir }) {
         };
         const resultsValid = created.name === 'Probe'
           && created.note === 'created-note'
+          && created.kind === 'primary'
+          && created.enabled === true
+          && created.status === 'open'
           && isDeepStrictEqual(get.result, created)
           && list.result.length === 2
           && isDeepStrictEqual(list.result.find((row) => row.id === created.id), created)
@@ -1033,6 +1036,10 @@ export async function readAuthorities({ rootDir }) {
           })
           && Object.hasOwn(createNull.result, 'note')
           && createNull.result.note === null
+          && createNull.result.name === 'Null Probe'
+          && createNull.result.kind === 'primary'
+          && createNull.result.enabled === true
+          && createNull.result.status === 'open'
           && isDeepStrictEqual(getNull.result, createNull.result)
           && isDeepStrictEqual(applyManaged.result, { ...update.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
           && createManaged.result.status === 'open'
