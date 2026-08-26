@@ -144,11 +144,14 @@ runtime integrations.
 `scripts/repo-truth.js` and `docs/repository-truth.json` are a horizontal
 **repository evidence discipline**, not a CRM runtime capability. Its status is
 `not_applicable` for all six columns and for every domain outside the table: it
-imports no domain package at runtime, opens no application or database, exposes
-no domain mutation, and adds nothing a domain could align to or be backfilled
-into. It reads the checked-in source of the framework, a frozen benchmark
-receipt and the measured claims ledger, and it never leaves this repository — a
-generated project has no claims ledger, no JTBD matrix and no status file.
+opens no application or durable domain database, exposes no domain mutation,
+and adds nothing a domain could align to or be backfilled into. Its storage
+authority imports selected Company and Work source and opens isolated in-memory
+SQLite databases only to execute bounded, disposable contract probes; no probe
+observes or changes application state. It otherwise reads the checked-in source
+of the framework, a frozen benchmark receipt and the measured claims ledger,
+and it never leaves this repository — a generated project has no claims ledger,
+no JTBD matrix and no status file.
 
 One fact *is* nearly domain-shaped and is deliberately not a row:
 `domain.<name>.package_native` is generated for all nine checked-in packages

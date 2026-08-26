@@ -36,11 +36,12 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { pathToFileURL } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const REPOSITORY_TRUTH_CONTRACT = 1;
 
@@ -105,6 +106,9 @@ export const TRUTH_PROBLEMS = Object.freeze([
  * acts on the boundary rather than discovering it.
  */
 export const TRUTH_LIMITATIONS = Object.freeze([
+  ['STORAGE_FACT_IS_BOUNDED_PROBE',
+    'storage runtime facts come from bounded executable probes over named Company, generated-service and Work '
+    + 'legacy operations and field shapes. They do not prove every checked-in service, schema shape or storage path'],
   ['TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME',
     'every fact is read from checked-in source or from a recorded receipt. Nothing here reports what a '
     + 'deployed instance is doing: which mode it chose, which tenant it is bound to, whether a verifier is '
@@ -181,11 +185,34 @@ export const JTBD_PORTFOLIO_SOURCES = Object.freeze([
 ]);
 
 export const AUTHORITY_SOURCES = Object.freeze([
+  'scripts/repo-truth.js',
   'packages/core/src/identity.js',
   'packages/core/src/authorization.js',
   'packages/core/src/runtime-mode.js',
   'packages/core/src/tenant-storage.js',
   'packages/core/src/tenant-binding.js',
+  'packages/core/src/storage-contract.js',
+  'packages/core/src/database.js',
+  'packages/core/src/errors.js',
+  'packages/core/src/validation.js',
+  'packages/core/src/time.js',
+  'packages/core/src/actor.js',
+  'packages/core/src/module-manifest.js',
+  'packages/core/src/module-evolution.js',
+  'packages/core/src/timeout.js',
+  'packages/core/src/action-runtime.js',
+  'packages/core/src/external-operation.js',
+  'packages/core/src/core-adapters.js',
+  'packages/core/src/definition-fingerprint.js',
+  'packages/core/src/money.js',
+  'packages/core/src/solution-plan.js',
+  'packages/core/src/implementation-evidence.js',
+  'packages/core/src/spine-store.js',
+  'packages/modules/company/src/company-service.js',
+  'packages/cli/src/module-factory.js',
+  'packages/work/src/legacy-tasks.js',
+  'packages/work/src/follow-up.js',
+  'packages/core/index.js',
   'packages/core/src/package-composition.js',
   'packages/core/src/package-registry.js',
   'packages/app/src/spine.js',
@@ -650,9 +677,9 @@ export function gitIn(cwd) {
  * so a test can flip one authority value and watch the whole document move,
  * which is the "a runtime fact changed and the generated facts are stale" case.
  *
- * @param {{rootDir: string}} options
+ * @param {{rootDir: string, generatedProbeClock?: 'advancing' | 'stalled'}} options
  */
-export async function readAuthorities({ rootDir }) {
+export async function readAuthorities({ rootDir, generatedProbeClock = 'advancing' }) {
   /**
    * A **fatal** problem: a source authority could not be read, so no fact may be
    * derived at all and the document is refused whole.
@@ -698,7 +725,30 @@ export async function readAuthorities({ rootDir }) {
       unavailable(`authority source ${path} does not exist, so the facts it carries cannot be read at all`);
       continue;
     }
+    let regularFile = false;
+    try {
+      regularFile = lstatSync(full).isFile();
+    } catch (error) {
+      problems.push({
+        code: 'TRUTH_SURFACE_UNSAFE',
+        message: `authority source ${path} could not be verified as a regular file: ${/** @type {any} */ (error)?.code ?? 'filesystem refusal'}`,
+      });
+      continue;
+    }
+    if (!regularFile) {
+      problems.push({
+        code: 'TRUTH_SURFACE_UNSAFE',
+        message: `authority source ${path} is not a regular file. No fact is derived from a directory, device, socket or pipe.`,
+      });
+      continue;
+    }
     digests.push([path, sha256(readFileSync(full, 'utf8'))]);
+  }
+  const executingGenerator = fileURLToPath(import.meta.url);
+  const targetGeneratorDigest = digests.find(([path]) => path === 'scripts/repo-truth.js')?.[1];
+  if (targetGeneratorDigest
+    && targetGeneratorDigest !== sha256(readFileSync(executingGenerator, 'utf8'))) {
+    unavailable('the target checkout has a different scripts/repo-truth.js than the generator executing this authority read');
   }
   const sourceSha = sha256(canonical(digests.slice().sort((a, b) => compare(a[0], b[0]))));
 
@@ -765,6 +815,629 @@ export async function readAuthorities({ rootDir }) {
       mode: { allowsAssertedActors: false },
     });
     bundle.anonymousAllowed = decision.allowed === true;
+
+    const storageContract = await import(url('packages/core/src/storage-contract.js'));
+    const { nowIso: realNowIso } = await import(url('packages/core/src/time.js'));
+    const { trustedSystemActor } = await import(url('packages/core/src/actor.js'));
+    const { CORE_MIGRATIONS_FOR_CHARACTERIZATION } = await import(url('packages/core/src/database.js'));
+    const { CompanyService } = await import(url('packages/modules/company/src/company-service.js'));
+    const { planModule } = await import(url('packages/cli/src/module-factory.js'));
+    const { migrateLegacyTasks } = await import(url('packages/work/src/legacy-tasks.js'));
+    bundle.storageContract = storageContract.STORAGE_CONTRACT;
+    const probeActor = trustedSystemActor('execute the repository-truth storage authority');
+
+    // The generated-service probe substitutes a deterministic clock so it can
+    // prove exact timestamp ordering without a wall-clock spin. Prove the real
+    // runtime clock separately, with a small hard bound: a regressed/constant
+    // clock refuses the authority instead of being masked by the substitute.
+    const canonicalUtcTimestamp = (value) => typeof value === 'string'
+      && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+      && Number.isFinite(Date.parse(value))
+      && new Date(Date.parse(value)).toISOString() === value;
+    const realClockStart = realNowIso();
+    if (!canonicalUtcTimestamp(realClockStart)) {
+      throw new Error('generated runtime clock did not return canonical ISO-8601 UTC');
+    }
+    let realClockAdvanced = false;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      const candidate = realNowIso();
+      if (canonicalUtcTimestamp(candidate) && Date.parse(candidate) > Date.parse(realClockStart)) {
+        realClockAdvanced = true;
+        break;
+      }
+    }
+    if (!realClockAdvanced) throw new Error('generated runtime clock did not advance within the bounded probe');
+
+    // Behavior probe: Company statements must render and execute through the
+    // real M1 SQLite adapter. The isolated schema makes a bad table, column,
+    // predicate or statement shape fail instead of being accepted by a fake.
+    const companyCalls = [];
+    const { DatabaseSync } = await import('node:sqlite');
+    const companyRaw = new DatabaseSync(':memory:');
+    try {
+      for (const migration of CORE_MIGRATIONS_FOR_CHARACTERIZATION) {
+        if (migration.plane === 'data') companyRaw.exec(migration.sql);
+      }
+      const companyActual = storageContract.createSqliteStorage(
+        companyRaw, (fn) => fn(), async (fn) => fn(),
+      ).sync;
+      const companySync = {
+        savepoint(name, fn) { companyCalls.push(['savepoint', name]); return companyActual.savepoint(name, fn); },
+        execute(statement) { companyCalls.push(['execute', statement.kind]); return companyActual.execute(statement); },
+        maybeOne(statement) { companyCalls.push(['maybeOne', statement.kind]); return companyActual.maybeOne(statement); },
+        many(statement) { companyCalls.push(['many', statement.kind]); return companyActual.many(statement); },
+      };
+      const companyAudits = [];
+      const companyService = new CompanyService({
+        database: { storage: { sync: companySync } },
+        audit: { record(entry) { companyAudits.push(entry); } }, events: { async emit() {} },
+      });
+      const companyCreated = await companyService.create(
+        { name: 'Truth Company', domain: 'EXAMPLE.COM' }, { actor: probeActor },
+      );
+      const companyOther = await companyService.create(
+        { name: 'Other Company', domain: 'OTHER.EXAMPLE' }, { actor: probeActor },
+      );
+      const companyRead = companyService.get(companyCreated.id);
+      const companyList = companyService.list();
+      let missingCompanyCode = null;
+      try {
+        companyService.get('truth-company-missing');
+      } catch (error) {
+        missingCompanyCode = /** @type {any} */ (error)?.code ?? null;
+      }
+      bundle.companyUsesStorage = isDeepStrictEqual(companyCreated, companyRead)
+        && companyCreated.name === 'Truth Company'
+        && companyCreated.domain === 'example.com'
+        && canonicalUtcTimestamp(companyCreated.createdAt)
+        && canonicalUtcTimestamp(companyCreated.updatedAt)
+        && companyOther.name === 'Other Company'
+        && canonicalUtcTimestamp(companyOther.createdAt)
+        && canonicalUtcTimestamp(companyOther.updatedAt)
+        && companyOther.domain === 'other.example'
+        && companyList.length === 2
+        && companyList.some((company) => isDeepStrictEqual(company, companyCreated))
+        && companyList.some((company) => isDeepStrictEqual(company, companyOther))
+        && missingCompanyCode === 'NOT_FOUND'
+        && companyAudits.length === 2
+        && companyAudits.every((entry) => isDeepStrictEqual(entry.actor, probeActor))
+        && canonical(companyCalls) === canonical([
+          ['savepoint', 'company_create'], ['execute', 'insert'],
+          ['savepoint', 'company_create'], ['execute', 'insert'],
+          ['maybeOne', 'select'], ['many', 'select'], ['maybeOne', 'select'],
+        ]);
+      if (!bundle.companyUsesStorage) {
+        throw new Error('the Company storage behavior probe was inconclusive or regressed');
+      }
+    } finally {
+      companyRaw.close();
+    }
+
+    // Execute the artifact the generator actually emits against a fake handle
+    // that exposes storage and deliberately has no raw driver. Every generated
+    // operation is driven; an alias/bracket/raw bypass therefore throws rather
+    // than being hidden by a token scan.
+    const generatedRoot = mkdtempSync(join(tmpdir(), 'accordo-truth-generated-'));
+    try {
+      // Give planning an isolated, empty module registry. The authority must
+      // not read an un-fingerprinted project module tree merely to generate a
+      // synthetic conformance artifact.
+      mkdirSync(join(generatedRoot, 'packages/modules'), { recursive: true });
+      const generatedPlan = planModule({
+        rootDir: generatedRoot,
+        manifest: {
+          manifestVersion: 1, name: 'truth-storage-probe',
+          fields: [
+            { name: 'name', type: 'string', required: true },
+            { name: 'note', type: 'string', required: false },
+            { name: 'kind', type: 'enum', values: ['primary', 'secondary'], required: true },
+            { name: 'enabled', type: 'boolean', required: true },
+            { name: 'status', type: 'enum', values: ['open', 'closed', 'pending'], writable: 'managed', default: 'open' },
+          ],
+        },
+      });
+      const serviceFile = generatedPlan.files.find((file) => {
+        const normalized = file.path.split(/[\\/]/).join('/');
+        return /\/src\/[^/]+-service\.js$/.test(normalized);
+      });
+      if (!serviceFile) throw new Error('generated storage probe did not produce a service artifact');
+      const managedPlan = planModule({
+        rootDir: generatedRoot,
+        manifest: {
+          manifestVersion: 1, name: 'truth-managed-storage-probe',
+          fields: [
+            { name: 'name', type: 'string', required: true, writable: 'managed', default: 'Managed Default' },
+            { name: 'note', type: 'string', required: false, writable: 'managed' },
+            { name: 'status', type: 'enum', values: ['open', 'closed'], writable: 'managed', default: 'open' },
+          ],
+        },
+      });
+      const managedServiceFile = managedPlan.files.find((file) => {
+        const normalized = file.path.split(/[\\/]/).join('/');
+        return /\/src\/[^/]+-service\.js$/.test(normalized);
+      });
+      if (!managedServiceFile) throw new Error('generated managed-storage probe did not produce a service artifact');
+      const migrationFile = generatedPlan.files.find((file) => /migration\.js$/.test(file.path));
+      const managedMigrationFile = managedPlan.files.find((file) => /migration\.js$/.test(file.path));
+      if (!migrationFile || !managedMigrationFile) throw new Error('generated storage probe did not produce migration artifacts');
+      writeFileSync(join(generatedRoot, 'package.json'), '{"type":"module"}\n');
+      for (const source of ['errors.js', 'validation.js']) {
+        const target = join(generatedRoot, 'packages/core/src', source);
+        mkdirSync(join(generatedRoot, 'packages/core/src'), { recursive: true });
+        writeFileSync(target, readFileSync(join(rootDir, 'packages/core/src', source), 'utf8'));
+      }
+      // The authority owns its clock so timestamp ordering is deterministic and
+      // cannot turn into a wall-clock spin. The stalled variant exists only to
+      // prove that a clock which cannot advance is refused with a stable code.
+      const probeTimePath = join(generatedRoot, 'packages/core/src/time.js');
+      writeFileSync(probeTimePath, generatedProbeClock === 'stalled'
+        ? `export function nowIso() { return '2026-01-01T00:00:00.000Z'; }\n`
+        : `let tick = 0;\nexport function nowIso() { return new Date(Date.UTC(2026, 0, 1, 0, 0, 0, tick++)).toISOString(); }\n`);
+      const generatedPath = join(generatedRoot, ...serviceFile.path.split(/[\\/]/));
+      mkdirSync(dirname(generatedPath), { recursive: true });
+      writeFileSync(generatedPath, serviceFile.content);
+      const managedGeneratedPath = join(generatedRoot, ...managedServiceFile.path.split(/[\\/]/));
+      mkdirSync(dirname(managedGeneratedPath), { recursive: true });
+      writeFileSync(managedGeneratedPath, managedServiceFile.content);
+      const migrationPath = join(generatedRoot, ...migrationFile.path.split(/[\\/]/));
+      const managedMigrationPath = join(generatedRoot, ...managedMigrationFile.path.split(/[\\/]/));
+      writeFileSync(migrationPath, migrationFile.content);
+      writeFileSync(managedMigrationPath, managedMigrationFile.content);
+      const generatedModule = await import(`${pathToFileURL(generatedPath).href}?truth-probe=1`);
+      const managedGeneratedModule = await import(`${pathToFileURL(managedGeneratedPath).href}?truth-probe=1`);
+      const migrationModule = await import(`${pathToFileURL(migrationPath).href}?truth-probe=1`);
+      const managedMigrationModule = await import(`${pathToFileURL(managedMigrationPath).href}?truth-probe=1`);
+      const GeneratedService = Object.values(generatedModule).find(
+        (value) => typeof value === 'function' && /Service$/.test(value.name),
+      );
+      const ManagedGeneratedService = Object.values(managedGeneratedModule).find(
+        (value) => typeof value === 'function' && /Service$/.test(value.name),
+      );
+      if (!GeneratedService) throw new Error('generated storage probe service export is unavailable');
+      if (!ManagedGeneratedService) throw new Error('generated managed-storage probe service export is unavailable');
+      const generatedCalls = [];
+      const generatedUpdateTimestamps = [];
+      const migration = Object.values(migrationModule).find((value) => Array.isArray(value))?.[0];
+      const managedMigration = Object.values(managedMigrationModule).find((value) => Array.isArray(value))?.[0];
+      if (!migration?.sql || !managedMigration?.sql) throw new Error('generated storage migration exports are unavailable');
+      const { DatabaseSync } = await import('node:sqlite');
+      const raw = new DatabaseSync(':memory:');
+      const managedRaw = new DatabaseSync(':memory:');
+      raw.exec(migration.sql);
+      managedRaw.exec(managedMigration.sql);
+      const realSync = storageContract.createSqliteStorage(raw, (fn) => fn(), async (fn) => fn()).sync;
+      const managedRealSync = storageContract.createSqliteStorage(managedRaw, (fn) => fn(), async (fn) => fn()).sync;
+      const tracked = (actual) => ({
+        savepoint(name, fn) { generatedCalls.push(['savepoint', name]); return actual.savepoint(name, fn); },
+        execute(statement) {
+          generatedCalls.push(['execute', statement.kind]);
+          if (statement.kind === 'update') {
+            generatedUpdateTimestamps.push(statement.values.find((entry) => entry.column === 'updated_at')?.value);
+          }
+          return actual.execute(statement);
+        },
+        maybeOne(statement) { generatedCalls.push(['maybeOne', statement.kind]); return actual.maybeOne(statement); },
+        many(statement) { generatedCalls.push(['many', statement.kind]); return actual.many(statement); },
+      });
+      const sync = tracked(realSync);
+      const managedSync = tracked(managedRealSync);
+      try {
+        const generatedAudits = [];
+        const audit = { record(entry) { generatedAudits.push(entry); } };
+        const service = new GeneratedService({
+          database: { storage: { sync } }, audit, events: { async emit() {} },
+        });
+        const managedService = new ManagedGeneratedService({
+          database: { storage: { sync: managedSync } }, audit, events: { async emit() {} },
+        });
+        /** @param {() => unknown | Promise<unknown>} run */
+        const drive = async (run) => {
+          const start = generatedCalls.length;
+          const result = await run();
+          return { result, calls: generatedCalls.slice(start) };
+        };
+        /** @param {() => unknown | Promise<unknown>} run */
+        const refusesWithoutEffects = async (run) => {
+          const mutationCallCount = generatedCalls.filter(([method]) => method === 'execute' || method === 'savepoint').length;
+          const auditCount = generatedAudits.length;
+          try {
+            await run();
+            return false;
+          } catch (error) {
+            return error?.code === 'VALIDATION_ERROR'
+              && generatedCalls.filter(([method]) => method === 'execute' || method === 'savepoint').length === mutationCallCount
+              && generatedAudits.length === auditCount;
+          }
+        };
+        const unknownPredicateRefused = await refusesWithoutEffects(
+          () => service.listWhere({ unknown: 'value' }),
+        );
+        const emptyMembershipRefused = await refusesWithoutEffects(
+          () => service.listWhere({ status: [] }),
+        );
+        const invalidPublicNameRefused = await refusesWithoutEffects(
+          () => service.create({ name: 42, kind: 'primary', enabled: true }, { actor: probeActor }),
+        );
+        const invalidPublicNoteRefused = await refusesWithoutEffects(
+          () => service.create({ name: 'Invalid', note: 42, kind: 'primary', enabled: true }, { actor: probeActor }),
+        );
+        const invalidPublicEnumRefused = await refusesWithoutEffects(
+          () => service.create({ name: 'Invalid', kind: 'wrong', enabled: true }, { actor: probeActor }),
+        );
+        const invalidPublicBooleanRefused = await refusesWithoutEffects(
+          () => service.create({ name: 'Invalid', kind: 'primary', enabled: 'yes' }, { actor: probeActor }),
+        );
+        const invalidManagedNoteRefused = await refusesWithoutEffects(
+          () => managedService.createManaged({ note: 42 }, { actor: probeActor }),
+        );
+        const invalidManagedEnumRefused = await refusesWithoutEffects(
+          () => managedService.createManaged({ status: 'wrong' }, { actor: probeActor }),
+        );
+        const invalidManagedStringRefused = await refusesWithoutEffects(
+          () => managedService.createManaged({ name: 42 }, { actor: probeActor }),
+        );
+        let managedCreateRefusal = null;
+        try {
+          await service.create({ name: 'Refused', kind: 'primary', enabled: true, status: 'closed' }, { actor: probeActor });
+        } catch (error) { managedCreateRefusal = error?.code ?? null; }
+        const create = await drive(() => service.create({
+          name: 'Probe', note: 'created-note', kind: 'primary', enabled: true,
+        }, { actor: probeActor }));
+        const created = create.result;
+        const invalidPublicNameUpdateRefused = await refusesWithoutEffects(
+          () => service.update(created.id, { name: 42 }, { actor: probeActor }),
+        );
+        const invalidPublicNoteUpdateRefused = await refusesWithoutEffects(
+          () => service.update(created.id, { note: 42 }, { actor: probeActor }),
+        );
+        const invalidPublicEnumUpdateRefused = await refusesWithoutEffects(
+          () => service.update(created.id, { kind: 'wrong' }, { actor: probeActor }),
+        );
+        const invalidPublicBooleanUpdateRefused = await refusesWithoutEffects(
+          () => service.update(created.id, { enabled: 'yes' }, { actor: probeActor }),
+        );
+        const createPendingSeed = await drive(() => service.create({
+          name: 'Other', note: null, kind: 'secondary', enabled: false,
+        }, { actor: probeActor }));
+        const pendingSeed = await drive(() => service.applyManaged(
+          createPendingSeed.result.id, { status: 'pending' }, { actor: probeActor },
+        ));
+        const createConjunctionSeed = await drive(() => service.create({
+          name: 'Open Disabled', note: 'conjunction-target', kind: 'primary', enabled: false,
+        }, { actor: probeActor }));
+        const conjunctionSeed = await drive(() => service.applyManaged(
+          createConjunctionSeed.result.id, { status: 'pending' }, { actor: probeActor },
+        ));
+        const createClosedSeed = await drive(() => service.create({
+          name: 'Closed', note: 'membership-target', kind: 'secondary', enabled: false,
+        }, { actor: probeActor }));
+        const closedSeed = await drive(() => service.applyManaged(
+          createClosedSeed.result.id, { status: 'closed' }, { actor: probeActor },
+        ));
+        const get = await drive(() => service.get(created.id));
+        const list = await drive(() => service.list());
+        const listWithMembership = await drive(() => service.list({ where: { status: ['open', 'closed'] } }));
+        const listWhere = await drive(() => service.listWhere({ id: created.id }));
+        const listWhereNull = await drive(() => service.listWhere({ note: null }));
+        const listWhereEnabled = await drive(() => service.listWhere({ enabled: true }));
+        const countWhere = await drive(() => service.countWhere({ id: created.id }));
+        const countWhereMembership = await drive(() => service.countWhere({ status: ['open', 'closed'] }));
+        const countWhereDisabled = await drive(() => service.countWhere({ enabled: false }));
+        const listWhereConjunction = await drive(() => service.listWhere({ kind: 'primary', enabled: false }));
+        const countWhereConjunction = await drive(() => service.countWhere({ kind: 'primary', enabled: false }));
+        const countWhereNoMatchConjunction = await drive(() => service.countWhere({ kind: 'secondary', enabled: true }));
+        const createOmitted = await drive(() => service.create({
+          name: 'Omitted Note', kind: 'primary', enabled: true,
+        }, { actor: probeActor }));
+        const getOmitted = await drive(() => service.get(createOmitted.result.id));
+        let managedUpdateRefusal = null;
+        try {
+          await service.update(created.id, { status: 'closed' }, { actor: probeActor });
+        } catch (error) { managedUpdateRefusal = error?.code ?? null; }
+        const update = await drive(() => service.update(created.id, {
+          name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
+        }, { actor: probeActor }));
+        const listSiblingsAfterUpdate = await drive(() => service.list());
+        const getNonmatchingAfterUpdate = await drive(() => service.get(pendingSeed.result.id));
+        const createNull = await drive(() => service.create({
+          name: 'Null Probe', note: null, kind: 'primary', enabled: true,
+        }, { actor: probeActor }));
+        const getNull = await drive(() => service.get(createNull.result.id));
+        const partialUpdate = await drive(() => service.update(created.id, { note: null }, { actor: probeActor }));
+        const listSiblingsAfterPartialUpdate = await drive(() => service.list());
+        const applyManaged = await drive(() => service.applyManaged(created.id, { status: 'closed' }, { actor: probeActor }));
+        const listSiblingsAfterManaged = await drive(() => service.list());
+        const getNonmatchingAfterManaged = await drive(() => service.get(pendingSeed.result.id));
+        const createManaged = await drive(() => managedService.createManaged({
+          name: 'Managed Probe', note: 'managed-note', status: 'open',
+        }, { actor: probeActor }));
+        const getManagedCreated = await drive(() => managedService.get(createManaged.result.id));
+        const invalidManagedNameUpdateRefused = await refusesWithoutEffects(
+          () => managedService.applyManaged(createManaged.result.id, { name: 42 }, { actor: probeActor }),
+        );
+        const invalidManagedNoteUpdateRefused = await refusesWithoutEffects(
+          () => managedService.applyManaged(createManaged.result.id, { note: 42 }, { actor: probeActor }),
+        );
+        const invalidManagedEnumUpdateRefused = await refusesWithoutEffects(
+          () => managedService.applyManaged(createManaged.result.id, { status: 'wrong' }, { actor: probeActor }),
+        );
+        const createManagedSibling = await drive(() => managedService.createManaged({
+          name: 'Managed Sibling', note: 'sibling-note', status: 'open',
+        }, { actor: probeActor }));
+        const createManagedOmitted = await drive(() => managedService.createManaged({
+          name: 'Managed Omitted', status: 'open',
+        }, { actor: probeActor }));
+        const getManagedOmittedCreated = await drive(() => managedService.get(createManagedOmitted.result.id));
+        const createManagedDefaults = await drive(() => managedService.createManaged({}, { actor: probeActor }));
+        const getManagedDefaultsCreated = await drive(() => managedService.get(createManagedDefaults.result.id));
+        const updateManaged = await drive(() => managedService.applyManaged(createManaged.result.id, {
+          name: 'Updated Managed Probe', note: null, status: 'closed',
+        }, { actor: probeActor }));
+        const getManagedUpdated = await drive(() => managedService.get(createManaged.result.id));
+        const getManagedSiblingAfterUpdate = await drive(() => managedService.get(createManagedSibling.result.id));
+        const getManagedOmittedAfterUpdate = await drive(() => managedService.get(createManagedOmitted.result.id));
+        const getManagedDefaultsAfterUpdate = await drive(() => managedService.get(createManagedDefaults.result.id));
+        const partialManagedUpdate = await drive(() => managedService.applyManaged(createManaged.result.id, { note: 'restored-note' }, { actor: probeActor }));
+        const getManagedPartial = await drive(() => managedService.get(createManaged.result.id));
+        const getManagedOmittedAfterPartial = await drive(() => managedService.get(createManagedOmitted.result.id));
+        const getManagedDefaultsAfterPartial = await drive(() => managedService.get(createManagedDefaults.result.id));
+        const getManagedSibling = await drive(() => managedService.get(createManagedSibling.result.id));
+        const operations = {
+          create: create.calls,
+          createPendingSeed: createPendingSeed.calls,
+          pendingSeed: pendingSeed.calls,
+          createConjunctionSeed: createConjunctionSeed.calls,
+          conjunctionSeed: conjunctionSeed.calls,
+          createClosedSeed: createClosedSeed.calls,
+          closedSeed: closedSeed.calls,
+          get: get.calls,
+          list: list.calls,
+          listWithMembership: listWithMembership.calls,
+          listWhere: listWhere.calls,
+          listWhereNull: listWhereNull.calls,
+          listWhereEnabled: listWhereEnabled.calls,
+          countWhere: countWhere.calls,
+          countWhereMembership: countWhereMembership.calls,
+          countWhereDisabled: countWhereDisabled.calls,
+          listWhereConjunction: listWhereConjunction.calls,
+          countWhereConjunction: countWhereConjunction.calls,
+          countWhereNoMatchConjunction: countWhereNoMatchConjunction.calls,
+          createOmitted: createOmitted.calls,
+          getOmitted: getOmitted.calls,
+          update: update.calls,
+          listSiblingsAfterUpdate: listSiblingsAfterUpdate.calls,
+          getNonmatchingAfterUpdate: getNonmatchingAfterUpdate.calls,
+          createNull: createNull.calls,
+          getNull: getNull.calls,
+          partialUpdate: partialUpdate.calls,
+          listSiblingsAfterPartialUpdate: listSiblingsAfterPartialUpdate.calls,
+          applyManaged: applyManaged.calls,
+          listSiblingsAfterManaged: listSiblingsAfterManaged.calls,
+          getNonmatchingAfterManaged: getNonmatchingAfterManaged.calls,
+          createManaged: createManaged.calls,
+          getManagedCreated: getManagedCreated.calls,
+          createManagedSibling: createManagedSibling.calls,
+          createManagedOmitted: createManagedOmitted.calls,
+          getManagedOmittedCreated: getManagedOmittedCreated.calls,
+          createManagedDefaults: createManagedDefaults.calls,
+          getManagedDefaultsCreated: getManagedDefaultsCreated.calls,
+          updateManaged: updateManaged.calls,
+          getManagedUpdated: getManagedUpdated.calls,
+          getManagedSiblingAfterUpdate: getManagedSiblingAfterUpdate.calls,
+          getManagedOmittedAfterUpdate: getManagedOmittedAfterUpdate.calls,
+          getManagedDefaultsAfterUpdate: getManagedDefaultsAfterUpdate.calls,
+          partialManagedUpdate: partialManagedUpdate.calls,
+          getManagedPartial: getManagedPartial.calls,
+          getManagedOmittedAfterPartial: getManagedOmittedAfterPartial.calls,
+          getManagedDefaultsAfterPartial: getManagedDefaultsAfterPartial.calls,
+          getManagedSibling: getManagedSibling.calls,
+        };
+        const seededSiblings = [pendingSeed.result, conjunctionSeed.result, closedSeed.result];
+        const seededSiblingsUnchanged = [
+          listSiblingsAfterUpdate.result, listSiblingsAfterPartialUpdate.result, listSiblingsAfterManaged.result,
+        ].every((rows) => seededSiblings.every((expected) => isDeepStrictEqual(
+          rows.find((row) => row.id === expected.id), expected,
+        ))) && [listSiblingsAfterUpdate.result, listSiblingsAfterPartialUpdate.result, listSiblingsAfterManaged.result]
+          .every((rows) => isDeepStrictEqual(rows.find((row) => row.id === createOmitted.result.id), createOmitted.result))
+          && [listSiblingsAfterPartialUpdate.result, listSiblingsAfterManaged.result]
+            .every((rows) => isDeepStrictEqual(rows.find((row) => row.id === createNull.result.id), createNull.result));
+        const priorMutationTimestamps = [
+          createPendingSeed.result.updatedAt,
+          createConjunctionSeed.result.updatedAt,
+          createClosedSeed.result.updatedAt,
+          created.updatedAt,
+          update.result.updatedAt,
+          partialUpdate.result.updatedAt,
+          createManaged.result.updatedAt,
+          updateManaged.result.updatedAt,
+        ];
+        const mutationTimestampsAdvance = generatedUpdateTimestamps.length === priorMutationTimestamps.length
+          && generatedUpdateTimestamps.every((timestamp, index) => canonicalUtcTimestamp(timestamp)
+            && canonicalUtcTimestamp(priorMutationTimestamps[index])
+            && Date.parse(timestamp) > Date.parse(priorMutationTimestamps[index]));
+        const generatedCreateTimestampsCanonical = [
+          created, createPendingSeed.result, createConjunctionSeed.result, createClosedSeed.result,
+          createOmitted.result, createNull.result, createManaged.result, createManagedSibling.result,
+          createManagedOmitted.result, createManagedDefaults.result,
+        ].every((record) => canonicalUtcTimestamp(record.createdAt) && canonicalUtcTimestamp(record.updatedAt));
+        if (!mutationTimestampsAdvance) {
+          throw new Error('generated mutation timestamps did not advance strictly');
+        }
+        const resultsValid = generatedCreateTimestampsCanonical
+          && unknownPredicateRefused && emptyMembershipRefused
+          && invalidPublicNameRefused && invalidPublicNoteRefused
+          && invalidPublicEnumRefused && invalidPublicBooleanRefused
+          && invalidPublicNameUpdateRefused && invalidPublicNoteUpdateRefused
+          && invalidPublicEnumUpdateRefused && invalidPublicBooleanUpdateRefused
+          && invalidManagedNoteRefused && invalidManagedEnumRefused && invalidManagedStringRefused
+          && invalidManagedNameUpdateRefused && invalidManagedNoteUpdateRefused && invalidManagedEnumUpdateRefused
+          && managedCreateRefusal === 'VALIDATION_ERROR'
+          && managedUpdateRefusal === 'VALIDATION_ERROR'
+          && generatedAudits.length === 18
+          && generatedAudits.every((entry) => isDeepStrictEqual(entry.actor, probeActor))
+          && seededSiblingsUnchanged
+          && created.name === 'Probe'
+          && created.note === 'created-note'
+          && created.kind === 'primary'
+          && created.enabled === true
+          && created.status === 'open'
+          && isDeepStrictEqual(get.result, created)
+          && list.result.length === 4
+          && isDeepStrictEqual(list.result.find((row) => row.id === created.id), created)
+          && isDeepStrictEqual(list.result.find((row) => row.id === pendingSeed.result.id), pendingSeed.result)
+          && listWithMembership.result.length === 2
+          && isDeepStrictEqual(listWithMembership.result.find((row) => row.id === created.id), created)
+          && isDeepStrictEqual(listWithMembership.result.find((row) => row.id === closedSeed.result.id), closedSeed.result)
+          && listWhere.result.length === 1
+          && isDeepStrictEqual(listWhere.result[0], created)
+          && listWhereNull.result.length === 1
+          && isDeepStrictEqual(listWhereNull.result[0], pendingSeed.result)
+          && listWhereEnabled.result.length === 1
+          && isDeepStrictEqual(listWhereEnabled.result[0], created)
+          && countWhere.result === 1
+          && countWhereMembership.result === 2
+          && countWhereDisabled.result === 3
+          && listWhereConjunction.result.length === 1
+          && listWhereConjunction.result[0].id === conjunctionSeed.result.id
+          && countWhereConjunction.result === 1
+          && countWhereNoMatchConjunction.result === 0
+          && Object.hasOwn(createOmitted.result, 'note')
+          && createOmitted.result.note === null
+          && isDeepStrictEqual(getOmitted.result, createOmitted.result)
+          && isDeepStrictEqual(update.result, {
+            ...created, name: 'Updated Probe', note: 'updated-note', kind: 'secondary', enabled: false,
+            updatedAt: update.result.updatedAt,
+          })
+          && Date.parse(update.result.updatedAt) > Date.parse(created.updatedAt)
+          && isDeepStrictEqual(getNonmatchingAfterUpdate.result, pendingSeed.result)
+          && Object.hasOwn(createNull.result, 'note')
+          && createNull.result.note === null
+          && createNull.result.name === 'Null Probe'
+          && createNull.result.kind === 'primary'
+          && createNull.result.enabled === true
+          && createNull.result.status === 'open'
+          && isDeepStrictEqual(getNull.result, createNull.result)
+          && isDeepStrictEqual(partialUpdate.result, {
+            ...update.result, note: null, updatedAt: partialUpdate.result.updatedAt,
+          })
+          && isDeepStrictEqual(applyManaged.result, { ...partialUpdate.result, status: 'closed', updatedAt: applyManaged.result.updatedAt })
+          && Date.parse(applyManaged.result.updatedAt) > Date.parse(partialUpdate.result.updatedAt)
+          && isDeepStrictEqual(getNonmatchingAfterManaged.result, getNonmatchingAfterUpdate.result)
+          && createManaged.result.name === 'Managed Probe'
+          && createManaged.result.note === 'managed-note'
+          && createManaged.result.status === 'open'
+          && isDeepStrictEqual(getManagedCreated.result, createManaged.result)
+          && isDeepStrictEqual(updateManaged.result, {
+            ...createManaged.result, name: 'Updated Managed Probe', note: null, status: 'closed',
+            updatedAt: updateManaged.result.updatedAt,
+          })
+          && Object.hasOwn(updateManaged.result, 'note')
+          && Date.parse(updateManaged.result.updatedAt) > Date.parse(createManaged.result.updatedAt)
+          && isDeepStrictEqual(getManagedUpdated.result, updateManaged.result)
+          && Object.hasOwn(createManagedOmitted.result, 'note')
+          && createManagedOmitted.result.note === null
+          && isDeepStrictEqual(getManagedOmittedCreated.result, createManagedOmitted.result)
+          && createManagedDefaults.result.name === 'Managed Default'
+          && createManagedDefaults.result.status === 'open'
+          && createManagedDefaults.result.note === null
+          && isDeepStrictEqual(getManagedDefaultsCreated.result, createManagedDefaults.result)
+          && isDeepStrictEqual(getManagedSiblingAfterUpdate.result, createManagedSibling.result)
+          && isDeepStrictEqual(getManagedOmittedAfterUpdate.result, createManagedOmitted.result)
+          && isDeepStrictEqual(getManagedDefaultsAfterUpdate.result, createManagedDefaults.result)
+          && isDeepStrictEqual(partialManagedUpdate.result, {
+            ...updateManaged.result, note: 'restored-note', updatedAt: partialManagedUpdate.result.updatedAt,
+          })
+          && isDeepStrictEqual(getManagedPartial.result, partialManagedUpdate.result)
+          && isDeepStrictEqual(getManagedOmittedAfterPartial.result, createManagedOmitted.result)
+          && isDeepStrictEqual(getManagedDefaultsAfterPartial.result, createManagedDefaults.result)
+          && isDeepStrictEqual(getManagedSibling.result, createManagedSibling.result)
+          && isDeepStrictEqual(generatedUpdateTimestamps, [
+            pendingSeed.result.updatedAt, conjunctionSeed.result.updatedAt, closedSeed.result.updatedAt,
+            update.result.updatedAt, partialUpdate.result.updatedAt, applyManaged.result.updatedAt,
+            updateManaged.result.updatedAt, partialManagedUpdate.result.updatedAt,
+          ]);
+        bundle.generatedRuntimeUsesStorage = resultsValid && canonical(operations) === canonical({
+          create: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          createPendingSeed: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          pendingSeed: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          createConjunctionSeed: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          conjunctionSeed: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          createClosedSeed: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          closedSeed: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          get: [['maybeOne', 'select']],
+          list: [['many', 'select']],
+          listWithMembership: [['many', 'select']],
+          listWhere: [['many', 'select']],
+          listWhereNull: [['many', 'select']],
+          listWhereEnabled: [['many', 'select']],
+          countWhere: [['maybeOne', 'count']],
+          countWhereMembership: [['maybeOne', 'count']],
+          countWhereDisabled: [['maybeOne', 'count']],
+          listWhereConjunction: [['many', 'select']],
+          countWhereConjunction: [['maybeOne', 'count']],
+          countWhereNoMatchConjunction: [['maybeOne', 'count']],
+          createOmitted: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          getOmitted: [['maybeOne', 'select']],
+          update: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          listSiblingsAfterUpdate: [['many', 'select']],
+          getNonmatchingAfterUpdate: [['maybeOne', 'select']],
+          createNull: [['savepoint', 'truth_storage_probe_mutation'], ['execute', 'insert']],
+          getNull: [['maybeOne', 'select']],
+          partialUpdate: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          listSiblingsAfterPartialUpdate: [['many', 'select']],
+          applyManaged: [['maybeOne', 'select'], ['savepoint', 'truth_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          listSiblingsAfterManaged: [['many', 'select']],
+          getNonmatchingAfterManaged: [['maybeOne', 'select']],
+          createManaged: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
+          getManagedCreated: [['maybeOne', 'select']],
+          createManagedSibling: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
+          createManagedOmitted: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
+          getManagedOmittedCreated: [['maybeOne', 'select']],
+          createManagedDefaults: [['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'insert']],
+          getManagedDefaultsCreated: [['maybeOne', 'select']],
+          updateManaged: [['maybeOne', 'select'], ['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          getManagedUpdated: [['maybeOne', 'select']],
+          getManagedSiblingAfterUpdate: [['maybeOne', 'select']],
+          getManagedOmittedAfterUpdate: [['maybeOne', 'select']],
+          getManagedDefaultsAfterUpdate: [['maybeOne', 'select']],
+          partialManagedUpdate: [['maybeOne', 'select'], ['savepoint', 'truth_managed_storage_probe_mutation'], ['execute', 'update'], ['maybeOne', 'select']],
+          getManagedPartial: [['maybeOne', 'select']],
+          getManagedOmittedAfterPartial: [['maybeOne', 'select']],
+          getManagedDefaultsAfterPartial: [['maybeOne', 'select']],
+          getManagedSibling: [['maybeOne', 'select']],
+        });
+        if (!bundle.generatedRuntimeUsesStorage) {
+          throw new Error('the generated storage behavior probe was inconclusive or regressed');
+        }
+      } finally {
+        raw.close();
+        managedRaw.close();
+      };
+    } finally {
+      rmSync(generatedRoot, { recursive: true, force: true });
+    }
+
+    // Behavior probe for the deliberately retained compatibility path. The
+    // fake service permits entry; the only way to answer that the table is
+    // absent is to invoke the supplied raw SQLite-shaped prepare/get pair.
+    let legacyPrepareCalls = 0;
+    const legacyReport = await migrateLegacyTasks({
+      modules: { get: () => ({ service: { createManaged() {}, listWhere() { return []; } } }) },
+      database: { raw: { prepare() {
+        legacyPrepareCalls += 1;
+        return {
+          get: () => ({ name: 'tasks' }),
+          all: () => [{ id: 'legacy-1', title: 'Legacy', status: 'open', due_at: null,
+            lead_id: 'lead-1', source_key: 'old-key', created_at: '2026-01-01T00:00:00.000Z' }],
+        };
+      } } },
+    });
+    bundle.workLegacyUsesRaw = legacyPrepareCalls === 2
+      && legacyReport.found === 1 && legacyReport.wouldAdopt === 1;
+    if (!bundle.workLegacyUsesRaw) {
+      throw new Error('the Work legacy raw-read behavior probe was inconclusive or regressed');
+    }
   } catch (error) {
     unavailable(`the spine authorities could not be read: ${/** @type {any} */ (error)?.message ?? error}`);
     return bundle;
@@ -1198,6 +1871,39 @@ export function buildFacts(bundle) {
     scope: 'framework',
   });
 
+  add({
+    id: 'spine.storage.contract',
+    value: bundle.storageContract,
+    shape: 'contract',
+    authority: 'storage.contract',
+    evidence: ['packages/core/src/storage-contract.js#STORAGE_CONTRACT'],
+    scope: 'framework',
+  });
+  add({
+    id: 'spine.storage.company_runtime',
+    value: bundle.companyUsesStorage ? 'implemented' : 'absent',
+    authority: 'storage.contract',
+    evidence: ['packages/modules/company/src/company-service.js#CompanyService'],
+    scope: 'framework',
+    limitations: ['STORAGE_FACT_IS_BOUNDED_PROBE'],
+  });
+  add({
+    id: 'spine.storage.generated_runtime',
+    value: bundle.generatedRuntimeUsesStorage ? 'implemented' : 'absent',
+    authority: 'storage.contract',
+    evidence: ['packages/cli/src/module-factory.js#serviceTemplate'],
+    scope: 'framework',
+    limitations: ['STORAGE_FACT_IS_BOUNDED_PROBE'],
+  });
+  add({
+    id: 'spine.storage.work_legacy_raw',
+    value: bundle.workLegacyUsesRaw ? 'implemented' : 'absent',
+    authority: 'storage.contract',
+    evidence: ['packages/work/src/legacy-tasks.js#migrateLegacyTasks'],
+    scope: 'framework',
+    limitations: ['STORAGE_FACT_IS_BOUNDED_PROBE'],
+  });
+
   for (const [id, rule] of Object.entries(DECLARED_ABSENCE)) {
     const declaration = (bundle.spineNotModeled ?? []).find((entry) => rule.match.test(String(entry)));
     if (!declaration) {
@@ -1498,6 +2204,7 @@ export function buildFacts(bundle) {
     { id: 'spine.contract', kind: 'source', reads: ['packages/app/src/spine.js', 'packages/core/src/authorization.js'] },
     { id: 'runtime.mode', kind: 'source', reads: ['packages/core/src/runtime-mode.js'] },
     { id: 'tenant.storage', kind: 'source', reads: ['packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js'] },
+    { id: 'storage.contract', kind: 'source', reads: ['scripts/repo-truth.js', 'packages/core/src/storage-contract.js', 'packages/core/src/database.js', 'packages/core/src/errors.js', 'packages/core/src/validation.js', 'packages/core/src/time.js', 'packages/core/src/actor.js', 'packages/core/src/module-manifest.js', 'packages/core/src/module-evolution.js', 'packages/core/src/timeout.js', 'packages/core/src/action-runtime.js', 'packages/core/src/external-operation.js', 'packages/core/src/core-adapters.js', 'packages/core/src/definition-fingerprint.js', 'packages/core/src/money.js', 'packages/core/src/solution-plan.js', 'packages/core/src/implementation-evidence.js', 'packages/core/src/spine-store.js', 'packages/core/src/package-registry.js', 'packages/core/src/package-composition.js', 'packages/core/src/identity.js', 'packages/core/src/runtime-mode.js', 'packages/core/src/authorization.js', 'packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js', 'packages/work/src/follow-up.js', 'packages/core/index.js'] },
     { id: 'reference.composition', kind: 'source', reads: REFERENCE_PACKAGES.map(([, path]) => path).concat(['packages/core/src/package-composition.js']) },
     { id: 'cli.rails', kind: 'source', reads: ['packages/cli/src/commands.js', ...RAILS.map(([, , path]) => path)] },
     { id: 'jtbd.portfolio', kind: 'source', reads: JTBD_PORTFOLIO_SOURCES },

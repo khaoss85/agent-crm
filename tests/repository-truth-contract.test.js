@@ -158,6 +158,8 @@ function frameworkFixture(t) {
   const root = disposable(t, 'accordo-truth-fixture-');
   cpSync(join(repoRoot, 'packages'), join(root, 'packages'), { recursive: true });
   cpSync(join(repoRoot, 'package.json'), join(root, 'package.json'));
+  mkdirSync(join(root, 'scripts'), { recursive: true });
+  cpSync(join(repoRoot, 'scripts/repo-truth.js'), join(root, 'scripts/repo-truth.js'));
   for (const path of [BENCHMARK_PANEL.aggregate, BENCHMARK_PANEL.protocol]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     cpSync(join(repoRoot, path), join(root, path));
@@ -208,6 +210,17 @@ function frameworkFixture(t) {
     },
   };
 }
+
+
+test('a generated authority clock that cannot advance fails explicitly without waiting', async () => {
+  const started = Date.now();
+  const result = await readAuthorities({ rootDir: repoRoot, generatedProbeClock: 'stalled' });
+  assert.ok(Date.now() - started < 2_000, 'stalled authority must terminate within a hard test bound');
+  assert.notEqual(result.generatedRuntimeUsesStorage, true);
+  assert.ok(result.problems.some((problem) => problem.code === 'TRUTH_AUTHORITY_UNAVAILABLE'
+    && problem.message.includes('generated mutation timestamps did not advance strictly')),
+  `expected stable timestamp authority failure, got ${JSON.stringify(result.problems)}`);
+});
 
 // ─────────────────────────────────────────── the committed document is honest
 
@@ -457,6 +470,29 @@ test('a symlink at a bound path is refused, not followed — at the file and at 
   // A path that simply is not there is still the caller's `existsSync` case, not
   // a traversal — refusing it here would turn "not present" into a failure.
   assert.equal(resolveSurfacePath(root, 'docs/never-existed.md').ok, true);
+});
+
+test('an unsafe generator path is reported instead of followed by the identity check', async (t) => {
+  const { root } = frameworkFixture(t);
+  const generator = join(root, 'scripts/repo-truth.js');
+  rmSync(generator);
+  mkdirSync(join(root, 'elsewhere'), { recursive: true });
+  symlinkSync(join(root, 'elsewhere'), generator);
+
+  const result = await readAuthorities({ rootDir: root });
+  assert.ok(result.problems.some((problem) => problem.code === 'TRUTH_SURFACE_UNSAFE'));
+});
+
+test('a directory at an authority path is a stable refusal, never EISDIR', async (t) => {
+  const { root } = frameworkFixture(t);
+  const generator = join(root, 'scripts/repo-truth.js');
+  rmSync(generator);
+  mkdirSync(generator);
+
+  const result = await readAuthorities({ rootDir: root });
+  const problem = result.problems.find((entry) => entry.code === 'TRUTH_SURFACE_UNSAFE');
+  assert.ok(problem);
+  assert.match(problem.message, /not a regular file/);
 });
 
 test('a string literal that quotes the grammar is not a citation', () => {
