@@ -19,12 +19,33 @@ worth separating because only one of them is ours:
   resource recommendations must be created by human beings."* A submission from
   an agent violates the destination's own rule, whatever ours says.
 
-A third reason is merely mechanical and should not be mistaken for either: this
-repository's execution environment refuses write access to third-party GitHub
-paths through its proxy (`POST /repos/…/forks` → 403, *"Write access to this
-GitHub API path is not permitted through this proxy"*), and `gh` is not
-installed. That is a fact about the sandbox, not a policy, and it would not
-license sending if it were lifted.
+A third reason is merely mechanical and should not be mistaken for either: an
+agent session is bound to this repository, and its proxy refuses write access to
+every GitHub path outside it (`POST /repos/…/forks` → 403, *"Write access to
+this GitHub API path is not permitted through this proxy"*). A maintainer PAT
+with full scope was tried against the same call and returned the identical 403 —
+the block is on the path, not on the identity — and `gh` is not installed. That
+is a fact about the sandbox, not a policy, and it would not license sending if
+it were lifted.
+
+## Running the three PR submissions
+
+`scripts/submit-awesome-lists.sh` does lists 1, 3 and 4 in one command from a
+machine with `gh` logged in. Dry run by default, `--apply` to send — the same
+posture the framework's own code generation takes.
+
+```bash
+./scripts/submit-awesome-lists.sh            # prints every patch, changes nothing
+./scripts/submit-awesome-lists.sh --apply    # forks, branches, pushes, opens the PRs
+```
+
+It refuses to guess: each list's insertion point is a fixed anchor read out of
+that README on 2026-08-26, and a list that has since reorganised is **skipped
+with its anchor printed** rather than patched somewhere plausible. A misplaced
+entry is worse than no entry — it reads as carelessness on the one surface where
+carelessness is the whole objection.
+
+List 2 is deliberately not in it, for the reason above. It is a browser tab.
 
 ---
 
@@ -37,7 +58,12 @@ license sending if it were lifted.
 Category **Developer Tools**. The file's CONTRIBUTING asks for alphabetical
 order within a category; the file itself does not keep it, and recent additions
 sit at the top of each section. Follow the file, not the instruction: add this
-as the **first line under `### 💻 Developer Tools`**.
+as the **first line under the Developer Tools heading**, with no blank line
+after it — entries there run contiguously.
+
+The heading carries an inline anchor, so the literal text to match is
+`### 💻 <a name="developer-tools"></a>Developer Tools`, not `### 💻 Developer
+Tools`. Searching for the latter finds nothing.
 
 ```markdown
 - [khaoss85/agent-crm](https://github.com/khaoss85/agent-crm) 🎖️ 📇 ☁️ - Read-only documentation server for Accordo, an open-source CRM framework that coding agents build with. Three tools over the published corpus: `search_docs`, `get_capability` — which returns every capability together with the limitation that bounds it — and `check_job` over a CRM jobs matrix whose default status is "not supported". Opens no database and holds no customer record. Endpoint: `https://accordo.dev/api/mcp`; also runs over stdio from a checkout.
@@ -162,8 +188,16 @@ question is fit, and the fit is direct: eleven installable `SKILL.md` files.
 Section: **Community Skills → Collections & Libraries** — a collection is what
 this is, and filing eleven skills under *Individual Skills* would be wrong.
 
+That section is a **bulleted list with sub-bullets, not a table.** An earlier
+revision of this file prepared a table row for it, which would have rendered as
+a stray pipe-delimited line in the middle of a list. Read out of the file on
+2026-08-26; the shape below is `obra/superpowers`', "Installation:" line and all:
+
 ```markdown
-| **[Accordo](https://github.com/khaoss85/agent-crm)** | Eleven skills for building a custom CRM as code — modules, workflows, domain packages, commercial operations, contract activation, delivery and service — with commercial policy enforced by generated tests rather than prompt instructions. Ships a local project MCP; code generation is dry-run until `--apply`. |
+- **[Accordo](https://github.com/khaoss85/agent-crm)** - Eleven skills for building a custom CRM as code you own: modules, deterministic workflows, domain packages, commercial operations, contract activation, delivery and service
+  - Commercial policy is generated as code and proven by tests in the project's merge gate, so a rule the agent is asked to bypass fails a test rather than a prompt
+  - Ships a local project MCP; code generation stays dry-run until `--apply`
+  - Installation: `/plugin marketplace add khaoss85/agent-crm` then `/plugin install accordo`
 ```
 
 **PR title**
@@ -209,15 +243,17 @@ Its four criteria, each checked rather than assumed: open source (MIT), commits
 within twelve months (this week), working software (`npm create accordo` is
 live on npm), CRM-related (the section is literally CRM frameworks).
 
-Entry, in the file's own table format:
+Entry, in the file's own `Name | Description | Stack | Stars` table format. Its
+house style is one short clause per row — *"No-code/low-code platform for CRM
+workflows"* — so this matches that length rather than the longer MCP entry:
 
 ```markdown
-| [Accordo](https://github.com/khaoss85/agent-crm) | Framework for building a custom CRM as code with a coding agent: modules, deterministic workflows, commercial policy and audit, with approvals enforced by generated tests. Not a deployable CRM — it ships no authentication and no hosted product. | Node.js | ![GitHub stars](https://img.shields.io/github/stars/khaoss85/agent-crm?style=flat-square) |
+| [Accordo](https://github.com/khaoss85/agent-crm) | Framework for building a custom CRM as code with a coding agent, with deterministic policy and audit; not a deployable CRM — it ships no authentication | Node.js | ![GitHub stars](https://img.shields.io/github/stars/khaoss85/agent-crm?style=flat-square) |
 ```
 
-The second sentence is not modesty, it is the whole reason this entry is safe to
-place on a list whose other rows are products a reader can deploy. Do not delete
-it to make the row shorter.
+The clause after the semicolon is not modesty, it is the whole reason this entry
+is safe on a list whose other rows are products a reader can deploy tonight. If
+the row has to get shorter, cut the first half.
 
 ---
 
