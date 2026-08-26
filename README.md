@@ -28,6 +28,15 @@ Modules + deterministic workflows + versioned policy
 API + Admin + trace + audit — in your repository, as code you review
 ```
 
+That sentence, run for real — the scaffold, an agent advancing two renewals, and the
+€80,000 one stopping at the gate until a human decides:
+
+![Terminal recording: npm create accordo scaffolds a project; an agent advances two renewals; the 80,000-euro one stops in approval_pending, requested by the agent and decided by nobody yet; workflow:list shows the evaluate-commercial-policy step that stopped it](.github/demo.gif)
+
+Recorded from the real commands with [VHS](https://github.com/charmbracelet/vhs); the
+script is [.github/demo.tape](.github/demo.tape), so the recording can be reproduced
+rather than trusted.
+
 ---
 
 ## When to reach for Accordo
