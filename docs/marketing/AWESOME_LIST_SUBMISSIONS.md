@@ -119,7 +119,7 @@ with `readOnlyHint: true`.
 
 ## 2. hesreallyhim/awesome-claude-code — an issue form, not a PR
 
-**Status: SENT 2026-08-26** — submitted by the maintainer through the web issue form (its CONTRIBUTING requires a human), prefilled from this file.
+**Status: SENT 2026-08-26** — [hesreallyhim/awesome-claude-code#2637](https://github.com/hesreallyhim/awesome-claude-code/issues/2637), submitted by the maintainer through the web issue form (its CONTRIBUTING requires a human), prefilled from this file. The bot validated it (`validation-passed`); the category landed as "Agent Orchestration" rather than "Skills" via the dropdown.
 
 Its CONTRIBUTING is explicit — *"ALL RECOMMENDATIONS MUST BE MADE USING THE WEB
 UI ISSUE FORM TEMPLATE, OR YOU RISK BEING RESTRICTED FROM INTERACTING WITH THIS
