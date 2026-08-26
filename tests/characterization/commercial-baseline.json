@@ -4224,7 +4224,7 @@
   ],
   "source": {
     "apps/admin/public/admin-quotes.js": "2989d42b38ddc8e114f32524f9fb163bdee18c33ba3fd849e21b57c93dbeb066",
-    "apps/server/src/http-server.js": "f0363931153dab6939340ede6da25da6816cfcb7d07f8c6ec0a9cebfe46ce382",
+    "apps/server/src/http-server.js": "16a09c578acb7e2c06c0b47e4d53ec687b316f7cbe229182dca47cabb9d1509f",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
     "packages/app/src/create-app.js": "2687a0e26d822737854cf982a584fbd5c920c20f7f65ea45193d1bd2baa29723",
     "packages/commercial/modules/catalog-sync-run.module.json": "509281aedba609303861b1097d4b9c7239fd85dcfb9b2d8c54e9c570aee0fc29",
