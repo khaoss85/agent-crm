@@ -51,7 +51,7 @@ List 2 is deliberately not in it, for the reason above. It is a browser tab.
 
 ## 1. punkpeye/awesome-mcp-servers — a pull request
 
-**Status: ready to send.**
+**Status: SENT 2026-08-26** — [punkpeye/awesome-mcp-servers#12938](https://github.com/punkpeye/awesome-mcp-servers/pull/12938), open, +1/−0.
 
 ### The entry
 
@@ -119,7 +119,7 @@ with `readOnlyHint: true`.
 
 ## 2. hesreallyhim/awesome-claude-code — an issue form, not a PR
 
-**Status: eligible — the age gate passed on 2026-08-18.**
+**Status: SENT 2026-08-26** — submitted by the maintainer through the web issue form (its CONTRIBUTING requires a human), prefilled from this file.
 
 Its CONTRIBUTING is explicit — *"ALL RECOMMENDATIONS MUST BE MADE USING THE WEB
 UI ISSUE FORM TEMPLATE, OR YOU RISK BEING RESTRICTED FROM INTERACTING WITH THIS
@@ -180,7 +180,7 @@ it is.
 
 ## 3. travisvn/awesome-claude-skills — a pull request
 
-**Status: ready to send.** 14.8k stars, 1.9k forks; the largest list in this
+**Status: SENT 2026-08-26** — [travisvn/awesome-claude-skills#1173](https://github.com/travisvn/awesome-claude-skills/pull/1173), open, +5/−0. 14.8k stars, 1.9k forks; the largest list in this
 family by an order of magnitude, and the only additional one whose reach is
 worth the review time. Its CONTRIBUTING states no age or star gate, so the only
 question is fit, and the fit is direct: eleven installable `SKILL.md` files.
@@ -232,7 +232,7 @@ there are enough community skills available"*.
 
 ## 4. sneg55/awesome-open-source-crm — a pull request
 
-**Status: ready to send, and rank it last.** 13 stars, 5 commits. Its retrieval
+**Status: SENT 2026-08-26** — [sneg55/awesome-open-source-crm#4](https://github.com/sneg55/awesome-open-source-crm/pull/4), open, +1/−0. 13 stars, 5 commits. Its retrieval
 value today is close to nothing. It is here for one reason: it is the only list
 found with a section headed **CRM Frameworks** — *"Platforms and frameworks for
 building custom CRM solutions"* — which is precisely and unusually the category

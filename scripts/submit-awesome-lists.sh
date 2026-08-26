@@ -233,7 +233,7 @@ keeping.
 BODY
 
 submit "sneg55/awesome-open-source-crm" "add-accordo" "README.md" \
-  "## CRM Frameworks" '^\|-' \
+  "## CRM Frameworks" '^[|]-' \
   "$WORK/p3" "Add Accordo under CRM Frameworks" "$WORK/b3"
 
 # ---------------------------------------------------------------- remaining
