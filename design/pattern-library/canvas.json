@@ -1,0 +1,26 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "title": "01 · Foundations", "x": 0, "y": 0, "w": 1140, "h": 1980 },
+    { "file": "Authorities.dc.html", "title": "02 · The four authorities", "x": 1240, "y": 0, "w": 1220, "h": 1980 },
+    { "file": "Controls.dc.html", "title": "03 · Controls", "x": 2560, "y": 0, "w": 1200, "h": 1520 },
+    { "file": "ScreenModule.dc.html", "title": "04 · Generated module list", "x": 0, "y": 2140, "w": 1440, "h": 980 },
+    { "file": "ScreenApproval.dc.html", "title": "05 · Approval, in context", "x": 1540, "y": 2140, "w": 1440, "h": 1080 }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -210,
+      "w": 940,
+      "text": "Guidelines for the frontend the framework generates — apps/admin/public/.\n\nColours, radii and control geometry are lifted from site/assets/styles.css. Where a value is a proposal rather than an existing one, the sheet says so.\n\nThe four authorities (agent, policy, human, evidence) are the product's own semantics, not a palette: they decide what a state looks like.\n\nSheets 01-03 are the system. Screens 04-05 show it doing real work."
+    },
+    {
+      "id": "screens-note",
+      "x": 0,
+      "y": 2000,
+      "w": 700,
+      "text": "Both screens are drawn from real code. 04 shows only fields the opportunity module actually declares, humanised the way admin-modules.js humanises them. 05 quotes standardSalesDiscountV1 from the b2b-lead-qualification starter, with the long reason strings elided at the marked ellipses.\n\nCompany and person names are invented; every identifier, threshold and state string is not."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

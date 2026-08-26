@@ -1,0 +1,142 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Spline+Sans+Mono:wght@300..700&display=swap">
+  <style>
+    body { margin: 0; font-family: 'Bricolage Grotesque', 'Avenir Next', Avenir, ui-sans-serif, system-ui, sans-serif; background: #f7f3e9; color: #171912; }
+    a { color: #176b2a; } a:hover { color: #0f4a1c; }
+    .mono { font-family: 'Spline Sans Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .cap { font-family: 'Spline Sans Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #6f6a5a; font-weight: 600; }
+    .b { font-family: 'Spline Sans Mono', ui-monospace, monospace; font-size: 11px; font-weight: 700; padding: 6px 10px; border-radius: 6px; display: inline-block; }
+    .th { border-bottom: 2px solid #171912; padding: 0 14px 9px 0; text-align: left; }
+    .td { border-bottom: 1px solid #d9d5c8; padding: 14px 14px 14px 0; font-size: 14px; vertical-align: middle; }
+    .chipnav { font-family: 'Spline Sans Mono', ui-monospace, monospace; font-size: 12px; font-weight: 700; padding: 7px 13px; border-radius: 6px; }
+  </style>
+</helmet>
+
+<div style="min-height: 900px; display: flex; flex-direction: column; background: #f7f3e9;">
+
+  <div style="border-bottom: 1px solid #d9d5c8; padding: 18px 44px; display: flex; align-items: center; justify-content: space-between; gap: 32px;">
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <svg width="22" height="22" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <circle cx="20" cy="20" r="5.5" fill="#27b64a"></circle>
+        <path d="M20 4 A16 16 0 0 1 33.86 12" stroke="#7457ff" stroke-width="3.4" stroke-linecap="round"></path>
+        <path d="M33.86 28 A16 16 0 0 1 20 36" stroke="#f2c84b" stroke-width="3.4" stroke-linecap="round"></path>
+        <path d="M20 36 A16 16 0 0 1 6.14 28" stroke="#ff6b69" stroke-width="3.4" stroke-linecap="round"></path>
+        <path d="M6.14 12 A16 16 0 0 1 20 4" stroke="#20b8d8" stroke-width="3.4" stroke-linecap="round"></path>
+      </svg>
+      <span style="font-size: 15px; font-weight: 700; letter-spacing: -.01em;">Acme Revenue</span>
+      <span class="mono" style="font-size: 11px; color: #6f6a5a;">localhost:4000</span>
+    </div>
+    <span class="mono" style="font-size: 11px; color: #6f6a5a;">no auth · local only</span>
+  </div>
+
+  <div style="padding: 16px 44px 0; display: flex; flex-direction: column; gap: 8px;">
+    <div class="cap">Generated modules · GET /api/schema</div>
+    <div style="display: flex; flex-wrap: wrap; gap: 7px;">
+      <span class="chipnav" style="background: #171912; color: #f7f3e9;">opportunity</span>
+      <span class="chipnav" style="background: transparent; color: #171912; border: 1px solid #d9d5c8;">company</span>
+      <span class="chipnav" style="background: transparent; color: #171912; border: 1px solid #d9d5c8;">contact</span>
+      <span class="chipnav" style="background: transparent; color: #171912; border: 1px solid #d9d5c8;">quote</span>
+    </div>
+  </div>
+
+  <div style="padding: 28px 44px 18px; display: flex; align-items: flex-end; justify-content: space-between; gap: 40px;">
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <h1 style="margin: 0; font-size: 46px; line-height: .98; letter-spacing: -.024em; font-weight: 700;">Opportunity</h1>
+      <p style="margin: 0; font-size: 14px; color: #62655b; max-width: 68ch; line-height: 1.5;">No page code was written for this screen. Every column below is a field the module declares, humanised by the renderer — which is exactly why one of them reads <span class="mono" style="font-size: 13px;">Value Cents</span>.</p>
+    </div>
+    <div style="display: flex; gap: 9px; flex-shrink: 0;">
+      <button style="border-radius: 12px; padding: 13px 20px; font-weight: 750; font-size: 15px; font-family: inherit; background: #fffdf7; color: #171912; border: 1px solid #d9d5c8; cursor: pointer;">New opportunity</button>
+    </div>
+  </div>
+
+  <div style="padding: 6px 44px 0; flex-grow: 1;">
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr>
+          <th class="th"><span class="cap">Name</span></th>
+          <th class="th"><span class="cap">Type</span></th>
+          <th class="th" style="text-align: right; padding-right: 24px;"><span class="cap">Value Cents</span></th>
+          <th class="th"><span class="cap">Currency</span></th>
+          <th class="th"><span class="cap">Stage</span></th>
+          <th class="th"><span class="cap">Owner</span></th>
+          <th class="th" style="padding-right: 0;"><span class="cap">Expected Close Date</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="td"><strong style="font-size: 14px;">Platform renewal 2027</strong></td>
+          <td class="td mono" style="font-size: 13px; color: #62655b;">renewal</td>
+          <td class="td mono" style="text-align: right; padding-right: 24px;">18000000</td>
+          <td class="td mono" style="font-size: 13px; color: #62655b;">EUR</td>
+          <td class="td"><span class="b" style="background: #fff3bd; color: #665000;">approval_required</span></td>
+          <td class="td mono" style="font-size: 13px;">s.rossi</td>
+          <td class="td mono" style="color: #6f6a5a; font-size: 12px; padding-right: 0;">2026-11-30</td>
+        </tr>
+        <tr>
+          <td class="td"><strong style="font-size: 14px;">Nord expansion</strong></td>
+          <td class="td mono" style="font-size: 13px; color: #62655b;">new_business</td>
+          <td class="td mono" style="text-align: right; padding-right: 24px;">6450000</td>
+          <td class="td mono" style="font-size: 13px; color: #62655b;">EUR</td>
+          <td class="td"><span class="b" style="background: #dcfbdc; color: #176b2a;">auto_approve</span></td>
+          <td class="td mono" style="font-size: 13px;">m.conti</td>
+          <td class="td mono" style="color: #6f6a5a; font-size: 12px; padding-right: 0;">2026-10-15</td>
+        </tr>
+        <tr>
+          <td class="td"><strong style="font-size: 14px;">Support tier upgrade</strong></td>
+          <td class="td mono" style="font-size: 13px; color: #62655b;">upsell</td>
+          <td class="td mono" style="text-align: right; padding-right: 24px;">2100000</td>
+          <td class="td mono" style="font-size: 13px; color: #62655b;">EUR</td>
+          <td class="td"><span class="b" style="background: #ffe6e1; color: #9b292d;">rejected</span></td>
+          <td class="td mono" style="font-size: 13px;">m.conti</td>
+          <td class="td mono" style="color: #6f6a5a; font-size: 12px; padding-right: 0;">2026-09-30</td>
+        </tr>
+        <tr>
+          <td class="td"><strong style="font-size: 14px;">Pilot — data migration</strong></td>
+          <td class="td mono" style="font-size: 13px; color: #62655b;">new_business</td>
+          <td class="td mono" style="text-align: right; padding-right: 24px;">980000</td>
+          <td class="td mono" style="font-size: 13px; color: #62655b;">EUR</td>
+          <td class="td"><span class="b" style="background: #ebe6ff; color: #4c2fc5;">proposal</span></td>
+          <td class="td mono" style="font-size: 13px;">s.rossi</td>
+          <td class="td mono" style="color: #6f6a5a; font-size: 12px; padding-right: 0;">2026-12-20</td>
+        </tr>
+        <tr>
+          <td class="td"><strong style="font-size: 14px;">Legacy port</strong></td>
+          <td class="td mono" style="font-size: 13px; color: #62655b;">new_business</td>
+          <td class="td mono" style="text-align: right; padding-right: 24px;">4720000</td>
+          <td class="td mono" style="font-size: 13px; color: #62655b;">EUR</td>
+          <td class="td"><span class="b" style="background: #fbe7e7; color: #a23636;">failed</span></td>
+          <td class="td mono" style="font-size: 13px;">a.greco</td>
+          <td class="td mono" style="color: #6f6a5a; font-size: 12px; padding-right: 0;">2026-09-05</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="margin: 26px 44px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 22px;">
+
+    <div style="border-left: 3px solid #7457ff; background: #ebe6ff; padding: 15px 20px; display: flex; flex-direction: column; gap: 5px;">
+      <strong style="font-size: 13px; color: #4c2fc5;">Why “Value Cents” and a raw integer</strong>
+      <span style="font-size: 13px; color: #171912; line-height: 1.5;">The module declares <span class="mono" style="font-size: 12px;">valueCents</span> and the renderer humanises the field name. Money formatting needs presentation metadata the schema does not carry — so this column is the honest ceiling of free UI, and the first thing worth adding to the module contract.</span>
+    </div>
+
+    <div style="border-left: 3px solid #f2c84b; background: #fff3bd; padding: 15px 20px; display: flex; flex-direction: column; gap: 5px;">
+      <strong style="font-size: 13px; color: #665000;">What this list does not do</strong>
+      <span style="font-size: 13px; color: #171912; line-height: 1.5;">No search, no saved views, no bulk edit, no export. The Admin states its own limits on the screen that has them, rather than letting a user hunt for a control nobody built.</span>
+    </div>
+
+  </div>
+
+  <div style="height: 34px;"></div>
+
+</div>
+</x-dc>
+</body>
+</html>

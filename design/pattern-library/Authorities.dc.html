@@ -1,0 +1,162 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Spline+Sans+Mono:wght@300..700&display=swap">
+  <style>
+    body { margin: 0; font-family: 'Bricolage Grotesque', 'Avenir Next', Avenir, ui-sans-serif, system-ui, sans-serif; background: #f7f3e9; color: #171912; }
+    a { color: #176b2a; } a:hover { color: #0f4a1c; }
+    .mono { font-family: 'Spline Sans Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .cap { font-family: 'Spline Sans Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #6f6a5a; font-weight: 600; }
+    .b { font-family: 'Spline Sans Mono', ui-monospace, monospace; font-size: 11px; font-weight: 700; padding: 6px 10px; border-radius: 6px; display: inline-block; }
+  </style>
+</helmet>
+
+<div style="padding: 56px 60px 64px; display: flex; flex-direction: column; gap: 44px;">
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div class="mono" style="font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #176b2a; font-weight: 600;">Accordo · pattern library · 02</div>
+    <h1 style="margin: 0; font-size: 58px; line-height: .96; letter-spacing: -.024em; font-weight: 700; max-width: 18ch;">The four authorities</h1>
+    <p style="margin: 0; max-width: 68ch; font-size: 17px; line-height: 1.5; color: #62655b;">This is the whole idea, and the one thing the Admin does not do today. Colour here is not a severity scale — <em>warning</em>, <em>danger</em>, <em>success</em>. It names <strong style="color: #171912;">which authority is holding the record right now</strong>. The site draws the same four as arcs closing into one seal.</p>
+  </div>
+
+  <div style="height: 1px; background: #d9d5c8;"></div>
+
+  <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px;">
+
+    <div style="display: flex; flex-direction: column; gap: 13px; border-top: 3px solid #7457ff; padding-top: 15px;">
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <strong style="font-size: 19px; letter-spacing: -.015em;">Agent</strong>
+        <span class="mono" style="font-size: 11px; color: #6f6a5a;">--agent #7457ff</span>
+      </div>
+      <p style="margin: 0; font-size: 13px; line-height: 1.5; color: #62655b;">Something a machine composed or proposed. Never something a machine <em>decided</em>.</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+        <span class="b" style="background: #ebe6ff; color: #4c2fc5;">proposal</span>
+        <span class="b" style="background: #ebe6ff; color: #4c2fc5;">draft</span>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 13px; border-top: 3px solid #f2c84b; padding-top: 15px;">
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <strong style="font-size: 19px; letter-spacing: -.015em;">Policy</strong>
+        <span class="mono" style="font-size: 11px; color: #6f6a5a;">--pending #f2c84b</span>
+      </div>
+      <p style="margin: 0; font-size: 13px; line-height: 1.5; color: #62655b;">A deterministic rule decided, or is holding the gate. Nothing is wrong; something is <em>bounded</em>.</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+        <span class="b" style="background: #fff3bd; color: #665000;">approval_required</span>
+        <span class="b" style="background: #fff3bd; color: #665000;">reject</span>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 13px; border-top: 3px solid #ff6b69; padding-top: 15px;">
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <strong style="font-size: 19px; letter-spacing: -.015em;">Human</strong>
+        <span class="mono" style="font-size: 11px; color: #6f6a5a;">--human #ff6b69</span>
+      </div>
+      <p style="margin: 0; font-size: 13px; line-height: 1.5; color: #62655b;">A named person must act, or has acted. The rarest colour on the screen, and the loudest.</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+        <span class="b" style="background: #ffe6e1; color: #9b292d;">rejected</span>
+        <span class="b" style="background: #ffe6e1; color: #9b292d;">needs you</span>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 13px; border-top: 3px solid #20b8d8; padding-top: 15px;">
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <strong style="font-size: 19px; letter-spacing: -.015em;">Evidence</strong>
+        <span class="mono" style="font-size: 11px; color: #6f6a5a;">--data #20b8d8</span>
+      </div>
+      <p style="margin: 0; font-size: 13px; line-height: 1.5; color: #62655b;">Audit, trace, immutable identifiers. Things that can be replayed, not changed.</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+        <span class="b" style="background: #dff8fd; color: #00677a;">recorded</span>
+        <span class="b" style="background: #dff8fd; color: #00677a;">immutable</span>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="border-top: 3px solid #27b64a; padding-top: 15px; display: grid; grid-template-columns: 1fr 2.1fr; gap: 32px; align-items: start;">
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <strong style="font-size: 19px; letter-spacing: -.015em;">Accord</strong>
+      <span class="mono" style="font-size: 11px; color: #6f6a5a;">--accord #27b64a · words --accent #176b2a</span>
+    </div>
+    <p style="margin: 0; font-size: 14px; line-height: 1.55; color: #62655b;">Not a fifth authority — what the four produce when they agree. Two greens exist because one cannot do both jobs: <span class="mono" style="font-size: 13px;">#27b64a</span> is a fill you read as a shape and measures <strong style="color: #171912;">2.41:1</strong> as 15px text on paper. Words are always <span class="mono" style="font-size: 13px;">#176b2a</span>, which is 5.97:1.</p>
+  </div>
+
+  <!-- three refusals -->
+  <div style="display: flex; flex-direction: column; gap: 16px;">
+    <h2 style="margin: 0; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: #6f6a5a; font-weight: 700;">The finding this taxonomy produces: three refusals, not one</h2>
+    <p style="margin: 0; max-width: 92ch; font-size: 14px; line-height: 1.55; color: #62655b;">The real discount policy returns three decisions, and two of them are refusals with different authors. Today the Admin paints both, plus a crashed run, in the same red.</p>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px;">
+      <div style="border-top: 1px solid #d9d5c8; padding-top: 14px; display: flex; flex-direction: column; gap: 8px;">
+        <span class="b" style="background: #fff3bd; color: #665000; align-self: flex-start;">reject</span>
+        <strong style="font-size: 14px;">The rule refused</strong>
+        <span style="font-size: 13px; line-height: 1.5; color: #62655b;">Above <span class="mono" style="font-size: 12px;">rejectAboveBps</span>. Deterministic, and no human is being asked. <strong style="color: #171912;">Policy.</strong></span>
+      </div>
+      <div style="border-top: 1px solid #d9d5c8; padding-top: 14px; display: flex; flex-direction: column; gap: 8px;">
+        <span class="b" style="background: #ffe6e1; color: #9b292d; align-self: flex-start;">rejected</span>
+        <strong style="font-size: 14px;">A person refused</strong>
+        <span style="font-size: 13px; line-height: 1.5; color: #62655b;">Someone with a name looked at it and said no, with a recorded reason. <strong style="color: #171912;">Human.</strong></span>
+      </div>
+      <div style="border-top: 1px solid #d9d5c8; padding-top: 14px; display: flex; flex-direction: column; gap: 8px;">
+        <span class="b" style="background: #fbe7e7; color: #a23636; align-self: flex-start;">failed</span>
+        <strong style="font-size: 14px;">Nothing refused</strong>
+        <span style="font-size: 13px; line-height: 1.5; color: #62655b;">The run broke. No decision was reached at all. <strong style="color: #171912;">A fault — the one state no authority owns.</strong></span>
+      </div>
+    </div>
+  </div>
+
+  <div style="height: 1px; background: #d9d5c8;"></div>
+
+  <!-- remap -->
+  <div style="display: flex; flex-direction: column; gap: 16px;">
+    <h2 style="margin: 0; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: #6f6a5a; font-weight: 700;">What changes in apps/admin/public/styles.css</h2>
+
+    <div style="display: grid; grid-template-columns: 1.25fr .85fr .85fr 1.5fr; gap: 0;">
+      <div style="border-bottom: 2px solid #171912; padding: 0 12px 9px 0;"><span class="cap">Rule as it stands</span></div>
+      <div style="border-bottom: 2px solid #171912; padding: 0 12px 9px;"><span class="cap">Today</span></div>
+      <div style="border-bottom: 2px solid #171912; padding: 0 12px 9px;"><span class="cap">Becomes</span></div>
+      <div style="border-bottom: 2px solid #171912; padding: 0 0 9px 12px;"><span class="cap">Why</span></div>
+
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px 14px 0;"><span class="mono" style="font-size: 12px; overflow-wrap: anywhere;">.badge.approval_pending</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px;"><span class="b" style="background: #fff0d8; color: #9b5c0a;">approval_pending</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px;"><span class="b" style="background: #fff3bd; color: #665000;">approval_pending</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 0 14px 12px;"><span style="font-size: 13px; line-height: 1.45; color: #62655b;">A held gate is the system working. Amber says something went slightly wrong.</span></div>
+
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px 14px 0;"><span class="mono" style="font-size: 12px; overflow-wrap: anywhere;">.badge.failed, .badge.rejected</span><br><span style="font-size: 12px; color: #6f6a5a;">one rule, two states</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px;"><span class="b" style="background: #fbe7e7; color: #a23636;">rejected</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px;"><span class="b" style="background: #ffe6e1; color: #9b292d;">rejected</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 0 14px 12px;"><span style="font-size: 13px; line-height: 1.45; color: #62655b;">Split it. <span class="mono" style="font-size: 12px;">.failed</span> keeps the red; a considered human refusal is not a crash.</span></div>
+
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px 14px 0;"><span class="mono" style="font-size: 12px; overflow-wrap: anywhere;">.badge.proposal, .badge.completed, .badge.approved</span><br><span style="font-size: 12px; color: #6f6a5a;">one rule, three states</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px; display: flex; flex-direction: column; gap: 5px; align-items: flex-start;"><span class="b" style="background: #e4f2eb; color: #1f6f50;">proposal</span><span class="b" style="background: #e4f2eb; color: #1f6f50;">approved</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px; display: flex; flex-direction: column; gap: 5px; align-items: flex-start;"><span class="b" style="background: #ebe6ff; color: #4c2fc5;">proposal</span><span class="b" style="background: #dcfbdc; color: #176b2a;">approved</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 0 14px 12px;"><span style="font-size: 13px; line-height: 1.45; color: #62655b;">Split it too. A <em>proposal</em> is the agent's; <em>approved</em> is the accord. Sharing one rule is what made the mix-up invisible.</span></div>
+
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px 14px 0;"><span class="mono" style="font-size: 12px; overflow-wrap: anywhere;">.dot</span> · <span class="mono" style="font-size: 12px; overflow-wrap: anywhere;">.span.failed .dot</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px;"><span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; background: #1f6f50; border: 4px solid #e4f2eb;"></span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px;"><span style="display: inline-block; width: 16px; height: 16px; border-radius: 50%; background: #20b8d8; border: 4px solid #dff8fd;"></span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 0 14px 12px;"><span style="font-size: 13px; line-height: 1.45; color: #62655b;">A trace span <em>is</em> evidence. Green says “this went well”, which a trace never claims. The failed variant keeps its red.</span></div>
+
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px 14px 0;"><span class="mono" style="font-size: 12px; overflow-wrap: anywhere;">.immutable</span> <span style="font-size: 12px; color: #6f6a5a;">(sets the colour)</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px;"><span class="mono" style="font-size: 12px; color: #6b7a72;">#6b7a72</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 12px;"><span class="mono" style="font-size: 12px; color: #00677a;">#00677a</span></div>
+      <div style="border-bottom: 1px solid #d9d5c8; padding: 14px 0 14px 12px;"><span style="font-size: 13px; line-height: 1.45; color: #62655b;">Immutability is the product's argument. It should be visible, not grey.</span></div>
+    </div>
+
+    <p style="margin: 0; max-width: 92ch; font-size: 13px; line-height: 1.55; color: #62655b;">The teal-green in the “Today” column, <span class="mono" style="font-size: 12px;">#1f6f50</span>, is not a stray: it is <span class="mono" style="font-size: 12px;">colors.accent</span> in <span class="mono" style="font-size: 12px;">brand.json</span>, inherited from the Admin on purpose so the two would match. The v3 layer then redefined <span class="mono" style="font-size: 12px;">--accent</span> to <span class="mono" style="font-size: 12px;">#176b2a</span> for contrast and the Admin was never brought along. The drift has a date, not a cause.</p>
+  </div>
+
+  <div style="border-left: 3px solid #20b8d8; padding: 18px 22px; background: #dff8fd; display: flex; flex-direction: column; gap: 7px;">
+    <div class="cap" style="color: #00677a;">The discipline</div>
+    <p style="margin: 0; font-size: 14px; line-height: 1.55; color: #171912; max-width: 92ch;">An authority colour may only appear where that authority is genuinely in play. Coral on a screen with no pending human decision is a lie the design tells before the copy gets a chance. If a state belongs to none of the four, it is ink, muted, or red — never a fifth hue.</p>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

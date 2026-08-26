@@ -40,3 +40,6 @@ packages/docs-mcp/runtime-corpus/
 # Python bytecode — never tracked. A tools/ import during verification generates it.
 __pycache__/
 *.pyc
+
+# Seeded design-canvas build artifact (~2.5 MB); re-seed from design/pattern-library/*.dc.html
+design/pattern-library/accordo-admin-pattern-library.html

@@ -1,0 +1,149 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Spline+Sans+Mono:wght@300..700&display=swap">
+  <style>
+    body { margin: 0; font-family: 'Bricolage Grotesque', 'Avenir Next', Avenir, ui-sans-serif, system-ui, sans-serif; background: #f7f3e9; color: #171912; }
+    a { color: #176b2a; } a:hover { color: #0f4a1c; }
+    .mono { font-family: 'Spline Sans Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .cap { font-family: 'Spline Sans Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #6f6a5a; font-weight: 600; }
+  </style>
+</helmet>
+
+<div style="padding: 56px 60px 64px; display: flex; flex-direction: column; gap: 46px;">
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div class="mono" style="font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #176b2a; font-weight: 600;">Accordo · pattern library · 01</div>
+    <h1 style="margin: 0; font-size: 58px; line-height: .96; letter-spacing: -.024em; font-weight: 700; max-width: 15ch;">Foundations</h1>
+    <p style="margin: 0; max-width: 64ch; font-size: 17px; line-height: 1.5; color: #62655b;">The generated Admin and accordo.dev should be one product seen from two sides. These are the values the site already resolves to, lifted from <span class="mono" style="font-size: 14px;">site/assets/styles.css</span>. Where a value here is a <em>proposal</em> rather than an existing one, it says so.</p>
+  </div>
+
+  <div style="height: 1px; background: #d9d5c8;"></div>
+
+  <!-- ground -->
+  <div style="display: flex; flex-direction: column; gap: 18px;">
+    <h2 style="margin: 0; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: #6f6a5a; font-weight: 700;">Ground and ink</h2>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px;">
+
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <div style="height: 84px; background: #f7f3e9; border: 1px solid #d9d5c8;"></div>
+        <div style="display: flex; flex-direction: column; gap: 3px;">
+          <strong style="font-size: 14px;">paper</strong>
+          <span class="mono" style="font-size: 12px; color: #6f6a5a;">#f7f3e9</span>
+          <span style="font-size: 12px; color: #62655b; line-height: 1.4;">The page. Warm, not white.</span>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <div style="height: 84px; background: #fffdf7; border: 1px solid #d9d5c8;"></div>
+        <div style="display: flex; flex-direction: column; gap: 3px;">
+          <strong style="font-size: 14px;">surface</strong>
+          <span class="mono" style="font-size: 12px; color: #6f6a5a;">#fffdf7</span>
+          <span style="font-size: 12px; color: #62655b; line-height: 1.4;">Raised only where a rule cannot do the job.</span>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <div style="height: 84px; background: #171912;"></div>
+        <div style="display: flex; flex-direction: column; gap: 3px;">
+          <strong style="font-size: 14px;">ink</strong>
+          <span class="mono" style="font-size: 12px; color: #6f6a5a;">#171912</span>
+          <span style="font-size: 12px; color: #62655b; line-height: 1.4;">16.0:1 on paper.</span>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <div style="height: 84px; display: flex;"><div style="flex-grow: 1; background: #62655b;"></div><div style="flex-grow: 1; background: #6f6a5a;"></div></div>
+        <div style="display: flex; flex-direction: column; gap: 3px;">
+          <strong style="font-size: 14px;">muted · dim</strong>
+          <span class="mono" style="font-size: 12px; color: #6f6a5a;">#62655b · #6f6a5a</span>
+          <span style="font-size: 12px; color: #62655b; line-height: 1.4;">5.37:1 and 4.88:1 <strong style="color: #171912;">on paper</strong>. Nothing quieter ships.</span>
+        </div>
+      </div>
+
+    </div>
+    <p style="margin: 0; max-width: 84ch; font-size: 13px; line-height: 1.55; color: #62655b;">Always state the ground with the ratio. The same <span class="mono" style="font-size: 12px;">--dim</span> is 4.88:1 on paper and 5.31:1 on surface, and only one of those numbers is the one a reader meets on a list page.</p>
+  </div>
+
+  <!-- rules not cards -->
+  <div style="display: flex; flex-direction: column; gap: 18px;">
+    <h2 style="margin: 0; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: #6f6a5a; font-weight: 700;">Rules, not nested cards</h2>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px;">
+
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="cap" style="color: #9b292d;">Admin today</div>
+        <div style="background: #f3f5f1; padding: 22px;">
+          <div style="background: #ffffff; border: 1px solid #dce1da; border-radius: 20px; padding: 18px; box-shadow: 0 18px 50px rgba(27,44,34,.08);">
+            <div style="font-size: 13px; font-weight: 700;">Panel</div>
+            <div style="background: #fbfcfa; border: 1px solid #dce1da; border-radius: 14px; padding: 12px; margin-top: 12px; font-size: 12px; color: #647067;">Card inside a panel inside a grid</div>
+          </div>
+        </div>
+        <p style="margin: 0; font-size: 13px; line-height: 1.5; color: #62655b;">20px radii, a 50px shadow, a card nested in a panel. Three containers to show one row of data.</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="cap" style="color: #176b2a;">Proposed</div>
+        <div style="background: #f7f3e9; padding: 22px; display: flex; flex-direction: column;">
+          <div style="border-top: 2px solid #171912; padding: 14px 0 12px;">
+            <div style="font-size: 13px; font-weight: 700;">Panel</div>
+          </div>
+          <div style="border-top: 1px solid #d9d5c8; padding: 12px 0; font-size: 12px; color: #62655b;">A row is a row. The rule is the container.</div>
+          <div style="border-top: 1px solid #d9d5c8; padding: 12px 0; font-size: 12px; color: #62655b;">Nothing floats.</div>
+        </div>
+        <p style="margin: 0; font-size: 13px; line-height: 1.5; color: #62655b;">Hairline rules on one ground. The site's v3 pass de-carded every section; the Admin never got that pass. Surfaces and radii survive on <em>controls</em> — see sheet 03 — not on containers.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- type -->
+  <div style="display: flex; flex-direction: column; gap: 18px;">
+    <h2 style="margin: 0; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: #6f6a5a; font-weight: 700;">Type</h2>
+    <div style="display: flex; flex-direction: column;">
+      <div style="border-top: 1px solid #d9d5c8; padding: 16px 0; display: grid; grid-template-columns: 210px 1fr; gap: 24px; align-items: baseline;">
+        <span class="mono" style="font-size: 11px; color: #6f6a5a;">display / 700 / -.024em</span>
+        <span style="font-size: 40px; letter-spacing: -.024em; font-weight: 700; line-height: 1;">Quote &amp; approval</span>
+      </div>
+      <div style="border-top: 1px solid #d9d5c8; padding: 16px 0; display: grid; grid-template-columns: 210px 1fr; gap: 24px; align-items: baseline;">
+        <span class="mono" style="font-size: 11px; color: #6f6a5a;">heading / 700 / 20px</span>
+        <span style="font-size: 20px; font-weight: 700; letter-spacing: -.015em;">Awaiting approval</span>
+      </div>
+      <div style="border-top: 1px solid #d9d5c8; padding: 16px 0; display: grid; grid-template-columns: 210px 1fr; gap: 24px; align-items: baseline;">
+        <span class="mono" style="font-size: 11px; color: #6f6a5a;">body / 400 / 15px</span>
+        <span style="font-size: 15px; line-height: 1.55;">A line discount above <span class="mono" style="font-size: 14px;">1000 bps</span> needs a named approver. The agent may propose it and may not apply it.</span>
+      </div>
+      <div style="border-top: 1px solid #d9d5c8; padding: 16px 0; display: grid; grid-template-columns: 210px 1fr; gap: 24px; align-items: baseline;">
+        <span class="mono" style="font-size: 11px; color: #6f6a5a;">mono / 400 / 13px</span>
+        <span class="mono" style="font-size: 13px;">opp_01JQ8F3K2M · 2026-08-26T09:14:22Z · 2400 bps · 18000000 cents</span>
+      </div>
+      <div style="border-top: 1px solid #d9d5c8; padding: 16px 0; display: grid; grid-template-columns: 210px 1fr; gap: 24px; align-items: baseline;">
+        <span class="mono" style="font-size: 11px; color: #6f6a5a;">label / 600 / 11px caps</span>
+        <span class="mono" style="font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #6f6a5a; font-weight: 600;">Approver</span>
+      </div>
+      <div style="border-top: 1px solid #d9d5c8;"></div>
+    </div>
+    <p style="margin: 0; max-width: 88ch; font-size: 13px; line-height: 1.55; color: #62655b;"><strong style="color: #171912;">Display tracking stops at -.024em.</strong> Bricolage draws <em>f</em> with a crossbar reaching past the stem, and below about that the two crossbars in “different” merge into the <em>i</em> beside them. The site's hero runs a notch tighter still at -.022em because that one headline was measured; treat -.024em as the working limit and measure anything tighter against the actual words.</p>
+    <p style="margin: 0; max-width: 88ch; font-size: 13px; line-height: 1.55; color: #62655b;"><strong style="color: #171912;">Mono is not decoration.</strong> Identifiers, timestamps, basis points and minor-unit amounts are monospaced everywhere, unrounded and unformatted — <span class="mono" style="font-size: 12px;">2400 bps</span>, not “24%”. If a person may have to read a value back to someone or paste it into a search box, it appears exactly as the API returned it.</p>
+  </div>
+
+  <!-- inherited defects -->
+  <div style="border-left: 3px solid #ff6b69; padding: 18px 22px; background: #ffe6e1; display: flex; flex-direction: column; gap: 8px;">
+    <div class="cap" style="color: #9b292d;">Three defects to fix before any of this matters</div>
+    <p style="margin: 0; font-size: 14px; line-height: 1.6; color: #171912; max-width: 92ch;">The Admin declares <span class="mono" style="font-size: 13px;">font-family: Inter</span> and ships no font file and no <span class="mono" style="font-size: 13px;">@font-face</span> — on every machine without Inter installed it silently renders in the system UI font. <span class="mono" style="font-size: 13px;">--surface-soft</span> is used three times and never declared. And four <span class="mono" style="font-size: 13px;">var()</span> fallbacks name a colour that is not the token they fall back from: <span class="mono" style="font-size: 13px;">var(--line, #d9e2dd)</span> against <span class="mono" style="font-size: 13px;">--line: #dce1da</span>, <span class="mono" style="font-size: 13px;">var(--line, #eef2f0)</span>, and <span class="mono" style="font-size: 13px;">var(--danger, #b3564d)</span> against <span class="mono" style="font-size: 13px;">--danger: #a23636</span>.</p>
+  </div>
+
+  <div style="border-left: 3px solid #f2c84b; padding: 16px 22px; background: #fff3bd; display: flex; flex-direction: column; gap: 6px;">
+    <div class="cap" style="color: #665000;">Honest note about this document</div>
+    <p style="margin: 0; font-size: 13.5px; line-height: 1.55; color: #171912; max-width: 92ch;">These sheets pull both faces from Google Fonts, which the shipped site refuses to do — it vendors them, because <span class="mono" style="font-size: 12px;">vercel.json</span> sets <span class="mono" style="font-size: 12px;">font-src 'self'</span>. The canvas this is drawn on admits no other font host. The rule stands for the product; the drawing of it could not obey the rule.</p>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>
