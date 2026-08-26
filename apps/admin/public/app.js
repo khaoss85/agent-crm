@@ -106,7 +106,7 @@ function renderOpportunities(items) {
         <td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.type.replace('_', ' '))}</small></td>
         <td>${escapeHtml(item.companyName || '—')}</td>
         <td><strong>${formatMoney(item.valueCents, item.currency)}</strong></td>
-        <td><span class="badge ${item.stage}">${escapeHtml(item.stage.replace('_', ' '))}</span></td>
+        <td><span class="badge ${item.stage}">${escapeHtml(item.stage)}</span></td>
         <td>${escapeHtml(item.owner)}</td>
         <td>${action}</td>
       </tr>
