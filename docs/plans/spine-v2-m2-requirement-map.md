@@ -5,7 +5,7 @@ Classification lives in `docs/plans/spine-v2-m2-requirements.json`; the units co
 from the M2 section of `docs/plans/production-spine-v2-postgresql.md`, which is
 ratified and is not edited to fit this map.
 
-The M2 section states **226** requirement units. Every one is claimed by exactly
+The M2 section states **232** requirement units. Every one is claimed by exactly
 one group below — a unit nobody classifies fails the gate, so this map cannot be
 made to look complete by leaving something out.
 
@@ -16,8 +16,8 @@ without a destination is an omission, and the gate refuses one.
 
 | Classification | Units | Share |
 |---|---|---|
-| `CURRENT_CAMPAIGN` | 86 | 38% |
-| `DEFERRED_OUTSIDE_M2` | 139 | 62% |
+| `CURRENT_CAMPAIGN` | 90 | 39% |
+| `DEFERRED_OUTSIDE_M2` | 141 | 61% |
 | `MERGED_PROVED` | 1 | 0% |
 
 ## CURRENT_CAMPAIGN
@@ -36,8 +36,9 @@ without a destination is an omission, and the gate refuses one.
 | `G16` | M2F | 3 | Config-file no-follow ownership and mode discipline |
 | `G17` | M2F | 3 | DX Simplicity Gate for the deployment-storage surface |
 | `G18` | M2F | 9 | identityVerifier ESM resolution, bounded deadline, credential-free failure |
-| `G19` | M2 completion gate | 2 | M2 exit criteria |
-| `G28a` | M2F | 13 | CLI PostgreSQL classification contract, refusal rows and SQLite coverage |
+| `G19` | M2 completion gate | 4 | M2 exit criteria |
+| `G28a` | M2F | 14 | CLI PostgreSQL classification contract, refusal rows and SQLite coverage |
+| `G28b` | M2F | 1 | CLI matrix executed against real PostgreSQL |
 | `G29` | M2F | 6 | Health/readiness stops reading tenant state; Admin metrics separated |
 
 - **G01** — workflows+action-runtime trace family is M2C; Work transaction context is M2D; Spine store dual-plane closure is M2F.
@@ -45,6 +46,7 @@ without a destination is an omission, and the gate refuses one.
 - **G14** — The loader, its closed envelope, precedence and refusals are adapter-independent. PostgreSQL selection refuses until M3.
 - **G18** — Path resolution, module evaluation, timeout and no-listener-before-resolution are adapter-independent.
 - **G28a** — Reading the canonical APP_COMMANDS authority, classifying every entry, refusing PostgreSQL before composition and running every command on SQLite are all runnable without the adapter. Deferring them would hide executable work behind an adapter dependency.
+- **G28b** — Composite. Running every command on SQLite, every declared refusal, the missing/malformed key cases and the no-SQLite-fallback sentinels are executable at M2-complete and gate it. Only the live-PostgreSQL execution of the supported commands waits for the M3 adapter, and it is re-proved there. Deferring the whole sentence because one clause names PostgreSQL would have hidden the SQLite obligations from the gating count — the exact error this map exists to refuse.
 - **G29** — Removing doctor/tenant reads from GET /health and moving Admin counts to an authenticated metrics read are adapter-independent.
 
 ## DEFERRED_OUTSIDE_M2
@@ -57,15 +59,14 @@ without a destination is an omission, and the gate refuses one.
 | `G11` | M3 | 4 | PostgreSQL DDL + ledger + audit in one transaction, fault-proved |
 | `G12` | M3 | 6 | Control-plane bootstrap under pg_advisory_xact_lock |
 | `G15` | M3 | 4 | Authenticated TLS for production PostgreSQL connections |
-| `G20` | M3 | 5 | Shared PostgreSQL control plane for organizations, leases, bindings, intents |
+| `G20` | M3 | 6 | Shared PostgreSQL control plane for organizations, leases, bindings, intents |
 | `G21` | M4 | 8 | Caller-known idempotency key contract |
 | `G22` | M4 | 11 | Verified provider-webhook event keys and evidence envelope |
 | `G23` | M4 | 4 | Compare-and-set promotion of trace and event intents |
 | `G24` | M4 | 12 | Issuance bucket, replay window, tombstone and reconcileUntil |
 | `G25` | M4 | 21 | Lease, generation fencing, clone refusal and in-flight write intents |
-| `G26` | M4 | 28 | Admin submission keys, durable recovery and acknowledgement |
-| `G27` | M4 | 18 | Root and child keys for fan-out |
-| `G28b` | M3 | 1 | CLI matrix executed against real PostgreSQL |
+| `G26` | M4 | 29 | Admin submission keys, durable recovery and acknowledgement |
+| `G27` | M4 | 19 | Root and child keys for fan-out |
 | `G30` | M4 | 4 | Lease-driven readiness transitions |
 
 - **G08b** — The SQLite child-process half lands with M2E; the phrase requires BOTH adapters, which is only satisfiable once M3 exists.
@@ -82,7 +83,6 @@ without a destination is an omission, and the gate refuses one.
 - **G25** — The plan itself says M4 races the topology, M4 pauses a write at the lease boundary and M4 uses a fixture identity authority.
 - **G26** — Real-Chromium PostgreSQL coverage; depends on the key contract and a live adapter.
 - **G27** — The plan states M4 fixtures cover the fan-out cases.
-- **G28b** — Running every supported command against a live PostgreSQL service needs the M3 adapter and the CI service container.
 - **G30** — Readiness derived from an unexpired writer lease requires the M4 lease authority.
 
 ## MERGED_PROVED
