@@ -30,7 +30,6 @@
       "slice": "M2E",
       "claims": [
         "5f90b9377bf1",
-        "95d7a9c87612",
         "bf5e963e2717",
         "86196f8abc00",
         "3b5f7d6cffe7",
@@ -39,6 +38,16 @@
         "d12836422fc7",
         "d4c3cba3dd1f"
       ]
+    },
+    {
+      "id": "G03x",
+      "title": "The four contract-2 versions — capabilityContract collides with merged meaning",
+      "claims": [
+        "95d7a9c87612"
+      ],
+      "classification": "CONTRADICTION_REQUIRES_FIX",
+      "slice": "M2E-1",
+      "reason": "The ratified sentence defines capabilityContract: 2 as \"capability consumers await every service/context/dependency operation\". The repository already ships capabilityContract: 2 with a different meaning — packages/contracts/src/lifecycle-capability.js:177 returns it as that capability's second, synchronous shape, chosen by the provider — and core validates the field nowhere. Implementing the sentence literally either reinterprets a merged synchronous declaration as async or forces it to 3, which the plan does not say. Resolving it is M2E-1's first deliverable and may require amending the ratified plan; it is recorded here rather than coded around, because a map reporting zero contradictions while one is known is the dishonesty this gate exists to refuse. It gates M2 either way."
     },
     {
       "id": "G04",

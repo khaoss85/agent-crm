@@ -16,9 +16,18 @@ without a destination is an omission, and the gate refuses one.
 
 | Classification | Units | Share |
 |---|---|---|
-| `CURRENT_CAMPAIGN` | 90 | 39% |
+| `CONTRADICTION_REQUIRES_FIX` | 1 | 0% |
+| `CURRENT_CAMPAIGN` | 89 | 38% |
 | `DEFERRED_OUTSIDE_M2` | 141 | 61% |
 | `MERGED_PROVED` | 1 | 0% |
+
+## CONTRADICTION_REQUIRES_FIX
+
+| Group | Slice / proved in | Units | Requirement |
+|---|---|---|---|
+| `G03x` | M2E-1 | 1 | The four contract-2 versions — capabilityContract collides with merged meaning |
+
+- **G03x** — The ratified sentence defines capabilityContract: 2 as "capability consumers await every service/context/dependency operation". The repository already ships capabilityContract: 2 with a different meaning — packages/contracts/src/lifecycle-capability.js:177 returns it as that capability's second, synchronous shape, chosen by the provider — and core validates the field nowhere. Implementing the sentence literally either reinterprets a merged synchronous declaration as async or forces it to 3, which the plan does not say. Resolving it is M2E-1's first deliverable and may require amending the ratified plan; it is recorded here rather than coded around, because a map reporting zero contradictions while one is known is the dishonesty this gate exists to refuse. It gates M2 either way.
 
 ## CURRENT_CAMPAIGN
 
@@ -26,7 +35,7 @@ without a destination is an omission, and the gate refuses one.
 |---|---|---|---|
 | `G01` | M2C/M2D/M2F | 2 | Remaining consumer extraction and Spine-store closure |
 | `G02` | M2E | 3 | Async control flow with the synchronous SQLite factory preserved |
-| `G03` | M2E | 9 | packageContract/actionContract/operationContract/capabilityContract 2 |
+| `G03` | M2E | 8 | packageContract/actionContract/operationContract/capabilityContract 2 |
 | `G04` | M2F | 1 | Repository guard gating compatibility-path deletion |
 | `G06` | M2F | 7 | Cross-plane audit intent, claim, delivery and reconciliation |
 | `G07` | M2F | 3 | Bounded {adapter, available} storage descriptor on every public surface |
