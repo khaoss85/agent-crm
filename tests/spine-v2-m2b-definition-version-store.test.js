@@ -24,22 +24,63 @@ import { IntelligenceRegistries } from '../packages/intelligence/src/registry.js
  */
 
 /**
+ * Optional chaining is the hole in the token scan M2A introduced. Its pattern
+ * looks for `database.raw`, and `packages/work/src/follow-up.js` reaches the
+ * driver as `tasks?.database?.raw` — genuine reachability that the plain scan
+ * does not surface. A guard that claims raw access cannot return to a file
+ * while a one-character edit walks past it is not evidence, so this alternation
+ * covers the optional-chained form too. Proven by construction below.
+ */
+const RAW_DRIVER_REACHABILITY = /database\s*\??\.\s*raw|\??\.\s*raw\s*\??\.\s*(?:prepare|exec)\s*\(|DatabaseSync/;
+
+/**
  * The one guard for this milestone. It covers the four files M2B declared and
  * nothing else: `packages/workflows/src/engine.js`, the action runtime and
  * Work's transaction-context seam still reach the driver, deliberately, and
  * this assertion makes no claim about them.
  */
+const M2B_SLICE = Object.freeze([
+  'packages/commercial/src/registry.js',
+  'packages/signature/src/registry.js',
+  'packages/intelligence/src/registry.js',
+  'packages/core/src/package-registry.js',
+]);
+
 test('the declared M2B slice has no raw-driver reachability', () => {
-  const paths = [
-    'packages/commercial/src/registry.js',
-    'packages/signature/src/registry.js',
-    'packages/intelligence/src/registry.js',
-    'packages/core/src/package-registry.js',
-  ];
-  for (const path of paths) {
+  for (const path of M2B_SLICE) {
     const source = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
-    assert.doesNotMatch(source, /database\.raw|\.raw\.prepare\s*\(|\.raw\.exec\s*\(|DatabaseSync/,
+    assert.doesNotMatch(source, RAW_DRIVER_REACHABILITY,
       `${path} must persist definition versions through the structured storage seam`);
+  }
+});
+
+/**
+ * **A guard nobody has watched fail is not a guard.** Each of these is a way a
+ * future edit could put the driver back into a migrated file, including the two
+ * optional-chained spellings the inherited M2A pattern misses — and each one
+ * must trip the alternation above.
+ */
+test('the M2B guard catches every spelling of a raw-driver return, optional chaining included', () => {
+  const escapes = [
+    'const select = database.raw.prepare(sql);',
+    'const select = database?.raw.prepare(sql);',
+    'const select = database?.raw?.prepare(sql);',
+    'const raw = tasks?.database?.raw;',
+    'const raw = deps.database ?. raw;',
+    'insert.run(...); database.raw.exec("COMMIT");',
+    'const db = new DatabaseSync(":memory:");',
+  ];
+  for (const escape of escapes) {
+    assert.match(escape, RAW_DRIVER_REACHABILITY, `the guard must refuse: ${escape}`);
+  }
+  // …and it does not fire on the seam the four files legitimately use, nor on
+  // an unrelated identifier that merely contains the word.
+  for (const allowed of [
+    'database.storage.sync.execute(statement);',
+    'const rawBody = Buffer.from(params.rawBody);',
+    'createDefinitionVersionStore(database).persist(entries);',
+  ]) {
+    assert.doesNotMatch(allowed, RAW_DRIVER_REACHABILITY, `the guard must allow: ${allowed}`);
   }
 });
 

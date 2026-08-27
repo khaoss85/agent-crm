@@ -65,28 +65,39 @@ changed fingerprint stops the boot.
 
 ## Raw-driver inventory
 
-Re-derived by grep over `packages/` at this head, not copied from earlier prose.
+Re-derived at this head, not copied from earlier prose. **The scan pattern
+matters:** the token scan M2A introduced looks for `database.raw`, and misses
+optional-chained access — `packages/work/src/follow-up.js` reaches the driver as
+`tasks?.database?.raw`, which a plain `database\.raw` scan does not surface. The
+inventory below uses a pattern that catches both spellings, which is why Work
+appears in it at all.
 
-| Classification | Path / consumer | Reason and disposition | Evidence owner |
-|---|---|---|---|
-| `M2B_CURRENT_SLICE` | `packages/commercial/src/registry.js` — catalog providers, discount policies | Raw persist-or-verify loop; migrate to the shared store. | `tests/commercial-contract.test.js`, `tests/commercial-e2e.test.js`, M2B guard |
-| `M2B_CURRENT_SLICE` | `packages/signature/src/registry.js` — signature providers | Raw persist-or-verify loop with a hard-coded type string; migrate to the shared store, parameterising the type through the entry. | `tests/signature-contract.test.js`, M2B guard |
-| `M2B_CURRENT_SLICE` | `packages/intelligence/src/registry.js` — enrichment providers, scoring models, routing policies | Raw persist-or-verify loop; migrate to the shared store. | `tests/intelligence-contract.test.js`, `tests/lead-intelligence-e2e.test.js`, M2B guard |
-| `M2B_CURRENT_SLICE` | `packages/core/src/package-registry.js` — `domain-policy:<domain>:<kind>` | Raw persist-or-verify loop; migrate to the shared store. | `tests/contracts-registry-review.test.js`, M2B guard |
-| `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/database.js` (3), `packages/core/src/core-adapters.js` (2), `packages/core/src/spine-store.js` (1) | SQLite adapter/compatibility internals own `DatabaseSync`, PRAGMAs, rendering, and raw-driver closure. | M0/M1 storage suites |
-| `LATER_M2_CORE` | `packages/core/src/action-runtime.js` (2) | Action-runtime persistence and trace remain a separate later-M2 slice. | action/trace suites |
-| `LATER_M2_PACKAGE` | `packages/workflows/src/engine.js` (9) | Workflow-run persistence is a separate runtime with joins and trace semantics. | workflow tests |
-| `LATER_M2_PACKAGE` | `packages/work/src/follow-up.js#requireCallerTransaction` (1, written `tasks?.database?.raw`) | Work's capability reads the raw driver's `isTransaction` flag to prove the caller's transaction; unchanged by M2B, so Work stays `partial`. | Work capability fault/concurrency suites |
-| `PROSE_NOT_A_CONSUMER` | `packages/create-accordo/src/project-bootstrap.js`, `packages/create-accordo/src/project-files.js`, `packages/cli/src/app-inspect.js` | The token `node:sqlite` appears inside declared limitations and reported metadata strings. No driver is opened. | bootstrap and inspect suites |
-| `CHARACTERIZATION_ONLY` | fixtures and temporary-project harnesses under `tests/characterization/` | Direct SQLite setup is preserved test evidence, not production reachability. | characterization suites |
-| `TEST_ONLY` | remaining occurrences under `tests/` | Fault injection, physical-schema assertions, and adapter tests intentionally exercise SQLite directly. | owning test files |
+```bash
+grep -rnE "database\s*\??\.\s*raw|\??\.\s*raw\s*\??\.\s*(prepare|exec)\s*\(|DatabaseSync" \
+  packages/ scripts/ apps/ --include='*.js'
+```
 
-Re-derived at this head with
-`grep -rnE "database\??\.raw|\.raw\.(prepare|exec)|DatabaseSync|node:sqlite" packages/ --include='*.js'`.
-The counts are occurrences, not statements. After M2B, no file under
-`packages/commercial`, `packages/signature`, `packages/intelligence` or
-`packages/core/src/package-registry.js` matches. **PostgreSQL remains absent:
-the only adapter is SQLite.**
+| Classification | Path / consumer | Occurrences | Reason and disposition | Evidence owner |
+|---|---|---|---|---|
+| `M2B_CURRENT_SLICE` | `packages/commercial/src/registry.js` — catalog providers, discount policies | 2 → **0** | Raw persist-or-verify loop, moved to the shared store. | `tests/commercial-contract.test.js`, `tests/commercial-e2e.test.js`, M2B guard |
+| `M2B_CURRENT_SLICE` | `packages/signature/src/registry.js` — signature providers | 2 → **0** | Raw persist-or-verify loop with a hard-coded type string, moved to the shared store; the type parameterises through the entry. | `tests/signature-contract.test.js`, M2B guard |
+| `M2B_CURRENT_SLICE` | `packages/intelligence/src/registry.js` — enrichment providers, scoring models, routing policies | 2 → **0** | Raw persist-or-verify loop, moved to the shared store. | `tests/intelligence-contract.test.js`, `tests/lead-intelligence-e2e.test.js`, M2B guard |
+| `M2B_CURRENT_SLICE` | `packages/core/src/package-registry.js` — `domain-policy:<domain>:<kind>` | 2 → **0** | Raw persist-or-verify loop, moved to the shared store. | `tests/contracts-registry-review.test.js`, M2B guard |
+| `LATER_M2_PACKAGE` | `packages/workflows/src/engine.js` | 9 | Workflow-run persistence is a separate runtime with joins and trace semantics. Untouched by M2B. | workflow tests |
+| `LATER_M2_CORE` | `packages/core/src/action-runtime.js` | 2 | Action-runtime persistence and trace remain a separate later-M2 slice. Untouched by M2B. | action/trace suites |
+| `LATER_M2_PACKAGE` | `packages/work/src/follow-up.js#requireCallerTransaction` | 1, written `tasks?.database?.raw` | Work's capability reads the driver's `isTransaction` flag to prove the caller's transaction. **Work remains `partial`, and its residue is reachable only through optional chaining, which the plain-token scan does not surface.** Untouched by M2B. | Work capability fault/concurrency suites |
+| `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/database.js` | 3 | The SQLite adapter owns `DatabaseSync`, the PRAGMAs, rendering, and the raw-driver closure. | M0/M1 storage suites |
+| `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/core-adapters.js` | 2 | Core adapter/compatibility internals. | M0/M1 storage suites |
+| `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/spine-store.js` | 1 | Control-plane store internals (`database.raw ?? database`). | Spine suites |
+| `AUTHORITY_PROBE_ALLOWED` | `scripts/repo-truth.js` | 5 | The Repository Truth storage authority opens isolated in-memory databases to execute its own probes. It is a repository-maintenance script, not application runtime. | `npm run repo:truth -- --check` |
+| `PROSE_NOT_A_CONSUMER` | `packages/create-accordo/src/project-bootstrap.js` (3), `packages/create-accordo/src/project-files.js` (1), `packages/cli/src/app-inspect.js` (1) | — | The token `node:sqlite` appears inside declared limitations and reported metadata strings. No driver is opened, and none of these matches the raw-driver pattern above. | bootstrap and inspect suites |
+| `CHARACTERIZATION_ONLY` | fixtures and temporary-project harnesses under `tests/characterization/` | — | Direct SQLite setup is preserved test evidence, not production reachability. | characterization suites |
+| `TEST_ONLY` | remaining occurrences under `tests/` | — | Fault injection, physical-schema assertions, and adapter tests intentionally exercise SQLite directly. | owning test files |
+
+After M2B the pattern above returns **nothing** under `packages/commercial`,
+`packages/signature`, `packages/intelligence`, or in
+`packages/core/src/package-registry.js`. **PostgreSQL remains absent: the only
+adapter is SQLite.**
 
 ## Decisions
 
@@ -131,11 +142,34 @@ the only adapter is SQLite.**
   are read from*, and no fact is read from the store, so adding it there would
   make `sourceSha` answer a question it does not answer. The store's behaviour is
   proven by the suites that execute it, not by a generator.
+- **The seam re-prepares; no statement cache is introduced.** Each registry used
+  to prepare the SELECT and the INSERT once and run them N times.
+  `createSqliteStorage` calls `raw.prepare(sql)` on every `execute`/`maybeOne`,
+  so the store re-prepares per statement. For a bounded set registered once at
+  startup that is the right trade, and adding a cache would be a performance
+  change nobody asked for inside a behaviour-preserving refactor. Recorded here
+  so it is a decision rather than something a reviewer discovers.
+- **The guard covers optional chaining, and was watched failing.** M2A's token
+  scan looks for `database.raw`; `packages/work/src/follow-up.js` reaches the
+  driver as `tasks?.database?.raw` and walks straight past it. The M2B guard's
+  alternation catches both spellings, and a second test asserts it refuses each
+  escape — `database?.raw.prepare(`, `database?.raw?.prepare(`, `?.database?.raw`,
+  `.raw.exec(`, `DatabaseSync` — while still allowing `database.storage.sync` and
+  `rawBody`. It was also verified by construction: each escape was temporarily
+  written into `packages/commercial/src/registry.js` and the guard failed on all
+  four, then the file was restored. **Follow-on work, deliberately not in this
+  PR:** M2A's own guard in `tests/work-legacy-task-migration.test.js` still
+  carries the un-hardened pattern and deserves the same treatment; widening this
+  PR to retrofit another milestone's guard would enlarge a bounded slice.
 - **`tests/contracts-registry-review.test.js` keeps its fault injection.** It
-  intercepts `database.raw.prepare` and matched `INSERT INTO definition_versions`;
-  the adapter quotes identifiers, so the match now accepts `INSERT INTO
-  "definition_versions"` too. The injected fault is unchanged — only the SQL text
-  the driver receives moved.
+  intercepts `database.raw.prepare` and matched `sql.startsWith('INSERT INTO
+  definition_versions')`. The adapter quotes identifiers — `renderSqliteStatement`
+  emits `INSERT INTO "definition_versions" (…)` — so that prefix stops matching
+  once the insert routes through the seam, and the injected fault silently stops
+  firing. Verified rather than assumed: with the original prefix the test fails,
+  and with the match widened to accept both spellings it passes. The rollback
+  assertion and the counted inserts are untouched; only the SQL text the driver
+  receives moved.
 
 ## Validation
 
@@ -178,6 +212,12 @@ npm run verify
   the suite refuses the regressions it claims to.
 - **2026-08-27:** Reconciled the M2A inventory rows, the alignment matrix, the
   status snapshot and the task ledger, and regenerated Repository Truth.
+- **2026-08-27:** Hardened the M2B guard after review raised that optional
+  chaining evades the inherited token scan. Proved it by construction — four
+  escapes written into a migrated file, guard failing on each, file restored —
+  and re-derived the raw-driver inventory with the widened pattern across
+  `packages/`, `scripts/` and `apps/`, which is what put `scripts/repo-truth.js`
+  and Work's optional-chained residue into the table.
 
 ## Outcome and follow-up
 
@@ -190,6 +230,9 @@ message, per family, rather than matching a fragment of it.
 Explicitly still open, and deliberately so: `packages/workflows/src/engine.js` and
 `packages/core/src/action-runtime.js` remain later-M2 raw consumers;
 `packages/work/src/follow-up.js#requireCallerTransaction` still reads the driver's
-transaction flag, so Work stays `partial`; the adapter internals in
+transaction flag through optional chaining, so Work stays `partial` — and that
+residue is invisible to a plain `database\.raw` scan, which is why the M2B guard
+catches the optional-chained spelling and why M2A's guard is named above as
+follow-on work; the adapter internals in
 `packages/core/src/database.js`, `core-adapters.js` and `spine-store.js` own the
 driver by design. PostgreSQL remains absent.
