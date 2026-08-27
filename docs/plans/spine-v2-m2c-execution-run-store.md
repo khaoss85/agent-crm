@@ -237,14 +237,44 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
 ## Known limitation, carried forward deliberately
 
 **Run and span persistence has no actor context and no audit event** — the same
-limitation M2B recorded for `definition_versions`, and the same three bounding
-facts apply. Neither consumer took an actor or emitted an audit event for these
-writes before M2C: the engine writes the run row before any step executes, and
-`writeTrace` writes evidence *about* an actor rather than a mutation *by* one.
-The trace row already records the actor inside `input_json` (`safeActor(actor)`
-in `action-runtime.js`), which is what makes it evidence rather than an
-unattributed mutation. M2C preserves that exactly. Nothing here is published, so
-no new mutation capability is created.
+limitation M2B recorded for `definition_versions`, raised again by review against
+AGENTS.md's *"Flag any mutation without actor context and audit event"*, and
+resolved the same way, for reasons verified rather than asserted.
+
+**The two consumers are not equally exposed, and an earlier draft of this section
+blurred them.** They deserve separate sentences:
+
+- **The action-runtime path already records the actor**, inside the run's own
+  `input_json` (`safeActor(actor)` in `action-runtime.js`), together with the
+  authorization decision that permitted the run. That is what makes a trace row
+  evidence *about* an actor rather than an unattributed mutation.
+- **The workflow-engine path records no actor at all.** `WorkflowEngine.run()`
+  accepts `context.actor` and passes it to every step, but has never persisted
+  it: `workflow_runs` has no actor column, and at `c284867` the engine's own
+  insert wrote `(id, workflow_name, status, input_json, output_json, error,
+  started_at, finished_at)` and nothing else. So a workflow run's stored evidence
+  cannot say who initiated it, and could not before M2C either.
+
+Three facts bound the gap:
+
+1. **It is not an M2C regression.** Verified against `c284867`: the engine passed
+   `context.actor` to steps only (lines 88 and 131) and persisted it nowhere, and
+   `writeTrace` behaved exactly as it does now. M2C preserves both byte for byte,
+   which the three characterization harnesses independently confirm.
+2. **Publishing nothing creates no new mutation capability.** The store is
+   internal and unexported, and `packages/app/src/create-app.js` already hands
+   every package the full `database` handle. The store is strictly narrower than
+   what was already reachable.
+3. **Closing it is milestone work, not a refactor's tail.** Attributing a
+   workflow run needs a schema migration for a column that does not exist, a new
+   startup-to-runtime decision about who the actor is when a run opens before its
+   first step, and an audit-event policy for evidence rows. Each of those changes
+   what the engine stores, which invalidates the byte-identical proof this
+   milestone rests on — the same reasoning under which M2B recorded rather than
+   implemented it.
+
+Recorded here as inherited work, so the next milestone meets it as a decision
+rather than rediscovering it as a surprise.
 
 ## Validation
 
@@ -297,6 +327,25 @@ npm run verify
   which retires the local full-tree run: that one had been confounded by the
   mutation harness editing source underneath it, and its ten failures were all
   in benchmark-fixture suites this PR does not touch.
+- **2026-08-27:** Review at the exact head returned four inline findings, and
+  the plain "no major issues" comment beside them made it easy to read as zero —
+  the inverse of the trap in this repository's own review guidance. Checked the
+  count rather than the comment. One P2 was already closed at that head by the
+  `error` type check found in the self-sweep; one P2 was real and mine, and is
+  fixed below; the two P1s were one finding stated twice.
+- **2026-08-27:** Fixed the `Open PRs` row in `docs/PROJECT_STATUS.md`, which
+  said `Measured at` names `e1ff9a0` while the row two lines above it and
+  `site/claims.json` `measuredAgainst` both name `27cc663`. I had copied M2B's
+  phrasing without re-checking it after the post-M2B measurement landed, leaving
+  the canonical status snapshot contradicting itself about measurement
+  provenance. The `e1ff9a0` on the milestone row is a different thing and stays:
+  it is M2A's review-closeout commit, not a measurement.
+- **2026-08-27:** Sharpened the actor/audit limitation after review raised it as
+  a P1 twice. The finding is not an M2C regression — verified at `c284867` that
+  the engine passed `context.actor` to steps and persisted it nowhere — but the
+  earlier wording blurred the two consumers, claiming the actor is recorded in
+  `input_json` when that is true of the action-runtime path and not of the
+  engine's. The two now get separate sentences.
 - **2026-08-27:** Added `packages/core/src/definition-version-store.js` to the
   three behaviour-bearing lists on the integrator's instruction, having first
   argued for deferring it. The instruction was right: the argument for adding
