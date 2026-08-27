@@ -144,8 +144,10 @@ string, nullable-string, enum and boolean paths, managed enum paths, the closed
 predicate shapes, and complete mutation/readback checks against their generated
 schemas. They prove those selected runtimes and the generator template use the
 contract; they do not claim every checked-in generated service is migrated. The Work
-probe deliberately detects that `legacy-tasks.js` still reaches the raw migration
-source, so it remains visible M2 residue rather than being mistaken for alignment.
+probe executes `legacy-tasks.js` through structured table-discovery and bounded-row
+reads. It proves only that migration path is off the raw driver; Work remains partial
+because `follow-up.js#requireCallerTransaction` still inspects the adapter-owned raw
+transaction state pending a later transaction-context seam.
 
 ## The rule that matters most
 

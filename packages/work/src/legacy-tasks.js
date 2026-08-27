@@ -26,9 +26,9 @@ import { TASK_MODULE, normalizeWorkActor, resolveModule } from './follow-up.js';
  *     every historical row readable.
  *   - Rows are **read** with a bounded `SELECT` and **written** through the
  *     `work-task` module's managed service, so the new rows carry the same
- *     validation, actor, audit and trace as any other managed write. The read is
- *     raw because the legacy module may no longer be composed at all — reading
- *     is not a mutation, and there is no service left to read through.
+ *     validation, actor, audit and trace as any other managed write. The legacy
+ *     module may no longer be composed, so table discovery and bounded row reads
+ *     use the closed Storage Contract v1 `select` vocabulary directly.
  *   - It is **dry-run by default**. `{ apply: true }` writes; anything else
  *     returns the plan and touches nothing.
  *   - It is **atomic**: the whole adoption runs in one transaction, so a run
