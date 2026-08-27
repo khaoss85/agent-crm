@@ -89,6 +89,18 @@ overbuilt/roadmap debt, or taxonomy error. In particular, `PLT-004` is horizonta
 plumbing, while the five Governance & Security orphans remain individually visible for human
 portfolio review.
 
+## Cross-cutting role-agent composition
+
+Individual assignments remain authoritative per JTBD. Higher-level role-agent packs are a
+non-authoritative composition view that groups existing desired jobs into end-to-end product
+slices; they do not alter assignment, priority, or coverage. The prospecting, marketing, and
+customer/service composition strategy is documented in
+[`../../strategy/AGENTIC_WORKFORCE_ROADMAP.md`](../../strategy/AGENTIC_WORKFORCE_ROADMAP.md).
+
+That roadmap deliberately reuses the existing SDR, ABM, customer-success, and agent-engineering
+jobs rather than adding duplicate catalogue records. A pack, prompt, connector, or model output
+cannot promote any grouped job: each coverage row still requires its own executable evidence.
+
 ## Public/private boundary
 
 The public overlay carries track, milestone, disposition, dependencies, and public
