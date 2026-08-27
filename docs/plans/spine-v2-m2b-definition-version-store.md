@@ -166,10 +166,14 @@ adapter is SQLite.**
   definition_versions')`. The adapter quotes identifiers — `renderSqliteStatement`
   emits `INSERT INTO "definition_versions" (…)` — so that prefix stops matching
   once the insert routes through the seam, and the injected fault silently stops
-  firing. Verified rather than assumed: with the original prefix the test fails,
-  and with the match widened to accept both spellings it passes. The rollback
-  assertion and the counted inserts are untouched; only the SQL text the driver
-  receives moved.
+  firing while the rollback assertion goes on passing without testing anything.
+  Verified rather than assumed: with the original prefix the suite fails 4/5,
+  and with `/^INSERT INTO "?definition_versions\b/` it passes 5/5, matching the
+  quoted and unquoted spellings while rejecting `"definition_versions_other"`.
+  **The rollback assertion and the counted-inserts check are byte-for-byte
+  unchanged** — only the interception predicate moved. The independent
+  all-or-nothing proof in the M2B suite needs no monkey-patching at all: it
+  counts the insert that reached the adapter before the refusal.
 
 ## Validation
 

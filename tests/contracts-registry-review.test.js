@@ -138,11 +138,16 @@ test('policy fingerprints are persisted, drift-checked and all-or-nothing', asyn
   let inserts = 0;
   app.database.raw.prepare = (sql) => {
     const statement = realPrepare(sql);
-    // The adapter quotes identifiers, so the statement the driver actually
-    // receives is `INSERT INTO "definition_versions" (…)`. Match both forms:
-    // the fault this test injects is about the second row failing, not about
-    // which layer rendered the SQL.
-    if (!/^INSERT INTO "?definition_versions"?\b/.test(sql)) return statement;
+    // `renderSqliteStatement` quotes every identifier, so the statement the
+    // driver receives is `INSERT INTO "definition_versions" (…)` and the old
+    // `startsWith('INSERT INTO definition_versions')` no longer matches it —
+    // which would leave this interception silently never firing and the
+    // rollback assertion below passing without testing anything. The optional
+    // opening quote covers both spellings; `\b` after the table name closes the
+    // match whether the next character is `"` or `(`. Nothing else here moved:
+    // the fault is still thrown on the second insert, and the assertions are
+    // unchanged.
+    if (!/^INSERT INTO "?definition_versions\b/.test(sql)) return statement;
     return {
       ...statement,
       run: (...args) => {
