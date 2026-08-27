@@ -24,20 +24,46 @@ import { IntelligenceRegistries } from '../packages/intelligence/src/registry.js
  */
 
 /**
- * Optional chaining is the hole in the token scan M2A introduced. Its pattern
- * looks for `database.raw`, and `packages/work/src/follow-up.js` reaches the
- * driver as `tasks?.database?.raw` — genuine reachability that the plain scan
- * does not surface. A guard that claims raw access cannot return to a file
- * while a one-character edit walks past it is not evidence, so this alternation
- * covers the optional-chained form too. Proven by construction below.
+ * **What this guard is, stated exactly.**
+ *
+ * It is a *token scan* for the known spellings of direct driver access in four
+ * named files. It catches regression by editing — someone reaching for
+ * `database.raw` again — and that is worth having, because that is how the
+ * driver actually comes back.
+ *
+ * **It does not prove unreachability, and must not be read as proving it.** No
+ * regex can: `const d = database; const r = d['r' + 'aw'];` defeats any pattern
+ * written here, and chasing that is a losing game rather than a stricter guard.
+ * A test named for a guarantee it cannot deliver is the same reassurance the
+ * falsification kit refuses when a mutation stops aiming at anything — so this
+ * one is named for what it does.
+ *
+ * The spellings it does cover are pinned below, each watched failing. The list
+ * grew twice under review: optional chaining (`tasks?.database?.raw`, which is
+ * how `packages/work/src/follow-up.js` still reaches the driver and why the
+ * inherited M2A pattern does not see it), then bracket access and destructuring.
  */
-const RAW_DRIVER_REACHABILITY = /database\s*\??\.\s*raw|\??\.\s*raw\s*\??\.\s*(?:prepare|exec)\s*\(|DatabaseSync/;
+const RAW_DRIVER_SPELLINGS = Object.freeze([
+  // `database.raw`, `database?.raw`, `this.database.raw`
+  /database\s*\??\.\s*raw\b/,
+  // `.raw.prepare(`, `?.raw?.exec(`
+  /\??\.\s*raw\s*\??\.\s*(?:prepare|exec)\s*\(/,
+  // `database['raw']`, `database?.["raw"]`
+  /database\s*\??\.?\s*\[\s*['"]raw['"]\s*\]/,
+  // `const { raw } = database`, `const { raw, storage } = this.database`
+  /\{[^{}]*\braw\b[^{}]*\}\s*=\s*[^;\n]*\bdatabase\b/i,
+  // the driver constructor itself
+  /\bDatabaseSync\b/,
+]);
+
+/** @param {string} source */
+const rawDriverSpelling = (source) => RAW_DRIVER_SPELLINGS.find((pattern) => pattern.test(source)) ?? null;
 
 /**
- * The one guard for this milestone. It covers the four files M2B declared and
- * nothing else: `packages/workflows/src/engine.js`, the action runtime and
- * Work's transaction-context seam still reach the driver, deliberately, and
- * this assertion makes no claim about them.
+ * The four files M2B declared, and nothing else:
+ * `packages/workflows/src/engine.js`, the action runtime and Work's
+ * transaction-context seam still reach the driver, deliberately, and this
+ * assertion makes no claim about them.
  */
 const M2B_SLICE = Object.freeze([
   'packages/commercial/src/registry.js',
@@ -46,41 +72,67 @@ const M2B_SLICE = Object.freeze([
   'packages/core/src/package-registry.js',
 ]);
 
-test('the declared M2B slice has no raw-driver reachability', () => {
+test('the four migrated files carry no known spelling of direct driver access', () => {
   for (const path of M2B_SLICE) {
     const source = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
-    assert.doesNotMatch(source, RAW_DRIVER_REACHABILITY,
-      `${path} must persist definition versions through the structured storage seam`);
+    const found = rawDriverSpelling(source);
+    assert.equal(found, null,
+      `${path} must persist definition versions through the structured storage seam, but matched ${found}`);
   }
 });
 
 /**
- * **A guard nobody has watched fail is not a guard.** Each of these is a way a
- * future edit could put the driver back into a migrated file, including the two
- * optional-chained spellings the inherited M2A pattern misses — and each one
- * must trip the alternation above.
+ * **A guard nobody has watched fail is not a guard.** Every spelling the scan
+ * claims to cover is pinned here, and each was additionally verified by
+ * construction — written into a migrated file, the guard watched failing, the
+ * file restored.
  */
-test('the M2B guard catches every spelling of a raw-driver return, optional chaining included', () => {
+test('the scan catches the spellings it claims to cover', () => {
   const escapes = [
     'const select = database.raw.prepare(sql);',
     'const select = database?.raw.prepare(sql);',
     'const select = database?.raw?.prepare(sql);',
     'const raw = tasks?.database?.raw;',
     'const raw = deps.database ?. raw;',
+    "const select = database['raw'].prepare(sql);",
+    'const select = database["raw"].prepare(sql);',
+    "const select = database?.['raw'].prepare(sql);",
+    'const { raw } = database;',
+    'const { raw, storage } = this.database;',
     'insert.run(...); database.raw.exec("COMMIT");',
     'const db = new DatabaseSync(":memory:");',
   ];
   for (const escape of escapes) {
-    assert.match(escape, RAW_DRIVER_REACHABILITY, `the guard must refuse: ${escape}`);
+    assert.notEqual(rawDriverSpelling(escape), null, `the scan must catch: ${escape}`);
   }
   // …and it does not fire on the seam the four files legitimately use, nor on
-  // an unrelated identifier that merely contains the word.
+  // unrelated identifiers that merely contain the word.
   for (const allowed of [
     'database.storage.sync.execute(statement);',
     'const rawBody = Buffer.from(params.rawBody);',
+    'const rawBody = Buffer.isBuffer(params.rawBody) ? params.rawBody : Buffer.from(params.rawBody);',
     'createDefinitionVersionStore(database).persist(entries);',
+    "const kinds = ['raw', 'cooked'];",
   ]) {
-    assert.doesNotMatch(allowed, RAW_DRIVER_REACHABILITY, `the guard must allow: ${allowed}`);
+    assert.equal(rawDriverSpelling(allowed), null, `the scan must allow: ${allowed}`);
+  }
+});
+
+/**
+ * **The limitation, asserted rather than described.** These are real escapes the
+ * scan does not catch, and pinning them here is the honest half of the claim: a
+ * reader who assumes this guard proves unreachability can run this test and see
+ * that it does not. If a future change makes the scan stronger, this test fails
+ * and gets updated — which is the point.
+ */
+test('the scan is a token scan, and cannot prove unreachability', () => {
+  for (const undetected of [
+    "const d = database; const r = d['r' + 'aw'];",
+    'const key = "raw"; const r = handle[key];',
+    'const r = Reflect.get(database, "ra" + "w");',
+  ]) {
+    assert.equal(rawDriverSpelling(undetected), null,
+      `this guard is a token scan and does not claim to catch: ${undetected}`);
   }
 });
 
@@ -306,6 +358,51 @@ test('the store defaults to the framework clock and a uuid, and refuses a bad cl
   );
   assert.throws(() => createDefinitionVersionStore(database, { newId: 'nope' }), /newId must be a function/);
   assert.throws(() => createDefinitionVersionStore({}), /requires a database with Storage Contract v1/);
+});
+
+/**
+ * `Object.keys` sees only enumerable string keys, so a "closed shape" checked
+ * with it is not closed: a field hidden behind `Object.defineProperty`, or held
+ * under a symbol, walks straight through and reaches the transaction. The store
+ * advertises both a closed shape and fail-closed validation, so it has to
+ * refuse the spellings that are easy to reach for as well as the obvious one.
+ */
+test('the closed entry shape refuses non-enumerable, symbol and non-plain entries', (t) => {
+  const database = memory(t);
+  const opened = [];
+  const sync = database.storage.sync;
+  const handle = {
+    storage: {
+      sync: { ...sync, transaction(fn) { opened.push('transaction'); return sync.transaction(fn); } },
+    },
+  };
+  const store = createDefinitionVersionStore(handle);
+
+  const hidden = entry();
+  Object.defineProperty(hidden, 'config', { value: { secret: 'do not persist me' }, enumerable: false });
+  assert.equal(Object.keys(hidden).includes('config'), false, 'the fixture really is invisible to Object.keys');
+  assert.throws(() => store.persist([hidden]), /unsupported field "config"/,
+    'a non-enumerable extra field is still an extra field');
+
+  const symboled = entry();
+  symboled[Symbol.for('accordo.test.config')] = { secret: 'do not persist me either' };
+  assert.throws(() => store.persist([symboled]), /unsupported field/,
+    'a symbol-keyed extra field is still an extra field');
+
+  // "Plain object" has to mean it: a class instance and a null-prototype bag
+  // both carry the four fields and neither is what the contract says.
+  class NotPlain {
+    constructor() {
+      Object.assign(this, entry());
+    }
+  }
+  assert.throws(() => store.persist([new NotPlain()]), /must be a plain object/);
+  const bare = Object.create(null);
+  Object.assign(bare, entry());
+  assert.throws(() => store.persist([bare]), /must be a plain object/);
+
+  assert.deepEqual(opened, [], 'none of these reached BEGIN IMMEDIATE');
+  assert.equal(rows(database).length, 0, 'and none of them persisted anything');
 });
 
 test('the store validates the whole batch before it opens a transaction', (t) => {

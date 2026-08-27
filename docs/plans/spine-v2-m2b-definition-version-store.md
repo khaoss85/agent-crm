@@ -189,6 +189,26 @@ adapter is SQLite.**
   byte-identical, which is the strongest available evidence that this refactor is
   boundary-preserving. No characterization receipt was weakened to make anything
   pass.
+- **The closed entry shape is checked with `Reflect.ownKeys`, not `Object.keys`.**
+  Review found the "closed shape" was not closed: `Object.keys` sees only
+  enumerable string keys, so a field hidden behind
+  `Object.defineProperty(…, {enumerable: false})` or held under a symbol reached
+  `BEGIN IMMEDIATE` instead of being refused before it. The check now uses
+  `Reflect.ownKeys` and also requires a genuine `Object.prototype` prototype —
+  the same test the storage contract's own `closed()` applies — so a class
+  instance and a null-prototype bag carrying the four fields are refused too.
+- **The guard's *claim* was narrowed, not only its pattern widened.** Review
+  found `database['raw']` and `const { raw } = database` both restored driver
+  reachability while the scan stayed green, and the test called its examples
+  "every spelling". Both halves were wrong. The pattern set now covers bracket
+  access and destructuring as well as optional chaining, each watched failing by
+  construction — but more importantly the test no longer claims what a token
+  scan cannot deliver. It is named *the four migrated files carry no known
+  spelling of direct driver access*, and a third test **asserts the limitation**
+  by pinning escapes the scan does not catch (`d['r' + 'aw']`, a computed key,
+  `Reflect.get`). No regex establishes unreachability; a guard named for a
+  guarantee it cannot give is the reassurance this repository's own falsification
+  kit exists to refuse.
 - **The seam re-prepares; no statement cache is introduced.** Each registry used
   to prepare the SELECT and the INSERT once and run them N times.
   `createSqliteStorage` calls `raw.prepare(sql)` on every `execute`/`maybeOne`,
@@ -265,6 +285,16 @@ npm run verify
   the suite refuses the regressions it claims to.
 - **2026-08-27:** Reconciled the M2A inventory rows, the alignment matrix, the
   status snapshot and the task ledger, and regenerated Repository Truth.
+- **2026-08-27:** Merged `origin/main` after the post-M2A measurement landed,
+  resolving four `docs/PROJECT_STATUS.md` passages: the milestone row (the only
+  true conflict), the next-work item, the implemented paragraph and `Open PRs`.
+  `docs/repository-truth.json` was taken from main wholesale and regenerated
+  rather than hand-merged; `site/claims.json` and `Measured at` were left alone,
+  and `measurement.test_tree_current` correctly flipped to `false`.
+- **2026-08-27:** Codex review at the merged head raised two P2s, both real and
+  both fixed with regressions written first: the closed entry shape was not
+  closed against non-enumerable or symbol keys, and the structural guard claimed
+  more than a token scan can prove.
 - **2026-08-27:** CI `verify` failed on the pushed head and caught two things
   the targeted suites could not: the falsification mutation had stopped aiming at
   anything, and the three characterization baselines were stale. Both are

@@ -78,12 +78,22 @@ function requireIdentityString(value, field, index) {
  * @param {number} index
  */
 function validateEntry(entry, index) {
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+  // The same "plain object" test the storage contract's own `closed()` applies.
+  // A class instance or a null-prototype bag can carry the four fields and
+  // still not be the shape this contract names, and `typeof` alone says yes to
+  // both of them.
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+    || Object.getPrototypeOf(entry) !== Object.prototype) {
     throw new ValidationError('Definition version entry must be a plain object', { index });
   }
-  const unknown = Object.keys(entry).find((key) => !ENTRY_FIELDS.includes(key));
+  // `Reflect.ownKeys`, not `Object.keys`: a field hidden behind
+  // `Object.defineProperty(…, {enumerable: false})`, or held under a symbol, is
+  // still a field the caller is asking this store to accept. A closed shape
+  // checked with `Object.keys` is not closed against either spelling.
+  const unknown = Reflect.ownKeys(entry).find((key) => !ENTRY_FIELDS.includes(key));
   if (unknown !== undefined) {
-    throw new ValidationError(`Definition version entry has an unsupported field "${unknown}"`, { index, field: unknown });
+    const named = typeof unknown === 'symbol' ? unknown.toString() : unknown;
+    throw new ValidationError(`Definition version entry has an unsupported field "${named}"`, { index, field: named });
   }
   const record = /** @type {Record<string, unknown>} */ (entry);
   const version = record.version;
