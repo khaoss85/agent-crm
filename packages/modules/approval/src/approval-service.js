@@ -36,20 +36,9 @@ export class ApprovalService {
       requestedAt: nowIso(),
       decidedAt: null,
     };
-    this.database.raw.prepare(`
-      INSERT INTO approvals(
-        id, opportunity_id, status, reason, requested_by, decided_by, requested_at, decided_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      approval.id,
-      approval.opportunityId,
-      approval.status,
-      approval.reason,
-      approval.requestedBy,
-      approval.decidedBy,
-      approval.requestedAt,
-      approval.decidedAt,
-    );
+    this.database.storage.sync.execute({
+      kind: 'insert', table: 'approvals', values: approvalValues(approval),
+    });
     this.audit.record({
       actor,
       action: 'approval.requested',
@@ -74,11 +63,12 @@ export class ApprovalService {
     const status = enumValue(decision, [...APPROVAL_STATUSES].filter((item) => item !== 'pending'), 'decision');
     const actor = normalizeActor(context.actor);
     const decidedAt = nowIso();
-    this.database.raw.prepare(`
-      UPDATE approvals
-      SET status = ?, decided_by = ?, decided_at = ?
-      WHERE id = ?
-    `).run(status, actor.id, decidedAt, id);
+    this.database.storage.sync.execute({
+      kind: 'update', table: 'approvals', values: [
+        { column: 'status', value: status }, { column: 'decided_by', value: actor.id },
+        { column: 'decided_at', value: decidedAt },
+      ], where: [{ column: 'id', op: 'eq', value: id }],
+    });
     const updated = this.get(id);
     this.audit.record({
       actor,
@@ -93,57 +83,58 @@ export class ApprovalService {
 
   /** @param {string} id */
   get(id) {
-    const row = this.database.raw.prepare(`
-      SELECT a.*, o.name AS opportunity_name, o.value_cents, o.currency,
-             c.name AS company_name
-      FROM approvals a
-      JOIN opportunities o ON o.id = a.opportunity_id
-      JOIN companies c ON c.id = o.company_id
-      WHERE a.id = ?
-    `).get(id);
+    const row = this.database.storage.sync.maybeOne({
+      kind: 'select', table: 'approvals', columns: '*', where: [{ column: 'id', op: 'eq', value: id }],
+    });
     if (!row) throw new NotFoundError('Approval', id);
-    return mapApprovalRow(row);
+    return this.#mapRow(row);
   }
 
   /** @param {string} opportunityId */
   findPendingByOpportunity(opportunityId) {
-    const row = this.database.raw.prepare(`
-      SELECT a.*, o.name AS opportunity_name, o.value_cents, o.currency,
-             c.name AS company_name
-      FROM approvals a
-      JOIN opportunities o ON o.id = a.opportunity_id
-      JOIN companies c ON c.id = o.company_id
-      WHERE a.opportunity_id = ? AND a.status = 'pending'
-    `).get(opportunityId);
-    return row ? mapApprovalRow(row) : null;
+    const row = this.database.storage.sync.maybeOne({
+      kind: 'select', table: 'approvals', columns: '*', where: [
+        { column: 'opportunity_id', op: 'eq', value: opportunityId },
+        { column: 'status', op: 'eq', value: 'pending' },
+      ],
+    });
+    return row ? this.#mapRow(row) : null;
   }
 
   /** @param {{status?: string, opportunityId?: string, limit?: number}} [filters] */
   list(filters = {}) {
-    const clauses = [];
-    const params = [];
+    const where = [];
     if (filters.status) {
       enumValue(filters.status, [...APPROVAL_STATUSES], 'status');
-      clauses.push('a.status = ?');
-      params.push(filters.status);
+      where.push({ column: 'status', op: 'eq', value: filters.status });
     }
     if (filters.opportunityId) {
-      clauses.push('a.opportunity_id = ?');
-      params.push(filters.opportunityId);
+      where.push({ column: 'opportunity_id', op: 'eq', value: filters.opportunityId });
     }
-    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
-    return this.database.raw.prepare(`
-      SELECT a.*, o.name AS opportunity_name, o.value_cents, o.currency,
-             c.name AS company_name
-      FROM approvals a
-      JOIN opportunities o ON o.id = a.opportunity_id
-      JOIN companies c ON c.id = o.company_id
-      ${where}
-      ORDER BY a.requested_at DESC
-      LIMIT ?
-    `).all(...params, limit).map(mapApprovalRow);
+    return this.database.storage.sync.many({
+      kind: 'select', table: 'approvals', columns: '*', where,
+      orderBy: [{ column: 'requested_at', direction: 'desc' }], limit,
+    }).map((row) => this.#mapRow(row));
   }
+
+  /** @param {any} row */
+  #mapRow(row) {
+    const opportunity = this.opportunities.get(row.opportunity_id);
+    return mapApprovalRow({
+      ...row, opportunity_name: opportunity.name, company_name: opportunity.companyName,
+      value_cents: opportunity.valueCents, currency: opportunity.currency,
+    });
+  }
+}
+
+/** @param {any} approval */
+function approvalValues(approval) {
+  return [
+    ['id', approval.id], ['opportunity_id', approval.opportunityId], ['status', approval.status],
+    ['reason', approval.reason], ['requested_by', approval.requestedBy], ['decided_by', approval.decidedBy],
+    ['requested_at', approval.requestedAt], ['decided_at', approval.decidedAt],
+  ].map(([column, value]) => ({ column, value }));
 }
 
 /** @param {any} row */

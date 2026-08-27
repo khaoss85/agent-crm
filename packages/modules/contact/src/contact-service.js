@@ -34,20 +34,9 @@ export class ContactService {
     };
 
     try {
-      this.database.raw.prepare(`
-        INSERT INTO contacts(
-          id, company_id, first_name, last_name, email, role, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        contact.id,
-        contact.companyId,
-        contact.firstName,
-        contact.lastName,
-        contact.email,
-        contact.role,
-        contact.createdAt,
-        contact.updatedAt,
-      );
+      this.database.storage.sync.execute({
+        kind: 'insert', table: 'contacts', values: contactValues(contact),
+      });
     } catch (error) {
       if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
         throw new ConflictError(`A contact already uses ${contact.email}`, { email: contact.email });
@@ -68,7 +57,9 @@ export class ContactService {
 
   /** @param {string} id */
   get(id) {
-    const row = this.database.raw.prepare('SELECT * FROM contacts WHERE id = ?').get(id);
+    const row = this.database.storage.sync.maybeOne({
+      kind: 'select', table: 'contacts', columns: '*', where: [{ column: 'id', op: 'eq', value: id }],
+    });
     if (!row) throw new NotFoundError('Contact', id);
     return mapContactRow(row);
   }
@@ -77,14 +68,26 @@ export class ContactService {
   list(filters = {}) {
     const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
     if (filters.companyId) {
-      return this.database.raw.prepare(`
-        SELECT * FROM contacts WHERE company_id = ? ORDER BY created_at DESC LIMIT ?
-      `).all(filters.companyId, limit).map(mapContactRow);
+      return this.database.storage.sync.many({
+        kind: 'select', table: 'contacts', columns: '*',
+        where: [{ column: 'company_id', op: 'eq', value: filters.companyId }],
+        orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
+      }).map(mapContactRow);
     }
-    return this.database.raw.prepare(`
-      SELECT * FROM contacts ORDER BY created_at DESC LIMIT ?
-    `).all(limit).map(mapContactRow);
+    return this.database.storage.sync.many({
+      kind: 'select', table: 'contacts', columns: '*', where: [],
+      orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
+    }).map(mapContactRow);
   }
+}
+
+/** @param {any} contact */
+function contactValues(contact) {
+  return [
+    ['id', contact.id], ['company_id', contact.companyId], ['first_name', contact.firstName],
+    ['last_name', contact.lastName], ['email', contact.email], ['role', contact.role],
+    ['created_at', contact.createdAt], ['updated_at', contact.updatedAt],
+  ].map(([column, value]) => ({ column, value }));
 }
 
 /** @param {any} row */

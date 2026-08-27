@@ -1418,25 +1418,28 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
       rmSync(generatedRoot, { recursive: true, force: true });
     }
 
-    // Behavior probe for the deliberately retained compatibility path. The
-    // fake service permits entry; the only way to answer that the table is
-    // absent is to invoke the supplied raw SQLite-shaped prepare/get pair.
-    let legacyPrepareCalls = 0;
+    // Behavior probe for the migrated compatibility path. Both legacy reads
+    // must cross the closed storage statement seam; raw driver reachability is
+    // refused structurally below rather than inferred from a happy-path call.
+    const legacyStorageCalls = [];
     const legacyReport = await migrateLegacyTasks({
       modules: { get: () => ({ service: { createManaged() {}, listWhere() { return []; } } }) },
-      database: { raw: { prepare() {
-        legacyPrepareCalls += 1;
-        return {
-          get: () => ({ name: 'tasks' }),
-          all: () => [{ id: 'legacy-1', title: 'Legacy', status: 'open', due_at: null,
-            lead_id: 'lead-1', source_key: 'old-key', created_at: '2026-01-01T00:00:00.000Z' }],
-        };
+      database: { storage: { sync: {
+        maybeOne(statement) { legacyStorageCalls.push(['maybeOne', statement]); return { name: 'tasks' }; },
+        many(statement) {
+          legacyStorageCalls.push(['many', statement]);
+          return [{ id: 'legacy-1', title: 'Legacy', status: 'open', due_at: null,
+            lead_id: 'lead-1', source_key: 'old-key', created_at: '2026-01-01T00:00:00.000Z' }];
+        },
       } } },
     });
-    bundle.workLegacyUsesRaw = legacyPrepareCalls === 2
+    const workLegacyUsesStorage = legacyStorageCalls.length === 2
+      && legacyStorageCalls[0][0] === 'maybeOne'
+      && legacyStorageCalls[1][0] === 'many'
       && legacyReport.found === 1 && legacyReport.wouldAdopt === 1;
-    if (!bundle.workLegacyUsesRaw) {
-      throw new Error('the Work legacy raw-read behavior probe was inconclusive or regressed');
+    bundle.workLegacyUsesRaw = false;
+    if (!workLegacyUsesStorage) {
+      throw new Error('the Work legacy structured-read behavior probe was inconclusive or regressed');
     }
   } catch (error) {
     unavailable(`the spine authorities could not be read: ${/** @type {any} */ (error)?.message ?? error}`);

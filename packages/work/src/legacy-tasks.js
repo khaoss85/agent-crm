@@ -69,14 +69,17 @@ export async function migrateLegacyTasks(context, options = {}) {
     });
   }
   const database = context.database;
-  if (!database?.raw?.prepare) {
+  const storage = database?.storage?.sync;
+  if (!storage?.maybeOne || !storage?.many) {
     throw new AppError('migrateLegacyTasks needs the application database handle', {
       code: 'WORK_MIGRATION_INVALID', status: 500,
     });
   }
-  const exists = database.raw
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(table);
+  const exists = storage.maybeOne({
+    kind: 'select', table: 'sqlite_master', columns: ['name'], where: [
+      { column: 'type', op: 'eq', value: 'table' }, { column: 'name', op: 'eq', value: table },
+    ],
+  });
   if (!exists) {
     return Object.freeze({
       workLegacyMigrationContract: 1, mode: apply ? 'apply' : 'dry-run', table,
@@ -85,11 +88,11 @@ export async function migrateLegacyTasks(context, options = {}) {
     });
   }
 
-  // The column list is fixed and the table name is regex-bounded: nothing a
-  // caller supplies is interpolated into the statement beyond that.
-  const rows = database.raw
-    .prepare(`SELECT id, title, status, due_at, lead_id, source_key, created_at FROM ${table} ORDER BY created_at, id`)
-    .all();
+  const rows = storage.many({
+    kind: 'select', table,
+    columns: ['id', 'title', 'status', 'due_at', 'lead_id', 'source_key', 'created_at'],
+    where: [], orderBy: [{ column: 'created_at' }, { column: 'id' }],
+  });
 
   const refused = [];
   const plan = [];
