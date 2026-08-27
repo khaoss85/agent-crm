@@ -142,6 +142,11 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/core/src/definition-fingerprint.js',
   'packages/core/src/timeout.js',
   'packages/core/src/action-runtime.js',
+  // The execution-run store, which now owns the run and span rows `writeTrace`
+  // above used to render by hand (Spine v2 M2C). It is hashed here for one
+  // reason: without it this baseline would be strictly LESS sensitive than it
+  // was, because behaviour moved out of a file it hashes into one it did not.
+  'packages/core/src/execution-run-store.js',
   'packages/app/src/create-app.js',
   'apps/server/src/http-server.js',
   'packages/sdk/src/index.js',

@@ -83,8 +83,8 @@ grep -rnE "database\s*\??\.\s*raw|\??\.\s*raw\s*\??\.\s*(prepare|exec)\s*\(|Data
 | `M2B_CURRENT_SLICE` | `packages/signature/src/registry.js` — signature providers | 2 → **0** | Raw persist-or-verify loop with a hard-coded type string, moved to the shared store; the type parameterises through the entry. | `tests/signature-contract.test.js`, M2B guard |
 | `M2B_CURRENT_SLICE` | `packages/intelligence/src/registry.js` — enrichment providers, scoring models, routing policies | 2 → **0** | Raw persist-or-verify loop, moved to the shared store. | `tests/intelligence-contract.test.js`, `tests/lead-intelligence-e2e.test.js`, M2B guard |
 | `M2B_CURRENT_SLICE` | `packages/core/src/package-registry.js` — `domain-policy:<domain>:<kind>` | 2 → **0** | Raw persist-or-verify loop, moved to the shared store. | `tests/contracts-registry-review.test.js`, M2B guard |
-| `LATER_M2_PACKAGE` | `packages/workflows/src/engine.js` | 9 | Workflow-run persistence is a separate runtime with joins and trace semantics. Untouched by M2B. | workflow tests |
-| `LATER_M2_CORE` | `packages/core/src/action-runtime.js` | 2 | Action-runtime persistence and trace remain a separate later-M2 slice. Untouched by M2B. | action/trace suites |
+| `EXTRACTED_IN_M2C` | `packages/workflows/src/engine.js` | 9 → **0** | Workflow-run persistence was a separate runtime with its own read shapes, untouched by M2B. M2C moved all nine sites to the execution-run store (`docs/plans/spine-v2-m2c-execution-run-store.md`). | workflow tests, M2C guard |
+| `EXTRACTED_IN_M2C` | `packages/core/src/action-runtime.js` | 2 → **0** | `writeTrace` was a separate later-M2 slice, untouched by M2B. M2C moved both sites to the execution-run store while `writeTrace` kept its published signature (`docs/plans/spine-v2-m2c-execution-run-store.md`). | action/trace suites, M2C guard |
 | `LATER_M2_PACKAGE` | `packages/work/src/follow-up.js#requireCallerTransaction` | 1, written `tasks?.database?.raw` | Work's capability reads the driver's `isTransaction` flag to prove the caller's transaction. **Work remains `partial`, and its residue is reachable only through optional chaining, which the plain-token scan does not surface.** Untouched by M2B. | Work capability fault/concurrency suites |
 | `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/database.js` | 3 | The SQLite adapter owns `DatabaseSync`, the PRAGMAs, rendering, and the raw-driver closure. | M0/M1 storage suites |
 | `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/core-adapters.js` | 2 | Core adapter/compatibility internals. | M0/M1 storage suites |
@@ -480,8 +480,9 @@ keeps its signature, `createAccordoApp()` stays synchronous, Storage Contract v1
 is untouched, and the ADR-015 refusal is byte-identical — a test asserts the whole
 message, per family, rather than matching a fragment of it.
 
-Explicitly still open, and deliberately so: `packages/workflows/src/engine.js` and
-`packages/core/src/action-runtime.js` remain later-M2 raw consumers;
+Explicitly still open at M2B, and deliberately so: `packages/workflows/src/engine.js` and
+`packages/core/src/action-runtime.js` remained later-M2 raw consumers — **both are
+extracted by M2C** (`docs/plans/spine-v2-m2c-execution-run-store.md`);
 `packages/work/src/follow-up.js#requireCallerTransaction` still reads the driver's
 transaction flag through optional chaining, so Work stays `partial` — and that
 residue is invisible to a plain `database\.raw` scan, which is why the M2B guard

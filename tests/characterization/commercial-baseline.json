@@ -4251,8 +4251,9 @@
     "packages/commercial/src/registry.js": "60d7ceff3de3bf88363288cb2c0a9386a335f6c1b10bf6a935306695a75b40af",
     "packages/commercial/src/terms.js": "7adceb41a3ca613fc14cafda70517aee5d5da645faed9fd02121376032e56efd",
     "packages/commercial/src/verify-terms.js": "e3c4e150fc4e6a0efe925f8db6d14698e4a69e9c6518d5e3f7ee90473db8871c",
-    "packages/core/src/action-runtime.js": "20f79f5a9ed77bcfb553edcf2ef0e287f15d253f3ead6e7fd716525f4ea335c6",
+    "packages/core/src/action-runtime.js": "8204232660b12f9d456cdb6deb6f268e43864061a7d6e55be5a0106449a97a17",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
+    "packages/core/src/execution-run-store.js": "3af9c2818cfd7a6c2f5a5e8e993aba7219397bc635ed8d3b1ceb18c7a8314be0",
     "packages/core/src/money.js": "67d7c03a14cf053e1e6f52d73ed2ca96608a8c3992615fe6a6738bcfc930e705",
     "packages/core/src/timeout.js": "9af8f74ac0f6fa7b229576c43540364d9014ce2225198c0e84e18070d952ff88",
     "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325"
