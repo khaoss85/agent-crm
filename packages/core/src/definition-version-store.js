@@ -132,6 +132,33 @@ function driftError(entry, persisted) {
 }
 
 /**
+ * The id source, given the same treatment `resolveClock` gives the clock: an
+ * injected generator is *input*, so what it returns is validated on every call
+ * rather than only that it is callable. A generator returning `null`, a number
+ * or an empty string would otherwise reach `storage.execute` and let the
+ * adapter's `PRIMARY KEY` decide — which is both a leak of the driver's words
+ * and a refusal arriving far later than it should.
+ *
+ * The two refusals differ deliberately. A non-function is construction-time
+ * misuse and raises `TypeError`, exactly as `resolveClock` does. A bad *value*
+ * is on its way to a write, so it raises `ValidationError` and carries the
+ * framework's stable code like every other refusal in this store.
+ *
+ * @param {unknown} newId
+ */
+function resolveIdSource(newId) {
+  if (newId === undefined || newId === null) return randomUUID;
+  if (typeof newId !== 'function') throw new TypeError('newId must be a function returning an id');
+  return () => {
+    const value = newId();
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new ValidationError('newId must return a non-empty string id');
+    }
+    return value;
+  };
+}
+
+/**
  * @param {any} database — an application database handle carrying `storage.sync`
  * @param {{clock?: () => string, newId?: () => string}} [options]
  *   `clock` and `newId` exist so a test can pin `registered_at` and `id`; the
@@ -140,8 +167,7 @@ function driftError(entry, persisted) {
  */
 export function createDefinitionVersionStore(database, options = {}) {
   const now = resolveClock(options.clock);
-  const newId = options.newId ?? randomUUID;
-  if (typeof newId !== 'function') throw new TypeError('newId must be a function returning an id');
+  const newId = resolveIdSource(options.newId);
   const storage = database?.storage?.sync;
   if (!storage) {
     throw new ValidationError('The definition-version store requires a database with Storage Contract v1');
@@ -154,8 +180,25 @@ export function createDefinitionVersionStore(database, options = {}) {
      */
     persist(entries) {
       const bounded = [...entries].map(validateEntry);
+      // Mint every id before the transaction opens, so a generator that returns
+      // a bad value or repeats itself is refused *without* a `BEGIN IMMEDIATE`
+      // to roll back — the same guarantee the rest of this store's validation
+      // gives. The cost is one discarded id per entry that turns out to verify
+      // rather than insert, which is free for a UUID source and buys something
+      // better than tidiness: a broken generator fails every boot, not only the
+      // boot that happens to have something new to write.
+      const ids = bounded.map(() => newId());
+      const seen = new Set();
+      for (const id of ids) {
+        if (seen.has(id)) {
+          throw new ValidationError(
+            `newId issued the same id twice in one batch ("${id}"); every definition version needs its own id`,
+          );
+        }
+        seen.add(id);
+      }
       storage.transaction(() => {
-        for (const entry of bounded) {
+        for (const [index, entry] of bounded.entries()) {
           const persisted = storage.maybeOne({
             kind: 'select',
             table: TABLE,
@@ -171,7 +214,7 @@ export function createDefinitionVersionStore(database, options = {}) {
               kind: 'insert',
               table: TABLE,
               values: [
-                { column: 'id', value: newId() },
+                { column: 'id', value: ids[index] },
                 { column: 'type', value: entry.type },
                 { column: 'name', value: entry.name },
                 { column: 'version', value: entry.version },

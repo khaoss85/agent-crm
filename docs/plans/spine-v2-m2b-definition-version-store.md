@@ -197,6 +197,26 @@ adapter is SQLite.**
   `Reflect.ownKeys` and also requires a genuine `Object.prototype` prototype —
   the same test the storage contract's own `closed()` applies — so a class
   instance and a null-prototype bag carrying the four fields are refused too.
+- **An injected id generator is validated on what it returns, and ids are minted
+  before the transaction.** `newId` was checked only for being a function, so a
+  generator returning `null`, a number or the same id twice sent that value into
+  `storage.execute` and left the adapter's `PRIMARY KEY` to decide — a refusal
+  arriving far too late, in the driver's words, contradicting both this
+  milestone's fail-closed claim and its explicit "no raw driver message becomes
+  public" requirement. `resolveIdSource` now mirrors `resolveClock` in
+  `packages/core/src/time.js`: it validates the *returned value* on every call.
+  The two refusals differ deliberately — a non-function is construction-time
+  misuse and raises `TypeError` exactly as `resolveClock` does, while a bad
+  value is on its way to a write and raises `ValidationError` so it carries the
+  framework's stable code like every other refusal here.
+  **Ids are minted for the whole batch before `BEGIN IMMEDIATE`**, and checked
+  for self-collision there, so a broken generator is refused without a
+  transaction to roll back — the same guarantee the rest of the validation
+  gives, and stronger than a partial insert rolled back. The cost is one
+  discarded id per entry that verifies rather than inserts: free for a UUID
+  source, and it buys something better than tidiness, because a broken generator
+  now fails *every* boot rather than only the boot that happens to have
+  something new to write.
 - **Closing the shape has two halves, and the first review fix only did one.**
   `Reflect.ownKeys` refuses keys nobody named. It does not ensure the keys that
   *were* named are present on the object: a polluted `Object.prototype` supplies
@@ -345,6 +365,13 @@ npm run verify
   both fixed with regressions written first: the closed entry shape was not
   closed against non-enumerable or symbol keys, and the structural guard claimed
   more than a token scan can prove.
+- **2026-08-27:** A fifth finding: the injected `newId` was validated only as a
+  function, not on what it returned. Fixed by mirroring `resolveClock`, with ids
+  minted pre-transaction so a malformed or self-colliding generator is refused
+  before `BEGIN IMMEDIATE`. The regression asserts each refusal carries the
+  framework's own error and leaks no driver message — writing it surfaced that
+  the store's first duplicate-id message contained the word "unique" and tripped
+  the test's own leak check, which is the check doing its job.
 - **2026-08-27:** Review raised a P1 for the missing actor and audit event.
   Verified all three bounding facts before ruling: no registry carried either
   before M2B, `create-app.js` already hands every package the full `database`

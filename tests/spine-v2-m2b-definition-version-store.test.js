@@ -314,11 +314,10 @@ const driftMessage = (type, identity, persisted, current) =>
 
 test('the store persists exactly the four identity fields, with store-owned metadata', (t) => {
   const database = memory(t);
-  const ids = ['id-1', 'id-2', 'id-3'];
   let issued = 0;
   const store = createDefinitionVersionStore(database, {
     clock: () => '2026-08-27T09:00:00.000Z',
-    newId: () => ids[issued++],
+    newId: () => `id-${++issued}`,
   });
 
   // Mixed types and several entries in ONE transaction.
@@ -340,8 +339,14 @@ test('the store persists exactly the four identity fields, with store-owned meta
     entry({ type: 'kind-b', name: 'beta', version: 2, fingerprint: 'b'.repeat(64) }),
     entry({ type: 'kind-a', name: 'alpha', version: 2, fingerprint: 'c'.repeat(64) }),
   ]);
-  assert.equal(rows(database).length, 3, 'a repeat registration verifies rather than duplicating');
-  assert.equal(issued, 3, 'and issues no further ids');
+  assert.deepEqual(rows(database).map((row) => row.id), ['id-1', 'id-3', 'id-2'],
+    'a repeat registration verifies rather than duplicating, and no row takes a new id');
+  // Ids are minted per *entry*, before the transaction opens, not per insert —
+  // that is what lets a malformed or self-colliding generator be refused without
+  // a `BEGIN IMMEDIATE` to roll back. The ids minted for entries that turn out
+  // to verify are simply discarded, which is why the counter has moved to six
+  // while the table still holds the first three.
+  assert.equal(issued, 6, 'the second batch minted ids it then discarded');
 });
 
 test('the store defaults to the framework clock and a uuid, and refuses a bad clock', (t) => {
@@ -462,6 +467,60 @@ test('a polluted Object.prototype cannot supply a field the entry does not own',
 
   assert.deepEqual(opened, [], 'no polluted entry reached BEGIN IMMEDIATE');
   assert.equal(rows(database).length, 0, 'and none of them persisted an inherited value');
+});
+
+/**
+ * **An injected generator is input, and input is validated.** `resolveClock`
+ * does not merely check that the clock is a function — it validates what the
+ * clock *returns*, on every call. `newId` had only the weaker half of that
+ * treatment, so a generator returning `null`, a number, or the same id twice
+ * sent that value into `storage.execute` and left SQLite's `PRIMARY KEY` to
+ * decide. That contradicts two things this milestone claims for itself: fail
+ * closed on malformed input, and no raw driver message ever becoming public.
+ */
+test('an injected id generator is validated on what it returns, not only that it is a function', (t) => {
+  const database = memory(t);
+  const opened = [];
+  const sync = database.storage.sync;
+  const handle = {
+    storage: {
+      sync: { ...sync, transaction(fn) { opened.push('transaction'); return sync.transaction(fn); } },
+    },
+  };
+  const refuses = (newId, batch, pattern, label) => {
+    assert.throws(
+      () => createDefinitionVersionStore(handle, { newId }).persist(batch),
+      (error) => {
+        assert.equal(error.code, 'VALIDATION_ERROR', `${label} must refuse with the framework's own error`);
+        assert.match(error.message, pattern, label);
+        // The M2B requirement, pinned rather than assumed: whatever went wrong,
+        // the driver never speaks to the caller.
+        assert.doesNotMatch(
+          error.message, /SQLITE|PRIMARY KEY|UNIQUE|constraint failed|prepare|datatype mismatch/i,
+          `${label} must not leak a raw driver message`,
+        );
+        return true;
+      },
+    );
+  };
+
+  refuses(() => null, [entry()], /newId must return a non-empty string/, 'a generator returning null');
+  refuses(() => 42, [entry()], /newId must return a non-empty string/, 'a generator returning a number');
+  refuses(() => '', [entry()], /newId must return a non-empty string/, 'a generator returning an empty string');
+  refuses(() => '   ', [entry()], /newId must return a non-empty string/, 'a generator returning whitespace');
+  refuses(() => undefined, [entry()], /newId must return a non-empty string/, 'a generator returning undefined');
+
+  // A constant generator collides with itself. Without this check the second
+  // insert would hit the PRIMARY KEY and the caller would read SQLite's words.
+  refuses(
+    () => 'the-same-id-every-time',
+    [entry({ name: 'alpha' }), entry({ name: 'beta' })],
+    /issued the same id twice/,
+    'a generator that repeats an id inside one batch',
+  );
+
+  assert.deepEqual(opened, [], 'every one of these was refused before BEGIN IMMEDIATE');
+  assert.equal(rows(database).length, 0, 'and none of them persisted anything');
 });
 
 test('the store validates the whole batch before it opens a transaction', (t) => {
