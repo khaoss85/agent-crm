@@ -28,9 +28,11 @@ module services, and the legacy table is read with the existing closed
 
 Storage Contract v1 is implemented by `packages/core/src/storage-contract.js`
 and rendered by the SQLite adapter in `packages/core/src/database.js`. The
-canonical generator already emits `storageContract: 1` services. Three older
-checked-in generated services still used `database.raw`, while Work's retained
-forward migration read a legacy `tasks` table through the raw driver. The
+canonical generator already emits `storageContract: 1` services. Before M2A,
+three older checked-in generated services used `database.raw`, while Work's
+retained forward migration read a legacy `tasks` table through the raw driver.
+They now use closed Storage Contract v1 statements and service-owned relation
+reads; the separate Work transaction-context check remains raw. The
 Repository Truth storage authority in `scripts/repo-truth.js` executes the Work
 migration reads, and the alignment matrix distinguishes this bounded extraction
 from Work's remaining transaction-context residue.
@@ -82,11 +84,27 @@ from Work's remaining transaction-context residue.
 
 ## Validation
 
-Run targeted Work, conversion, pipeline, API, and workflow suites; M0 and M1
-storage/characterization suites; `npm run repo:truth -- --check`; then
-`npm run verify`, smoke, GTM/site checks, and exact-head external gates. Expected
-behavior is zero test failures, an unchanged M0/M1 contract, a current generated
-truth document, and no raw-driver token in the declared generated/legacy slice.
+Run these commands under Node 22.16.0:
+
+```bash
+node --test tests/work-legacy-task-migration.test.js \
+  tests/lead-conversion-e2e.test.js \
+  tests/opportunity-pipeline-e2e.test.js
+node --test tests/spine-v2-m0-characterization.test.js \
+  tests/spine-v2-m1-storage-contract.test.js
+npm run repo:truth
+npm run repo:truth -- --check
+npm run smoke
+npm run gtm:check
+npm run site:check
+git diff --check
+npm run verify
+```
+
+Expected behavior is zero test failures, an unchanged M0/M1 contract, a current
+generated truth document, and no raw-driver token in the declared
+generated/legacy slice. Exact-head GitHub CI and Vercel must pass, and a fresh
+Codex review must have no unresolved P1/P2/P3 before merge.
 
 ## Progress log
 
