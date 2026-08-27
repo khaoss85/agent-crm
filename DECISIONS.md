@@ -540,6 +540,55 @@ Company therefore still refuses before either dependent write. M2 owns the rest
 of the SQLite extraction; this addendum must not be read as repository-wide raw
 driver removal or as PostgreSQL support.
 
+
+### ADR-018 addendum 8 — proving the caller's transaction is core machinery, from four consumers
+
+Production Spine v2 M2D removes the last business-consumer raw-driver reach.
+`packages/work/src/follow-up.js` read the SQLite driver's `isTransaction` flag
+off the module service's database handle: one boolean, bought by a business
+package holding the driver, and with it every table in the application. It
+survived three milestones because it was spelled with optional chaining, which a
+plain token scan for the property does not see.
+
+**Four consumers, not one.** Applying the two-consumer rule found three more
+capabilities promising the same atomicity in their own doc comments with nothing
+checking it, and each was measured — not reasoned about — committing a partial
+write outside a transaction: `delivery-obligations@1.markHandedOver` left an
+obligation marked handed over to a delivery project that would never exist and
+permanently un-handoverable; `service-obligations@1.markActivated` did the same
+through a different status column; and
+`contracts-successor-activation@1.executeSuccession` committed a successor
+commercial agreement with no lineage row, so nothing on disk said which
+agreement it replaced. The primitive is core machinery because four unlike
+consumers need it, and all four are migrated onto it here.
+
+**The mechanism.** The database wrapper mints one opaque witness — a frozen
+empty object — per outer transaction, beside the flag that already tracked one,
+and drops it in the same `finally`. Membership lives in a module-private
+`WeakSet` with no exported mutator, bound to the storage handle it was minted
+for, so a boolean, a bare object, a frozen empty object of exactly the right
+shape, or a genuine witness from another handle are all refused.
+`proveCallerTransaction` **pulls** it from the handle the write will land on
+rather than accepting one from a caller, and first compares the handles of the
+services that must commit together: two services on two connections break
+atomicity even inside a transaction, because they are inside two different ones.
+The mint function is deliberately not public — a package that could mint could
+manufacture the proof it is subject to.
+
+**The assumption, and the obligation it places on M3.** "An outer transaction is
+open on this handle" means "the caller's transaction" only while one application
+instance has one connection, nested outer transactions are refused
+(`NESTED_TRANSACTION`), and one core module instance is loaded per process. The
+ratified PostgreSQL plan introduces connection pooling and transaction
+connection affinity. **A pooled adapter must mint its witness on a
+connection-affine handle** — the object compared by identity must be the pooled
+client bound to the active transaction, never a pool-level facade shared across
+clients. This is an obligation on that milestone, not a property it inherits: an
+implementation that mints at pool level would leave all four consumers silently
+proving nothing, with no test failing. Recorded here rather than only in
+`docs/plans/spine-v2-m2d-transaction-context.md` because that is where the
+implementer will look.
+
 ## ADR-019 — Safe generated-module evolution through explicit revisions and append-only named migrations
 
 **Status:** accepted (Module Evolution v1).
