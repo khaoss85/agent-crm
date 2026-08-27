@@ -113,8 +113,11 @@ export function inspect(section, data) {
     if (!OWNERS.includes(entry.owner)) {
       failures.push(`${id}: owner ${JSON.stringify(entry.owner)} is not a milestone this campaign recognises.`);
     }
+    // The whole excerpt, not a prefix of it. Matching the first sixty
+    // characters accepted an excerpt that quotes the section and then says
+    // something else, which is the shape a quote is most likely to be wrong in.
     if (typeof entry.excerpt === 'string' && entry.excerpt.trim()
-      && !flat.includes(entry.excerpt.replace(/\s+/g, ' ').trim().slice(0, 60))) {
+      && !flat.includes(entry.excerpt.replace(/\s+/g, ' ').trim())) {
       failures.push(`${id}: its excerpt does not appear in the ratified section, so it indexes text that is not there.`);
     }
   }
@@ -161,8 +164,10 @@ export function render(data, fingerprint) {
     'ratified and is not edited to fit this file.',
     '',
     `Indexing section \`${fingerprint}\`. If that fingerprint moves, the ratified text`,
-    'changed and these entries were written against a different section — the gate',
-    'fails until someone re-reads it.',
+    'changed and these entries were written against a different section, so the gate',
+    'fails. Adopting the new fingerprint with `--write` clears the failure and is not',
+    'evidence that anyone re-read anything — that part is a person\'s job and this',
+    'file cannot check it.',
     '',
     '**This is an index, not a proof, and not an inventory of everything.** It',
     'records the areas listed below and who owns them. It does not establish that',
@@ -174,9 +179,13 @@ export function render(data, fingerprint) {
     '| Id | Area | Owner | Why |',
     '|---|---|---|---|',
   ];
+  // Reasons are rendered whole. Truncating at two hundred characters cut them
+  // mid-clause, and these reasons are mostly qualifications — "only the live
+  // PostgreSQL half waits" loses its meaning exactly where it is cut. Pipes are
+  // escaped because a reason containing one silently splits its own row.
+  const cell = (value) => String(value ?? '').replace(/\s+/g, ' ').replace(/\|/g, '\\|').trim();
   for (const entry of data.entries) {
-    const why = (entry.reason ?? '').replace(/\s+/g, ' ').slice(0, 200) || '—';
-    lines.push(`| \`${entry.id}\` | ${entry.title} | ${entry.owner} | ${why} |`);
+    lines.push(`| \`${entry.id}\` | ${cell(entry.title)} | ${cell(entry.owner)} | ${cell(entry.reason) || '—'} |`);
   }
   lines.push('');
   return lines.join('\n');

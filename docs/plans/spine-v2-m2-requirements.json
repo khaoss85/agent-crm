@@ -1,5 +1,5 @@
 {
-  "$comment": "Curated inventory of the ratified Spine v2 M2 section. Hand-kept, not derived: it records which areas of M2 this campaign has assigned, to whom, and why. It does not establish that the listed areas are all of them. It is an index, not a proof — see scripts/spine-v2-m2-map.js.",
+  "$comment": "Curated inventory of the ratified Spine v2 M2 section. Hand-kept, not derived: it records which areas of M2 this campaign has assigned, to whom, and — where the assignment is not self-evident — why. It does not establish that the listed areas are all of them. It is an index, not a proof — see scripts/spine-v2-m2-map.js.",
   "section": {
     "fingerprint": "8874e940d985f32f",
     "note": "Set by scripts/spine-v2-m2-map.js --write. A change here means the ratified section moved and the inventory below needs re-reading."
@@ -227,7 +227,7 @@
       "title": "CLI PostgreSQL classification contract, refusal rows and SQLite coverage",
       "owner": "M2F",
       "excerpt": "The implementation reads the canonical `APP_COMMANDS` export/authority rather than duplicating an unchecked list.",
-      "reason": "Reading the canonical APP_COMMANDS authority, classifying every entry, refusing PostgreSQL before composition and running every command on SQLite are all runnable without the adapter. Deferring them would hide executable work behind an adapter dependency."
+      "reason": "Reading the canonical APP_COMMANDS authority, classifying every entry, refusing PostgreSQL before composition and running every command on SQLite are all runnable without the adapter. Deferring them would hide executable work behind an adapter dependency. Running every supported command against a live PostgreSQL service is not part of this entry and belongs to M3; what gates M2 is the classification contract, the declared refusals and the SQLite run, none of which need the adapter."
     },
     {
       "id": "M2-33",

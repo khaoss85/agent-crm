@@ -46,6 +46,38 @@ test('the inventory shape is checked', () => {
 
   const invented = mutate((e) => ({ ...e, excerpt: 'A requirement the ratified section does not state anywhere at all.' }));
   assert.ok(inspect(section, invented).some((f) => /indexes text that is not there/.test(f)));
+
+  // The whole excerpt is checked, not a prefix: an excerpt that opens with real
+  // section text and then says something else is the shape a wrong quote takes.
+  const drifted = mutate((e) => ({ ...e, excerpt: `${e.excerpt} and then asserts something the section never says.` }));
+  assert.ok(inspect(section, drifted).some((f) => /indexes text that is not there/.test(f)));
+});
+
+/**
+ * The rendered table is Markdown, and both of these silently corrupt it rather
+ * than failing: a pipe inside a reason splits its own row, and truncation cuts
+ * these reasons mid-qualification — they are mostly qualifications, so the cut
+ * lands exactly where the meaning is.
+ */
+test('rendered cells survive their own content', () => {
+  const piped = {
+    ...data,
+    entries: [{ id: 'M2-99', title: 'a | title', owner: 'M2F', reason: 'refuses a | b | c and nothing else' }],
+  };
+  const rendered = render(piped, 'deadbeefdeadbeef');
+  const row = rendered.split('\n').find((line) => line.includes('M2-99'));
+  assert.equal(row.split(/(?<!\\)\|/).length - 2, 4, 'a pipe in a cell must not split the row');
+
+  const long = 'x'.repeat(400);
+  assert.ok(render({ ...data, entries: [{ id: 'M2-98', title: 't', owner: 'M2F', reason: long }] }, 'd').includes(long),
+    'a reason must render whole; truncation drops the qualification it exists for');
+});
+
+/** `--write` adopts a fingerprint. It cannot know whether a person re-read anything. */
+test('the document does not claim a reread it cannot observe', () => {
+  const rendered = render(data, fingerprintOf(section));
+  assert.match(rendered, /is not\s+evidence that anyone re-read anything/);
+  assert.doesNotMatch(rendered, /fails until someone re-reads it/);
 });
 
 /**

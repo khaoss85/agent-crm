@@ -6,8 +6,10 @@ index is the M2 part of `docs/plans/production-spine-v2-postgresql.md`, which is
 ratified and is not edited to fit this file.
 
 Indexing section `8874e940d985f32f`. If that fingerprint moves, the ratified text
-changed and these entries were written against a different section — the gate
-fails until someone re-reads it.
+changed and these entries were written against a different section, so the gate
+fails. Adopting the new fingerprint with `--write` clears the failure and is not
+evidence that anyone re-read anything — that part is a person's job and this
+file cannot check it.
 
 **This is an index, not a proof, and not an inventory of everything.** It
 records the areas listed below and who owns them. It does not establish that
@@ -21,21 +23,21 @@ proof is tests, Repository Truth and measurement.
 | `M2-01` | Remaining consumer extraction and Spine-store closure | M2C/M2D/M2F | workflows+action-runtime trace family is M2C; Work transaction context is M2D; Spine store dual-plane closure is M2F. |
 | `M2-02` | Async control flow with the synchronous SQLite factory preserved | M2E | — |
 | `M2-03` | packageContract/actionContract/operationContract/capabilityContract 2 | M2E | — |
-| `M2-04` | The four contract-2 versions — capabilityContract collides with merged meaning | M2E-1 | The ratified sentence defines capabilityContract: 2 as "capability consumers await every service/context/dependency operation". The repository already ships capabilityContract: 2 with a different mean |
+| `M2-04` | The four contract-2 versions — capabilityContract collides with merged meaning | M2E-1 | The ratified sentence defines capabilityContract: 2 as "capability consumers await every service/context/dependency operation". The repository already ships capabilityContract: 2 with a different meaning — packages/contracts/src/lifecycle-capability.js:177 returns it as that capability's second, synchronous shape, chosen by the provider — and core validates the field nowhere. Implementing the sentence literally either reinterprets a merged synchronous declaration as async or forces it to 3, which the plan does not say. Resolving it is M2E-1's first deliverable and may require amending the ratified plan; it is recorded here rather than coded around, because a map reporting zero contradictions while one is known is the dishonesty this gate exists to refuse. It gates M2 either way. |
 | `M2-05` | Repository guard gating compatibility-path deletion | M2F | — |
 | `M2-06` | Provisioning tenant resolver separate from application binding | pre-campaign | — |
 | `M2-07` | Cross-plane audit intent, claim, delivery and reconciliation | M2F | — |
 | `M2-08` | Bounded {adapter, available} storage descriptor on every public surface | M2F | — |
 | `M2-09` | serve on the async factory over SQLite; await startup before serving | M2E/M2F | — |
-| `M2-10` | Child-process entry-point evidence for both adapters | M2E | Composite. The SQLite child-process entry-point evidence lands with M2E and gates M2 — the requirement exists precisely to say a direct factory call is not sufficient evidence, which is as true on SQL |
-| `M2-11` | db:migrate refuses PostgreSQL, and SQLite compatibility is unchanged | M2F | Both are executable at M2-complete and gate it: the refusal needs the deployment-storage loader, not the adapter, and G28a already classifies the same CLI refusal as current work — so deferring these  |
+| `M2-10` | Child-process entry-point evidence for both adapters | M2E | Composite. The SQLite child-process entry-point evidence lands with M2E and gates M2 — the requirement exists precisely to say a direct factory call is not sufficient evidence, which is as true on SQLite as on PostgreSQL. Only the PostgreSQL half waits for the adapter. This is the identical error already fixed on G28b and missed here. |
+| `M2-11` | db:migrate refuses PostgreSQL, and SQLite compatibility is unchanged | M2F | Both are executable at M2-complete and gate it: the refusal needs the deployment-storage loader, not the adapter, and G28a already classifies the same CLI refusal as current work — so deferring these two made the map disagree with itself. The third composite deferral found by review after the rule meant to stop them; the rule only catches a group that declares itself composite, which is the hole named in my own last review request. |
 | `M2-12` | Startup attestation gates production migrations | M3 | Attestation gates PostgreSQL DDL. No DDL path exists before the M3 adapter, so this cannot be proved by M2-complete; the M2 obligation is that the contract is defined and PostgreSQL selection refuses. |
 | `M2-13` | Verifier provider contract v2 discovery/attestation operations | M3 | Ordered discover/attest operations exist to authorize DDL against real control and data resources; unreachable before the adapter. |
-| `M2-14` | PostgreSQL DDL + ledger + audit in one transaction, fault-proved | M3 | Applying a DDL unit, its checksum ledger row and an immutable migration audit row in one transaction is PostgreSQL dialect behaviour over a driver that does not exist until M3; SQLite migrations alrea |
+| `M2-14` | PostgreSQL DDL + ledger + audit in one transaction, fault-proved | M3 | Applying a DDL unit, its checksum ledger row and an immutable migration audit row in one transaction is PostgreSQL dialect behaviour over a driver that does not exist until M3; SQLite migrations already run under their own released path and are frozen by M0. |
 | `M2-15` | Control-plane bootstrap under pg_advisory_xact_lock | M3 | Control-plane bootstrap is specified in terms of pg_advisory_xact_lock, a PostgreSQL-only primitive with no SQLite equivalent, so no part of it is executable before the M3 adapter. |
 | `M2-16` | Production MCP static-context-only and source-only | M2F | Adapter-independent: it is a refusal surface proved by absence of reachability, provable on SQLite. |
 | `M2-17` | One shared versioned deployment-storage configuration loader | M2F | The loader, its closed envelope, precedence and refusals are adapter-independent. PostgreSQL selection refuses until M3. |
-| `M2-18` | TLS as a closed contract field, and the settings a parser can refuse | M2F | The closed envelope must carry the TLS fields, and a parser refuses plaintext, sslmode=disable|allow|prefer, verification-disabled settings and a permissive production default without opening a connec |
+| `M2-18` | TLS as a closed contract field, and the settings a parser can refuse | M2F | The closed envelope must carry the TLS fields, and a parser refuses plaintext, sslmode=disable\|allow\|prefer, verification-disabled settings and a permissive production default without opening a connection. My own deferral reason said as much and then deferred all four units anyway, so the parser boundaries could have gone green uncounted. Certificate-chain, expiry and hostname verification need real endpoints and stay with G15. |
 | `M2-19` | TLS proved against real endpoints | M3 | Proving trusted-CA success and every refusal against real TLS endpoints needs a live driver and real certificates, neither of which exists before the M3 adapter. |
 | `M2-20` | Config-file no-follow ownership and mode discipline | M2F | — |
 | `M2-21` | DX Simplicity Gate for the deployment-storage surface | M2F | — |
@@ -49,7 +51,7 @@ proof is tests, Repository Truth and measurement.
 | `M2-29` | Lease, generation fencing, clone refusal and in-flight write intents | M4 | The plan itself says M4 races the topology, M4 pauses a write at the lease boundary and M4 uses a fixture identity authority. |
 | `M2-30` | Admin submission keys, durable recovery and acknowledgement | M4 | Real-Chromium PostgreSQL coverage; depends on the key contract and a live adapter. |
 | `M2-31` | Root and child keys for fan-out | M4 | The plan states M4 fixtures cover the fan-out cases. |
-| `M2-32` | CLI PostgreSQL classification contract, refusal rows and SQLite coverage | M2F | Reading the canonical APP_COMMANDS authority, classifying every entry, refusing PostgreSQL before composition and running every command on SQLite are all runnable without the adapter. Deferring them w |
-| `M2-33` | CLI matrix executed against real PostgreSQL | M2F | Composite. Running every command on SQLite, every declared refusal, the missing/malformed key cases and the no-SQLite-fallback sentinels are executable at M2-complete and gate it. Only the live-Postgr |
+| `M2-32` | CLI PostgreSQL classification contract, refusal rows and SQLite coverage | M2F | Reading the canonical APP_COMMANDS authority, classifying every entry, refusing PostgreSQL before composition and running every command on SQLite are all runnable without the adapter. Deferring them would hide executable work behind an adapter dependency. Running every supported command against a live PostgreSQL service is not part of this entry and belongs to M3; what gates M2 is the classification contract, the declared refusals and the SQLite run, none of which need the adapter. |
+| `M2-33` | CLI matrix executed against real PostgreSQL | M2F | Composite. Running every command on SQLite, every declared refusal, the missing/malformed key cases and the no-SQLite-fallback sentinels are executable at M2-complete and gate it. Only the live-PostgreSQL execution of the supported commands waits for the M3 adapter, and it is re-proved there. Deferring the whole sentence because one clause names PostgreSQL would have hidden the SQLite obligations from the gating count — the exact error this map exists to refuse. |
 | `M2-34` | Health/readiness stops reading tenant state; Admin metrics separated | M2F | Removing doctor/tenant reads from GET /health and moving Admin counts to an authenticated metrics read are adapter-independent. |
 | `M2-35` | Lease-driven readiness transitions | M4 | Readiness derived from an unexpired writer lease requires the M4 lease authority. |
