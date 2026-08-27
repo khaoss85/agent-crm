@@ -115,7 +115,7 @@ matrix prevents.
 | Domain | Status | Reason |
 |---|---|---|
 | Core CRM (Sales) | `aligned` | Company, Contact, Opportunity and Approval now use the structured seam; conversion, pipeline and approval suites preserve their characterized behavior, and a structural guard prevents raw-driver reachability from returning |
-| Work | `aligned` | its generated resources and `migrateLegacyTasks(...)` use the structured storage seam for exact reads and mutations; executable migration tests retain adoption, dry-run, refusal and restart behavior |
+| Work | `partial` | its generated resources and `migrateLegacyTasks(...)` use the structured storage seam, with executable migration evidence; `packages/work/src/follow-up.js#requireCallerTransaction` still reads `database.raw.isTransaction` to prove the caller transaction and remains sequenced for later M2 |
 | Pipeline | `deferred` | runtime pipeline persistence remains direct SQLite and is sequenced for M2 |
 | Lead Intelligence | `deferred` | package persistence is outside the two-consumer M1 slice; M2 owns migration |
 | Commercial Operations | `deferred` | package persistence is outside the two-consumer M1 slice; M2 owns migration |
