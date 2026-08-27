@@ -313,10 +313,39 @@ A package imports from **`packages/core/index.js`** and nothing else under
 import { definePackage, AppError, ValidationError, requiredString } from '../../core/index.js';
 ```
 
-What is public today: the package contract (`definePackage`,
-`validatePackageDefinition`, `PackageRegistry`), the error types, the
-declared-definition fingerprint helpers, the money helpers and bounds, and the
-shared value validators.
+**`packages/core/index.js` is the authoritative list** — read the file, not this
+paragraph. What follows orients you; an enumeration copied into prose drifts
+from the file the moment an export lands, and this one had already drifted
+before it admitted it.
+
+Broadly, what is public: the package contract (`definePackage`,
+`validatePackageDefinition`, `PackageRegistry`), the error types, the framework
+clock and bounded outbound calls, run traces, the canonical actor authority and
+identity normalization, the declared-definition fingerprint helpers **and the
+definition-version store that persists them** (`createDefinitionVersionStore`),
+the money helpers and bounds, the shared value validators, the Solution Plan and
+implementation-evidence contracts, and the Production Spine v1 identity, runtime
+mode, authorization and tenancy exports.
+
+The definition-version store is the newest of these and the least self-evident,
+so it earns a line of its own: it is how a package records each `{type, name,
+version, fingerprint}` at startup and refuses the boot when a registered
+version's source has moved underneath it (ADR-015). It is the other half of
+`computeDefinitionFingerprint` — a package that hand-rolls the persist-or-verify
+loop re-implements the rule that decides whether the application starts, and the
+one sentence a person reads at boot becomes several that disagree.
+
+**And its limitation, in the same breath.** The store writes to
+`definition_versions` with **no actor context and no audit event**. Almost every
+other write in this framework carries both; this one does not. It is startup
+identity, recorded before any actor exists, and the gap predates the store — the
+four registries it replaced each wrote the same rows the same way. So it is
+**not a general persistence path**, and it is not the precedent to copy when your
+package needs to write something a person did: use a module service or a named
+workflow for that, so validation, actor identity, audit and trace travel with the
+write. Giving definition-version registration an actor and an audit row is
+sequenced work, not a gap to route around
+(`docs/plans/spine-v2-m2b-definition-version-store.md`).
 
 Everything in `packages/core/src/*` is **private**. It changes without notice,
 and `package validate` fails a package that reaches into it. If you need

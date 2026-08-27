@@ -62,8 +62,8 @@ from Work's remaining transaction-context residue.
 | `M2A_CURRENT_SLICE` | `packages/modules/opportunity/src/opportunity-service.js` — Opportunity | Compatibility CRUD and managed savepoint used the raw driver; migrate to closed statements and storage savepoint, resolving display joins through Company/Contact. | pipeline and conversion tests plus structural guard |
 | `M2A_CURRENT_SLICE` | `packages/work/src/legacy-tasks.js` — Work forward migration | Legacy table discovery and bounded row reads used raw SQLite; migrate both reads to structured select statements without deleting the migration. | `tests/work-legacy-task-migration.test.js` |
 | `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/database.js`, `packages/core/src/core-adapters.js`, `packages/core/src/spine-store.js` | SQLite adapter/compatibility internals own `DatabaseSync`, PRAGMAs, rendering, and raw-driver closure. | M0/M1 storage suites |
-| `LATER_M2_CORE` | `packages/core/src/action-runtime.js`, `packages/core/src/package-registry.js` | Core runtime persistence outside this bounded compatibility family. | action/package registry suites |
-| `LATER_M2_PACKAGE` | `packages/commercial/src/registry.js`, `packages/signature/src/registry.js`, `packages/intelligence/src/registry.js` | Package definition-version registries are separate package extraction work. | package characterization suites |
+| `LATER_M2_CORE` | `packages/core/src/action-runtime.js` | Core runtime persistence outside this bounded compatibility family. `packages/core/src/package-registry.js` was listed here at M2A and is extracted behind the definition-version store by M2B (`docs/plans/spine-v2-m2b-definition-version-store.md`). | action suites |
+| `EXTRACTED_IN_M2B` | `packages/commercial/src/registry.js`, `packages/signature/src/registry.js`, `packages/intelligence/src/registry.js` | Package definition-version registries were separate package extraction work at M2A. M2B extracts all three, with `packages/core/src/package-registry.js`, behind one internal definition-version store (`docs/plans/spine-v2-m2b-definition-version-store.md`). | package characterization suites plus `tests/spine-v2-m2b-definition-version-store.test.js` |
 | `LATER_M2_PACKAGE` | `packages/workflows/src/engine.js` | Workflow-run persistence is a separate runtime with joins and trace semantics. | workflow tests |
 | `LATER_M2_PACKAGE` | `packages/work/src/follow-up.js#requireCallerTransaction` | Work's capability checks the raw driver's `isTransaction` flag to prevent a half-written task/activity pair; the legacy migration is extracted in M2A, but this separate transaction-context seam keeps Work `partial`. | Work capability fault/concurrency suites |
 | `MIGRATION_SOURCE_ALLOWED` | `packages/core/src/module-evolution.js` | References the adapter-owned foreign-key migration check in explanatory source; it does not open the driver. | module-evolution tests |
@@ -125,4 +125,6 @@ longer reach the raw SQLite driver. Public behavior and Storage Contract v1 are
 unchanged. Work deliberately remains `partial`: `follow-up.js` still checks the
 raw driver's transaction state, which requires a bounded transaction-context
 seam in later M2 package work. Core runtime stores, package registries, and the
-workflow engine remain explicitly outside M2A; PostgreSQL and M2B did not start.
+workflow engine remain explicitly outside M2A; PostgreSQL and M2B did not start
+from this branch. M2B extracts the definition-version store, which is why two rows
+above are annotated rather than left describing a checkout that has moved.
