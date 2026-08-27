@@ -1,0 +1,518 @@
+{
+  "$comment": "Requirement-to-evidence map for the ratified Spine v2 M2 section. Hand-authored groups; machine-checked coverage. Every unit index the extractor produces must be claimed exactly once, so a hard requirement cannot be dropped by omission. classification: MERGED_PROVED | CURRENT_CAMPAIGN | DEFERRED_OUTSIDE_M2 | CONTRADICTION_REQUIRES_FIX.",
+  "groups": [
+    {
+      "id": "G01",
+      "title": "Remaining consumer extraction and Spine-store closure",
+      "units": [
+        0,
+        1
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2C/M2D/M2F",
+      "note": "workflows+action-runtime trace family is M2C; Work transaction context is M2D; Spine store dual-plane closure is M2F."
+    },
+    {
+      "id": "G02",
+      "title": "Async control flow with the synchronous SQLite factory preserved",
+      "units": [
+        2,
+        3,
+        4
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2E"
+    },
+    {
+      "id": "G03",
+      "title": "packageContract/actionContract/operationContract/capabilityContract 2",
+      "units": [
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2E"
+    },
+    {
+      "id": "G04",
+      "title": "Repository guard gating compatibility-path deletion",
+      "units": [
+        14
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2F"
+    },
+    {
+      "id": "G05",
+      "title": "Provisioning tenant resolver separate from application binding",
+      "units": [
+        15
+      ],
+      "classification": "MERGED_PROVED",
+      "slice": "ADR-038 / Spine v1",
+      "evidence": {
+        "sources": [
+          "packages/core/src/tenant-binding.js",
+          "packages/core/src/tenant-storage.js"
+        ],
+        "truthFacts": [
+          "spine.tenancy.one_tenant_per_instance"
+        ]
+      }
+    },
+    {
+      "id": "G06",
+      "title": "Cross-plane audit intent, claim, delivery and reconciliation",
+      "units": [
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2F"
+    },
+    {
+      "id": "G07",
+      "title": "Bounded {adapter, available} storage descriptor on every public surface",
+      "units": [
+        23,
+        24,
+        25
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2F"
+    },
+    {
+      "id": "G08a",
+      "title": "serve on the async factory over SQLite; await startup before serving",
+      "units": [
+        26,
+        27
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2E/M2F"
+    },
+    {
+      "id": "G08b",
+      "title": "Child-process entry-point evidence for both adapters",
+      "units": [
+        28
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M3",
+      "reason": "The SQLite child-process half lands with M2E; the phrase requires BOTH adapters, which is only satisfiable once M3 exists."
+    },
+    {
+      "id": "G09",
+      "title": "Startup attestation gates production migrations",
+      "units": [
+        29,
+        30,
+        31,
+        32,
+        33,
+        34
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M3",
+      "reason": "Attestation gates PostgreSQL DDL. No DDL path exists before the M3 adapter, so this cannot be proved by M2-complete; the M2 obligation is that the contract is defined and PostgreSQL selection refuses."
+    },
+    {
+      "id": "G10",
+      "title": "Verifier provider contract v2 discovery/attestation operations",
+      "units": [
+        35,
+        36,
+        37,
+        38,
+        39,
+        40
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M3",
+      "reason": "Ordered discover/attest operations exist to authorize DDL against real control and data resources; unreachable before the adapter."
+    },
+    {
+      "id": "G11",
+      "title": "PostgreSQL DDL + ledger + audit in one transaction, fault-proved",
+      "units": [
+        41,
+        42,
+        43,
+        44
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M3",
+      "reason": "Applying a DDL unit, its checksum ledger row and an immutable migration audit row in one transaction is PostgreSQL dialect behaviour over a driver that does not exist until M3; SQLite migrations already run under their own released path and are frozen by M0."
+    },
+    {
+      "id": "G12",
+      "title": "Control-plane bootstrap under pg_advisory_xact_lock",
+      "units": [
+        45,
+        46,
+        47,
+        48,
+        49,
+        50
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M3",
+      "reason": "Control-plane bootstrap is specified in terms of pg_advisory_xact_lock, a PostgreSQL-only primitive with no SQLite equivalent, so no part of it is executable before the M3 adapter."
+    },
+    {
+      "id": "G13",
+      "title": "Production MCP static-context-only and source-only",
+      "units": [
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2F",
+      "note": "Adapter-independent: it is a refusal surface proved by absence of reachability, provable on SQLite."
+    },
+    {
+      "id": "G14",
+      "title": "One shared versioned deployment-storage configuration loader",
+      "units": [
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2F",
+      "note": "The loader, its closed envelope, precedence and refusals are adapter-independent. PostgreSQL selection refuses until M3."
+    },
+    {
+      "id": "G15",
+      "title": "Authenticated TLS for production PostgreSQL connections",
+      "units": [
+        74,
+        75,
+        76,
+        77
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M3",
+      "reason": "Requires real TLS endpoints and a live driver; the M2 obligation is that the closed contract carries the fields and that plaintext settings are rejected by the parser."
+    },
+    {
+      "id": "G16",
+      "title": "Config-file no-follow ownership and mode discipline",
+      "units": [
+        78,
+        79,
+        80
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2F"
+    },
+    {
+      "id": "G17",
+      "title": "DX Simplicity Gate for the deployment-storage surface",
+      "units": [
+        81,
+        82,
+        83
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2F"
+    },
+    {
+      "id": "G18",
+      "title": "identityVerifier ESM resolution, bounded deadline, credential-free failure",
+      "units": [
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2F",
+      "note": "Path resolution, module evaluation, timeout and no-listener-before-resolution are adapter-independent."
+    },
+    {
+      "id": "G19",
+      "title": "M2 exit criteria",
+      "units": [
+        93,
+        94
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2 completion gate"
+    },
+    {
+      "id": "G20",
+      "title": "Shared PostgreSQL control plane for organizations, leases, bindings, intents",
+      "units": [
+        95,
+        96,
+        97,
+        98,
+        99
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M3",
+      "reason": "A genuinely shared PostgreSQL control plane cannot exist before the adapter."
+    },
+    {
+      "id": "G21",
+      "title": "Caller-known idempotency key contract",
+      "units": [
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M4",
+      "reason": "Plan text scopes keys to PostgreSQL writes and the campaign assigns unknown-commit/idempotency evidence to M4."
+    },
+    {
+      "id": "G22",
+      "title": "Verified provider-webhook event keys and evidence envelope",
+      "units": [
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M4",
+      "reason": "Provider-event keys derive replay identity from verified webhook evidence and are stored against PostgreSQL outcome rows; the outcome ledger they key into does not exist until M4 builds it."
+    },
+    {
+      "id": "G23",
+      "title": "Compare-and-set promotion of trace and event intents",
+      "units": [
+        119,
+        120,
+        121,
+        122
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M4",
+      "reason": "Compare-and-set promotion of trace and event intents is a property of the M4 outcome record; there is no outcome to promote before that record exists."
+    },
+    {
+      "id": "G24",
+      "title": "Issuance bucket, replay window, tombstone and reconcileUntil",
+      "units": [
+        123,
+        124,
+        125,
+        126,
+        127,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M4",
+      "reason": "Bucket, replay window, tombstone and reconcileUntil are lifecycle rules over persisted outcomes, which M4 introduces; at M2-complete there is nothing for them to govern."
+    },
+    {
+      "id": "G25",
+      "title": "Lease, generation fencing, clone refusal and in-flight write intents",
+      "units": [
+        135,
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147,
+        148,
+        149,
+        150,
+        151,
+        152,
+        153,
+        154,
+        155
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M4",
+      "reason": "The plan itself says M4 races the topology, M4 pauses a write at the lease boundary and M4 uses a fixture identity authority."
+    },
+    {
+      "id": "G26",
+      "title": "Admin submission keys, durable recovery and acknowledgement",
+      "units": [
+        156,
+        157,
+        158,
+        159,
+        160,
+        161,
+        162,
+        163,
+        164,
+        165,
+        166,
+        167,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173,
+        174,
+        175,
+        176,
+        177,
+        178,
+        179,
+        180,
+        181,
+        182,
+        183
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M4",
+      "reason": "Real-Chromium PostgreSQL coverage; depends on the key contract and a live adapter."
+    },
+    {
+      "id": "G27",
+      "title": "Root and child keys for fan-out",
+      "units": [
+        184,
+        185,
+        186,
+        187,
+        188,
+        189,
+        190,
+        191,
+        192,
+        193,
+        194,
+        195,
+        196,
+        197,
+        198,
+        199,
+        200,
+        201
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M4",
+      "reason": "The plan states M4 fixtures cover the fan-out cases."
+    },
+    {
+      "id": "G28a",
+      "title": "CLI PostgreSQL classification contract, refusal rows and SQLite coverage",
+      "units": [
+        202,
+        203,
+        204,
+        205,
+        206,
+        207,
+        208,
+        209,
+        210,
+        211,
+        212,
+        213,
+        214
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2F",
+      "note": "Reading the canonical APP_COMMANDS authority, classifying every entry, refusing PostgreSQL before composition and running every command on SQLite are all runnable without the adapter. Deferring them would hide executable work behind an adapter dependency."
+    },
+    {
+      "id": "G28b",
+      "title": "CLI matrix executed against real PostgreSQL",
+      "units": [
+        215
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M3",
+      "reason": "Running every supported command against a live PostgreSQL service needs the M3 adapter and the CI service container."
+    },
+    {
+      "id": "G29",
+      "title": "Health/readiness stops reading tenant state; Admin metrics separated",
+      "units": [
+        216,
+        218,
+        222,
+        223,
+        224,
+        225
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2F",
+      "note": "Removing doctor/tenant reads from GET /health and moving Admin counts to an authenticated metrics read are adapter-independent."
+    },
+    {
+      "id": "G30",
+      "title": "Lease-driven readiness transitions",
+      "units": [
+        217,
+        219,
+        220,
+        221
+      ],
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M4",
+      "reason": "Readiness derived from an unexpired writer lease requires the M4 lease authority."
+    }
+  ]
+}
