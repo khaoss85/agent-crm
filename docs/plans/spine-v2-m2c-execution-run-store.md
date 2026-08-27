@@ -158,18 +158,19 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
   split — a non-function is construction-time misuse and raises `TypeError`
   exactly as `resolveClock` does, while a bad value is on its way to a write and
   raises `ValidationError` so it carries the framework's stable code.
-- **One shared identity-text rule, with recorded exemptions.** `assertIdentityText`
-  is a single rule with call sites for every stored *identity* string: the
-  generated run and span ids, the caller-supplied `runId`, `workflowName`, each
-  span `name` and `startedAt`. M2B's comment explains why this is one rule and
-  not per-field copies. Two fields are deliberately **exempt**, and the exemption
-  is the interesting part: `error` carries a normalized exception message, which
-  legitimately contains newlines, so M2B's control-character class would refuse
-  real failure paths and — through the best-effort catch — silently lose the
-  trace of the failure it was describing. `input` and `output` go through the
-  shared JSON encoder, and `JSON.stringify` already escapes every control
-  character. Bounding either would be a new refusal on evidence the framework
-  itself produces.
+- **The first draft applied M2B's identity rule to every caller-supplied
+  string. That contract no longer exists, and this bullet is deliberately not a
+  description of it.** `assertIdentityText` was a single rule — non-empty,
+  bounded, no control characters — over the generated ids, `runId`,
+  `workflowName`, each span `name` and `startedAt`, with `error`, `input` and
+  `output` exempt. It is **deleted**. Every one of those checks on a caller's
+  value turned out to be an invented refusal that the best-effort trace write
+  swallowed, destroying the evidence it was meant to protect; the regression
+  tests now prove those values must be **accepted**. What replaced it is the
+  three-category rule below, and that is the contract to read. This bullet is
+  kept as history rather than removed, because the sequence — one rule, then a
+  ceiling narrowed, then the class closed — is the reasoning a future reader
+  needs in order not to restore the validation the tests refuse.
 - **What this store is entitled to refuse, in three categories — and the
   reasoning that closes the class.** This is the third revision of this
   decision, and the revisions are the interesting part: the ceiling was written
@@ -178,9 +179,9 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
   refuses **(1) what it owns** — a minted id gets non-empty, no control
   characters and a length ceiling, because the store produces it *and* quotes it
   verbatim into the duplicate-id refusal; **(2) what the driver would refuse
-  anyway** — a status outside the schema's own `CHECK` set, and a non-string in
-  a `TEXT` column of a `STRICT` table, which is the same *what* SQLite refuses
-  moved earlier and into the framework's words; **(3) a shape whose acceptance
+  anyway**, established by probing the real schema rather than assuming — a
+  status outside the schema's own `CHECK` set, and a value a `STRICT` `TEXT`
+  column genuinely cannot take; **(3) a shape whose acceptance
   would silently corrupt** — an unnamed key, or a named field arriving through a
   polluted prototype. Everything else a caller supplies is stored as given.
   **The asymmetry with M2B is the load-bearing argument.** M2B applies an
@@ -228,6 +229,19 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
   applied to its own guard. What replaced it: `assertStorableText` (type only,
   category 2) for caller values, `assertGeneratedId` (the full rule, category 1)
   for minted ids.
+- **"The driver would refuse it anyway" is a claim that has to be probed, and
+  mine was wrong about numbers.** Category 2 read `typeof value === 'string'`,
+  justified as matching what SQLite accepts. A probe against the real schema
+  says otherwise: a `STRICT` `TEXT` column **losslessly coerces** a number and
+  a bigint and stores the text form, while a boolean, object, array,
+  `undefined` and `null` genuinely fail to bind or violate `NOT NULL`. So the
+  string requirement was a *new* refusal on values that previously persisted —
+  the same shape as the length ceiling, found one round later, in the very check
+  written to replace it. The accepted set is now the driver's: string, number,
+  bigint. **The value is passed through unchanged**, which matters for bytes: the
+  driver renders a JS number as a double, so `42` stores as `"42.0"`, and
+  converting in the store would have stored `"42"` and silently changed the rows
+  this milestone promises to preserve. A test pins `"42.0"`.
 - **`MAX_SPANS` is kept, and it is not pure preservation — said plainly rather
   than claimed away.** The statement it replaced *streamed* its inserts, so an
   infinite generator meant unbounded row growth forever; this store collects the
@@ -399,6 +413,13 @@ npm run verify
   count rather than the comment. One P2 was already closed at that head by the
   `error` type check found in the self-sweep; one P2 was real and mine, and is
   fixed below; the two P1s were one finding stated twice.
+- **2026-08-27:** Two more findings at the exact head, both real. The plan
+  still carried the retired identity-rule bullet *above* its own correction, so
+  a reader met a contract the head deletes — rewritten as history rather than
+  removed, because the sequence is what stops the next agent restoring it. And
+  category 2's "the driver would refuse anything but a string" was itself an
+  unprobed assumption: `STRICT` `TEXT` coerces numbers and bigints. Probed,
+  corrected, and pinned including the `"42.0"` byte the driver actually writes.
 - **2026-08-27:** The integrator asked the generalising question — is each
   remaining bound protecting something the store *does*, or something I
   *assumed* it does — and named `startedAt` and span `name` as the neighbours to

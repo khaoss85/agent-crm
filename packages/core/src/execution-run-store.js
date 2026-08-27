@@ -118,11 +118,14 @@ const FORBIDDEN_IDENTITY_TEXT = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
  *    control characters, and a length ceiling — because the store both produces
  *    that value and interpolates it verbatim into the duplicate-id refusal.
  *    See `assertGeneratedId` and `MAX_GENERATED_ID`.
- * 2. **What the driver would refuse anyway.** A status outside the schema's own
- *    `CHECK` set, and a non-string in a `TEXT` column of a `STRICT` table.
- *    Same *what* SQLite would refuse, moved earlier and into this framework's
- *    words instead of the driver's. See `assertStorableText`, `assertStatus`
- *    and `assertOptionalMessage`.
+ * 2. **What the driver would refuse anyway** — established by probing the real
+ *    schema, not by assuming. A status outside the schema's own `CHECK` set,
+ *    and a value a `TEXT` column of a `STRICT` table cannot take. That column
+ *    *coerces* a number and a bigint, so those are accepted and passed through
+ *    unchanged; a boolean, object, array, `undefined` or `null` genuinely fails
+ *    to bind. Same *what* SQLite refuses, moved earlier and into this
+ *    framework's words. See `assertStorableText`, `assertStatus` and
+ *    `assertOptionalMessage`.
  * 3. **A shape whose acceptance would silently corrupt.** An unnamed key, or a
  *    named field arriving through a polluted prototype. See `closedArgument`.
  *
@@ -137,22 +140,34 @@ const FORBIDDEN_IDENTITY_TEXT = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
  */
 
 /**
- * A value on its way into a `TEXT` column of a `STRICT` table: it must be
- * text. Category 2 — a number or an object reaches a driver datatype refusal,
- * and because the trace write is best-effort that refusal is swallowed and
- * logged in the driver's words. The type check is the same treatment
- * `assertOptionalMessage` gives `error`, applied symmetrically.
+ * A value on its way into a `TEXT` column of a `STRICT` table.
  *
- * Deliberately no length bound, no character class and no non-empty rule:
- * nothing before this store imposed any of them, and each one refused values
- * the framework accepts. `subject` is the caller's own phrase so a refusal
- * still names the exact field.
+ * **Category 2, and the accepted set is the driver's, not an opinion.** An
+ * earlier draft required `typeof value === 'string'` on the stated grounds that
+ * "the driver would refuse anything else". Probed against the real schema, that
+ * was false for exactly the values it mattered for: a `STRICT` `TEXT` column
+ * **losslessly coerces** a number or a bigint and stores its text form, so
+ * requiring a string was a *new* refusal on a path that accepted them — the same
+ * evidence-destruction shape this store spent two rounds removing, because the
+ * best-effort caller swallows the refusal.
+ *
+ * So the set here is exactly what the driver takes: string, number, bigint.
+ * Everything else — boolean, object, array, `undefined`, `null` — fails to bind
+ * or violates `NOT NULL`, and refusing those early only changes *whose words*
+ * the caller reads, never *what* is accepted.
+ *
+ * **The value is returned unchanged, deliberately.** Converting a number here
+ * would store `"42"`, while binding it and letting SQLite coerce stores
+ * `"42.0"` — the driver renders a JS number as a double. Preserving the bytes
+ * means passing the value through and letting the same coercion happen that
+ * happened before this store existed.
  *
  * @param {unknown} value @param {string} subject @param {unknown} [details]
  */
 function assertStorableText(value, subject, details) {
-  if (typeof value !== 'string') {
-    throw new ValidationError(`${subject} must be a string`, details);
+  const type = typeof value;
+  if (type !== 'string' && type !== 'number' && type !== 'bigint') {
+    throw new ValidationError(`${subject} must be text the database can store`, details);
   }
   return value;
 }
@@ -197,8 +212,13 @@ function assertGeneratedId(value, subject, details) {
  */
 function assertOptionalMessage(value, subject, details) {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'string') {
-    throw new ValidationError(`${subject} must be a string or null`, details);
+  // The same accepted set as `assertStorableText`, for the same probed reason:
+  // this column is nullable `TEXT` in a `STRICT` table, so it coerces a number
+  // or a bigint rather than refusing it. Returned unchanged so the driver's own
+  // coercion produces the same bytes it always did.
+  const type = typeof value;
+  if (type !== 'string' && type !== 'number' && type !== 'bigint') {
+    throw new ValidationError(`${subject} must be text the database can store, or null`, details);
   }
   return value;
 }

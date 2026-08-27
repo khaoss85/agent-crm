@@ -445,11 +445,11 @@ test('a caller identity is stored as given: the store refuses only what SQLite w
   const store = pinned(database);
   const NUL = String.fromCharCode(0);
 
-  // Every one of these was refused by an earlier draft of this store, and every
-  // refusal destroyed a whole trace — silently, because `writeTrace` is
-  // best-effort. None of them is refused by anything else in the framework:
-  // `action-registry.js` bounds neither half of `module`/`action`, and a
-  // workflow step name and `ctx.step(name, …)` are not validated at all.
+  // Every one of these was refused by an earlier draft, and every refusal
+  // destroyed a whole trace — silently, because `writeTrace` is best-effort.
+  // None is refused by anything else in the framework: `action-registry.js`
+  // bounds neither half of `module`/`action`, and a workflow step name and
+  // `ctx.step(name, …)` are not validated at all.
   const accepted = [
     ['span name with a control character', () => store.recordRun(recordedRun({
       runId: 'r1', steps: [{ name: `my${NUL}step`, status: 'completed' }],
@@ -467,15 +467,46 @@ test('a caller identity is stored as given: the store refuses only what SQLite w
   }
   assert.equal(runRows(database).length, accepted.length, 'every one reached the table');
 
-  // What the store still refuses on a caller value, and only this: a type the
-  // column cannot hold. STRICT TEXT would refuse it anyway — same refusal,
-  // moved earlier and into the framework's words.
-  for (const bad of [42, {}, [], true]) {
+  // What the store still refuses on a caller value, and ONLY this: a value the
+  // column genuinely cannot take. Probed against the real schema rather than
+  // assumed — see the numeric test below for what that probe corrected.
+  for (const bad of [true, {}, [], undefined, null]) {
     assert.throws(() => store.startRun({ workflowName: /** @type {any} */ (bad), input: null }),
-      (error) => error.code === 'VALIDATION_ERROR' && /must be a string/.test(error.message));
+      (error) => error.code === 'VALIDATION_ERROR' && /must be text the database can store/.test(error.message),
+      `must refuse: ${String(bad)}`);
     assert.throws(() => store.startSpan({ runId: 'r1', name: /** @type {any} */ (bad), input: null }),
-      (error) => error.code === 'VALIDATION_ERROR' && /must be a string/.test(error.message));
+      (error) => error.code === 'VALIDATION_ERROR');
   }
+});
+
+test('a numeric identity is accepted and coerced by the driver, exactly as it was before', (t) => {
+  const database = memory(t);
+  const store = pinned(database);
+
+  // A `STRICT` `TEXT` column LOSSLESSLY COERCES a number and a bigint. An
+  // earlier draft required a string on the stated grounds that the driver would
+  // refuse anything else; probing the real schema showed that premise false for
+  // exactly these values, so requiring a string was a new refusal on a path that
+  // accepted them — and on the best-effort path it destroyed the whole trace.
+  store.recordRun(recordedRun({
+    runId: 'run-num', workflowName: /** @type {any} */ (42),
+    startedAt: /** @type {any} */ (20260827),
+    steps: [{ name: /** @type {any} */ (7), status: 'completed', error: /** @type {any} */ (99) }],
+  }));
+
+  const [run] = runRows(database);
+  // The value is passed through UNCHANGED so the driver's own coercion runs:
+  // it renders a JS number as a double, so 42 stores as "42.0" and NOT "42".
+  // Converting in the store would have changed the bytes it claims to preserve.
+  assert.equal(run.workflow_name, '42.0');
+  assert.equal(run.started_at, '20260827.0');
+  const [span] = spanRows(database, 'run-num');
+  assert.equal(span.name, '7.0');
+  assert.equal(span.error, '99.0');
+
+  // A bigint coerces without the double rendering.
+  const runId = store.startRun({ workflowName: /** @type {any} */ (10n), input: null });
+  assert.equal(store.getRun(runId).workflowName, '10');
 });
 
 test('an error message keeps its newlines, because a trace of a failure must survive being written', (t) => {
@@ -543,22 +574,18 @@ test('an error that is not text is refused here, not by the driver\'s datatype r
   const runId = store.startRun({ workflowName: 'demo', input: null });
   const spanId = store.startSpan({ runId, name: 'boom', input: null });
 
-  // Exempting a message from BOUNDS is not the same as accepting anything.
-  // These columns are TEXT in a STRICT table, so a number or an object lands on
-  // a driver datatype refusal — and because the trace write is best-effort, that
-  // refusal is swallowed and logged in the driver's words rather than this
-  // store's. The type check is what makes the exemption a stated exception
-  // instead of a hole.
-  for (const bad of [42, {}, [], true, () => {}]) {
+  // Exempting a message from BOUNDS is not the same as accepting anything: a
+  // boolean, object or array fails to bind, and because the trace write is
+  // best-effort that driver refusal is swallowed and logged in the driver's
+  // words. Numbers are NOT in this set — the column coerces them, so refusing
+  // them would be an invented refusal.
+  for (const bad of [true, {}, [], () => {}]) {
     assert.throws(() => store.failSpan({ spanId, error: /** @type {any} */ (bad) }),
-      (error) => error.code === 'VALIDATION_ERROR' && /must be a string or null/.test(error.message));
+      (error) => error.code === 'VALIDATION_ERROR' && /must be text the database can store/.test(error.message));
     assert.throws(() => store.failRun({ runId, error: /** @type {any} */ (bad), output: null }),
-      (error) => error.code === 'VALIDATION_ERROR' && /must be a string or null/.test(error.message));
+      (error) => error.code === 'VALIDATION_ERROR');
     assert.throws(() => store.recordRun(recordedRun({ runId: 'other', error: bad })),
-      (error) => error.code === 'VALIDATION_ERROR' && /must be a string or null/.test(error.message));
-    assert.throws(() => store.recordRun(recordedRun({
-      runId: 'other', steps: [{ name: 'x', status: 'failed', error: bad }],
-    })), (error) => error.code === 'VALIDATION_ERROR' && /must be a string or null/.test(error.message));
+      (error) => error.code === 'VALIDATION_ERROR');
   }
   // `null` and an absent error remain exactly what they were.
   store.failSpan({ spanId, error: null });
@@ -667,10 +694,10 @@ test('no refusal leaks a driver message', (t) => {
   const database = memory(t);
   const store = pinned(database);
   const attempts = [
-    () => store.startRun({ workflowName: /** @type {any} */ (42), input: null }),
+    () => store.startRun({ workflowName: /** @type {any} */ ({}), input: null }),
     () => store.recordRun(recordedRun({ status: 'nope' })),
     () => store.recordRun(recordedRun({ steps: 7 })),
-    () => store.recordRun(recordedRun({ error: /** @type {any} */ ({}) })),
+    () => store.recordRun(recordedRun({ error: /** @type {any} */ ([]) })),
     () => store.recordRun({ ...recordedRun(), spans: [] }),
     () => createExecutionRunStore(database, { newId: () => /** @type {any} */ (null) })
       .startSpan({ runId: 'r', name: 'n', input: null }),
@@ -678,7 +705,7 @@ test('no refusal leaks a driver message', (t) => {
   for (const attempt of attempts) {
     assert.throws(attempt, (error) => {
       assert.equal(error.code, 'VALIDATION_ERROR', error.message);
-      assert.doesNotMatch(error.message, /SQLITE|UNIQUE|constraint|CHECK|SQL|prepare/i, error.message);
+      assert.doesNotMatch(error.message, /SQLITE|UNIQUE|constraint|CHECK|SQL|prepare|bound to SQLite/i, error.message);
       return true;
     });
   }
