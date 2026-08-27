@@ -242,14 +242,33 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
   driver renders a JS number as a double, so `42` stores as `"42.0"`, and
   converting in the store would have stored `"42"` and silently changed the rows
   this milestone promises to preserve. A test pins `"42.0"`.
-- **`MAX_SPANS` is kept, and it is not pure preservation — said plainly rather
-  than claimed away.** The statement it replaced *streamed* its inserts, so an
-  infinite generator meant unbounded row growth forever; this store collects the
-  batch first, which is what makes an out-of-memory crash possible and the cap
-  necessary. The cap converts two pathologies into one refusal. Reachability,
-  stated: an action making more than 10,000 `ctx.step(…)` calls loses its trace.
-  Unlike everything the sweep removed, the alternative here is a crash rather
-  than a stored row.
+- **`MAX_SPANS` is the one place this milestone deliberately sacrifices
+  evidence to avoid a crash — and the sacrifice is silent, because the caller
+  swallows the refusal.** It is kept, and it is not pure preservation: the
+  statement it replaced *streamed* its inserts, so an infinite generator meant
+  unbounded row growth forever, while this store collects the batch first, which
+  is what makes an out-of-memory crash possible and the cap necessary. It
+  converts two pathologies into one refusal, and unlike everything the sweep
+  removed, the alternative here is a crash rather than a stored row.
+  **The bound is 10,000 spans in one run, not 10,000 `ctx.step(…)` calls, and
+  an earlier draft of this bullet said it was.** Review caught the off-by-one and
+  it was real, measured through `runRecordAction`: **9,999 `ctx.step` calls
+  survive; 10,000 lose the entire trace while the action still returns `ok: true`.**
+  The enforced number was never wrong — `collected.length >= MAX_SPANS` before
+  the push accepts exactly 10,000 spans — so nothing executable changed. What was
+  wrong was the claim, stated in a unit the store does not control.
+- **No fixed reservation could have fixed it, which is why the units moved
+  instead.** The obvious repair is to reserve the span the runtime prepends.
+  That works for exactly one caller: `action-runtime.js` adds **one** span, and
+  **two** when the event dispatch also fails; `external-operation.js` adds up to
+  **five** across intent, external, finalize, compensate and events;
+  `catalog-sync.js` adds up to **three**. A constant chosen for any one of them
+  is quietly wrong for the rest — the same finding reproduced in a form harder to
+  see. So the store states its bound in spans, the only unit it controls, and the
+  caller's budget is documented as derived and per-caller. The boundary is pinned
+  by a test through `runRecordAction` rather than through the store, because
+  going through the store is what hid it; the test fails if the cap moves by one
+  in **either** direction.
 - **Exempting `error` from the bounds is not the same as accepting anything, and
   the first pass conflated the two.** `error` was the one stored field with no
   check at all — not even a type. Both columns are `TEXT` in a `STRICT` table,
@@ -413,6 +432,14 @@ npm run verify
   count rather than the comment. One P2 was already closed at that head by the
   `error` type check found in the self-sweep; one P2 was real and mine, and is
   fixed below; the two P1s were one finding stated twice.
+- **2026-08-27:** A fresh review at `00dc27d` — a review object rather than a
+  comment — returned one P2, and it was the same defect one layer up: a bound
+  whose stated justification did not match what the code does. `MAX_SPANS` was
+  documented in `ctx.step` calls, a unit the store does not control, and was off
+  by one against every caller by a different amount. Reproduced through
+  `runRecordAction`, corrected in units rather than by reservation, and pinned by
+  a boundary test that catches a one-off either way. Nothing executable in the
+  store changed: the diff is comment-only.
 - **2026-08-27:** Two more findings at the exact head, both real. The plan
   still carried the retired identity-rule bullet *above* its own correction, so
   a reader met a contract the head deletes — rewritten as history rather than

@@ -86,10 +86,26 @@ const MAX_GENERATED_ID = 200;
  * accidental infinite generator meant unbounded row growth forever; this store
  * collects the batch first, which is what makes an out-of-memory crash
  * possible and the cap necessary. So the cap converts two pathologies into one
- * refusal. Reachability, honestly: an action making more than `MAX_SPANS`
- * `ctx.step(…)` calls loses its trace. No real run comes within orders of
- * magnitude, and unlike the checks this store dropped, the alternative here is
- * a crash rather than a stored row.
+ * refusal, and it is the one place this store deliberately sacrifices evidence
+ * to avoid a crash — **silently**, because the caller swallows the refusal.
+ *
+ * **The bound is 10,000 spans in one run. It is not 10,000 `ctx.step(…)`
+ * calls, and an earlier draft of this comment said it was.** That was off by
+ * one and review caught it: a caller's runtime contributes spans of its own, so
+ * a record action calling `ctx.step` exactly 10,000 times arrives here with
+ * 10,001 and loses its whole trace while reporting success. Measured through
+ * `runRecordAction`: 9,999 calls survive, 10,000 do not.
+ *
+ * The caller's budget is therefore **derived, and different for each caller** —
+ * which is exactly why this comment states the bound in spans, the only unit
+ * this store controls. No single reservation could make one number true for all
+ * of them: `action-runtime.js` prepends one span, and two when the event
+ * dispatch also fails; `external-operation.js` adds up to five across intent,
+ * external, finalize, compensate and events; `catalog-sync.js` adds up to
+ * three. A constant chosen for any one of those is quietly wrong for the rest.
+ *
+ * No real run comes within orders of magnitude, and unlike the checks this
+ * store dropped, the alternative here is a crash rather than a stored row.
  */
 const MAX_SPANS = 10_000;
 

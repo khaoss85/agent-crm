@@ -659,6 +659,46 @@ test('every argument shape is closed against unknown, symbol, non-enumerable and
   assert.deepEqual(runRows(database), []);
 });
 
+/**
+ * **The cap's boundary, measured where a caller actually meets it.**
+ *
+ * Driving the store directly is what hid this: the store's own bound is exactly
+ * `MAX_SPANS` spans and always was, but a caller's runtime contributes spans of
+ * its own, so the budget a person reasons about — `ctx.step(…)` calls — sits
+ * one lower. The source comment used to state the bound in `ctx.step` units and
+ * was off by one. These two tests pin the real boundary through the real
+ * runtime, so the number is a test rather than a sentence.
+ */
+test('the span cap boundary, through the action runtime that meets it', async (t) => {
+  const stepper = (count) => ({
+    module: 'thing', name: 'do', actionContract: 1, input: [],
+    execute: (ctx) => {
+      for (let i = 0; i < count; i += 1) ctx.step(`s${i}`);
+      return { ok: true };
+    },
+  });
+
+  // 9,999 caller steps + the one span `runRecordAction` prepends = 10,000,
+  // which is exactly `MAX_SPANS` and is accepted.
+  const under = memory(t);
+  const survived = await actionHarness(under, stepper(9_999))();
+  assert.equal(survived.ok, true);
+  assert.equal(runRows(under).length, 1, 'the run is recorded');
+  assert.equal(spanRows(under, runRows(under)[0].id).length, 10_000, 'exactly MAX_SPANS spans');
+
+  // One more caller step is 10,001, which the cap refuses — and because the
+  // trace write is best-effort the action still reports success while its whole
+  // trace disappears. That is the deliberate sacrifice, and this is its price.
+  const over = memory(t);
+  const { value: lost, logged } = await withCapturedErrors(
+    () => actionHarness(over, stepper(10_000))(),
+  );
+  assert.equal(lost.ok, true, 'the action still succeeds — the sacrifice is silent to the caller');
+  assert.deepEqual(runRows(over), [], 'and the entire trace is gone, not truncated');
+  assert.ok(logged.some((line) => /failed to persist trace/.test(line)),
+    'the loss is logged, which is the only signal there is');
+});
+
 test('recordRun refuses a non-iterable steps and caps a runaway one', (t) => {
   const database = memory(t);
   const store = pinned(database);
