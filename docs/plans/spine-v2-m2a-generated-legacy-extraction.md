@@ -20,8 +20,36 @@ module services, and the legacy table is read with the existing closed
 - [x] Migrate Approval, Contact, and Opportunity reads/writes.
 - [x] Migrate Work legacy-table discovery and row reads.
 - [x] Add a structural no-raw-driver guard for the declared slice.
-- [ ] Run M0/M1, Repository Truth, and full verification gates.
-- [ ] Complete exact-head CI, Vercel, and Codex review.
+- [x] Run M0/M1, Repository Truth, and full verification gates.
+- [x] Complete exact-head CI and Vercel gates.
+- [x] Address Codex review by keeping Work partial and correcting stale raw-read prose.
+
+## Current repository context
+
+Storage Contract v1 is implemented by `packages/core/src/storage-contract.js`
+and rendered by the SQLite adapter in `packages/core/src/database.js`. The
+canonical generator already emits `storageContract: 1` services. Three older
+checked-in generated services still used `database.raw`, while Work's retained
+forward migration read a legacy `tasks` table through the raw driver. The
+Repository Truth storage authority in `scripts/repo-truth.js` executes the Work
+migration reads, and the alignment matrix distinguishes this bounded extraction
+from Work's remaining transaction-context residue.
+
+## Milestones
+
+1. **Inventory and characterize.** Classify raw-driver reachability and run the
+   existing generated-service and Work migration tests without changing source.
+   The repository remains runnable and establishes the compatibility baseline.
+2. **Extract checked-in generated residues.** Move Approval, Contact, and
+   Opportunity to existing closed statements and service-owned relation reads;
+   add a structural guard. Targeted suites remain green after this milestone.
+3. **Extract the Work legacy migration.** Move table discovery and bounded row
+   reads to closed `select` statements while preserving dry-run, atomicity,
+   identity, and idempotency. Work remains runnable and its migration suite is
+   green.
+4. **Reconcile truth and verify.** Regenerate Repository Truth, keep Work partial
+   for the separate transaction-context residue, and run all local and external
+   gates before regular merge.
 
 ## Raw-driver inventory
 
@@ -56,4 +84,27 @@ module services, and the legacy table is read with the existing closed
 
 Run targeted Work, conversion, pipeline, API, and workflow suites; M0 and M1
 storage/characterization suites; `npm run repo:truth -- --check`; then
-`npm run verify`, smoke, GTM/site checks, and exact-head external gates.
+`npm run verify`, smoke, GTM/site checks, and exact-head external gates. Expected
+behavior is zero test failures, an unchanged M0/M1 contract, a current generated
+truth document, and no raw-driver token in the declared generated/legacy slice.
+
+## Progress log
+
+- **2026-08-27:** Inventoried the bounded slice and later-M2 consumers before
+  mutation.
+- **2026-08-27:** Migrated Approval, Contact, Opportunity, and the Work legacy
+  migration using Storage Contract v1 without adding statement vocabulary.
+- **2026-08-27:** Targeted, characterization, Repository Truth, full CI, and
+  Vercel gates passed at M2A head `26ba59d`; Codex identified stale explanatory
+  prose and this plan's incomplete structure for closeout.
+- **2026-08-27:** Corrected the prose and completed the required living-plan
+  structure without widening M2A.
+
+## Outcome and follow-up
+
+The declared Approval, Contact, Opportunity, and Work legacy-migration paths no
+longer reach the raw SQLite driver. Public behavior and Storage Contract v1 are
+unchanged. Work deliberately remains `partial`: `follow-up.js` still checks the
+raw driver's transaction state, which requires a bounded transaction-context
+seam in later M2 package work. Core runtime stores, package registries, and the
+workflow engine remain explicitly outside M2A; PostgreSQL and M2B did not start.
