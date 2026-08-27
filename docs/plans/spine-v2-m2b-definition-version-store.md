@@ -22,12 +22,12 @@ statement vocabulary is added to `packages/core/src/storage-contract.js`.
 
 ## Progress
 
-- [ ] Baseline the registry suites before mutation.
-- [ ] Add the internal definition-version store on Storage Contract v1.
-- [ ] Migrate Commercial, Signature, Intelligence, and the package registry.
-- [ ] Prove exact behaviour preservation per registry family.
-- [ ] Add a structural no-raw-driver guard for the declared M2B slice.
-- [ ] Reconcile truth, the M2A inventory, and the alignment matrix.
+- [x] Baseline the registry suites before mutation.
+- [x] Add the internal definition-version store on Storage Contract v1.
+- [x] Migrate Commercial, Signature, Intelligence, and the package registry.
+- [x] Prove exact behaviour preservation per registry family.
+- [x] Add a structural no-raw-driver guard for the declared M2B slice.
+- [x] Reconcile truth, the M2A inventory, and the alignment matrix.
 - [ ] Complete exact-head CI and Vercel gates.
 
 ## Current repository context
@@ -73,17 +73,69 @@ Re-derived by grep over `packages/` at this head, not copied from earlier prose.
 | `M2B_CURRENT_SLICE` | `packages/signature/src/registry.js` — signature providers | Raw persist-or-verify loop with a hard-coded type string; migrate to the shared store, parameterising the type through the entry. | `tests/signature-contract.test.js`, M2B guard |
 | `M2B_CURRENT_SLICE` | `packages/intelligence/src/registry.js` — enrichment providers, scoring models, routing policies | Raw persist-or-verify loop; migrate to the shared store. | `tests/intelligence-contract.test.js`, `tests/lead-intelligence-e2e.test.js`, M2B guard |
 | `M2B_CURRENT_SLICE` | `packages/core/src/package-registry.js` — `domain-policy:<domain>:<kind>` | Raw persist-or-verify loop; migrate to the shared store. | `tests/contracts-registry-review.test.js`, M2B guard |
-| `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/database.js`, `packages/core/src/core-adapters.js`, `packages/core/src/spine-store.js` | SQLite adapter/compatibility internals own `DatabaseSync`, PRAGMAs, rendering, and raw-driver closure. | M0/M1 storage suites |
-| `LATER_M2_CORE` | `packages/core/src/action-runtime.js` | Action-runtime persistence and trace remain a separate later-M2 slice. | action/trace suites |
-| `LATER_M2_PACKAGE` | `packages/workflows/src/engine.js` | Workflow-run persistence is a separate runtime with joins and trace semantics. | workflow tests |
-| `LATER_M2_PACKAGE` | `packages/work/src/follow-up.js#requireCallerTransaction` | Work's capability reads the raw driver's transaction flag to prove the caller's transaction; unchanged by M2B, so Work stays `partial`. | Work capability fault/concurrency suites |
-| `MIGRATION_SOURCE_ALLOWED` | `packages/core/src/module-evolution.js` | Names the adapter-owned foreign-key migration check in explanatory source; it opens no driver. | module-evolution tests |
+| `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/database.js` (3), `packages/core/src/core-adapters.js` (2), `packages/core/src/spine-store.js` (1) | SQLite adapter/compatibility internals own `DatabaseSync`, PRAGMAs, rendering, and raw-driver closure. | M0/M1 storage suites |
+| `LATER_M2_CORE` | `packages/core/src/action-runtime.js` (2) | Action-runtime persistence and trace remain a separate later-M2 slice. | action/trace suites |
+| `LATER_M2_PACKAGE` | `packages/workflows/src/engine.js` (9) | Workflow-run persistence is a separate runtime with joins and trace semantics. | workflow tests |
+| `LATER_M2_PACKAGE` | `packages/work/src/follow-up.js#requireCallerTransaction` (1, written `tasks?.database?.raw`) | Work's capability reads the raw driver's `isTransaction` flag to prove the caller's transaction; unchanged by M2B, so Work stays `partial`. | Work capability fault/concurrency suites |
+| `PROSE_NOT_A_CONSUMER` | `packages/create-accordo/src/project-bootstrap.js`, `packages/create-accordo/src/project-files.js`, `packages/cli/src/app-inspect.js` | The token `node:sqlite` appears inside declared limitations and reported metadata strings. No driver is opened. | bootstrap and inspect suites |
 | `CHARACTERIZATION_ONLY` | fixtures and temporary-project harnesses under `tests/characterization/` | Direct SQLite setup is preserved test evidence, not production reachability. | characterization suites |
 | `TEST_ONLY` | remaining occurrences under `tests/` | Fault injection, physical-schema assertions, and adapter tests intentionally exercise SQLite directly. | owning test files |
 
+Re-derived at this head with
+`grep -rnE "database\??\.raw|\.raw\.(prepare|exec)|DatabaseSync|node:sqlite" packages/ --include='*.js'`.
+The counts are occurrences, not statements. After M2B, no file under
+`packages/commercial`, `packages/signature`, `packages/intelligence` or
+`packages/core/src/package-registry.js` matches. **PostgreSQL remains absent:
+the only adapter is SQLite.**
+
 ## Decisions
 
-_(recorded during implementation)_
+- **One store, not a repository.** `createDefinitionVersionStore(database, {clock, newId})`
+  returns a frozen `{persist(entries)}` and nothing else. No `where` builder, no
+  table parameter, no raw escape hatch: it persists definition versions or it
+  persists nothing. Widening it later would have to be a deliberate act, not a
+  convenience.
+- **The entry shape is closed at four fields.** `{type, name, version, fingerprint}`.
+  `id` and `registered_at` are the store's, so no caller can choose a row's
+  identity or backdate a registration, and an extra key — `config`, `evaluate`,
+  `id` — is refused rather than dropped. Silently dropping it would make a
+  request to persist an executable definition look as if it had succeeded.
+- **No new statement vocabulary.** The whole loop is one `select` and one
+  `insert` from the existing M1 vocabulary. `packages/core/src/storage-contract.js`
+  is untouched.
+- **`storage.sync.transaction` is the same wrapper.** The adapter hands
+  `createSqliteStorage` the very function `database.transaction` exposes, so
+  `NESTED_TRANSACTION` refusal and the retryable `CONFLICT` a busy database
+  produces are preserved without re-implementing either. A test pins the nesting
+  refusal so that identity cannot quietly become two functions.
+- **The read stays inside the transaction, before its own write.** That is what
+  makes an identity repeated inside one batch verify against what the batch just
+  wrote, instead of hitting a UNIQUE violation whose message would be the
+  driver's. The behaviour is not new; keeping the loop shape is what preserves it.
+- **The batch is validated before `BEGIN IMMEDIATE`.** A malformed identity is a
+  startup-time defect, and it should never be the reason a transaction has to
+  roll back. A test asserts the transaction is never opened for a bad batch.
+- **The two early returns stayed at their call sites.** Signature and the package
+  registry returned before opening a transaction on an empty registry; Commercial
+  and Intelligence did not. Moving that decision into the store would have changed
+  one pair or the other, so the store always opens the transaction and the two
+  call sites keep their guard. Exact preservation beat symmetry.
+- **Injectable clock and id, defaulting to today's behaviour.** `resolveClock`
+  from `packages/core/src/time.js` is the existing convention, and it refuses a
+  non-canonical instant; the default is `nowIso` and `randomUUID`, which is what
+  all four registries used. The clock is called per row, as before.
+- **No new Repository Truth fact and no new authority probe.** `--check` reports
+  that no fact moved and no conclusion changed: only `sourceSha`, because
+  `packages/core/src/package-registry.js` and `packages/core/index.js` are
+  authority sources. `AUTHORITY_SOURCES` is defined as *the exact files the facts
+  are read from*, and no fact is read from the store, so adding it there would
+  make `sourceSha` answer a question it does not answer. The store's behaviour is
+  proven by the suites that execute it, not by a generator.
+- **`tests/contracts-registry-review.test.js` keeps its fault injection.** It
+  intercepts `database.raw.prepare` and matched `INSERT INTO definition_versions`;
+  the adapter quotes identifiers, so the match now accepts `INSERT INTO
+  "definition_versions"` too. The injected fault is unchanged — only the SQL text
+  the driver receives moved.
 
 ## Validation
 
@@ -111,7 +163,33 @@ npm run verify
 
 - **2026-08-27:** Created this plan before touching source, and recorded the
   bounded slice and the later-M2 consumers.
+- **2026-08-27:** Baselined the registry, package-contract, characterization and
+  package-absence suites at `e1ff9a0`. One pre-existing darwin-only failure in
+  `tests/spine-v2-m0-characterization.test.js` (`/private/var` vs `/var` tmpdir
+  realpath) was recorded and left alone: it is unrelated to this milestone and
+  does not reproduce on CI's Linux runner.
+- **2026-08-27:** Added `packages/core/src/definition-version-store.js`, exported
+  it from the kernel surface, and migrated all four consumers. The registry
+  suites and the package end-to-end suites stayed green without being edited.
+- **2026-08-27:** Added `tests/spine-v2-m2b-definition-version-store.test.js`:
+  the structural guard, the store's own fail-closed and injection proofs, and a
+  five-test block replayed for each of the four registry families. Mutating the
+  refusal text failed four tests and removing batch validation failed five, so
+  the suite refuses the regressions it claims to.
+- **2026-08-27:** Reconciled the M2A inventory rows, the alignment matrix, the
+  status snapshot and the task ledger, and regenerated Repository Truth.
 
 ## Outcome and follow-up
 
-_(recorded at completion)_
+The four declared registries no longer reach the raw SQLite driver, and the loop
+they shared exists once. Public behaviour is unchanged: `persistFingerprints(database)`
+keeps its signature, `createAccordoApp()` stays synchronous, Storage Contract v1
+is untouched, and the ADR-015 refusal is byte-identical — a test asserts the whole
+message, per family, rather than matching a fragment of it.
+
+Explicitly still open, and deliberately so: `packages/workflows/src/engine.js` and
+`packages/core/src/action-runtime.js` remain later-M2 raw consumers;
+`packages/work/src/follow-up.js#requireCallerTransaction` still reads the driver's
+transaction flag, so Work stays `partial`; the adapter internals in
+`packages/core/src/database.js`, `core-adapters.js` and `spine-store.js` own the
+driver by design. PostgreSQL remains absent.
