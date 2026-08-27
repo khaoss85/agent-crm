@@ -324,8 +324,18 @@ does not take the check.
 
 The proof is inserted *after* the existing input validations and *immediately
 before* the first write, at all four sites. Every current 400/409 for bad input
-is reachable exactly as before; the only reachable behaviour that changes is the
-path measured above.
+is reachable exactly as before, and for the two obligation loops that took work
+rather than placement: they validated id N only *after* writing id N-1, so a
+transaction check placed before the loop would have shadowed a foreign id's own
+409 with a 500 for any caller outside a transaction. They are now two passes —
+judge every requested row, then prove, then write — which restores the
+precedence and removes the partial commit with the same change. `executeSuccession`
+already conformed, because `derive()` runs every refusal before any write.
+
+Work's precedence was never at risk: `requireCallerTransaction` already ran
+before `validateFollowUpRequest` before M2D, and still does.
+
+The only reachable behaviour that changes anywhere is the path measured above.
 
 ### 8. Three tests moved off a mixed composition
 
@@ -385,6 +395,40 @@ is strictly more correct.
   out of scope, and the M2D guard makes no claim about them.
 - **Two copies of core in one process fail closed.** See the named assumption,
   invariant 3.
+- **The witness proves a transaction is open on the handle, not which async
+  flow owns it.** One connection serves the whole instance, so if flow A opens
+  `transactionAsync` and awaits, a flow B that opened nothing can call one of
+  these capabilities during that window, be told it succeeded, and lose its
+  writes when A rolls back. Measured, not reasoned:
+
+  ```
+  PROBE P1: flow B (no transaction of its own) -> SUCCEEDED (3 rows)
+  PROBE P1: obligation status while A still open = handed_over
+  PROBE P1: obligation status after A rolled back  = pending_handover
+  ```
+
+  **This is not a regression and M2D does not widen it.** Before M2D
+  `markHandedOver` had no check at all, so B was never refused; Work read
+  `isTransaction`, the same process-wide connection flag, which is `true`
+  throughout A's window. The behaviour is byte-identical either side of this
+  change. What M2D did narrow is the far larger hazard: a transactionless caller
+  used to corrupt **unconditionally**, and now only inside another flow's open
+  window.
+
+  It is also unreachable in production today. Every caller of all four consumers
+  is a record action, and a concurrent record action opens its own transaction
+  and is refused `NESTED_TRANSACTION` loudly. Reaching it needs a production
+  caller that invokes one of these capabilities outside an action, which the
+  consumer search above establishes does not exist.
+
+  Closing it properly means binding the witness to the async caller rather than
+  to the connection — the same ownership question as M3's transaction connection
+  affinity, and the same place it should be answered. An `AsyncLocalStorage`
+  binding would do it, at the cost of a real false-refusal mode: context is lost
+  across timer and event-emitter boundaries, so legitimate code would begin
+  refusing for reasons nothing in the error explains. That trade belongs to the
+  milestone that owns connection ownership, not to one whose mandate is
+  preservation.
 
 ## Outcome and follow-up
 

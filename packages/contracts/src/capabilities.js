@@ -145,10 +145,20 @@ export function createDeliveryObligationsCapability(moduleNames) {
             throw new AppError('A handover reference is required', { code: 'HANDOVER_REF_REQUIRED', status: 400 });
           }
           const obligations = service(names.deliveryObligation);
-          // Everything above this line is input validation, and it still
-          // refuses first. Everything below writes.
-          requireCallerTransaction([obligations], 'A delivery handover');
-          const updated = [];
+
+          // **Preflight, in two passes, and the order is the contract.**
+          //
+          // Every requested row is read and judged before anything is written
+          // AND before the transaction is proved. A stale plan, a foreign id or
+          // a second handover therefore still answers with its own 409 exactly
+          // as it did before this capability proved anything — the transaction
+          // refusal is added to the surface, it does not shadow it.
+          //
+          // The single-pass version validated id N only after writing id N-1,
+          // which is what made a refusal partway through leave the earlier rows
+          // committed outside a transaction. Splitting the passes fixes the
+          // precedence and the partial commit with the same change.
+          const rows = [];
           for (const id of new Set(obligationIds)) {
             const row = safeGet(obligations, id);
             if (!row || row.contractId !== contractId) {
@@ -161,6 +171,15 @@ export function createDeliveryObligationsCapability(moduleNames) {
                 code: 'OBLIGATION_ALREADY_HANDED_OVER', status: 409, details: { obligationId: row.id },
               });
             }
+            rows.push(row);
+          }
+
+          // Nothing has been written yet, so this is still "before the first
+          // write" — now with every input refusal already past.
+          requireCallerTransaction([obligations], 'A delivery handover');
+
+          const updated = [];
+          for (const row of rows) {
             // Awaited, deliberately: an unawaited managed write would escape
             // the caller's transaction, and a failure in it would surface as an
             // unhandled rejection AFTER a "successful" handover.
@@ -201,12 +220,15 @@ export function createDeliveryObligationsCapability(moduleNames) {
 export function requireCallerTransaction(services, what) {
   const proof = proveCallerTransaction(services);
   if (proof === TRANSACTION_PROOF.ACTIVE) return;
+  // No `details.proof` here, matching Work: this branch has a message of its
+  // own, so there is nothing for a diagnostic field to disambiguate. `proof`
+  // rides only on the refusal that four outcomes share.
   if (proof === TRANSACTION_PROOF.NO_TRANSACTION) {
     throw new AppError(
       `${what} must run inside the caller's transaction: it writes a set of rows that are only correct together, `
         + 'and outside a transaction a refusal partway through would leave the earlier ones committed. '
         + "Call it from a package action's execute, or from inside database.transactionAsync.",
-      { code: 'CONTRACT_TRANSACTION_REQUIRED', status: 500, details: { proof } },
+      { code: 'CONTRACT_TRANSACTION_REQUIRED', status: 500 },
     );
   }
   throw new AppError(

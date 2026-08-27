@@ -575,6 +575,16 @@ atomicity even inside a transaction, because they are inside two different ones.
 The mint function is deliberately not public — a package that could mint could
 manufacture the proof it is subject to.
 
+**What the witness does not prove.** It proves a transaction is open on the
+handle, not which async flow owns it. If flow A opens `transactionAsync` and
+awaits, a flow B that opened nothing can write inside A's transaction during that
+window and lose those writes to A's rollback — measured, and byte-identical
+before this change, since `markHandedOver` had no check at all and Work read the
+same process-wide connection flag. M2D narrows the hazard from unconditional to
+window-bounded; it does not close it. Closing it means binding the witness to the
+async caller, which is the same ownership question as connection affinity below
+and belongs with it.
+
 **The assumption, and the obligation it places on M3.** "An outer transaction is
 open on this handle" means "the caller's transaction" only while one application
 instance has one connection, nested outer transactions are refused

@@ -311,6 +311,20 @@ test('a package can ask the question and cannot answer it', () => {
     false,
     'the sanctioned import must stay allowed',
   );
+
+  // **And the honest half.** The rule reads import *specifiers*, so a computed
+  // one is beyond its reach. A package that wrote this would pass the scan, get
+  // the mint, and be able to manufacture a witness for the real handle. Pinned
+  // as a NON-catch so nobody reads the assertions above as a proof of
+  // unreachability: the residual defence there is trusted checked-in source
+  // (ADR-018 addendum 4), exactly as it is for every other package boundary.
+  for (const computed of [
+    "const p = '../../core/src/transaction-witness.js'; await import(p);",
+    "await import(new URL('../../core/src/transaction-witness.js', import.meta.url));",
+  ]) {
+    assert.equal(importsPrivateKernelPath(computed), false,
+      `the import rule is a specifier scan and does not claim to catch: ${computed}`);
+  }
 });
 
 /* ------------------------------------------------------------------ */
@@ -360,6 +374,11 @@ test('Work refuses outside a transaction, on a foreign handle, after one ends, a
       assert.equal(error.code, 'WORK_TRANSACTION_REQUIRED');
       assert.equal(error.status, 500);
       assert.match(error.message, /must be called inside the caller's transaction/);
+      // The pre-M2D error shape, asserted rather than described: this branch
+      // has a message of its own and carries no diagnostic field. `proof` rides
+      // only on the refusal that four outcomes share.
+      assert.equal(error.details?.proof, undefined,
+        'the no-transaction refusal keeps the exact shape it had before M2D');
       return true;
     },
   );
@@ -489,24 +508,46 @@ test('delivery-obligations@1 refuses a handover outside a transaction, and commi
   const pending = capability.listPending(contract.id);
   assert.ok(pending.length >= 1);
 
-  // Outside a transaction this used to mark obligation[0] handed over and THEN
-  // refuse, leaving it pointing at a delivery project that would never exist.
+  // **Precedence, both directions.** A bad id is still answered by its own 409
+  // even outside a transaction — the transaction refusal was added to this
+  // surface, it does not shadow what was already there. Before M2D this exact
+  // call marked obligation[0] handed over and THEN refused, leaving it pointing
+  // at a delivery project that would never exist.
   await assert.rejects(
     () => capability.markHandedOver({
       contractId: contract.id, obligationIds: [pending[0].id, FOREIGN],
       handoverRef: 'outside', actor: ACTOR,
     }),
     (error) => {
-      assert.equal(error.code, 'CONTRACT_TRANSACTION_REQUIRED');
-      assert.equal(error.status, 500);
+      assert.equal(error.code, 'OBLIGATION_NOT_OF_CONTRACT');
+      assert.equal(error.status, 409);
       return true;
     },
   );
-  assert.deepEqual(
-    service.get(pending[0].id).status, pending[0].status,
-    'nothing was committed: the refusal lands before the first write, not after it',
-  );
+  assert.equal(service.get(pending[0].id).status, pending[0].status,
+    'and zero rows were written on the way to that 409');
   assert.equal(service.get(pending[0].id).handoverRef, null);
+
+  // With nothing wrong in the request, the missing transaction is what is left
+  // to refuse — and it still commits nothing.
+  await assert.rejects(
+    () => capability.markHandedOver({
+      contractId: contract.id, obligationIds: pending.map((row) => row.id),
+      handoverRef: 'outside', actor: ACTOR,
+    }),
+    (error) => {
+      assert.equal(error.code, 'CONTRACT_TRANSACTION_REQUIRED');
+      assert.equal(error.status, 500);
+      // Its own message, so no diagnostic field — the same shape Work's
+      // no-transaction refusal keeps.
+      assert.equal(error.details?.proof, undefined);
+      return true;
+    },
+  );
+  for (const row of pending) {
+    assert.equal(service.get(row.id).status, row.status, 'no obligation was written');
+    assert.equal(service.get(row.id).handoverRef, null);
+  }
 
   // Inside a transaction the same shape of failure still rolls back whole, and
   // a valid handover still succeeds — the refusal is about context, not input.
@@ -541,15 +582,30 @@ test('service-obligations@1 refuses an activation outside a transaction, and com
   const pending = capability.listPending(contract.id);
   assert.ok(pending.length >= 1);
 
+  // Same precedence rule as the delivery half: a bad id keeps its own 409
+  // outside a transaction, and a clean request meets the transaction refusal.
   await assert.rejects(
     () => capability.markActivated({
       contractId: contract.id, obligationIds: [pending[0].id, FOREIGN],
       coverageRef: 'outside', actor: ACTOR,
     }),
-    (error) => error.code === 'CONTRACT_TRANSACTION_REQUIRED',
+    (error) => error.code === 'SERVICE_OBLIGATION_NOT_OF_CONTRACT' && error.status === 409,
   );
   assert.equal(service.get(pending[0].id).status, pending[0].status, 'nothing was committed');
   assert.equal(service.get(pending[0].id).coverageRef, null);
+
+  await assert.rejects(
+    () => capability.markActivated({
+      contractId: contract.id, obligationIds: pending.map((row) => row.id),
+      coverageRef: 'outside', actor: ACTOR,
+    }),
+    (error) => {
+      assert.equal(error.code, 'CONTRACT_TRANSACTION_REQUIRED');
+      assert.equal(error.details?.proof, undefined);
+      return true;
+    },
+  );
+  assert.equal(service.get(pending[0].id).status, pending[0].status, 'still nothing committed');
 
   await assert.rejects(
     () => app.database.transactionAsync(() => capability.markActivated({

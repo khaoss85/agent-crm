@@ -142,11 +142,14 @@ export function createServiceObligationsCapability(moduleNames) {
             });
           }
           const obligations = service(names.serviceObligation);
-          // The same rule as the delivery half, through the same helper: a
-          // partial activation is the identical defect wearing a different
-          // status column. Input refusals above still come first.
-          requireCallerTransaction([obligations], 'A service obligation activation');
-          const updated = [];
+
+          // Two passes, for the same reason as the delivery half: every row is
+          // judged before anything is written and before the transaction is
+          // proved, so each 409 keeps the precedence it had before this
+          // capability proved anything. A partial activation is the identical
+          // defect wearing a different status column, and this is the identical
+          // fix.
+          const rows = [];
           for (const id of new Set(obligationIds)) {
             const row = safeGet(obligations, id);
             if (!row || row.contractId !== contractId) {
@@ -159,6 +162,13 @@ export function createServiceObligationsCapability(moduleNames) {
                 code: 'SERVICE_OBLIGATION_ALREADY_ACTIVATED', status: 409, details: { obligationId: row.id },
               });
             }
+            rows.push(row);
+          }
+
+          requireCallerTransaction([obligations], 'A service obligation activation');
+
+          const updated = [];
+          for (const row of rows) {
             // Awaited, deliberately: an unawaited managed write would escape the
             // caller's transaction, and a failure in it would surface as an
             // unhandled rejection AFTER a "successful" activation.
