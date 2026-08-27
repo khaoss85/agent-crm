@@ -63,10 +63,8 @@ export class OpportunityService {
    */
   async applyManaged(id, patch, context = {}) {
     this.get(id);
-    /** @type {string[]} */
-    const assignments = [];
-    /** @type {unknown[]} */
-    const params = [];
+    /** @type {{column: string, value: unknown}[]} */
+    const values = [];
     /** @type {Record<string, unknown>} */
     const changes = {};
     const columns = {
@@ -87,18 +85,17 @@ export class OpportunityService {
       } else {
         value = requiredString(raw, field);
       }
-      assignments.push(`${column} = ?`);
-      params.push(value);
+      values.push({ column, value });
       changes[field] = value;
     }
-    if (!assignments.length) return this.get(id);
-    assignments.push('updated_at = ?');
-    params.push(nowIso());
-    params.push(id);
+    if (!values.length) return this.get(id);
+    values.push({ column: 'updated_at', value: nowIso() });
 
-    this.database.raw.exec('SAVEPOINT opportunity_managed;');
-    try {
-      this.database.raw.prepare(`UPDATE opportunities SET ${assignments.join(', ')} WHERE id = ?`).run(...params);
+    const updated = this.database.storage.sync.savepoint('opportunity_managed', () => {
+      this.database.storage.sync.execute({
+        kind: 'update', table: 'opportunities', values,
+        where: [{ column: 'id', op: 'eq', value: id }],
+      });
       const updated = this.get(id);
       this.audit.record({
         actor: context.actor,
@@ -107,14 +104,10 @@ export class OpportunityService {
         entityId: id,
         data: changes,
       });
-      this.database.raw.exec('RELEASE SAVEPOINT opportunity_managed;');
-      await this.events.emit('opportunity.updated', updated);
       return updated;
-    } catch (error) {
-      this.database.raw.exec('ROLLBACK TO SAVEPOINT opportunity_managed;');
-      this.database.raw.exec('RELEASE SAVEPOINT opportunity_managed;');
-      throw error;
-    }
+    });
+    await this.events.emit('opportunity.updated', updated);
+    return updated;
   }
 
   /**
@@ -153,26 +146,9 @@ export class OpportunityService {
     };
 
     try {
-      this.database.raw.prepare(`
-        INSERT INTO opportunities(
-          id, company_id, contact_id, name, type, value_cents, currency, stage,
-          owner, expected_close_date, source_key, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        opportunity.id,
-        opportunity.companyId,
-        opportunity.contactId,
-        opportunity.name,
-        opportunity.type,
-        opportunity.valueCents,
-        opportunity.currency,
-        opportunity.stage,
-        opportunity.owner,
-        opportunity.expectedCloseDate,
-        opportunity.sourceKey,
-        opportunity.createdAt,
-        opportunity.updatedAt,
-      );
+      this.database.storage.sync.execute({
+        kind: 'insert', table: 'opportunities', values: opportunityValues(opportunity),
+      });
     } catch (error) {
       if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
         throw new ConflictError(`An opportunity already exists for source ${opportunity.sourceKey}`, {
@@ -195,48 +171,32 @@ export class OpportunityService {
 
   /** @param {string} id */
   get(id) {
-    const row = this.database.raw.prepare(`
-      SELECT o.*, c.name AS company_name,
-             ct.first_name || ' ' || ct.last_name AS contact_name
-      FROM opportunities o
-      JOIN companies c ON c.id = o.company_id
-      LEFT JOIN contacts ct ON ct.id = o.contact_id
-      WHERE o.id = ?
-    `).get(id);
+    const row = this.database.storage.sync.maybeOne({
+      kind: 'select', table: 'opportunities', columns: '*', where: [{ column: 'id', op: 'eq', value: id }],
+    });
     if (!row) throw new NotFoundError('Opportunity', id);
-    return mapOpportunityRow(row);
+    return this.#mapRow(row);
   }
 
   /** @param {{stage?: string, type?: string, companyId?: string, limit?: number}} [filters] */
   list(filters = {}) {
-    const clauses = [];
-    const params = [];
+    const where = [];
     if (filters.stage) {
       enumValue(filters.stage, [...OPPORTUNITY_STAGES], 'stage');
-      clauses.push('o.stage = ?');
-      params.push(filters.stage);
+      where.push({ column: 'stage', op: 'eq', value: filters.stage });
     }
     if (filters.type) {
       enumValue(filters.type, [...OPPORTUNITY_TYPES], 'type');
-      clauses.push('o.type = ?');
-      params.push(filters.type);
+      where.push({ column: 'type', op: 'eq', value: filters.type });
     }
     if (filters.companyId) {
-      clauses.push('o.company_id = ?');
-      params.push(filters.companyId);
+      where.push({ column: 'company_id', op: 'eq', value: filters.companyId });
     }
-    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
-    return this.database.raw.prepare(`
-      SELECT o.*, c.name AS company_name,
-             ct.first_name || ' ' || ct.last_name AS contact_name
-      FROM opportunities o
-      JOIN companies c ON c.id = o.company_id
-      LEFT JOIN contacts ct ON ct.id = o.contact_id
-      ${where}
-      ORDER BY o.updated_at DESC
-      LIMIT ?
-    `).all(...params, limit).map(mapOpportunityRow);
+    return this.database.storage.sync.many({
+      kind: 'select', table: 'opportunities', columns: '*', where,
+      orderBy: [{ column: 'updated_at', direction: 'desc' }], limit,
+    }).map((row) => this.#mapRow(row));
   }
 
   /**
@@ -258,9 +218,11 @@ export class OpportunityService {
       });
     }
     const updatedAt = nowIso();
-    this.database.raw.prepare(`
-      UPDATE opportunities SET stage = ?, updated_at = ? WHERE id = ?
-    `).run(stage, updatedAt, id);
+    this.database.storage.sync.execute({
+      kind: 'update', table: 'opportunities', values: [
+        { column: 'stage', value: stage }, { column: 'updated_at', value: updatedAt },
+      ], where: [{ column: 'id', op: 'eq', value: id }],
+    });
     const updated = this.get(id);
     this.audit.record({
       actor: context.actor,
@@ -281,6 +243,27 @@ export class OpportunityService {
     });
     return updated;
   }
+
+  /** @param {any} row */
+  #mapRow(row) {
+    const company = this.companies.get(row.company_id);
+    const contact = row.contact_id ? this.contacts.get(row.contact_id) : null;
+    return mapOpportunityRow({
+      ...row, company_name: company.name,
+      contact_name: contact ? `${contact.firstName} ${contact.lastName}` : null,
+    });
+  }
+}
+
+/** @param {any} opportunity */
+function opportunityValues(opportunity) {
+  return [
+    ['id', opportunity.id], ['company_id', opportunity.companyId], ['contact_id', opportunity.contactId],
+    ['name', opportunity.name], ['type', opportunity.type], ['value_cents', opportunity.valueCents],
+    ['currency', opportunity.currency], ['stage', opportunity.stage], ['owner', opportunity.owner],
+    ['expected_close_date', opportunity.expectedCloseDate], ['source_key', opportunity.sourceKey],
+    ['created_at', opportunity.createdAt], ['updated_at', opportunity.updatedAt],
+  ].map(([column, value]) => ({ column, value }));
 }
 
 /** @param {any} row */

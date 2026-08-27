@@ -104,17 +104,18 @@ adding a command or rail. No domain reads it and no application behavior moves.
 | Customer Data | `not_applicable` | package behavior and evidence do not read `/version.json` |
 | Custom-package fixture | `not_applicable` | customer packages receive no public-site deployment metadata |
 
-### Storage contract v1 assessment (Production Spine v2 M1)
+### Storage contract v1 assessment (Production Spine v2 M1 + M2A)
 
 The internal dialect-neutral storage seam is horizontal kernel machinery. M1
-intentionally proves only the handwritten Company slice and package-owned Work
-resources; declaring every other domain aligned would be the exact silent
-backfill this matrix prevents.
+initially proved only Company and generated Work resources. M2A adds the bounded
+Approval, Contact, Opportunity, and Work legacy-migration compatibility family;
+declaring every other domain aligned would still be the silent backfill this
+matrix prevents.
 
 | Domain | Status | Reason |
 |---|---|---|
-| Core CRM (Sales) | `partial` | Company uses the seam; Contact and Opportunity retain their old persistence behind the characterized Company dependency closure until M2 |
-| Work | `partial` | its selected generated resource runtime keeps migration participation and uses structured storage for exact reads, mutations, audit and managed actions; `packages/work/src/legacy-tasks.js` and `migrateLegacyTasks(...)` still perform raw SQLite-specific legacy migration reads and are explicitly deferred to M2 |
+| Core CRM (Sales) | `aligned` | Company, Contact, Opportunity and Approval now use the structured seam; conversion, pipeline and approval suites preserve their characterized behavior, and a structural guard prevents raw-driver reachability from returning |
+| Work | `aligned` | its generated resources and `migrateLegacyTasks(...)` use the structured storage seam for exact reads and mutations; executable migration tests retain adoption, dry-run, refusal and restart behavior |
 | Pipeline | `deferred` | runtime pipeline persistence remains direct SQLite and is sequenced for M2 |
 | Lead Intelligence | `deferred` | package persistence is outside the two-consumer M1 slice; M2 owns migration |
 | Commercial Operations | `deferred` | package persistence is outside the two-consumer M1 slice; M2 owns migration |

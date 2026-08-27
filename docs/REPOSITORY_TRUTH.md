@@ -91,7 +91,7 @@ is not a state they can be in; disagreement is a failure instead.
 | `spine.contract` | `SPINE_CONTRACT`, `PERMISSIONS`, `ROLE_BUNDLES`, `SPINE_NOT_MODELED` |
 | `runtime.mode` | `MODE_ENV`, and production's refusal to start without a verifier |
 | `tenant.storage` | `TENANT_STRATEGY`, `TENANT_LIMITATIONS`, and a **structural probe of `bindTenantStorage()`'s own returned shape** |
-| `storage.contract` | the M1 contract constant; Company `create/get/list` executed through the real SQLite adapter; generated public and managed services executed against their generated schemas; and the retained Work legacy raw-read probe |
+| `storage.contract` | the M1 contract constant; Company `create/get/list` executed through the real SQLite adapter; generated public and managed services executed against their generated schemas; and the Work legacy migration's structured-read probe |
 | `reference.composition` | the nine checked-in domain packages composed through `resolvePackageComposition` — the same function `PackageRegistry` throws from at startup |
 | `cli.rails` | the CLI dispatch table **and** each handler module's export, which must agree |
 
