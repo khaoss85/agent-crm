@@ -504,11 +504,11 @@ test('an injected id generator is validated on what it returns, not only that it
     );
   };
 
-  refuses(() => null, [entry()], /newId must return a non-empty string/, 'a generator returning null');
-  refuses(() => 42, [entry()], /newId must return a non-empty string/, 'a generator returning a number');
-  refuses(() => '', [entry()], /newId must return a non-empty string/, 'a generator returning an empty string');
-  refuses(() => '   ', [entry()], /newId must return a non-empty string/, 'a generator returning whitespace');
-  refuses(() => undefined, [entry()], /newId must return a non-empty string/, 'a generator returning undefined');
+  refuses(() => null, [entry()], /The id newId returned must be a non-empty string/, 'a generator returning null');
+  refuses(() => 42, [entry()], /The id newId returned must be a non-empty string/, 'a generator returning a number');
+  refuses(() => '', [entry()], /The id newId returned must be a non-empty string/, 'a generator returning an empty string');
+  refuses(() => '   ', [entry()], /The id newId returned must be a non-empty string/, 'a generator returning whitespace');
+  refuses(() => undefined, [entry()], /The id newId returned must be a non-empty string/, 'a generator returning undefined');
 
   // A constant generator collides with itself. Without this check the second
   // insert would hit the PRIMARY KEY and the caller would read SQLite's words.
@@ -814,4 +814,53 @@ test('sweep: a repeated identity across two batches never reaches the UNIQUE con
   // a second row and never surface the table UNIQUE(type, name, version).
   assert.doesNotThrow(() => store.persist([entry()]));
   assert.equal(rows(database).length, 1);
+});
+
+
+/** DEL, the C1 range, and the Unicode line and paragraph separators. */
+const HOSTILE_CODE_POINTS = [0x7F, 0x85, 0x9B, 0x2028, 0x2029];
+const hostileChar = (cp) => String.fromCodePoint(cp);
+const named = (cp) => 'U+' + cp.toString(16).toUpperCase().padStart(4, '0');
+
+test('sweep: one identity-text rule covers every field the store stores or quotes', (t) => {
+  const database = memory(t);
+  const store = createDefinitionVersionStore(database);
+  // C0 was already refused. These are the rest of the class: DEL, the C1 range,
+  // and the Unicode line and paragraph separators — each of which splits a log
+  // line or a terminal, and none of which belongs in an identity.
+  for (const field of ['type', 'name', 'fingerprint']) {
+    for (const cp of HOSTILE_CODE_POINTS) {
+      refusesCleanly(
+        () => store.persist([entry({ [field]: 'bad' + hostileChar(cp) + 'value' })]),
+        /control character/,
+        field + ' carrying ' + named(cp),
+      );
+    }
+  }
+  assert.equal(rows(database).length, 0);
+});
+
+test('sweep: the generated id obeys the same identity rule as the fields beside it', (t) => {
+  const database = memory(t);
+  const opened = [];
+  const sync = database.storage.sync;
+  const handle = {
+    storage: { sync: { ...sync, transaction(fn) { opened.push('t'); return sync.transaction(fn); } } },
+  };
+  // The id is persisted and quoted into a boot-time refusal exactly as `type`
+  // and `name` are, so it earns exactly their bounds.
+  refusesCleanly(
+    () => createDefinitionVersionStore(handle, { newId: () => 'x'.repeat(5000) }).persist([entry()]),
+    /is too long/,
+    'an over-long generated id',
+  );
+  for (const cp of [0x0A, ...HOSTILE_CODE_POINTS]) {
+    refusesCleanly(
+      () => createDefinitionVersionStore(handle, { newId: () => 'id' + hostileChar(cp) + 'injected' }).persist([entry()]),
+      /control character/,
+      'a generated id carrying ' + named(cp),
+    );
+  }
+  assert.deepEqual(opened, [], 'a bad id never reached BEGIN IMMEDIATE');
+  assert.equal(rows(database).length, 0);
 });

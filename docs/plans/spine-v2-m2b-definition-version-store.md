@@ -288,10 +288,27 @@ real gap.**
 | a generated id colliding with a row already in the table, or one repeated across two `persist` calls | reached the `PRIMARY KEY`, so the caller read SQLite's words | refused as `an id that is already registered`, by an existence check **inside** the transaction |
 | `entries` itself | `[...entries]` raised a bare `TypeError: … is not iterable`, naming no contract | refused as `must be iterable` |
 | an enormous or runaway batch | unbounded — an accidental infinite generator was an out-of-memory crash | capped at `MAX_BATCH` (10,000), refused as `Too many definition versions` |
-| `type`, `name`, `fingerprint` length | unbounded, in a stored row *and* in a refusal a person reads at boot | capped at `MAX_IDENTITY` (200) |
-| `type`, `name`, `fingerprint` contents | any character, including the control characters used for log-splitting and terminal escapes | control characters refused |
+| `type`, `name`, `fingerprint`, **and the generated id** — length | unbounded, in a stored row *and* in a refusal a person reads at boot | one bound, `MAX_IDENTITY` (200) |
+| the same four — contents | any character, including those used for log-splitting and terminal escapes | one character class: C0, DEL, C1, and U+2028/U+2029 |
 | `version` | `Number.isInteger`, so past 2^53 two different versions read back as one | `Number.isSafeInteger` |
 | the `clock` return value | already validated on every call by `resolveClock` | unchanged; a test now pins that the refusal lands **before** `BEGIN IMMEDIATE`, like the rest |
+
+**One rule, not a list of patches.** The last several findings were the same
+defect wearing different clothes: *the same validation applied in one place and
+not another*. `type` and `name` had bounds and a character class; the generated
+id, persisted in the same row and interpolated into the same refusals, had
+neither. Rather than patch two more spots, the rule is now a single
+`assertIdentityText` with three call sites — the entry's identity fields and the
+id source — so a further variant of this finding has nowhere to land, and the
+next reader meets a rule rather than a list.
+
+Two things that unification deliberately did **not** do. There is **one bound
+for all four values**, not a separate one for the id: a UUID is 36 characters
+and 200 is a generous ceiling, so a second limit would be a number to justify
+rather than a rule to follow. And every refusal still **names its own field** —
+the shared validator takes the caller's phrase, because "identity invalid" would
+trade a class of bug for a loss of diagnosability, and this text is what a person
+reads when a boot fails.
 
 **Why the id check is inside the transaction when everything else is outside.**
 It reads the table, and only under `BEGIN IMMEDIATE` does the write lock
@@ -410,6 +427,10 @@ npm run verify
   both fixed with regressions written first: the closed entry shape was not
   closed against non-enumerable or symbol keys, and the structural guard claimed
   more than a token scan can prove.
+- **2026-08-27:** Two more findings of the same family — the C1 range, DEL and
+  the Unicode separators slipping past the character class, and the generated id
+  having neither bound. Collapsed the family instead of patching two spots: one
+  `assertIdentityText` rule, one bound, one character class, three call sites.
 - **2026-08-27:** A sixth finding — a generated id colliding across calls or
   with an existing row — prompted a sweep of the whole injected-input surface
   rather than a seventh single fix. Five of six probes failed; all five are

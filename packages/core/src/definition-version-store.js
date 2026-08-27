@@ -73,35 +73,45 @@ const MAX_IDENTITY = 200;
 const MAX_BATCH = 10_000;
 
 /**
- * Control characters never appear in a real identity, and they do appear in
- * log-splitting and terminal-escape payloads. Refusing them keeps a stored
- * identity and the refusal quoting it both readable.
+ * Characters that never appear in a real identity and do appear in
+ * log-splitting and terminal-escape payloads: C0, DEL, the C1 range, and the
+ * Unicode line and paragraph separators. Refusing them keeps both a stored
+ * identity and the refusal quoting it readable.
  */
-const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F]/;
+const FORBIDDEN_IDENTITY_TEXT = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
 
 /**
+ * **One rule for every piece of identity text this store handles.**
+ *
+ * `type`, `name`, `fingerprint` and the id the store generates are all stored
+ * in the same row and all interpolated into the same boot-time refusals, so
+ * they all earn the same bounds. Applying the rule to some of them and not
+ * others is precisely what produced a run of near-identical review findings:
+ * one place validated, another not, the difference invisible until someone
+ * went looking. There is one bound for all four, deliberately — a UUID is 36
+ * characters and `MAX_IDENTITY` is a generous ceiling for it, so a second limit
+ * would be a number to justify rather than a rule to follow.
+ *
+ * `subject` is the caller's own phrase, so the refusal still names the exact
+ * field. A shared validator that said only "identity invalid" would trade a
+ * class of bug for a loss of diagnosability, and this text is what a person
+ * reads when a boot fails.
+ *
  * @param {unknown} value
- * @param {string} field
- * @param {number} index
+ * @param {string} subject — how the refusal names this value
+ * @param {unknown} [details]
  */
-function requireIdentityString(value, field, index) {
+function assertIdentityText(value, subject, details) {
   if (typeof value !== 'string' || value.trim() === '') {
-    throw new ValidationError(
-      `Definition version ${field} must be a non-empty string`,
-      { index, field },
-    );
+    throw new ValidationError(`${subject} must be a non-empty string`, details);
   }
   if (value.length > MAX_IDENTITY) {
     throw new ValidationError(
-      `Definition version ${field} is too long (${value.length} characters; the limit is ${MAX_IDENTITY})`,
-      { index, field },
+      `${subject} is too long (${value.length} characters; the limit is ${MAX_IDENTITY})`, details,
     );
   }
-  if (CONTROL_CHARACTERS.test(value)) {
-    throw new ValidationError(
-      `Definition version ${field} must not contain a control character`,
-      { index, field },
-    );
+  if (FORBIDDEN_IDENTITY_TEXT.test(value)) {
+    throw new ValidationError(`${subject} must not contain a control character`, details);
   }
   return value;
 }
@@ -149,10 +159,10 @@ function validateEntry(entry, index) {
     throw new ValidationError('Definition version version must be a non-negative integer', { index, field: 'version' });
   }
   return Object.freeze({
-    type: requireIdentityString(record.type, 'type', index),
-    name: requireIdentityString(record.name, 'name', index),
+    type: assertIdentityText(record.type, 'Definition version type', { index, field: 'type' }),
+    name: assertIdentityText(record.name, 'Definition version name', { index, field: 'name' }),
     version: /** @type {number} */ (version),
-    fingerprint: requireIdentityString(record.fingerprint, 'fingerprint', index),
+    fingerprint: assertIdentityText(record.fingerprint, 'Definition version fingerprint', { index, field: 'fingerprint' }),
   });
 }
 
@@ -188,13 +198,9 @@ function driftError(entry, persisted) {
 function resolveIdSource(newId) {
   if (newId === undefined || newId === null) return randomUUID;
   if (typeof newId !== 'function') throw new TypeError('newId must be a function returning an id');
-  return () => {
-    const value = newId();
-    if (typeof value !== 'string' || value.trim() === '') {
-      throw new ValidationError('newId must return a non-empty string id');
-    }
-    return value;
-  };
+  // The same rule the entry's own identity fields get: the id is persisted in
+  // the same row and quoted into the same refusals, so it earns the same bounds.
+  return () => assertIdentityText(newId(), 'The id newId returned', { field: 'id' });
 }
 
 /**
