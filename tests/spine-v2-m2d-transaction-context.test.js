@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { createDatabase } from '../packages/core/src/database.js';
+import { importsPrivateKernelPath } from '../packages/cli/src/package-sources.js';
+import * as core from '../packages/core/index.js';
 import { TRANSACTION_PROOF, proveCallerTransaction } from '../packages/core/index.js';
 import { activatedContract, boot, project, signedOrder } from './helpers/contracts-project.js';
 
@@ -270,6 +272,45 @@ test('a witness the core never minted is refused, whatever shape it wears', (t) 
   assert.equal(proveCallerTransaction([{}]), TRANSACTION_PROOF.NO_STORAGE);
   assert.equal(proveCallerTransaction([serviceOn(db), {}]), TRANSACTION_PROOF.NO_STORAGE);
   assert.equal(proveCallerTransaction([]), TRANSACTION_PROOF.NO_STORAGE);
+});
+
+/**
+ * **Why "not exported" is a boundary and not a habit.**
+ *
+ * The unforgeability argument has two halves and only one of them lives in
+ * `transaction-witness.js`. The `WeakSet` stops a package *constructing* a
+ * witness; what stops it *minting* one is that `mintTransactionWitness` is
+ * absent from `packages/core/index.js` **and** that a package may not import a
+ * private kernel path to get at it (`packages/cli/src/package-commands.js`
+ * refuses `packages/core/src/…` in package sources, and `package test` reports
+ * it as a conformance failure).
+ *
+ * Either half alone is worth nothing: a public mint would make the `WeakSet`
+ * decorative, and a private mint with no import rule would be one line away
+ * from public. Both are asserted here, because both can regress silently.
+ */
+test('a package can ask the question and cannot answer it', () => {
+  assert.equal('proveCallerTransaction' in core, true, 'consumers need the question');
+  assert.equal('TRANSACTION_PROOF' in core, true);
+
+  // The two that would let a caller manufacture its own proof.
+  assert.equal('mintTransactionWitness' in core, false,
+    'a package that could mint could manufacture the proof it is subject to');
+  assert.equal('isActiveTransactionWitness' in core, false,
+    'the registry check is an internal of proveCallerTransaction, not a second path to it');
+
+  // …and the import rule that keeps the private module private, proven on the
+  // exact specifier a package would have to write to reach the mint.
+  assert.equal(
+    importsPrivateKernelPath("import { mintTransactionWitness } from '../../core/src/transaction-witness.js';"),
+    true,
+    'reaching the mint through a private kernel path must be a conformance failure',
+  );
+  assert.equal(
+    importsPrivateKernelPath("import { proveCallerTransaction } from '../../core/index.js';"),
+    false,
+    'the sanctioned import must stay allowed',
+  );
 });
 
 /* ------------------------------------------------------------------ */

@@ -305,8 +305,11 @@ with their trigger semantics intact:
 | `raw` present, `isTransaction === false` | `NO_TRANSACTION` | "must be called inside the caller's transaction…" |
 | no `raw`, or `isTransaction` not a boolean | `NO_STORAGE`, `SPLIT_STORAGE`, `NO_WITNESS_API`, `FORGED_WITNESS` | "cannot prove it is running inside the caller's transaction…" |
 
-The outcome is additionally carried in `details.proof`, which is additive and
-the only reason a mixed composition is diagnosable at all.
+The outcome is additionally carried in `details.proof` on the **"cannot prove"**
+refusal only — the one message four outcomes share. `NO_TRANSACTION` has a
+message of its own, needs no disambiguator, and keeps the original error shape
+exactly. That detail is additive, and it is the only reason a mixed composition
+(invariant 3 above) is diagnosable at all.
 
 ### 6. `complete` and `cancel` take the check too
 
@@ -350,6 +353,13 @@ is strictly more correct.
     commits nothing; still rolls back whole inside one; and the legitimate path
     is untouched.
   - The witness lifetime, across both commit and rollback.
+  - **The two halves of unforgeability, both asserted.** `mintTransactionWitness`
+    and `isActiveTransactionWitness` are absent from `packages/core/index.js`,
+    **and** `importsPrivateKernelPath` refuses the exact specifier a package
+    would have to write to reach the mint directly
+    (`packages/cli/src/package-commands.js`). Either half alone is worth
+    nothing: a public mint makes the `WeakSet` decorative, and a private mint
+    with no import rule is one line away from public.
 - Structural guard over the six-file M2D slice, covering `database.raw`,
   `database?.raw`, `.raw.prepare(`, `?.raw?.exec(`, `database['raw']`,
   `database?.['raw']`, `const { raw } = database`, renamed and multi-name
