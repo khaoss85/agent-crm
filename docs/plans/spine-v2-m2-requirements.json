@@ -1,561 +1,254 @@
 {
-  "$comment": "Requirement-to-evidence map for the ratified Spine v2 M2 section. Hand-authored groups; machine-checked coverage. Every unit index the extractor produces must be claimed exactly once, so a hard requirement cannot be dropped by omission. classification: MERGED_PROVED | CURRENT_CAMPAIGN | DEFERRED_OUTSIDE_M2 | CONTRADICTION_REQUIRES_FIX.",
-  "groups": [
+  "$comment": "Curated inventory of the ratified Spine v2 M2 section. Hand-kept, not derived: it records how this campaign has assigned each area of M2 and why. It is an index, not a proof — see scripts/spine-v2-m2-map.js.",
+  "section": {
+    "fingerprint": "8874e940d985f32f",
+    "note": "Set by scripts/spine-v2-m2-map.js --write. A change here means the ratified section moved and the inventory below needs re-reading."
+  },
+  "entries": [
     {
-      "id": "G01",
+      "id": "M2-01",
       "title": "Remaining consumer extraction and Spine-store closure",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2C/M2D/M2F",
-      "note": "workflows+action-runtime trace family is M2C; Work transaction context is M2D; Spine store dual-plane closure is M2F.",
-      "claims": [
-        "0eba0f303697",
-        "db3cde437cf4"
-      ]
+      "owner": "M2C/M2D/M2F",
+      "excerpt": "Move remaining core modules, generated services, package services, audit, trace, workflows, the Spine store and migration bookkeeping in reviewable groups.",
+      "reason": "workflows+action-runtime trace family is M2C; Work transaction context is M2D; Spine store dual-plane closure is M2F."
     },
     {
-      "id": "G02",
+      "id": "M2-02",
       "title": "Async control flow with the synchronous SQLite factory preserved",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2E",
-      "claims": [
-        "0439596112b0",
-        "0c733e4c0692",
-        "c1f8503fdf5d"
-      ]
+      "owner": "M2E",
+      "excerpt": "Convert service/application control flow on the new async composition path; preserve route and SDK response shapes.",
+      "reason": null
     },
     {
-      "id": "G03",
+      "id": "M2-03",
       "title": "packageContract/actionContract/operationContract/capabilityContract 2",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2E",
-      "claims": [
-        "5f90b9377bf1",
-        "bf5e963e2717",
-        "86196f8abc00",
-        "3b5f7d6cffe7",
-        "69f462eb7617",
-        "f4122c552182",
-        "d12836422fc7",
-        "d4c3cba3dd1f"
-      ]
+      "owner": "M2E",
+      "excerpt": "Version every nested package execution seam before exposing async services:",
+      "reason": null
     },
     {
-      "id": "G03x",
+      "id": "M2-04",
       "title": "The four contract-2 versions — capabilityContract collides with merged meaning",
-      "claims": [
-        "95d7a9c87612"
-      ],
-      "classification": "CONTRADICTION_REQUIRES_FIX",
-      "slice": "M2E-1",
+      "owner": "M2E-1",
+      "excerpt": "`packageContract: 2`, `actionContract: 2`, `operationContract: 2` and `capabilityContract: 2` require actions, operations and capability consumers to await every service/context/de",
       "reason": "The ratified sentence defines capabilityContract: 2 as \"capability consumers await every service/context/dependency operation\". The repository already ships capabilityContract: 2 with a different meaning — packages/contracts/src/lifecycle-capability.js:177 returns it as that capability's second, synchronous shape, chosen by the provider — and core validates the field nowhere. Implementing the sentence literally either reinterprets a merged synchronous declaration as async or forces it to 3, which the plan does not say. Resolving it is M2E-1's first deliverable and may require amending the ratified plan; it is recorded here rather than coded around, because a map reporting zero contradictions while one is known is the dishonesty this gate exists to refuse. It gates M2 either way."
     },
     {
-      "id": "G04",
+      "id": "M2-05",
       "title": "Repository guard gating compatibility-path deletion",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2F",
-      "claims": [
-        "78b07f74bc4c"
-      ]
+      "owner": "M2F",
+      "excerpt": "Delete the compatibility path only after a repository guard proves no business consumer reaches `DatabaseSync`, `.raw.prepare()` or `.raw.exec()`.",
+      "reason": null
     },
     {
-      "id": "G05",
+      "id": "M2-06",
       "title": "Provisioning tenant resolver separate from application binding",
-      "classification": "MERGED_PROVED",
-      "slice": "ADR-038 / Spine v1",
-      "evidence": {
-        "tests": [
-          "tests/spine-tenancy-truth.test.js",
-          "tests/spine-plane-collision.test.js"
-        ],
-        "truthFacts": [
-          {
-            "id": "spine.multi_tenant_single_instance",
-            "value": "refused_at_startup"
-          },
-          {
-            "id": "spine.tenant.isolation.mode",
-            "value": "one_tenant_per_instance"
-          }
-        ]
-      },
-      "claims": [
-        "3d7ef322f0ac"
-      ]
+      "owner": "merged",
+      "excerpt": "Keep the provisioning-side tenant resolver separate from the application binding; the application handle still cannot name a second tenant.",
+      "reason": null
     },
     {
-      "id": "G06",
+      "id": "M2-07",
       "title": "Cross-plane audit intent, claim, delivery and reconciliation",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2F",
-      "claims": [
-        "e4562ef65a2c",
-        "10b0dc9e21a7",
-        "12fa4193fc10",
-        "c3d3551699ab",
-        "698f1c12a453",
-        "542aaaa3bce1",
-        "27f37bcb5dd5"
-      ]
+      "owner": "M2F",
+      "excerpt": "Make cross-plane Spine writes explicitly recoverable rather than pretending two independent databases share an atomic transaction.",
+      "reason": null
     },
     {
-      "id": "G07",
+      "id": "M2-08",
       "title": "Bounded {adapter, available} storage descriptor on every public surface",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2F",
-      "claims": [
-        "953bc0c37339",
-        "95e6a99bb859",
-        "82cedac888a2"
-      ]
+      "owner": "M2F",
+      "excerpt": "Replace storage details on every public/in-process surface with a bounded descriptor such as `{adapter, available}`.",
+      "reason": null
     },
     {
-      "id": "G08a",
+      "id": "M2-09",
       "title": "serve on the async factory over SQLite; await startup before serving",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2E/M2F",
-      "claims": [
-        "d858fecd6c0e",
-        "d2ab925345f2"
-      ]
+      "owner": "M2E/M2F",
+      "excerpt": "Migrate `serve` composition onto the unconditional async factory when PostgreSQL is selected, while retaining the characterized synchronous SQLite path.",
+      "reason": null
     },
     {
-      "id": "G08b",
+      "id": "M2-10",
       "title": "Child-process entry-point evidence for both adapters",
-      "classification": "CURRENT_CAMPAIGN",
-      "claims": [
-        "635c69f1e795"
-      ],
-      "slice": "M2E",
-      "partiallyProvedIn": "M3",
-      "note": "Composite. The SQLite child-process entry-point evidence lands with M2E and gates M2 — the requirement exists precisely to say a direct factory call is not sufficient evidence, which is as true on SQLite as on PostgreSQL. Only the PostgreSQL half waits for the adapter. This is the identical error already fixed on G28b and missed here."
+      "owner": "M2E",
+      "excerpt": "Add end-to-end child-process tests for both adapters; calling `createAccordoAppAsync` directly is not sufficient evidence.",
+      "reason": "Composite. The SQLite child-process entry-point evidence lands with M2E and gates M2 — the requirement exists precisely to say a direct factory call is not sufficient evidence, which is as true on SQLite as on PostgreSQL. Only the PostgreSQL half waits for the adapter. This is the identical error already fixed on G28b and missed here."
     },
     {
-      "id": "G09a",
+      "id": "M2-11",
       "title": "db:migrate refuses PostgreSQL, and SQLite compatibility is unchanged",
-      "claims": [
-        "7708cd00203e",
-        "e028b6666bb0"
-      ],
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2F",
-      "note": "Both are executable at M2-complete and gate it: the refusal needs the deployment-storage loader, not the adapter, and G28a already classifies the same CLI refusal as current work — so deferring these two made the map disagree with itself. The third composite deferral found by review after the rule meant to stop them; the rule only catches a group that declares itself composite, which is the hole named in my own last review request."
+      "owner": "M2F",
+      "excerpt": "The unauthenticated `crm db:migrate` command remains a stable PostgreSQL refusal;",
+      "reason": "Both are executable at M2-complete and gate it: the refusal needs the deployment-storage loader, not the adapter, and G28a already classifies the same CLI refusal as current work — so deferring these two made the map disagree with itself. The third composite deferral found by review after the rule meant to stop them; the rule only catches a group that declares itself composite, which is the hole named in my own last review request."
     },
     {
-      "id": "G09",
+      "id": "M2-12",
       "title": "Startup attestation gates production migrations",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M3",
-      "reason": "Attestation gates PostgreSQL DDL. No DDL path exists before the M3 adapter, so this cannot be proved by M2-complete; the M2 obligation is that the contract is defined and PostgreSQL selection refuses.",
-      "claims": [
-        "8340bc0af3ec",
-        "2e4e19e20165",
-        "7c41da4d68a8",
-        "b57355662a3f"
-      ]
+      "owner": "M3",
+      "excerpt": "Production startup migrations run only after the deployment verifier provider returns a bounded, verified workload/startup system identity with an explicit `schema:migrate` permiss",
+      "reason": "Attestation gates PostgreSQL DDL. No DDL path exists before the M3 adapter, so this cannot be proved by M2-complete; the M2 obligation is that the contract is defined and PostgreSQL selection refuses."
     },
     {
-      "id": "G10",
+      "id": "M2-13",
       "title": "Verifier provider contract v2 discovery/attestation operations",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M3",
-      "reason": "Ordered discover/attest operations exist to authorize DDL against real control and data resources; unreachable before the adapter.",
-      "claims": [
-        "b38064a17c32",
-        "2f9cb6f40dc2",
-        "c0d6d4c2d1ce",
-        "a0cfc53cd3a0",
-        "09fb3f9dbc7c",
-        "36dbd29eb938"
-      ]
+      "owner": "M3",
+      "excerpt": "Verifier provider contract v2 returns ordered non-interchangeable operations:",
+      "reason": "Ordered discover/attest operations exist to authorize DDL against real control and data resources; unreachable before the adapter."
     },
     {
-      "id": "G11",
+      "id": "M2-14",
       "title": "PostgreSQL DDL + ledger + audit in one transaction, fault-proved",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M3",
-      "reason": "Applying a DDL unit, its checksum ledger row and an immutable migration audit row in one transaction is PostgreSQL dialect behaviour over a driver that does not exist until M3; SQLite migrations already run under their own released path and are frozen by M0.",
-      "claims": [
-        "52bd52792081",
-        "da4f6a30fa3c",
-        "063415850e71",
-        "2d62b58063ce"
-      ]
+      "owner": "M3",
+      "excerpt": "PostgreSQL applies each transactional DDL unit, its name/checksum ledger row and immutable migration audit row in the same data-plane transaction.",
+      "reason": "Applying a DDL unit, its checksum ledger row and an immutable migration audit row in one transaction is PostgreSQL dialect behaviour over a driver that does not exist until M3; SQLite migrations already run under their own released path and are frozen by M0."
     },
     {
-      "id": "G12",
+      "id": "M2-15",
       "title": "Control-plane bootstrap under pg_advisory_xact_lock",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M3",
-      "reason": "Control-plane bootstrap is specified in terms of pg_advisory_xact_lock, a PostgreSQL-only primitive with no SQLite equivalent, so no part of it is executable before the M3 adapter.",
-      "claims": [
-        "d9dfec925706",
-        "2d7eb7cf1974",
-        "7f7b1cd9fa73",
-        "be5a2da2b9c3",
-        "4ce7f0e2fae8",
-        "55293bf599e9"
-      ]
+      "owner": "M3",
+      "excerpt": "Control-plane bootstrap runs first, before any organization, lease, binding or audit-intent read.",
+      "reason": "Control-plane bootstrap is specified in terms of pg_advisory_xact_lock, a PostgreSQL-only primitive with no SQLite equivalent, so no part of it is executable before the M3 adapter."
     },
     {
-      "id": "G13",
+      "id": "M2-16",
       "title": "Production MCP static-context-only and source-only",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2F",
-      "note": "Adapter-independent: it is a refusal surface proved by absence of reachability, provable on SQLite.",
-      "claims": [
-        "20809ba96d12",
-        "7b6a1bf46b46",
-        "2a057a80fcbc",
-        "660580829b22",
-        "14518b23e8a7",
-        "d1b725cc192b",
-        "f749f355af13",
-        "600cdfcb28bf"
-      ]
+      "owner": "M2F",
+      "excerpt": "Production MCP stdio remains static-context-only and source-only in this milestone: it does not load deployment storage, compose the application, connect, migrate or invoke startup",
+      "reason": "Adapter-independent: it is a refusal surface proved by absence of reachability, provable on SQLite."
     },
     {
-      "id": "G14",
+      "id": "M2-17",
       "title": "One shared versioned deployment-storage configuration loader",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2F",
-      "note": "The loader, its closed envelope, precedence and refusals are adapter-independent. PostgreSQL selection refuses until M3.",
-      "claims": [
-        "ec6965e39128",
-        "33288057b7e1",
-        "5ac596b4db97",
-        "42a5da0672e7",
-        "2a7245f6b39c",
-        "bca3a9c938c0",
-        "1078ce17bd17",
-        "c4bf21b757a8",
-        "2839f444d5fb",
-        "f6e8d30ff36a",
-        "f797ba543044",
-        "4531bb8be018",
-        "cd8d90cc999f",
-        "903f4567b449",
-        "4afa09840713"
-      ]
+      "owner": "M2F",
+      "excerpt": "Define one shared, versioned deployment-storage configuration loader used by the factory, CLI and MCP rather than inventing flags independently.",
+      "reason": "The loader, its closed envelope, precedence and refusals are adapter-independent. PostgreSQL selection refuses until M3."
     },
     {
-      "id": "G15a",
+      "id": "M2-18",
       "title": "TLS as a closed contract field, and the settings a parser can refuse",
-      "claims": [
-        "3efb7fb1d81c",
-        "60fe094a1261",
-        "f840c5f66ce6"
-      ],
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2F",
-      "partiallyProvedIn": "M3",
-      "note": "The closed envelope must carry the TLS fields, and a parser refuses plaintext, sslmode=disable|allow|prefer, verification-disabled settings and a permissive production default without opening a connection. My own deferral reason said as much and then deferred all four units anyway, so the parser boundaries could have gone green uncounted. Certificate-chain, expiry and hostname verification need real endpoints and stay with G15."
+      "owner": "M2F",
+      "excerpt": "PostgreSQL production connections require authenticated TLS as part of this closed contract: encryption on, certificate-chain verification against an explicit deployment trust sour",
+      "reason": "The closed envelope must carry the TLS fields, and a parser refuses plaintext, sslmode=disable|allow|prefer, verification-disabled settings and a permissive production default without opening a connection. My own deferral reason said as much and then deferred all four units anyway, so the parser boundaries could have gone green uncounted. Certificate-chain, expiry and hostname verification need real endpoints and stay with G15."
     },
     {
-      "id": "G15",
+      "id": "M2-19",
       "title": "TLS proved against real endpoints",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M3",
-      "reason": "Proving trusted-CA success and every refusal against real TLS endpoints needs a live driver and real certificates, neither of which exists before the M3 adapter.",
-      "claims": [
-        "3a3ca09589a7"
-      ]
+      "owner": "M3",
+      "excerpt": "Integration fixtures prove trusted-CA success and every refusal against real TLS endpoints, with credentials absent from diagnostics.",
+      "reason": "Proving trusted-CA success and every refusal against real TLS endpoints needs a live driver and real certificates, neither of which exists before the M3 adapter."
     },
     {
-      "id": "G16",
+      "id": "M2-20",
       "title": "Config-file no-follow ownership and mode discipline",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2F",
-      "claims": [
-        "3b52b8ac74d3",
-        "cb31e9ecab11",
-        "1ba6ccc777a2"
-      ]
+      "owner": "M2F",
+      "excerpt": "Before reading bytes, the loader uses a no-follow open/stat discipline and requires a regular file owned by the effective process identity with no group/other permission bits; syml",
+      "reason": null
     },
     {
-      "id": "G17",
+      "id": "M2-21",
       "title": "DX Simplicity Gate for the deployment-storage surface",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2F",
-      "claims": [
-        "d3539b49cfa6",
-        "9c35d273b440",
-        "5a68d751f2d8"
-      ]
+      "owner": "M2F",
+      "excerpt": "Clear the DX Simplicity Gate before naming the surface:",
+      "reason": null
     },
     {
-      "id": "G18",
+      "id": "M2-22",
       "title": "identityVerifier ESM resolution, bounded deadline, credential-free failure",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2F",
-      "note": "Path resolution, module evaluation, timeout and no-listener-before-resolution are adapter-independent.",
-      "claims": [
-        "edf6048f0357",
-        "1f0660605cef",
-        "05eef3a1ae58",
-        "fdadf868741b",
-        "45603508379a",
-        "f3de0dd5c816",
-        "f4557816093a",
-        "15538372ee07",
-        "40f9beff99c1"
-      ]
+      "owner": "M2F",
+      "excerpt": "`identityVerifier` is a checked repository-relative ESM provider reference, not executable code or a credential in JSON.",
+      "reason": "Path resolution, module evaluation, timeout and no-listener-before-resolution are adapter-independent."
     },
     {
-      "id": "G19",
+      "id": "M2-23",
       "title": "M2 exit criteria",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2 completion gate",
-      "claims": [
-        "e97afa6685cf",
-        "a9ab649f2df6",
-        "c2ab93e064e0",
-        "3c0590977848"
-      ]
+      "owner": "M2 completion gate",
+      "excerpt": "SQLite passes the full suite through the portable contract, and the raw SQLite driver is private to the SQLite adapter.",
+      "reason": null
     },
     {
-      "id": "G20",
+      "id": "M2-24",
       "title": "Shared PostgreSQL control plane for organizations, leases, bindings, intents",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M3",
-      "reason": "A genuinely shared PostgreSQL control plane cannot exist before the adapter.",
-      "claims": [
-        "afccfbce7ccd",
-        "f42d74fa6d2c",
-        "9d159296e3df",
-        "4759dfe96c47",
-        "3e56731846bb",
-        "d034eab49c0b"
-      ]
+      "owner": "M3",
+      "excerpt": "The closed deployment envelope also carries a `controlPlane` connection.",
+      "reason": "A genuinely shared PostgreSQL control plane cannot exist before the adapter."
     },
     {
-      "id": "G21",
+      "id": "M2-25",
       "title": "Caller-known idempotency key contract",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M4",
-      "reason": "Plan text scopes keys to PostgreSQL writes and the campaign assigns unknown-commit/idempotency evidence to M4.",
-      "claims": [
-        "ddce58fe2160",
-        "8dc3cfdf4f90",
-        "ea353efc338a",
-        "a6d5e18e2a4e",
-        "d138e8fb8b49",
-        "fa20c7c14cde",
-        "857c5a52362a",
-        "9237688880a1"
-      ]
+      "owner": "M4",
+      "excerpt": "Every PostgreSQL write receives a caller-known idempotency key before work:",
+      "reason": "Plan text scopes keys to PostgreSQL writes and the campaign assigns unknown-commit/idempotency evidence to M4."
     },
     {
-      "id": "G22",
+      "id": "M2-26",
       "title": "Verified provider-webhook event keys and evidence envelope",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M4",
-      "reason": "Provider-event keys derive replay identity from verified webhook evidence and are stored against PostgreSQL outcome rows; the outcome ledger they key into does not exist until M4 builds it.",
-      "claims": [
-        "5c3a442646ce",
-        "afedf3dc11b0",
-        "d21c450e9e35",
-        "6d80384d73f8",
-        "2ee1dfee39eb",
-        "cab5ff8e08de",
-        "1fa18f32550b",
-        "e0152831efef",
-        "f32f9cd45183",
-        "06f65310849f",
-        "d61852eafcf3"
-      ]
+      "owner": "M4",
+      "excerpt": "Verified provider webhooks are the bounded exception to caller header transport.",
+      "reason": "Provider-event keys derive replay identity from verified webhook evidence and are stored against PostgreSQL outcome rows; the outcome ledger they key into does not exist until M4 builds it."
     },
     {
-      "id": "G23",
+      "id": "M2-27",
       "title": "Compare-and-set promotion of trace and event intents",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M4",
-      "reason": "Compare-and-set promotion of trace and event intents is a property of the M4 outcome record; there is no outcome to promote before that record exists.",
-      "claims": [
-        "a0af55398ac2",
-        "37a38bfb6c58",
-        "699ed62eac88",
-        "bae154dba3c2"
-      ]
+      "owner": "M4",
+      "excerpt": "An outcome durably records compare-and-set promotion state for its trace and event intents.",
+      "reason": "Compare-and-set promotion of trace and event intents is a property of the M4 outcome record; there is no outcome to promote before that record exists."
     },
     {
-      "id": "G24",
+      "id": "M2-28",
       "title": "Issuance bucket, replay window, tombstone and reconcileUntil",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M4",
-      "reason": "Bucket, replay window, tombstone and reconcileUntil are lifecycle rules over persisted outcomes, which M4 introduces; at M2-complete there is nothing for them to govern.",
-      "claims": [
-        "c1fb71e1d480",
-        "247c3604deee",
-        "195d549a88de",
-        "a7bc4d701968",
-        "9f03c1797a94",
-        "be8046e30e0c",
-        "3caee4ef6a82",
-        "7e4033fca0b4",
-        "7882cb7259c1",
-        "df38e24d3cd2",
-        "32e49c180b84",
-        "563ee7f715fa"
-      ]
+      "owner": "M4",
+      "excerpt": "Keys carry a validated issuance bucket inside their canonical format.",
+      "reason": "Bucket, replay window, tombstone and reconcileUntil are lifecycle rules over persisted outcomes, which M4 introduces; at M2-complete there is nothing for them to govern."
     },
     {
-      "id": "G25",
+      "id": "M2-29",
       "title": "Lease, generation fencing, clone refusal and in-flight write intents",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M4",
-      "reason": "The plan itself says M4 races the topology, M4 pauses a write at the lease boundary and M4 uses a fixture identity authority.",
-      "claims": [
-        "109edfd1d6a7",
-        "1323508e70fd",
-        "224caaa2e592",
-        "abbfb42d0db1",
-        "6fd45765a6b6",
-        "c0f32809f870",
-        "4f41bd7b5c0b",
-        "24779a9c6ca5",
-        "3a7e7d3ac9dc",
-        "f2766a7a4594",
-        "0225bf52daca",
-        "a5ef3a13e10e",
-        "03d7ce454ba7",
-        "7f945e67c152",
-        "e236876b8793",
-        "d3de7e2d167d",
-        "f9c4cad4f6a7",
-        "f5653e16e155",
-        "c78d07ecd020",
-        "efc402192a3a",
-        "2a0dd87cc835"
-      ]
+      "owner": "M4",
+      "excerpt": "M4 races one tenant against two databases from instances with isolated local filesystems and the shared control plane; one lease/binding wins.",
+      "reason": "The plan itself says M4 races the topology, M4 pauses a write at the lease boundary and M4 uses a fixture identity authority."
     },
     {
-      "id": "G26",
+      "id": "M2-30",
       "title": "Admin submission keys, durable recovery and acknowledgement",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M4",
-      "reason": "Real-Chromium PostgreSQL coverage; depends on the key contract and a live adapter.",
-      "claims": [
-        "be353e6dda99",
-        "bc4d4ebccf31",
-        "0a079f6e1afc",
-        "686283dc7ca7",
-        "f78941f3b42c",
-        "c25b81c59e85",
-        "70dad675c16a",
-        "6f3244676271",
-        "7f448477e871",
-        "734bd547596d",
-        "686aebd55a9d",
-        "bdc39359f9eb",
-        "f7b143fce2ab",
-        "c16713d4ba44",
-        "9e5cab9da046",
-        "8cda1eaea6b0",
-        "97637b811539",
-        "7c9a2ddbbfec",
-        "657f8a585231",
-        "0e9a17a635d3",
-        "f372d34c9320",
-        "54d47dad6052",
-        "2d31de5d0adc",
-        "7aba255142b6",
-        "ffdb8ff042fd",
-        "fece6572d626",
-        "edbbf2287e9c",
-        "edb437042b1a",
-        "4c4a84b78649"
-      ]
+      "owner": "M4",
+      "excerpt": "The Admin creates one root key at the user-submission boundary, before calling either direct `api()` or generated-module `moduleClient.request()`.",
+      "reason": "Real-Chromium PostgreSQL coverage; depends on the key contract and a live adapter."
     },
     {
-      "id": "G27",
+      "id": "M2-31",
       "title": "Root and child keys for fan-out",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M4",
-      "reason": "The plan states M4 fixtures cover the fan-out cases.",
-      "claims": [
-        "75619b5bbf65",
-        "ce5442c9892c",
-        "2aea22cefa69",
-        "ada40a804e84",
-        "015653e7377e",
-        "aadad522a944",
-        "8d09ee15ad05",
-        "5efb6627b0f8",
-        "4290f536e693",
-        "d07b1b22e4f0",
-        "981c5f5a3ed1",
-        "4ec8478578ea",
-        "9ad1c0c08c12",
-        "bba1b460d212",
-        "e616ea621369",
-        "b37db740f0e0",
-        "01156f60e206",
-        "4cb683d58085",
-        "274a2e7709bb"
-      ]
+      "owner": "M4",
+      "excerpt": "A logical request owns one caller-known root key and one parent outcome.",
+      "reason": "The plan states M4 fixtures cover the fan-out cases."
     },
     {
-      "id": "G28a",
+      "id": "M2-32",
       "title": "CLI PostgreSQL classification contract, refusal rows and SQLite coverage",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2F",
-      "note": "Reading the canonical APP_COMMANDS authority, classifying every entry, refusing PostgreSQL before composition and running every command on SQLite are all runnable without the adapter. Deferring them would hide executable work behind an adapter dependency.",
-      "claims": [
-        "b7c7ac7be855",
-        "b7324d28a6c5",
-        "7fdce9bb5eb1",
-        "7c688991ec37",
-        "7fbfb98f9fc6",
-        "d2144cd93a9e",
-        "a40e51b7c5a7",
-        "ec6b1ed07fac",
-        "4c34af0750c1",
-        "e9ce3737db31",
-        "982a27838797",
-        "97a11d930622",
-        "e9d6f4280a5b",
-        "572c69ec95c4"
-      ]
+      "owner": "M2F",
+      "excerpt": "The implementation reads the canonical `APP_COMMANDS` export/authority rather than duplicating an unchecked list.",
+      "reason": "Reading the canonical APP_COMMANDS authority, classifying every entry, refusing PostgreSQL before composition and running every command on SQLite are all runnable without the adapter. Deferring them would hide executable work behind an adapter dependency."
     },
     {
-      "id": "G28b",
+      "id": "M2-33",
       "title": "CLI matrix executed against real PostgreSQL",
-      "classification": "CURRENT_CAMPAIGN",
-      "claims": [
-        "ecd20f5c5a4f"
-      ],
-      "slice": "M2F",
-      "partiallyProvedIn": "M3",
-      "note": "Composite. Running every command on SQLite, every declared refusal, the missing/malformed key cases and the no-SQLite-fallback sentinels are executable at M2-complete and gate it. Only the live-PostgreSQL execution of the supported commands waits for the M3 adapter, and it is re-proved there. Deferring the whole sentence because one clause names PostgreSQL would have hidden the SQLite obligations from the gating count — the exact error this map exists to refuse."
+      "owner": "M2F",
+      "excerpt": "It runs every command on SQLite, every supported command on PostgreSQL, every declared refusal, missing/malformed key cases, lost-response replay for mutators, no-SQLite-fallback s",
+      "reason": "Composite. Running every command on SQLite, every declared refusal, the missing/malformed key cases and the no-SQLite-fallback sentinels are executable at M2-complete and gate it. Only the live-PostgreSQL execution of the supported commands waits for the M3 adapter, and it is re-proved there. Deferring the whole sentence because one clause names PostgreSQL would have hidden the SQLite obligations from the gating count — the exact error this map exists to refuse."
     },
     {
-      "id": "G29",
+      "id": "M2-34",
       "title": "Health/readiness stops reading tenant state; Admin metrics separated",
-      "classification": "CURRENT_CAMPAIGN",
-      "slice": "M2F",
-      "note": "Removing doctor/tenant reads from GET /health and moving Admin counts to an authenticated metrics read are adapter-independent.",
-      "claims": [
-        "89b564dd08bf",
-        "cd9973a5ed53",
-        "4581e71c8ff6",
-        "353c51a24523",
-        "948075ae8f03",
-        "1484f7156f80"
-      ]
+      "owner": "M2F",
+      "excerpt": "Production HTTP `GET /health` no longer calls `app.doctor()` or any tenant service.",
+      "reason": "Removing doctor/tenant reads from GET /health and moving Admin counts to an authenticated metrics read are adapter-independent."
     },
     {
-      "id": "G30",
+      "id": "M2-35",
       "title": "Lease-driven readiness transitions",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M4",
-      "reason": "Readiness derived from an unexpired writer lease requires the M4 lease authority.",
-      "claims": [
-        "1d6bd8a055cc",
-        "706ac6feda5c",
-        "37cf789adac5",
-        "04d9fb152226"
-      ]
+      "owner": "M4",
+      "excerpt": "It returns one bounded storage-independent liveness/readiness contract derived from process startup completion, current unexpired writer lease/ attestation authority and, when need",
+      "reason": "Readiness derived from an unexpired writer lease requires the M4 lease authority."
     }
   ]
 }

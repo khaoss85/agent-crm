@@ -1,36 +1,39 @@
 // @ts-check
 
 /**
- * Binds the ratified Spine v2 M2 section to a classification for every
- * requirement it states.
+ * Keeps the curated M2 inventory honest about the section it indexes.
  *
- * The failure this exists to stop is the one the campaign named: declaring M2
- * complete because the visible raw-driver consumers are gone, while two thirds
- * of what the milestone actually requires has never been read. The ratified
- * plan is prose, and prose has no gate — so a milestone can be "finished"
- * against a summary of itself rather than against its text.
+ * **What this is not.** An earlier cut of this script tokenized the ratified M2
+ * prose into sentences and claimed to prove every requirement was classified.
+ * It could not: prose tokenization decides what a requirement *is*, and five
+ * review rounds found five different ways that decision silently dropped text —
+ * a length floor, unrecognised sentence terminators, discarded headings, a
+ * table row whose first cell was empty, and duplicate text collapsing into one
+ * claim. Each fix introduced the next. A gate whose correctness depends on
+ * parsing English is a gate that reports completeness it has not established,
+ * which is the failure it existed to prevent.
  *
- * So the plan is split into the smallest units a requirement can claim, and
- * every unit must be claimed by exactly one group in
- * `docs/plans/spine-v2-m2-requirements.json`. Add a sentence to M2 and this
- * fails until someone classifies it. Delete one and it fails until someone
- * removes its claim. The map cannot drift from the text it describes, and it
- * cannot be made to look complete by omission — the two ways a hand-kept
- * checklist normally rots.
+ * **What this is.** Two much smaller facts, both checkable:
  *
- * It classifies. It does not prove: `CURRENT_CAMPAIGN` means "this milestone
- * owes this", not "this is done". Evidence lives in the tests each slice
- * merges, and `MERGED_PROVED` names the sources or facts that carry it.
+ *   1. the fingerprint of the whole ratified M2 section — if it moves, the
+ *      inventory below was written against different text and a person re-reads
+ *      it, which is the only honest response to prose changing;
+ *   2. the inventory's own shape — every entry has a stable id, a source
+ *      excerpt, an owning milestone and a reason, ids are unique, and owners
+ *      are milestones this campaign recognises.
  *
- *   node scripts/spine-v2-m2-map.js            check and print the summary
- *   node scripts/spine-v2-m2-map.js --write    also regenerate the Markdown map
+ * It indexes; it does not prove. **Proof is tests, Repository Truth and
+ * measurement** — nothing here asserts a requirement is met, and no reader
+ * should take a green run as saying so.
  *
- * Exit codes: 0 the map covers the section exactly, 1 it does not.
+ *   node scripts/spine-v2-m2-map.js            check
+ *   node scripts/spine-v2-m2-map.js --write    adopt the current section fingerprint and render the index
+ *
+ * Exit codes: 0 the inventory matches the section it indexes, 1 it does not.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
@@ -39,278 +42,130 @@ const planPath = join(root, 'docs', 'plans', 'production-spine-v2-postgresql.md'
 const dataPath = join(root, 'docs', 'plans', 'spine-v2-m2-requirements.json');
 const outPath = join(root, 'docs', 'plans', 'spine-v2-m2-requirement-map.md');
 
-/** Fact ids the generated truth document states, read once and cached. */
-let truthFactCache = null;
-function truthFacts() {
-  if (!truthFactCache) {
-    const truth = JSON.parse(readFileSync(join(root, 'docs', 'repository-truth.json'), 'utf8'));
-    truthFactCache = new Map((truth.facts ?? []).map((fact) => [fact.id, fact.value]));
-  }
-  return truthFactCache;
-}
-
-const CLASSIFICATIONS = new Set([
-  'MERGED_PROVED', 'CURRENT_CAMPAIGN', 'DEFERRED_OUTSIDE_M2', 'CONTRADICTION_REQUIRES_FIX',
+/** Milestones an entry may be assigned to. `merged` means it landed before this campaign. */
+export const OWNERS = Object.freeze([
+  'merged', 'M2C/M2D/M2F', 'M2E', 'M2E-1', 'M2E/M2F', 'M2F', 'M2 completion gate', 'M3', 'M4',
 ]);
 
-/**
- * The unit split. Sentence-level inside paragraphs, whole rows for tables,
- * headings dropped — a heading states no requirement. The 25-character floor
- * drops fragments a classification could not meaningfully attach to.
- *
- * @param {string} source
- */
-export function m2Units(source) {
+/** The ratified section, verbatim, between its own heading and M3's. */
+export function m2Section(source) {
   const lines = source.split('\n');
   const start = lines.findIndex((line) => line.startsWith('### M2 — '));
   const end = lines.findIndex((line, index) => index > start && line.startsWith('### M3 — '));
   if (start === -1 || end === -1) {
     throw new Error('spine-v2-m2-map: could not find the M2 section boundaries in the ratified plan.');
   }
-
-  /** @type {{fingerprint: string, text: string}[]} */
-  const units = [];
-  const emit = (text) => {
-    const normalized = text.replace(/\s+/g, ' ').trim();
-    if (!normalized) return;
-    units.push({ fingerprint: fingerprintOf(normalized), text: normalized });
-  };
-
-  let paragraph = [];
-  const flush = () => {
-    if (!paragraph.length) return;
-    const text = paragraph.join(' ').replace(/\s+/g, ' ').trim();
-    // Every sentence terminator, not the three that happened to appear in the
-    // section when this was written. A terminator the splitter does not know
-    // merges two requirements into one unit, and classifying the merged unit
-    // silently covers a requirement nobody read.
-    if (text) for (const sentence of text.split(/(?<=[.:;?!])\s+(?=[A-Z`\-])/)) emit(sentence);
-    paragraph = [];
-  };
-
-  for (const line of lines.slice(start, end)) {
-    const text = line.trim();
-    if (!text) { flush(); continue; }
-    // Headings are emitted, not discarded. A heading that states a requirement
-    // ("#### Refuse all writes in production") is a requirement, and the only
-    // safe assumption about text this gate has not read is that it matters.
-    if (text.startsWith('#')) { flush(); emit(text.replace(/^#+\s*/, '')); continue; }
-    if (text.startsWith('|')) {
-      flush();
-      // A separator row is one whose every cell is dashes or empty. Testing
-      // only the first cell discards a real row whose first cell is blank.
-      const cells = text.split('|').slice(1, -1);
-      if (cells.length && cells.every((cell) => /^[\s:-]*$/.test(cell))) continue;
-      emit(text);
-      continue;
-    }
-    paragraph.push(text.replace(/^[-*]\s+/, '').replace(/^\d+\.\s+/, ''));
-  }
-  flush();
-  return units;
+  return lines.slice(start, end).join('\n');
 }
 
-/** Content identity. Twelve hex is ample for a few hundred sentences and stays readable in a diff. */
 export function fingerprintOf(text) {
-  return createHash('sha256').update(text.replace(/\s+/g, ' ').trim(), 'utf8').digest('hex').slice(0, 12);
+  return createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 16);
 }
 
 /**
- * **Positions are not identities.** An earlier cut of this gate had groups claim
- * numeric indices. Insert a requirement anywhere but the end and every later
- * index retargets a different sentence: the gate reports only the old final
- * index as unclassified, a maintainer assigns it, the gate goes green — and the
- * *inserted* requirement now carries a classification nobody chose for it. That
- * is worse than no map, because it launders an unreviewed requirement through a
- * passing gate. Claims are content fingerprints, so an edit orphans its old
- * claim and surfaces its new text, and neither can be mistaken for the other.
- *
- * @param {{fingerprint: string, text: string}[]} units
- * @param {{groups: any[]}} data
- * @param {{fileExists?: (path: string) => boolean, factValue?: (id: string) => unknown}} [world]
- *   Injected so the drift tests can pin the evidence rules without touching disk.
+ * @param {string} section
+ * @param {{section?: {fingerprint?: string}, entries?: any[]}} data
  * @returns {string[]} reasons the gate must fail
  */
-export function inspectCoverage(units, data, world = {}) {
-  const fileExists = world.fileExists ?? ((path) => existsSync(join(root, path)));
-  const factValue = world.factValue ?? ((id) => truthFacts().get(id));
+export function inspect(section, data) {
   const failures = [];
-  const groups = Array.isArray(data?.groups) ? data.groups : null;
-  if (!groups) return ['spine-v2-m2-map: the requirements document has no `groups` array.'];
+  // The ratified section wraps its prose, so an excerpt taken from it will not
+  // match byte for byte. Both sides are compared with whitespace collapsed,
+  // which is the difference between "this text is not there" and "this text is
+  // there, hard-wrapped".
+  const flat = section.replace(/\s+/g, ' ');
+  const entries = Array.isArray(data?.entries) ? data.entries : null;
+  if (!entries) return ['spine-v2-m2-map: the inventory has no `entries` array.'];
 
-  // **A duplicate would collapse into one claim and cover both occurrences.**
-  // Content identity buys immunity to position and pays for it here: two
-  // verbatim-identical requirements share a fingerprint, so one claim would
-  // report both classified while one occurrence has no owner — the same
-  // silent-omission failure this gate exists to refuse, reintroduced by its own
-  // fix. Refused loudly rather than handled: a ratified plan repeating a
-  // requirement word for word is either a copy-paste defect or two distinct
-  // requirements that happen to read alike, and both want a person, not an
-  // occurrence counter that lets the text stay ambiguous.
-  const occurrences = new Map();
-  for (const unit of units) occurrences.set(unit.fingerprint, (occurrences.get(unit.fingerprint) ?? 0) + 1);
-  for (const [fingerprint, count] of occurrences) {
-    if (count > 1) {
-      const text = units.find((unit) => unit.fingerprint === fingerprint).text;
-      failures.push(
-        `${fingerprint} appears ${count} times in the M2 section: "${text.slice(0, 80)}…". One claim cannot own two `
-        + 'occurrences. Reword one so they are distinguishable, or remove the repetition from the ratified plan.',
-      );
-    }
+  const actual = fingerprintOf(section);
+  const recorded = data.section?.fingerprint;
+  if (recorded !== actual) {
+    failures.push(
+      `the ratified M2 section is ${actual}, but this inventory was written against ${recorded ?? 'nothing'}. `
+      + 'Re-read the section, update the entries it changed, then `--write` to adopt the new fingerprint. '
+      + 'Adopting it without reading is how an index stops describing the thing it indexes.',
+    );
   }
 
-  const stated = new Map(units.map((unit) => [unit.fingerprint, unit.text]));
-  /** @type {Map<string, string>} */
-  const claimed = new Map();
-
-  for (const group of groups) {
-    if (!CLASSIFICATIONS.has(group.classification)) {
-      failures.push(`${group.id}: unknown classification ${JSON.stringify(group.classification)}.`);
+  const seen = new Set();
+  for (const entry of entries) {
+    const id = entry?.id;
+    if (typeof id !== 'string' || !/^M2-\d{2}$/.test(id)) {
+      failures.push(`entry id ${JSON.stringify(id)} is not of the form M2-01.`);
+      continue;
     }
-    if (group.classification === 'DEFERRED_OUTSIDE_M2' && !group.provedIn) {
-      failures.push(`${group.id}: deferred without naming where it is proved. A deferral that names no milestone is an omission.`);
-    }
-    // **The classification that claims no work is owed is the one that must
-    // carry proof.** The deferral rule was strict from the start and this one
-    // was absent entirely, which is backwards: a group can be moved to
-    // MERGED_PROVED and the gate would agree that an obligation is already met
-    // on nobody's authority. Evidence must exist, and must point at things that
-    // exist — a source path that resolves, a fact id the truth document states.
-    // **Existence is not proof.** The first cut of this rule accepted any path
-    // that resolved and any fact id that was stated — so `evidence.sources:
-    // ["AGENTS.md"]` declared an obligation met. A claim that work is already
-    // done has to name something that would fail if it were not: a test that
-    // runs, or a generated fact together with the value it must hold. Naming a
-    // file proves only that the file exists.
-    if (group.classification === 'MERGED_PROVED') {
-      const tests = group.evidence?.tests ?? [];
-      const facts = group.evidence?.truthFacts ?? [];
-      if (!tests.length && !facts.length) {
-        failures.push(
-          `${group.id}: claims MERGED_PROVED without executable evidence. Name the tests that prove it, or the generated `
-          + 'facts and the values they must hold — a source path only proves the file exists.',
-        );
-      }
-      for (const test of tests) {
-        if (!/^tests\//.test(test)) failures.push(`${group.id}: evidence names ${test}, which is not a test.`);
-        else if (!fileExists(test)) failures.push(`${group.id}: evidence names ${test}, which does not exist.`);
-      }
-      for (const fact of facts) {
-        if (typeof fact !== 'object' || fact === null || !fact.id || !Object.hasOwn(fact, 'value')) {
-          failures.push(`${group.id}: fact evidence must state {id, value}; a bare id asserts nothing.`);
-          continue;
-        }
-        const actual = factValue(fact.id);
-        if (actual === undefined) failures.push(`${group.id}: evidence names fact ${fact.id}, which the truth document does not state.`);
-        else if (JSON.stringify(actual) !== JSON.stringify(fact.value)) {
-          failures.push(`${group.id}: evidence expects ${fact.id} = ${JSON.stringify(fact.value)}, but it is ${JSON.stringify(actual)}.`);
-        }
+    if (seen.has(id)) failures.push(`${id} is used by more than one entry; ids are how an entry is referred to elsewhere.`);
+    seen.add(id);
+    for (const field of ['title', 'excerpt']) {
+      if (typeof entry[field] !== 'string' || entry[field].trim() === '') {
+        failures.push(`${id}: ${field} is required and must be a non-empty string.`);
       }
     }
-
-    for (const fingerprint of group.claims ?? []) {
-      if (claimed.has(fingerprint)) {
-        failures.push(`${fingerprint} is claimed by both ${claimed.get(fingerprint)} and ${group.id}; one requirement, one owner.`);
-      }
-      claimed.set(fingerprint, group.id);
-      if (!stated.has(fingerprint)) {
-        failures.push(
-          `${group.id} claims ${fingerprint}, which the M2 section no longer states. The requirement was edited or removed: `
-          + 'reclassify its new text rather than deleting the claim to make this pass.',
-        );
-      }
+    if (!OWNERS.includes(entry.owner)) {
+      failures.push(`${id}: owner ${JSON.stringify(entry.owner)} is not a milestone this campaign recognises.`);
     }
-  }
-
-  for (const unit of units) {
-    if (!claimed.has(unit.fingerprint)) {
-      failures.push(
-        `unclassified ${unit.fingerprint}: "${unit.text.slice(0, 100)}…" — the ratified plan states it and this map does `
-        + 'not answer for it, so M2 cannot be called complete against this map.',
-      );
+    if (typeof entry.excerpt === 'string' && entry.excerpt.trim()
+      && !flat.includes(entry.excerpt.replace(/\s+/g, ' ').trim().slice(0, 60))) {
+      failures.push(`${id}: its excerpt does not appear in the ratified section, so it indexes text that is not there.`);
     }
   }
   return failures;
 }
 
-// Importable without side effects: the tests import `m2Units` and
-// `inspectCoverage`, and a module that runs a gate merely because it was
-// imported cannot be tested without also being obeyed.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const planSource = readFileSync(planPath, 'utf8');
+  const section = m2Section(readFileSync(planPath, 'utf8'));
   const data = JSON.parse(readFileSync(dataPath, 'utf8'));
-  const units = m2Units(planSource);
-  const failures = inspectCoverage(units, data);
 
+  if (process.argv.includes('--write')) {
+    data.section = { ...data.section, fingerprint: fingerprintOf(section) };
+    writeFileSync(dataPath, `${JSON.stringify(data, null, 2)}\n`);
+  }
+
+  const failures = inspect(section, data);
   if (failures.length) {
     process.stderr.write(`\n  spine-v2-m2-map: ${failures.length} problem(s).\n\n`);
     for (const failure of failures) process.stderr.write(`  - ${failure}\n`);
-    process.stderr.write('\n  Classify the new text in docs/plans/spine-v2-m2-requirements.json rather than editing the ratified plan to fit the map.\n\n');
+    process.stderr.write('\n');
     process.exit(1);
   }
 
-  const byClassification = {};
-  for (const group of data.groups) {
-    byClassification[group.classification] = (byClassification[group.classification] ?? 0) + group.claims.length;
-  }
-
-  process.stderr.write(`\n  spine-v2-m2-map — ${units.length} requirement units, ${data.groups.length} groups, every unit classified once\n\n`);
-  for (const [name, count] of Object.entries(byClassification)) {
-    process.stderr.write(`  ${name.padEnd(28)} ${String(count).padStart(3)}  (${Math.round((count / units.length) * 100)}%)\n`);
-  }
-  process.stderr.write('\n');
+  const byOwner = {};
+  for (const entry of data.entries) byOwner[entry.owner] = (byOwner[entry.owner] ?? 0) + 1;
+  process.stderr.write(`\n  spine-v2-m2-map — ${data.entries.length} inventory entries indexing section ${fingerprintOf(section)}\n\n`);
+  for (const owner of OWNERS) if (byOwner[owner]) process.stderr.write(`  ${owner.padEnd(22)} ${byOwner[owner]}\n`);
+  process.stderr.write('\n  This is an index. Proof is tests, Repository Truth and measurement.\n\n');
 
   if (process.argv.includes('--write')) {
-    writeFileSync(outPath, render(units, data));
+    writeFileSync(outPath, render(data, fingerprintOf(section)));
     process.stderr.write(`  ${outPath.slice(root.length)} written.\n\n`);
   }
 }
 
-/**
- * @param {string[]} units
- * @param {{groups: any[]}} data
- */
-export function render(units, data) {
-  const order = ['CONTRADICTION_REQUIRES_FIX', 'CURRENT_CAMPAIGN', 'DEFERRED_OUTSIDE_M2', 'MERGED_PROVED'];
+/** @param {{entries: any[]}} data @param {string} fingerprint */
+export function render(data, fingerprint) {
   const lines = [
-    '# Spine v2 M2 — requirement-to-evidence map',
+    '# Spine v2 M2 — requirement inventory',
     '',
     '**Generated by `node scripts/spine-v2-m2-map.js --write`. Do not edit by hand.**',
-    'Classification lives in `docs/plans/spine-v2-m2-requirements.json`; the units come',
-    'from the M2 section of `docs/plans/production-spine-v2-postgresql.md`, which is',
-    'ratified and is not edited to fit this map.',
+    'The entries live in `docs/plans/spine-v2-m2-requirements.json`; the section they',
+    'index is the M2 part of `docs/plans/production-spine-v2-postgresql.md`, which is',
+    'ratified and is not edited to fit this file.',
     '',
-    `The M2 section states **${units.length}** requirement units. Every one is claimed by exactly`,
-    'one group below — a unit nobody classifies fails the gate, so this map cannot be',
-    'made to look complete by leaving something out.',
+    `Indexing section \`${fingerprint}\`. If that fingerprint moves, the ratified text`,
+    'changed and these entries were written against a different section — the gate',
+    'fails until someone re-reads it.',
     '',
-    '**What this answers and what it does not.** `CURRENT_CAMPAIGN` means the milestone',
-    'owes the requirement, not that it is delivered; the tests each slice merges are the',
-    'evidence. `DEFERRED_OUTSIDE_M2` must name where it is proved instead — a deferral',
-    'without a destination is an omission, and the gate refuses one.',
+    '**This is an index, not a proof.** It records how the campaign has assigned each',
+    'area of M2 and why. It makes no claim that any requirement is met, and a green',
+    'run does not say one is: proof is tests, Repository Truth and measurement.',
     '',
-    '| Classification | Units | Share |',
-    '|---|---|---|',
+    '| Id | Area | Owner | Why |',
+    '|---|---|---|---|',
   ];
-  for (const name of order) {
-    const count = data.groups.filter((g) => g.classification === name).reduce((n, g) => n + g.claims.length, 0);
-    if (count) lines.push(`| \`${name}\` | ${count} | ${Math.round((count / units.length) * 100)}% |`);
+  for (const entry of data.entries) {
+    const why = (entry.reason ?? '').replace(/\s+/g, ' ').slice(0, 200) || '—';
+    lines.push(`| \`${entry.id}\` | ${entry.title} | ${entry.owner} | ${why} |`);
   }
   lines.push('');
-  for (const name of order) {
-    const groups = data.groups.filter((group) => group.classification === name);
-    if (!groups.length) continue;
-    lines.push(`## ${name}`, '');
-    lines.push('| Group | Slice / proved in | Units | Requirement |', '|---|---|---|---|');
-    for (const group of groups) {
-      lines.push(`| \`${group.id}\` | ${group.slice ?? group.provedIn ?? '—'} | ${group.claims.length} | ${group.title} |`);
-    }
-    lines.push('');
-    for (const group of groups) {
-      const why = group.reason ?? group.note;
-      if (why) lines.push(`- **${group.id}** — ${why}`);
-    }
-    lines.push('');
-  }
-  return `${lines.join('\n')}`;
+  return lines.join('\n');
 }

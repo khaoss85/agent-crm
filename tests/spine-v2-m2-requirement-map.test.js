@@ -4,189 +4,55 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
-import { m2Units, inspectCoverage, fingerprintOf, render } from '../scripts/spine-v2-m2-map.js';
+import { m2Section, fingerprintOf, inspect, render, OWNERS } from '../scripts/spine-v2-m2-map.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
 const plan = read('docs', 'plans', 'production-spine-v2-postgresql.md');
 const data = JSON.parse(read('docs', 'plans', 'spine-v2-m2-requirements.json'));
+const section = m2Section(plan);
 
-/**
- * Two shapes, because the holes have two shapes. A sentence arrives inside an
- * existing paragraph — which is the only way a missing terminator can merge it
- * into its neighbour — while a heading or a table row arrives between
- * paragraphs, as it would in any real edit. Inserting a heading *inside* a
- * paragraph would re-tokenize the prose around it and prove nothing about the
- * hole under test.
- */
-const ANCHOR = 'Delete the compatibility path only after a repository guard';
-const insertSentence = (line) => {
-  assert.ok(plan.includes(ANCHOR), 'mid-section anchor moved; fix this fixture, not the plan');
-  return plan.replace(ANCHOR, `${line} ${ANCHOR}`);
-};
-const BLOCK_ANCHOR = '#### Production binding and idempotency details';
-const insertBlock = (line) => {
-  // Inserted at an existing paragraph boundary. Dropping a block into the
-  // middle of the numbered list would re-tokenize the list around it, and the
-  // extra units that produced would be an artefact of the fixture rather than
-  // the hole under test.
-  assert.ok(plan.includes(BLOCK_ANCHOR), 'block anchor moved; fix this fixture, not the plan');
-  return plan.replace(BLOCK_ANCHOR, `${line}\n\n${BLOCK_ANCHOR}`);
-};
-
-test('every M2 requirement unit is classified exactly once', () => {
-  assert.deepEqual(inspectCoverage(m2Units(plan), data), []);
+test('the inventory matches the section it indexes', () => {
+  assert.deepEqual(inspect(section, data), []);
 });
 
 /**
- * **The only way this gate can lie is by dropping text before it counts it.**
- *
- * A unit the extractor discards is never counted, so it can never be reported
- * unclassified — the map stays green while the ratified plan grew a requirement
- * nobody read. Every case below was a live hole in the first cut of this file,
- * found by review rather than by me, and each is asserted as *surfaced and
- * unclassified*, never merely as "some failure occurred".
+ * **The one thing this gate is for.** The inventory is hand-kept prose about
+ * prose; it cannot notice on its own that the ratified section moved
+ * underneath it. The fingerprint is what turns that from silent staleness into
+ * a failure a person has to answer, and adopting a new fingerprint is
+ * deliberately a separate act from passing the check.
  */
-test('no requirement can disappear before it is counted', () => {
-  const cases = [
-    ['question terminator', 'Must every unaudited write be refused?', insertSentence],
-    ['exclamation terminator', 'Refuse every unaudited write!', insertSentence],
-    ['short requirement', 'Encrypt every write.', insertSentence],
-    ['requirement-bearing heading', '#### Refuse all writes in production', insertBlock],
-    ['table row with an empty first cell', '|  | Every production write must carry a durable audit. |', insertBlock],
-  ];
-  for (const [label, line, insert] of cases) {
-    const grown = insert(line);
-    const units = m2Units(grown);
-    // Compared on normalized whitespace, because that is what the extractor
-    // stores and what the fingerprint is taken over.
-    const expected = line.replace(/^#+\s*/, '').replace(/\s+/g, ' ').trim();
-    const surfaced = units.find((unit) => unit.text === expected);
-    assert.ok(surfaced, `${label}: the extractor dropped it, so nothing could ever report it`);
-    const failures = inspectCoverage(units, data);
-    assert.equal(failures.length, 1, `${label}: expected exactly the one new requirement to be unclassified`);
-    assert.match(failures[0], new RegExp(`^unclassified ${surfaced.fingerprint}`), label);
-  }
-});
-
-/**
- * **Positions are not identities, and this is the case that proved it.**
- *
- * Under numeric claims, inserting mid-section retargeted every later index: the
- * gate named only the old last unit, and assigning it turned the gate green
- * while the inserted requirement silently inherited someone else's
- * classification. Content fingerprints make the inserted text the only thing
- * reported, wherever it lands.
- */
-test('an insertion is reported where it happened, not at the end', () => {
-  const units = m2Units(insertSentence('Every renewal must be attested afresh.'));
-  const failures = inspectCoverage(units, data);
+test('a changed section stops the inventory from claiming to index it', () => {
+  const moved = plan.replace(
+    'Delete the compatibility path only after a repository guard',
+    'Every production write is additionally attested. Delete the compatibility path only after a repository guard',
+  );
+  assert.notEqual(moved, plan, 'anchor moved; fix this fixture, not the plan');
+  const failures = inspect(m2Section(moved), data);
   assert.equal(failures.length, 1);
-  assert.match(failures[0], /Every renewal must be attested afresh/);
-  const last = m2Units(plan).at(-1);
-  assert.doesNotMatch(failures[0], new RegExp(last.fingerprint), 'the final unit must not absorb an insertion elsewhere');
+  assert.match(failures[0], /the ratified M2 section is [0-9a-f]{16}, but this inventory was written against/);
 });
 
-/** Editing a requirement orphans its claim *and* surfaces the new text; neither may pass alone. */
-test('an edited requirement is reported twice over', () => {
-  const edited = plan.replace('Existing `--db` remains', 'Existing `--db` stays');
-  assert.notEqual(edited, plan, 'edit anchor moved; fix this fixture, not the plan');
-  const failures = inspectCoverage(m2Units(edited), data);
-  assert.ok(failures.some((f) => /no longer states/.test(f)), 'the old claim must be reported orphaned');
-  assert.ok(failures.some((f) => /^unclassified/.test(f)), 'the new text must be reported unclassified');
+test('the inventory shape is checked', () => {
+  const mutate = (fn) => ({ ...data, entries: data.entries.map((e, i) => (i === 0 ? fn(e) : e)) });
+
+  assert.ok(inspect(section, mutate((e) => ({ ...e, id: 'nope' }))).some((f) => /is not of the form M2-01/.test(f)));
+  assert.ok(inspect(section, mutate((e) => ({ ...e, owner: 'someday' }))).some((f) => /not a milestone this campaign recognises/.test(f)));
+  assert.ok(inspect(section, mutate((e) => ({ ...e, title: '' }))).some((f) => /title is required/.test(f)));
+
+  const duplicated = { ...data, entries: [...data.entries, data.entries[0]] };
+  assert.ok(inspect(section, duplicated).some((f) => /used by more than one entry/.test(f)));
+
+  const invented = mutate((e) => ({ ...e, excerpt: 'A requirement the ratified section does not state anywhere at all.' }));
+  assert.ok(inspect(section, invented).some((f) => /indexes text that is not there/.test(f)));
 });
 
-/**
- * **The fix for positions reintroduced the omission it removed.** Two
- * verbatim-identical requirements share a fingerprint, so a single claim would
- * report both classified while one occurrence had no owner. Refused loudly, and
- * watched refusing: the plan states no duplicate today, so this is the only way
- * to know the rule works.
- */
-test('a repeated requirement cannot be covered by one claim', () => {
-  const units = m2Units(plan);
-  assert.equal(new Set(units.map((u) => u.fingerprint)).size, units.length, 'the plan states no duplicate today');
-
-  const repeated = insertSentence('Package validation rejects any mixed graph (for example package/action v2 exposing capability/operation v1) and declared capability requirements select an explicit async-capable version before application startup.');
-  const grown = m2Units(repeated);
-  assert.equal(grown.length, units.length + 1, 'the duplicate must be counted, not collapsed');
-  const failures = inspectCoverage(grown, data);
-  assert.equal(failures.length, 1);
-  assert.match(failures[0], /appears 2 times/);
+/** Every owner in the inventory is one the script publishes, so the two cannot drift apart. */
+test('owners come from the published list', () => {
+  for (const entry of data.entries) assert.ok(OWNERS.includes(entry.owner), `${entry.id}: ${entry.owner}`);
 });
 
-test('the map refuses malformed classification', () => {
-  const invented = { groups: data.groups.map((g) => (g.id === 'G01' ? { ...g, classification: 'DONE_TRUST_ME' } : g)) };
-  assert.ok(inspectCoverage(m2Units(plan), invented).some((f) => /unknown classification/.test(f)));
-
-  const homeless = {
-    groups: data.groups.map((g) => (g.classification === 'DEFERRED_OUTSIDE_M2' ? { ...g, provedIn: undefined } : g)),
-  };
-  assert.ok(inspectCoverage(m2Units(plan), homeless).some((f) => /deferred without naming where it is proved/.test(f)));
-
-  const overlapping = {
-    groups: [...data.groups, { id: 'GXX', classification: 'CURRENT_CAMPAIGN', claims: [m2Units(plan)[0].fingerprint] }],
-  };
-  assert.ok(inspectCoverage(m2Units(plan), overlapping).some((f) => /claimed by both/.test(f)));
-});
-
-/** A generated document that nobody regenerates is a document that quietly disagrees with its source. */
-test('the published map matches what the classification authority renders', () => {
-  assert.equal(read('docs', 'plans', 'spine-v2-m2-requirement-map.md'), render(m2Units(plan), data));
-});
-
-/**
- * **The classification that claims no work is owed must carry the most proof,
- * and carried none.** The deferral rule was strict from the first cut; this one
- * was absent, so a group could be moved to `MERGED_PROVED` and the gate would
- * agree an obligation was already met on nobody's authority. Watched refusing
- * in all three shapes — and it caught a fabricated fact id of mine on its first
- * run, which is why the reference check is here and not just the presence one.
- */
-test('MERGED_PROVED must name evidence that would fail if the claim were false', () => {
-  const units = m2Units(plan);
-  const mutate = (fn) => ({ groups: data.groups.map((g) => (g.classification === 'MERGED_PROVED' ? fn(g) : g)) });
-
-  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: undefined })))
-    .some((f) => /without executable evidence/.test(f)));
-
-  // The defect that prompted this: any resolvable path satisfied the rule, so
-  // naming a document declared an obligation met.
-  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: { sources: ['AGENTS.md'] } })))
-    .some((f) => /without executable evidence/.test(f)));
-
-  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: { tests: ['packages/core/index.js'] } })))
-    .some((f) => /which is not a test/.test(f)));
-  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: { tests: ['tests/nope.test.js'] } })))
-    .some((f) => /tests\/nope\.test\.js, which does not exist/.test(f)));
-
-  // A bare id asserts nothing; a stated value can be wrong, and must be caught.
-  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: { truthFacts: ['spine.tenant.isolation.mode'] } })))
-    .some((f) => /must state \{id, value\}/.test(f)));
-  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: { truthFacts: [{ id: 'spine.nope', value: 'x' }] } })))
-    .some((f) => /which the truth document does not state/.test(f)));
-  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: { truthFacts: [{ id: 'spine.tenant.isolation.mode', value: 'wrong' }] } })))
-    .some((f) => /expects spine\.tenant\.isolation\.mode = "wrong", but it is/.test(f)));
-});
-
-/** Every composite whose executable half gates M2 must say so rather than defer whole. */
-test('a composite requirement with an executable half gates M2', () => {
-  for (const group of data.groups.filter((g) => g.partiallyProvedIn)) {
-    assert.equal(group.classification, 'CURRENT_CAMPAIGN',
-      `${group.id} records a partially-deferred clause, so its executable half must gate M2`);
-    assert.match(group.partiallyProvedIn, /^M[345]$/);
-  }
-});
-
-test('no deferral is a dead end', () => {
-  for (const group of data.groups.filter((g) => g.classification === 'DEFERRED_OUTSIDE_M2')) {
-    assert.match(group.provedIn, /^M[345]$/, `${group.id} must name the milestone that proves it`);
-    assert.ok(String(group.reason ?? '').length > 40, `${group.id} must say why it cannot be proved at M2-complete`);
-  }
-});
-
-/** Fingerprints are content identity: same text same id, whitespace-insensitive, different text different id. */
-test('fingerprints identify content', () => {
-  assert.equal(fingerprintOf('Refuse every  unaudited write.'), fingerprintOf('Refuse every unaudited write.'));
-  assert.notEqual(fingerprintOf('Refuse every unaudited write.'), fingerprintOf('Refuse every audited write.'));
+test('the published index matches what the inventory renders', () => {
+  assert.equal(read('docs', 'plans', 'spine-v2-m2-requirement-map.md'), render(data, fingerprintOf(section)));
 });
