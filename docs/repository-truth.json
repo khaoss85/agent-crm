@@ -461,7 +461,7 @@
       "authority": "measurement.git",
       "evidence": [
         "git merge-base --is-ancestor <sha> HEAD",
-        "sha:28b5958"
+        "sha:9b02dac"
       ],
       "scope": "measurement",
       "status": "current",
@@ -469,26 +469,26 @@
     },
     {
       "id": "measurement.source_sha",
-      "value": "28b5958",
+      "value": "9b02dac",
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.sha"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_count",
-      "value": 1641,
+      "value": 1644,
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.tests"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
@@ -501,18 +501,18 @@
         "site/claims.json#measuredAgainst.testFiles"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_tree_current",
-      "value": "false",
+      "value": "true",
       "authority": "measurement.git",
       "evidence": [
         "git rev-parse <sha>:tests versus HEAD:tests",
-        "measuredTree:e8460eba5a13"
+        "measuredTree:879aafabd6c3"
       ],
       "scope": "measurement",
       "status": "current",
@@ -851,5 +851,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "0e5eec9b9a48b43649ec5f07c8a7545bff3633c0e5ba30f524022a00255b3e21"
+  "fingerprint": "8a3b859bf9a284c761d32657a88851e35549d29b4cb76033b2e4082c55f43312"
 }
