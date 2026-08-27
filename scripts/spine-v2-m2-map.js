@@ -30,6 +30,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
@@ -37,6 +38,16 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const planPath = join(root, 'docs', 'plans', 'production-spine-v2-postgresql.md');
 const dataPath = join(root, 'docs', 'plans', 'spine-v2-m2-requirements.json');
 const outPath = join(root, 'docs', 'plans', 'spine-v2-m2-requirement-map.md');
+
+/** Fact ids the generated truth document states, read once and cached. */
+let truthFactIdCache = null;
+function truthFactIds() {
+  if (!truthFactIdCache) {
+    const truth = JSON.parse(readFileSync(join(root, 'docs', 'repository-truth.json'), 'utf8'));
+    truthFactIdCache = new Set((truth.facts ?? []).map((fact) => fact.id));
+  }
+  return truthFactIdCache;
+}
 
 const CLASSIFICATIONS = new Set([
   'MERGED_PROVED', 'CURRENT_CAMPAIGN', 'DEFERRED_OUTSIDE_M2', 'CONTRADICTION_REQUIRES_FIX',
@@ -116,9 +127,13 @@ export function fingerprintOf(text) {
  *
  * @param {{fingerprint: string, text: string}[]} units
  * @param {{groups: any[]}} data
+ * @param {{fileExists?: (path: string) => boolean, factExists?: (id: string) => boolean}} [world]
+ *   Injected so the drift tests can pin the evidence rules without touching disk.
  * @returns {string[]} reasons the gate must fail
  */
-export function inspectCoverage(units, data) {
+export function inspectCoverage(units, data, world = {}) {
+  const fileExists = world.fileExists ?? ((path) => existsSync(join(root, path)));
+  const factExists = world.factExists ?? ((id) => truthFactIds().has(id));
   const failures = [];
   const groups = Array.isArray(data?.groups) ? data.groups : null;
   if (!groups) return ['spine-v2-m2-map: the requirements document has no `groups` array.'];
@@ -154,6 +169,28 @@ export function inspectCoverage(units, data) {
     }
     if (group.classification === 'DEFERRED_OUTSIDE_M2' && !group.provedIn) {
       failures.push(`${group.id}: deferred without naming where it is proved. A deferral that names no milestone is an omission.`);
+    }
+    // **The classification that claims no work is owed is the one that must
+    // carry proof.** The deferral rule was strict from the start and this one
+    // was absent entirely, which is backwards: a group can be moved to
+    // MERGED_PROVED and the gate would agree that an obligation is already met
+    // on nobody's authority. Evidence must exist, and must point at things that
+    // exist — a source path that resolves, a fact id the truth document states.
+    if (group.classification === 'MERGED_PROVED') {
+      const sources = group.evidence?.sources ?? [];
+      const facts = group.evidence?.truthFacts ?? [];
+      if (!sources.length && !facts.length) {
+        failures.push(
+          `${group.id}: claims MERGED_PROVED with no evidence. Name the sources or the generated facts that carry it, `
+          + 'or classify it as work this campaign owes.',
+        );
+      }
+      for (const source of sources) {
+        if (!fileExists(source)) failures.push(`${group.id}: evidence names ${source}, which does not exist.`);
+      }
+      for (const fact of facts) {
+        if (!factExists(fact)) failures.push(`${group.id}: evidence names fact ${fact}, which the truth document does not state.`);
+      }
     }
     for (const fingerprint of group.claims ?? []) {
       if (claimed.has(fingerprint)) {

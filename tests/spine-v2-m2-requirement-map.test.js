@@ -135,6 +135,43 @@ test('the published map matches what the classification authority renders', () =
   assert.equal(read('docs', 'plans', 'spine-v2-m2-requirement-map.md'), render(m2Units(plan), data));
 });
 
+/**
+ * **The classification that claims no work is owed must carry the most proof,
+ * and carried none.** The deferral rule was strict from the first cut; this one
+ * was absent, so a group could be moved to `MERGED_PROVED` and the gate would
+ * agree an obligation was already met on nobody's authority. Watched refusing
+ * in all three shapes — and it caught a fabricated fact id of mine on its first
+ * run, which is why the reference check is here and not just the presence one.
+ */
+test('MERGED_PROVED must point at things that exist', () => {
+  const units = m2Units(plan);
+  const strip = { groups: data.groups.map((g) => (g.classification === 'MERGED_PROVED' ? { ...g, evidence: undefined } : g)) };
+  assert.ok(inspectCoverage(units, strip).some((f) => /claims MERGED_PROVED with no evidence/.test(f)));
+
+  const promoted = {
+    groups: data.groups.map((g) => (g.id === 'G01' ? { ...g, classification: 'MERGED_PROVED', evidence: undefined } : g)),
+  };
+  assert.ok(inspectCoverage(units, promoted).some((f) => /G01: claims MERGED_PROVED with no evidence/.test(f)));
+
+  const ghost = {
+    groups: data.groups.map((g) => (g.classification === 'MERGED_PROVED'
+      ? { ...g, evidence: { sources: ['packages/core/src/nope.js'], truthFacts: ['spine.nope'] } }
+      : g)),
+  };
+  const failures = inspectCoverage(units, ghost);
+  assert.ok(failures.some((f) => /nope\.js, which does not exist/.test(f)));
+  assert.ok(failures.some((f) => /fact spine\.nope, which the truth document does not state/.test(f)));
+});
+
+/** Every composite whose executable half gates M2 must say so rather than defer whole. */
+test('a composite requirement with an executable half gates M2', () => {
+  for (const group of data.groups.filter((g) => g.partiallyProvedIn)) {
+    assert.equal(group.classification, 'CURRENT_CAMPAIGN',
+      `${group.id} records a partially-deferred clause, so its executable half must gate M2`);
+    assert.match(group.partiallyProvedIn, /^M[345]$/);
+  }
+});
+
 test('no deferral is a dead end', () => {
   for (const group of data.groups.filter((g) => g.classification === 'DEFERRED_OUTSIDE_M2')) {
     assert.match(group.provedIn, /^M[345]$/, `${group.id} must name the milestone that proves it`);

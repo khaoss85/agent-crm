@@ -17,8 +17,8 @@ without a destination is an omission, and the gate refuses one.
 | Classification | Units | Share |
 |---|---|---|
 | `CONTRADICTION_REQUIRES_FIX` | 1 | 0% |
-| `CURRENT_CAMPAIGN` | 89 | 38% |
-| `DEFERRED_OUTSIDE_M2` | 141 | 61% |
+| `CURRENT_CAMPAIGN` | 93 | 40% |
+| `DEFERRED_OUTSIDE_M2` | 137 | 59% |
 | `MERGED_PROVED` | 1 | 0% |
 
 ## CONTRADICTION_REQUIRES_FIX
@@ -40,8 +40,10 @@ without a destination is an omission, and the gate refuses one.
 | `G06` | M2F | 7 | Cross-plane audit intent, claim, delivery and reconciliation |
 | `G07` | M2F | 3 | Bounded {adapter, available} storage descriptor on every public surface |
 | `G08a` | M2E/M2F | 2 | serve on the async factory over SQLite; await startup before serving |
+| `G08b` | M2E | 1 | Child-process entry-point evidence for both adapters |
 | `G13` | M2F | 8 | Production MCP static-context-only and source-only |
 | `G14` | M2F | 15 | One shared versioned deployment-storage configuration loader |
+| `G15a` | M2F | 3 | TLS as a closed contract field, and the settings a parser can refuse |
 | `G16` | M2F | 3 | Config-file no-follow ownership and mode discipline |
 | `G17` | M2F | 3 | DX Simplicity Gate for the deployment-storage surface |
 | `G18` | M2F | 9 | identityVerifier ESM resolution, bounded deadline, credential-free failure |
@@ -51,8 +53,10 @@ without a destination is an omission, and the gate refuses one.
 | `G29` | M2F | 6 | Health/readiness stops reading tenant state; Admin metrics separated |
 
 - **G01** — workflows+action-runtime trace family is M2C; Work transaction context is M2D; Spine store dual-plane closure is M2F.
+- **G08b** — Composite. The SQLite child-process entry-point evidence lands with M2E and gates M2 — the requirement exists precisely to say a direct factory call is not sufficient evidence, which is as true on SQLite as on PostgreSQL. Only the PostgreSQL half waits for the adapter. This is the identical error already fixed on G28b and missed here.
 - **G13** — Adapter-independent: it is a refusal surface proved by absence of reachability, provable on SQLite.
 - **G14** — The loader, its closed envelope, precedence and refusals are adapter-independent. PostgreSQL selection refuses until M3.
+- **G15a** — The closed envelope must carry the TLS fields, and a parser refuses plaintext, sslmode=disable|allow|prefer, verification-disabled settings and a permissive production default without opening a connection. My own deferral reason said as much and then deferred all four units anyway, so the parser boundaries could have gone green uncounted. Certificate-chain, expiry and hostname verification need real endpoints and stay with G15.
 - **G18** — Path resolution, module evaluation, timeout and no-listener-before-resolution are adapter-independent.
 - **G28a** — Reading the canonical APP_COMMANDS authority, classifying every entry, refusing PostgreSQL before composition and running every command on SQLite are all runnable without the adapter. Deferring them would hide executable work behind an adapter dependency.
 - **G28b** — Composite. Running every command on SQLite, every declared refusal, the missing/malformed key cases and the no-SQLite-fallback sentinels are executable at M2-complete and gate it. Only the live-PostgreSQL execution of the supported commands waits for the M3 adapter, and it is re-proved there. Deferring the whole sentence because one clause names PostgreSQL would have hidden the SQLite obligations from the gating count — the exact error this map exists to refuse.
@@ -62,12 +66,11 @@ without a destination is an omission, and the gate refuses one.
 
 | Group | Slice / proved in | Units | Requirement |
 |---|---|---|---|
-| `G08b` | M3 | 1 | Child-process entry-point evidence for both adapters |
 | `G09` | M3 | 6 | Startup attestation gates production migrations |
 | `G10` | M3 | 6 | Verifier provider contract v2 discovery/attestation operations |
 | `G11` | M3 | 4 | PostgreSQL DDL + ledger + audit in one transaction, fault-proved |
 | `G12` | M3 | 6 | Control-plane bootstrap under pg_advisory_xact_lock |
-| `G15` | M3 | 4 | Authenticated TLS for production PostgreSQL connections |
+| `G15` | M3 | 1 | TLS proved against real endpoints |
 | `G20` | M3 | 6 | Shared PostgreSQL control plane for organizations, leases, bindings, intents |
 | `G21` | M4 | 8 | Caller-known idempotency key contract |
 | `G22` | M4 | 11 | Verified provider-webhook event keys and evidence envelope |
@@ -78,12 +81,11 @@ without a destination is an omission, and the gate refuses one.
 | `G27` | M4 | 19 | Root and child keys for fan-out |
 | `G30` | M4 | 4 | Lease-driven readiness transitions |
 
-- **G08b** — The SQLite child-process half lands with M2E; the phrase requires BOTH adapters, which is only satisfiable once M3 exists.
 - **G09** — Attestation gates PostgreSQL DDL. No DDL path exists before the M3 adapter, so this cannot be proved by M2-complete; the M2 obligation is that the contract is defined and PostgreSQL selection refuses.
 - **G10** — Ordered discover/attest operations exist to authorize DDL against real control and data resources; unreachable before the adapter.
 - **G11** — Applying a DDL unit, its checksum ledger row and an immutable migration audit row in one transaction is PostgreSQL dialect behaviour over a driver that does not exist until M3; SQLite migrations already run under their own released path and are frozen by M0.
 - **G12** — Control-plane bootstrap is specified in terms of pg_advisory_xact_lock, a PostgreSQL-only primitive with no SQLite equivalent, so no part of it is executable before the M3 adapter.
-- **G15** — Requires real TLS endpoints and a live driver; the M2 obligation is that the closed contract carries the fields and that plaintext settings are rejected by the parser.
+- **G15** — Proving trusted-CA success and every refusal against real TLS endpoints needs a live driver and real certificates, neither of which exists before the M3 adapter.
 - **G20** — A genuinely shared PostgreSQL control plane cannot exist before the adapter.
 - **G21** — Plan text scopes keys to PostgreSQL writes and the campaign assigns unknown-commit/idempotency evidence to M4.
 - **G22** — Provider-event keys derive replay identity from verified webhook evidence and are stored against PostgreSQL outcome rows; the outcome ledger they key into does not exist until M4 builds it.

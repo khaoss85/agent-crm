@@ -69,7 +69,8 @@
           "packages/core/src/tenant-storage.js"
         ],
         "truthFacts": [
-          "spine.tenancy.one_tenant_per_instance"
+          "spine.multi_tenant_single_instance",
+          "spine.tenant.isolation.mode"
         ]
       },
       "claims": [
@@ -115,12 +116,13 @@
     {
       "id": "G08b",
       "title": "Child-process entry-point evidence for both adapters",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M3",
-      "reason": "The SQLite child-process half lands with M2E; the phrase requires BOTH adapters, which is only satisfiable once M3 exists.",
+      "classification": "CURRENT_CAMPAIGN",
       "claims": [
         "635c69f1e795"
-      ]
+      ],
+      "slice": "M2E",
+      "partiallyProvedIn": "M3",
+      "note": "Composite. The SQLite child-process entry-point evidence lands with M2E and gates M2 — the requirement exists precisely to say a direct factory call is not sufficient evidence, which is as true on SQLite as on PostgreSQL. Only the PostgreSQL half waits for the adapter. This is the identical error already fixed on G28b and missed here."
     },
     {
       "id": "G09",
@@ -222,15 +224,25 @@
       ]
     },
     {
-      "id": "G15",
-      "title": "Authenticated TLS for production PostgreSQL connections",
-      "classification": "DEFERRED_OUTSIDE_M2",
-      "provedIn": "M3",
-      "reason": "Requires real TLS endpoints and a live driver; the M2 obligation is that the closed contract carries the fields and that plaintext settings are rejected by the parser.",
+      "id": "G15a",
+      "title": "TLS as a closed contract field, and the settings a parser can refuse",
       "claims": [
         "3efb7fb1d81c",
         "60fe094a1261",
-        "f840c5f66ce6",
+        "f840c5f66ce6"
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2F",
+      "partiallyProvedIn": "M3",
+      "note": "The closed envelope must carry the TLS fields, and a parser refuses plaintext, sslmode=disable|allow|prefer, verification-disabled settings and a permissive production default without opening a connection. My own deferral reason said as much and then deferred all four units anyway, so the parser boundaries could have gone green uncounted. Certificate-chain, expiry and hostname verification need real endpoints and stay with G15."
+    },
+    {
+      "id": "G15",
+      "title": "TLS proved against real endpoints",
+      "classification": "DEFERRED_OUTSIDE_M2",
+      "provedIn": "M3",
+      "reason": "Proving trusted-CA success and every refusal against real TLS endpoints needs a live driver and real certificates, neither of which exists before the M3 adapter.",
+      "claims": [
         "3a3ca09589a7"
       ]
     },
