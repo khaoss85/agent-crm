@@ -363,6 +363,14 @@ is strictly more correct.
     commits nothing; still rolls back whole inside one; and the legitimate path
     is untouched.
   - The witness lifetime, across both commit and rollback.
+  - **The boundary of the proof itself**, pinned so the function's name cannot
+    be mistaken for a stronger guarantee: flow B, having opened nothing, is
+    *not* refused during flow A's open window, and loses its writes to A's
+    rollback — with the `NESTED_TRANSACTION` refusal that makes this
+    unreachable in production asserted in the same test. Named for the limit it
+    establishes, the way the token-scan test is, and carrying the instruction
+    that if it ever fails because the witness became caller-scoped, that is a
+    fix and the test should be updated rather than the behaviour restored.
   - **The two halves of unforgeability, both asserted.** `mintTransactionWitness`
     and `isActiveTransactionWitness` are absent from `packages/core/index.js`,
     **and** `importsPrivateKernelPath` refuses the exact specifier a package

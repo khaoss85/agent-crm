@@ -485,6 +485,85 @@ test('a fault between the Task and the Activity rolls both back, in the real app
   assert.equal(activities.list().length, 0, 'and no half pair survives');
 });
 
+/**
+ * **The boundary of the proof, pinned — not a hazard blessed as desirable.**
+ *
+ * `proveCallerTransaction` is named for the caller. What it checks is that an
+ * outer transaction is open on the connection, and it cannot see which async
+ * flow opened one. The two are the same statement only while a concurrent
+ * record action is refused `NESTED_TRANSACTION`, which is what makes the gap
+ * below unreachable in production today.
+ *
+ * This test exists so that nobody reads that function's name and concludes the
+ * witness is caller-scoped. It is the same job the token-scan test does for the
+ * structural guard: name the limit, so the mechanism cannot be mistaken for a
+ * stronger one.
+ *
+ * **If this test ever fails because the witness became caller-scoped, that is a
+ * fix.** Update the test to assert the refusal; do not restore the behaviour it
+ * currently pins. The measured hazard is recorded in
+ * `docs/plans/spine-v2-m2d-transaction-context.md` and the ownership question
+ * belongs to the pooled-connection affinity obligation in `DECISIONS.md`
+ * (ADR-018 addendum 8).
+ */
+test('the witness proves a transaction is open on the connection, not which flow owns it', async (t) => {
+  const root = project(t, { withDelivery: true });
+  const context = await boot(root, join(root, 'data', 'm2d-interleave.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { contract } = await activatedContract(root, app, { name: 'M2D Interleave', offers: OFFERS });
+
+  const capability = app.domains.capability({
+    consumer: 'delivery', capability: 'delivery-obligations', version: 1,
+    context: { modules: app.modules, actor: ACTOR },
+  });
+  const service = app.modules.get('delivery-obligation').service;
+  const pending = capability.listPending(contract.id);
+  assert.ok(pending.length >= 1);
+
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+
+  // Flow A opens a transaction and holds it open across an await.
+  const flowA = app.database.transactionAsync(async () => {
+    await gate;
+    throw new Error('flow A rolls back');
+  });
+
+  // Flow B opened nothing. It is told the proof holds, because on this one
+  // connection it does — A's transaction is open, and nothing here can tell
+  // that A is somebody else.
+  const marked = await capability.markHandedOver({
+    contractId: contract.id,
+    obligationIds: pending.map((row) => row.id),
+    handoverRef: 'flow-b-ref',
+    actor: ACTOR,
+  });
+  assert.equal(marked, pending.length, 'B is not refused: the proof is connection-scoped');
+  assert.equal(service.get(pending[0].id).status, 'handed_over', 'and B genuinely wrote');
+
+  // …and B's writes were never B's to keep.
+  release();
+  await assert.rejects(() => flowA, /flow A rolls back/);
+  assert.equal(service.get(pending[0].id).status, pending[0].status,
+    "B was told it succeeded, and A's rollback took the writes with it");
+  assert.equal(service.get(pending[0].id).handoverRef, null);
+
+  // The invariant that makes this unreachable in production, asserted rather
+  // than described: a concurrent flow that opens its own transaction — which is
+  // what every production caller does, because every one of them is a record
+  // action — is refused before it can reach any of this.
+  await app.database.transactionAsync(async () => {
+    await assert.rejects(
+      () => app.database.transactionAsync(async () => 'never runs'),
+      (error) => {
+        assert.equal(error.code, 'NESTED_TRANSACTION');
+        return true;
+      },
+    );
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /* Contracts — the three measured partial commits, now refused         */
 /* ------------------------------------------------------------------ */

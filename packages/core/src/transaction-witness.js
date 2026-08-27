@@ -131,13 +131,45 @@ function storageOf(service) {
  * connection: a caller cannot satisfy it by holding some other transaction's
  * token, because its token is never consulted.
  *
- * **The assumption this rests on, stated so it can be checked.** "An outer
- * transaction is open on this handle" is equivalent to "the caller's
- * transaction" only because one application instance has one connection and
- * `createDatabase` refuses a nested outer transaction (`NESTED_TRANSACTION`).
- * Both invariants are true today and neither is guaranteed forever — see
- * `docs/plans/spine-v2-m2d-transaction-context.md` §5, which records what a
- * pooled-connection adapter must provide for this to stay true.
+ * ### What this proves, and what it does not
+ *
+ * The name says "caller". What the code checks is that **an outer transaction
+ * is open on this connection** — it cannot see which async flow opened it, and
+ * there is nothing on the handle that would tell it.
+ *
+ * The two are the same statement only while three invariants hold:
+ *
+ * 1. **One connection per application instance.** `createDatabase` opens one,
+ *    and every module service receives that same object.
+ * 2. **Nested outer transactions are refused.** `begin()` raises
+ *    `NESTED_TRANSACTION`, so a transaction open on this connection cannot
+ *    belong to an inner scope the caller does not own.
+ * 3. **One loaded core module instance per process.** The witness registry is
+ *    the module-private `WeakSet` above; two copies of `packages/core` in one
+ *    process do not share it, and the proof fails closed as `FORGED_WITNESS`.
+ *
+ * **The gap those invariants leave, stated plainly.** If flow A opens
+ * `transactionAsync` and awaits, a flow B that opened nothing can call a
+ * consumer of this function during that window, be told `ACTIVE`, write inside
+ * A's transaction, and lose those writes when A rolls back. That is measured,
+ * not hypothetical — `tests/spine-v2-m2d-transaction-context.test.js` pins it.
+ *
+ * It is unreachable in production **today**, and by invariant 2 rather than by
+ * luck: every caller of every consumer is a record action, and a concurrent
+ * record action opens its own transaction and is refused `NESTED_TRANSACTION`
+ * before it can reach here. **A caller that invokes one of those consumers
+ * outside a record action would reach it**, which is the thing to check before
+ * adding one.
+ *
+ * This is also strictly better than what it replaced: reading the driver's
+ * `isTransaction` flag answered the same connection-wide question, and two of
+ * the four consumers had no check at all, so a transactionless caller used to
+ * corrupt unconditionally rather than only inside another flow's window.
+ *
+ * Closing the gap means binding the witness to the async caller rather than to
+ * the connection — the same ownership question as the pooled-connection
+ * affinity obligation recorded in `DECISIONS.md` (ADR-018 addendum 8), and it
+ * belongs there rather than here.
  *
  * @param {any[]} services the module services whose writes must commit together
  * @returns {string} one of {@link TRANSACTION_PROOF}
