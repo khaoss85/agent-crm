@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError } from '../../core/index.js';
+import { AppError, TRANSACTION_PROOF, proveCallerTransaction } from '../../core/index.js';
 import { resolvedNames } from './activation.js';
 
 /**
@@ -145,6 +145,9 @@ export function createDeliveryObligationsCapability(moduleNames) {
             throw new AppError('A handover reference is required', { code: 'HANDOVER_REF_REQUIRED', status: 400 });
           }
           const obligations = service(names.deliveryObligation);
+          // Everything above this line is input validation, and it still
+          // refuses first. Everything below writes.
+          requireCallerTransaction([obligations], 'A delivery handover');
           const updated = [];
           for (const id of new Set(obligationIds)) {
             const row = safeGet(obligations, id);
@@ -172,6 +175,45 @@ export function createDeliveryObligationsCapability(moduleNames) {
       };
     },
   };
+}
+
+/**
+ * **Refuse to start a write set that cannot be finished as one.**
+ *
+ * A handover marks N obligations, and each `applyManaged` lands on its own
+ * SAVEPOINT so it nests safely inside an enclosing transaction. Outside one,
+ * that SAVEPOINT *is* the transaction and `RELEASE` commits it — so a refusal
+ * at obligation 3 leaves obligations 1 and 2 committed, marked handed over to
+ * a delivery project that will never exist, and permanently un-handoverable
+ * because `OBLIGATION_ALREADY_HANDED_OVER` is terminal.
+ *
+ * That was reachable and it was measured, not reasoned about: the probe is in
+ * `docs/plans/spine-v2-m2d-transaction-context.md` §2 and it is now a checked-in
+ * regression. The doc comments on both write methods have always promised "in
+ * the caller's transaction"; this is the line that makes the promise checkable.
+ *
+ * `proveCallerTransaction` asks the storage seam — never the SQLite driver —
+ * for the opaque witness the database wrapper mints per outer transaction, on
+ * the same handle the write is about to use.
+ *
+ * @param {any[]} services @param {string} what
+ */
+export function requireCallerTransaction(services, what) {
+  const proof = proveCallerTransaction(services);
+  if (proof === TRANSACTION_PROOF.ACTIVE) return;
+  if (proof === TRANSACTION_PROOF.NO_TRANSACTION) {
+    throw new AppError(
+      `${what} must run inside the caller's transaction: it writes a set of rows that are only correct together, `
+        + 'and outside a transaction a refusal partway through would leave the earlier ones committed. '
+        + "Call it from a package action's execute, or from inside database.transactionAsync.",
+      { code: 'CONTRACT_TRANSACTION_REQUIRED', status: 500, details: { proof } },
+    );
+  }
+  throw new AppError(
+    `${what} cannot prove it is running inside the caller's transaction, so it refuses to write the first row `
+      + 'of a set whose remainder might not commit with it.',
+    { code: 'CONTRACT_TRANSACTION_REQUIRED', status: 500, details: { proof } },
+  );
 }
 
 /** @param {any} service @param {string} id */

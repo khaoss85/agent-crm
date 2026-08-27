@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError } from '../../core/index.js';
+import { requireCallerTransaction } from './capabilities.js';
 import { resolvedNames } from './activation.js';
 
 /**
@@ -141,6 +142,10 @@ export function createServiceObligationsCapability(moduleNames) {
             });
           }
           const obligations = service(names.serviceObligation);
+          // The same rule as the delivery half, through the same helper: a
+          // partial activation is the identical defect wearing a different
+          // status column. Input refusals above still come first.
+          requireCallerTransaction([obligations], 'A service obligation activation');
           const updated = [];
           for (const id of new Set(obligationIds)) {
             const row = safeGet(obligations, id);

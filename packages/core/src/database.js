@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { AppError, ConflictError } from './errors.js';
 import { createSqliteStorage } from './storage-contract.js';
+import { mintTransactionWitness } from './transaction-witness.js';
 
 /**
  * @typedef {{
@@ -402,6 +403,19 @@ export function createDatabase(options = {}) {
   // "cannot start a transaction within a transaction".
   let inOuterTransaction = false;
 
+  /**
+   * The opaque witness for the outer transaction currently open on this
+   * connection, or null (Spine v2 M2D).
+   *
+   * It is minted and dropped **beside** `inOuterTransaction`, in the same two
+   * places, so the witness's lifetime is the transaction's lifetime and there
+   * is no second piece of state that could drift from the first. Consumers
+   * that must prove transactional context read it through
+   * `storage.activeTransaction()`; the slot itself is closed over here, so
+   * nothing outside this function can set it.
+   */
+  let currentWitness = null;
+
   function begin() {
     if (inOuterTransaction) {
       throw new AppError(
@@ -421,6 +435,10 @@ export function createDatabase(options = {}) {
       throw error;
     }
     inOuterTransaction = true;
+    // Minted only after BEGIN actually succeeded: a witness for a transaction
+    // that was never opened would be the one lie this whole mechanism exists
+    // to make impossible.
+    currentWitness = mintTransactionWitness(storage);
   }
 
   /** @param {unknown} primaryError — never masked by a rollback failure */
@@ -447,6 +465,10 @@ export function createDatabase(options = {}) {
         : error;
     } finally {
       inOuterTransaction = false;
+      // Dropped whether the transaction committed or rolled back: past this
+      // point the witness names a transaction that is over, and a consumer
+      // holding one must not be able to write through it.
+      currentWitness = null;
     }
   };
   const transactionAsync = async (fn) => {
@@ -462,9 +484,16 @@ export function createDatabase(options = {}) {
         : error;
     } finally {
       inOuterTransaction = false;
+      // Dropped whether the transaction committed or rolled back: past this
+      // point the witness names a transaction that is over, and a consumer
+      // holding one must not be able to write through it.
+      currentWitness = null;
     }
   };
-  const storage = createSqliteStorage(raw, transaction, transactionAsync);
+  // `begin()` above refers to `storage` — legal because it can only run after
+  // this function has returned, and deliberate: the witness must be bound to
+  // the very handle a consumer will later ask.
+  const storage = createSqliteStorage(raw, transaction, transactionAsync, () => currentWitness);
 
   return {
     raw,

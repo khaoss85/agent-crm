@@ -130,8 +130,26 @@ export function renderSqliteStatement(statement) {
   refuse('Unsupported storage statement kind', { kind: statement.kind });
 }
 
-/** SQLite-only M1 adapter. Raw driver access never leaves this closure. */
-export function createSqliteStorage(raw, transaction, transactionAsync) {
+/**
+ * SQLite-only M1 adapter. Raw driver access never leaves this closure.
+ *
+ * `readWitness` is the database wrapper's own view of whether an outer
+ * transaction is open on this connection, published here as
+ * `activeTransaction()` so a consumer that must prove transactional context
+ * asks the storage seam instead of reaching past it for the driver's own
+ * transaction flag (Spine v2 M2D).
+ *
+ * It is a **reader**. The slot it reads lives in `createDatabase`'s closure and
+ * nothing on the returned object can write it, so holding `database.storage`
+ * lets a package ask the question and never answer it.
+ *
+ * Omitted — as the repository-truth storage probes in `scripts/repo-truth.js`
+ * construct it — `activeTransaction()` answers `null`. That is the fail-closed
+ * direction: a handle assembled without the wrapper cannot prove a transaction,
+ * and says so rather than staying silent.
+ */
+export function createSqliteStorage(raw, transaction, transactionAsync, readWitness) {
+  const activeTransaction = typeof readWitness === 'function' ? () => readWitness() : () => null;
   const prepared = (statement) => {
     const rendered = renderSqliteStatement(statement);
     return { prepared: raw.prepare(rendered.sql), params: rendered.params };
@@ -169,6 +187,12 @@ export function createSqliteStorage(raw, transaction, transactionAsync) {
   return Object.freeze({
     contract: STORAGE_CONTRACT,
     sync,
+    /**
+     * The opaque witness for the outer transaction currently open on this
+     * handle, or `null`. Read-only, and the value is meaningless on its own:
+     * only `proveCallerTransaction` can tell a genuine one from a forgery.
+     */
+    activeTransaction,
     async execute(statement) { return sync.execute(statement); },
     async maybeOne(statement) { return sync.maybeOne(statement); },
     async many(statement) { return sync.many(statement); },
