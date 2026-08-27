@@ -170,6 +170,72 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
   shared JSON encoder, and `JSON.stringify` already escapes every control
   character. Bounding either would be a new refusal on evidence the framework
   itself produces.
+- **What this store is entitled to refuse, in three categories — and the
+  reasoning that closes the class.** This is the third revision of this
+  decision, and the revisions are the interesting part: the ceiling was written
+  as universal, narrowed to minted ids after review, then narrowed again after
+  the integrator asked the question that generalised it. The rule now: the store
+  refuses **(1) what it owns** — a minted id gets non-empty, no control
+  characters and a length ceiling, because the store produces it *and* quotes it
+  verbatim into the duplicate-id refusal; **(2) what the driver would refuse
+  anyway** — a status outside the schema's own `CHECK` set, and a non-string in
+  a `TEXT` column of a `STRICT` table, which is the same *what* SQLite refuses
+  moved earlier and into the framework's words; **(3) a shape whose acceptance
+  would silently corrupt** — an unnamed key, or a named field arriving through a
+  polluted prototype. Everything else a caller supplies is stored as given.
+  **The asymmetry with M2B is the load-bearing argument.** M2B applies an
+  identical character-class and length rule to `definition_versions`, and that
+  is right *there* because it sits on the **startup** path, where a refusal is
+  loud and stops the boot. This store sits on an evidence path where the caller
+  swallows the refusal — so an invented refusal is not a safety feature, it is
+  an evidence-destruction primitive.
+- **The length ceiling was wrong for caller-supplied identity, and review caught
+  it.** `MAX_IDENTITY` (200) bounded every identity string, justified in the
+  source as "far above anything real — a workflow name is `module.action`". That
+  was an unverified assumption. A record action's workflow name is exactly
+  `${module}.${action}`, and `packages/core/src/action-registry.js:7` validates
+  each part against an anchored lower-case pattern that bounds its length **not
+  at all**; the module-manifest validator uses the same shape. Two individually
+  valid declarations therefore exceeded the ceiling — and because `writeTrace` is
+  best-effort, the refusal was swallowed and the action **reported success with
+  no run row and no span row at all**. Reproduced with a 150-character module and
+  a 150-character action: 301 characters, `VALIDATION_ERROR`, zero rows. It is
+  this PR's regression, not an inherited one: the pre-M2C `writeTrace` at
+  `c284867` contains no length check of any kind.
+  **The fix keeps one rule and narrows one ceiling.** Non-empty and no control
+  characters still apply to every identity string — that is what actually
+  protects the row and any log that renders it. The ceiling moves to
+  `MAX_GENERATED_ID`, applied only to ids the store mints, where it is earned
+  twice: the store owns those values *and* quotes them verbatim into the
+  duplicate-id refusal. The original justification — "an unbounded identity is an
+  unbounded error message" — turned out to be true of nothing else, because the
+  store never interpolates caller identity into a message, only its length.
+  The reviewer's alternative, enforcing a combined bound at action registration,
+  was rejected: that is a **new** startup refusal for packages that are valid
+  today, which is a compatibility break in a milestone that promises none, and it
+  is outside this slice.
+- **The sweep the integrator asked for found seven more of the same defect, and
+  they are fixed together.** The question — *is this ceiling protecting something
+  the store actually does, or something I assumed it does?* — applied to every
+  remaining rule. Probed rather than reasoned; each of these was refused, and
+  each refusal destroyed the whole trace: a span name with a control character
+  or an empty span name (both reachable through `ctx.step(name, …)` and through
+  a workflow step name, **neither of which is validated anywhere**), a workflow
+  name with a control character or empty, an empty or control-bearing
+  `startedAt`, and an empty caller-supplied `runId`. All seven are now stored as
+  given. `assertIdentityText` is gone, because a validator that no longer
+  asserts identity text should not keep the name — the same rule this milestone
+  applied to its own guard. What replaced it: `assertStorableText` (type only,
+  category 2) for caller values, `assertGeneratedId` (the full rule, category 1)
+  for minted ids.
+- **`MAX_SPANS` is kept, and it is not pure preservation — said plainly rather
+  than claimed away.** The statement it replaced *streamed* its inserts, so an
+  infinite generator meant unbounded row growth forever; this store collects the
+  batch first, which is what makes an out-of-memory crash possible and the cap
+  necessary. The cap converts two pathologies into one refusal. Reachability,
+  stated: an action making more than 10,000 `ctx.step(…)` calls loses its trace.
+  Unlike everything the sweep removed, the alternative here is a crash rather
+  than a stored row.
 - **Exempting `error` from the bounds is not the same as accepting anything, and
   the first pass conflated the two.** `error` was the one stored field with no
   check at all — not even a type. Both columns are `TEXT` in a `STRICT` table,
@@ -333,6 +399,21 @@ npm run verify
   count rather than the comment. One P2 was already closed at that head by the
   `error` type check found in the self-sweep; one P2 was real and mine, and is
   fixed below; the two P1s were one finding stated twice.
+- **2026-08-27:** The integrator asked the generalising question — is each
+  remaining bound protecting something the store *does*, or something I
+  *assumed* it does — and named `startedAt` and span `name` as the neighbours to
+  check first. Both were instances, and so were five more. Fixed as one
+  principle rather than seven patches, and the class is closed: every refusal
+  that remains sits in category 1, 2 or 3 above.
+- **2026-08-27:** A fifth finding at the exact head, and the most serious one:
+  the 200-character identity ceiling refused workflow names the framework's own
+  validators accept, and the best-effort trace write swallowed the refusal, so an
+  action succeeded with its whole trace missing. Reproduced first, fixed by
+  narrowing the ceiling to minted ids, regression written before the fix and
+  watched failing. The old "one rule, one bound" test asserted the behaviour that
+  was wrong, so it was rewritten rather than deleted: it now pins the rule that
+  survived and pins that long caller identity is *accepted*, with the rows to
+  prove it.
 - **2026-08-27:** Fixed the `Open PRs` row in `docs/PROJECT_STATUS.md`, which
   said `Measured at` names `e1ff9a0` while the row two lines above it and
   `site/claims.json` `measuredAgainst` both name `27cc663`. I had copied M2B's

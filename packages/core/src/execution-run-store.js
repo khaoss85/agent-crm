@@ -57,18 +57,39 @@ const DEFAULT_RUN_LIMIT = 100;
 const MAX_RUN_LIMIT = 500;
 
 /**
- * Bounds on identity text. Every one of these strings lands in a database row
- * *and* in evidence a person reads, so an unbounded one is both an unbounded
- * row and an unbounded page of output. 200 sits far above anything real — a
- * workflow name is `module.action`, and an id is a 36-character UUID.
+ * The bound on **an id this store mints**, and on nothing else.
+ *
+ * It was briefly a bound on every identity string, justified as "far above
+ * anything real". That was an unverified assumption, and it was wrong. A record
+ * action's workflow name is the module and action joined by a dot, and
+ * `packages/core/src/action-registry.js` validates each part against an
+ * anchored lower-case pattern that bounds its **length not at all**. Two
+ * individually valid declarations therefore exceed any ceiling invented here —
+ * and because the trace write is best-effort, the refusal was swallowed and the
+ * action reported success with no run row and no span row. Losing the evidence
+ * that something happened, while it happens, is far worse than storing a long
+ * name, and nothing before this store bounded it either.
+ *
+ * The bound survives exactly where it is earned. The store *owns* the ids it
+ * mints and interpolates them **verbatim** into the duplicate-id refusal, so
+ * here a ceiling protects a message a person reads — which is what the original
+ * justification claimed, and only ever achieved for this one value. A UUID is
+ * 36 characters.
  */
-const MAX_IDENTITY = 200;
+const MAX_GENERATED_ID = 200;
 
 /**
- * One run's steps are the steps of one execution. The cap exists so an
- * accidental runaway generator is a framework refusal rather than an
- * out-of-memory crash; it is orders of magnitude above any real run, which
- * produces a handful.
+ * One run's steps are the steps of one execution.
+ *
+ * Kept, and it is **not** pure preservation — stated plainly rather than
+ * claimed away. The statement this replaced *streamed* its inserts, so an
+ * accidental infinite generator meant unbounded row growth forever; this store
+ * collects the batch first, which is what makes an out-of-memory crash
+ * possible and the cap necessary. So the cap converts two pathologies into one
+ * refusal. Reachability, honestly: an action making more than `MAX_SPANS`
+ * `ctx.step(…)` calls loses its trace. No real run comes within orders of
+ * magnitude, and unlike the checks this store dropped, the alternative here is
+ * a crash rather than a stored row.
  */
 const MAX_SPANS = 10_000;
 
@@ -80,41 +101,81 @@ const MAX_SPANS = 10_000;
 const FORBIDDEN_IDENTITY_TEXT = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
 
 /**
- * **One rule for every piece of identity text this store handles.**
+ * **What this store is entitled to refuse, and nothing beyond it.**
  *
- * Ids, workflow names, span names and the start instant are all stored in the
- * same rows and all read back into the same evidence, so they all earn the same
- * bounds. Applying the rule to some of them and not others is precisely what
- * produced a run of near-identical review findings in the milestone before this
- * one: one place validated, another not, the difference invisible until someone
- * went looking.
+ * Every statement here runs on an evidence path. The engine's writes fail a
+ * run; `recordRun`'s are best-effort, so a refusal there is *swallowed by the
+ * caller* and the trace disappears in silence. On such a path an invented
+ * refusal is not a safety feature — it is an evidence-destruction primitive.
+ * The milestone before this one applied the same character-class and
+ * length rules to `definition_versions`, and that was right *there* precisely
+ * because it sits on the **startup** path, where a refusal is loud and stops
+ * the boot. The asymmetry is the whole point.
  *
- * **Two fields are deliberately exempt, and the exemption is the interesting
- * part.** `error` carries a normalized exception message, which legitimately
- * contains newlines — refusing them would refuse real failure paths, and
- * because the trace write is best-effort the refusal would *silently lose the
- * trace of the failure it was describing*. `input` and `output` go through
- * `encodeJson`, and `JSON.stringify` already escapes every control character.
+ * So the store refuses exactly three things:
  *
- * `subject` is the caller's own phrase, so the refusal still names the exact
- * field: a shared validator saying only "identity invalid" would trade a class
- * of bug for a loss of diagnosability.
+ * 1. **What it owns.** An id it minted gets the full treatment — non-empty, no
+ *    control characters, and a length ceiling — because the store both produces
+ *    that value and interpolates it verbatim into the duplicate-id refusal.
+ *    See `assertGeneratedId` and `MAX_GENERATED_ID`.
+ * 2. **What the driver would refuse anyway.** A status outside the schema's own
+ *    `CHECK` set, and a non-string in a `TEXT` column of a `STRICT` table.
+ *    Same *what* SQLite would refuse, moved earlier and into this framework's
+ *    words instead of the driver's. See `assertStorableText`, `assertStatus`
+ *    and `assertOptionalMessage`.
+ * 3. **A shape whose acceptance would silently corrupt.** An unnamed key, or a
+ *    named field arriving through a polluted prototype. See `closedArgument`.
  *
- * @param {unknown} value
- * @param {string} subject — how the refusal names this value
- * @param {unknown} [details]
+ * Anything else a caller supplies is stored as given. That is deliberate and it
+ * was learned the hard way: a 200-character ceiling and a control-character
+ * class were applied to `workflowName`, span `name` and `startedAt` — none of
+ * which any framework validator bounds or filters — and each one silently
+ * destroyed a whole trace for a declaration the framework itself accepts.
+ * `packages/core/src/action-registry.js` bounds neither half of
+ * `module`/`action`; a workflow step name and `ctx.step(name, …)` are not
+ * validated at all.
  */
-function assertIdentityText(value, subject, details) {
+
+/**
+ * A value on its way into a `TEXT` column of a `STRICT` table: it must be
+ * text. Category 2 — a number or an object reaches a driver datatype refusal,
+ * and because the trace write is best-effort that refusal is swallowed and
+ * logged in the driver's words. The type check is the same treatment
+ * `assertOptionalMessage` gives `error`, applied symmetrically.
+ *
+ * Deliberately no length bound, no character class and no non-empty rule:
+ * nothing before this store imposed any of them, and each one refused values
+ * the framework accepts. `subject` is the caller's own phrase so a refusal
+ * still names the exact field.
+ *
+ * @param {unknown} value @param {string} subject @param {unknown} [details]
+ */
+function assertStorableText(value, subject, details) {
+  if (typeof value !== 'string') {
+    throw new ValidationError(`${subject} must be a string`, details);
+  }
+  return value;
+}
+
+/**
+ * An id this store minted. Category 1, and the only value that earns the full
+ * rule: the store produces it, so no caller is refused something it was given
+ * elsewhere, and the store quotes it **verbatim** into the duplicate-id
+ * refusal, so a control character or an unbounded length would land in a
+ * message a person reads.
+ * @param {unknown} value @param {string} subject @param {unknown} [details]
+ */
+function assertGeneratedId(value, subject, details) {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new ValidationError(`${subject} must be a non-empty string`, details);
   }
-  if (value.length > MAX_IDENTITY) {
-    throw new ValidationError(
-      `${subject} is too long (${value.length} characters; the limit is ${MAX_IDENTITY})`, details,
-    );
-  }
   if (FORBIDDEN_IDENTITY_TEXT.test(value)) {
     throw new ValidationError(`${subject} must not contain a control character`, details);
+  }
+  if (value.length > MAX_GENERATED_ID) {
+    throw new ValidationError(
+      `${subject} is too long (${value.length} characters; the limit is ${MAX_GENERATED_ID})`, details,
+    );
   }
   return value;
 }
@@ -273,7 +334,7 @@ function mapSpanRow(row) {
 function resolveIdSource(newId) {
   if (newId === undefined || newId === null) return randomUUID;
   if (typeof newId !== 'function') throw new TypeError('newId must be a function returning an id');
-  return () => assertIdentityText(newId(), 'The id newId returned', { field: 'id' });
+  return () => assertGeneratedId(newId(), 'The id newId returned', { field: 'id' });
 }
 
 /**
@@ -305,8 +366,8 @@ export function createExecutionRunStore(database, options = {}) {
      */
     startRun(run) {
       const own = closedArgument(run, 'Execution run', ['workflowName', 'input'], ['workflowName']);
-      const workflowName = assertIdentityText(own.workflowName, 'Execution run workflow name', { field: 'workflowName' });
-      const id = assertIdentityText(newId(), 'The generated run id', { field: 'id' });
+      const workflowName = assertStorableText(own.workflowName, 'Execution run workflow name', { field: 'workflowName' });
+      const id = assertGeneratedId(newId(), 'The generated run id', { field: 'id' });
       storage.execute({
         kind: 'insert',
         table: RUNS,
@@ -334,9 +395,9 @@ export function createExecutionRunStore(database, options = {}) {
      */
     startSpan(span) {
       const own = closedArgument(span, 'Trace span', ['runId', 'name', 'input'], ['runId', 'name']);
-      const runId = assertIdentityText(own.runId, 'Trace span run id', { field: 'runId' });
-      const name = assertIdentityText(own.name, 'Trace span name', { field: 'name' });
-      const id = assertIdentityText(newId(), 'The generated span id', { field: 'id' });
+      const runId = assertStorableText(own.runId, 'Trace span run id', { field: 'runId' });
+      const name = assertStorableText(own.name, 'Trace span name', { field: 'name' });
+      const id = assertGeneratedId(newId(), 'The generated span id', { field: 'id' });
       storage.execute({
         kind: 'insert',
         table: SPANS,
@@ -364,7 +425,7 @@ export function createExecutionRunStore(database, options = {}) {
      */
     completeSpan(span) {
       const own = closedArgument(span, 'Trace span completion', ['spanId', 'output'], ['spanId']);
-      const spanId = assertIdentityText(own.spanId, 'Trace span id', { field: 'spanId' });
+      const spanId = assertStorableText(own.spanId, 'Trace span id', { field: 'spanId' });
       patch(SPANS, spanId, [
         { column: 'status', value: 'completed' },
         { column: 'output_json', value: encodeJson(own.output) },
@@ -374,13 +435,13 @@ export function createExecutionRunStore(database, options = {}) {
 
     /**
      * Close a span that failed. `error` is passed through unbounded and
-     * unfiltered: see `assertIdentityText` for why a normalized exception
+     * unfiltered: see the doctrine above for why a normalized exception
      * message is deliberately not identity text.
      * @param {{spanId: string, error: string | null}} span
      */
     failSpan(span) {
       const own = closedArgument(span, 'Trace span failure', ['spanId', 'error'], ['spanId', 'error']);
-      const spanId = assertIdentityText(own.spanId, 'Trace span id', { field: 'spanId' });
+      const spanId = assertStorableText(own.spanId, 'Trace span id', { field: 'spanId' });
       const error = assertOptionalMessage(own.error, 'Trace span error', { field: 'error' });
       patch(SPANS, spanId, [
         { column: 'status', value: 'failed' },
@@ -395,7 +456,7 @@ export function createExecutionRunStore(database, options = {}) {
      */
     completeRun(run) {
       const own = closedArgument(run, 'Execution run completion', ['runId', 'output'], ['runId']);
-      const runId = assertIdentityText(own.runId, 'Execution run id', { field: 'runId' });
+      const runId = assertStorableText(own.runId, 'Execution run id', { field: 'runId' });
       patch(RUNS, runId, [
         { column: 'status', value: 'completed' },
         { column: 'output_json', value: encodeJson(own.output) },
@@ -410,7 +471,7 @@ export function createExecutionRunStore(database, options = {}) {
      */
     failRun(run) {
       const own = closedArgument(run, 'Execution run failure', ['runId', 'error', 'output'], ['runId', 'error']);
-      const runId = assertIdentityText(own.runId, 'Execution run id', { field: 'runId' });
+      const runId = assertStorableText(own.runId, 'Execution run id', { field: 'runId' });
       const error = assertOptionalMessage(own.error, 'Execution run error', { field: 'error' });
       patch(RUNS, runId, [
         { column: 'status', value: 'failed' },
@@ -438,10 +499,10 @@ export function createExecutionRunStore(database, options = {}) {
       const own = closedArgument(run, 'Recorded execution run',
         ['runId', 'workflowName', 'status', 'input', 'output', 'error', 'startedAt', 'steps'],
         ['runId', 'workflowName', 'status', 'startedAt', 'steps']);
-      const runId = assertIdentityText(own.runId, 'Execution run id', { field: 'runId' });
-      const workflowName = assertIdentityText(own.workflowName, 'Execution run workflow name', { field: 'workflowName' });
+      const runId = assertStorableText(own.runId, 'Execution run id', { field: 'runId' });
+      const workflowName = assertStorableText(own.workflowName, 'Execution run workflow name', { field: 'workflowName' });
       const status = assertStatus(own.status, RUN_STATUSES, 'Execution run status', { field: 'status' });
-      const startedAt = assertIdentityText(own.startedAt, 'Execution run startedAt', { field: 'startedAt' });
+      const startedAt = assertStorableText(own.startedAt, 'Execution run startedAt', { field: 'startedAt' });
       const error = assertOptionalMessage(own.error, 'Execution run error', { field: 'error' });
 
       // The whole batch is validated before the first row is written. The one
@@ -451,7 +512,7 @@ export function createExecutionRunStore(database, options = {}) {
       // and the caller's best-effort catch sees the same swallowed failure either
       // way.
       const steps = boundedSteps(own.steps);
-      const minted = steps.map(() => assertIdentityText(newId(), 'The generated span id', { field: 'id' }));
+      const minted = steps.map(() => assertGeneratedId(newId(), 'The generated span id', { field: 'id' }));
       const seen = new Set();
       for (const id of minted) {
         // Within one call this is free, so it is done. Beyond one call it is not
@@ -582,7 +643,7 @@ function boundedSteps(steps) {
     const own = closedArgument(step, `Trace span step at index ${index}`,
       ['name', 'status', 'output', 'error'], ['name', 'status']);
     collected.push({
-      name: assertIdentityText(own.name, 'Trace span name', { index, field: 'name' }),
+      name: assertStorableText(own.name, 'Trace span name', { index, field: 'name' }),
       status: assertStatus(own.status, SPAN_STATUSES, 'Trace span status', { index, field: 'status' }),
       output: own.output,
       error: assertOptionalMessage(own.error, 'Trace span error', { index, field: 'error' }),

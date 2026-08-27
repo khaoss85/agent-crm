@@ -440,32 +440,42 @@ test('an injected clock is validated on every call, before anything is written',
   assert.deepEqual(runRows(database), []);
 });
 
-test('the identity rule is one rule: every stored identity string gets the same bounds', (t) => {
+test('a caller identity is stored as given: the store refuses only what SQLite would', (t) => {
   const database = memory(t);
   const store = pinned(database);
-  const long = 'x'.repeat(201);
-  const control = 'a\u0007b';
+  const NUL = String.fromCharCode(0);
 
-  const refusals = [
-    () => store.startRun({ workflowName: long, input: null }),
-    () => store.startRun({ workflowName: control, input: null }),
-    () => store.startRun({ workflowName: '', input: null }),
-    () => store.startRun({ workflowName: /** @type {any} */ (7), input: null }),
-    () => store.startSpan({ runId: 'r', name: long, input: null }),
-    () => store.startSpan({ runId: control, name: 'ok', input: null }),
-    () => store.recordRun(recordedRun({ runId: control })),
-    () => store.recordRun(recordedRun({ workflowName: long })),
-    () => store.recordRun(recordedRun({ startedAt: control })),
-    () => store.recordRun(recordedRun({ steps: [{ name: long, status: 'completed' }] })),
-    // The Unicode separators and the C1 range, which a naive class misses.
-    () => store.startRun({ workflowName: 'a\u2028b', input: null }),
-    () => store.startRun({ workflowName: 'a\u2029b', input: null }),
-    () => store.startRun({ workflowName: 'a\u009Bb', input: null }),
+  // Every one of these was refused by an earlier draft of this store, and every
+  // refusal destroyed a whole trace — silently, because `writeTrace` is
+  // best-effort. None of them is refused by anything else in the framework:
+  // `action-registry.js` bounds neither half of `module`/`action`, and a
+  // workflow step name and `ctx.step(name, …)` are not validated at all.
+  const accepted = [
+    ['span name with a control character', () => store.recordRun(recordedRun({
+      runId: 'r1', steps: [{ name: `my${NUL}step`, status: 'completed' }],
+    }))],
+    ['empty span name', () => store.recordRun(recordedRun({
+      runId: 'r2', steps: [{ name: '', status: 'completed' }],
+    }))],
+    ['workflow name with a control character', () => store.recordRun(recordedRun({ runId: 'r3', workflowName: `m${NUL}a` }))],
+    ['empty workflow name', () => store.recordRun(recordedRun({ runId: 'r4', workflowName: '' }))],
+    ['empty startedAt', () => store.recordRun(recordedRun({ runId: 'r5', startedAt: '' }))],
+    ['empty runId', () => store.recordRun(recordedRun({ runId: '' }))],
   ];
-  for (const [index, refuse] of refusals.entries()) {
-    assert.throws(refuse, (error) => error.code === 'VALIDATION_ERROR', `refusal ${index}`);
+  for (const [label, write] of accepted) {
+    assert.doesNotThrow(write, `must be stored as given: ${label}`);
   }
-  assert.deepEqual(runRows(database), []);
+  assert.equal(runRows(database).length, accepted.length, 'every one reached the table');
+
+  // What the store still refuses on a caller value, and only this: a type the
+  // column cannot hold. STRICT TEXT would refuse it anyway — same refusal,
+  // moved earlier and into the framework's words.
+  for (const bad of [42, {}, [], true]) {
+    assert.throws(() => store.startRun({ workflowName: /** @type {any} */ (bad), input: null }),
+      (error) => error.code === 'VALIDATION_ERROR' && /must be a string/.test(error.message));
+    assert.throws(() => store.startSpan({ runId: 'r1', name: /** @type {any} */ (bad), input: null }),
+      (error) => error.code === 'VALIDATION_ERROR' && /must be a string/.test(error.message));
+  }
 });
 
 test('an error message keeps its newlines, because a trace of a failure must survive being written', (t) => {
@@ -484,6 +494,47 @@ test('an error message keeps its newlines, because a trace of a failure must sur
     steps: [{ name: 'thing.do', status: 'failed', error: message }],
   }));
   assert.equal(spanRows(database, 'run-2')[0].error, message);
+});
+
+test('a long but valid action identity still gets a trace', (t) => {
+  const database = memory(t);
+  const store = pinned(database);
+
+  // `packages/core/src/action-registry.js` validates module and action names
+  // with an anchored lower-case pattern and bounds NEITHER, so two individually
+  // valid names exceed any ceiling this store might invent. A record action's
+  // workflow name is the two joined by a dot.
+  const NAME_RE = /^[a-z][a-z0-9-]*$/;
+  const moduleName = 'a'.repeat(150);
+  const actionName = 'b'.repeat(150);
+  assert.ok(NAME_RE.test(moduleName) && NAME_RE.test(actionName), 'both are valid declarations');
+  const workflowName = moduleName + '.' + actionName;
+  assert.ok(workflowName.length > 200, 'and together they exceed the ceiling this store used to impose');
+
+  // The regression this pins. The store refused, `writeTrace` is best-effort,
+  // so the action reported success and its ENTIRE trace vanished — the worst
+  // available outcome, because the thing happened and the evidence did not.
+  store.recordRun(recordedRun({ workflowName, steps: [{ name: workflowName, status: 'completed' }] }));
+  const [run] = runRows(database);
+  assert.equal(run.workflow_name, workflowName, 'stored whole, not truncated and not refused');
+  assert.equal(spanRows(database, 'run-1')[0].name, workflowName);
+
+  // The engine path takes the same names.
+  const runId = store.startRun({ workflowName, input: null });
+  const spanId = store.startSpan({ runId, name: workflowName, input: null });
+  store.completeSpan({ spanId, output: null });
+  assert.equal(store.getRun(runId).workflowName, workflowName);
+});
+
+test('the length ceiling still applies to the ids the store mints, because it quotes them', (t) => {
+  const database = memory(t);
+  // The ceiling belongs where the store OWNS the value and interpolates it
+  // verbatim into a refusal a person reads. A caller's workflow name is
+  // neither owned nor interpolated — only its length ever reached a message.
+  const store = createExecutionRunStore(database, { newId: () => 'i'.repeat(201) });
+  assert.throws(() => store.startRun({ workflowName: 'demo', input: null }),
+    (error) => error.code === 'VALIDATION_ERROR' && /is too long/.test(error.message));
+  assert.deepEqual(runRows(database), []);
 });
 
 test('an error that is not text is refused here, not by the driver\'s datatype rule', (t) => {
@@ -616,9 +667,10 @@ test('no refusal leaks a driver message', (t) => {
   const database = memory(t);
   const store = pinned(database);
   const attempts = [
-    () => store.startRun({ workflowName: '', input: null }),
+    () => store.startRun({ workflowName: /** @type {any} */ (42), input: null }),
     () => store.recordRun(recordedRun({ status: 'nope' })),
     () => store.recordRun(recordedRun({ steps: 7 })),
+    () => store.recordRun(recordedRun({ error: /** @type {any} */ ({}) })),
     () => store.recordRun({ ...recordedRun(), spans: [] }),
     () => createExecutionRunStore(database, { newId: () => /** @type {any} */ (null) })
       .startSpan({ runId: 'r', name: 'n', input: null }),
