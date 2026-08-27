@@ -334,14 +334,6 @@ to somebody whose transaction is plainly open is the worst available message.
 The bound callback reading `ACTIVE` and the plain one reading
 `NOT_TRANSACTION_OWNER` are both asserted.
 
-**One implementation note worth keeping, because it failed first.** The scope
-must close when the transaction *body* settles, not when the scope function
-returns. A `finally` around `AsyncLocalStorage.run` fires the moment an async
-body hands back its pending promise, which drops the witness while the
-transaction is still open — the first cut did exactly that and told every
-legitimate consumer there was no transaction. The negative-evidence suite caught
-it immediately.
-
 > **REMAINING ASSUMPTIONS.** The same-handle half assumes **one connection per
 > application instance**; the registries are module-private, so **one loaded core
 > module instance per process** (two copies fail closed as `FORGED_WITNESS`).
@@ -355,6 +347,47 @@ it immediately.
 > pool-level facade, **and** the ownership scope must be opened around that
 > client's work. An adapter that does the first and not the second would restore
 > exactly the gap this milestone closed, with no test failing.
+
+### The `finally` that dropped every legitimate consumer
+
+A receipt, not a footnote: this is the bug the negative-evidence suite was
+written for, and it is the argument for having written that suite *before* this
+change rather than after it.
+
+The first implementation of the owned scope cleared the witness the obvious way:
+
+```js
+try {
+  return OWNERSHIP.run(witness, body);
+} finally {
+  CURRENT.delete(storage);          // ← fires far too early
+}
+```
+
+`AsyncLocalStorage.run` returns whatever `body` returns. When `body` is async
+that is a **pending promise**, so `finally` fires immediately — while the
+transaction is still open and the body has not started its first `await`. The
+witness was therefore dropped at the top of every transaction, and the effect
+was the exact inverse of the feature: every *legitimate* consumer, running
+inside the transaction it genuinely owned, was refused.
+
+Two things about it are worth keeping.
+
+**It is close to invisible on reading.** The code is idiomatic, the `finally` is
+correct-looking resource cleanup, and the bug lives entirely in the interaction
+between `finally` and an async return value. Nothing about the diff looks wrong.
+
+**It was caught on the first run, by tests that already existed.** The M2D suite
+went from 15 green to a specific, immediate failure. The suite was not written
+for this bug — it was written for the five negative evidences and the three
+measured partial commits — and it caught a defect introduced weeks of reasoning
+later, in a change nobody had planned when it was written. That is what a
+regression suite is for, and it is why the sequencing (probe → regression →
+change) is not ceremony.
+
+The fix closes the scope when the body **settles**: synchronous results close
+immediately, thenables close on resolve and on reject, and a re-entrant close is
+a no-op.
 
 ### 4. The same-handle half, which nothing was checking
 
