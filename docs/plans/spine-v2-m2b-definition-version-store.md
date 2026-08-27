@@ -170,6 +170,25 @@ adapter is SQLite.**
   and gives the enumeration as orientation. Retro-fixing the other eight
   omissions as durable prose is not M2B's to do; naming the file as the authority
   is what stops the next one.
+- **The falsification mutation follows the rule; it is not deleted.**
+  `scripts/falsify.js` aimed `definition-version-immutability` at the drift check
+  in `packages/intelligence/src/registry.js`, a line M2B removed. `tests/falsify.test.js`
+  caught it — a mutation that aims at nothing "keeps printing reassurance it has
+  not earned" — so the mutation now targets the same check in its new home,
+  `packages/core/src/definition-version-store.js`. Neutralising it there removes
+  the rule for **all four** registries at once, which makes it a stronger target
+  than it was, and `tests/intelligence-contract.test.js` still kills it:
+  `node scripts/falsify.js` reports 5 caught, 0 survived, 0 stale.
+- **The three characterization baselines were regenerated, and the diff is the
+  proof.** `commercial`, `intelligence` and `signature` each freeze a hash of
+  every behaviour-bearing source file, so three of them moved. Regenerating is
+  what the harness itself instructs, but the receipt is *what* moved: the entire
+  diff across the three baselines is **four source-hash lines and nothing else**.
+  No observation, asserted value or classification changed. Three independent
+  harnesses replayed each domain's externally observable behaviour and found it
+  byte-identical, which is the strongest available evidence that this refactor is
+  boundary-preserving. No characterization receipt was weakened to make anything
+  pass.
 - **The seam re-prepares; no statement cache is introduced.** Each registry used
   to prepare the SELECT and the INSERT once and run them N times.
   `createSqliteStorage` calls `raw.prepare(sql)` on every `execute`/`maybeOne`,
@@ -216,6 +235,8 @@ node --test tests/commercial-e2e.test.js tests/lead-intelligence-e2e.test.js \
   tests/intelligence-pre-extraction-upgrade.test.js tests/signature-order-e2e.test.js
 node --test tests/spine-v2-m0-characterization.test.js \
   tests/spine-v2-m1-storage-contract.test.js tests/work-legacy-task-migration.test.js
+node --test tests/characterization/*.test.js tests/falsify.test.js
+node scripts/falsify.js
 npm run repo:truth
 npm run repo:truth -- --check
 npm run gtm:check
@@ -244,6 +265,13 @@ npm run verify
   the suite refuses the regressions it claims to.
 - **2026-08-27:** Reconciled the M2A inventory rows, the alignment matrix, the
   status snapshot and the task ledger, and regenerated Repository Truth.
+- **2026-08-27:** CI `verify` failed on the pushed head and caught two things
+  the targeted suites could not: the falsification mutation had stopped aiming at
+  anything, and the three characterization baselines were stale. Both are
+  regressions this PR caused. Re-aimed the mutation at the store and regenerated
+  the baselines; the whole baseline diff is four source-hash lines with zero
+  observation changes. This is the reason a milestone runs `npm run verify` and
+  not only the suites it thinks it touched.
 - **2026-08-27:** Integrator review raised that `docs/PACKAGE_AUTHORING.md` §10
   enumerates the public kernel surface and no longer described it. Updated §10,
   and recorded both the rejected `database.definitionVersions` alternative and
