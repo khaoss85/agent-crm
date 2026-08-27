@@ -55,6 +55,31 @@ const FINGERPRINT_PREVIEW = 12;
 const ENTRY_FIELDS = Object.freeze(['type', 'name', 'version', 'fingerprint']);
 
 /**
+ * Bounds on what may be stored and quoted back. Every identity string lands in
+ * a database row *and* in a refusal a person reads at boot, so an unbounded one
+ * is both an unbounded row and an unbounded error message. 200 sits far above
+ * anything real — the longest `type` in the repository is
+ * `domain-policy:<domain>:<kind>` over a 64-character package name, and a
+ * fingerprint is 64 hex characters.
+ */
+const MAX_IDENTITY = 200;
+
+/**
+ * A batch is the checked-in definitions of one application, registered once at
+ * startup. The cap exists so an accidental runaway generator is a framework
+ * refusal rather than an out-of-memory crash; it is orders of magnitude above
+ * any real composition.
+ */
+const MAX_BATCH = 10_000;
+
+/**
+ * Control characters never appear in a real identity, and they do appear in
+ * log-splitting and terminal-escape payloads. Refusing them keeps a stored
+ * identity and the refusal quoting it both readable.
+ */
+const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F]/;
+
+/**
  * @param {unknown} value
  * @param {string} field
  * @param {number} index
@@ -63,6 +88,18 @@ function requireIdentityString(value, field, index) {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new ValidationError(
       `Definition version ${field} must be a non-empty string`,
+      { index, field },
+    );
+  }
+  if (value.length > MAX_IDENTITY) {
+    throw new ValidationError(
+      `Definition version ${field} is too long (${value.length} characters; the limit is ${MAX_IDENTITY})`,
+      { index, field },
+    );
+  }
+  if (CONTROL_CHARACTERS.test(value)) {
+    throw new ValidationError(
+      `Definition version ${field} must not contain a control character`,
       { index, field },
     );
   }
@@ -105,8 +142,10 @@ function validateEntry(entry, index) {
     throw new ValidationError(`Definition version entry requires own field "${missing}"`, { index, field: missing });
   }
   const record = /** @type {Record<string, unknown>} */ (entry);
+  // `isSafeInteger`, not `isInteger`: past 2^53 a version cannot survive a round
+  // trip through JS, so two different versions would read back as the same one.
   const version = record.version;
-  if (!Number.isInteger(version) || /** @type {number} */ (version) < 0) {
+  if (!Number.isSafeInteger(version) || /** @type {number} */ (version) < 0) {
     throw new ValidationError('Definition version version must be a non-negative integer', { index, field: 'version' });
   }
   return Object.freeze({
@@ -159,6 +198,28 @@ function resolveIdSource(newId) {
 }
 
 /**
+ * Turn whatever the caller passed into a bounded array, refusing in this
+ * store's own words rather than letting `[...entries]` raise a bare
+ * `TypeError: … is not iterable` that names no contract.
+ * @param {unknown} entries
+ */
+function boundedBatch(entries) {
+  if (entries === null || entries === undefined || typeof (/** @type {any} */ (entries)[Symbol.iterator]) !== 'function') {
+    throw new ValidationError('Definition versions to persist must be iterable');
+  }
+  const collected = [];
+  for (const item of /** @type {Iterable<unknown>} */ (entries)) {
+    if (collected.length >= MAX_BATCH) {
+      throw new ValidationError(
+        `Too many definition versions in one batch (the limit is ${MAX_BATCH})`,
+      );
+    }
+    collected.push(item);
+  }
+  return collected;
+}
+
+/**
  * @param {any} database — an application database handle carrying `storage.sync`
  * @param {{clock?: () => string, newId?: () => string}} [options]
  *   `clock` and `newId` exist so a test can pin `registered_at` and `id`; the
@@ -179,17 +240,17 @@ export function createDefinitionVersionStore(database, options = {}) {
      * @param {Iterable<{type: string, name: string, version: number, fingerprint: string}>} entries
      */
     persist(entries) {
-      const bounded = [...entries].map(validateEntry);
-      // Mint every id before the transaction opens, so a generator that returns
-      // a bad value or repeats itself is refused *without* a `BEGIN IMMEDIATE`
-      // to roll back — the same guarantee the rest of this store's validation
-      // gives. The cost is one discarded id per entry that turns out to verify
-      // rather than insert, which is free for a UUID source and buys something
-      // better than tidiness: a broken generator fails every boot, not only the
-      // boot that happens to have something new to write.
-      const ids = bounded.map(() => newId());
+      const bounded = boundedBatch(entries).map(validateEntry);
+      // Mint every id and timestamp before the transaction opens, so a source
+      // that returns a bad value or repeats itself is refused *without* a
+      // `BEGIN IMMEDIATE` to roll back — the same guarantee the rest of this
+      // store's validation gives. The cost is one discarded id per entry that
+      // turns out to verify rather than insert, which is free for a UUID source
+      // and buys something better than tidiness: a broken generator fails every
+      // boot, not only the boot that happens to have something new to write.
+      const minted = bounded.map(() => ({ id: newId(), registeredAt: now() }));
       const seen = new Set();
-      for (const id of ids) {
+      for (const { id } of minted) {
         if (seen.has(id)) {
           throw new ValidationError(
             `newId issued the same id twice in one batch ("${id}"); every definition version needs its own id`,
@@ -210,16 +271,37 @@ export function createDefinitionVersionStore(database, options = {}) {
             ],
           });
           if (!persisted) {
+            // Unlike every other check here, this one belongs INSIDE the
+            // transaction, and the asymmetry is deliberate: it reads the table,
+            // and only under `BEGIN IMMEDIATE` does the write lock guarantee no
+            // other connection slips a row in between this read and the insert
+            // below. It closes both a generator repeating an id across calls —
+            // which the per-batch check cannot see, because `seen` starts empty
+            // every call — and a collision with a row that was already there.
+            // Without it the `PRIMARY KEY` decides, and the caller reads the
+            // driver's words instead of this store's.
+            const taken = storage.maybeOne({
+              kind: 'select',
+              table: TABLE,
+              columns: ['id'],
+              where: [{ column: 'id', op: 'eq', value: minted[index].id }],
+            });
+            if (taken) {
+              throw new ValidationError(
+                `newId returned an id that is already registered ("${minted[index].id}"); `
+                  + 'every definition version needs its own id',
+              );
+            }
             storage.execute({
               kind: 'insert',
               table: TABLE,
               values: [
-                { column: 'id', value: ids[index] },
+                { column: 'id', value: minted[index].id },
                 { column: 'type', value: entry.type },
                 { column: 'name', value: entry.name },
                 { column: 'version', value: entry.version },
                 { column: 'fingerprint', value: entry.fingerprint },
-                { column: 'registered_at', value: now() },
+                { column: 'registered_at', value: minted[index].registeredAt },
               ],
             });
             continue;

@@ -275,6 +275,51 @@ adapter is SQLite.**
   all-or-nothing proof in the M2B suite needs no monkey-patching at all: it
   counts the insert that reached the adapter before the refusal.
 
+## The injected-input surface, swept
+
+Six review findings in a row were the same shape — *the store trusts something
+it should validate* — so rather than answer a seventh one at a time, the whole
+surface was walked at once. Each value the store accepts or produces was probed
+with a failing test first; **five of six probes failed, and each failure was a
+real gap.**
+
+| Input | Was | Now |
+|---|---|---|
+| a generated id colliding with a row already in the table, or one repeated across two `persist` calls | reached the `PRIMARY KEY`, so the caller read SQLite's words | refused as `an id that is already registered`, by an existence check **inside** the transaction |
+| `entries` itself | `[...entries]` raised a bare `TypeError: … is not iterable`, naming no contract | refused as `must be iterable` |
+| an enormous or runaway batch | unbounded — an accidental infinite generator was an out-of-memory crash | capped at `MAX_BATCH` (10,000), refused as `Too many definition versions` |
+| `type`, `name`, `fingerprint` length | unbounded, in a stored row *and* in a refusal a person reads at boot | capped at `MAX_IDENTITY` (200) |
+| `type`, `name`, `fingerprint` contents | any character, including the control characters used for log-splitting and terminal escapes | control characters refused |
+| `version` | `Number.isInteger`, so past 2^53 two different versions read back as one | `Number.isSafeInteger` |
+| the `clock` return value | already validated on every call by `resolveClock` | unchanged; a test now pins that the refusal lands **before** `BEGIN IMMEDIATE`, like the rest |
+
+**Why the id check is inside the transaction when everything else is outside.**
+It reads the table, and only under `BEGIN IMMEDIATE` does the write lock
+guarantee no other connection slips a row in between that read and the insert.
+The asymmetry is deliberate and commented in the source, so it does not read as
+an oversight. Timestamps are now minted alongside ids before the transaction,
+for the same reason ids are.
+
+**Judged acceptable, recorded so they are decisions and not omissions:**
+
+- **A generator that throws mid-iteration** propagates the caller's own error.
+  That happens while collecting the batch, before the transaction opens, so
+  nothing is persisted and no driver message is involved. Wrapping a caller's
+  own exception would hide where it came from.
+- **`fingerprint` is not required to be 64 hex characters.** The store is
+  generic: `computeDefinitionFingerprint` produces that shape, but a caller may
+  legitimately use another digest, and hard-coding SHA-256's width would put a
+  domain assumption in the kernel. Length and control characters are bounded,
+  which is what protects the row and the message.
+- **Infrastructure failures still surface as driver errors** — a full disk, a
+  corrupt file. Those are not malformed input, and the store has nothing truer
+  to say about them than the driver does.
+- **`MAX_BATCH` and `MAX_IDENTITY` are new refusals**, so a composition beyond
+  them would now fail. Both sit orders of magnitude above anything real: the
+  longest `type` in this repository is `domain-policy:<domain>:<kind>` over a
+  64-character package name, and no application registers ten thousand
+  definition versions at startup.
+
 ## Known limitation, carried forward deliberately
 
 **Definition-version registration has no actor context and no audit event.**
@@ -365,6 +410,11 @@ npm run verify
   both fixed with regressions written first: the closed entry shape was not
   closed against non-enumerable or symbol keys, and the structural guard claimed
   more than a token scan can prove.
+- **2026-08-27:** A sixth finding — a generated id colliding across calls or
+  with an existing row — prompted a sweep of the whole injected-input surface
+  rather than a seventh single fix. Five of six probes failed; all five are
+  fixed in one push and the surface is tabled above, together with what was
+  judged acceptable and why.
 - **2026-08-27:** A fifth finding: the injected `newId` was validated only as a
   function, not on what it returned. Fixed by mirroring `resolveClock`, with ids
   minted pre-transaction so a malformed or self-colliding generator is refused

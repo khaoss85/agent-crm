@@ -701,3 +701,117 @@ test('an empty registration is still a no-op for every family that had one', (t)
   assert.doesNotThrow(() => new IntelligenceRegistries({}).persistFingerprints(database));
   assert.equal(rows(database).length, 0);
 });
+
+
+// ---------------------------------------------------------------------------
+// Injected-input surface sweep
+//
+// Six review findings in a row were the same shape: the store trusts something
+// it should validate. Rather than answer one more at a time, this block walks
+// the whole surface and asks of each value the store accepts or produces: what
+// does a hostile or broken caller do with it, and does the store answer in its
+// own words or the driver's?
+// ---------------------------------------------------------------------------
+
+/** Refuse with the framework's own error, and never in the driver's words. */
+function refusesCleanly(fn, pattern, label) {
+  assert.throws(fn, (error) => {
+    assert.equal(error.code, 'VALIDATION_ERROR', label + ' must carry the framework error code');
+    assert.match(error.message, pattern, label);
+    assert.doesNotMatch(
+      error.message, /SQLITE|PRIMARY KEY|UNIQUE|constraint failed|prepare|datatype mismatch|not iterable/i,
+      label + ' must not leak a driver or engine message',
+    );
+    return true;
+  });
+}
+
+test("sweep: an id that already exists is refused in the store's own words, not the driver's", (t) => {
+  const database = memory(t);
+  // The same id handed out on two separate calls: the batch-level check cannot
+  // see it, because `seen` starts empty on every call.
+  const store = createDefinitionVersionStore(database, { newId: () => 'a-fixed-id' });
+  store.persist([entry({ name: 'first' })]);
+  assert.equal(rows(database).length, 1);
+
+  refusesCleanly(
+    () => store.persist([entry({ name: 'second' })]),
+    /an id that is already registered/,
+    'a generator repeating an id across calls',
+  );
+  assert.equal(rows(database).length, 1, 'and the colliding row was not written');
+});
+
+test('sweep: entries must be iterable, and a runaway batch is refused rather than attempted', (t) => {
+  const database = memory(t);
+  const store = createDefinitionVersionStore(database);
+  for (const notIterable of [null, undefined, 42, {}, true]) {
+    refusesCleanly(() => store.persist(notIterable), /must be iterable/, 'persist(' + String(notIterable) + ')');
+  }
+  // An accidental runaway generator becomes a framework refusal rather than an
+  // out-of-memory crash.
+  const runaway = (function* () { for (let i = 0; ; i += 1) yield entry({ name: 'n-' + i }); })();
+  refusesCleanly(() => store.persist(runaway), /Too many definition versions/, 'a runaway generator');
+  assert.equal(rows(database).length, 0);
+});
+
+test('sweep: identity strings are bounded and free of control characters', (t) => {
+  const database = memory(t);
+  const store = createDefinitionVersionStore(database);
+  const huge = 'x'.repeat(5000);
+  const NUL = String.fromCharCode(0);
+  for (const field of ['type', 'name', 'fingerprint']) {
+    refusesCleanly(() => store.persist([entry({ [field]: huge })]), /is too long/, 'an over-long ' + field);
+    refusesCleanly(
+      () => store.persist([entry({ [field]: 'bad\nvalue' })]),
+      /control character/,
+      field + ' carrying a newline',
+    );
+    refusesCleanly(
+      () => store.persist([entry({ [field]: 'bad' + NUL + 'value' })]),
+      /control character/,
+      field + ' carrying a NUL',
+    );
+  }
+  assert.equal(rows(database).length, 0);
+});
+
+test('sweep: version must round-trip, not merely be a non-negative integer', (t) => {
+  const database = memory(t);
+  const store = createDefinitionVersionStore(database);
+  // Past MAX_SAFE_INTEGER a version cannot survive a round trip through JS, so
+  // two different versions can read back as the same one.
+  refusesCleanly(
+    () => store.persist([entry({ version: Number.MAX_SAFE_INTEGER + 2 })]),
+    /must be a non-negative integer/,
+    'a version past the safe-integer range',
+  );
+  assert.equal(rows(database).length, 0);
+});
+
+test('sweep: a clock that misbehaves is refused before the transaction opens', (t) => {
+  const database = memory(t);
+  const opened = [];
+  const sync = database.storage.sync;
+  const handle = {
+    storage: { sync: { ...sync, transaction(fn) { opened.push('t'); return sync.transaction(fn); } } },
+  };
+  // `resolveClock` already validates what the clock returns on every call; what
+  // this pins is that the refusal lands before BEGIN IMMEDIATE, like the rest.
+  assert.throws(
+    () => createDefinitionVersionStore(handle, { clock: () => '2026-13-45T99:99:99Z' }).persist([entry()]),
+    /canonical UTC ISO instant/,
+  );
+  assert.deepEqual(opened, [], 'a bad clock never reached BEGIN IMMEDIATE');
+  assert.equal(rows(database).length, 0);
+});
+
+test('sweep: a repeated identity across two batches never reaches the UNIQUE constraint', (t) => {
+  const database = memory(t);
+  const store = createDefinitionVersionStore(database);
+  store.persist([entry()]);
+  // Same identity, same fingerprint, fresh call: this must verify, never insert
+  // a second row and never surface the table UNIQUE(type, name, version).
+  assert.doesNotThrow(() => store.persist([entry()]));
+  assert.equal(rows(database).length, 1);
+});
