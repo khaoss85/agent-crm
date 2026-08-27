@@ -203,14 +203,18 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
   a 150-character action: 301 characters, `VALIDATION_ERROR`, zero rows. It is
   this PR's regression, not an inherited one: the pre-M2C `writeTrace` at
   `c284867` contains no length check of any kind.
-  **The fix keeps one rule and narrows one ceiling.** Non-empty and no control
-  characters still apply to every identity string — that is what actually
-  protects the row and any log that renders it. The ceiling moves to
+  **That pass kept one rule and narrowed one ceiling** — and this sentence
+  describes *that pass*, not the head. It moved the ceiling to
   `MAX_GENERATED_ID`, applied only to ids the store mints, where it is earned
   twice: the store owns those values *and* quotes them verbatim into the
   duplicate-id refusal. The original justification — "an unbounded identity is an
   unbounded error message" — turned out to be true of nothing else, because the
   store never interpolates caller identity into a message, only its length.
+  It also **kept non-empty and control-character checks on every identity
+  string**, which the very next pass removed. **Do not read that as the
+  contract**: the regression tests accept an empty and a control-bearing
+  workflow name, span name, `startedAt` and caller `runId`, and the
+  three-category rule below is what the head enforces.
   The reviewer's alternative, enforcing a combined bound at action registration,
   was rejected: that is a **new** startup refusal for packages that are valid
   today, which is a compatibility break in a milestone that promises none, and it
@@ -271,16 +275,19 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
   in **either** direction.
 - **Exempting `error` from the bounds is not the same as accepting anything, and
   the first pass conflated the two.** `error` was the one stored field with no
-  check at all — not even a type. Both columns are `TEXT` in a `STRICT` table,
-  so a number or an object reaches a driver datatype refusal, and because the
-  trace write is best-effort that refusal is swallowed and logged *in the
-  driver's words*: exactly the leak this store exists to stop, hiding behind a
-  deliberate exemption. `assertOptionalMessage` now type-checks every `error`
-  the store stores — deliberately with **no length bound and no character
-  class**, so the newline that made the exemption necessary still costs nothing
-  and the sentence a person reads on a failure is never truncated. Found by
-  walking the store's own surface rather than by review, which is the point of
-  walking it.
+  check at all — not even a type. A boolean, object or array fails to bind, and
+  because the trace write is best-effort that driver refusal is swallowed and
+  logged *in the driver's words*: exactly the leak this store exists to stop,
+  hiding behind a deliberate exemption. `assertOptionalMessage` now checks every
+  `error` the store stores against the same accepted set as `assertStorableText`
+  — deliberately with **no length bound and no character class**, so the newline
+  that made the exemption necessary still costs nothing and the sentence a person
+  reads on a failure is never truncated. Found by walking the store's own surface
+  rather than by review, which is the point of walking it.
+  **A number is not in the refused set**, and an earlier draft of this bullet
+  said it was — the same stale claim as the source comment beside it, and the
+  third instance rather than the two review named. `STRICT` `TEXT` *coerces* a
+  number: `99` stores as `"99.0"`, and a test pins it.
 - **The read path validates nothing and refuses nothing.** `getRun` is
   HTTP-reachable (`GET /api/traces/:id`). Today a control-character id reaches
   the parameterized lookup, matches no row, and becomes `NotFoundError` — a 404.
@@ -432,6 +439,15 @@ npm run verify
   count rather than the comment. One P2 was already closed at that head by the
   `error` type check found in the self-sweep; one P2 was real and mine, and is
   fixed below; the two P1s were one finding stated twice.
+- **2026-08-27:** Review at `821625d` returned two P2s, both stale prose that
+  outlived the code it described — a plan bullet still stating the universal
+  identity rule as the contract, and `assertOptionalMessage`'s own header still
+  claiming a number reaches a driver refusal three lines above the code that
+  coerces it. Rather than fix the two named sites, grepped the *concept* across
+  both files and found a **third** the review had not named: the plan's mirror of
+  that same numeric claim. All three fixed; the re-sweep is clean. The lesson is
+  recorded above rather than only applied, because M2E-1 redefines a concept
+  across thirteen declarations and will need the same sweep.
 - **2026-08-27:** A fresh review at `00dc27d` — a review object rather than a
   comment — returned one P2, and it was the same defect one layer up: a bound
   whose stated justification did not match what the code does. `MAX_SPANS` was
@@ -487,6 +503,28 @@ npm run verify
   (`/private/var` vs `/var` tmpdir realpath) was recorded and left alone: it is
   unrelated to this milestone and does not reproduce on CI's Linux runner. It is
   the same failure M2B recorded.
+
+## A note on how the stale sentences got there
+
+Worth recording, because the same trap is waiting in M2E-1. Validation was
+removed here over **four passes** — the universal rule, then the ceiling, then
+the whole caller-supplied class, then the numeric coercion — and the sentences
+justifying each state were spread across a source file and this plan. Every pass
+fixed the prose it was *looking at*, which is the prose adjacent to the code it
+changed. The leftovers were the sentences a pass did not happen to be reading:
+a bullet further down this file, and a function header three lines above the
+code that refuted it.
+
+Review found them by reading **forward from the concept** rather than backward
+from the diff. That is the sweep to run deliberately whenever something is
+deleted or redefined: `grep` the concept across every file that could describe
+it, and check each hit against the head rather than against the change. Doing it
+after this pair found no third instance, which is how the class was closed
+rather than the instances patched.
+
+**This applies directly to M2E-1**, where Option 4 redefines `capabilityContract`
+across thirteen declarations in nine files, plus a homonym in `site/capabilities.json`
+that means something else entirely. The concept sweep there is not optional.
 
 ## The receipts
 

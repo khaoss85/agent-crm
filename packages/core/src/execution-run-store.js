@@ -212,13 +212,20 @@ function assertGeneratedId(value, subject, details) {
 }
 
 /**
- * **The other half of the `error` exemption above.** Exempting a message from
- * bounds and from the character class is not the same as accepting anything:
- * these columns are `TEXT` in a `STRICT` table, so a number or an object lands
- * on a driver datatype refusal, and because the trace write is best-effort that
- * refusal is swallowed and logged in the driver's words. A *type* check costs
- * the newline nothing and is the difference between "this store validates
- * everything except one field" and a rule with a stated exception.
+ * **The other half of the `error` exemption above**, and it takes the same
+ * accepted set as `assertStorableText` for the same probed reason.
+ *
+ * Exempting a message from bounds and from the character class is not the same
+ * as accepting *anything*: a boolean, object, array or `undefined` fails to
+ * bind, and because the trace write is best-effort that driver refusal is
+ * swallowed and logged in the driver's words.
+ *
+ * **A number is not in that set, and an earlier draft of this comment said it
+ * was.** These columns are `TEXT` in a `STRICT` table, which *coerces* a number
+ * and a bigint rather than refusing them — `99` stores as `"99.0"`, and a test
+ * pins that. The claim survived one round past the code that refuted it, three
+ * lines below. Refusing a number here would be an invented refusal on an
+ * evidence path, which is the defect this store exists to have stopped making.
  *
  * Deliberately no length bound: a normalized exception message has never had
  * one, and truncating the sentence a person reads when something failed would
