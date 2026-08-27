@@ -142,6 +142,34 @@ adapter is SQLite.**
   are read from*, and no fact is read from the store, so adding it there would
   make `sourceSha` answer a question it does not answer. The store's behaviour is
   proven by the suites that execute it, not by a generator.
+- **Published as a kernel export, rather than attached to the database handle.**
+  The alternative considered was hanging the store off `createDatabase(...)` —
+  `database.definitionVersions.persist(...)` — which would have added no export
+  at all. Rejected: it widens the handle every consumer already holds into a
+  place where the next primitive is also "just one more property", and it makes
+  a startup-identity concern a property of the connection. The published export
+  keeps the store addressable exactly where the repository's own rule says a
+  package must look. Three of the four consumers live outside `packages/core`,
+  and §10 of `docs/PACKAGE_AUTHORING.md` plus AGENTS.md §9 forbid deep imports,
+  so *some* public path was required; `packages/core/index.js` is the only
+  sanctioned one. Nothing agent-facing moves — no MCP tool, CLI command, HTTP
+  route or skill — and `surface:check` budgets exactly those and stayed green.
+  The framework also ships no published library (`accordo@0.0.1` is an empty
+  name reservation), so `packages/core/index.js` has no external consumer and no
+  external compatibility surface exists to break.
+- **`docs/PACKAGE_AUTHORING.md` §10 is updated in this PR.** §10 enumerated the
+  public surface in prose, and a new export makes that sentence an incomplete
+  statement about what the framework exposes — the exact class of claim ADR-039
+  binds, and one no test catches, because nothing enumerates the core export
+  surface mechanically. Worth recording: the enumeration was **already** stale
+  before M2B. It named five groups; `packages/core/index.js` carries thirteen,
+  omitting the clock, bounded outbound calls, run traces, the actor authority,
+  identity normalization, the Solution Plan and evidence contracts, and the whole
+  Production Spine v1 block. Adding the store to a list that drifts silently
+  would repeat the failure, so §10 now names the file as the authoritative list
+  and gives the enumeration as orientation. Retro-fixing the other eight
+  omissions as durable prose is not M2B's to do; naming the file as the authority
+  is what stops the next one.
 - **The seam re-prepares; no statement cache is introduced.** Each registry used
   to prepare the SELECT and the INSERT once and run them N times.
   `createSqliteStorage` calls `raw.prepare(sql)` on every `execute`/`maybeOne`,
@@ -216,6 +244,10 @@ npm run verify
   the suite refuses the regressions it claims to.
 - **2026-08-27:** Reconciled the M2A inventory rows, the alignment matrix, the
   status snapshot and the task ledger, and regenerated Repository Truth.
+- **2026-08-27:** Integrator review raised that `docs/PACKAGE_AUTHORING.md` §10
+  enumerates the public kernel surface and no longer described it. Updated §10,
+  and recorded both the rejected `database.definitionVersions` alternative and
+  the pre-existing staleness of that enumeration.
 - **2026-08-27:** Hardened the M2B guard after review raised that optional
   chaining evades the inherited token scan. Proved it by construction — four
   escapes written into a migrated file, guard failing on each, file restored —
