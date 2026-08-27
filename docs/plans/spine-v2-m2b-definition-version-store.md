@@ -255,6 +255,43 @@ adapter is SQLite.**
   all-or-nothing proof in the M2B suite needs no monkey-patching at all: it
   counts the insert that reached the adapter before the refusal.
 
+## Known limitation, carried forward deliberately
+
+**Definition-version registration has no actor context and no audit event.**
+Review flagged this against AGENTS.md:153 — *"Flag any mutation without actor
+context and audit event"* — and the rule applies: the store inserts into
+`definition_versions` with neither. The gap is real and it is named here so the
+next milestone inherits it as work rather than rediscovering it as a surprise.
+
+Three facts bound its scope, each verified rather than asserted:
+
+1. **It is not an M2B regression.** None of the four registries took an actor or
+   emitted an audit event for this write before M2B —
+   `git show e1ff9a0:<each registry>` greps clean for `actor`/`audit` in the
+   persist path (signature's single hit is a `humanApproval` metadata string
+   about `request-signature`, not this write). M2B preserves that behaviour
+   exactly, and the three characterization harnesses independently confirm the
+   observable behaviour is byte-identical.
+2. **Publishing the store creates no new mutation capability.**
+   `packages/app/src/create-app.js:197,204` hands every package the **full**
+   `database` handle, and `createDatabase` returns `{raw, storage, path, plane,
+   close, transaction, transactionAsync}` — so `.raw` was already in every
+   package's hands. Any package could already write anything to any table,
+   `definition_versions` included, with no actor and no audit. The store is
+   strictly **narrower** than what was already reachable: four validated fields,
+   one table, fail-closed, inside one transaction.
+3. **Closing it is milestone work, not a refactor's tail.** Adding actor and
+   audit would introduce a new startup-write behaviour across four packages,
+   invalidate the byte-identical behaviour proof this milestone rests on, and
+   decide by side effect a question that deserves deciding on purpose — whether
+   every definition-version registration earns an audit row, and who the actor is
+   at boot, before any actor exists.
+
+The limitation is stated beside the store's description in
+`docs/PACKAGE_AUTHORING.md` §10, because that is where a package author reads
+about it, together with the instruction not to treat it as a general persistence
+precedent.
+
 ## Validation
 
 Run these commands under Node 22.16.0:
@@ -308,6 +345,13 @@ npm run verify
   both fixed with regressions written first: the closed entry shape was not
   closed against non-enumerable or symbol keys, and the structural guard claimed
   more than a token scan can prove.
+- **2026-08-27:** Review raised a P1 for the missing actor and audit event.
+  Verified all three bounding facts before ruling: no registry carried either
+  before M2B, `create-app.js` already hands every package the full `database`
+  handle including `.raw`, and the store is strictly narrower than what that
+  handle already allowed. Recorded as a named limitation here and in
+  `docs/PACKAGE_AUTHORING.md` §10 rather than implemented, because closing it
+  would stop M2B being a refactor.
 - **2026-08-27:** A third P2 on the next head: the entry shape was still open to
   prototype pollution, because refusing unnamed keys says nothing about whether
   the named ones are own properties. Fixed with `Object.hasOwn` for all four

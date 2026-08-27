@@ -335,6 +335,18 @@ version's source has moved underneath it (ADR-015). It is the other half of
 loop re-implements the rule that decides whether the application starts, and the
 one sentence a person reads at boot becomes several that disagree.
 
+**And its limitation, in the same breath.** The store writes to
+`definition_versions` with **no actor context and no audit event**. Almost every
+other write in this framework carries both; this one does not. It is startup
+identity, recorded before any actor exists, and the gap predates the store — the
+four registries it replaced each wrote the same rows the same way. So it is
+**not a general persistence path**, and it is not the precedent to copy when your
+package needs to write something a person did: use a module service or a named
+workflow for that, so validation, actor identity, audit and trace travel with the
+write. Giving definition-version registration an actor and an audit row is
+sequenced work, not a gap to route around
+(`docs/plans/spine-v2-m2b-definition-version-store.md`).
+
 Everything in `packages/core/src/*` is **private**. It changes without notice,
 and `package validate` fails a package that reaches into it. If you need
 something that is not exported, say so in an issue: the answer is either a new
