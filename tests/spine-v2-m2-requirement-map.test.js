@@ -96,6 +96,25 @@ test('an edited requirement is reported twice over', () => {
   assert.ok(failures.some((f) => /^unclassified/.test(f)), 'the new text must be reported unclassified');
 });
 
+/**
+ * **The fix for positions reintroduced the omission it removed.** Two
+ * verbatim-identical requirements share a fingerprint, so a single claim would
+ * report both classified while one occurrence had no owner. Refused loudly, and
+ * watched refusing: the plan states no duplicate today, so this is the only way
+ * to know the rule works.
+ */
+test('a repeated requirement cannot be covered by one claim', () => {
+  const units = m2Units(plan);
+  assert.equal(new Set(units.map((u) => u.fingerprint)).size, units.length, 'the plan states no duplicate today');
+
+  const repeated = insertSentence('Package validation rejects any mixed graph (for example package/action v2 exposing capability/operation v1) and declared capability requirements select an explicit async-capable version before application startup.');
+  const grown = m2Units(repeated);
+  assert.equal(grown.length, units.length + 1, 'the duplicate must be counted, not collapsed');
+  const failures = inspectCoverage(grown, data);
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /appears 2 times/);
+});
+
 test('the map refuses malformed classification', () => {
   const invented = { groups: data.groups.map((g) => (g.id === 'G01' ? { ...g, classification: 'DONE_TRUST_ME' } : g)) };
   assert.ok(inspectCoverage(m2Units(plan), invented).some((f) => /unknown classification/.test(f)));

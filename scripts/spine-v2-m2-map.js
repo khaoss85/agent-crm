@@ -123,6 +123,27 @@ export function inspectCoverage(units, data) {
   const groups = Array.isArray(data?.groups) ? data.groups : null;
   if (!groups) return ['spine-v2-m2-map: the requirements document has no `groups` array.'];
 
+  // **A duplicate would collapse into one claim and cover both occurrences.**
+  // Content identity buys immunity to position and pays for it here: two
+  // verbatim-identical requirements share a fingerprint, so one claim would
+  // report both classified while one occurrence has no owner — the same
+  // silent-omission failure this gate exists to refuse, reintroduced by its own
+  // fix. Refused loudly rather than handled: a ratified plan repeating a
+  // requirement word for word is either a copy-paste defect or two distinct
+  // requirements that happen to read alike, and both want a person, not an
+  // occurrence counter that lets the text stay ambiguous.
+  const occurrences = new Map();
+  for (const unit of units) occurrences.set(unit.fingerprint, (occurrences.get(unit.fingerprint) ?? 0) + 1);
+  for (const [fingerprint, count] of occurrences) {
+    if (count > 1) {
+      const text = units.find((unit) => unit.fingerprint === fingerprint).text;
+      failures.push(
+        `${fingerprint} appears ${count} times in the M2 section: "${text.slice(0, 80)}…". One claim cannot own two `
+        + 'occurrences. Reword one so they are distinguishable, or remove the repetition from the ratified plan.',
+      );
+    }
+  }
+
   const stated = new Map(units.map((unit) => [unit.fingerprint, unit.text]));
   /** @type {Map<string, string>} */
   const claimed = new Map();
