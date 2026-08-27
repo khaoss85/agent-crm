@@ -111,10 +111,13 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **Production Spine v2 M2 is ready but not started.** Its causal boundary is
-   the remaining SQLite extraction and compatibility work named by the merged
-   ExecPlan and Legacy Alignment Matrix, including the raw legacy Work reads in
-   `packages/work/src/legacy-tasks.js`.
+1. **Production Spine v2 M2 is under way: M2A is merged, the rest is not
+   started.** Its causal boundary is the remaining SQLite extraction and
+   compatibility work named by the merged ExecPlans and Legacy Alignment Matrix.
+   M2A extracted the Approval, Contact and Opportunity compatibility services
+   and Work's legacy-task reader. <!-- truth: spine.storage.work_legacy_raw=absent -->
+   The workflow engine, the action runtime, the package definition-version
+   registries and Work's separate transaction-context check remain.
 2. M2 must preserve the M0/M1 public contracts and must not be confused with the
    later production PostgreSQL adapter milestone. Cloud C0 and shared-database
    row tenancy remain outside this sequence.
@@ -157,8 +160,10 @@ packages; contract activation plus governed renewal and amendment execution;
 Production Spine v1 one-instance/one-tenant binding and membership permissions;
 the checked SEE/PLAN/BUILD/CHECK/PROVE rails; CLI and MCP; and the live
 `create-accordo@0.1.0` bootstrap package. Production Spine v2 M0 is executable
-characterization only: it adds neither PostgreSQL storage nor a portable storage
-seam.
+characterization only; M1 added the internal SQLite storage contract and M2A
+migrated the named compatibility consumers onto it. <!-- truth: spine.storage.contract=1 -->
+Neither adds PostgreSQL storage, and the seam stays SQLite-only rather than
+portable.
 
 **Not implemented:** the PostgreSQL production adapter and later Spine v2
 milestones; deployment authentication; billing, invoicing and revenue
